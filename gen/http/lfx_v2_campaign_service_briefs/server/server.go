@@ -28,6 +28,9 @@ type Server struct {
 	DeleteBrief            http.Handler
 	FetchEventURL          http.Handler
 	UploadCreativeAsset    http.Handler
+	ListCreativeAssets     http.Handler
+	GetCreativeAsset       http.Handler
+	DeleteCreativeAsset    http.Handler
 	CreateCampaigns        http.Handler
 	AdoptCampaign          http.Handler
 	GetCampaign            http.Handler
@@ -93,6 +96,9 @@ func New(
 			{"DeleteBrief", "DELETE", "/projects/{project_id}/briefs/{brief_id}"},
 			{"FetchEventURL", "POST", "/projects/{project_id}/fetch-event-url"},
 			{"UploadCreativeAsset", "POST", "/projects/{project_id}/briefs/{brief_id}/creative-assets"},
+			{"ListCreativeAssets", "GET", "/projects/{project_id}/briefs/{brief_id}/creative-assets"},
+			{"GetCreativeAsset", "GET", "/projects/{project_id}/briefs/{brief_id}/creative-assets/{asset_id}"},
+			{"DeleteCreativeAsset", "DELETE", "/projects/{project_id}/briefs/{brief_id}/creative-assets/{asset_id}"},
 			{"CreateCampaigns", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns"},
 			{"AdoptCampaign", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/adopt"},
 			{"GetCampaign", "GET", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}"},
@@ -130,6 +136,9 @@ func New(
 		DeleteBrief:            NewDeleteBriefHandler(e.DeleteBrief, mux, decoder, encoder, errhandler, formatter),
 		FetchEventURL:          NewFetchEventURLHandler(e.FetchEventURL, mux, decoder, encoder, errhandler, formatter),
 		UploadCreativeAsset:    NewUploadCreativeAssetHandler(e.UploadCreativeAsset, mux, decoder, encoder, errhandler, formatter),
+		ListCreativeAssets:     NewListCreativeAssetsHandler(e.ListCreativeAssets, mux, decoder, encoder, errhandler, formatter),
+		GetCreativeAsset:       NewGetCreativeAssetHandler(e.GetCreativeAsset, mux, decoder, encoder, errhandler, formatter),
+		DeleteCreativeAsset:    NewDeleteCreativeAssetHandler(e.DeleteCreativeAsset, mux, decoder, encoder, errhandler, formatter),
 		CreateCampaigns:        NewCreateCampaignsHandler(e.CreateCampaigns, mux, decoder, encoder, errhandler, formatter),
 		AdoptCampaign:          NewAdoptCampaignHandler(e.AdoptCampaign, mux, decoder, encoder, errhandler, formatter),
 		GetCampaign:            NewGetCampaignHandler(e.GetCampaign, mux, decoder, encoder, errhandler, formatter),
@@ -174,6 +183,9 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.DeleteBrief = m(s.DeleteBrief)
 	s.FetchEventURL = m(s.FetchEventURL)
 	s.UploadCreativeAsset = m(s.UploadCreativeAsset)
+	s.ListCreativeAssets = m(s.ListCreativeAssets)
+	s.GetCreativeAsset = m(s.GetCreativeAsset)
+	s.DeleteCreativeAsset = m(s.DeleteCreativeAsset)
 	s.CreateCampaigns = m(s.CreateCampaigns)
 	s.AdoptCampaign = m(s.AdoptCampaign)
 	s.GetCampaign = m(s.GetCampaign)
@@ -218,6 +230,9 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountDeleteBriefHandler(mux, h.DeleteBrief)
 	MountFetchEventURLHandler(mux, h.FetchEventURL)
 	MountUploadCreativeAssetHandler(mux, h.UploadCreativeAsset)
+	MountListCreativeAssetsHandler(mux, h.ListCreativeAssets)
+	MountGetCreativeAssetHandler(mux, h.GetCreativeAsset)
+	MountDeleteCreativeAssetHandler(mux, h.DeleteCreativeAsset)
 	MountCreateCampaignsHandler(mux, h.CreateCampaigns)
 	MountAdoptCampaignHandler(mux, h.AdoptCampaign)
 	MountGetCampaignHandler(mux, h.GetCampaign)
@@ -661,6 +676,168 @@ func NewUploadCreativeAssetHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "upload-creative-asset")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountListCreativeAssetsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint.
+func MountListCreativeAssetsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/briefs/{brief_id}/creative-assets", f)
+}
+
+// NewListCreativeAssetsHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-briefs" service
+// "list-creative-assets" endpoint.
+func NewListCreativeAssetsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeListCreativeAssetsRequest(mux, decoder)
+		encodeResponse = EncodeListCreativeAssetsResponse(encoder)
+		encodeError    = EncodeListCreativeAssetsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "list-creative-assets")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountGetCreativeAssetHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint.
+func MountGetCreativeAssetHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/briefs/{brief_id}/creative-assets/{asset_id}", f)
+}
+
+// NewGetCreativeAssetHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-briefs" service
+// "get-creative-asset" endpoint.
+func NewGetCreativeAssetHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeGetCreativeAssetRequest(mux, decoder)
+		encodeResponse = EncodeGetCreativeAssetResponse(encoder)
+		encodeError    = EncodeGetCreativeAssetError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "get-creative-asset")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountDeleteCreativeAssetHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "delete-creative-asset" endpoint.
+func MountDeleteCreativeAssetHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("DELETE", "/projects/{project_id}/briefs/{brief_id}/creative-assets/{asset_id}", f)
+}
+
+// NewDeleteCreativeAssetHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-briefs" service
+// "delete-creative-asset" endpoint.
+func NewDeleteCreativeAssetHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeDeleteCreativeAssetRequest(mux, decoder)
+		encodeResponse = EncodeDeleteCreativeAssetResponse(encoder)
+		encodeError    = EncodeDeleteCreativeAssetError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "delete-creative-asset")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
 		payload, err := decodeRequest(r)
 		if err != nil {

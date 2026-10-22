@@ -50,6 +50,18 @@ type Client struct {
 	// upload-creative-asset endpoint.
 	UploadCreativeAssetDoer goahttp.Doer
 
+	// ListCreativeAssets Doer is the HTTP client used to make requests to the
+	// list-creative-assets endpoint.
+	ListCreativeAssetsDoer goahttp.Doer
+
+	// GetCreativeAsset Doer is the HTTP client used to make requests to the
+	// get-creative-asset endpoint.
+	GetCreativeAssetDoer goahttp.Doer
+
+	// DeleteCreativeAsset Doer is the HTTP client used to make requests to the
+	// delete-creative-asset endpoint.
+	DeleteCreativeAssetDoer goahttp.Doer
+
 	// CreateCampaigns Doer is the HTTP client used to make requests to the
 	// create-campaigns endpoint.
 	CreateCampaignsDoer goahttp.Doer
@@ -190,6 +202,9 @@ func NewClient(
 		DeleteBriefDoer:            doer,
 		FetchEventURLDoer:          doer,
 		UploadCreativeAssetDoer:    doer,
+		ListCreativeAssetsDoer:     doer,
+		GetCreativeAssetDoer:       doer,
+		DeleteCreativeAssetDoer:    doer,
 		CreateCampaignsDoer:        doer,
 		AdoptCampaignDoer:          doer,
 		GetCampaignDoer:            doer,
@@ -413,6 +428,78 @@ func (c *Client) UploadCreativeAsset() goa.Endpoint {
 		resp, err := c.UploadCreativeAssetDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListCreativeAssets returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service list-creative-assets server.
+func (c *Client) ListCreativeAssets() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListCreativeAssetsRequest(c.encoder)
+		decodeResponse = DecodeListCreativeAssetsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListCreativeAssetsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListCreativeAssetsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "list-creative-assets", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// GetCreativeAsset returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service get-creative-asset server.
+func (c *Client) GetCreativeAsset() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetCreativeAssetRequest(c.encoder)
+		decodeResponse = DecodeGetCreativeAssetResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetCreativeAssetRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetCreativeAssetDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "get-creative-asset", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// DeleteCreativeAsset returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service delete-creative-asset server.
+func (c *Client) DeleteCreativeAsset() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeDeleteCreativeAssetRequest(c.encoder)
+		decodeResponse = DecodeDeleteCreativeAssetResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildDeleteCreativeAssetRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.DeleteCreativeAssetDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "delete-creative-asset", err)
 		}
 		return decodeResponse(resp)
 	}

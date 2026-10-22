@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -152,12 +153,35 @@ const createCreativeAssetQuery = `INSERT INTO creative_assets
 		ON CONFLICT (brief_id, checksum) DO UPDATE SET byte_size = creative_assets.byte_size
 		RETURNING ` + creativeAssetCols + `, (xmax = 0) AS inserted`
 
+// creativeAssetQuotaQuery reads a brief's current asset count and total stored bytes, and
+// whether THIS upload's checksum is already stored there, in one aggregate over one index.
+//
+// It never touches the BYTEA: count, byte_size and checksum are all stored outside the blob, so
+// the aggregate reads no TOAST pages regardless of how large the brief's library is. It is
+// index-served by the UNIQUE (brief_id, checksum) index from 000028, whose leftmost column is
+// brief_id — the same index that makes the insert's ON CONFLICT arm cheap.
+//
+// It is scoped by brief_id ALONE, with no project_id predicate, and that is deliberate rather
+// than an omission: the caller has already taken FOR UPDATE on (brief_id, project_id), so the
+// brief is proven to be this tenant's before this runs, and an asset row's project_id is the
+// brief's by construction. Adding the predicate would narrow nothing while taking the aggregate
+// off the (brief_id, checksum) index.
+//
+// bool_or(...) over zero rows is NULL, so the COALESCE is load-bearing for an empty brief.
+const creativeAssetQuotaQuery = `SELECT count(*), COALESCE(sum(byte_size), 0),
+		COALESCE(bool_or(checksum = $2), false)
+	FROM creative_assets WHERE brief_id = $1`
+
 // CreateAsset stores an uploaded image and returns it, or ErrNotFound when the parent brief is
 // absent, archived, or owned by another project. Idempotent on (brief_id, checksum).
 //
 // The bool reports whether THIS call inserted the row (true) or resolved to an existing one
 // (false), so the transport can answer 201 only for a genuine creation. It is meaningful only
 // when err is nil.
+//
+// Returns ErrCreativeAssetQuotaExceeded when the brief is already at model.MaxCreativeAssetsPerBrief
+// assets or this upload would take it past model.MaxCreativeAssetBytesPerBrief — unless the upload
+// is a dedupe hit, which stores nothing and is therefore exempt.
 func (r *CreativeAssetRepo) CreateAsset(ctx context.Context, a *model.CreativeAsset) (*model.CreativeAsset, bool, error) {
 	// Lock the parent brief, then insert on the SAME transaction. The lock is what orders this
 	// against a concurrent ArchiveBrief; the insert's own WHERE EXISTS gate is retained because
@@ -184,6 +208,31 @@ func (r *CreativeAssetRepo) CreateAsset(ctx context.Context, a *model.CreativeAs
 	}
 	if status == "archived" {
 		return nil, false, domain.ErrNotFound
+	}
+
+	// Quota, decided under the brief lock taken above. The lock is what makes this race-free:
+	// two concurrent uploads to the same brief serialize on that row, so the second one counts
+	// the first one's asset rather than both reading the same pre-insert total and both passing.
+	//
+	// The dedupe probe is part of the SAME aggregate, not a second query, because a dedupe hit
+	// must be EXEMPT: identical bytes re-sent to the same brief resolve to the existing row and
+	// store nothing, so refusing it would make a plain retry fail at exactly the moment the
+	// (brief_id, checksum) uniqueness exists to make retrying safe. Reading it separately would
+	// let the row appear between the probe and the count.
+	var (
+		assetCount  int
+		bytesUsed   int64
+		isDuplicate bool
+	)
+	if qerr := tx.QueryRow(ctx, creativeAssetQuotaQuery, a.BriefID, a.Checksum).
+		Scan(&assetCount, &bytesUsed, &isDuplicate); qerr != nil {
+		return nil, false, fmt.Errorf("create creative asset: read quota: %w", qerr)
+	}
+	if !isDuplicate {
+		if assetCount >= model.MaxCreativeAssetsPerBrief ||
+			bytesUsed+a.ByteSize > model.MaxCreativeAssetBytesPerBrief {
+			return nil, false, domain.ErrCreativeAssetQuotaExceeded
+		}
 	}
 
 	stored, inserted, err := scanCreativeAssetWithInserted(tx.QueryRow(ctx, createCreativeAssetQuery,
@@ -287,6 +336,250 @@ func (r *CreativeAssetRepo) GetAsset(ctx context.Context, projectID, briefID, as
 		return nil, fmt.Errorf("get creative asset: %w", err)
 	}
 	return asset, nil
+}
+
+// getCreativeAssetMetadataQuery is getCreativeAssetQuery with creativeAssetCols in place of
+// creativeAssetColsWithBytes: the same row, under the same tenant and active-parent scope, minus
+// the blob.
+//
+// It is a separate statement rather than a GetAsset call whose Bytes the caller drops, for the
+// reason getCreativeAssetSizeQuery exists at all: the column holds up to 30 MiB, and shipping it
+// across the wire only to discard it is the exact cost creativeAssetCols was introduced to avoid.
+// The scope predicate is duplicated verbatim, as the size query's is, because the three must stay
+// identical — a metadata read scoped more loosely than the byte read would let a caller probe
+// another tenant's assets for existence.
+//
+// Same malformed-id convention as getCreativeAssetQuery: a well-formed id matching no row is
+// ErrNotFound, a malformed one is a 22P02 that surfaces as a 500, and the TRANSPORT is what keeps
+// malformed ids out — design/brief.go's asset_id attribute carries Format(FormatUUID).
+const getCreativeAssetMetadataQuery = `SELECT ` + creativeAssetCols + `
+	FROM creative_assets ca
+	WHERE ca.id = $1 AND ca.project_id = $2 AND ca.brief_id = $3
+	AND EXISTS (
+		SELECT 1 FROM campaign_briefs b
+		WHERE b.id = ca.brief_id AND b.project_id = ca.project_id AND b.status <> 'archived'
+	)`
+
+// GetAssetMetadata loads a stored asset WITHOUT its bytes, scoped to (projectID, briefID), or
+// ErrNotFound when no such asset exists for that brief.
+func (r *CreativeAssetRepo) GetAssetMetadata(ctx context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error) {
+	asset, err := scanCreativeAsset(r.db.QueryRow(ctx, getCreativeAssetMetadataQuery, assetID, projectID, briefID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("get creative asset metadata: %w", err)
+	}
+	return asset, nil
+}
+
+// listCreativeAssetsQuery returns a brief's assets, oldest first, without their bytes.
+//
+// It is driven FROM campaign_briefs with a LEFT JOIN rather than from creative_assets, so that
+// one statement answers two different questions that a plain SELECT over the assets cannot tell
+// apart: a brief with no assets yields exactly one row whose asset columns are NULL, while a
+// brief that is absent, archived or another tenant's yields NO rows. Selecting from the assets
+// alone returns the empty set for both, which would report a brief the caller cannot see as an
+// empty library — the opposite of what every other read of a brief's children does.
+//
+// ORDER BY created_at, id: created_at alone is not a total order (two uploads can share a
+// timestamp), and an unstable order would reshuffle a folder upload's review grid between reads
+// for no reason the user could see. The id breaks the tie deterministically.
+//
+// No LIMIT, by design — see the port doc. The set is bounded by the quota, and a brief that
+// predates the quota needs its WHOLE library visible in order to be deleted down to it.
+//
+// COALESCE(ca.width, 0) is doing two jobs here: the column's own NULL (dimensions unknown,
+// migration 000047) and the LEFT JOIN's NULL (no asset row at all) both coalesce to 0, which is
+// correct for the first and irrelevant for the second, since the nil id already marks that row
+// as the no-assets sentinel.
+const listCreativeAssetsQuery = `SELECT ca.id::text, ca.mime_type, ca.byte_size, ca.checksum,
+		COALESCE(ca.width, 0), COALESCE(ca.height, 0), ca.created_by, ca.created_at
+	FROM campaign_briefs b
+	LEFT JOIN creative_assets ca
+		ON ca.brief_id = b.id AND ca.project_id = b.project_id
+	WHERE b.id = $1 AND b.project_id = $2 AND b.status <> 'archived'
+	ORDER BY ca.created_at, ca.id`
+
+// ListAssets returns every asset stored for an active brief (oldest first, without bytes) with
+// the brief's count and total stored bytes, or ErrNotFound when the brief is absent, archived or
+// another project's.
+//
+// The totals are summed over exactly the rows returned, in one pass, rather than read from a
+// second aggregate query. That is not an optimisation: a separate aggregate takes its own
+// snapshot under READ COMMITTED, so an upload committing between the two would publish a count
+// that disagrees with the list beside it — and the quota a client reads off that list is what it
+// uses to decide whether to keep sending files.
+func (r *CreativeAssetRepo) ListAssets(ctx context.Context, projectID, briefID string) ([]*model.CreativeAsset, int, int64, error) {
+	rows, err := r.db.Query(ctx, listCreativeAssetsQuery, briefID, projectID)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("list creative assets: %w", err)
+	}
+	defer rows.Close()
+
+	// Non-nil empty rather than nil: an empty library is a real answer that the result type
+	// publishes as `assets: []`, and a nil slice would encode it as a missing field.
+	assets := []*model.CreativeAsset{}
+	var bytesUsed int64
+	briefFound := false
+	for rows.Next() {
+		var (
+			id        *string
+			mimeType  *string
+			byteSize  *int64
+			checksum  *string
+			width     int
+			height    int
+			createdBy []byte
+			createdAt *time.Time
+		)
+		if serr := rows.Scan(&id, &mimeType, &byteSize, &checksum, &width, &height, &createdBy, &createdAt); serr != nil {
+			return nil, 0, 0, fmt.Errorf("list creative assets: scan: %w", serr)
+		}
+		briefFound = true
+		if id == nil {
+			// The LEFT JOIN's no-assets row: the brief exists and holds nothing.
+			continue
+		}
+		a := &model.CreativeAsset{
+			ID:        *id,
+			ProjectID: projectID,
+			BriefID:   briefID,
+			MimeType:  derefString(mimeType),
+			ByteSize:  derefInt64(byteSize),
+			Checksum:  derefString(checksum),
+			Width:     width,
+			Height:    height,
+			CreatedBy: createdBy,
+		}
+		if createdAt != nil {
+			a.CreatedAt = *createdAt
+		}
+		bytesUsed += a.ByteSize
+		assets = append(assets, a)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, 0, 0, fmt.Errorf("list creative assets: %w", rerr)
+	}
+	if !briefFound {
+		return nil, 0, 0, domain.ErrNotFound
+	}
+	return assets, len(assets), bytesUsed, nil
+}
+
+// deleteCreativeAssetQuery resolves the asset, decides whether any live campaign on the brief
+// could still need it, and deletes it — in ONE statement against ONE snapshot.
+//
+// Splitting it would be a bug, not a style choice: between a separate reference check and the
+// delete, claimCampaignDispatchQuery could insert a 'pending' campaign row and a dispatch could
+// begin reading the very bytes being removed.
+//
+// The `referenced` arm has two halves and both are exact.
+//
+//   - A NULL config_snapshot. claimCampaignDispatchQuery (campaign_repo.go) inserts the claim row
+//     with no snapshot, BEFORE the dispatcher resolves any asset. So a NULL snapshot is not "we
+//     cannot tell" — it is precisely the window in which a reference is about to be created and
+//     does not exist yet. Refusing is the only answer that cannot delete bytes out from under an
+//     in-flight dispatch.
+//   - The id appearing in the snapshot's text. config_snapshot is persisted UNENCRYPTED and its
+//     sanitization strips URL query/fragment and credentials but keeps imageAssetId VERBATIM
+//     (reddit_asset.go, linkedin.go), so a stored asset reference survives into it as its id.
+//
+// Two forms are matched, lower-cased on both sides: the hyphenated form and the 32-character
+// dashless form. That is exhaustive over the four shapes uuid.Parse accepts, because the
+// `urn:uuid:…` and `{…}` forms each CONTAIN the hyphenated form as a substring.
+//
+// strpos(...) > 0 rather than LIKE: a UUID contains no LIKE metacharacter today, but a pattern
+// built from an identifier is a class of bug worth not having, and strpos treats every character
+// literally by construction.
+//
+// status <> 'deleted' is the live predicate. 'deleted' is the terminal soft-delete state in
+// model.Campaign's vocabulary; every other status — including the partial-orphan states
+// group_created and unconfirmed — is a row whose config a dispatch or a retry may still read.
+//
+// The two booleans separate the outcomes the caller must tell apart: no `found` is ErrNotFound,
+// found without `removed` is ErrCreativeAssetInUse, and both is success. A single row count
+// could not distinguish "no such asset" from "refused".
+const deleteCreativeAssetQuery = `WITH target AS (
+		SELECT ca.id
+		FROM creative_assets ca
+		WHERE ca.id = $1 AND ca.project_id = $2 AND ca.brief_id = $3
+		AND EXISTS (
+			SELECT 1 FROM campaign_briefs b
+			WHERE b.id = ca.brief_id AND b.project_id = ca.project_id AND b.status <> 'archived'
+		)
+	),
+	referenced AS (
+		SELECT 1
+		FROM campaigns c, target t
+		WHERE c.brief_id = $3 AND c.project_id = $2
+		  AND c.status <> 'deleted'
+		  AND (
+			c.config_snapshot IS NULL
+			OR strpos(lower(c.config_snapshot::text), lower(t.id::text)) > 0
+			OR strpos(lower(c.config_snapshot::text), replace(lower(t.id::text), '-', '')) > 0
+		  )
+	),
+	removed AS (
+		DELETE FROM creative_assets
+		WHERE id IN (SELECT id FROM target)
+		  AND NOT EXISTS (SELECT 1 FROM referenced)
+		RETURNING id
+	)
+	SELECT EXISTS (SELECT 1 FROM target)  AS found,
+	       EXISTS (SELECT 1 FROM removed) AS deleted`
+
+// DeleteAsset permanently removes a stored asset, or returns ErrNotFound when no such asset
+// exists for that brief, or ErrCreativeAssetInUse when a live campaign on the brief could still
+// reference it.
+func (r *CreativeAssetRepo) DeleteAsset(ctx context.Context, projectID, briefID, assetID string) error {
+	var found, deleted bool
+	if err := r.db.QueryRow(ctx, deleteCreativeAssetQuery, assetID, projectID, briefID).Scan(&found, &deleted); err != nil {
+		return fmt.Errorf("delete creative asset: %w", err)
+	}
+	switch {
+	case !found:
+		return domain.ErrNotFound
+	case !deleted:
+		return domain.ErrCreativeAssetInUse
+	default:
+		return nil
+	}
+}
+
+// derefString and derefInt64 read a LEFT JOIN's nullable column into the model's plain field.
+// They are only ever called for a row whose asset id was non-NULL, where the join matched and
+// every NOT NULL column of creative_assets is therefore present; the nil arms exist so a future
+// change to the query cannot turn a NULL into a panic.
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func derefInt64(i *int64) int64 {
+	if i == nil {
+		return 0
+	}
+	return *i
+}
+
+// scanCreativeAsset reads one creative_assets row in creativeAssetCols order — every field except
+// bytes, which that column list omits. The returned model's Bytes stays nil.
+func scanCreativeAsset(row pgx.Row) (*model.CreativeAsset, error) {
+	var (
+		a         model.CreativeAsset
+		createdBy []byte
+	)
+	if err := row.Scan(
+		&a.ID, &a.ProjectID, &a.BriefID, &a.MimeType, &a.ByteSize, &a.Checksum,
+		&a.Width, &a.Height, &createdBy, &a.CreatedAt,
+	); err != nil {
+		return nil, err
+	}
+	a.CreatedBy = createdBy
+	return &a, nil
 }
 
 // scanCreativeAssetWithBytes reads one creative_assets row in creativeAssetColsWithBytes order —

@@ -1525,6 +1525,33 @@ var CreativeAsset = Type("creative-asset", func() {
 	Required("id", "project_id", "brief_id", "mime_type", "byte_size", "checksum")
 })
 
+// CreativeAssetList is the brief's creative-asset library: every stored asset, plus the
+// quota the next upload will be judged against.
+//
+// The quota fields are on the LIST rather than only in the 409 an upload returns, and that is
+// the point of putting them here. A folder upload sends many files in sequence; without the
+// limits up front the only way to discover the brief is full is to send file 51 and be
+// refused, having already paid for fifty round trips. With them, a client knows before it
+// starts how many assets and how many bytes it may still add.
+//
+// `count` and `bytes_used` are served rather than left for the client to derive from `assets`.
+// They are computed from the same rows the server read, so they are by construction the figures
+// the upload path's quota check will compare against — a client that totalled `assets` itself
+// would be reimplementing that check, and would diverge the moment an asset exists that the
+// caller cannot see (there are none today).
+var CreativeAssetList = Type("creative-asset-list", func() {
+	Attribute("assets", ArrayOf(CreativeAsset), "Every asset stored for this brief, oldest first. Each carries metadata only — the image bytes are served by the signed creative-asset URL, never inline here.")
+	Attribute("count", Int, "Number of assets stored for this brief.")
+	Attribute("count_limit", Int, "Maximum assets one brief may hold. An upload that would exceed it is refused with 409 reason=creative_asset_quota_exceeded.")
+	Attribute("bytes_used", Int64, "Total stored bytes across those assets.")
+	Attribute("bytes_limit", Int64, "Maximum total stored bytes one brief may hold. Enforced alongside count_limit; either one alone bounds the wrong thing — a count cap still admits that many maximum-sized images, and a byte cap alone still admits unboundedly many tiny ones.")
+	// All five are Required, including the two totals that look redundant beside `assets`.
+	// A client that has to decide whether `count` was omitted or is genuinely zero cannot
+	// tell an empty library from a field the server declined to compute, and "0 of 100 used"
+	// is exactly the state a folder picker must render correctly.
+	Required("assets", "count", "count_limit", "bytes_used", "bytes_limit")
+})
+
 // ─── Brief + campaign service ───
 
 var _ = Service("lfx-v2-campaign-service-briefs", func() {
@@ -1849,6 +1876,63 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 				Body(CreativeAsset)
 			})
 			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("list-creative-assets", func() {
+		Description("List the creative assets stored for a brief, with the per-brief quota the next upload will be judged against. Metadata only: the image bytes are never returned inline — byte_size, width and height exist precisely so a reader can size and classify an asset without loading a blob of up to 30 MiB. Assets are ordered oldest first, and the whole library is returned (it is bounded by count_limit). An archived brief returns 404, matching every other read of a brief's children.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			Required("project_id", "brief_id")
+		})
+		Result(CreativeAssetList)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/creative-assets")
+			Header("bearer_token:Authorization")
+			// No ETag, for the reason upload gives: creative assets are insert-only and
+			// carry no version, so there is no optimistic-concurrency handle to hand back.
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("get-creative-asset", func() {
+		Description("Get one stored creative asset's metadata. The image bytes are not returned here — they are served, when signed creative-asset URLs are configured, by the separate signed-asset route. An asset belonging to another project or brief, or to an archived brief, is 404, the same as one that does not exist.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			creativeAssetIDAttr()
+			Required("project_id", "brief_id", "asset_id")
+		})
+		Result(CreativeAsset)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/creative-assets/{asset_id}")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("delete-creative-asset", func() {
+		Description("Permanently delete a stored creative asset, freeing its bytes against the brief's quota. Refused with 409 reason=creative_asset_in_use when any live campaign on the brief could still need it: one whose stored configuration names this asset id, and also one whose configuration has not been recorded yet, because a dispatch claims its campaign row before it resolves any asset. Delete the campaign, or reconcile a stuck claim, then retry. This is a HARD delete — unlike a campaign or a brief, which are retired by a status flip — because reclaiming the storage is the entire reason the endpoint exists.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			creativeAssetIDAttr()
+			Required("project_id", "brief_id", "asset_id")
+		})
+		commonBriefErrors()
+		HTTP(func() {
+			DELETE("/projects/{project_id}/briefs/{brief_id}/creative-assets/{asset_id}")
+			Header("bearer_token:Authorization")
+			Response(StatusNoContent)
 			briefErrorResponses()
 		})
 	})
@@ -2734,6 +2818,16 @@ func briefIDAttr() {
 
 func campaignIDAttr() {
 	Attribute("campaign_id", String, "Campaign UUID", func() { Format(FormatUUID) })
+}
+
+// creativeAssetIDAttr is the path segment identifying one stored creative asset.
+//
+// `Format(FormatUUID)` is load-bearing rather than documentation: the repository's
+// creative-asset queries bind the id straight into a `::uuid` comparison and the port
+// documents validation as the caller's obligation, so the transport layer rejecting a
+// malformed id is what keeps a typo out of the database as a 400 instead of a 500.
+func creativeAssetIDAttr() {
+	Attribute("asset_id", String, "Creative asset UUID", func() { Format(FormatUUID) })
 }
 
 // metricsWindowEnum applies the platform-agnostic reporting-window vocabulary

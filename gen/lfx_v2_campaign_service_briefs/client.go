@@ -23,6 +23,9 @@ type Client struct {
 	DeleteBriefEndpoint            goa.Endpoint
 	FetchEventURLEndpoint          goa.Endpoint
 	UploadCreativeAssetEndpoint    goa.Endpoint
+	ListCreativeAssetsEndpoint     goa.Endpoint
+	GetCreativeAssetEndpoint       goa.Endpoint
+	DeleteCreativeAssetEndpoint    goa.Endpoint
 	CreateCampaignsEndpoint        goa.Endpoint
 	AdoptCampaignEndpoint          goa.Endpoint
 	GetCampaignEndpoint            goa.Endpoint
@@ -55,7 +58,7 @@ type Client struct {
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, uploadCreativeAsset, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, getCampaignSettings, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, updateCampaignBudget, updateCampaignBid, applyKeywordActions, addNegativeKeywords, getKeywordTargeting, removeKeywordTargeting, listMetaAdSets, listMetaAds, toggleMetaAdSetStatus, deleteCampaign, getJob, startEmailWizardPlan, planEmailWizard, generateWizardContent, updateWizardSections, cloneWizardEmail, setWizardSendList, chatWizardTurn, getWizardSession goa.Endpoint) *Client {
+func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, uploadCreativeAsset, listCreativeAssets, getCreativeAsset, deleteCreativeAsset, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, getCampaignSettings, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, updateCampaignBudget, updateCampaignBid, applyKeywordActions, addNegativeKeywords, getKeywordTargeting, removeKeywordTargeting, listMetaAdSets, listMetaAds, toggleMetaAdSetStatus, deleteCampaign, getJob, startEmailWizardPlan, planEmailWizard, generateWizardContent, updateWizardSections, cloneWizardEmail, setWizardSendList, chatWizardTurn, getWizardSession goa.Endpoint) *Client {
 	return &Client{
 		CreateBriefEndpoint:            createBrief,
 		FindBriefEndpoint:              findBrief,
@@ -65,6 +68,9 @@ func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, dele
 		DeleteBriefEndpoint:            deleteBrief,
 		FetchEventURLEndpoint:          fetchEventURL,
 		UploadCreativeAssetEndpoint:    uploadCreativeAsset,
+		ListCreativeAssetsEndpoint:     listCreativeAssets,
+		GetCreativeAssetEndpoint:       getCreativeAsset,
+		DeleteCreativeAssetEndpoint:    deleteCreativeAsset,
 		CreateCampaignsEndpoint:        createCampaigns,
 		AdoptCampaignEndpoint:          adoptCampaign,
 		GetCampaignEndpoint:            getCampaign,
@@ -254,6 +260,62 @@ func (c *Client) UploadCreativeAsset(ctx context.Context, p *UploadCreativeAsset
 		return
 	}
 	return ires.(*CreativeAsset), nil
+}
+
+// ListCreativeAssets calls the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// ListCreativeAssets may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) ListCreativeAssets(ctx context.Context, p *ListCreativeAssetsPayload) (res *CreativeAssetList, err error) {
+	var ires any
+	ires, err = c.ListCreativeAssetsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*CreativeAssetList), nil
+}
+
+// GetCreativeAsset calls the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// GetCreativeAsset may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) GetCreativeAsset(ctx context.Context, p *GetCreativeAssetPayload) (res *CreativeAsset, err error) {
+	var ires any
+	ires, err = c.GetCreativeAssetEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*CreativeAsset), nil
+}
+
+// DeleteCreativeAsset calls the "delete-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// DeleteCreativeAsset may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) DeleteCreativeAsset(ctx context.Context, p *DeleteCreativeAssetPayload) (err error) {
+	_, err = c.DeleteCreativeAssetEndpoint(ctx, p)
+	return
 }
 
 // CreateCampaigns calls the "create-campaigns" endpoint of the

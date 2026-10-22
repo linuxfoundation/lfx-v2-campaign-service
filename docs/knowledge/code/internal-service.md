@@ -345,6 +345,34 @@ binds it in the same step as the brief repos, and BOTH startup paths bind throug
 forces it to be CALLED, and the handler's 503 is deliberately indistinguishable from the
 no-database mode's, so a mis-wired live container cannot be detected from the outside.
 
+## Reading and deleting stored creative assets (LFXV2-2665)
+
+`ListCreativeAssets`, `GetCreativeAsset` and `DeleteCreativeAsset` sit beside the upload handler
+and are deliberately thin: the quota arithmetic and the delete's reference check are both the
+repository's, not theirs. All three take the same typed `503` on an unwired repo, for the reason
+the upload handler gives.
+
+`ListCreativeAssets` publishes `model.MaxCreativeAssetsPerBrief` and
+`model.MaxCreativeAssetBytesPerBrief` as `count_limit`/`bytes_limit` beside the totals the repo
+computed. It reads the SAME constants the repository enforces against, which is what makes a
+drift between the published ceiling and the enforced one a test failure rather than a client
+that is quietly told the wrong number
+(`TestListCreativeAssets_PublishesTheEnforcedQuota`). The slice is always non-nil — an empty
+library serializes as `[]`, never `null` — and an invisible brief is a 404 from the repo instead
+(`TestListCreativeAssets_EmptyLibraryIsAnEmptyArray`).
+
+`GetCreativeAsset` reads through the port's `GetAssetMetadata` rather than `GetAsset`. The
+response carries no bytes, so the existing method would detoast up to 30 MiB of `BYTEA` only to
+discard it; that is the whole reason the fifth port method exists. `created` stays nil here, as
+it does everywhere but upload.
+
+`mapBriefErr` gains two arms, both `409`, both carrying a `reason` from `conflictReason`:
+`ErrCreativeAssetQuotaExceeded` → `creative_asset_quota_exceeded` and `ErrCreativeAssetInUse` →
+`creative_asset_in_use`. Each message appends the remedy — delete an asset and retry; delete the
+campaign or reconcile a stuck dispatch and retry — because "the brief is full" with no way to
+empty it is not actionable, and because a folder upload has to branch on which refusal it got.
+The discriminator, not the prose, is what it branches on.
+
 ## Campaign config update: the caller's config is redacted before `config_snapshot`
 
 `BriefService.UpdateCampaign` (backing `PUT .../campaigns/{id}`) is DB-only and overlays the

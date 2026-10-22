@@ -262,6 +262,75 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 	return res, nil
 }
 
+// ListCreativeAssets returns a brief's stored assets with the quota the next upload is judged
+// against. Metadata only — the bytes never ride on this response.
+//
+// The quota CEILINGS are published alongside the current totals because a folder upload is a
+// sequence of requests: without them a client only discovers the brief is full by sending the
+// file that gets refused, having already paid for every round trip before it.
+func (s *BriefService) ListCreativeAssets(ctx context.Context, p *briefs.ListCreativeAssetsPayload) (*briefs.CreativeAssetList, error) {
+	repo := s.creativeAssetRepo()
+	if repo == nil {
+		return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "creative asset reads are unavailable"}
+	}
+
+	assets, count, bytesUsed, err := repo.ListAssets(ctx, p.ProjectID, p.BriefID)
+	if err != nil {
+		return nil, mapBriefErr(err)
+	}
+
+	results := make([]*briefs.CreativeAsset, 0, len(assets))
+	for _, a := range assets {
+		results = append(results, creativeAssetResult(a))
+	}
+	// Every field is set, including the two totals that look derivable from `results`. A client
+	// that had to decide whether `count` was omitted or genuinely zero could not tell an empty
+	// library from a figure the server declined to compute — and "0 of 100 used" is precisely the
+	// state a folder picker must render correctly.
+	return &briefs.CreativeAssetList{
+		Assets:     results,
+		Count:      count,
+		CountLimit: model.MaxCreativeAssetsPerBrief,
+		BytesUsed:  bytesUsed,
+		BytesLimit: model.MaxCreativeAssetBytesPerBrief,
+	}, nil
+}
+
+// GetCreativeAsset returns one stored asset's metadata. It reads through GetAssetMetadata rather
+// than GetAsset: the response carries no bytes, so loading up to 30 MiB of BYTEA to discard it
+// would be pure cost.
+func (s *BriefService) GetCreativeAsset(ctx context.Context, p *briefs.GetCreativeAssetPayload) (*briefs.CreativeAsset, error) {
+	repo := s.creativeAssetRepo()
+	if repo == nil {
+		return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "creative asset reads are unavailable"}
+	}
+
+	asset, err := repo.GetAssetMetadata(ctx, p.ProjectID, p.BriefID, p.AssetID)
+	if err != nil {
+		return nil, mapBriefErr(err)
+	}
+	// Created stays nil here, as it does everywhere but the upload path: this request created
+	// nothing, and the field's only job is selecting 201 versus 200 on that one method.
+	return creativeAssetResult(asset), nil
+}
+
+// DeleteCreativeAsset permanently removes a stored asset, freeing its bytes against the brief's
+// quota, unless a live campaign on the brief could still need it.
+//
+// The reference check is the repository's, in the same statement as the delete, because the
+// window between a separate check and the delete is exactly when a dispatch claim can appear.
+func (s *BriefService) DeleteCreativeAsset(ctx context.Context, p *briefs.DeleteCreativeAssetPayload) error {
+	repo := s.creativeAssetRepo()
+	if repo == nil {
+		return &briefs.ConnServiceUnavailableError{Code: "503", Message: "creative asset deletion is unavailable"}
+	}
+
+	if err := repo.DeleteAsset(ctx, p.ProjectID, p.BriefID, p.AssetID); err != nil {
+		return mapBriefErr(err)
+	}
+	return nil
+}
+
 // createdTag renders the repository's "did this call insert" bool as the enum string the design
 // declares. A string rather than a bool because Goa's response Tag matches on a string value.
 func createdTag(created bool) *string {

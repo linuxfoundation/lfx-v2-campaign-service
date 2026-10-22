@@ -54,6 +54,29 @@ type Service interface {
 	// and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or
 	// 360x640 to 2430x4320 (vertical) pixels.
 	UploadCreativeAsset(context.Context, *UploadCreativeAssetPayload) (res *CreativeAsset, err error)
+	// List the creative assets stored for a brief, with the per-brief quota the
+	// next upload will be judged against. Metadata only: the image bytes are never
+	// returned inline — byte_size, width and height exist precisely so a reader
+	// can size and classify an asset without loading a blob of up to 30 MiB.
+	// Assets are ordered oldest first, and the whole library is returned (it is
+	// bounded by count_limit). An archived brief returns 404, matching every other
+	// read of a brief's children.
+	ListCreativeAssets(context.Context, *ListCreativeAssetsPayload) (res *CreativeAssetList, err error)
+	// Get one stored creative asset's metadata. The image bytes are not returned
+	// here — they are served, when signed creative-asset URLs are configured, by
+	// the separate signed-asset route. An asset belonging to another project or
+	// brief, or to an archived brief, is 404, the same as one that does not exist.
+	GetCreativeAsset(context.Context, *GetCreativeAssetPayload) (res *CreativeAsset, err error)
+	// Permanently delete a stored creative asset, freeing its bytes against the
+	// brief's quota. Refused with 409 reason=creative_asset_in_use when any live
+	// campaign on the brief could still need it: one whose stored configuration
+	// names this asset id, and also one whose configuration has not been recorded
+	// yet, because a dispatch claims its campaign row before it resolves any
+	// asset. Delete the campaign, or reconcile a stuck claim, then retry. This is
+	// a HARD delete — unlike a campaign or a brief, which are retired by a status
+	// flip — because reclaiming the storage is the entire reason the endpoint
+	// exists.
+	DeleteCreativeAsset(context.Context, *DeleteCreativeAssetPayload) (err error)
 	// Create campaigns across the selected platforms (async -> job). Besides the
 	// request-shape 400s (an unknown or duplicate platform, new_version on a
 	// platform that does not support it, and the like), two dispatch-time rules
@@ -666,7 +689,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [36]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+var MethodNames = [39]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "list-creative-assets", "get-creative-asset", "delete-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
 
 // AddNegativeKeywordsPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service add-negative-keywords method.
@@ -1196,6 +1219,27 @@ type CreativeAsset struct {
 	Created *string
 }
 
+// CreativeAssetList is the result type of the lfx-v2-campaign-service-briefs
+// service list-creative-assets method.
+type CreativeAssetList struct {
+	// Every asset stored for this brief, oldest first. Each carries metadata only
+	// — the image bytes are served by the signed creative-asset URL, never inline
+	// here.
+	Assets []*CreativeAsset
+	// Number of assets stored for this brief.
+	Count int
+	// Maximum assets one brief may hold. An upload that would exceed it is refused
+	// with 409 reason=creative_asset_quota_exceeded.
+	CountLimit int
+	// Total stored bytes across those assets.
+	BytesUsed int64
+	// Maximum total stored bytes one brief may hold. Enforced alongside
+	// count_limit; either one alone bounds the wrong thing — a count cap still
+	// admits that many maximum-sized images, and a byte cap alone still admits
+	// unboundedly many tiny ones.
+	BytesLimit int64
+}
+
 // DeleteBriefPayload is the payload type of the lfx-v2-campaign-service-briefs
 // service delete-brief method.
 type DeleteBriefPayload struct {
@@ -1220,6 +1264,19 @@ type DeleteCampaignPayload struct {
 	CampaignID string
 	// If-Match header carrying the current ETag/version
 	IfMatch *string
+}
+
+// DeleteCreativeAssetPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service delete-creative-asset method.
+type DeleteCreativeAssetPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Creative asset UUID
+	AssetID string
 }
 
 // EmailCopy is the result type of the lfx-v2-campaign-service-briefs service
@@ -1437,6 +1494,19 @@ type GetCampaignSettingsPayload struct {
 	CampaignID string
 }
 
+// GetCreativeAssetPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service get-creative-asset method.
+type GetCreativeAssetPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Creative asset UUID
+	AssetID string
+}
+
 // GetJobPayload is the payload type of the lfx-v2-campaign-service-briefs
 // service get-job method.
 type GetJobPayload struct {
@@ -1630,6 +1700,17 @@ type KeywordTargetingRemovals struct {
 	Results []*KeywordTargetingRemovalResult
 	// How many results are APPLIED.
 	AppliedCount int
+}
+
+// ListCreativeAssetsPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service list-creative-assets method.
+type ListCreativeAssetsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
 }
 
 // ListMetaAdSetsPayload is the payload type of the

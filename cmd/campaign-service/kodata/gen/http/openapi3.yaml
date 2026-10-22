@@ -6232,6 +6232,155 @@ paths:
             security:
                 - jwt_header_Authorization: []
     /projects/{project_id}/briefs/{brief_id}/creative-assets:
+        get:
+            tags:
+                - lfx-v2-campaign-service-briefs
+            summary: list-creative-assets lfx-v2-campaign-service-briefs
+            description: 'List the creative assets stored for a brief, with the per-brief quota the next upload will be judged against. Metadata only: the image bytes are never returned inline — byte_size, width and height exist precisely so a reader can size and classify an asset without loading a blob of up to 30 MiB. Assets are ordered oldest first, and the whole library is returned (it is bounded by count_limit). An archived brief returns 404, matching every other read of a brief''s children.'
+            operationId: lfx-v2-campaign-service-briefs#list-creative-assets
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+                - name: brief_id
+                  in: path
+                  description: Brief UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Brief UUID
+                    example: fef979b7-77a1-48d3-a5cb-a2ea4b3e8145
+                    format: uuid
+                  example: fef979b7-77a1-48d3-a5cb-a2ea4b3e8145
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/CreativeAssetList'
+                            example:
+                                assets:
+                                    - brief_id: Praesentium dolore aut labore qui debitis.
+                                      byte_size: 4945546068272182131
+                                      checksum: Id hic rerum iure odio.
+                                      created: "true"
+                                      height: 6089835885683914289
+                                      id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                                      mime_type: image/jpeg
+                                      project_id: Qui aliquam ea quam dolore est.
+                                      width: 1297412450570756896
+                                    - brief_id: Praesentium dolore aut labore qui debitis.
+                                      byte_size: 4945546068272182131
+                                      checksum: Id hic rerum iure odio.
+                                      created: "true"
+                                      height: 6089835885683914289
+                                      id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                                      mime_type: image/jpeg
+                                      project_id: Qui aliquam ea quam dolore est.
+                                      width: 1297412450570756896
+                                    - brief_id: Praesentium dolore aut labore qui debitis.
+                                      byte_size: 4945546068272182131
+                                      checksum: Id hic rerum iure odio.
+                                      created: "true"
+                                      height: 6089835885683914289
+                                      id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                                      mime_type: image/jpeg
+                                      project_id: Qui aliquam ea quam dolore est.
+                                      width: 1297412450570756896
+                                    - brief_id: Praesentium dolore aut labore qui debitis.
+                                      byte_size: 4945546068272182131
+                                      checksum: Id hic rerum iure odio.
+                                      created: "true"
+                                      height: 6089835885683914289
+                                      id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                                      mime_type: image/jpeg
+                                      project_id: Qui aliquam ea quam dolore est.
+                                      width: 1297412450570756896
+                                bytes_limit: 7549547776033087914
+                                bytes_used: 4713769312342199349
+                                count: 6440019522820428019
+                                count_limit: 8153159168725148156
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
         post:
             tags:
                 - lfx-v2-campaign-service-briefs
@@ -6301,6 +6450,247 @@ paths:
                                 mime_type: image/jpeg
                                 project_id: Qui aliquam ea quam dolore est.
                                 width: 1297412450570756896
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/briefs/{brief_id}/creative-assets/{asset_id}:
+        delete:
+            tags:
+                - lfx-v2-campaign-service-briefs
+            summary: delete-creative-asset lfx-v2-campaign-service-briefs
+            description: 'Permanently delete a stored creative asset, freeing its bytes against the brief''s quota. Refused with 409 reason=creative_asset_in_use when any live campaign on the brief could still need it: one whose stored configuration names this asset id, and also one whose configuration has not been recorded yet, because a dispatch claims its campaign row before it resolves any asset. Delete the campaign, or reconcile a stuck claim, then retry. This is a HARD delete — unlike a campaign or a brief, which are retired by a status flip — because reclaiming the storage is the entire reason the endpoint exists.'
+            operationId: lfx-v2-campaign-service-briefs#delete-creative-asset
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+                - name: brief_id
+                  in: path
+                  description: Brief UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Brief UUID
+                    example: cbc781cf-df2d-48bc-9ff0-97432716198c
+                    format: uuid
+                  example: cbc781cf-df2d-48bc-9ff0-97432716198c
+                - name: asset_id
+                  in: path
+                  description: Creative asset UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Creative asset UUID
+                    example: def2798d-00a5-49e0-bee1-b08a0f83fe98
+                    format: uuid
+                  example: def2798d-00a5-49e0-bee1-b08a0f83fe98
+            responses:
+                "204":
+                    description: No Content response.
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+        get:
+            tags:
+                - lfx-v2-campaign-service-briefs
+            summary: get-creative-asset lfx-v2-campaign-service-briefs
+            description: Get one stored creative asset's metadata. The image bytes are not returned here — they are served, when signed creative-asset URLs are configured, by the separate signed-asset route. An asset belonging to another project or brief, or to an archived brief, is 404, the same as one that does not exist.
+            operationId: lfx-v2-campaign-service-briefs#get-creative-asset
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+                - name: brief_id
+                  in: path
+                  description: Brief UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Brief UUID
+                    example: 7811c1bd-3403-4bc4-b867-dc6bc22f6311
+                    format: uuid
+                  example: 7811c1bd-3403-4bc4-b867-dc6bc22f6311
+                - name: asset_id
+                  in: path
+                  description: Creative asset UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Creative asset UUID
+                    example: 4185df79-8d41-4bd4-a505-91cd6043592b
+                    format: uuid
+                  example: 4185df79-8d41-4bd4-a505-91cd6043592b
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/CreativeAsset'
+                            example:
+                                brief_id: Molestiae et exercitationem omnis eius corporis.
+                                byte_size: 7971718854909744411
+                                checksum: Sint impedit iure laudantium dolores error.
+                                created: "true"
+                                height: 4081440319267816624
+                                id: 7264cf0d-954c-46d9-bfbd-a0d44007f6e5
+                                mime_type: image/jpeg
+                                project_id: Esse in quod necessitatibus.
+                                width: 5427018862536424644
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -20323,6 +20713,119 @@ components:
                 - mime_type
                 - byte_size
                 - checksum
+        CreativeAssetList:
+            type: object
+            properties:
+                assets:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/CreativeAsset'
+                    description: Every asset stored for this brief, oldest first. Each carries metadata only — the image bytes are served by the signed creative-asset URL, never inline here.
+                    example:
+                        - brief_id: Praesentium dolore aut labore qui debitis.
+                          byte_size: 4945546068272182131
+                          checksum: Id hic rerum iure odio.
+                          created: "true"
+                          height: 6089835885683914289
+                          id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                          mime_type: image/jpeg
+                          project_id: Qui aliquam ea quam dolore est.
+                          width: 1297412450570756896
+                        - brief_id: Praesentium dolore aut labore qui debitis.
+                          byte_size: 4945546068272182131
+                          checksum: Id hic rerum iure odio.
+                          created: "true"
+                          height: 6089835885683914289
+                          id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                          mime_type: image/jpeg
+                          project_id: Qui aliquam ea quam dolore est.
+                          width: 1297412450570756896
+                        - brief_id: Praesentium dolore aut labore qui debitis.
+                          byte_size: 4945546068272182131
+                          checksum: Id hic rerum iure odio.
+                          created: "true"
+                          height: 6089835885683914289
+                          id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                          mime_type: image/jpeg
+                          project_id: Qui aliquam ea quam dolore est.
+                          width: 1297412450570756896
+                        - brief_id: Praesentium dolore aut labore qui debitis.
+                          byte_size: 4945546068272182131
+                          checksum: Id hic rerum iure odio.
+                          created: "true"
+                          height: 6089835885683914289
+                          id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                          mime_type: image/jpeg
+                          project_id: Qui aliquam ea quam dolore est.
+                          width: 1297412450570756896
+                bytes_limit:
+                    type: integer
+                    description: Maximum total stored bytes one brief may hold. Enforced alongside count_limit; either one alone bounds the wrong thing — a count cap still admits that many maximum-sized images, and a byte cap alone still admits unboundedly many tiny ones.
+                    example: 7549547776033087914
+                    format: int64
+                bytes_used:
+                    type: integer
+                    description: Total stored bytes across those assets.
+                    example: 4713769312342199349
+                    format: int64
+                count:
+                    type: integer
+                    description: Number of assets stored for this brief.
+                    example: 6440019522820428019
+                    format: int64
+                count_limit:
+                    type: integer
+                    description: Maximum assets one brief may hold. An upload that would exceed it is refused with 409 reason=creative_asset_quota_exceeded.
+                    example: 8153159168725148156
+                    format: int64
+            example:
+                assets:
+                    - brief_id: Praesentium dolore aut labore qui debitis.
+                      byte_size: 4945546068272182131
+                      checksum: Id hic rerum iure odio.
+                      created: "true"
+                      height: 6089835885683914289
+                      id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                      mime_type: image/jpeg
+                      project_id: Qui aliquam ea quam dolore est.
+                      width: 1297412450570756896
+                    - brief_id: Praesentium dolore aut labore qui debitis.
+                      byte_size: 4945546068272182131
+                      checksum: Id hic rerum iure odio.
+                      created: "true"
+                      height: 6089835885683914289
+                      id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                      mime_type: image/jpeg
+                      project_id: Qui aliquam ea quam dolore est.
+                      width: 1297412450570756896
+                    - brief_id: Praesentium dolore aut labore qui debitis.
+                      byte_size: 4945546068272182131
+                      checksum: Id hic rerum iure odio.
+                      created: "true"
+                      height: 6089835885683914289
+                      id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                      mime_type: image/jpeg
+                      project_id: Qui aliquam ea quam dolore est.
+                      width: 1297412450570756896
+                    - brief_id: Praesentium dolore aut labore qui debitis.
+                      byte_size: 4945546068272182131
+                      checksum: Id hic rerum iure odio.
+                      created: "true"
+                      height: 6089835885683914289
+                      id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                      mime_type: image/jpeg
+                      project_id: Qui aliquam ea quam dolore est.
+                      width: 1297412450570756896
+                bytes_limit: 7549547776033087914
+                bytes_used: 4713769312342199349
+                count: 6440019522820428019
+                count_limit: 8153159168725148156
+            required:
+                - assets
+                - count
+                - count_limit
+                - bytes_used
+                - bytes_limit
         DiscoverAudienceListsRequestBody:
             type: object
             properties:

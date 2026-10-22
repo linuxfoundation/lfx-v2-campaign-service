@@ -163,6 +163,40 @@ uses the permissive UUID-or-slug attribute, not the slug-only one `create-campai
 because the asset is bound to a campaign later by its own id and the id is never stamped into a
 campaign name.
 
+`list-creative-assets`, `get-creative-asset` and `delete-creative-asset` (LFXV2-2665) complete
+that surface: before this, upload was the only creative-asset method, so a brief's library was
+write-only — nothing could enumerate it, and nothing could free its bytes. A folder upload is
+the use case that makes those gaps blocking, because it is a SEQUENCE of requests rather than
+one.
+
+- **The list result is a `CreativeAssetList`, not a bare array.** Alongside `assets` it carries
+  `count`/`count_limit` and `bytes_used`/`bytes_limit`, and all five are REQUIRED. Publishing the
+  ceilings beside the totals is what lets a client decide before it starts sending: with only the
+  rows, a caller discovers a full brief by sending the file that gets refused, having already
+  paid for every round trip before it. Making them required is what separates "the library is
+  empty" from "the server declined to compute a total" — "0 of 100 used" is exactly the state a
+  folder picker has to render correctly. The method takes no limit or cursor: a brief stored
+  before the quota existed may hold more than `count_limit`, and its full set is precisely what
+  an operator must see in order to delete back down to it.
+- **`get-creative-asset` exists separately from a list filter** because it is the metadata read
+  the signed-asset route does not provide — that route serves bytes, this one answers "what shape
+  is this asset". `created` is absent here, as it is everywhere but upload: its only job is
+  selecting 201 versus 200 on that one method.
+- **Delete is a `204` with no body, and HARD.** Campaigns and briefs retire by a status flip;
+  this row is removed, because reclaiming the storage against the quota is the entire reason the
+  endpoint exists. It is refused `409` while any live campaign on the brief could still need the
+  asset, which includes a campaign whose configuration has not been recorded yet (see
+  [internal/infrastructure/postgres](internal-infrastructure-postgres.md) for why that arm is
+  exact rather than a hedge).
+- **No new error type.** Both refusals are the `Conflict`/`ConflictError` that
+  `commonBriefErrors()` already declares, separated by the `reason` discriminator —
+  `creative_asset_quota_exceeded` and `creative_asset_in_use` — the same mechanism
+  `ab_test_unsupported_send_type` uses, and for the same reason: a folder upload sending many
+  files has to branch on WHICH refusal it got (stop and prompt the user to free space, versus
+  skip this one file), and the two are indistinguishable from prose.
+
+Like upload, none of the three carries an ETag, for the reason given above.
+
 ## The audience-builder service (LFXV2-2770)
 
 `audience_builder.go` declares a service of its own — thirteen methods under

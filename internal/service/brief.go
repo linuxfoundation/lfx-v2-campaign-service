@@ -2310,6 +2310,23 @@ func mapBriefErr(err error) error {
 		// A create pre-check refused the config before any platform was asked. Its message is
 		// fixed, caller-safe text by the sentinel's contract, and it is the actionable part.
 		return &briefs.BadRequestError{Code: "400", Message: err.Error()}
+	case errors.Is(err, domain.ErrCreativeAssetQuotaExceeded):
+		// Both 409s below carry a reason for ab_test_unsupported_send_type's purpose: a folder
+		// upload sends many files and has to branch on WHICH refusal it got -- stop and prompt the
+		// user to free space, versus skip this one file -- and the two are indistinguishable from
+		// prose. The remedy names the endpoint that provides it, because "the brief is full" with
+		// no way to empty it is not actionable.
+		return &briefs.ConflictError{
+			Code:    "409",
+			Reason:  conflictReason("creative_asset_quota_exceeded"),
+			Message: domain.ErrCreativeAssetQuotaExceeded.Error() + "; delete an asset from the brief and retry",
+		}
+	case errors.Is(err, domain.ErrCreativeAssetInUse):
+		return &briefs.ConflictError{
+			Code:    "409",
+			Reason:  conflictReason("creative_asset_in_use"),
+			Message: domain.ErrCreativeAssetInUse.Error() + "; delete that campaign, or reconcile a dispatch stuck pending, then retry",
+		}
 	case errors.Is(err, domain.ErrConflict):
 		return &briefs.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):

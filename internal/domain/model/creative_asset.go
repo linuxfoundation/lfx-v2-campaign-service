@@ -20,6 +20,28 @@ const (
 	MimeTypeJPEG = "image/jpeg"
 )
 
+// Per-brief creative-asset quota. Both ceilings apply, and neither is redundant: a count
+// cap alone still admits that many maximum-sized images (100 × 30 MiB = 3 GiB of BYTEA in
+// one brief), and a byte cap alone still admits unboundedly many tiny ones, each of which
+// costs a row and a plan entry rather than storage. See GitHub issue #171 — before this,
+// nothing bounded a brief's library at all: dedupe on (brief_id, checksum) refuses only an
+// identical re-upload, and there is no prune path for an archived brief's assets.
+//
+// The two VALUES are a stated assumption, not a product decision — #171 leaves the limit,
+// the scope and the error shape open, and Misha owns the call. They are placed here, in
+// the domain, because both the repository (which enforces them) and the service (which
+// publishes them on the asset list) must read the same numbers; a duplicated literal in
+// either layer would let the published quota drift from the enforced one.
+const (
+	// MaxCreativeAssetsPerBrief is how many assets one brief may hold. A folder upload of a
+	// full campaign's media is tens of files, so this leaves room for several rounds of it.
+	MaxCreativeAssetsPerBrief = 100
+	// MaxCreativeAssetBytesPerBrief is the total stored bytes one brief may hold. 512 MiB is
+	// comfortably above a realistic library (100 assets averaging 5 MiB) while staying far
+	// below the 3 GiB the count cap alone would permit.
+	MaxCreativeAssetBytesPerBrief int64 = 512 << 20
+)
+
 // CreativeAsset is an uploaded image, subordinate to a brief, that a Meta ad creative
 // references by id. It holds the SOURCE BYTES, not a platform handle: Meta's image_hash
 // is per-ad-account and only resolvable at dispatch, so the bytes must survive the gap

@@ -2122,6 +2122,74 @@ rather than under `dbtest/`, because `NewCreativeAssetRepo` needs the instrument
 wrapper that `dbtest.Pool` does not expose; it follows the same `TEST_DATABASE_URL`-gated
 skip/fail-on-CI convention and the same `UniqueID` discipline as the rest of the live suite.
 
+### The per-brief quota, and the three read/delete methods (LFXV2-2665)
+
+`CreateAsset` now enforces a per-brief ceiling — `model.MaxCreativeAssetsPerBrief` (100) and
+`model.MaxCreativeAssetBytesPerBrief` (512 MiB) — returning `ErrCreativeAssetQuotaExceeded`,
+which the service maps to a `409`, not a `400`: the request is well-formed, the brief's state is
+what refuses it, and the remedy is to change that state. The figures are a STATED ASSUMPTION
+(issue `#171` owns the real ones) chosen so the endpoint cannot be used to fill the table, not
+derived from a product requirement.
+
+Three properties of where the check sits are load-bearing:
+
+- **Inside `CreateAsset`'s transaction, AFTER the `FOR UPDATE` brief lock.** The lock the parent
+  gate already takes is what makes the aggregate race-free: two concurrent uploads serialize on
+  the same brief row, so neither can read a total the other is about to invalidate. A check in
+  the service layer, or in its own statement, would be a TOCTOU window.
+- **Dedupe hits are exempt.** The aggregate runs only when the insert is NOT a duplicate
+  (`!isDuplicate`). Without that, a plain retry of an already-stored upload — which adds nothing
+  — would start failing once a brief reached the cap, and the upload would stop being idempotent
+  exactly when it matters most. `TestCreativeAssetRepo_CreateAsset_EnforcesPerBriefCount`
+  re-sends a stored checksum at the cap and requires both no error and `created == false`.
+- **A refusal stores nothing**, because the transaction rolls back; the same test counts rows
+  after the 409 to pin it.
+
+`GetAssetMetadata` is `GetAsset`'s scoping (tenant, brief, non-archived parent) with
+`creativeAssetCols` instead of `creativeAssetColsWithBytes`. It is a separate method rather than
+a flag because the difference is whether up to 30 MiB of `BYTEA` is detoasted for a response that
+never carries it. `TestCreativeAssetRepo_GetAssetMetadata_ScopesLikeGetAssetWithoutBytes`
+asserts `Bytes == nil` first — that is the whole point of the method — then walks the same four
+404 shapes.
+
+`ListAssets` is driven FROM `campaign_briefs` with a LEFT JOIN onto `creative_assets`, not from
+the assets table. That is the only shape that separates "this brief is empty" (a row, no assets,
+a non-nil empty slice) from "this brief is not visible to you" (no row at all → `ErrNotFound`) —
+an assets-first query returns zero rows for both, and an archived or foreign brief would then
+look like an empty library. It returns the whole set, oldest first, with the count and byte total
+computed in the same snapshot as the rows; a separate aggregate query would be free under READ
+COMMITTED to disagree with the list printed beside it.
+`TestCreativeAssetRepo_ListAssets_SeparatesAnEmptyLibraryFromAnInvisibleBrief` is the pair that
+justifies the join shape.
+
+`DeleteAsset` is a HARD delete — the row is removed, not status-flipped — and it is one statement
+of three CTEs (`target`, `referenced`, `removed`) returning `found`/`deleted`. One round trip,
+one snapshot: `!found` → `ErrNotFound`, `found && !deleted` → `ErrCreativeAssetInUse`, otherwise
+nil. The reference check must live in the same statement as the delete, because the window
+between a separate check and the delete is exactly when a dispatch claim can appear.
+
+It refuses while the brief holds any campaign with `status <> 'deleted'` whose `config_snapshot`
+either names the asset id or **is NULL**. Three details:
+
+- **The NULL arm is exact, not a hedge.** `claimCampaignDispatchQuery` inserts the `pending`
+  claim row with no `config_snapshot` BEFORE the dispatcher reads any asset — so a NULL snapshot
+  on a live row is precisely "a dispatch that may be about to use this asset", and skipping it
+  would let a delete race a claim.
+- **Both id spellings.** `config_snapshot` keeps `imageAssetId` verbatim, but a caller may send
+  the UUID hyphenated or dashless, so the predicate matches both forms, case-insensitively.
+- **`strpos(...) > 0`, not `LIKE`.** No character of a UUID is then a wildcard.
+
+Only `status = 'deleted'` campaigns are ignored — legal in multiples, since
+`uq_campaigns_brief_platform_variant_slot_version_live` is partial `WHERE status <> 'deleted'`.
+`TestCreativeAssetRepo_DeleteAsset_RefusesWhileALiveCampaignCouldNeedIt` drives every arm
+including the dashless spelling and the NULL snapshot, and
+`TestCreativeAssetRepo_DeleteAsset_FreesTheBriefsQuota` fills a brief to the cap, confirms the
+409, deletes one and confirms the next create succeeds — the 409's stated remedy has to actually
+work.
+
+The BYTE arm of the quota is deliberately NOT exercised live: inserting 512 MiB would dominate
+the suite's runtime to reach the other branch of the same `if` the count arm already covers.
+
 ## `ListRecentProjectPlatformCampaigns` (LFXV2-2665)
 
 The HubSpot email monitor's scope: `campaignCols` for a project's rows on one platform that have
