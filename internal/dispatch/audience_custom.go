@@ -35,11 +35,14 @@ const customVersionLimit = 10
 // InterpretCustom turns a free-text request into draft criteria.
 //
 // eventURL, when set, makes this an EVENT audience: the page is fetched through the
-// SSRF-guarded reader and its metadata quoted to the model, so a regional plan can
-// be drafted without running discovery first.
+// SSRF-guarded reader and its metadata quoted to the model, so the event's audience
+// can be drafted without running discovery first. It is not location-scoped unless
+// the request asks for one.
 func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, request, eventURL string, answers []audience.CustomAnswer) (outcome *audience.CustomInterpretOutcome, err error) {
 	if strings.TrimSpace(request) == "" && strings.TrimSpace(eventURL) != "" {
-		request = "Plan the regional event audience for this event."
+		// Neutral on purpose: "regional" read to the model as a request for the host
+		// city and country, which an event audience no longer defaults to.
+		request = "Plan the default audience for this event."
 	}
 	if _, perr := audience.CustomInterpretPrompt(request, answers, nil); perr != nil {
 		return nil, perr
@@ -92,18 +95,23 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 				draft.Notes = append(draft.Notes, fmt.Sprintf("Left out %d registered_for names that %s: %s.",
 					len(invented), reason, strings.Join(invented, "; ")))
 			}
-			// The past editions are a REGIONAL audience's default: one with a location.
-			// Anything else gets none, because the registration branch is OR'd beside
-			// the others. For speakers alone it would AND every speaker with a past
-			// registration and drop first-time speakers; for a topic-only education
-			// audience it would add past registrants who never enrolled.
+			// The past editions are the default of two audiences: a regional one (with a
+			// location), and the event's default audience, which selects the event
+			// page's visitors and has no location. The service adds them rather than the
+			// model, so they are capped newest first. Anything else gets none, because
+			// the registration branch is OR'd beside the others: for speakers or
+			// ambassadors alone it would AND every one with a past registration and drop
+			// first-timers; for a topic-only education audience it would add past
+			// registrants who never enrolled.
 			defaults := event.PastEditions
 			hasLocation := len(draft.Criteria.Cities) > 0 || len(draft.Criteria.Countries) > 0
 			regional := hasLocation && (draft.Criteria.ContactLocation || draft.Criteria.EventRegistered || draft.Criteria.EducationEnrolled)
+			rolesOnly := draft.Criteria.Speakers != nil || draft.Criteria.Ambassadors
+			eventDefault := !hasLocation && !rolesOnly && len(draft.Criteria.PageViewURLs) > 0
 			switch {
 			case len(named) > 0:
 				defaults = named
-			case len(draft.Criteria.RegisteredFor) > 0, draft.ExcludePastEditions, !regional:
+			case len(draft.Criteria.RegisteredFor) > 0, draft.ExcludePastEditions, !regional && !eventDefault:
 				// Every named edition was unknown, or past registrants were ruled out:
 				// adding the warehouse's editions would reach people the operator excluded.
 				defaults = nil
