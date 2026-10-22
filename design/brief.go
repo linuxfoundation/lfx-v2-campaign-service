@@ -1525,6 +1525,63 @@ var CreativeAsset = Type("creative-asset", func() {
 	Required("id", "project_id", "brief_id", "mime_type", "byte_size", "checksum")
 })
 
+// CreativeSlotAssignment is one platform image slot and the stored assets that fill it.
+//
+// It carries `requirement` — the slot's rule rendered as a sentence — even on a slot that is
+// FULL, because the operator's next question after "what fits here" is "what else would".
+// Re-deriving that sentence client-side would mean shipping every platform's geometry to the
+// browser and keeping two copies of it in step.
+var CreativeSlotAssignment = Type("creative-slot-assignment", func() {
+	Attribute("slot_key", String, "Stable identifier for this slot: platform/channel/slot, or platform/slot where the platform has a single ad shape. It is the join key between a plan row and an operator override, so it survives a round trip through a client unchanged.")
+	Attribute("platform", String, "Campaign platform this slot belongs to, using the same identifier a campaign config carries (\"google-ads\").")
+	Attribute("channel", String, "Ad channel within the platform whose rules differ from its siblings (\"PERFORMANCE_MAX\", \"DEMAND_GEN\", \"DISPLAY\"). Absent where the platform has a single ad shape.")
+	Attribute("slot", String, "Wire name of the slot within its channel — the asset field type or payload array key a campaign config puts this image under.")
+	Attribute("label", String, "Operator-facing name of the slot. It NAMES ITS CHANNEL, because three Google channels each have a slot called \"logo image\" under different rules and a bare \"logo image\" would not say which creative is meant.")
+	Attribute("requirement", String, "The slot's rule as a sentence an operator can act on — ratio, tolerance and pixel floor, plus the byte cap where one applies.")
+	Attribute("asset_ids", ArrayOf(String, func() { Format(FormatUUID) }), "Assets assigned to this slot, best fit first. An asset may appear in several slots: one library feeds every platform, and the same square image legitimately serves a 1:1 slot on each. It never appears twice within one slot.")
+	Attribute("min_count", Int, "Images the platform requires in this slot. 0 marks the slot optional.")
+	Attribute("max_count", Int, "Images the platform will accept in this slot. 0 means the platform states no per-slot ceiling; a shared ceiling across sibling slots may still apply.")
+	Required("slot_key", "platform", "slot", "label", "requirement", "asset_ids", "min_count", "max_count")
+})
+
+// CreativeSlotGap is one requirement the library cannot meet.
+//
+// A gap is first-class output, not an error: a plan with gaps is a correct and complete answer
+// about a library that is not yet complete, and it is the most useful thing this endpoint
+// produces. Only REQUIRED shortfalls appear — an optional slot left empty is simply an optional
+// slot left empty, and listing it would bury the shortfalls that actually block a launch.
+//
+// The fields are flat rather than nesting a slot, because a gap may span SEVERAL slots: Google
+// requires Demand Gen's landscape and square marketing images only of each other, so the
+// shortfall belongs to the pair and `slot_key` is then absent.
+var CreativeSlotGap = Type("creative-slot-gap", func() {
+	Attribute("platform", String, "Campaign platform whose rule is unmet.")
+	Attribute("channel", String, "Ad channel whose rule is unmet. Absent where the platform has a single ad shape.")
+	Attribute("slot_key", String, "The slot this shortfall belongs to. ABSENT when the requirement spans several slots and no single one of them is required on its own.")
+	Attribute("label", String, "Operator-facing name of the unmet requirement.")
+	Attribute("need", Int, "How many more images the requirement needs beyond what the plan could assign. Always at least 1.", func() { Minimum(1) })
+	Attribute("reason", String, "What is missing and what would satisfy it, as the sentence an operator takes back to their designer. It names every shape that would close the gap, not just one, so an either-or requirement does not send someone to produce an image they did not need.")
+	Required("platform", "label", "need", "reason")
+})
+
+// CreativeAssetPlan is the whole computed grid: which stored assets fit which platform slots,
+// and what is still missing.
+//
+// It is a pure READ. Nothing is written, no asset is attached to anything, and calling it twice
+// with an unchanged library returns an identical plan — so a client may call it as often as it
+// likes while the operator is still deciding, and an operator override replaces a row here
+// rather than racing it.
+var CreativeAssetPlan = Type("creative-asset-plan", func() {
+	Attribute("platforms", ArrayOf(String), "The platforms this plan covers, after defaulting — echoed so a caller who sent no filter knows what was actually evaluated.")
+	Attribute("assignments", ArrayOf(CreativeSlotAssignment), "Every slot that received at least one asset, in platform catalog order.")
+	Attribute("gaps", ArrayOf(CreativeSlotGap), "Every required slot or cross-slot rule the library leaves short. Empty means this library can fill every requested platform.")
+	Attribute("unclassified", ArrayOf(String, func() { Format(FormatUUID) }), "Assets whose dimensions were never recorded, so their shape is unknown. They are NOT counted against any slot and NOT reported as failing one: unknown is a different answer from wrong, and a dimension backfill makes them classifiable without the operator doing anything.")
+	Attribute("unused", ArrayOf(String, func() { Format(FormatUUID) }), "Assets whose dimensions are known and which no requested slot would accept. The mirror of gaps: not only \"what am I missing\" but \"which of the files I just dropped is doing nothing\".")
+	// All five are Required so a client never has to tell an omitted list from an empty one.
+	// Empty gaps is the answer that means "ready to launch", and it has to be expressible.
+	Required("platforms", "assignments", "gaps", "unclassified", "unused")
+})
+
 // CreativeAssetList is the brief's creative-asset library: every stored asset, plus the
 // quota the next upload will be judged against.
 //
@@ -1914,6 +1971,41 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		HTTP(func() {
 			GET("/projects/{project_id}/briefs/{brief_id}/creative-assets/{asset_id}")
 			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("get-asset-plan", func() {
+		Description("Match the brief's stored creative assets against the image slots each ad platform publishes, and report what fits where and what is still missing. A pure read: nothing is stored, no asset is attached to a campaign, and an unchanged library always produces an identical plan. Eligibility is the slot's own rule — aspect ratio within the platform's documented tolerance, the pixel floor, and the slot's byte cap — and among eligible assets the closest fit to the slot's target ratio wins, then the larger image, then the earlier upload. An asset may fill slots on several platforms at once but never appears twice in one slot. Assets stored before the service recorded dimensions come back under `unclassified` rather than being judged against a shape they never declared. An archived brief returns 404, matching every other read of a brief's children.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			// Repeatable query parameter (?platforms=google-ads&platforms=...), not a
+			// comma-joined string: a platform identifier is opaque to this endpoint, and a
+			// separator baked into the wire format would have to be escaped the day one
+			// contains it.
+			//
+			// ABSENT means every platform the service publishes slot rules for, which is the
+			// answer an operator asking "is my library ready" actually wants. An unknown
+			// platform is IGNORED rather than refused — it contributes no slots, so it can
+			// produce neither an assignment nor a gap, and a client built against a newer
+			// release asking for a platform this one has not shipped gets the plan for the
+			// platforms it does know instead of a 400 and nothing.
+			Attribute("platforms", ArrayOf(String), "Restrict the plan to these campaign platforms (\"google-ads\"). Repeat the parameter for several. Absent means every platform whose slot rules this service publishes. A platform it does not know is ignored, not refused.", func() {
+				Example([]string{"google-ads"})
+			})
+			Required("project_id", "brief_id")
+		})
+		Result(CreativeAssetPlan)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/creative-assets/plan")
+			Param("platforms")
+			Header("bearer_token:Authorization")
+			// No ETag: the plan is derived, holds no version of its own, and is cheap to
+			// recompute — there is nothing to concurrency-control against.
 			Response(StatusOK)
 			briefErrorResponses()
 		})

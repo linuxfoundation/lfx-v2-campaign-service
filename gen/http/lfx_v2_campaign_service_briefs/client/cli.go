@@ -501,6 +501,52 @@ func BuildGetCreativeAssetPayload(lfxV2CampaignServiceBriefsGetCreativeAssetProj
 	return v, nil
 }
 
+// BuildGetAssetPlanPayload builds the payload for the
+// lfx-v2-campaign-service-briefs get-asset-plan endpoint from CLI flags.
+func BuildGetAssetPlanPayload(lfxV2CampaignServiceBriefsGetAssetPlanProjectID *string, lfxV2CampaignServiceBriefsGetAssetPlanBriefID *string, lfxV2CampaignServiceBriefsGetAssetPlanPlatforms *string, lfxV2CampaignServiceBriefsGetAssetPlanBearerToken *string) (*lfxv2campaignservicebriefs.GetAssetPlanPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceBriefsGetAssetPlanProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceBriefsGetAssetPlanProjectID
+	}
+	var briefID string
+	{
+		if lfxV2CampaignServiceBriefsGetAssetPlanBriefID == nil {
+			return nil, fmt.Errorf("missing required flag --brief-id")
+		}
+		briefID = *lfxV2CampaignServiceBriefsGetAssetPlanBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var platforms []string
+	{
+		if lfxV2CampaignServiceBriefsGetAssetPlanPlatforms != nil {
+			err = json.Unmarshal([]byte(*lfxV2CampaignServiceBriefsGetAssetPlanPlatforms), &platforms)
+			if err != nil {
+				return nil, fmt.Errorf("invalid JSON for platforms, \nerror: %s, \nexample of valid JSON:\n%s", err, "'[\n      \"google-ads\"\n   ]'")
+			}
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsGetAssetPlanBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceBriefsGetAssetPlanBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.GetAssetPlanPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.Platforms = platforms
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildDeleteCreativeAssetPayload builds the payload for the
 // lfx-v2-campaign-service-briefs delete-creative-asset endpoint from CLI flags.
 func BuildDeleteCreativeAssetPayload(lfxV2CampaignServiceBriefsDeleteCreativeAssetProjectID *string, lfxV2CampaignServiceBriefsDeleteCreativeAssetBriefID *string, lfxV2CampaignServiceBriefsDeleteCreativeAssetAssetID *string, lfxV2CampaignServiceBriefsDeleteCreativeAssetBearerToken *string) (*lfxv2campaignservicebriefs.DeleteCreativeAssetPayload, error) {

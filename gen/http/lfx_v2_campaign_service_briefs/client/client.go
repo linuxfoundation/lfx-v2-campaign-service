@@ -58,6 +58,10 @@ type Client struct {
 	// get-creative-asset endpoint.
 	GetCreativeAssetDoer goahttp.Doer
 
+	// GetAssetPlan Doer is the HTTP client used to make requests to the
+	// get-asset-plan endpoint.
+	GetAssetPlanDoer goahttp.Doer
+
 	// DeleteCreativeAsset Doer is the HTTP client used to make requests to the
 	// delete-creative-asset endpoint.
 	DeleteCreativeAssetDoer goahttp.Doer
@@ -204,6 +208,7 @@ func NewClient(
 		UploadCreativeAssetDoer:    doer,
 		ListCreativeAssetsDoer:     doer,
 		GetCreativeAssetDoer:       doer,
+		GetAssetPlanDoer:           doer,
 		DeleteCreativeAssetDoer:    doer,
 		CreateCampaignsDoer:        doer,
 		AdoptCampaignDoer:          doer,
@@ -476,6 +481,30 @@ func (c *Client) GetCreativeAsset() goa.Endpoint {
 		resp, err := c.GetCreativeAssetDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "get-creative-asset", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// GetAssetPlan returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service get-asset-plan server.
+func (c *Client) GetAssetPlan() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetAssetPlanRequest(c.encoder)
+		decodeResponse = DecodeGetAssetPlanResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetAssetPlanRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetAssetPlanDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
 		}
 		return decodeResponse(resp)
 	}

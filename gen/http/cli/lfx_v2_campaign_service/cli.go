@@ -30,7 +30,7 @@ func UsageCommands() []string {
 	return []string{
 		"lfx-v2-campaign-service-audiences (create-audience|get-audience|list-audiences|update-audience|build-audience)",
 		"lfx-v2-campaign-service-audience-builder (get-audience-builder-capabilities|discover-audience-lists|search-audience-lists|get-audience-suppression-lists|get-audience-last-sent|get-existing-audience-master-lists|preview-audience-count|compose-audience-master|attach-existing-audience|run-audience-qa|interpret-custom-audience|preview-custom-audience|create-custom-audience)",
-		"lfx-v2-campaign-service-briefs (create-brief|find-brief|get-brief|update-brief|approve-brief|delete-brief|fetch-event-url|upload-creative-asset|list-creative-assets|get-creative-asset|delete-creative-asset|create-campaigns|adopt-campaign|get-campaign|get-campaign-metrics|get-campaign-settings|get-brief-metrics|generate-email-copy|update-campaign|toggle-campaign-status|update-campaign-budget|update-campaign-bid|apply-keyword-actions|add-negative-keywords|get-keyword-targeting|remove-keyword-targeting|list-meta-ad-sets|list-meta-ads|toggle-meta-ad-set-status|delete-campaign|get-job|start-email-wizard-plan|plan-email-wizard|generate-wizard-content|update-wizard-sections|clone-wizard-email|set-wizard-send-list|chat-wizard-turn|get-wizard-session)",
+		"lfx-v2-campaign-service-briefs (create-brief|find-brief|get-brief|update-brief|approve-brief|delete-brief|fetch-event-url|upload-creative-asset|list-creative-assets|get-creative-asset|get-asset-plan|delete-creative-asset|create-campaigns|adopt-campaign|get-campaign|get-campaign-metrics|get-campaign-settings|get-brief-metrics|generate-email-copy|update-campaign|toggle-campaign-status|update-campaign-budget|update-campaign-bid|apply-keyword-actions|add-negative-keywords|get-keyword-targeting|remove-keyword-targeting|list-meta-ad-sets|list-meta-ads|toggle-meta-ad-set-status|delete-campaign|get-job|start-email-wizard-plan|plan-email-wizard|generate-wizard-content|update-wizard-sections|clone-wizard-email|set-wizard-send-list|chat-wizard-turn|get-wizard-session)",
 		"lfx-v2-campaign-service-svc (readyz|livez)",
 		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|get-meta-ads-audience|get-twitter-ads-audience|get-linkedin-ads-audience|get-microsoft-ads-keywords|get-microsoft-ads-audience|get-reddit-ads-audience|get-reddit-ads-keywords|resolve-google-ads-campaign|resolve-microsoft-ads-campaign|resolve-meta-ads-campaign|resolve-reddit-ads-campaign|resolve-twitter-ads-campaign|resolve-linkedin-ads-campaign|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-reddit-ads-accounts|list-hubspot-emails|search-hubspot-campaigns|create-hubspot-campaign|monitor-google-ads-account|monitor-linkedin-ads-account|monitor-meta-ads-account|monitor-reddit-ads-account|monitor-microsoft-ads-account|monitor-twitter-ads-account|monitor-hubspot-account)",
 		"lfx-v2-campaign-service-signed-assets get-signed-creative-asset",
@@ -236,6 +236,12 @@ func ParseEndpoint(
 		lfxV2CampaignServiceBriefsGetCreativeAssetBriefIDFlag     = new(cliStringFlag)
 		lfxV2CampaignServiceBriefsGetCreativeAssetAssetIDFlag     = new(cliStringFlag)
 		lfxV2CampaignServiceBriefsGetCreativeAssetBearerTokenFlag = new(cliStringFlag)
+
+		lfxV2CampaignServiceBriefsGetAssetPlanFlags           = flag.NewFlagSet("get-asset-plan", flag.ExitOnError)
+		lfxV2CampaignServiceBriefsGetAssetPlanProjectIDFlag   = new(cliStringFlag)
+		lfxV2CampaignServiceBriefsGetAssetPlanBriefIDFlag     = new(cliStringFlag)
+		lfxV2CampaignServiceBriefsGetAssetPlanPlatformsFlag   = new(cliStringFlag)
+		lfxV2CampaignServiceBriefsGetAssetPlanBearerTokenFlag = new(cliStringFlag)
 
 		lfxV2CampaignServiceBriefsDeleteCreativeAssetFlags           = flag.NewFlagSet("delete-creative-asset", flag.ExitOnError)
 		lfxV2CampaignServiceBriefsDeleteCreativeAssetProjectIDFlag   = new(cliStringFlag)
@@ -895,6 +901,10 @@ func ParseEndpoint(
 	lfxV2CampaignServiceBriefsGetCreativeAssetFlags.Var(lfxV2CampaignServiceBriefsGetCreativeAssetBriefIDFlag, "brief-id", "Brief UUID")
 	lfxV2CampaignServiceBriefsGetCreativeAssetFlags.Var(lfxV2CampaignServiceBriefsGetCreativeAssetAssetIDFlag, "asset-id", "Creative asset UUID")
 	lfxV2CampaignServiceBriefsGetCreativeAssetFlags.Var(lfxV2CampaignServiceBriefsGetCreativeAssetBearerTokenFlag, "bearer-token", "")
+	lfxV2CampaignServiceBriefsGetAssetPlanFlags.Var(lfxV2CampaignServiceBriefsGetAssetPlanProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
+	lfxV2CampaignServiceBriefsGetAssetPlanFlags.Var(lfxV2CampaignServiceBriefsGetAssetPlanBriefIDFlag, "brief-id", "Brief UUID")
+	lfxV2CampaignServiceBriefsGetAssetPlanFlags.Var(lfxV2CampaignServiceBriefsGetAssetPlanPlatformsFlag, "platforms", "")
+	lfxV2CampaignServiceBriefsGetAssetPlanFlags.Var(lfxV2CampaignServiceBriefsGetAssetPlanBearerTokenFlag, "bearer-token", "")
 	lfxV2CampaignServiceBriefsDeleteCreativeAssetFlags.Var(lfxV2CampaignServiceBriefsDeleteCreativeAssetProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceBriefsDeleteCreativeAssetFlags.Var(lfxV2CampaignServiceBriefsDeleteCreativeAssetBriefIDFlag, "brief-id", "Brief UUID")
 	lfxV2CampaignServiceBriefsDeleteCreativeAssetFlags.Var(lfxV2CampaignServiceBriefsDeleteCreativeAssetAssetIDFlag, "asset-id", "Creative asset UUID")
@@ -1275,6 +1285,7 @@ func ParseEndpoint(
 	lfxV2CampaignServiceBriefsUploadCreativeAssetFlags.Usage = lfxV2CampaignServiceBriefsUploadCreativeAssetUsage
 	lfxV2CampaignServiceBriefsListCreativeAssetsFlags.Usage = lfxV2CampaignServiceBriefsListCreativeAssetsUsage
 	lfxV2CampaignServiceBriefsGetCreativeAssetFlags.Usage = lfxV2CampaignServiceBriefsGetCreativeAssetUsage
+	lfxV2CampaignServiceBriefsGetAssetPlanFlags.Usage = lfxV2CampaignServiceBriefsGetAssetPlanUsage
 	lfxV2CampaignServiceBriefsDeleteCreativeAssetFlags.Usage = lfxV2CampaignServiceBriefsDeleteCreativeAssetUsage
 	lfxV2CampaignServiceBriefsCreateCampaignsFlags.Usage = lfxV2CampaignServiceBriefsCreateCampaignsUsage
 	lfxV2CampaignServiceBriefsAdoptCampaignFlags.Usage = lfxV2CampaignServiceBriefsAdoptCampaignUsage
@@ -1522,6 +1533,9 @@ func ParseEndpoint(
 
 			case "get-creative-asset":
 				epf = lfxV2CampaignServiceBriefsGetCreativeAssetFlags
+
+			case "get-asset-plan":
+				epf = lfxV2CampaignServiceBriefsGetAssetPlanFlags
 
 			case "delete-creative-asset":
 				epf = lfxV2CampaignServiceBriefsDeleteCreativeAssetFlags
@@ -1967,6 +1981,9 @@ func ParseEndpoint(
 			case "get-creative-asset":
 				endpoint = c.GetCreativeAsset()
 				data, err = lfxv2campaignservicebriefsc.BuildGetCreativeAssetPayload(lfxV2CampaignServiceBriefsGetCreativeAssetProjectIDFlag.value, lfxV2CampaignServiceBriefsGetCreativeAssetBriefIDFlag.value, lfxV2CampaignServiceBriefsGetCreativeAssetAssetIDFlag.value, lfxV2CampaignServiceBriefsGetCreativeAssetBearerTokenFlag.value)
+			case "get-asset-plan":
+				endpoint = c.GetAssetPlan()
+				data, err = lfxv2campaignservicebriefsc.BuildGetAssetPlanPayload(lfxV2CampaignServiceBriefsGetAssetPlanProjectIDFlag.value, lfxV2CampaignServiceBriefsGetAssetPlanBriefIDFlag.value, lfxV2CampaignServiceBriefsGetAssetPlanPlatformsFlag.value, lfxV2CampaignServiceBriefsGetAssetPlanBearerTokenFlag.value)
 			case "delete-creative-asset":
 				endpoint = c.DeleteCreativeAsset()
 				data, err = lfxv2campaignservicebriefsc.BuildDeleteCreativeAssetPayload(lfxV2CampaignServiceBriefsDeleteCreativeAssetProjectIDFlag.value, lfxV2CampaignServiceBriefsDeleteCreativeAssetBriefIDFlag.value, lfxV2CampaignServiceBriefsDeleteCreativeAssetAssetIDFlag.value, lfxV2CampaignServiceBriefsDeleteCreativeAssetBearerTokenFlag.value)
@@ -2768,6 +2785,7 @@ func lfxV2CampaignServiceBriefsUsage() {
 	fmt.Fprintln(os.Stderr, `    upload-creative-asset: Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account's media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig variant names one by imageAssetId, and at dispatch it is uploaded once through LinkedIn's Images API (an organization-owned image URN) and used as that dark post's article thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320 (vertical) pixels.`)
 	fmt.Fprintln(os.Stderr, `    list-creative-assets: List the creative assets stored for a brief, with the per-brief quota the next upload will be judged against. Metadata only: the image bytes are never returned inline — byte_size, width and height exist precisely so a reader can size and classify an asset without loading a blob of up to 30 MiB. Assets are ordered oldest first, and the whole library is returned (it is bounded by count_limit). An archived brief returns 404, matching every other read of a brief's children.`)
 	fmt.Fprintln(os.Stderr, `    get-creative-asset: Get one stored creative asset's metadata. The image bytes are not returned here — they are served, when signed creative-asset URLs are configured, by the separate signed-asset route. An asset belonging to another project or brief, or to an archived brief, is 404, the same as one that does not exist.`)
+	fmt.Fprintln(os.Stderr, `    get-asset-plan: Match the brief's stored creative assets against the image slots each ad platform publishes, and report what fits where and what is still missing. A pure read: nothing is stored, no asset is attached to a campaign, and an unchanged library always produces an identical plan. Eligibility is the slot's own rule — aspect ratio within the platform's documented tolerance, the pixel floor, and the slot's byte cap — and among eligible assets the closest fit to the slot's target ratio wins, then the larger image, then the earlier upload. An asset may fill slots on several platforms at once but never appears twice in one slot. Assets stored before the service recorded dimensions come back under `+"`"+`unclassified`+"`"+` rather than being judged against a shape they never declared. An archived brief returns 404, matching every other read of a brief's children.`)
 	fmt.Fprintln(os.Stderr, `    delete-creative-asset: Permanently delete a stored creative asset, freeing its bytes against the brief's quota. Refused with 409 reason=creative_asset_in_use when any live campaign on the brief could still need it: one whose stored configuration names this asset id, and also one whose configuration has not been recorded yet, because a dispatch claims its campaign row before it resolves any asset. Delete the campaign, or reconcile a stuck claim, then retry. This is a HARD delete — unlike a campaign or a brief, which are retired by a status flip — because reclaiming the storage is the entire reason the endpoint exists.`)
 	fmt.Fprintln(os.Stderr, `    create-campaigns: Create campaigns across the selected platforms (async -> job). Besides the request-shape 400s (an unknown or duplicate platform, new_version on a platform that does not support it, and the like), two dispatch-time rules are refused synchronously, before any job exists. (1) An email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients' time zones, which HubSpot does not allow together: 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. (2) A Reddit config that names a stored creative asset it cannot use, decided from the config alone: redditConfig.imageAssetId together with imageUrl or postUrl, an imageAssetId that is not a UUID, or imageAssetId while signed creative-asset URLs are not configured ('stored creative assets are not enabled for Reddit; supply imageUrl'): 400 with that message. Every other dispatch failure, including an imageAssetId that does not exist for this brief, still arrives later, as the job's own result.`)
 	fmt.Fprintln(os.Stderr, `    adopt-campaign: Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project's connection, and nothing is created upstream. Supported platforms: google-ads, microsoft-ads, meta-ads, reddit-ads, twitter-ads and linkedin-ads; every other platform answers 400. The read is one get-campaign-by-id under the project's OWN connection (never the shared LF system account), plus, on Reddit, X and LinkedIn only, one read of that connection's ad account after a campaign 404, and the campaign must belong to that connection's ad account. Returns 404 only when the platform PROVES it holds no such campaign (a deleted, removed or archived campaign counts as absent; on LinkedIn a CANCELED, PENDING_DELETION or REMOVED one), 503 when the campaign could not be verified (the platform was unreachable or throttled, answered with something untrustworthy, or gave a not-found that could equally be an access, auth or account problem - its existence is unknown), 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the platform reports the campaign under a different ad account than the project's connection / the campaign is of a type that platform's slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired or platform_campaign_id is malformed for that platform (checked before any connection work). An adopted campaign records only the campaign itself (id, name, account), never its children, and is returned, read back by get-campaign and indexed with `+"`"+`adopted: true`+"`"+`. The metrics read and the settings readback (on the platforms that support them), delete and pause work on it; activation is refused on every platform because adoption does not verify the targeting the activate guard requires (toggle-campaign-status answers 409 with reason=campaign_adopted); the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line item the row does not record) and on LinkedIn (its bid is the campaign's own unitCost, but adoption verifies identity, not the bidding setup); the budget lever is refused on Meta (its budget lives on the ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget is the campaign's own. A LinkedIn PAUSE on an adopted campaign addresses the campaign alone, never its creatives.`)
@@ -3033,6 +3051,30 @@ func lfxV2CampaignServiceBriefsGetCreativeAssetUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs get-creative-asset --project-id \"cncf\" --brief-id \"7811c1bd-3403-4bc4-b867-dc6bc22f6311\" --asset-id \"4185df79-8d41-4bd4-a505-91cd6043592b\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceBriefsGetAssetPlanUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-briefs get-asset-plan", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -brief-id STRING")
+	fmt.Fprint(os.Stderr, " -platforms JSON")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Match the brief's stored creative assets against the image slots each ad platform publishes, and report what fits where and what is still missing. A pure read: nothing is stored, no asset is attached to a campaign, and an unchanged library always produces an identical plan. Eligibility is the slot's own rule — aspect ratio within the platform's documented tolerance, the pixel floor, and the slot's byte cap — and among eligible assets the closest fit to the slot's target ratio wins, then the larger image, then the earlier upload. An asset may fill slots on several platforms at once but never appears twice in one slot. Assets stored before the service recorded dimensions come back under `+"`"+`unclassified`+"`"+` rather than being judged against a shape they never declared. An archived brief returns 404, matching every other read of a brief's children.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -brief-id STRING: Brief UUID`)
+	fmt.Fprintln(os.Stderr, `    -platforms JSON: `)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs get-asset-plan --project-id \"cncf\" --brief-id \"7c1e3057-941a-44fd-842d-f728f95b8878\" --platforms '[\n      \"google-ads\"\n   ]' --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceBriefsDeleteCreativeAssetUsage() {

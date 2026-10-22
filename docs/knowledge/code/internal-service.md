@@ -373,6 +373,50 @@ campaign or reconcile a stuck dispatch and retry — because "the brief is full"
 empty it is not actionable, and because a folder upload has to branch on which refusal it got.
 The discriminator, not the prose, is what it branches on.
 
+## The platform slot registry and `GetAssetPlan` (LFXV2-2665)
+
+`creative_plan.go` holds two things: the registry of platforms whose image rules this service
+publishes, and the handler that runs a brief's library against them.
+
+**`slotCatalogs()` is the registry, and it lives HERE deliberately.**
+[internal/creative](internal-creative.md) depends on nothing, each platform package publishes
+its own rows (`googleads.ImageSlotCatalog()`), and this layer is the only one that already
+imports every platform — so it is the one place that can name them all without an import cycle,
+and without dragging six API clients into a binary that only wanted to classify an image.
+Adding a platform is one entry here plus a `creative.Catalog` in that platform's package;
+nothing in `internal/creative` changes.
+
+`GetAssetPlan` reads through `ListAssets`, not a bytes-bearing port method: classifying needs an
+id and two integers, all of them columns on the row, and detoasting up to 30 MiB of `BYTEA` per
+asset to compare two numbers would be the entire cost of the endpoint. `Ordinal` comes from the
+LIST INDEX — the repository's oldest-first order — because it is the classifier's last ranking
+tie-break and therefore what makes a reloaded plan identical to the one the operator was looking
+at; an index rather than a `created_at`, because two files uploaded in one batch can share a
+timestamp and an index cannot.
+
+`requestedCatalog` resolves the `platforms` filter. An **empty** filter means every registered
+platform. An **unknown** one is dropped rather than refused: it publishes no slots, so it can
+produce neither an assignment nor a gap, and a client built against a newer release should get
+the plan for the platforms this one does know rather than a 400 and nothing. The drop is visible
+in the echoed `platforms`, so a caller can still tell that what it asked for is not what it got.
+Duplicates are deduped and the result is **sorted**, because the classifier fills slots in
+catalog order and an unsorted map range would otherwise let a shared group ceiling fall to a
+different platform between two identical requests.
+
+Every list on the wire is a non-nil slice (`idList`). An empty `gaps` is the answer that means
+"this library can launch", so it must be distinguishable from a field the server declined to
+compute — and a nil slice renders as JSON `null`, which is that other answer. `Channel` and
+`SlotKey` are pointers set only when non-empty: a gap raised by a cross-slot requirement names
+no slot at all, because Google's reciprocal landscape-or-square pair belongs to neither member
+and naming one would send the operator to make exactly the image they did not need.
+
+A route detail worth pinning rather than reasoning about: `/creative-assets/plan` sits under the
+same prefix as `/creative-assets/{asset_id}`, and the generated muxer is the only layer that
+decides between them. `TestGetAssetPlanRoute_WinsAgainstTheAssetIDWildcard` registers both on a
+real `goahttp.NewMuxer()` and asserts the literal segment wins, because the failure mode —
+arriving at the single-asset handler as `asset_id="plan"` — is a 404 that looks like a missing
+asset.
+
 ## Campaign config update: the caller's config is redacted before `config_snapshot`
 
 `BriefService.UpdateCampaign` (backing `PUT .../campaigns/{id}`) is DB-only and overlays the

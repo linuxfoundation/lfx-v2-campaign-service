@@ -30,6 +30,7 @@ type Server struct {
 	UploadCreativeAsset    http.Handler
 	ListCreativeAssets     http.Handler
 	GetCreativeAsset       http.Handler
+	GetAssetPlan           http.Handler
 	DeleteCreativeAsset    http.Handler
 	CreateCampaigns        http.Handler
 	AdoptCampaign          http.Handler
@@ -98,6 +99,7 @@ func New(
 			{"UploadCreativeAsset", "POST", "/projects/{project_id}/briefs/{brief_id}/creative-assets"},
 			{"ListCreativeAssets", "GET", "/projects/{project_id}/briefs/{brief_id}/creative-assets"},
 			{"GetCreativeAsset", "GET", "/projects/{project_id}/briefs/{brief_id}/creative-assets/{asset_id}"},
+			{"GetAssetPlan", "GET", "/projects/{project_id}/briefs/{brief_id}/creative-assets/plan"},
 			{"DeleteCreativeAsset", "DELETE", "/projects/{project_id}/briefs/{brief_id}/creative-assets/{asset_id}"},
 			{"CreateCampaigns", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns"},
 			{"AdoptCampaign", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/adopt"},
@@ -138,6 +140,7 @@ func New(
 		UploadCreativeAsset:    NewUploadCreativeAssetHandler(e.UploadCreativeAsset, mux, decoder, encoder, errhandler, formatter),
 		ListCreativeAssets:     NewListCreativeAssetsHandler(e.ListCreativeAssets, mux, decoder, encoder, errhandler, formatter),
 		GetCreativeAsset:       NewGetCreativeAssetHandler(e.GetCreativeAsset, mux, decoder, encoder, errhandler, formatter),
+		GetAssetPlan:           NewGetAssetPlanHandler(e.GetAssetPlan, mux, decoder, encoder, errhandler, formatter),
 		DeleteCreativeAsset:    NewDeleteCreativeAssetHandler(e.DeleteCreativeAsset, mux, decoder, encoder, errhandler, formatter),
 		CreateCampaigns:        NewCreateCampaignsHandler(e.CreateCampaigns, mux, decoder, encoder, errhandler, formatter),
 		AdoptCampaign:          NewAdoptCampaignHandler(e.AdoptCampaign, mux, decoder, encoder, errhandler, formatter),
@@ -185,6 +188,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.UploadCreativeAsset = m(s.UploadCreativeAsset)
 	s.ListCreativeAssets = m(s.ListCreativeAssets)
 	s.GetCreativeAsset = m(s.GetCreativeAsset)
+	s.GetAssetPlan = m(s.GetAssetPlan)
 	s.DeleteCreativeAsset = m(s.DeleteCreativeAsset)
 	s.CreateCampaigns = m(s.CreateCampaigns)
 	s.AdoptCampaign = m(s.AdoptCampaign)
@@ -232,6 +236,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountUploadCreativeAssetHandler(mux, h.UploadCreativeAsset)
 	MountListCreativeAssetsHandler(mux, h.ListCreativeAssets)
 	MountGetCreativeAssetHandler(mux, h.GetCreativeAsset)
+	MountGetAssetPlanHandler(mux, h.GetAssetPlan)
 	MountDeleteCreativeAssetHandler(mux, h.DeleteCreativeAsset)
 	MountCreateCampaignsHandler(mux, h.CreateCampaigns)
 	MountAdoptCampaignHandler(mux, h.AdoptCampaign)
@@ -784,6 +789,60 @@ func NewGetCreativeAssetHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "get-creative-asset")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountGetAssetPlanHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint.
+func MountGetAssetPlanHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/briefs/{brief_id}/creative-assets/plan", f)
+}
+
+// NewGetAssetPlanHandler creates a HTTP handler which loads the HTTP request
+// and calls the "lfx-v2-campaign-service-briefs" service "get-asset-plan"
+// endpoint.
+func NewGetAssetPlanHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeGetAssetPlanRequest(mux, decoder)
+		encodeResponse = EncodeGetAssetPlanResponse(encoder)
+		encodeError    = EncodeGetAssetPlanError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "get-asset-plan")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
 		payload, err := decodeRequest(r)
 		if err != nil {

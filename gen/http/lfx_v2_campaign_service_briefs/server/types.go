@@ -534,6 +534,28 @@ type GetCreativeAssetResponseBody struct {
 	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
 }
 
+// GetAssetPlanResponseBody is the type of the "lfx-v2-campaign-service-briefs"
+// service "get-asset-plan" endpoint HTTP response body.
+type GetAssetPlanResponseBody struct {
+	// The platforms this plan covers, after defaulting — echoed so a caller who
+	// sent no filter knows what was actually evaluated.
+	Platforms []string `form:"platforms" json:"platforms" xml:"platforms"`
+	// Every slot that received at least one asset, in platform catalog order.
+	Assignments []*CreativeSlotAssignmentResponseBody `form:"assignments" json:"assignments" xml:"assignments"`
+	// Every required slot or cross-slot rule the library leaves short. Empty means
+	// this library can fill every requested platform.
+	Gaps []*CreativeSlotGapResponseBody `form:"gaps" json:"gaps" xml:"gaps"`
+	// Assets whose dimensions were never recorded, so their shape is unknown. They
+	// are NOT counted against any slot and NOT reported as failing one: unknown is
+	// a different answer from wrong, and a dimension backfill makes them
+	// classifiable without the operator doing anything.
+	Unclassified []string `form:"unclassified" json:"unclassified" xml:"unclassified"`
+	// Assets whose dimensions are known and which no requested slot would accept.
+	// The mirror of gaps: not only "what am I missing" but "which of the files I
+	// just dropped is doing nothing".
+	Unused []string `form:"unused" json:"unused" xml:"unused"`
+}
+
 // CreateCampaignsResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // response body.
@@ -1952,6 +1974,79 @@ type GetCreativeAssetPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
 // response body for the "Unauthorized" error.
 type GetCreativeAssetUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "BadRequest" error.
+type GetAssetPlanBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "Conflict" error.
+type GetAssetPlanConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetAssetPlanServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type GetAssetPlanServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "InternalServerError" error.
+type GetAssetPlanInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "NotFound" error.
+type GetAssetPlanNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetAssetPlanPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetAssetPlanUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -4223,6 +4318,65 @@ type CreativeAssetResponseBody struct {
 	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
 }
 
+// CreativeSlotAssignmentResponseBody is used to define fields on response body
+// types.
+type CreativeSlotAssignmentResponseBody struct {
+	// Stable identifier for this slot: platform/channel/slot, or platform/slot
+	// where the platform has a single ad shape. It is the join key between a plan
+	// row and an operator override, so it survives a round trip through a client
+	// unchanged.
+	SlotKey string `form:"slot_key" json:"slot_key" xml:"slot_key"`
+	// Campaign platform this slot belongs to, using the same identifier a campaign
+	// config carries ("google-ads").
+	Platform string `form:"platform" json:"platform" xml:"platform"`
+	// Ad channel within the platform whose rules differ from its siblings
+	// ("PERFORMANCE_MAX", "DEMAND_GEN", "DISPLAY"). Absent where the platform has
+	// a single ad shape.
+	Channel *string `form:"channel,omitempty" json:"channel,omitempty" xml:"channel,omitempty"`
+	// Wire name of the slot within its channel — the asset field type or payload
+	// array key a campaign config puts this image under.
+	Slot string `form:"slot" json:"slot" xml:"slot"`
+	// Operator-facing name of the slot. It NAMES ITS CHANNEL, because three Google
+	// channels each have a slot called "logo image" under different rules and a
+	// bare "logo image" would not say which creative is meant.
+	Label string `form:"label" json:"label" xml:"label"`
+	// The slot's rule as a sentence an operator can act on — ratio, tolerance and
+	// pixel floor, plus the byte cap where one applies.
+	Requirement string `form:"requirement" json:"requirement" xml:"requirement"`
+	// Assets assigned to this slot, best fit first. An asset may appear in several
+	// slots: one library feeds every platform, and the same square image
+	// legitimately serves a 1:1 slot on each. It never appears twice within one
+	// slot.
+	AssetIds []string `form:"asset_ids" json:"asset_ids" xml:"asset_ids"`
+	// Images the platform requires in this slot. 0 marks the slot optional.
+	MinCount int `form:"min_count" json:"min_count" xml:"min_count"`
+	// Images the platform will accept in this slot. 0 means the platform states no
+	// per-slot ceiling; a shared ceiling across sibling slots may still apply.
+	MaxCount int `form:"max_count" json:"max_count" xml:"max_count"`
+}
+
+// CreativeSlotGapResponseBody is used to define fields on response body types.
+type CreativeSlotGapResponseBody struct {
+	// Campaign platform whose rule is unmet.
+	Platform string `form:"platform" json:"platform" xml:"platform"`
+	// Ad channel whose rule is unmet. Absent where the platform has a single ad
+	// shape.
+	Channel *string `form:"channel,omitempty" json:"channel,omitempty" xml:"channel,omitempty"`
+	// The slot this shortfall belongs to. ABSENT when the requirement spans
+	// several slots and no single one of them is required on its own.
+	SlotKey *string `form:"slot_key,omitempty" json:"slot_key,omitempty" xml:"slot_key,omitempty"`
+	// Operator-facing name of the unmet requirement.
+	Label string `form:"label" json:"label" xml:"label"`
+	// How many more images the requirement needs beyond what the plan could
+	// assign. Always at least 1.
+	Need int `form:"need" json:"need" xml:"need"`
+	// What is missing and what would satisfy it, as the sentence an operator takes
+	// back to their designer. It names every shape that would close the gap, not
+	// just one, so an either-or requirement does not send someone to produce an
+	// image they did not need.
+	Reason string `form:"reason" json:"reason" xml:"reason"`
+}
+
 // EmailMetricsResponseBody is used to define fields on response body types.
 type EmailMetricsResponseBody struct {
 	// Emails handed to the delivery pipeline, to date
@@ -5006,6 +5160,62 @@ func NewGetCreativeAssetResponseBody(res *lfxv2campaignservicebriefs.CreativeAss
 		Width:     res.Width,
 		Height:    res.Height,
 		Created:   res.Created,
+	}
+	return body
+}
+
+// NewGetAssetPlanResponseBody builds the HTTP response body from the result of
+// the "get-asset-plan" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewGetAssetPlanResponseBody(res *lfxv2campaignservicebriefs.CreativeAssetPlan) *GetAssetPlanResponseBody {
+	body := &GetAssetPlanResponseBody{}
+	if res.Platforms != nil {
+		body.Platforms = make([]string, len(res.Platforms))
+		for i, val := range res.Platforms {
+			body.Platforms[i] = val
+		}
+	} else {
+		body.Platforms = []string{}
+	}
+	if res.Assignments != nil {
+		body.Assignments = make([]*CreativeSlotAssignmentResponseBody, len(res.Assignments))
+		for i, val := range res.Assignments {
+			if val == nil {
+				body.Assignments[i] = nil
+				continue
+			}
+			body.Assignments[i] = marshalLfxv2campaignservicebriefsCreativeSlotAssignmentToCreativeSlotAssignmentResponseBody(val)
+		}
+	} else {
+		body.Assignments = []*CreativeSlotAssignmentResponseBody{}
+	}
+	if res.Gaps != nil {
+		body.Gaps = make([]*CreativeSlotGapResponseBody, len(res.Gaps))
+		for i, val := range res.Gaps {
+			if val == nil {
+				body.Gaps[i] = nil
+				continue
+			}
+			body.Gaps[i] = marshalLfxv2campaignservicebriefsCreativeSlotGapToCreativeSlotGapResponseBody(val)
+		}
+	} else {
+		body.Gaps = []*CreativeSlotGapResponseBody{}
+	}
+	if res.Unclassified != nil {
+		body.Unclassified = make([]string, len(res.Unclassified))
+		for i, val := range res.Unclassified {
+			body.Unclassified[i] = val
+		}
+	} else {
+		body.Unclassified = []string{}
+	}
+	if res.Unused != nil {
+		body.Unused = make([]string, len(res.Unused))
+		for i, val := range res.Unused {
+			body.Unused[i] = val
+		}
+	} else {
+		body.Unused = []string{}
 	}
 	return body
 }
@@ -6405,6 +6615,84 @@ func NewGetCreativeAssetPayloadTooLargeResponseBody(res *lfxv2campaignservicebri
 // "lfx-v2-campaign-service-briefs" service.
 func NewGetCreativeAssetUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *GetCreativeAssetUnauthorizedResponseBody {
 	body := &GetCreativeAssetUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanBadRequestResponseBody builds the HTTP response body from the
+// result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *GetAssetPlanBadRequestResponseBody {
+	body := &GetAssetPlanBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanConflictResponseBody builds the HTTP response body from the
+// result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *GetAssetPlanConflictResponseBody {
+	body := &GetAssetPlanConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetAssetPlanServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *GetAssetPlanServiceUnavailableResponseBody {
+	body := &GetAssetPlanServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanInternalServerErrorResponseBody builds the HTTP response body
+// from the result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *GetAssetPlanInternalServerErrorResponseBody {
+	body := &GetAssetPlanInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanNotFoundResponseBody builds the HTTP response body from the
+// result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GetAssetPlanNotFoundResponseBody {
+	body := &GetAssetPlanNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *GetAssetPlanPayloadTooLargeResponseBody {
+	body := &GetAssetPlanPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *GetAssetPlanUnauthorizedResponseBody {
+	body := &GetAssetPlanUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -8918,6 +9206,18 @@ func NewGetCreativeAssetPayload(projectID string, briefID string, assetID string
 	v.ProjectID = projectID
 	v.BriefID = briefID
 	v.AssetID = assetID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetAssetPlanPayload builds a lfx-v2-campaign-service-briefs service
+// get-asset-plan endpoint payload.
+func NewGetAssetPlanPayload(projectID string, briefID string, platforms []string, bearerToken *string) *lfxv2campaignservicebriefs.GetAssetPlanPayload {
+	v := &lfxv2campaignservicebriefs.GetAssetPlanPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.Platforms = platforms
 	v.BearerToken = bearerToken
 
 	return v

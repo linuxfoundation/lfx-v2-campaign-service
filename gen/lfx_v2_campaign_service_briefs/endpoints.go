@@ -26,6 +26,7 @@ type Endpoints struct {
 	UploadCreativeAsset    goa.Endpoint
 	ListCreativeAssets     goa.Endpoint
 	GetCreativeAsset       goa.Endpoint
+	GetAssetPlan           goa.Endpoint
 	DeleteCreativeAsset    goa.Endpoint
 	CreateCampaigns        goa.Endpoint
 	AdoptCampaign          goa.Endpoint
@@ -73,6 +74,7 @@ func NewEndpoints(s Service) *Endpoints {
 		UploadCreativeAsset:    NewUploadCreativeAssetEndpoint(s, a.JWTAuth),
 		ListCreativeAssets:     NewListCreativeAssetsEndpoint(s, a.JWTAuth),
 		GetCreativeAsset:       NewGetCreativeAssetEndpoint(s, a.JWTAuth),
+		GetAssetPlan:           NewGetAssetPlanEndpoint(s, a.JWTAuth),
 		DeleteCreativeAsset:    NewDeleteCreativeAssetEndpoint(s, a.JWTAuth),
 		CreateCampaigns:        NewCreateCampaignsEndpoint(s, a.JWTAuth),
 		AdoptCampaign:          NewAdoptCampaignEndpoint(s, a.JWTAuth),
@@ -118,6 +120,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.UploadCreativeAsset = m(e.UploadCreativeAsset)
 	e.ListCreativeAssets = m(e.ListCreativeAssets)
 	e.GetCreativeAsset = m(e.GetCreativeAsset)
+	e.GetAssetPlan = m(e.GetAssetPlan)
 	e.DeleteCreativeAsset = m(e.DeleteCreativeAsset)
 	e.CreateCampaigns = m(e.CreateCampaigns)
 	e.AdoptCampaign = m(e.AdoptCampaign)
@@ -376,6 +379,29 @@ func NewGetCreativeAssetEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.
 			return nil, err
 		}
 		return s.GetCreativeAsset(ctx, p)
+	}
+}
+
+// NewGetAssetPlanEndpoint returns an endpoint function that calls the method
+// "get-asset-plan" of service "lfx-v2-campaign-service-briefs".
+func NewGetAssetPlanEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GetAssetPlanPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetAssetPlan(ctx, p)
 	}
 }
 

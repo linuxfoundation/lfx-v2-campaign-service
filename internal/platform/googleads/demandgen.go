@@ -144,7 +144,7 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	// that may have created something we never got an id for.
 	namePartial := func() *CampaignResult {
 		return &CampaignResult{
-			Platform:     "google-ads",
+			Platform:     platformGoogleAds,
 			AccountLabel: c.account.Label,
 			// Stamped on every partial, not just the success result — a caller
 			// reconciling a possibly-created campaign needs to know which account to

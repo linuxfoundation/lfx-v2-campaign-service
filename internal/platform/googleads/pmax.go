@@ -215,7 +215,7 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 
 	namePartial := func() *CampaignResult {
 		return &CampaignResult{
-			Platform:           "google-ads",
+			Platform:           platformGoogleAds,
 			AccountLabel:       c.account.Label,
 			CustomerID:         c.account.CustomerID,
 			CampaignName:       campaignName,

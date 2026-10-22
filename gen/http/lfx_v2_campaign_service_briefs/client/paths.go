@@ -59,6 +59,11 @@ func GetCreativeAssetLfxV2CampaignServiceBriefsPath(projectID string, briefID st
 	return fmt.Sprintf("/projects/%v/briefs/%v/creative-assets/%v", projectID, briefID, assetID)
 }
 
+// GetAssetPlanLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service get-asset-plan HTTP endpoint.
+func GetAssetPlanLfxV2CampaignServiceBriefsPath(projectID string, briefID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/creative-assets/plan", projectID, briefID)
+}
+
 // DeleteCreativeAssetLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service delete-creative-asset HTTP endpoint.
 func DeleteCreativeAssetLfxV2CampaignServiceBriefsPath(projectID string, briefID string, assetID string) string {
 	return fmt.Sprintf("/projects/%v/briefs/%v/creative-assets/%v", projectID, briefID, assetID)

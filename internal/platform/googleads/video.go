@@ -179,7 +179,7 @@ func (c *Client) createVideoCampaignCascade(ctx context.Context, in CampaignInpu
 
 	namePartial := func() *CampaignResult {
 		return &CampaignResult{
-			Platform:           "google-ads",
+			Platform:           platformGoogleAds,
 			AccountLabel:       c.account.Label,
 			CustomerID:         c.account.CustomerID,
 			CampaignName:       campaignName,

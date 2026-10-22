@@ -534,6 +534,28 @@ type GetCreativeAssetResponseBody struct {
 	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
 }
 
+// GetAssetPlanResponseBody is the type of the "lfx-v2-campaign-service-briefs"
+// service "get-asset-plan" endpoint HTTP response body.
+type GetAssetPlanResponseBody struct {
+	// The platforms this plan covers, after defaulting — echoed so a caller who
+	// sent no filter knows what was actually evaluated.
+	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
+	// Every slot that received at least one asset, in platform catalog order.
+	Assignments []*CreativeSlotAssignmentResponseBody `form:"assignments,omitempty" json:"assignments,omitempty" xml:"assignments,omitempty"`
+	// Every required slot or cross-slot rule the library leaves short. Empty means
+	// this library can fill every requested platform.
+	Gaps []*CreativeSlotGapResponseBody `form:"gaps,omitempty" json:"gaps,omitempty" xml:"gaps,omitempty"`
+	// Assets whose dimensions were never recorded, so their shape is unknown. They
+	// are NOT counted against any slot and NOT reported as failing one: unknown is
+	// a different answer from wrong, and a dimension backfill makes them
+	// classifiable without the operator doing anything.
+	Unclassified []string `form:"unclassified,omitempty" json:"unclassified,omitempty" xml:"unclassified,omitempty"`
+	// Assets whose dimensions are known and which no requested slot would accept.
+	// The mirror of gaps: not only "what am I missing" but "which of the files I
+	// just dropped is doing nothing".
+	Unused []string `form:"unused,omitempty" json:"unused,omitempty" xml:"unused,omitempty"`
+}
+
 // CreateCampaignsResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // response body.
@@ -1952,6 +1974,79 @@ type GetCreativeAssetPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
 // response body for the "Unauthorized" error.
 type GetCreativeAssetUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetAssetPlanBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "BadRequest" error.
+type GetAssetPlanBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetAssetPlanConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "Conflict" error.
+type GetAssetPlanConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetAssetPlanServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type GetAssetPlanServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetAssetPlanInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "InternalServerError" error.
+type GetAssetPlanInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetAssetPlanNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "NotFound" error.
+type GetAssetPlanNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetAssetPlanPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetAssetPlanPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetAssetPlanUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetAssetPlanUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -4223,6 +4318,65 @@ type CreativeAssetResponseBody struct {
 	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
 }
 
+// CreativeSlotAssignmentResponseBody is used to define fields on response body
+// types.
+type CreativeSlotAssignmentResponseBody struct {
+	// Stable identifier for this slot: platform/channel/slot, or platform/slot
+	// where the platform has a single ad shape. It is the join key between a plan
+	// row and an operator override, so it survives a round trip through a client
+	// unchanged.
+	SlotKey *string `form:"slot_key,omitempty" json:"slot_key,omitempty" xml:"slot_key,omitempty"`
+	// Campaign platform this slot belongs to, using the same identifier a campaign
+	// config carries ("google-ads").
+	Platform *string `form:"platform,omitempty" json:"platform,omitempty" xml:"platform,omitempty"`
+	// Ad channel within the platform whose rules differ from its siblings
+	// ("PERFORMANCE_MAX", "DEMAND_GEN", "DISPLAY"). Absent where the platform has
+	// a single ad shape.
+	Channel *string `form:"channel,omitempty" json:"channel,omitempty" xml:"channel,omitempty"`
+	// Wire name of the slot within its channel — the asset field type or payload
+	// array key a campaign config puts this image under.
+	Slot *string `form:"slot,omitempty" json:"slot,omitempty" xml:"slot,omitempty"`
+	// Operator-facing name of the slot. It NAMES ITS CHANNEL, because three Google
+	// channels each have a slot called "logo image" under different rules and a
+	// bare "logo image" would not say which creative is meant.
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// The slot's rule as a sentence an operator can act on — ratio, tolerance and
+	// pixel floor, plus the byte cap where one applies.
+	Requirement *string `form:"requirement,omitempty" json:"requirement,omitempty" xml:"requirement,omitempty"`
+	// Assets assigned to this slot, best fit first. An asset may appear in several
+	// slots: one library feeds every platform, and the same square image
+	// legitimately serves a 1:1 slot on each. It never appears twice within one
+	// slot.
+	AssetIds []string `form:"asset_ids,omitempty" json:"asset_ids,omitempty" xml:"asset_ids,omitempty"`
+	// Images the platform requires in this slot. 0 marks the slot optional.
+	MinCount *int `form:"min_count,omitempty" json:"min_count,omitempty" xml:"min_count,omitempty"`
+	// Images the platform will accept in this slot. 0 means the platform states no
+	// per-slot ceiling; a shared ceiling across sibling slots may still apply.
+	MaxCount *int `form:"max_count,omitempty" json:"max_count,omitempty" xml:"max_count,omitempty"`
+}
+
+// CreativeSlotGapResponseBody is used to define fields on response body types.
+type CreativeSlotGapResponseBody struct {
+	// Campaign platform whose rule is unmet.
+	Platform *string `form:"platform,omitempty" json:"platform,omitempty" xml:"platform,omitempty"`
+	// Ad channel whose rule is unmet. Absent where the platform has a single ad
+	// shape.
+	Channel *string `form:"channel,omitempty" json:"channel,omitempty" xml:"channel,omitempty"`
+	// The slot this shortfall belongs to. ABSENT when the requirement spans
+	// several slots and no single one of them is required on its own.
+	SlotKey *string `form:"slot_key,omitempty" json:"slot_key,omitempty" xml:"slot_key,omitempty"`
+	// Operator-facing name of the unmet requirement.
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// How many more images the requirement needs beyond what the plan could
+	// assign. Always at least 1.
+	Need *int `form:"need,omitempty" json:"need,omitempty" xml:"need,omitempty"`
+	// What is missing and what would satisfy it, as the sentence an operator takes
+	// back to their designer. It names every shape that would close the gap, not
+	// just one, so an either-or requirement does not send someone to produce an
+	// image they did not need.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
 // EmailMetricsResponseBody is used to define fields on response body types.
 type EmailMetricsResponseBody struct {
 	// Emails handed to the delivery pipeline, to date
@@ -6137,6 +6291,121 @@ func NewGetCreativeAssetPayloadTooLarge(body *GetCreativeAssetPayloadTooLargeRes
 // NewGetCreativeAssetUnauthorized builds a lfx-v2-campaign-service-briefs
 // service get-creative-asset endpoint Unauthorized error.
 func NewGetCreativeAssetUnauthorized(body *GetCreativeAssetUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewGetAssetPlanCreativeAssetPlanOK builds a "lfx-v2-campaign-service-briefs"
+// service "get-asset-plan" endpoint result from a HTTP "OK" response.
+func NewGetAssetPlanCreativeAssetPlanOK(body *GetAssetPlanResponseBody) *lfxv2campaignservicebriefs.CreativeAssetPlan {
+	v := &lfxv2campaignservicebriefs.CreativeAssetPlan{}
+	v.Platforms = make([]string, len(body.Platforms))
+	for i, val := range body.Platforms {
+		v.Platforms[i] = val
+	}
+	v.Assignments = make([]*lfxv2campaignservicebriefs.CreativeSlotAssignment, len(body.Assignments))
+	for i, val := range body.Assignments {
+		if val == nil {
+			v.Assignments[i] = nil
+			continue
+		}
+		v.Assignments[i] = unmarshalCreativeSlotAssignmentResponseBodyToLfxv2campaignservicebriefsCreativeSlotAssignment(val)
+	}
+	v.Gaps = make([]*lfxv2campaignservicebriefs.CreativeSlotGap, len(body.Gaps))
+	for i, val := range body.Gaps {
+		if val == nil {
+			v.Gaps[i] = nil
+			continue
+		}
+		v.Gaps[i] = unmarshalCreativeSlotGapResponseBodyToLfxv2campaignservicebriefsCreativeSlotGap(val)
+	}
+	v.Unclassified = make([]string, len(body.Unclassified))
+	for i, val := range body.Unclassified {
+		v.Unclassified[i] = val
+	}
+	v.Unused = make([]string, len(body.Unused))
+	for i, val := range body.Unused {
+		v.Unused[i] = val
+	}
+
+	return v
+}
+
+// NewGetAssetPlanBadRequest builds a lfx-v2-campaign-service-briefs service
+// get-asset-plan endpoint BadRequest error.
+func NewGetAssetPlanBadRequest(body *GetAssetPlanBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetAssetPlanConflict builds a lfx-v2-campaign-service-briefs service
+// get-asset-plan endpoint Conflict error.
+func NewGetAssetPlanConflict(body *GetAssetPlanConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGetAssetPlanServiceUnavailable builds a lfx-v2-campaign-service-briefs
+// service get-asset-plan endpoint ServiceUnavailable error.
+func NewGetAssetPlanServiceUnavailable(body *GetAssetPlanServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetAssetPlanInternalServerError builds a lfx-v2-campaign-service-briefs
+// service get-asset-plan endpoint InternalServerError error.
+func NewGetAssetPlanInternalServerError(body *GetAssetPlanInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetAssetPlanNotFound builds a lfx-v2-campaign-service-briefs service
+// get-asset-plan endpoint NotFound error.
+func NewGetAssetPlanNotFound(body *GetAssetPlanNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetAssetPlanPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service get-asset-plan endpoint PayloadTooLarge error.
+func NewGetAssetPlanPayloadTooLarge(body *GetAssetPlanPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetAssetPlanUnauthorized builds a lfx-v2-campaign-service-briefs service
+// get-asset-plan endpoint Unauthorized error.
+func NewGetAssetPlanUnauthorized(body *GetAssetPlanUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
 	v := &lfxv2campaignservicebriefs.UnauthorizedError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -9612,6 +9881,47 @@ func ValidateGetCreativeAssetResponseBody(body *GetCreativeAssetResponseBody) (e
 	return
 }
 
+// ValidateGetAssetPlanResponseBody runs the validations defined on
+// GetAssetPlanResponseBody
+func ValidateGetAssetPlanResponseBody(body *GetAssetPlanResponseBody) (err error) {
+	if body.Platforms == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platforms", "body"))
+	}
+	if body.Assignments == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("assignments", "body"))
+	}
+	if body.Gaps == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("gaps", "body"))
+	}
+	if body.Unclassified == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("unclassified", "body"))
+	}
+	if body.Unused == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("unused", "body"))
+	}
+	for _, e := range body.Assignments {
+		if e != nil {
+			if err2 := validateCreativeSlotAssignmentResponseBody(e, "body.assignments[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.Gaps {
+		if e != nil {
+			if err2 := validateCreativeSlotGapResponseBody(e, "body.gaps[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.Unclassified {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.unclassified[*]", e, goa.FormatUUID))
+	}
+	for _, e := range body.Unused {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.unused[*]", e, goa.FormatUUID))
+	}
+	return
+}
+
 // ValidateCreateCampaignsResponseBody runs the validations defined on
 // CreateCampaignsResponseBody
 func ValidateCreateCampaignsResponseBody(body *CreateCampaignsResponseBody) (err error) {
@@ -11359,6 +11669,95 @@ func ValidateGetCreativeAssetPayloadTooLargeResponseBody(body *GetCreativeAssetP
 // ValidateGetCreativeAssetUnauthorizedResponseBody runs the validations
 // defined on GetCreativeAssetUnauthorizedResponseBody
 func ValidateGetCreativeAssetUnauthorizedResponseBody(body *GetCreativeAssetUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetAssetPlanBadRequestResponseBody runs the validations defined on
+// GetAssetPlanBadRequestResponseBody
+func ValidateGetAssetPlanBadRequestResponseBody(body *GetAssetPlanBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetAssetPlanConflictResponseBody runs the validations defined on
+// GetAssetPlanConflictResponseBody
+func ValidateGetAssetPlanConflictResponseBody(body *GetAssetPlanConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		}
+	}
+	return
+}
+
+// ValidateGetAssetPlanServiceUnavailableResponseBody runs the validations
+// defined on GetAssetPlanServiceUnavailableResponseBody
+func ValidateGetAssetPlanServiceUnavailableResponseBody(body *GetAssetPlanServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetAssetPlanInternalServerErrorResponseBody runs the validations
+// defined on GetAssetPlanInternalServerErrorResponseBody
+func ValidateGetAssetPlanInternalServerErrorResponseBody(body *GetAssetPlanInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetAssetPlanNotFoundResponseBody runs the validations defined on
+// GetAssetPlanNotFoundResponseBody
+func ValidateGetAssetPlanNotFoundResponseBody(body *GetAssetPlanNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetAssetPlanPayloadTooLargeResponseBody runs the validations defined
+// on GetAssetPlanPayloadTooLargeResponseBody
+func ValidateGetAssetPlanPayloadTooLargeResponseBody(body *GetAssetPlanPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetAssetPlanUnauthorizedResponseBody runs the validations defined on
+// GetAssetPlanUnauthorizedResponseBody
+func ValidateGetAssetPlanUnauthorizedResponseBody(body *GetAssetPlanUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -14182,6 +14581,118 @@ func validateCreativeAssetResponseBody(body *CreativeAssetResponseBody, path str
 	if body.Created != nil {
 		if !(*body.Created == "true" || *body.Created == "false") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".created", *body.Created, []any{"true", "false"}))
+		}
+	}
+	return
+}
+
+// ValidateCreativeSlotAssignmentResponseBody runs the validations defined on
+// creative-slot-assignment
+func ValidateCreativeSlotAssignmentResponseBody(body *CreativeSlotAssignmentResponseBody) (err error) {
+	if body.SlotKey == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("slot_key", "body"))
+	}
+	if body.Platform == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform", "body"))
+	}
+	if body.Slot == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("slot", "body"))
+	}
+	if body.Label == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("label", "body"))
+	}
+	if body.Requirement == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requirement", "body"))
+	}
+	if body.AssetIds == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("asset_ids", "body"))
+	}
+	if body.MinCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("min_count", "body"))
+	}
+	if body.MaxCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("max_count", "body"))
+	}
+	for _, e := range body.AssetIds {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.asset_ids[*]", e, goa.FormatUUID))
+	}
+	return
+}
+
+// validateCreativeSlotAssignmentResponseBody checks creative-slot-assignment
+// and reports errors using the path supplied by its caller
+func validateCreativeSlotAssignmentResponseBody(body *CreativeSlotAssignmentResponseBody, path string) (err error) {
+	if body.SlotKey == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("slot_key", path))
+	}
+	if body.Platform == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform", path))
+	}
+	if body.Slot == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("slot", path))
+	}
+	if body.Label == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("label", path))
+	}
+	if body.Requirement == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requirement", path))
+	}
+	if body.AssetIds == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("asset_ids", path))
+	}
+	if body.MinCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("min_count", path))
+	}
+	if body.MaxCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("max_count", path))
+	}
+	for _, e := range body.AssetIds {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".asset_ids[*]", e, goa.FormatUUID))
+	}
+	return
+}
+
+// ValidateCreativeSlotGapResponseBody runs the validations defined on
+// creative-slot-gap
+func ValidateCreativeSlotGapResponseBody(body *CreativeSlotGapResponseBody) (err error) {
+	if body.Platform == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform", "body"))
+	}
+	if body.Label == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("label", "body"))
+	}
+	if body.Need == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("need", "body"))
+	}
+	if body.Reason == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("reason", "body"))
+	}
+	if body.Need != nil {
+		if *body.Need < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.need", *body.Need, 1, true))
+		}
+	}
+	return
+}
+
+// validateCreativeSlotGapResponseBody checks creative-slot-gap and reports
+// errors using the path supplied by its caller
+func validateCreativeSlotGapResponseBody(body *CreativeSlotGapResponseBody, path string) (err error) {
+	if body.Platform == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform", path))
+	}
+	if body.Label == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("label", path))
+	}
+	if body.Need == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("need", path))
+	}
+	if body.Reason == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("reason", path))
+	}
+	if body.Need != nil {
+		if *body.Need < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError(path+".need", *body.Need, 1, true))
 		}
 	}
 	return

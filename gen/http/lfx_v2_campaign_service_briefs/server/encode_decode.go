@@ -1775,6 +1775,165 @@ func EncodeGetCreativeAssetError(encoder func(context.Context, http.ResponseWrit
 	}
 }
 
+// EncodeGetAssetPlanResponse returns an encoder for responses returned by the
+// lfx-v2-campaign-service-briefs get-asset-plan endpoint.
+func EncodeGetAssetPlanResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.CreativeAssetPlan)
+		enc := encoder(ctx, w)
+		body := NewGetAssetPlanResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeGetAssetPlanRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-briefs get-asset-plan endpoint.
+func DecodeGetAssetPlanRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.GetAssetPlanPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.GetAssetPlanPayload, error) {
+		var payload *lfxv2campaignservicebriefs.GetAssetPlanPayload
+		var (
+			projectID   string
+			briefID     string
+			platforms   []string
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		platforms = r.URL.Query()["platforms"]
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewGetAssetPlanPayload(projectID, briefID, platforms, bearerToken)
+		if payload.BearerToken != nil {
+			cred := *payload.BearerToken
+			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred = cred[index+1:]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeGetAssetPlanError returns an encoder for errors returned by the
+// get-asset-plan lfx-v2-campaign-service-briefs endpoint.
+func EncodeGetAssetPlanError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetAssetPlanBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetAssetPlanConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetAssetPlanServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetAssetPlanInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetAssetPlanNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignservicebriefs.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetAssetPlanPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignservicebriefs.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetAssetPlanUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeDeleteCreativeAssetResponse returns an encoder for responses returned
 // by the lfx-v2-campaign-service-briefs delete-creative-asset endpoint.
 func EncodeDeleteCreativeAssetResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
@@ -7017,6 +7176,48 @@ func marshalLfxv2campaignservicebriefsCreativeAssetToCreativeAssetResponseBody(v
 		Width:     v.Width,
 		Height:    v.Height,
 		Created:   v.Created,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsCreativeSlotAssignmentToCreativeSlotAssignmentResponseBody
+// builds a value of type *CreativeSlotAssignmentResponseBody from a value of
+// type *lfxv2campaignservicebriefs.CreativeSlotAssignment.
+func marshalLfxv2campaignservicebriefsCreativeSlotAssignmentToCreativeSlotAssignmentResponseBody(v *lfxv2campaignservicebriefs.CreativeSlotAssignment) *CreativeSlotAssignmentResponseBody {
+	res := &CreativeSlotAssignmentResponseBody{
+		SlotKey:     v.SlotKey,
+		Platform:    v.Platform,
+		Channel:     v.Channel,
+		Slot:        v.Slot,
+		Label:       v.Label,
+		Requirement: v.Requirement,
+		MinCount:    v.MinCount,
+		MaxCount:    v.MaxCount,
+	}
+	if v.AssetIds != nil {
+		res.AssetIds = make([]string, len(v.AssetIds))
+		for i, val := range v.AssetIds {
+			res.AssetIds[i] = val
+		}
+	} else {
+		res.AssetIds = []string{}
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsCreativeSlotGapToCreativeSlotGapResponseBody
+// builds a value of type *CreativeSlotGapResponseBody from a value of type
+// *lfxv2campaignservicebriefs.CreativeSlotGap.
+func marshalLfxv2campaignservicebriefsCreativeSlotGapToCreativeSlotGapResponseBody(v *lfxv2campaignservicebriefs.CreativeSlotGap) *CreativeSlotGapResponseBody {
+	res := &CreativeSlotGapResponseBody{
+		Platform: v.Platform,
+		Channel:  v.Channel,
+		SlotKey:  v.SlotKey,
+		Label:    v.Label,
+		Need:     v.Need,
+		Reason:   v.Reason,
 	}
 
 	return res

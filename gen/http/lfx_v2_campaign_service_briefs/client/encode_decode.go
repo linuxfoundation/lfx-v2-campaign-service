@@ -2296,6 +2296,226 @@ func DecodeGetCreativeAssetResponse(decoder func(*http.Response) goahttp.Decoder
 	}
 }
 
+// BuildGetAssetPlanRequest instantiates a HTTP request object with method and
+// path set to call the "lfx-v2-campaign-service-briefs" service
+// "get-asset-plan" endpoint
+func (c *Client) BuildGetAssetPlanRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.GetAssetPlanPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "get-asset-plan", "*lfxv2campaignservicebriefs.GetAssetPlanPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: GetAssetPlanLfxV2CampaignServiceBriefsPath(projectID, briefID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "get-asset-plan", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeGetAssetPlanRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs get-asset-plan server.
+func EncodeGetAssetPlanRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.GetAssetPlanPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "get-asset-plan", "*lfxv2campaignservicebriefs.GetAssetPlanPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		for _, value := range p.Platforms {
+			values.Add("platforms", value)
+		}
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeGetAssetPlanResponse returns a decoder for responses returned by the
+// lfx-v2-campaign-service-briefs get-asset-plan endpoint. restoreBody controls
+// whether the response body should be restored after having been read.
+// DecodeGetAssetPlanResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeGetAssetPlanResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-asset-plan", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body GetAssetPlanResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			err = ValidateGetAssetPlanResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			res := NewGetAssetPlanCreativeAssetPlanOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetAssetPlanBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			err = ValidateGetAssetPlanBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			return nil, NewGetAssetPlanBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body GetAssetPlanConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			err = ValidateGetAssetPlanConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			return nil, NewGetAssetPlanConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body GetAssetPlanServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			err = ValidateGetAssetPlanServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			return nil, NewGetAssetPlanServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body GetAssetPlanInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			err = ValidateGetAssetPlanInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			return nil, NewGetAssetPlanInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body GetAssetPlanNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			err = ValidateGetAssetPlanNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			return nil, NewGetAssetPlanNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetAssetPlanPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			err = ValidateGetAssetPlanPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			return nil, NewGetAssetPlanPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetAssetPlanUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			err = ValidateGetAssetPlanUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			return nil, NewGetAssetPlanUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-asset-plan", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "get-asset-plan", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildDeleteCreativeAssetRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-briefs" service
 // "delete-creative-asset" endpoint
@@ -8972,6 +9192,44 @@ func unmarshalCreativeAssetResponseBodyToLfxv2campaignservicebriefsCreativeAsset
 		Width:     v.Width,
 		Height:    v.Height,
 		Created:   v.Created,
+	}
+
+	return res
+}
+
+// unmarshalCreativeSlotAssignmentResponseBodyToLfxv2campaignservicebriefsCreativeSlotAssignment
+// builds a value of type *lfxv2campaignservicebriefs.CreativeSlotAssignment
+// from a value of type *CreativeSlotAssignmentResponseBody.
+func unmarshalCreativeSlotAssignmentResponseBodyToLfxv2campaignservicebriefsCreativeSlotAssignment(v *CreativeSlotAssignmentResponseBody) *lfxv2campaignservicebriefs.CreativeSlotAssignment {
+	res := &lfxv2campaignservicebriefs.CreativeSlotAssignment{
+		SlotKey:     *v.SlotKey,
+		Platform:    *v.Platform,
+		Channel:     v.Channel,
+		Slot:        *v.Slot,
+		Label:       *v.Label,
+		Requirement: *v.Requirement,
+		MinCount:    *v.MinCount,
+		MaxCount:    *v.MaxCount,
+	}
+	res.AssetIds = make([]string, len(v.AssetIds))
+	for i, val := range v.AssetIds {
+		res.AssetIds[i] = val
+	}
+
+	return res
+}
+
+// unmarshalCreativeSlotGapResponseBodyToLfxv2campaignservicebriefsCreativeSlotGap
+// builds a value of type *lfxv2campaignservicebriefs.CreativeSlotGap from a
+// value of type *CreativeSlotGapResponseBody.
+func unmarshalCreativeSlotGapResponseBodyToLfxv2campaignservicebriefsCreativeSlotGap(v *CreativeSlotGapResponseBody) *lfxv2campaignservicebriefs.CreativeSlotGap {
+	res := &lfxv2campaignservicebriefs.CreativeSlotGap{
+		Platform: *v.Platform,
+		Channel:  v.Channel,
+		SlotKey:  v.SlotKey,
+		Label:    *v.Label,
+		Need:     *v.Need,
+		Reason:   *v.Reason,
 	}
 
 	return res

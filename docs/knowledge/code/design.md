@@ -197,6 +197,33 @@ one.
 
 Like upload, none of the three carries an ETag, for the reason given above.
 
+`get-asset-plan` (LFXV2-2665) is the fifth method on that surface and the one that answers the
+operator's actual question: not "what have I stored" but **"can this brief launch, and if not,
+what is missing?"** It is `GET .../creative-assets/plan` — a PURE READ that stores nothing and
+attaches nothing, so an operator may call it as often as they like while still deciding, and
+the override they eventually send replaces a row in the plan rather than racing it.
+
+- **`platforms` is a REPEATABLE query parameter**, not a comma-joined list: a platform
+  identifier is opaque, and a separator inside one would need an escaping rule nothing else in
+  this API has. Absent means every platform whose slot rules the service publishes, which is
+  the answer "is my library ready" wants. A platform the service does not know is **ignored,
+  not refused** — see [internal/service](internal-service.md) — and the echoed `platforms`
+  field is what makes the drop visible.
+- **The result is four lists and all of them are REQUIRED**: `assignments`, `gaps`,
+  `unclassified` and `unused`. Empty is a real answer here — no gaps is precisely the state
+  that means ready to launch — so each must serialize as `[]` rather than `null`.
+- **`creative-slot-gap` makes `slot_key` OPTIONAL while `label` is required.** A requirement
+  can span several slots (Google needs Demand Gen's landscape marketing image *or* its square
+  one), and such a gap belongs to no single slot; the label names the requirement instead.
+  Every other gap field — platform, need, reason — is required, because a gap with no stated
+  remedy is not worth returning.
+- **`requirement` travels with a FULL slot too**, not only a gap. The operator's next question
+  after "what fits here" is "what else would", and re-deriving that sentence client-side would
+  mean keeping a second copy of every platform's image geometry in the browser.
+- **No ETag**, and for a different reason than upload's: the plan is DERIVED and holds no
+  version of its own. It changes when the library changes, and the library's own methods are
+  where a concurrency guard would belong.
+
 ## The audience-builder service (LFXV2-2770)
 
 `audience_builder.go` declares a service of its own — thirteen methods under
