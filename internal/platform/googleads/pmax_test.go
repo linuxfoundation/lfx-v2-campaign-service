@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -332,6 +333,12 @@ func TestCreatePerformanceMaxCampaign_LinkFailureStillReportsWhatExists(t *testi
 // of 2026-10-16 are exactly that). So this return carries the hedged ACTION REQUIRED
 // sentence rather than the informational one or nothing. It is also
 // the proof that campaigns:mutate stays untouched: the handler fails the test if it is hit.
+//
+// The arm is now reached only after the reuse lookup DECLINES the existing budget — here
+// because the handler reports no budget of that name at all. That is the pairing this test
+// pins: a declined reuse must leave the pre-reuse behaviour exactly as it was, hedge
+// included. The accepted-reuse path is a different arm and does not carry the hedge; see
+// TestCreatePerformanceMaxCampaign_DuplicateBudgetReusesOrphan.
 func TestCreatePerformanceMaxCampaign_DuplicateBudgetWarnsAboutExpansion(t *testing.T) {
 	images := pmaxImages(t)
 	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -341,6 +348,13 @@ func TestCreatePerformanceMaxCampaign_DuplicateBudgetWarnsAboutExpansion(t *test
 		}
 		if strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate") {
 			gaqlError(http.StatusBadRequest, "campaignBudgetError", "DUPLICATE_NAME")(w, r)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			// The reuse lookup. Answering with no rows makes it refuse (Google said the
+			// name is taken and the account says no budget holds it — a contradiction),
+			// which is what keeps this test on the refusal arm it is about.
+			_, _ = w.Write([]byte(`{"results":[]}`))
 			return
 		}
 		t.Errorf("nothing may be mutated once the budget name is taken: %s", r.URL.Path)
@@ -717,5 +731,106 @@ func TestPreflightPerformanceMaxSplitsTheCriteria(t *testing.T) {
 				t.Errorf("refused by the wrong rule: got %q, want it to mention %q", err, tc.wantSub)
 			}
 		})
+	}
+}
+
+// TestCreatePerformanceMaxCampaign_DuplicateBudgetReusesOrphan is the other half of the
+// pairing: the same DUPLICATE_NAME refusal, but the account shows the budget holding the
+// name is an adoptable orphan, so the cascade continues against it instead of dead-ending.
+//
+// This is the case the 2026-10-16 and 2026-10-20 dispatches produced and could not get
+// past: each one died at campaigns:mutate having already created a budget, and because a
+// non-shared budget with no campaign on it has no Google Ads UI surface to delete it from,
+// the name stayed taken forever. Adoption is the only way a brief in that state is ever
+// dispatched again.
+//
+// The hedge is deliberately asserted ABSENT here. expansionActionRequiredIfExists warns
+// that an earlier attempt may have left a campaign billing outside this request's opt-out;
+// a successful reuse has just proved from the campaign side that NO campaign references
+// this budget, so there is nothing left to warn about and the sentence would be false.
+func TestCreatePerformanceMaxCampaign_DuplicateBudgetReusesOrphan(t *testing.T) {
+	assetH, _ := okPMaxAssets()
+	groupH, _ := okPMaxGroup()
+	linkH, _ := okPMaxLinks()
+	images := pmaxImages(t)
+	in := demandGenInput()
+	budgetName := ComposeName(budgetKindFor(campaignKindPerformanceMax), in)
+
+	// mu guards the captures below: httptest serves each request on its own goroutine,
+	// matching newBudgetLookupServer's own pattern.
+	var (
+		mu           sync.Mutex
+		searches     int
+		campaignBody map[string]any
+	)
+	cascade := pmaxCascade(t, images, assetH, groupH, linkH)
+	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+			// The create still fails — nothing about reuse changes what Google says.
+			gaqlError(http.StatusBadRequest, "campaignBudgetError", "DUPLICATE_NAME")(w, r)
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			// First the budget lookup, then the attachment check. The orphan already
+			// carries this brief's amount, so no alignment mutate is expected — and the
+			// budget handler above would fail the test if one were attempted.
+			mu.Lock()
+			searches++
+			n := searches
+			mu.Unlock()
+			if n == 1 {
+				_, _ = w.Write([]byte(`{"results":[` +
+					string(budgetRow(budgetRowOpts{name: budgetName, amountMicros: "500000000"})) + `]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"results":[]}`))
+		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+			body := decode(t, r)
+			mu.Lock()
+			campaignBody = body
+			mu.Unlock()
+			okCampaign(w, r)
+		default:
+			cascade(w, r)
+		}
+	})
+	c := demandGenClient(t, srv)
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("an adoptable orphan budget must not fail the dispatch: %v", err)
+	}
+	if res.CampaignBudgetID != "777" {
+		t.Errorf("CampaignBudgetID = %q, want the reused 777", res.CampaignBudgetID)
+	}
+	if res.CampaignID == "" || res.AssetGroupID != "555" {
+		t.Errorf("the whole cascade must run: campaign %q, asset group %q", res.CampaignID, res.AssetGroupID)
+	}
+	// The campaign has to attach to the budget that was actually adopted.
+	mu.Lock()
+	defer mu.Unlock()
+	ops, _ := campaignBody["operations"].([]any)
+	if len(ops) != 1 {
+		t.Fatalf("campaign body = %v", campaignBody)
+	}
+	op, _ := ops[0].(map[string]any)
+	create, _ := op["create"].(map[string]any)
+	if got, _ := create["campaignBudget"].(string); got != "customers/1234567890/campaignBudgets/777" {
+		t.Errorf("campaignBudget = %q, want the reused budget's resource name", got)
+	}
+	var sawReuse, sawHedge bool
+	for _, s := range res.Steps {
+		if strings.Contains(s, "Campaign budget reused: 777") {
+			sawReuse = true
+		}
+		if s == expansionActionRequiredIfExists {
+			sawHedge = true
+		}
+	}
+	if !sawReuse {
+		t.Errorf("the result must say the budget was reused rather than created: %v", res.Steps)
+	}
+	if sawHedge {
+		t.Errorf("a proven-unattached budget leaves nothing to hedge about, but the Steps warn anyway: %v", res.Steps)
 	}
 }

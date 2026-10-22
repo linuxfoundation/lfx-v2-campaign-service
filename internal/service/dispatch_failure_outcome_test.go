@@ -53,8 +53,11 @@ func TestDispatchFailureMessage_OutcomeArms(t *testing.T) {
 			wantNone: []string{"something may have been created", "could not be confirmed"},
 		},
 		{
-			outcome:  domain.CreateOutcomeCampaignNameTaken,
-			wantAll:  []string{"already exists", "budget for this attempt WAS created"},
+			outcome: domain.CreateOutcomeCampaignNameTaken,
+			// "EXISTS", not "WAS created": since budget-name adoption the budget behind this
+			// token may have been reused from an earlier attempt rather than created by this
+			// one. What the operator needs is that a budget for the brief is there.
+			wantAll:  []string{"already exists", "budget for this attempt EXISTS"},
 			wantNone: []string{"nothing new was created"},
 		},
 		{
@@ -64,7 +67,7 @@ func TestDispatchFailureMessage_OutcomeArms(t *testing.T) {
 		},
 		{
 			outcome:  domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed,
-			wantAll:  []string{"created the campaign budget", "could not be confirmed"},
+			wantAll:  []string{"created or reused the campaign budget", "could not be confirmed"},
 			wantNone: []string{"no campaign exists", "nothing new was created"},
 		},
 		{
@@ -79,7 +82,7 @@ func TestDispatchFailureMessage_OutcomeArms(t *testing.T) {
 			// The cascade's last mutate can answer 2xx with a response this client cannot
 			// read, past which that step did commit — so asserting the setup is unfinished
 			// would be this token overclaiming exactly as the two the review round caught.
-			wantNone: []string{"nothing new was created", "did not finish setting it up", "created the campaign budget"},
+			wantNone: []string{"nothing new was created", "did not finish setting it up", "created the campaign budget", "created or reused the campaign budget"},
 		},
 	}
 

@@ -44,6 +44,14 @@ func newCampaignClientFull(t *testing.T, budgetH, campaignH, adGroupH, adGroupAd
 			adGroupH(w, r)
 		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
 			adGroupAdH(w, r)
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			// The budget-reuse lookup, reached only from the DUPLICATE_NAME arm. The
+			// default answer is "no live budget carries that name", which
+			// findReusableBudget treats as a contradiction of Google's own refusal and
+			// declines to reuse on — so every test using this harness keeps the
+			// pre-reuse behaviour, and a test that wants a reuse serves its own rows.
+			// Never `{"results":null}`: that is a different response from an empty page.
+			_, _ = io.WriteString(w, `{"results":[]}`)
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

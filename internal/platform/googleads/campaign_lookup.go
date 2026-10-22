@@ -52,12 +52,27 @@ import (
 // Rejecting costs no reachable lookup either — Google Ads' JSON and proto surfaces both
 // require valid UTF-8, so no stored campaign name can contain a malformed byte.
 func gaqlStringLiteral(s string) (string, error) {
+	return gaqlNameLiteral("campaign", s)
+}
+
+// gaqlNameLiteral is gaqlStringLiteral with the ENTITY named, so a budget lookup's
+// refusals say "campaign budget name" rather than claiming the caller passed a campaign
+// name. Everything the doc comment above argues applies unchanged: the rules are about
+// what GAQL and encoding/json do to a free-text string, not about which resource the
+// string names, and Google Ads forbids the same three runes in CampaignBudget.name as in
+// Campaign.name.
+//
+// It exists as a parameter rather than a second escaper because the budget path's hazard
+// is the SAME hazard: a refusal there is answered as "that budget is not safely reusable",
+// which re-blocks a dispatch, and an escaping regression there would hand a campaign a
+// budget the query never really matched. Two copies would let one drift lenient.
+func gaqlNameLiteral(entity, s string) (string, error) {
 	if !utf8.ValidString(s) {
-		return "", fmt.Errorf("google-ads: campaign name for lookup is not valid UTF-8; encoding it would substitute U+FFFD and query a different name")
+		return "", fmt.Errorf("google-ads: %s name for lookup is not valid UTF-8; encoding it would substitute U+FFFD and query a different name", entity)
 	}
 	for _, r := range s {
 		if r == '\x00' || r == '\n' || r == '\r' {
-			return "", fmt.Errorf("google-ads: campaign name contains %U, which Google Ads forbids in a campaign name, so it cannot match a real campaign", r)
+			return "", fmt.Errorf("google-ads: %s name contains %U, which Google Ads forbids in a %s name, so it cannot match a real %s", entity, r, entity, entity)
 		}
 	}
 	escaped := strings.ReplaceAll(s, `\`, `\\`)
