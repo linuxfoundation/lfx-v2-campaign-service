@@ -302,7 +302,13 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 		// so the reuse side is still read for a write that may have landed.
 		return namePartial(), fmt.Errorf("google-ads performance max budget %q already exists (DUPLICATE_NAME): %w — and could not be safely reused: %w — a prior attempt likely created it; verify in Google Ads before retrying", budgetName, err, reuseErr)
 	case createOutcomeAmbiguous(err):
-		return namePartial(), fmt.Errorf("google-ads performance max budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
+		// ASK THE ACCOUNT rather than hand the ambiguity to the operator. This arm used to
+		// return an id-less partial every time, which classified as
+		// CreateOutcomeUnconfirmed and reached the operator as "something may have been
+		// created" — while a budget that HAD committed sat unattached in the account, both
+		// invisible (a non-shared budget is not in the shared library) and blocking the
+		// next retry by name.
+		return c.ambiguousBudgetCreateOutcome(ctx, "performance max", budgetName, namePartial, err)
 	default:
 		return nil, fmt.Errorf("google-ads performance max budget creation failed: %w", err)
 	}

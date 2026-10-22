@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // ---------------------------------------------------------------------------
@@ -832,5 +834,119 @@ func TestCreatePerformanceMaxCampaign_DuplicateBudgetReusesOrphan(t *testing.T) 
 	}
 	if sawHedge {
 		t.Errorf("a proven-unattached budget leaves nothing to hedge about, but the Steps warn anyway: %v", res.Steps)
+	}
+}
+
+// TestCreatePerformanceMaxCampaign_AmbiguousBudgetResolvesTheOrphan is issue #385 on the
+// channel that produced it. campaignBudgets:mutate answers 5xx — which says nothing about
+// whether the write landed — and the budget DID land. Before the account was read back,
+// this returned an id-less partial every time, so the committed budget became an orphan
+// nobody was told about: invisible (a non-shared budget is in no Shared Library page) and
+// blocking the next retry of the same brief by name.
+func TestCreatePerformanceMaxCampaign_AmbiguousBudgetResolvesTheOrphan(t *testing.T) {
+	in := demandGenInput()
+	budgetName := ComposeName(budgetKindFor(campaignKindPerformanceMax), in)
+	images := pmaxImages(t)
+
+	// mu guards searches: httptest serves each request on its own goroutine.
+	var (
+		mu       sync.Mutex
+		searches int
+	)
+	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if body, ok := images[r.URL.Path]; ok {
+			_, _ = w.Write(body)
+			return
+		}
+		switch {
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+			serverError(w, r)
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			// The budget lookup, then the attachment check — a budget created seconds ago
+			// and never attached is referenced by nothing.
+			mu.Lock()
+			searches++
+			n := searches
+			mu.Unlock()
+			if n == 1 {
+				_, _ = w.Write([]byte(`{"results":[` +
+					string(budgetRow(budgetRowOpts{name: budgetName, amountMicros: "500000000"})) + `]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"results":[]}`))
+		default:
+			t.Errorf("no further mutate may be sent after an unconfirmed budget, got %s", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	})
+	c := demandGenClient(t, srv)
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("a budget create that was never acknowledged must still fail the dispatch")
+	}
+	if res == nil || res.CampaignBudgetID != "777" {
+		t.Fatalf("the partial must carry the id the account resolved, got %+v", res)
+	}
+	if !strings.Contains(err.Error(), "WAS created") {
+		t.Errorf("error = %q, want it to state the budget exists rather than that it may", err)
+	}
+	// The id is what CreateOutcome reads, and it is the whole operator-visible difference:
+	// a budget they can name instead of one they must hunt for in change history.
+	if outcome, ok := CreateOutcome(res, err); !ok || outcome != domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed {
+		t.Errorf("outcome = %q (ok=%v), want %q", outcome, ok, domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if searches != 2 {
+		t.Errorf("want the lookup and its attachment check, got %d searches", searches)
+	}
+}
+
+// TestCreatePerformanceMaxCampaign_AmbiguousBudgetNotVisibleKeepsTheClaim is the other
+// direction: the account was read, repeatedly, and holds nothing under this name. The
+// sentence says so, which is what the operator needs, but the partial and the claim stay —
+// an absence is a property of the read, not proof that the mutate never landed.
+func TestCreatePerformanceMaxCampaign_AmbiguousBudgetNotVisibleKeepsTheClaim(t *testing.T) {
+	in := demandGenInput()
+	images := pmaxImages(t)
+	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if body, ok := images[r.URL.Path]; ok {
+			_, _ = w.Write(body)
+			return
+		}
+		switch {
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+			serverError(w, r)
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			// A honoured query that matched nothing. Never `{"results":null}`.
+			_, _ = w.Write([]byte(`{"results":[]}`))
+		default:
+			t.Errorf("no further mutate may be sent after an unconfirmed budget, got %s", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	})
+	c := demandGenClient(t, srv)
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if res == nil {
+		t.Fatal("expected a partial: an ambiguous mutating create must retain the claim")
+	}
+	if res.CampaignBudgetID != "" {
+		t.Errorf("CampaignBudgetID = %q, want empty — no budget was found", res.CampaignBudgetID)
+	}
+	if !strings.Contains(err.Error(), "no budget of that name is live in the account") {
+		t.Errorf("error = %q, want it to report the absence", err)
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("an absence does not settle an ambiguous mutate: %v", err)
+	}
+	if outcome, ok := CreateOutcome(res, err); !ok || outcome != domain.CreateOutcomeUnconfirmed {
+		t.Errorf("outcome = %q (ok=%v), want %q", outcome, ok, domain.CreateOutcomeUnconfirmed)
 	}
 }
