@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // newCampaignClient wires a token server + an API server whose budget/campaign
@@ -32,6 +34,23 @@ func newCampaignClient(t *testing.T, budgetH, campaignH http.HandlerFunc) *Clien
 // also supplied per-test, for tests that exercise the GA-3 cascade itself.
 func newCampaignClientFull(t *testing.T, budgetH, campaignH, adGroupH, adGroupAdH http.HandlerFunc) *Client {
 	t.Helper()
+	return newCampaignClientSearch(t, budgetH, campaignH, adGroupH, adGroupAdH, emptySearchPage)
+}
+
+// emptySearchPage is the default googleAds:search answer: a honoured query that matched
+// nothing. Never `{"results":null}` — that is a different response from an empty page.
+func emptySearchPage(w http.ResponseWriter, _ *http.Request) {
+	_, _ = io.WriteString(w, `{"results":[]}`)
+}
+
+// newCampaignClientSearch is newCampaignClientFull with the googleAds:search handler also
+// supplied per-test. Two arms read the account: the DUPLICATE_NAME reuse lookup, and the
+// ambiguity resolution that follows an unconfirmed budget create. With the default
+// emptySearchPage both read "no live budget carries that name" — a contradiction the
+// reuse arm refuses to act on, and proof to the ambiguous arm that nothing was created.
+// A test that wants either arm to find a budget serves its own rows.
+func newCampaignClientSearch(t *testing.T, budgetH, campaignH, adGroupH, adGroupAdH, searchH http.HandlerFunc) *Client {
+	t.Helper()
 	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
 	t.Cleanup(tokenSrv.Close)
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -45,13 +64,7 @@ func newCampaignClientFull(t *testing.T, budgetH, campaignH, adGroupH, adGroupAd
 		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
 			adGroupAdH(w, r)
 		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
-			// The budget-reuse lookup, reached only from the DUPLICATE_NAME arm. The
-			// default answer is "no live budget carries that name", which
-			// findReusableBudget treats as a contradiction of Google's own refusal and
-			// declines to reuse on — so every test using this harness keeps the
-			// pre-reuse behaviour, and a test that wants a reuse serves its own rows.
-			// Never `{"results":null}`: that is a different response from an empty page.
-			_, _ = io.WriteString(w, `{"results":[]}`)
+			searchH(w, r)
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -205,20 +218,90 @@ func TestCreateCampaign_CampaignDuplicateNameIsUnconfirmedExists(t *testing.T) {
 	}
 }
 
-func TestCreateCampaign_BudgetAmbiguous5xxIsUnconfirmed(t *testing.T) {
-	c := newCampaignClient(t,
-		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) },
-		func(w http.ResponseWriter, _ *http.Request) {
-			t.Error("campaign must not be attempted after budget 5xx")
-			okCampaign(w, nil)
-		},
-	)
+// sampleBudgetName is the budget name ComposeName produces for sampleInput — the name the
+// ambiguity-resolution lookup searches the account for.
+const sampleBudgetName = "LFX | Budget | CNCF | KubeCon | brief-1"
+
+// refuseCampaignMutate fails the test if campaigns:mutate is ever issued. Every ambiguous
+// budget outcome below shares one invariant: the budget step did not complete, so no
+// campaign may be attempted whatever the account turns out to hold.
+func refuseCampaignMutate(t *testing.T) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		t.Error("campaign must not be attempted after an unconfirmed budget create")
+		okCampaign(w, r)
+	}
+}
+
+func ambiguousBudgetMutate(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusServiceUnavailable)
+}
+
+// TestCreateCampaign_BudgetAmbiguous5xxResolvesACommittedBudget is the outcome the old
+// behaviour could never reach: the 5xx said nothing, but the budget DID commit, and the
+// account says so. The partial must carry the id, because that id is the whole difference
+// between an operator who can act and one sent to hunt through change history for a
+// non-shared budget no Google Ads page lists.
+func TestCreateCampaign_BudgetAmbiguous5xxResolvesACommittedBudget(t *testing.T) {
+	c := newCampaignClientSearch(t, ambiguousBudgetMutate, refuseCampaignMutate(t),
+		okAdGroup, okAdGroupAd,
+		searchPagesHandler(t,
+			[]json.RawMessage{budgetRow(budgetRowOpts{name: sampleBudgetName})},
+			nil, // attachment check: nothing references it, as a never-attached budget cannot
+		))
+	res, err := c.CreateCampaign(context.Background(), sampleInput())
+	if err == nil {
+		t.Fatal("expected an error on budget 5xx")
+	}
+	if !strings.Contains(err.Error(), "WAS created") {
+		t.Errorf("a budget the account confirms must be reported as created, got: %v", err)
+	}
+	if res == nil || res.CampaignBudgetID != "777" {
+		t.Fatalf("partial must carry the resolved budget id, got %+v", res)
+	}
+	// The id on the partial is not decoration: it is the only input CreateOutcome reads to
+	// upgrade the operator's sentence from "something may exist" to a budget they can name.
+	if outcome, ok := CreateOutcome(res, err); !ok || outcome != domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed {
+		t.Errorf("outcome = %q (ok=%v), want %q", outcome, ok, domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed)
+	}
+}
+
+// TestCreateCampaign_BudgetAmbiguous5xxWithNothingCreatedIsACleanFailure: the account was
+// read and holds no budget of this name. campaigns:mutate was never issued, so nothing
+// exists to reconcile — a nil result, which is the pre-create failure contract (the
+// dispatch claim is released and the retry is clean).
+func TestCreateCampaign_BudgetAmbiguous5xxWithNothingCreatedIsACleanFailure(t *testing.T) {
+	// Default search handler: a honoured query that matched nothing.
+	c := newCampaignClient(t, ambiguousBudgetMutate, refuseCampaignMutate(t))
+	res, err := c.CreateCampaign(context.Background(), sampleInput())
+	if err == nil {
+		t.Fatal("expected an error on budget 5xx")
+	}
+	if !strings.Contains(err.Error(), "nothing was created") {
+		t.Errorf("a proved absence must say nothing was created, got: %v", err)
+	}
+	if res != nil {
+		t.Errorf("nothing exists to reconcile, so no partial may be returned, got %+v", res)
+	}
+	if outcome, ok := CreateOutcome(res, err); ok {
+		t.Errorf("a nil result is a pre-create failure and carries no token, got %q", outcome)
+	}
+}
+
+// TestCreateCampaign_BudgetAmbiguous5xxWithUnreadableAccountIsUnconfirmed is the arm that
+// must keep behaving exactly as it did before the lookup existed: the account could not be
+// read, so nothing was settled, and the operator gets the UNCONFIRMED sentence plus the
+// name-carrying partial that is the only handle on a budget whose id is unknown.
+func TestCreateCampaign_BudgetAmbiguous5xxWithUnreadableAccountIsUnconfirmed(t *testing.T) {
+	c := newCampaignClientSearch(t, ambiguousBudgetMutate, refuseCampaignMutate(t),
+		okAdGroup, okAdGroupAd,
+		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) })
 	res, err := c.CreateCampaign(context.Background(), sampleInput())
 	if err == nil {
 		t.Fatal("expected an error on budget 5xx")
 	}
 	if !strings.Contains(err.Error(), "UNCONFIRMED") {
-		t.Errorf("budget 5xx must be UNCONFIRMED, got: %v", err)
+		t.Errorf("an unsettled budget 5xx must be UNCONFIRMED, got: %v", err)
 	}
 	if res == nil || res.CampaignName == "" {
 		t.Fatalf("expected a name-carrying partial, got %+v", res)
@@ -235,6 +318,11 @@ func TestCreateCampaign_BudgetAmbiguous5xxIsUnconfirmed(t *testing.T) {
 	// means knowing which Google Ads account to look in.
 	if res.CustomerID != "1234567890" {
 		t.Errorf("partial must carry the creating CustomerID, got %q", res.CustomerID)
+	}
+	// The create error is wrapped FIRST so errors.As still reaches the budget mutate's own
+	// *apiError rather than the lookup read's — the create outcome depends on it.
+	if outcome, ok := CreateOutcome(res, err); !ok || outcome != domain.CreateOutcomeUnconfirmed {
+		t.Errorf("outcome = %q (ok=%v), want %q", outcome, ok, domain.CreateOutcomeUnconfirmed)
 	}
 }
 

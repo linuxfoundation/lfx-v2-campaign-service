@@ -183,9 +183,17 @@ func (c *Client) budgetIDFromResourceName(resourceName string) string {
 //   - exactly one live, non-shared, unattached, same-shape budget -> (budget, nil)
 //   - anything else, including no match at all                    -> (nil, error)
 //
+// That contract is the DUPLICATE_NAME caller's, not the lookup's: the search and the
+// gates live in findBudgetByName, which reports a clean absence, and this function is the
+// thin layer that turns that absence into the contradiction it is HERE. Callers for whom
+// an absence is an ANSWER rather than a contradiction — the ambiguous-create arms, where
+// Google refused nothing and "no budget exists" is the best possible outcome — call
+// findBudgetByName instead. Bending this function to serve them would have it assert a
+// duplicate refusal that never happened.
+//
 // A false NEGATIVE here costs a retry that was already failing. A false POSITIVE funds a
 // paid campaign from a budget somebody else controls, so the asymmetry runs one way and
-// every gate below is a conjunction.
+// every gate is a conjunction.
 //
 // WHY REUSE IS SOUND AT ALL. A non-shared budget's name SYNCHRONIZES to its campaign's
 // name once a campaign attaches to it. An attempt that got past the campaign mutate
@@ -193,22 +201,53 @@ func (c *Client) budgetIDFromResourceName(resourceName string) string {
 // means the name is held by a budget with no campaign on it — the orphan shape. That is
 // the ARGUMENT for reuse; it is not the evidence, because it rests on Google's behaviour
 // as this package documents it rather than on anything this service observed. The gates
-// below are the evidence, and they are checked even though the argument predicts them.
+// in findBudgetByName are the evidence, and they are checked even though the argument
+// predicts them.
 func (c *Client) findReusableBudget(ctx context.Context, budgetName string) (*reusableBudget, error) {
-	if err := c.validateAccountIDs(); err != nil {
+	budget, found, err := c.findBudgetByName(ctx, budgetName)
+	if err != nil {
 		return nil, err
+	}
+	if !found {
+		// Google refused the create as a duplicate name and the account says no live
+		// budget carries that name. Both cannot be true. Something between the two calls
+		// is wrong — a stale read replica, the wrong account, a name that does not
+		// round-trip — and none of those is a safe footing for attaching a campaign.
+		return nil, fmt.Errorf("google-ads campaign budget lookup: Google refused the create because %q already exists, but no live budget of that name is visible in account %s; refusing to proceed on two answers that contradict each other", budgetName, c.account.CustomerID)
+	}
+	return budget, nil
+}
+
+// findBudgetByName is the search and the identity gates, with no opinion about what an
+// absence MEANS. It is the shared core of every "what is actually in the account under
+// this name" question this client asks.
+//
+// Three exits, and the middle one is the whole point of the split:
+//
+//   - exactly one live, non-shared, unattached, same-shape budget -> (budget, true, nil)
+//   - no live budget of that name at all                          -> (nil, false, nil)
+//   - anything else                                               -> (nil, false, error)
+//
+// The third exit swallows nothing: a budget that EXISTS under this name but fails a gate
+// — shared, attached, wrong pacing, unreadable — is an error and never a false. Only an
+// empty result set is an absence. That keeps the fail-closed direction intact for both
+// callers: whatever they decide an absence means, they only ever decide it about a name
+// the account genuinely has nothing live under.
+func (c *Client) findBudgetByName(ctx context.Context, budgetName string) (*reusableBudget, bool, error) {
+	if err := c.validateAccountIDs(); err != nil {
+		return nil, false, err
 	}
 	// Bound the name with the SAME limit and the SAME UNIT the create path enforces —
 	// maxBudgetNameBytes, UTF-8 BYTES, see preflightCampaignKind. Campaign names are
 	// bounded in runes and budgets are not, so measuring this one in runes would be the
 	// wrong ceiling in the lenient direction.
 	if err := validateEntityName("budget", budgetName, len(budgetName), maxBudgetNameBytes, "UTF-8 bytes"); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	literal, err := gaqlNameLiteral("campaign budget", budgetName)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	// The name and the tombstone filter are applied SERVER-side so a miss costs one page
@@ -223,7 +262,7 @@ func (c *Client) findReusableBudget(ctx context.Context, budgetName string) (*re
 
 	rows, err := c.gaqlSearch(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("google-ads campaign budget lookup: %w", err)
+		return nil, false, fmt.Errorf("google-ads campaign budget lookup: %w", err)
 	}
 
 	var (
@@ -237,17 +276,18 @@ func (c *Client) findReusableBudget(ctx context.Context, budgetName string) (*re
 		// receive raw bytes `"bad\xff"`, and encoding/json substitutes the very rune that
 		// was asked for, so the echo-check passes on a value it never saw intact.
 		if !utf8.Valid(raw) || hasUnpairedSurrogateEscape(raw) {
-			return nil, fmt.Errorf("google-ads campaign budget lookup: exact-match query for %q returned a row whose name cannot survive JSON decoding intact (malformed UTF-8 bytes, or an unpaired surrogate escape); decoding it would substitute U+FFFD and could echo back the requested name from a value that never matched it", budgetName)
+			return nil, false, fmt.Errorf("google-ads campaign budget lookup: exact-match query for %q returned a row whose name cannot survive JSON decoding intact (malformed UTF-8 bytes, or an unpaired surrogate escape); decoding it would substitute U+FFFD and could echo back the requested name from a value that never matched it", budgetName)
 		}
 		if hasDuplicateKeys(raw) {
-			return nil, fmt.Errorf("google-ads campaign budget lookup: exact-match query for %q returned a row that declares the same JSON key twice; the row identifies more than one budget and no reading of it can be trusted", budgetName)
+			return nil, false, fmt.Errorf("google-ads campaign budget lookup: exact-match query for %q returned a row that declares the same JSON key twice; the row identifies more than one budget and no reading of it can be trusted", budgetName)
 		}
 		var row budgetLookupRow
 		if err := json.Unmarshal(raw, &row); err != nil {
-			// A 2xx row we cannot decode is NOT a non-match, and here a non-match is
-			// itself an error — but it is the WRONG error, blaming the absence of a
-			// budget for what is really an unreadable response.
-			return nil, fmt.Errorf("google-ads campaign budget lookup: decoding result row: %w", err)
+			// A 2xx row we cannot decode is NOT a non-match. Both callers read a
+			// non-match as a fact about the account — one as a contradiction, one as
+			// proof a write never landed — and an undecodable row is evidence for
+			// neither.
+			return nil, false, fmt.Errorf("google-ads campaign budget lookup: decoding result row: %w", err)
 		}
 
 		// Re-checking the name client-side is what makes an escaping regression LOUD: if
@@ -257,12 +297,12 @@ func (c *Client) findReusableBudget(ctx context.Context, budgetName string) (*re
 		// which invalidates the WHOLE response, and skipping would quietly reduce an
 		// unhonoured query to "no rows matched". Byte-exact, matching ComposeName.
 		if row.CampaignBudget.Name != budgetName {
-			return nil, fmt.Errorf("google-ads campaign budget lookup: exact-match query for %q returned a budget named %q; the name filter was not honoured, refusing to trust this response", budgetName, row.CampaignBudget.Name)
+			return nil, false, fmt.Errorf("google-ads campaign budget lookup: exact-match query for %q returned a budget named %q; the name filter was not honoured, refusing to trust this response", budgetName, row.CampaignBudget.Name)
 		}
 
 		b, live, err := c.budgetRowIdentity(row, budgetName)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if !live {
 			continue
@@ -279,11 +319,10 @@ func (c *Client) findReusableBudget(ctx context.Context, budgetName string) (*re
 
 	switch len(matches) {
 	case 0:
-		// Google refused the create as a duplicate name and the account says no live
-		// budget carries that name. Both cannot be true. Something between the two calls
-		// is wrong — a stale read replica, the wrong account, a name that does not
-		// round-trip — and none of those is a safe footing for attaching a campaign.
-		return nil, fmt.Errorf("google-ads campaign budget lookup: Google refused the create because %q already exists, but no live budget of that name is visible in account %s; refusing to proceed on two answers that contradict each other", budgetName, c.account.CustomerID)
+		// The ONLY clean absence: the query was honoured, every row it returned was
+		// readable, and nothing live carries this name. What that absence means is the
+		// caller's to decide.
+		return nil, false, nil
 	case 1:
 		// Fall through to the reuse gates.
 	default:
@@ -291,7 +330,7 @@ func (c *Client) findReusableBudget(ctx context.Context, budgetName string) (*re
 		for _, m := range matches {
 			ids = append(ids, m.ID)
 		}
-		return nil, fmt.Errorf("google-ads campaign budget lookup: %d live budgets in account %s are named %q (ids %v) — refusing to choose one", len(matches), c.account.CustomerID, budgetName, ids)
+		return nil, false, fmt.Errorf("google-ads campaign budget lookup: %d live budgets in account %s are named %q (ids %v) — refusing to choose one", len(matches), c.account.CustomerID, budgetName, ids)
 	}
 	budget := matches[0]
 
@@ -306,10 +345,83 @@ func (c *Client) findReusableBudget(ctx context.Context, budgetName string) (*re
 	// one shape most likely to exist in the account is also the shape that phrase is
 	// least clear about. Two independent answers that must agree.
 	if err := c.assertBudgetUnattached(ctx, budget, budgetName); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
-	return budget, nil
+	return budget, true, nil
+}
+
+// ambiguousBudgetCreateOutcome is the WHOLE of every channel's ambiguous budget-create
+// arm: it resolves the ambiguity, picks the partial, and composes the sentence, so the
+// five channels cannot drift from each other on a failure none of them can test against
+// the live account. channel is the channel word the existing messages use — "performance
+// max", "campaign", "demand gen", "display", "video" — and namePartial is the caller's own
+// pre-budget partial builder.
+//
+// Returning (nil, err) in the proven-nothing-created case is deliberate and is the only
+// behaviour change visible outside this package: a nil result is the pre-create failure
+// contract (CreateOutcome returns no token for it, orchestrator releases the claim), which
+// is exactly right once the account has said nothing was written.
+func (c *Client) ambiguousBudgetCreateOutcome(ctx context.Context, channel, budgetName string, namePartial func() *CampaignResult, createErr error) (*CampaignResult, error) {
+	budgetID, budgetExists, resolveErr := c.resolveBudgetAfterAmbiguousCreate(ctx, budgetName)
+	switch {
+	case resolveErr != nil:
+		// Nothing was settled, so nothing is claimed: this is the sentence the arm
+		// returned before any of this existed. The create error is wrapped FIRST for the
+		// same load-bearing reason the DUPLICATE_NAME arms spell out — errors.As stops at
+		// the first *apiError in the chain, so an apiError from the lookup READ must not
+		// shadow the create's and cost this failure its create-outcome token.
+		return namePartial(), fmt.Errorf("google-ads %s budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w — and the account could not be read to settle it: %w", channel, budgetName, createErr, resolveErr)
+	case budgetExists:
+		// The budget landed. Carrying its id is what turns the generic unconfirmed
+		// message into CreateOutcomeBudgetCreatedCampaignUnconfirmed (see CreateOutcome) —
+		// a budget the operator can act on instead of one they have to go looking for in
+		// change history.
+		r := namePartial()
+		r.CampaignBudgetID = budgetID
+		return r, fmt.Errorf("google-ads %s budget %s (%q) WAS created despite an unconfirmed create response, and the campaign was never attempted; the budget is unattached so it accrues no spend, and a retry of this brief will reuse it: %w", channel, budgetID, budgetName, createErr)
+	default:
+		// No live budget of this name, and campaigns:mutate was never issued — so there is
+		// nothing to verify, nothing to reconcile, and the retry is clean.
+		return nil, fmt.Errorf("google-ads %s budget creation failed with an unconfirmed response, but no budget named %q is live in the account, so nothing was created: %w", channel, budgetName, createErr)
+	}
+}
+
+// resolveBudgetAfterAmbiguousCreate answers the question the ambiguous budget-create arm
+// has never been able to answer: did the budget actually get created?
+//
+// The arm is reached when campaignBudgets:mutate failed in a way that does not say
+// whether the write landed — a 5xx, an exhausted 429, a transport error after the request
+// was on the wire. Before this existed, every such failure returned a partial carrying no
+// budget id, so a budget that HAD been committed became an orphan nobody was told about,
+// and the retry it blocked failed differently one call later.
+//
+// WHY THE ACCOUNT MAY BE READ FOR AN ANSWER HERE. This is Step 1: campaigns:mutate has not
+// been issued, on this attempt or on any attempt that reached this arm. A non-shared
+// budget's name synchronises to its campaign's name on attach, so no campaign can have
+// taken this name and renamed its budget — a live budget found under budgetName is this
+// client's own, and an absence is this client's own too. The same reasoning licenses
+// reuseBudgetAfterDuplicateName, and it is STRONGER here, where Google refused nothing and
+// so cannot be contradicted.
+//
+// Three outcomes, and every one of them is better than the single outcome it replaces:
+//
+//   - (id, true, nil)  — the budget exists; the caller puts its id on the partial so the
+//     operator is told what to reconcile instead of being sent to hunt for it
+//   - ("", false, nil) — nothing was created; the caller may report a clean pre-create
+//     failure, which is a safe retry and no orphan
+//   - ("", false, err) — the account could not be read, or a budget of this name exists
+//     that fails a gate. Nothing was settled, so the caller keeps saying exactly what it
+//     said before this existed
+func (c *Client) resolveBudgetAfterAmbiguousCreate(ctx context.Context, budgetName string) (budgetID string, created bool, err error) {
+	budget, found, err := c.findBudgetByName(ctx, budgetName)
+	if err != nil {
+		return "", false, err
+	}
+	if !found {
+		return "", false, nil
+	}
+	return budget.ID, true, nil
 }
 
 // budgetRowIdentity answers "which budget is this row, and may it be reused" for ONE row,

@@ -1461,7 +1461,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		budgetResource, budgetID = resource, id
 		steps = append(steps, reuseSteps...)
 	case createOutcomeAmbiguous(err):
-		return campaignNamePartial(), fmt.Errorf("google-ads campaign budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
+		// Resolved against the account rather than reported as unknown — see
+		// ambiguousBudgetCreateOutcome; every channel takes this arm identically.
+		return c.ambiguousBudgetCreateOutcome(ctx, "campaign", budgetName, campaignNamePartial, err)
 	default:
 		return nil, fmt.Errorf("google-ads campaign budget creation failed: %w", err)
 	}

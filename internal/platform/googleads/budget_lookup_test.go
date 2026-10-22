@@ -136,6 +136,37 @@ func newBudgetLookupServer(t *testing.T, pages ...[]json.RawMessage) (*httptest.
 	}
 }
 
+// searchPagesHandler is newBudgetLookupServer's paging rule as a bare googleAds:search
+// handler, for the channel harnesses that route search themselves: one response per call,
+// in order, and a call past the end of pages fails the test rather than silently repeating
+// the last page.
+func searchPagesHandler(t *testing.T, pages ...[]json.RawMessage) http.HandlerFunc {
+	t.Helper()
+	var (
+		mu sync.Mutex
+		n  int
+	)
+	return func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		i := n
+		n++
+		mu.Unlock()
+		if i >= len(pages) {
+			// t.Error, not t.Fatal: FailNow is only legal on the test goroutine.
+			t.Errorf("unexpected extra search (#%d)", i+1)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		rows := pages[i]
+		if rows == nil {
+			// Never `{"results":null}` — a different response from an empty page.
+			rows = []json.RawMessage{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(searchResponse{Results: rows})
+	}
+}
+
 const testBudgetName = "LFX | Budget | proj | evt | brief-1"
 
 // TestFindReusableBudget_AdoptsTheOrphan is the happy path, and the whole point of the
@@ -288,6 +319,98 @@ func TestFindReusableBudget_NoRowsIsAContradiction(t *testing.T) {
 		!strings.Contains(err.Error(), "contradict") {
 		t.Fatalf("an empty result must be refused as a contradiction, got: %v", err)
 	}
+}
+
+// TestFindBudgetByName_NoRowsIsACleanAbsence is the other side of the same response, and
+// the reason the contract was split in two: the SEARCH reports an absence, and only the
+// DUPLICATE_NAME wrapper above turns it into a contradiction. The ambiguous-create arm
+// reaches the account with Google having refused nothing, so for it an absence is the
+// answer — proof the create never landed — and a lookup that errored on it would report
+// "something may exist" about a budget that provably does not.
+func TestFindBudgetByName_NoRowsIsACleanAbsence(t *testing.T) {
+	srv, queries := newBudgetLookupServer(t, nil)
+	c := newAccountsTestClient(t, srv)
+
+	budget, found, err := c.findBudgetByName(context.Background(), testBudgetName)
+	if err != nil {
+		t.Fatalf("an empty result set is not an error here: %v", err)
+	}
+	if found || budget != nil {
+		t.Fatalf("found = %v, budget = %+v, want a clean absence", found, budget)
+	}
+	// No attachment check: there is no budget to ask about. An extra query would mean the
+	// absence was decided after reading something else.
+	if q := queries(); len(q) != 1 {
+		t.Errorf("want exactly the one lookup query, got %d: %v", len(q), q)
+	}
+}
+
+// TestFindBudgetByName_AGateFailureIsNeverAnAbsence is the invariant that keeps the clean
+// absence safe to act on. A budget that EXISTS under this name but fails a gate is an
+// ERROR, never (nil, false, nil) — read as an absence, it would tell the ambiguous-create
+// arm that nothing was created while a budget of that very name sat in the account.
+//
+// The shared case stands in for all of them: findBudgetByName returns the gate error
+// budgetRowIdentity raised, and reports found=false alongside it so no caller can read the
+// pair as a verdict about the account.
+func TestFindBudgetByName_AGateFailureIsNeverAnAbsence(t *testing.T) {
+	srv, _ := newBudgetLookupServer(t, []json.RawMessage{
+		budgetRow(budgetRowOpts{name: testBudgetName, explicitShared: "true"}),
+	})
+	c := newAccountsTestClient(t, srv)
+
+	budget, found, err := c.findBudgetByName(context.Background(), testBudgetName)
+	if err == nil {
+		t.Fatal("a shared budget of this name must be an error, not an absence")
+	}
+	if !strings.Contains(err.Error(), "explicitly shared") {
+		t.Errorf("error = %q, want the sharing gate's own sentence", err)
+	}
+	if found || budget != nil {
+		t.Errorf("found = %v, budget = %+v, want neither alongside an error", found, budget)
+	}
+}
+
+// TestResolveBudgetAfterAmbiguousCreate_ReportsTheThreeOutcomes pins the adapter the
+// ambiguous arms call, because each of its three answers drives a different operator
+// sentence and a different retry.
+func TestResolveBudgetAfterAmbiguousCreate_ReportsTheThreeOutcomes(t *testing.T) {
+	t.Run("created", func(t *testing.T) {
+		srv, _ := newBudgetLookupServer(t,
+			[]json.RawMessage{budgetRow(budgetRowOpts{name: testBudgetName})},
+			nil, // attachment check: a never-attached budget is referenced by nothing
+		)
+		id, created, err := newAccountsTestClient(t, srv).
+			resolveBudgetAfterAmbiguousCreate(context.Background(), testBudgetName)
+		if err != nil || !created || id != "777" {
+			t.Fatalf("got (%q, %v, %v), want the committed budget's id", id, created, err)
+		}
+	})
+	t.Run("not created", func(t *testing.T) {
+		srv, _ := newBudgetLookupServer(t, nil)
+		id, created, err := newAccountsTestClient(t, srv).
+			resolveBudgetAfterAmbiguousCreate(context.Background(), testBudgetName)
+		if err != nil || created || id != "" {
+			t.Fatalf("got (%q, %v, %v), want a proved absence", id, created, err)
+		}
+	})
+	t.Run("unreadable", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if writeAccountsToken(w, r) {
+				return
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		t.Cleanup(srv.Close)
+		id, created, err := newAccountsTestClient(t, srv).
+			resolveBudgetAfterAmbiguousCreate(context.Background(), testBudgetName)
+		if err == nil {
+			t.Fatal("an unreadable account settles nothing and must be an error")
+		}
+		if created || id != "" {
+			t.Errorf("got (%q, %v) alongside the error, want neither", id, created)
+		}
+	})
 }
 
 // TestFindReusableBudget_AmbiguousIsNeverASilentPick: two live budgets of one name is
