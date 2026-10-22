@@ -13,11 +13,21 @@ import (
 	"unicode/utf8"
 )
 
-// ambiguousBudgetResolveTimeout is the hard ceiling on resolveBudgetAfterAmbiguousCreate,
-// detached from the caller's context. It has to cover the attempt schedule below plus the
-// searches themselves — a found budget costs two (the name lookup and the campaign-side
-// attachment check), each bounded by googleAdsRequestTimeout — so it is the ceiling for
-// the case where the queries are slow, not the normal exit.
+// ambiguousBudgetResolveTimeout is a wall-clock cap on the whole of
+// resolveBudgetAfterAmbiguousCreate. The resolution runs on a context detached from the
+// caller's, so this is the ONLY thing bounding it, and the caller is still waiting on it.
+//
+// It is deliberately NOT computed from the searches it contains: one gaqlSearch can cost
+// several pages, each with its own googleAdsRequestTimeout (30s) attempt deadline, so a
+// budget would have to cover minutes to bound the worst case — which would be a far worse
+// answer than giving up. Four lightweight single-page searches plus 1750ms of sleep fit
+// inside twenty seconds with room to spare whenever the account is answering at all.
+//
+// The trade-off it buys, and its direction: on an account slow enough to exhaust this, a
+// budget that IS live may go unfound and the arm reports the failure as unsettled rather
+// than as an absence. That is the fail-closed side — nothing is claimed either way — but
+// it is a real loss of the reporting this arm exists for, so the ceiling is sized to be
+// reached only by an account that is effectively not answering.
 const ambiguousBudgetResolveTimeout = 20 * time.Second
 
 // Retry schedule for the ONE outcome that is not self-evident: no live budget of this name
@@ -402,6 +412,17 @@ func (c *Client) ambiguousBudgetCreateOutcome(ctx context.Context, channel, budg
 		// of the name, an explicitly shared one, an attached one, a wrong-shaped or
 		// undecodable one. Naming only the read failure would send the operator to check
 		// connectivity when the actual answer is in the wrapped resolveErr.
+		//
+		// A gate refusal is where this arm is weakest, and deliberately so. Every gate
+		// error names the budget's ID, and resolveErr is wrapped here, so the operator IS
+		// told which budget to go and look at — including in the case most likely to
+		// arise here, a row whose explicitly_shared arrives omitted (the gate refuses
+		// rather than read absent as false). What the refusal costs is the machine-
+		// readable CampaignBudgetID, and that is the right trade: the gates are what
+		// establish the row is THIS dispatch's budget at all — the name-synchronises
+		// argument holds for non-shared budgets only — so putting an id on the partial
+		// for a row that failed them would claim a creation the account has not
+		// confirmed. Reported in words, never claimed in the result.
 		return namePartial(), fmt.Errorf("google-ads %s budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w — and the account did not settle it: %w", channel, budgetName, createErr, resolveErr)
 	case budgetExists:
 		// The budget landed. Carrying its id is what turns the generic unconfirmed

@@ -459,7 +459,7 @@ func TestAmbiguousBudgetResolveScheduleSpans(t *testing.T) {
 		t.Errorf("schedule spans %v, want %v — update the doc comment alongside the constants", total, want)
 	}
 	if total >= ambiguousBudgetResolveTimeout {
-		t.Errorf("schedule (%v) must stay well inside the %v ceiling, which also has to cover the searches themselves", total, ambiguousBudgetResolveTimeout)
+		t.Errorf("schedule (%v) must stay well inside the %v ceiling, which also has to leave room for the four searches to answer", total, ambiguousBudgetResolveTimeout)
 	}
 }
 

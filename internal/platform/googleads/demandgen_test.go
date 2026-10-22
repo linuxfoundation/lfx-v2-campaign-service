@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // demandGenInput is the narrowest input that reaches the mutates: Demand Gen needs no
@@ -237,6 +239,55 @@ func TestCreateDemandGenCampaignReturnsThePartialAfterBudgetCommits(t *testing.T
 	}
 	if res.CampaignID != "" {
 		t.Errorf("CampaignID = %q, want empty — the campaign was not created", res.CampaignID)
+	}
+}
+
+// ambiguousBudgetCreateOutcome is one body shared by all five channels precisely so they
+// cannot drift on a failure none of them can exercise against the live account — and a
+// channel with no test of the arm is the one a future edit lands in untested. Demand Gen
+// was that channel; this closes it, mirroring the Display and Video proofs.
+//
+// The budget mutate and the resolution search both 5xx, so nothing is settled: the claim
+// is retained, the partial carries the NAME (the only handle on a budget with no id), and
+// no further mutate may be sent.
+func TestCreateDemandGenCampaign_AmbiguousBudgetKeepsTheClaim(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"),
+			strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			// t.Errorf, not t.Fatalf: this runs on the server's goroutine, where
+			// FailNow would abandon the handler mid-response instead of failing here.
+			t.Errorf("no further mutate may be sent after an unconfirmed budget, got %s", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+	res, err := c.CreateDemandGenCampaign(context.Background(), demandGenInput())
+
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if res == nil {
+		t.Fatal("a budget that MAY exist must come back as a partial, not as nil")
+	}
+	if res.CampaignBudgetName == "" {
+		t.Error("the partial must carry the budget NAME — it is the only handle on a budget whose id is unknown")
+	}
+	if res.CampaignBudgetID != "" {
+		t.Errorf("CampaignBudgetID = %q — an unresolved budget has no id to claim", res.CampaignBudgetID)
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a 5xx on a mutating POST is an unknown outcome, not a failure: %v", err)
+	}
+	if got, want := CreateOutcome(res, err); got != domain.CreateOutcomeUnconfirmed || !want {
+		t.Errorf("CreateOutcome = (%q, %v), want (%q, true)", got, want, domain.CreateOutcomeUnconfirmed)
 	}
 }
 
