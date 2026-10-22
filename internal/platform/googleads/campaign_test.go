@@ -266,25 +266,32 @@ func TestCreateCampaign_BudgetAmbiguous5xxResolvesACommittedBudget(t *testing.T)
 	}
 }
 
-// TestCreateCampaign_BudgetAmbiguous5xxWithNothingCreatedIsACleanFailure: the account was
-// read and holds no budget of this name. campaigns:mutate was never issued, so nothing
-// exists to reconcile — a nil result, which is the pre-create failure contract (the
-// dispatch claim is released and the retry is clean).
-func TestCreateCampaign_BudgetAmbiguous5xxWithNothingCreatedIsACleanFailure(t *testing.T) {
+// TestCreateCampaign_BudgetAmbiguous5xxWithNoVisibleBudgetSaysSoButKeepsTheClaim: the
+// account was read, repeatedly, and holds no budget of this name. That is said in words —
+// a far better starting point than "it may exist" — but it is NOT claimed: an absence is a
+// property of the read, so the partial and the UNCONFIRMED outcome stay, and the brief's
+// claim is retained.
+func TestCreateCampaign_BudgetAmbiguous5xxWithNoVisibleBudgetSaysSoButKeepsTheClaim(t *testing.T) {
 	// Default search handler: a honoured query that matched nothing.
 	c := newCampaignClient(t, ambiguousBudgetMutate, refuseCampaignMutate(t))
 	res, err := c.CreateCampaign(context.Background(), sampleInput())
 	if err == nil {
 		t.Fatal("expected an error on budget 5xx")
 	}
-	if !strings.Contains(err.Error(), "nothing was created") {
-		t.Errorf("a proved absence must say nothing was created, got: %v", err)
+	if !strings.Contains(err.Error(), "no budget of that name is live in the account") {
+		t.Errorf("the sentence must report the absence, got: %v", err)
 	}
-	if res != nil {
-		t.Errorf("nothing exists to reconcile, so no partial may be returned, got %+v", res)
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("an absence is not proof the write never landed, so the outcome stays UNCONFIRMED, got: %v", err)
 	}
-	if outcome, ok := CreateOutcome(res, err); ok {
-		t.Errorf("a nil result is a pre-create failure and carries no token, got %q", outcome)
+	if res == nil {
+		t.Fatal("expected a partial: an ambiguous mutating create must retain the claim")
+	}
+	if res.CampaignBudgetID != "" {
+		t.Errorf("CampaignBudgetID = %q, want empty — no budget was found", res.CampaignBudgetID)
+	}
+	if outcome, ok := CreateOutcome(res, err); !ok || outcome != domain.CreateOutcomeUnconfirmed {
+		t.Errorf("outcome = %q (ok=%v), want %q", outcome, ok, domain.CreateOutcomeUnconfirmed)
 	}
 }
 

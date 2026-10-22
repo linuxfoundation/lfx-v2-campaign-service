@@ -386,12 +386,19 @@ func TestResolveBudgetAfterAmbiguousCreate_ReportsTheThreeOutcomes(t *testing.T)
 			t.Fatalf("got (%q, %v, %v), want the committed budget's id", id, created, err)
 		}
 	})
-	t.Run("not created", func(t *testing.T) {
-		srv, _ := newBudgetLookupServer(t, nil)
+	t.Run("not visible", func(t *testing.T) {
+		// One empty page per attempt: the absence is only reported once the whole
+		// schedule has asked, and the harness fails the test on a search past the end,
+		// so this pins the attempt count from both sides.
+		pages := make([][]json.RawMessage, ambiguousBudgetResolveAttempts)
+		srv, queries := newBudgetLookupServer(t, pages...)
 		id, created, err := newAccountsTestClient(t, srv).
 			resolveBudgetAfterAmbiguousCreate(context.Background(), testBudgetName)
 		if err != nil || created || id != "" {
-			t.Fatalf("got (%q, %v, %v), want a proved absence", id, created, err)
+			t.Fatalf("got (%q, %v, %v), want an absence", id, created, err)
+		}
+		if got := len(queries()); got != ambiguousBudgetResolveAttempts {
+			t.Errorf("searches = %d, want %d — the absence must be corroborated, not taken on the first read", got, ambiguousBudgetResolveAttempts)
 		}
 	})
 	t.Run("unreadable", func(t *testing.T) {
@@ -411,6 +418,49 @@ func TestResolveBudgetAfterAmbiguousCreate_ReportsTheThreeOutcomes(t *testing.T)
 			t.Errorf("got (%q, %v) alongside the error, want neither", id, created)
 		}
 	})
+}
+
+// TestResolveBudgetAfterAmbiguousCreate_FindsABudgetThatWasNotVisibleYet is the whole
+// reason the no-row outcome is retried. The arm is reached when campaignBudgets:mutate
+// failed without saying whether the write landed — including while Google was still
+// committing it — so the budget that most needs reporting is exactly the one a single
+// immediate read can miss. One empty page, then the row, then its attachment check.
+func TestResolveBudgetAfterAmbiguousCreate_FindsABudgetThatWasNotVisibleYet(t *testing.T) {
+	srv, queries := newBudgetLookupServer(t,
+		nil, // first look: the commit has not surfaced yet
+		[]json.RawMessage{budgetRow(budgetRowOpts{name: testBudgetName})},
+		nil, // attachment check: a never-attached budget is referenced by nothing
+	)
+	id, created, err := newAccountsTestClient(t, srv).
+		resolveBudgetAfterAmbiguousCreate(context.Background(), testBudgetName)
+	if err != nil || !created || id != "777" {
+		t.Fatalf("got (%q, %v, %v), want the budget the second look found", id, created, err)
+	}
+	if got := len(queries()); got != 3 {
+		t.Errorf("searches = %d, want 3 — the retry, the hit, and its attachment check", got)
+	}
+}
+
+// TestAmbiguousBudgetResolveScheduleSpans computes the schedule from the constants, so a
+// change to any of the three fails a test rather than only a comment. N attempts sleep
+// N-1 times.
+func TestAmbiguousBudgetResolveScheduleSpans(t *testing.T) {
+	var (
+		total time.Duration
+		delay = ambiguousBudgetResolveMinDelay
+	)
+	for i := 1; i < ambiguousBudgetResolveAttempts; i++ {
+		total += delay
+		if delay *= 2; delay > ambiguousBudgetResolveMaxDelay {
+			delay = ambiguousBudgetResolveMaxDelay
+		}
+	}
+	if want := 1750 * time.Millisecond; total != want {
+		t.Errorf("schedule spans %v, want %v — update the doc comment alongside the constants", total, want)
+	}
+	if total >= ambiguousBudgetResolveTimeout {
+		t.Errorf("schedule (%v) must stay well inside the %v ceiling, which also has to cover the searches themselves", total, ambiguousBudgetResolveTimeout)
+	}
 }
 
 // TestFindReusableBudget_AmbiguousIsNeverASilentPick: two live budgets of one name is

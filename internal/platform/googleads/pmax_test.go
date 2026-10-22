@@ -904,11 +904,11 @@ func TestCreatePerformanceMaxCampaign_AmbiguousBudgetResolvesTheOrphan(t *testin
 	}
 }
 
-// TestCreatePerformanceMaxCampaign_AmbiguousBudgetProvedAbsentIsACleanFailure is the other
-// direction: the account was read and holds nothing under this name, so the 5xx cost
-// nothing. campaigns:mutate was never issued and no budget exists, which makes a nil
-// result — the pre-create failure contract, claim released — the only true answer.
-func TestCreatePerformanceMaxCampaign_AmbiguousBudgetProvedAbsentIsACleanFailure(t *testing.T) {
+// TestCreatePerformanceMaxCampaign_AmbiguousBudgetNotVisibleKeepsTheClaim is the other
+// direction: the account was read, repeatedly, and holds nothing under this name. The
+// sentence says so, which is what the operator needs, but the partial and the claim stay —
+// an absence is a property of the read, not proof that the mutate never landed.
+func TestCreatePerformanceMaxCampaign_AmbiguousBudgetNotVisibleKeepsTheClaim(t *testing.T) {
 	in := demandGenInput()
 	images := pmaxImages(t)
 	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -934,13 +934,19 @@ func TestCreatePerformanceMaxCampaign_AmbiguousBudgetProvedAbsentIsACleanFailure
 	if err == nil {
 		t.Fatal("want an error")
 	}
-	if res != nil {
-		t.Errorf("nothing was created, so the claim must be released: %+v", res)
+	if res == nil {
+		t.Fatal("expected a partial: an ambiguous mutating create must retain the claim")
 	}
-	if !strings.Contains(err.Error(), "nothing was created") {
-		t.Errorf("error = %q, want it to say the account proved nothing was created", err)
+	if res.CampaignBudgetID != "" {
+		t.Errorf("CampaignBudgetID = %q, want empty — no budget was found", res.CampaignBudgetID)
 	}
-	if strings.Contains(err.Error(), "UNCONFIRMED") {
-		t.Errorf("a settled absence must not be reported as unconfirmed: %v", err)
+	if !strings.Contains(err.Error(), "no budget of that name is live in the account") {
+		t.Errorf("error = %q, want it to report the absence", err)
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("an absence does not settle an ambiguous mutate: %v", err)
+	}
+	if outcome, ok := CreateOutcome(res, err); !ok || outcome != domain.CreateOutcomeUnconfirmed {
+		t.Errorf("outcome = %q (ok=%v), want %q", outcome, ok, domain.CreateOutcomeUnconfirmed)
 	}
 }

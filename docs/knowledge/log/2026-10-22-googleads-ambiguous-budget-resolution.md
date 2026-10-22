@@ -28,28 +28,55 @@ such budget, never that a gate was skipped.
 
 **`ambiguousBudgetCreateOutcome` is the WHOLE of the arm for all five channels** —
 resolution, partial and sentence — so they cannot drift on a failure none of them can
-exercise against the live account. Three outcomes: budget exists → the caller's partial
+exercise against the live account. Three outcomes: budget found → the caller's partial
 plus `CampaignBudgetID` and a sentence saying it WAS created, unattached, and that a
-retry will reuse it; proved absent → `(nil, err)` saying nothing was created, which is
-the pre-create failure contract (no outcome token, the orchestrator releases the claim,
-the retry is clean); account unreadable → the partial and the original UNCONFIRMED
-sentence, nothing settled and nothing claimed. The create error is wrapped FIRST in all
-three, because `errors.As` stops at the first `*apiError` and a read error must not
-shadow the create's.
+retry will reuse it; not visible after the re-reads → the partial and a sentence saying
+no budget of that name is live in the account, checked N times; the account did not
+settle it → the partial and the original UNCONFIRMED sentence. The create error is
+wrapped FIRST in all three, because `errors.As` stops at the first `*apiError` and a
+read error must not shadow the create's.
 
-`CreateOutcome` needed no new annotation: it already classifies from the partial's ids,
-so setting `CampaignBudgetID` is what turns the generic unconfirmed failure into
-`CreateOutcomeBudgetCreatedCampaignUnconfirmed`, and a nil result into no token at all.
-The proven-absent `(nil, err)` is the only behaviour change visible outside the package.
+**An absence is reported, never claimed.** No arm returns a nil result. The tempting one
+is the absence: `campaigns:mutate` was never issued and the account shows nothing, so a
+nil result would be the pre-create failure contract and a clean retry. But an absence is
+a property of the READ, and this same file refuses to act on a zero-row answer from this
+same query where it can be contradicted, naming a stale read replica, the wrong account,
+and a name that does not round-trip. The repo's rule is explicit — an ambiguous mutating
+create must produce a partial and retain the claim
+(`docs/reviews/knowledge-base/context-and-cancellation.md`,
+`presend-clean-inflight-unconfirmed`) — and releasing the claim on a read would report a
+budget that committed but was briefly invisible as never created, which is the exact
+orphan this arm exists to close. So the behaviour change visible outside the package is
+in the SENTENCE and in `CampaignBudgetID`, not in the result being nil: `CreateOutcome`
+needed no new annotation because it already classifies from the partial's ids, so setting
+`CampaignBudgetID` is what turns the generic unconfirmed failure into
+`CreateOutcomeBudgetCreatedCampaignUnconfirmed`, and the other two arms stay
+`CreateOutcomeUnconfirmed`.
 
-**Cost.** One `googleAds:search` on the ambiguous path, two when a budget is found
-(`assertBudgetUnattached` asks the campaign side independently) — paid only on a failure
-that was previously unresolvable.
+**Only the no-row outcome is retried, on a detached, bounded context.** A budget
+committed moments earlier is exactly the one a single immediate read misses, and exactly
+the one that most needs reporting, so `resolveBudgetAfterAmbiguousCreate` re-reads on a
+250ms→1s schedule — `ambiguousBudgetResolveAttempts = 4`, 1750ms of sleep — under a 20s
+`ambiguousBudgetResolveTimeout`, mirroring `reconcileAmbiguousAudienceCommit` in
+`internal/infrastructure/postgres/audience_repo.go`. A found budget or any gate error
+settles the question at once and is never retried. The context is detached with
+`context.WithoutCancel` because one of the three shapes reaching this arm is a transport
+error, which a cancelled caller context produces — reusing `ctx` would make the whole
+feature inert in the shape most likely to leave an orphan.
+
+**Cost.** Up to four `googleAds:search` calls on the ambiguous path, plus one more when a
+budget is found (`assertBudgetUnattached` asks the campaign side independently) — paid
+only on a failure that was previously unresolvable.
 
 **Tests.** Unit proofs that `findBudgetByName` reports zero rows as a clean absence
 without the second query and that a gate failure is never an absence; a three-subtest
-proof of `resolveBudgetAfterAmbiguousCreate`'s outcomes; and channel-level proofs of all
-three arms on Search plus the created/absent arms on Performance Max. The Display and
+proof of `resolveBudgetAfterAmbiguousCreate`'s outcomes, with the absence subtest driving
+its page count from `ambiguousBudgetResolveAttempts` so the attempt count is pinned from
+both sides; a proof that a budget invisible on the first read but present on the second
+is still found and reported; `TestAmbiguousBudgetResolveScheduleSpans`, so changing any
+of the three schedule constants fails a test rather than only a stale comment; and
+channel-level proofs of all three arms on Search plus the found/not-visible arms on
+Performance Max. The Display and
 Video `AmbiguousBudgetKeepsTheClaim` tests now permit the resolution READ and forbid only
 further mutates, which is the invariant they were always about.
 

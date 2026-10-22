@@ -513,28 +513,44 @@ and `ambiguousBudgetCreateOutcome` switches on it:
 
 | account says | partial | sentence | `CreateOutcome` |
 |---|---|---|---|
-| budget exists | caller's partial **plus `CampaignBudgetID`** | "...budget `<id>` (`<name>`) **WAS created** despite an unconfirmed create response, and the campaign was never attempted; the budget is unattached so it accrues no spend, and a retry of this brief will reuse it" | `CreateOutcomeBudgetCreatedCampaignUnconfirmed` |
-| proved absent | **`nil`** | "...but no budget named `<name>` is live in the account, so **nothing was created**" | no token — the pre-create failure contract |
-| account unreadable | caller's partial (names only) | the original "...budget creation **UNCONFIRMED** (`<name>` may exist — verify in Google Ads before retrying)" plus "and the account could not be read to settle it" | `CreateOutcomeUnconfirmed` |
+| budget found | caller's partial **plus `CampaignBudgetID`** | "...budget `<id>` (`<name>`) **WAS created** despite an unconfirmed create response, and the campaign was never attempted; the budget is unattached so it accrues no spend, and a retry of this brief will reuse it" | `CreateOutcomeBudgetCreatedCampaignUnconfirmed` |
+| not visible after the re-reads | caller's partial (names only) | "...budget creation **UNCONFIRMED** (…)" plus "no budget of that name is live in the account, checked `N` times, so most likely nothing was created" | `CreateOutcomeUnconfirmed` |
+| the account did not settle it | caller's partial (names only) | "...budget creation **UNCONFIRMED** (…)" plus "and the account did not settle it" — the read failed, OR a budget of the name exists and failed a gate | `CreateOutcomeUnconfirmed` |
 
-Three details are load-bearing:
+Four details are load-bearing:
 
-- **`CreateOutcome` is driven by the partial's ids, not by a per-arm annotation.** The
-  first row differs from the third only because `CampaignBudgetID` is set on it; nothing
-  in the error text is parsed. So the id on the partial IS the classification.
+- **`CreateOutcome` is driven by the partial's ids, not by a per-arm annotation.** Row one
+  differs from rows two and three only because `CampaignBudgetID` is set on it; nothing in
+  the error text is parsed. So the id on the partial IS the classification.
 - **The create error is wrapped FIRST in all three sentences**, for the reason the
   DUPLICATE_NAME bullets above spell out: `errors.As` stops at the first `*apiError`, so
   an `apiError` from the lookup READ must not shadow the create's and cost the failure its
   outcome token.
-- **`(nil, err)` in the proven-absent case is the only behaviour change visible outside
-  this package.** A nil result is the pre-create failure contract — no outcome token, the
-  orchestrator releases the brief's claim — and that is exactly right once the account has
-  said nothing was written: there is nothing to verify, nothing to reconcile, and the
-  retry is clean.
+- **An absence is reported, never claimed.** Every arm returns a partial and keeps the
+  brief's claim; none returns `nil`. The temptation is row two — campaigns:mutate was
+  never issued and the account shows nothing, so a nil result would release the claim for
+  a clean retry — but an absence is a property of the READ, and this same file refuses to
+  act on a zero-row answer from this same query where it can be contradicted, naming a
+  stale read replica, the wrong account, and a name that does not round-trip. The repo's
+  rule is explicit: an ambiguous mutating create must produce a partial and retain the
+  claim (`docs/reviews/knowledge-base/context-and-cancellation.md`,
+  `presend-clean-inflight-unconfirmed`). A nil there would report a budget that committed
+  but was briefly invisible as never created — the exact orphan the arm exists to close.
+  What DID change for the operator is the sentence: "no budget of that name is live in the
+  account" is a far better starting point than "it may exist".
+- **Only the no-row outcome is retried, on a detached, bounded context.** A budget
+  committed moments before is exactly the one a single immediate read misses, and it is
+  the one that most needs reporting, so `resolveBudgetAfterAmbiguousCreate` re-reads on a
+  250ms→1s schedule (4 attempts, 1750ms of sleep) under a 20s ceiling, mirroring
+  `reconcileAmbiguousAudienceCommit`'s precedent in `audience_repo.go`. A found budget or
+  any gate error settles the question immediately and is never retried. The context is
+  detached (`context.WithoutCancel`) because one of the three shapes that reach this arm
+  is a transport error, which a cancelled caller context produces — reusing `ctx` would
+  make the feature inert in a shape especially likely to leave an orphan.
 
-The cost is one `googleAds:search` on the ambiguous path, or two when a budget IS found
-(`assertBudgetUnattached` asks the campaign side independently), paid only on a failure
-that was previously unresolvable.
+The cost is up to four `googleAds:search` calls on the ambiguous path, plus one more when
+a budget IS found (`assertBudgetUnattached` asks the campaign side independently), paid
+only on a failure that was previously unresolvable.
 
 ## Responsive Search Ad copy + final URL (GA-3a)
 

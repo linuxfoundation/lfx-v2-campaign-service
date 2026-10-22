@@ -9,7 +9,30 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
+)
+
+// ambiguousBudgetResolveTimeout is the hard ceiling on resolveBudgetAfterAmbiguousCreate,
+// detached from the caller's context. It has to cover the attempt schedule below plus the
+// searches themselves — a found budget costs two (the name lookup and the campaign-side
+// attachment check), each bounded by googleAdsRequestTimeout — so it is the ceiling for
+// the case where the queries are slow, not the normal exit.
+const ambiguousBudgetResolveTimeout = 20 * time.Second
+
+// Retry schedule for the ONE outcome that is not self-evident: no live budget of this name
+// visible yet. See resolveBudgetAfterAmbiguousCreate for why that outcome is ambiguous.
+//
+// The attempt cap, not the timeout, is what normally ends the loop; it bounds what this
+// costs on the path where nothing is wrong. N attempts sleep N-1 times, so these four
+// attempts span 250+500+1000 = 1750ms of sleep plus four round trips. Retrying until the
+// ceiling instead would add twenty seconds to every genuinely-failed create, and each
+// attempt is a real googleAds:search against the account's quota — so the schedule buys
+// the replica-lag window without turning a clean failure into a slow one.
+const (
+	ambiguousBudgetResolveAttempts = 4
+	ambiguousBudgetResolveMinDelay = 250 * time.Millisecond
+	ambiguousBudgetResolveMaxDelay = 1 * time.Second
 )
 
 // ---------------------------------------------------------------------------
@@ -358,10 +381,12 @@ func (c *Client) findBudgetByName(ctx context.Context, budgetName string) (*reus
 // max", "campaign", "demand gen", "display", "video" — and namePartial is the caller's own
 // pre-budget partial builder.
 //
-// Returning (nil, err) in the proven-nothing-created case is deliberate and is the only
-// behaviour change visible outside this package: a nil result is the pre-create failure
-// contract (CreateOutcome returns no token for it, orchestrator releases the claim), which
-// is exactly right once the account has said nothing was written.
+// Every arm returns a partial and keeps the brief's claim. What changes is what the
+// partial and the sentence SAY: a budget that is found puts its id on the partial, which
+// is what reclassifies the failure for CreateOutcome, and an absence that survives the
+// re-reads is reported as such in words. No arm returns a nil result — an ambiguous
+// mutating create is not allowed to resolve into a pre-create failure on the strength of
+// a read (see the default arm).
 func (c *Client) ambiguousBudgetCreateOutcome(ctx context.Context, channel, budgetName string, namePartial func() *CampaignResult, createErr error) (*CampaignResult, error) {
 	budgetID, budgetExists, resolveErr := c.resolveBudgetAfterAmbiguousCreate(ctx, budgetName)
 	switch {
@@ -371,7 +396,13 @@ func (c *Client) ambiguousBudgetCreateOutcome(ctx context.Context, channel, budg
 		// same load-bearing reason the DUPLICATE_NAME arms spell out — errors.As stops at
 		// the first *apiError in the chain, so an apiError from the lookup READ must not
 		// shadow the create's and cost this failure its create-outcome token.
-		return namePartial(), fmt.Errorf("google-ads %s budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w — and the account could not be read to settle it: %w", channel, budgetName, createErr, resolveErr)
+		//
+		// "did not settle it" rather than "could not be read": this arm also fires when
+		// the account WAS read and a gate refused the row it returned — two live budgets
+		// of the name, an explicitly shared one, an attached one, a wrong-shaped or
+		// undecodable one. Naming only the read failure would send the operator to check
+		// connectivity when the actual answer is in the wrapped resolveErr.
+		return namePartial(), fmt.Errorf("google-ads %s budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w — and the account did not settle it: %w", channel, budgetName, createErr, resolveErr)
 	case budgetExists:
 		// The budget landed. Carrying its id is what turns the generic unconfirmed
 		// message into CreateOutcomeBudgetCreatedCampaignUnconfirmed (see CreateOutcome) —
@@ -381,9 +412,21 @@ func (c *Client) ambiguousBudgetCreateOutcome(ctx context.Context, channel, budg
 		r.CampaignBudgetID = budgetID
 		return r, fmt.Errorf("google-ads %s budget %s (%q) WAS created despite an unconfirmed create response, and the campaign was never attempted; the budget is unattached so it accrues no spend, and a retry of this brief will reuse it: %w", channel, budgetID, budgetName, createErr)
 	default:
-		// No live budget of this name, and campaigns:mutate was never issued — so there is
-		// nothing to verify, nothing to reconcile, and the retry is clean.
-		return nil, fmt.Errorf("google-ads %s budget creation failed with an unconfirmed response, but no budget named %q is live in the account, so nothing was created: %w", channel, budgetName, createErr)
+		// The account shows no live budget of this name, after the corroborating re-reads
+		// resolveBudgetAfterAmbiguousCreate makes. That is worth SAYING — it is a much
+		// better starting point than "it may exist" — but it is not worth CLAIMING.
+		//
+		// An ambiguous mutating create must produce a partial result and retain the claim
+		// (docs/reviews/knowledge-base/context-and-cancellation.md,
+		// presend-clean-inflight-unconfirmed), and the reason survives the re-reads: an
+		// absence is a property of the READ, and this same file refuses to act on a
+		// zero-row answer from this same query where it can be contradicted, naming a
+		// stale read replica, the wrong account, and a name that does not round-trip. A
+		// nil result here would release the brief's claim on the strength of that read,
+		// so a budget that did commit and was simply not visible would be reported as
+		// never created — the exact orphan shape this arm exists to close. The partial
+		// therefore still carries the names, and the outcome stays UNCONFIRMED.
+		return namePartial(), fmt.Errorf("google-ads %s budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w — no budget of that name is live in the account, checked %d times, so most likely nothing was created", channel, budgetName, createErr, ambiguousBudgetResolveAttempts)
 	}
 }
 
@@ -408,20 +451,62 @@ func (c *Client) ambiguousBudgetCreateOutcome(ctx context.Context, channel, budg
 //
 //   - (id, true, nil)  — the budget exists; the caller puts its id on the partial so the
 //     operator is told what to reconcile instead of being sent to hunt for it
-//   - ("", false, nil) — nothing was created; the caller may report a clean pre-create
-//     failure, which is a safe retry and no orphan
+//   - ("", false, nil) — no budget of this name is visible after the re-reads below; the
+//     caller may SAY so, which is a far better starting point than "it may exist", but it
+//     may not treat it as proof that nothing was written
 //   - ("", false, err) — the account could not be read, or a budget of this name exists
 //     that fails a gate. Nothing was settled, so the caller keeps saying exactly what it
 //     said before this existed
+//
+// THE READ RUNS ON A DETACHED, BOUNDED CONTEXT, for the same reason
+// ambiguousCommitReconcileTimeout is detached in audience_repo.go: one of the three shapes
+// that reach this arm is a transport error from httpClient.Do, and a cancelled or expired
+// caller context produces exactly that. Reusing ctx would make the feature inert in one of
+// the shapes most likely to leave an orphan — the search would fail immediately and the
+// arm would fall through to "did not settle it" — while still costing a doomed round trip.
+// The caller is already on its way out with an error; a client disconnect must not be the
+// reason an orphan goes unreported.
+//
+// ONLY THE NO-ROW OUTCOME IS RETRIED. A zero-row search does not prove the write rolled
+// back: this arm is reached when campaignBudgets:mutate failed without saying whether the
+// write landed, including while Google was still committing it, and the Google Ads search
+// surface is not guaranteed read-after-write consistent — findReusableBudget's own
+// contradiction message names a stale read replica as one explanation it refuses to
+// proceed on. Treating the first zero-row answer as final would leave this blind to a
+// subset of its own reason for existing: a budget committed moments before is exactly the
+// one a single immediate read can miss, and it is the one the caller most needs to hear
+// about, since the id it would carry is what makes the orphan actionable. A found budget,
+// or any gate error, settles the question immediately and is never retried.
 func (c *Client) resolveBudgetAfterAmbiguousCreate(ctx context.Context, budgetName string) (budgetID string, created bool, err error) {
-	budget, found, err := c.findBudgetByName(ctx, budgetName)
-	if err != nil {
-		return "", false, err
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ambiguousBudgetResolveTimeout)
+	defer cancel()
+
+	delay := ambiguousBudgetResolveMinDelay
+	for attempt := 1; ; attempt++ {
+		budget, found, err := c.findBudgetByName(rctx, budgetName)
+		if err != nil {
+			return "", false, err
+		}
+		if found {
+			return budget.ID, true, nil
+		}
+		if attempt >= ambiguousBudgetResolveAttempts {
+			return "", false, nil
+		}
+
+		timer := time.NewTimer(delay)
+		select {
+		case <-rctx.Done():
+			timer.Stop()
+			// The ceiling was reached before the attempts were, so the re-reads never
+			// finished and the absence is reported as unsettled rather than as an absence.
+			return "", false, fmt.Errorf("resolving budget %q after an unconfirmed create: %w", budgetName, rctx.Err())
+		case <-timer.C:
+		}
+		if delay *= 2; delay > ambiguousBudgetResolveMaxDelay {
+			delay = ambiguousBudgetResolveMaxDelay
+		}
 	}
-	if !found {
-		return "", false, nil
-	}
-	return budget.ID, true, nil
 }
 
 // budgetRowIdentity answers "which budget is this row, and may it be reused" for ONE row,
