@@ -540,47 +540,67 @@ type Service interface {
 	// as possibly-committed, and so is a 2xx whose body could not be decoded.
 	// Verify in HubSpot before creating it again.
 	CreateHubspotCampaign(context.Context, *CreateHubspotCampaignPayload) (res *HubspotCampaign, err error)
-	// Read every campaign visible on a Google Ads account, live from the platform,
-	// with pacing and action items derived by this service's ported rule engine.
-	// Account-scoped, not project-scoped: {project_id} resolves which stored
-	// connection credential to use, and the read enumerates everything that
-	// credential reaches on account_id, not only campaigns this service created.
-	// Unlike GET .../connection-google-ads/accounts, this endpoint resolves the
-	// project's OWN connection only and does not fall back to the shared LF system
-	// credential: a project with no Google Ads connection of its own gets a 404,
-	// not the LF account's data. A pure read: nothing is persisted.
+	// Read this project's own campaigns on a Google Ads account, live from the
+	// platform, with pacing and action items derived by this service's ported rule
+	// engine. Project-scoped: only campaigns this service recorded for the project
+	// are returned; the upstream account is shared across foundations, so the
+	// account read is filtered to them before rules and totals. A project with no
+	// campaigns recorded on the platform gets an empty monitor without any
+	// upstream call. A recorded campaign created under a different account than
+	// account_id fails the read with 409 rather than returning a partial picture.
+	// {project_id} also resolves which stored connection credential reads
+	// account_id. Unlike GET .../connection-google-ads/accounts, this endpoint
+	// resolves the project's OWN connection only and does not fall back to the
+	// shared LF system credential: a project with campaigns but no Google Ads
+	// connection of its own gets a 404, not the LF account's data. A pure read:
+	// nothing is persisted.
 	MonitorGoogleAdsAccount(context.Context, *MonitorGoogleAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read every campaign visible on a LinkedIn Ads account, live from the
 	// platform, with pacing and action items derived by this service's ported rule
-	// engine. Account-scoped, not project-scoped, the same way
-	// monitor-google-ads-account is. A pure read: nothing is persisted.
+	// engine. Account-scoped, not project-scoped: {project_id} resolves which
+	// stored connection credential to use, and the read enumerates everything that
+	// credential reaches on account_id. A pure read: nothing is persisted.
 	MonitorLinkedinAdsAccount(context.Context, *MonitorLinkedinAdsAccountPayload) (res *AccountMonitor, err error)
-	// Read every campaign visible on a Meta Ads account, live from the platform,
-	// with pacing and action items derived by this service's ported rule engine.
-	// Account-scoped, not project-scoped, the same way monitor-google-ads-account
-	// is. A pure read: nothing is persisted.
+	// Read this project's own campaigns on a Meta Ads account, live from the
+	// platform, with pacing and action items derived by this service's ported rule
+	// engine. Project-scoped: only campaigns this service recorded for the project
+	// are returned; the upstream account is shared across foundations, so the
+	// account read is filtered to them before rules and totals. A project with no
+	// campaigns recorded on the platform gets an empty monitor without any
+	// upstream call. A recorded campaign created under a different account than
+	// account_id fails the read with 409 rather than returning a partial picture.
+	// A pure read: nothing is persisted.
 	MonitorMetaAdsAccount(context.Context, *MonitorMetaAdsAccountPayload) (res *AccountMonitor, err error)
-	// Read every campaign visible on a Reddit Ads account, live from the platform,
-	// with pacing and action items derived by this service's ported rule engine.
-	// Account-scoped, not project-scoped, the same way monitor-google-ads-account
-	// is. A pure read: nothing is persisted.
+	// Read this project's own campaigns on a Reddit Ads account, live from the
+	// platform, with pacing and action items derived by this service's ported rule
+	// engine. Project-scoped: only campaigns this service recorded for the project
+	// are returned; the upstream account is shared across foundations, so the
+	// account read is filtered to them before rules and totals. A project with no
+	// campaigns recorded on the platform gets an empty monitor without any
+	// upstream call. A recorded campaign created under a different account than
+	// account_id fails the read with 409 rather than returning a partial picture.
+	// A pure read: nothing is persisted.
 	MonitorRedditAdsAccount(context.Context, *MonitorRedditAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read every live campaign on a Microsoft Advertising account with pacing and
 	// action items derived by this service's rule engine. Account-scoped, not
-	// project-scoped, the same way monitor-google-ads-account is, and resolved
-	// from the project's OWN connection only. The campaign list (names, statuses,
-	// daily budgets) is read live; delivery metrics come from Microsoft's
-	// asynchronous Reporting service, which takes minutes to build a report, so
-	// they are served from the last report that finished — see metrics_as_of and
-	// metrics_pending — while the next one builds. The first read for an account
-	// and window therefore returns campaigns with fetch_failed=true and
-	// metrics_pending=true. Saved reports are cached platform data, not a record
-	// of anything this service did.
+	// project-scoped: the read enumerates everything the project's OWN connection
+	// reaches on account_id. The campaign list (names, statuses, daily budgets) is
+	// read live; delivery metrics come from Microsoft's asynchronous Reporting
+	// service, which takes minutes to build a report, so they are served from the
+	// last report that finished — see metrics_as_of and metrics_pending — while
+	// the next one builds. The first read for an account and window therefore
+	// returns campaigns with fetch_failed=true and metrics_pending=true. Saved
+	// reports are cached platform data, not a record of anything this service did.
 	MonitorMicrosoftAdsAccount(context.Context, *MonitorMicrosoftAdsAccountPayload) (res *AccountMonitor, err error)
-	// Read every live campaign on an X (Twitter) Ads account with pacing and
-	// action items derived by this service's rule engine. Account-scoped, not
-	// project-scoped, the same way monitor-google-ads-account is, and resolved
-	// from the project's OWN connection only. The campaign list (names, statuses,
+	// Read this project's own live campaigns on an X (Twitter) Ads account with
+	// pacing and action items derived by this service's rule engine, resolved from
+	// the project's OWN connection only. Project-scoped: only campaigns this
+	// service recorded for the project are returned; the upstream account is
+	// shared across foundations, so the account read is filtered to them before
+	// rules and totals. A project with no campaigns recorded on the platform gets
+	// an empty monitor without any upstream call. A recorded campaign created
+	// under a different account than account_id fails the read with 409 rather
+	// than returning a partial picture. The campaign list (names, statuses,
 	// budgets, and flights from the line items) is read live; delivery metrics
 	// come from X's asynchronous stats jobs — X's synchronous stats are capped at
 	// 7 days per request — so they are served from the last report that finished —
@@ -588,11 +608,15 @@ type Service interface {
 	// read for an account and window therefore returns campaigns with
 	// fetch_failed=true and metrics_pending=true. Conversions are never reported
 	// for X. Saved reports are cached platform data, not a record of anything this
-	// service did. Two account states are refused with 409 rather than served
-	// metrics that would be wrong: more than 200 campaigns active in the window
-	// (reason account_too_many_active_campaigns — one report covers at most ten X
-	// stats jobs of 20 campaigns), and an account timezone whose local midnight is
-	// not a whole UTC hour, such as Asia/Kolkata (reason
+	// service did; the saved report covers the whole account, and only the
+	// response is scoped. The scope refusals carry reason
+	// campaign_account_mismatch (a recorded campaign belongs to another account,
+	// or records none) or campaign_scope_invalid (a recorded campaign id the
+	// platform cannot read). Two account states are also refused with 409 rather
+	// than served metrics that would be wrong: more than 200 campaigns active in
+	// the window (reason account_too_many_active_campaigns — one report covers at
+	// most ten X stats jobs of 20 campaigns), and an account timezone whose local
+	// midnight is not a whole UTC hour, such as Asia/Kolkata (reason
 	// account_timezone_unsupported — X accepts whole-hour window bounds only, so
 	// the account's own days cannot be queried exactly). A 90-day window that
 	// crosses a DST fall-back covers the trailing 89 whole local days, because 90
@@ -799,8 +823,11 @@ type AccountMonitorConflictError struct {
 	Message string
 	// Why the account cannot be monitored as it stands:
 	// account_too_many_active_campaigns (more campaigns active in the window than
-	// one report covers) or account_timezone_unsupported (the account's timezone
-	// does not start its days on a whole UTC hour).
+	// one report covers), account_timezone_unsupported (the account's timezone
+	// does not start its days on a whole UTC hour), campaign_account_mismatch (a
+	// campaign recorded for this project was created under a different account, or
+	// records none) or campaign_scope_invalid (a campaign recorded for this
+	// project has an id the platform cannot read).
 	Reason string
 }
 

@@ -441,6 +441,25 @@ type AccountMonitorReader interface {
 		accountID string, days int) (*model.AccountMonitorRead, error)
 }
 
+// AccountMonitorScoper is an OPTIONAL dispatcher capability, discovered by type assertion like
+// AccountMonitorReader: it reduces the project's campaign scope to the upstream campaign ids that
+// can be read under the monitored account (linuxfoundation/lfx-self-serve-ops#897).
+//
+// Implementing it is this codebase's record that the platform's ad account is SHARED across
+// foundations (docs/architecture.md, "Account Tenancy"). An account read on such a platform
+// returns every foundation's campaigns, so ReadAccountCampaignMetrics and
+// ReadReportedAccountCampaigns keep only the rows whose ids this returns, and a platform that
+// implements it never answers the monitor account-wide. A platform that does not implement it
+// keeps the account-wide read.
+//
+// scope is never empty: the orchestrator answers an empty scope with an empty monitor before
+// calling this. ANY entry recorded under an account other than accountID must fail the call with
+// an error wrapping ErrCampaignAccountMismatch, never be dropped: a partly matching scope reduced
+// to the matching ids would be reported as the project's whole picture.
+type AccountMonitorScoper interface {
+	MonitorScopeForAccount(scope []model.ProjectCampaignScope, accountID string) ([]string, error)
+}
+
 // EmailSearcher is an OPTIONAL dispatcher capability: search the marketing emails reachable
 // through a project's stored connection. Discovered by type assertion like StatusToggler,
 // MetricsReader and AccountLister; a dispatcher that doesn't implement it yields a clean
@@ -2899,9 +2918,10 @@ func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platf
 	return accounts, nil
 }
 
-// ReadAccountCampaignMetrics reads every campaign visible on accountID over the trailing
-// `days` days, for the account-scoped monitor endpoints, with the account's currency when the
-// dispatcher reports it. Modeled directly on ReadAccounts above: type-assert for the reader
+// ReadAccountCampaignMetrics reads the campaigns on accountID over the trailing `days` days, for
+// the account-monitor endpoints, with the account's currency when the dispatcher reports it. On a
+// shared-tenancy platform (AccountMonitorScoper) only the project's own campaigns are returned;
+// elsewhere every campaign visible on the account is. Modeled directly on ReadAccounts above: type-assert for the reader
 // (AccountMonitorReader first, then AccountMetricsReader), bound the call, record it through
 // recordUpstream, and treat a nil result with no error as a contract violation rather than an
 // authoritative empty answer.
@@ -2914,6 +2934,17 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 	reader, rowsOnly := d.(AccountMetricsReader)
 	if !withCurrency && !rowsOnly {
 		return nil, fmt.Errorf("%w: %s", ErrAccountMetricsUnsupported, platform)
+	}
+	// On a shared-tenancy platform the project's own campaigns are established BEFORE any
+	// upstream call, and an empty scope answers with an empty monitor without contacting the
+	// platform at all: the account read below would otherwise return every foundation's
+	// campaigns to a project that has none of its own (lfx-self-serve-ops#897).
+	scopeIDs, scoped, serr := o.scopeAccountMonitor(ctx, projectID, platform, accountID)
+	if serr != nil {
+		return nil, serr
+	}
+	if scoped && len(scopeIDs) == 0 {
+		return &model.AccountMonitorRead{Rows: []model.AccountCampaignMetrics{}}, nil
 	}
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
@@ -2943,7 +2974,76 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 	// value reaches the response, and a dispatcher that forgot would otherwise publish whatever
 	// the platform sent.
 	read.Currency = model.NormalizeCurrencyCode(read.Currency)
+	// The upstream read is account-wide; only the project's own campaigns leave this service.
+	// Filtered before the rule engine runs, so action items and totals describe the same rows.
+	if scoped {
+		read.Rows = filterMonitorRows(read.Rows, scopeIDs)
+	}
 	return read, nil
+}
+
+// scopeAccountMonitor resolves the project's campaign scope for an account-monitor read.
+//
+// scoped is false when platform's dispatcher does not implement AccountMonitorScoper: its
+// account is not recorded as shared, and the monitor keeps its account-wide read. Otherwise ids
+// is the set of upstream campaign ids the monitor may return — EMPTY when the project has no
+// campaigns on platform, which the caller answers without any upstream call, exactly as
+// ReadKeywordPerformance does. A live scope entry recorded under a different account than
+// accountID fails the read (ErrCampaignAccountMismatch → 409) rather than shrinking the set.
+//
+// The project's SOFT-DELETED campaigns are in ids too: a local delete does not stop the upstream
+// campaign (BriefService.DeleteCampaign), and the monitor is where one still spending is seen.
+// Each is checked on its own and kept only when the scoper proves it belongs to accountID; one
+// that cannot be proven is dropped and logged, never a 409. A deleted row cannot be re-dispatched
+// or reconciled, so a 409 on it would have no remedy, and dropping it shows nothing unproven.
+func (o *Orchestrator) scopeAccountMonitor(ctx context.Context, projectID string, platform model.Provider, accountID string) (ids map[string]bool, scoped bool, err error) {
+	scoper, ok := o.dispatchers[platform].(AccountMonitorScoper)
+	if !ok {
+		return nil, false, nil
+	}
+	scope, err := o.projectCampaignScope(ctx, projectID, platform)
+	if err != nil {
+		return nil, true, err
+	}
+	ids = make(map[string]bool, len(scope))
+	if len(scope) > 0 {
+		campaignIDs, serr := scoper.MonitorScopeForAccount(scope, accountID)
+		if serr != nil {
+			return nil, true, serr
+		}
+		for _, id := range campaignIDs {
+			ids[id] = true
+		}
+	}
+	deleted, err := o.campaigns.ListProjectPlatformDeletedCampaignIDs(ctx, projectID, platform)
+	if err != nil {
+		return nil, true, fmt.Errorf("resolve deleted campaign scope for project %s on %s: %w", projectID, platform, err)
+	}
+	for _, d := range deleted {
+		campaignIDs, derr := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{d}, accountID)
+		if derr != nil {
+			slog.InfoContext(ctx, "account monitor: soft-deleted campaign not shown, it cannot be proven to belong to the monitored account",
+				"project_id", projectID, "platform", string(platform), "error", safeErrSummary(derr))
+			continue
+		}
+		for _, id := range campaignIDs {
+			ids[id] = true
+		}
+	}
+	return ids, true, nil
+}
+
+// filterMonitorRows keeps only the rows whose upstream campaign id is in ids, matched by
+// PlatformCampaignID exactly as the insight report merges match theirs (scopeCampaignIDs). The
+// result is never nil, so an empty answer still serializes as `[]`.
+func filterMonitorRows(rows []model.AccountCampaignMetrics, ids map[string]bool) []model.AccountCampaignMetrics {
+	out := make([]model.AccountCampaignMetrics, 0, len(ids))
+	for _, r := range rows {
+		if ids[r.PlatformCampaignID] {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // ProbeConnection verifies a project's own stored connection against the platform, for the

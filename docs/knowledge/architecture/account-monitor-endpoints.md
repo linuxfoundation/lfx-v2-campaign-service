@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Account-Monitor Endpoints"
-description: "Seven monitor endpoints: six account-scoped ones, one per ad platform (four ported from the LFX One BFF's rule engines and read live, Microsoft Ads and X served from saved asynchronous reports because their metrics cannot be read inside one request), and a project-scoped HubSpot email monitor that reads only the marketing emails this service recorded for the project."
+description: "Seven monitor endpoints: six ad-platform ones, one per ad platform (four ported from the LFX One BFF's rule engines and read live, Microsoft Ads and X served from saved asynchronous reports because their metrics cannot be read inside one request), of which Google Ads, Meta, Reddit and X return only the campaigns this service recorded for the project because their ad account is shared across foundations while LinkedIn and Microsoft stay account-scoped, and a project-scoped HubSpot email monitor that reads only the marketing emails this service recorded for the project."
 resource: "internal/service/connection_monitor.go"
 ---
 
@@ -12,8 +12,8 @@ resource: "internal/service/connection_monitor.go"
 Microsoft Ads and X joined later and are the two REPORT-BACKED monitors — see
 [Microsoft: a report-backed monitor](#microsoft-a-report-backed-monitor) and
 [X: a second report-backed monitor](#x-a-second-report-backed-monitor). HubSpot's
-`GET /projects/{project_id}/connection-hubspot/account-monitor?days=` is the seventh and the
-only PROJECT-scoped one — see
+`GET /projects/{project_id}/connection-hubspot/account-monitor?days=` is the seventh, the only
+one with no `account_id`, and project-scoped — see
 [HubSpot: a project-scoped email monitor](#hubspot-a-project-scoped-email-monitor). Everything
 below that is not in those sections describes the four live reads.
 
@@ -21,8 +21,11 @@ Ports the LFX One BFF's `/api/campaigns/monitor` family (Google, LinkedIn,
 Meta, Reddit — Meta ships with a pagination fix, not a verbatim port; see
 below). `{project_id}` means "whose credential do I resolve," the same way
 it already does for the existing `connection-*-ads/accounts` discovery
-endpoints — these are *account*-scoped reads (every campaign the credential
-reaches), not project-scoped ones.
+endpoints. On LinkedIn and Microsoft these are *account*-scoped reads (every
+campaign the credential reaches). On Google Ads, Meta, Reddit and X, whose
+one ad account every foundation shares, `{project_id}` also limits the
+response to the campaigns this service recorded for the project — see
+[Project scoping on shared accounts](#project-scoping-on-shared-accounts-lfx-self-serve-ops897).
 
 ## Shape
 
@@ -535,9 +538,68 @@ shared credential has no "own" account to monitor, the same way it has no
 residual even for a project WITH its own connection — see
 `resolveOwnedGoogleAdsDiscoveryClient`'s doc comment
 (`internal/dispatch/googleads.go`): Google Ads is one shared customer across
-every foundation, so the fix closes the system-fallback gap but cannot make
-the endpoint project-scoped in the way LinkedIn/Meta/Reddit's per-project ad
-accounts are.
+every foundation, so the fix closes the system-fallback gap but cannot by
+itself make the endpoint project-scoped. Project scoping, below, is what
+closes that residual.
+
+### Project scoping on shared accounts (lfx-self-serve-ops#897)
+
+Resolving the project's own credential decides whose credential reads the
+account; it does not decide which campaigns come back. On Google Ads, Meta,
+Reddit and X every foundation's connection points at the same upstream
+account, so an account-wide read handed a `campaign_manager` of one project
+every other foundation's campaigns, budgets and spend. That was true through
+the BFF and on a direct call alike: the gateway check is `campaign_manager`
+on `project:{project_id}` and nothing else, and this service only verified
+identity.
+
+The four monitors are now project-scoped inside the service, for every
+caller (ROOT included), at one choke point mirroring
+`Orchestrator.ReadKeywordPerformance`:
+
+1. `scopeAccountMonitor` reads the project's campaign scope from SQL
+   (`projectCampaignScope` → `ListProjectPlatformCampaignIDs`, filtered on
+   `project_id`).
+2. An empty scope answers 200 with an empty monitor before any upstream call
+   and before the connection is resolved — so a project with no campaigns and
+   no connection gets 200, not 404, as the insight reads already do. On X it
+   also skips the saved-report read, the campaign list and any submission.
+3. The dispatcher's `MonitorScopeForAccount` checks each entry's recorded
+   creation account against `account_id` with the same provenance helpers the
+   insight reads use (`googleAdsScopeForCustomer`, `metaScopeForAccount`,
+   `redditScopeForAccount`, `twitterScopeForAccount`). ANY mismatch fails the
+   read closed — a partly matching scope is never reduced to the matching ids,
+   because the response has no field that could disclose the omission.
+   The project's SOFT-DELETED campaigns (`ListProjectPlatformDeletedCampaignIDs`)
+   join the set too, because a local delete does not stop the upstream campaign
+   and the monitor is where one still spending shows up. Each is checked on its
+   own: it is kept when it is proven to belong to `account_id`, and dropped and
+   logged otherwise, never a 409 — a deleted row cannot be re-dispatched or
+   reconciled, so that refusal would have no remedy. The empty-scope answer in
+   step 2 therefore needs both lists empty.
+4. The unchanged account read runs, and only rows whose
+   `platform_campaign_id` is in the scoped set are kept, BEFORE the rule engine
+   and `monitorTotals` — so action items and totals describe the same rows.
+
+The 409s are mapped by `classifyMonitorError` (`connection_monitor.go`), with
+`classifyInsightsErrorFor`'s arm order and remedies: provenance mixed, then
+unknown (Reddit only — it refuses a row that records no creating account),
+then mismatch, then an unreadable stored id. Google, Meta and Reddit answer
+`ConflictError`; X answers its own `AccountMonitorConflictError` with `reason`
+`campaign_account_mismatch` or `campaign_scope_invalid`. The arms apply only
+to those four platforms, so LinkedIn and Microsoft can never produce a 409
+their designs do not declare.
+
+The shared-tenancy marker is the OPTIONAL capability
+`service.AccountMonitorScoper`, implemented in
+`internal/dispatch/account_monitor_scope.go` by the four shared-tenancy
+dispatchers and by no others. LinkedIn runs an account per foundation and
+Microsoft's tenancy is not yet recorded
+([architecture.md § Account Tenancy](../../architecture.md#account-tenancy)),
+so both keep the account-wide read. X's saved report
+(`account_monitor_reports`) still stores the account-wide rows; only the
+response is filtered, and the report's `metrics_as_of`, window and
+`metrics_pending` are returned unchanged.
 
 ### Expected interaction with `LFX_FORCE_SYSTEM_ADS_ACCOUNT`
 

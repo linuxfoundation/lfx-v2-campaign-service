@@ -306,6 +306,16 @@ The service introduces **no new FGA object types** — only relations on the exi
 
 **Every endpoint in this service is gated on `campaign_manager`** — there is no read-only campaigns audience. The Campaigns page is only ever accessed by campaign managers, who both read and write; the platform-metrics reads are live ad-platform data (also campaign-manager scoped), distinct from the Snowflake-backed Marketing Insights dashboard that `marketing_auditor` governs. RuleSets are evaluated against the `{projectId}` in the path; because these are project relations (not a new type), all API paths nest under `/projects/{projectId}/…` (see [api-catalog.md](api-catalog.md#api-design-rules)).
 
+**The gateway check is project-level; data on a shared ad account is scoped in the service.** A
+`campaign_manager` grant on one project passes the check for that project only, but on a platform
+whose single upstream account is shared by every foundation (see
+[Account Tenancy](#account-tenancy)) an account-wide read would still return other foundations'
+data. The account-monitor reads close that inside the service rather than at the gateway: on Google
+Ads, Meta, Reddit and X they return only the campaigns this service recorded for the `{projectId}`
+in the path, for every caller, ROOT included. So a direct call by a single-project
+`campaign_manager`, bypassing the BFF, sees that project's own campaigns and nothing else
+(lfx-self-serve-ops#897, ask 2).
+
 ### Indexer Resource Type Names
 
 Resources that need cross-project listing or revision/audit history are indexed into the Query Service under a globally-unique type name (the platform maintains a single object namespace shared across services). This service declares:
@@ -456,14 +466,30 @@ Campaign managers can create, read, update, and remove connections to ad platfor
 accounts; it is not encoded in the migrations (which only enforce one live connection per provider
 per project), so the "migrations are the sole authority" rule does not cover it. This section and
 [Current Platform Accounts](#current-platform-accounts) below are the authority for tenancy. The
-account-monitor scope guards in `internal/dispatch` cite them. Five platforms carry one —
+account-monitor scope guards in `internal/dispatch` cite them.
+
+**Project scoping on shared accounts.** The Google Ads, Meta, Reddit and X account monitors return
+only the requesting project's own campaigns — the `platform_campaign_id`s recorded on its
+`campaigns` rows for that platform — because the account they read is the one every foundation
+shares. The marker is the optional dispatcher capability `service.AccountMonitorScoper`: the
+dispatchers of the shared-tenancy platforms implement it (`internal/dispatch/account_monitor_scope.go`),
+and `Orchestrator.ReadAccountCampaignMetrics` / `ReadReportedAccountCampaigns` filter the account
+read to the project's scope before rules and totals run. A project with no campaigns on the platform
+gets an empty monitor with no upstream call. A recorded campaign created under a different account
+than the requested one fails the read with 409 rather than a partial picture
+(lfx-self-serve-ops#897). LinkedIn and Microsoft do not implement the capability, so their monitors
+stay account-wide. Implementing it is how a platform is recorded as shared in code: if a platform's
+tenancy changes, change its dispatcher in the same change as the tables here.
+
+**Requested-account guards.** Five platforms carry one —
 `requireLinkedInManagedAccount`, `requireMetaManagedAccount`, Reddit's `resolveMonitorClient`,
 `requireTwitterManagedAccount` and `requireMicrosoftManagedAccount` — each refusing a requested
 `account_id` other than the one the project's own connection stores
 (`domain.ErrAccountNotManagedByConnection`, 400). The check is LIVE on LinkedIn, where a project can
 name another foundation's account, and DEFENSIVE on Meta, Reddit and X, where every project's stored
-account is the same shared one. Google Ads, one shared customer, has no such guard. Microsoft's
-guard runs regardless of its unrecorded tenancy. If a platform moves to an account per foundation,
+account is the same shared one. Google Ads has no such guard and needs none for isolation: project
+scoping means naming another customer returns only this project's campaigns recorded there, or a
+409. Microsoft's guard runs regardless of its unrecorded tenancy. If a platform moves to an account per foundation,
 or Microsoft's account is recorded, update both tables here in the same change.
 
 > **Future organic/communication channels** (Slack workspaces, Discord servers, social accounts) may legitimately need *multiple instances per project* — a shape the current singleton `UNIQUE (project_id)` per-provider tables do **not** accommodate. Those channels are out of scope for this paid-platform migration; when they land, their tables will drop the `UNIQUE (project_id)` constraint and their API will use a collection shape (`/projects/{id}/slack-connections/{id}`). This is called out so the singleton decision here is understood as scoped to paid ad platforms, not a claim about every future channel.
@@ -535,6 +561,12 @@ Events | KubeCon NA 2025 | EMEA | Conversions | Intent | Search | cncf | MoFU | 
 ```
 
 The data pipeline parses campaign names to attribute them to the correct foundation/project. No manual mapping entry needed once the naming convention is followed.
+
+This service's own reads do not parse names. The project-scoped reads — the keyword and audience
+insights and the Google Ads, Meta, Reddit and X account monitors — attribute an upstream campaign to
+a project by `campaigns.project_id`, the row this service wrote when it created or adopted the
+campaign. A campaign created outside this service is therefore not in any project's monitor, however
+it is named.
 
 ## Migration Path
 

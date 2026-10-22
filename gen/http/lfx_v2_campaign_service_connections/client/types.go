@@ -5530,6 +5530,19 @@ type MonitorGoogleAdsAccountBadRequestResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// MonitorGoogleAdsAccountConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
+// endpoint HTTP response body for the "Conflict" error.
+type MonitorGoogleAdsAccountConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
 // MonitorGoogleAdsAccountServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
@@ -5650,6 +5663,19 @@ type MonitorMetaAdsAccountBadRequestResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// MonitorMetaAdsAccountConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
+// endpoint HTTP response body for the "Conflict" error.
+type MonitorMetaAdsAccountConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
 // MonitorMetaAdsAccountServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
@@ -5708,6 +5734,19 @@ type MonitorRedditAdsAccountBadRequestResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorRedditAdsAccountConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
+// endpoint HTTP response body for the "Conflict" error.
+type MonitorRedditAdsAccountConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // MonitorRedditAdsAccountServiceUnavailableResponseBody is the type of the
@@ -5836,8 +5875,11 @@ type MonitorTwitterAdsAccountConflictResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 	// Why the account cannot be monitored as it stands:
 	// account_too_many_active_campaigns (more campaigns active in the window than
-	// one report covers) or account_timezone_unsupported (the account's timezone
-	// does not start its days on a whole UTC hour).
+	// one report covers), account_timezone_unsupported (the account's timezone
+	// does not start its days on a whole UTC hour), campaign_account_mismatch (a
+	// campaign recorded for this project was created under a different account, or
+	// records none) or campaign_scope_invalid (a campaign recorded for this
+	// project has an id the platform cannot read).
 	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
@@ -13226,6 +13268,19 @@ func NewMonitorGoogleAdsAccountBadRequest(body *MonitorGoogleAdsAccountBadReques
 	return v
 }
 
+// NewMonitorGoogleAdsAccountConflict builds a
+// lfx-v2-campaign-service-connections service monitor-google-ads-account
+// endpoint Conflict error.
+func NewMonitorGoogleAdsAccountConflict(body *MonitorGoogleAdsAccountConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
 // NewMonitorGoogleAdsAccountServiceUnavailable builds a
 // lfx-v2-campaign-service-connections service monitor-google-ads-account
 // endpoint ServiceUnavailable error.
@@ -13440,6 +13495,19 @@ func NewMonitorMetaAdsAccountBadRequest(body *MonitorMetaAdsAccountBadRequestRes
 	return v
 }
 
+// NewMonitorMetaAdsAccountConflict builds a
+// lfx-v2-campaign-service-connections service monitor-meta-ads-account
+// endpoint Conflict error.
+func NewMonitorMetaAdsAccountConflict(body *MonitorMetaAdsAccountConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
 // NewMonitorMetaAdsAccountServiceUnavailable builds a
 // lfx-v2-campaign-service-connections service monitor-meta-ads-account
 // endpoint ServiceUnavailable error.
@@ -13542,6 +13610,19 @@ func NewMonitorRedditAdsAccountBadRequest(body *MonitorRedditAdsAccountBadReques
 	v := &lfxv2campaignserviceconnections.BadRequestError{
 		Code:    *body.Code,
 		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorRedditAdsAccountConflict builds a
+// lfx-v2-campaign-service-connections service monitor-reddit-ads-account
+// endpoint Conflict error.
+func NewMonitorRedditAdsAccountConflict(body *MonitorRedditAdsAccountConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -20677,6 +20758,23 @@ func ValidateMonitorGoogleAdsAccountBadRequestResponseBody(body *MonitorGoogleAd
 	return
 }
 
+// ValidateMonitorGoogleAdsAccountConflictResponseBody runs the validations
+// defined on MonitorGoogleAdsAccountConflictResponseBody
+func ValidateMonitorGoogleAdsAccountConflictResponseBody(body *MonitorGoogleAdsAccountConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		}
+	}
+	return
+}
+
 // ValidateMonitorGoogleAdsAccountServiceUnavailableResponseBody runs the
 // validations defined on MonitorGoogleAdsAccountServiceUnavailableResponseBody
 func ValidateMonitorGoogleAdsAccountServiceUnavailableResponseBody(body *MonitorGoogleAdsAccountServiceUnavailableResponseBody) (err error) {
@@ -20823,6 +20921,23 @@ func ValidateMonitorMetaAdsAccountBadRequestResponseBody(body *MonitorMetaAdsAcc
 	return
 }
 
+// ValidateMonitorMetaAdsAccountConflictResponseBody runs the validations
+// defined on MonitorMetaAdsAccountConflictResponseBody
+func ValidateMonitorMetaAdsAccountConflictResponseBody(body *MonitorMetaAdsAccountConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		}
+	}
+	return
+}
+
 // ValidateMonitorMetaAdsAccountServiceUnavailableResponseBody runs the
 // validations defined on MonitorMetaAdsAccountServiceUnavailableResponseBody
 func ValidateMonitorMetaAdsAccountServiceUnavailableResponseBody(body *MonitorMetaAdsAccountServiceUnavailableResponseBody) (err error) {
@@ -20891,6 +21006,23 @@ func ValidateMonitorRedditAdsAccountBadRequestResponseBody(body *MonitorRedditAd
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorRedditAdsAccountConflictResponseBody runs the validations
+// defined on MonitorRedditAdsAccountConflictResponseBody
+func ValidateMonitorRedditAdsAccountConflictResponseBody(body *MonitorRedditAdsAccountConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		}
 	}
 	return
 }
@@ -21042,8 +21174,8 @@ func ValidateMonitorTwitterAdsAccountConflictResponseBody(body *MonitorTwitterAd
 		err = goa.MergeErrors(err, goa.MissingFieldError("reason", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported" || *body.Reason == "campaign_account_mismatch" || *body.Reason == "campaign_scope_invalid") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"account_too_many_active_campaigns", "account_timezone_unsupported", "campaign_account_mismatch", "campaign_scope_invalid"}))
 		}
 	}
 	return

@@ -13784,6 +13784,7 @@ func EncodeMonitorGoogleAdsAccountRequest(encoder func(*http.Request) goahttp.En
 // response body should be restored after having been read.
 // DecodeMonitorGoogleAdsAccountResponse may return the following errors:
 //   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -13840,6 +13841,20 @@ func DecodeMonitorGoogleAdsAccountResponse(decoder func(*http.Response) goahttp.
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-google-ads-account", err)
 			}
 			return nil, NewMonitorGoogleAdsAccountBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body MonitorGoogleAdsAccountConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-google-ads-account", err)
+			}
+			err = ValidateMonitorGoogleAdsAccountConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-google-ads-account", err)
+			}
+			return nil, NewMonitorGoogleAdsAccountConflict(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body MonitorGoogleAdsAccountServiceUnavailableResponseBody
@@ -14191,6 +14206,7 @@ func EncodeMonitorMetaAdsAccountRequest(encoder func(*http.Request) goahttp.Enco
 // after having been read.
 // DecodeMonitorMetaAdsAccountResponse may return the following errors:
 //   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -14247,6 +14263,20 @@ func DecodeMonitorMetaAdsAccountResponse(decoder func(*http.Response) goahttp.De
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-meta-ads-account", err)
 			}
 			return nil, NewMonitorMetaAdsAccountBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body MonitorMetaAdsAccountConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-meta-ads-account", err)
+			}
+			err = ValidateMonitorMetaAdsAccountConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-meta-ads-account", err)
+			}
+			return nil, NewMonitorMetaAdsAccountConflict(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body MonitorMetaAdsAccountServiceUnavailableResponseBody
@@ -14394,6 +14424,7 @@ func EncodeMonitorRedditAdsAccountRequest(encoder func(*http.Request) goahttp.En
 // response body should be restored after having been read.
 // DecodeMonitorRedditAdsAccountResponse may return the following errors:
 //   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -14450,6 +14481,20 @@ func DecodeMonitorRedditAdsAccountResponse(decoder func(*http.Response) goahttp.
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-reddit-ads-account", err)
 			}
 			return nil, NewMonitorRedditAdsAccountBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body MonitorRedditAdsAccountConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-reddit-ads-account", err)
+			}
+			err = ValidateMonitorRedditAdsAccountConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-reddit-ads-account", err)
+			}
+			return nil, NewMonitorRedditAdsAccountConflict(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body MonitorRedditAdsAccountServiceUnavailableResponseBody

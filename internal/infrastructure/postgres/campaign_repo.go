@@ -605,9 +605,30 @@ const listProjectPlatformCampaignIDsQuery = `SELECT DISTINCT platform_campaign_i
 // That is an ordinary state — a project that has not run a campaign yet — and the caller renders
 // it as an empty result rather than a failure.
 func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
-	rows, err := r.db.Query(ctx, listProjectPlatformCampaignIDsQuery, projectID, platform)
+	return r.queryProjectCampaignScope(ctx, listProjectPlatformCampaignIDsQuery, "project platform campaign ids", projectID, platform)
+}
+
+// listProjectPlatformDeletedCampaignIDsQuery is listProjectPlatformCampaignIDsQuery's complement
+// on status: the project's SOFT-DELETED campaigns with an upstream id, scoped by project_id and
+// platform in SQL for the same reason. A local delete does not touch the ad platform, so the
+// account monitor reads these too — a deleted campaign may still be spending.
+const listProjectPlatformDeletedCampaignIDsQuery = `SELECT DISTINCT platform_campaign_id, result FROM campaigns
+	WHERE project_id=$1 AND platform=$2 AND status = 'deleted'
+	  AND platform_campaign_id IS NOT NULL AND platform_campaign_id <> ''
+	ORDER BY platform_campaign_id ASC`
+
+// ListProjectPlatformDeletedCampaignIDs returns the upstream campaign ids of this project's
+// soft-deleted campaigns on platform. Returns an EMPTY slice, not an error, when there are none.
+func (r *CampaignRepo) ListProjectPlatformDeletedCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	return r.queryProjectCampaignScope(ctx, listProjectPlatformDeletedCampaignIDsQuery, "project platform deleted campaign ids", projectID, platform)
+}
+
+// queryProjectCampaignScope runs one of the (platform_campaign_id, result) scope queries above;
+// what names the read in its errors.
+func (r *CampaignRepo) queryProjectCampaignScope(ctx context.Context, query, what, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	rows, err := r.db.Query(ctx, query, projectID, platform)
 	if err != nil {
-		return nil, fmt.Errorf("list project platform campaign ids: %w", err)
+		return nil, fmt.Errorf("list %s: %w", what, err)
 	}
 	defer rows.Close()
 
@@ -618,12 +639,12 @@ func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, proje
 			result []byte
 		)
 		if serr := rows.Scan(&id, &result); serr != nil {
-			return nil, fmt.Errorf("scan project platform campaign id: %w", serr)
+			return nil, fmt.Errorf("scan %s: %w", what, serr)
 		}
 		out = append(out, model.ProjectCampaignScope{PlatformCampaignID: id, Result: result})
 	}
 	if rerr := rows.Err(); rerr != nil {
-		return nil, fmt.Errorf("iterate project platform campaign ids: %w", rerr)
+		return nil, fmt.Errorf("iterate %s: %w", what, rerr)
 	}
 	return out, nil
 }

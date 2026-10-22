@@ -187,6 +187,21 @@ func TestListProjectPlatformCampaignIDs_IsScopedInSQL(t *testing.T) {
 			"creation-customer check that ReadMetrics already enforces")
 }
 
+// TestListProjectPlatformDeletedCampaignIDs_IsScopedInSQL pins the account monitor's soft-deleted
+// scope to the same boundary as the live one above, with the status predicate inverted: only
+// this project's deleted rows on this platform that have an upstream id.
+func TestListProjectPlatformDeletedCampaignIDs_IsScopedInSQL(t *testing.T) {
+	q := normalizeWS(listProjectPlatformDeletedCampaignIDsQuery)
+
+	require.Contains(t, q, "project_id=$1", "the project scope must be applied in SQL")
+	require.Contains(t, q, "platform=$2", "the platform must be part of the scope")
+	require.Contains(t, q, "status = 'deleted'", "this read returns the soft-deleted rows the live scope excludes")
+	require.NotContains(t, q, livePredicate, "the live predicate would make this read always empty")
+	require.Contains(t, q, "platform_campaign_id <> ''", "rows with no upstream id must be excluded")
+	require.Contains(t, strings.ToUpper(q), "SELECT DISTINCT PLATFORM_CAMPAIGN_ID, RESULT",
+		"the id and its provenance are needed and nothing else")
+}
+
 // The HubSpot email monitor reads per recorded email, so its scope query is the tenant boundary
 // (a HubSpot portal is shared across projects) and the bound on how many emails one read asks
 // about. Both live in the SQL.

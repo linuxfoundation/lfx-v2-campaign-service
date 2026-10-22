@@ -152,6 +152,14 @@ type CampaignReader interface {
 	// precisely when an unscoped query would expose everyone else's.
 	ListProjectPlatformCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error)
 
+	// ListProjectPlatformDeletedCampaignIDs is ListProjectPlatformCampaignIDs for the rows it
+	// excludes: the project's SOFT-DELETED campaigns on platform that have an upstream id, with
+	// the same provenance blob and the same project_id/platform scoping in SQL. A local delete
+	// neither stops nor deletes the upstream campaign (BriefService.DeleteCampaign), so the
+	// account monitor still shows such a campaign while it may be spending. Returns an EMPTY
+	// slice, not an error, when there are none.
+	ListProjectPlatformDeletedCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error)
+
 	// ListRecentProjectPlatformCampaigns returns at most limit of the project's campaigns on
 	// platform that have an upstream id — SOFT-DELETED ONES INCLUDED (a local delete does not
 	// stop or delete the upstream email; Status says which) — NEWEST FIRST (created_at, then id,
