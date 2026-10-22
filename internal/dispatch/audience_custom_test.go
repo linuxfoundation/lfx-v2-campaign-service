@@ -905,6 +905,34 @@ func TestInterpretCustom_ATopicOnlyEducationAudienceGetsNoPastEditions(t *testin
 	assert.Empty(t, out.Draft.Criteria.RegisteredFor, "a topic-only education audience is not widened with past registrants")
 }
 
+// The event's default audience has no location, yet still gets the event's past
+// editions -- added by the service, newest first and capped, never left to the
+// model to copy from a cut-short, alphabetical EVENT block.
+func TestInterpretCustom_TheDefaultEventAudienceGetsItsPastEditionsNewestFirst(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":[],"label":""},"questions":[],"notes":[]}`,
+	}}
+	events := make([]snowflake.Event, 0, 40)
+	for year := 1990; year < 2026; year++ {
+		events = append(events, snowflake.Event{EventName: fmt.Sprintf("Synthetic Summit %d", year)})
+	}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	c := out.Draft.Criteria
+	assert.Empty(t, c.Cities, "an event audience is not location-scoped by default")
+	require.Len(t, c.RegisteredFor, audience.CustomMaxRegisteredFor)
+	assert.Equal(t, "Synthetic Summit 2025", c.RegisteredFor[0], "the most recent editions are kept")
+	assert.Contains(t, strings.Join(out.Draft.Notes, "\n"), "11 older ones were left out")
+}
+
 // A label filled in from a long page title is cut to the contract's 200 runes, so
 // the unedited draft still passes preview.
 func TestInterpretCustom_ALongPageTitleIsCutToTheLabelLimit(t *testing.T) {
