@@ -619,12 +619,14 @@ func (r *CreativeAssetRepo) ListAssets(ctx context.Context, projectID, briefID s
 // That accounts for four. The fifth, upsertCampaignQuery, is not GUARDED against this delete but
 // ORDERED against it, on both arms -- see THE OTHER WRITER, AND WHY IT NEEDS NOTHING above. That
 // paragraph sweeps config_snapshot rather than status, so it is named here too: a reader walking
-// this list must not have to guess that the answer is twenty lines up under a different column.
+// this list must not have to guess that the answer is under a heading framed around a different
+// column.
 //
-// Finally, two statements are not status WRITERS but still touch a 'pending' row -- DeleteDispatchClaim
-// and ClearDispatchClaim match on status='pending' and DELETE the row rather than restatusing it, so
-// they do not change the count above. Both move in the safe direction: a claim that is gone is a
-// dispatch that will never resolve, so the asset becoming deletable is the correct outcome.
+// Finally, two statements are not status WRITERS but still touch a 'pending' row --
+// DeleteDispatchClaim and ClearDispatchClaim match on status='pending' and DELETE the row rather
+// than restatusing it, so they do not change the count above. Both move in the safe direction: a
+// claim that is gone is a dispatch that will never resolve, so the asset becoming deletable is
+// the correct outcome.
 //
 // A TEXT SEARCH RATHER THAN A JSON PATH, and the trade is accepted rather than overlooked. The
 // snapshot carries an asset id under a different key per platform (redditConfig.imageAssetId,

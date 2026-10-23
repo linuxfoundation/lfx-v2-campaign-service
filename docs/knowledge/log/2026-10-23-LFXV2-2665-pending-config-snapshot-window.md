@@ -24,9 +24,10 @@ preaching the sweep has to perform one, and a partial enumeration there is worse
 next editor trusts the list instead of redoing it. `campaigns.status` has FIVE writers:
 `claimCampaignDispatchQuery`, `upsertCampaignQuery`, `replaceCampaignQuery`, `adoptCampaignQuery`
 and `deleteCampaignQuery`. The two INSERTs — the claim and the adopt — cannot move an existing row
-off `pending`. `upsertCampaignQuery` is not guarded against this delete but ORDERED against it, on
-both arms, for the reasons the `config_snapshot` sweep already gives; saying so explicitly is part
-of the lesson, because a list that accounts for four of five sends the next reader looking.
+off `pending`. `upsertCampaignQuery` is not guarded against `deleteCreativeAssetQuery` but ORDERED
+against it, on both arms, for the reasons the `config_snapshot` sweep already gives; saying so
+explicitly is part of the lesson, because a list that accounts for four of five sends the next
+reader looking.
 `deleteCampaignQuery` writes `status='deleted'` — the one value the query's own
 `c.status <> 'deleted'` predicate reads — and is held off by `DeleteCampaign`'s whitelist
 (`model.CampaignStatusDeletable`, which fails closed on anything unrecognised) under its own
@@ -39,8 +40,9 @@ to one of those three, so it was never what kept a `pending` row out. **The gene
 when you name the guard that makes an arm durable, name the one that keys on the same column the
 arm does — a guard reached by an inferential step ("a pending campaign has no platform id yet")
 leaves no trail back here for whoever relaxes the real one.** `DeleteDispatchClaim` and
-`ClearDispatchClaim` remove a `pending` row outright rather than restatusing it, and move in the
-safe direction: a claim that is gone will never resolve, so the asset becoming deletable is right.
+`ClearDispatchClaim` remove a `pending` row outright rather than restatusing it, so they are not
+status writers and do not change the count of five; and they move in the safe direction: a claim
+that is gone will never resolve, so the asset becoming deletable is right.
 
 **Removal direction — the reader.** `deleteCreativeAssetQuery`'s `referenced` CTE gains
 `c.status = 'pending'` as an independent first arm. It holds whatever the snapshot contains, so a

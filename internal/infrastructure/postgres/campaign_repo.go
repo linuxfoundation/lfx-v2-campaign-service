@@ -1355,9 +1355,9 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	// loaded row). A future caller that synthesized a BriefID would make the miss reachable --
 	// and would land on the scan below rather than on silence. The scan is there for the
 	// predicate's next editor: it converts any future miss from a silent loss of the lock into
-	// ErrNotFound, which is the behaviour the
-	// sibling callers of the asset-side query already have (CreateAsset maps ErrNoRows the same
-	// way). Do not read it as evidence that the lock could fail today.
+	// ErrNotFound, which is the behaviour the sibling callers of the asset-side query already
+	// have (CreateAsset maps ErrNoRows the same way). Do not read it as evidence that the lock
+	// could fail today.
 	var briefStatus string
 	if lerr := tx.QueryRow(ctx, lockBriefRowByIDQuery, c.BriefID).Scan(&briefStatus); lerr != nil {
 		if errors.Is(lerr, pgx.ErrNoRows) {
