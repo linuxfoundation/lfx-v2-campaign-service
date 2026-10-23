@@ -202,7 +202,13 @@ type Service interface {
 	// creation has not finished on the ad platform — its status is still 'pending'
 	// — because a dispatcher may still be resolving the configuration this request
 	// would overwrite. Retry once the status is no longer 'pending'. A name-only
-	// edit is NOT refused and stays available throughout.
+	// edit is NOT refused and stays available throughout. A configuration that
+	// NEWLY names a stored creative asset which no longer exists for the brief —
+	// typically one deleted between reading the campaign and sending this request
+	// — is refused with 409 reason=creative_asset_reference_missing, naming the
+	// ids that did not resolve; upload the asset again, or remove the reference,
+	// then retry. References already present on the stored configuration are
+	// carried through unchanged and are never refused by this check.
 	UpdateCampaign(context.Context, *UpdateCampaignPayload) (res *Campaign, err error)
 	// Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist
 	// the new status. Unlike update-campaign (which only writes the DB row), this

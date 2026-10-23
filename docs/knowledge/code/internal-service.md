@@ -373,6 +373,20 @@ campaign or reconcile a stuck dispatch and retry — because "the brief is full"
 empty it is not actionable, and because a folder upload has to branch on which refusal it got.
 The discriminator, not the prose, is what it branches on.
 
+A third arm, `ErrCreativeAssetReferenceMissing` → `creative_asset_reference_missing`, is the
+inverse of `creative_asset_in_use` and closes the same window from the other side: the repo
+refuses a replace whose configuration NEWLY names an asset that no longer exists for the brief
+(see [internal/infrastructure/postgres](internal-infrastructure-postgres.md)). It is a 409 rather
+than a 400 — the configuration was well-formed and was valid when the caller read the campaign;
+what changed is the world, and re-uploading then retrying is the remedy, which is also why it
+does not reuse `ErrCreateConfigInvalid`, whose contract is a create-time 400. Its `Message` is
+`err.Error()` plus the remedy, so it carries the ids that failed to resolve: the caller supplied
+them in that same request and the repo canonicalized them, so naming them discloses nothing a
+platform or another tenant owns. `TestUpdateCampaign_ConfigNamingAMissingAssetIsRefused` pins the
+status, the literal slug and the ids in the message, with
+`TestUpdateCampaign_AConfigEditThatResolvesStillSucceeds` as the contrast that a blanket refusal
+could not pass.
+
 ## The platform slot registry and `GetAssetPlan` (LFXV2-2665)
 
 `creative_plan.go` holds two things: the registry of platforms whose image rules this service

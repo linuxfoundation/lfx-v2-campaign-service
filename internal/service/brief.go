@@ -1502,6 +1502,13 @@ const conflictReasonCampaignAdopted = "campaign_adopted"
 // listed in the design Enum in design/connection.go — keep the three in step by hand.
 const conflictReasonCampaignDispatchInFlight = "campaign_dispatch_in_flight"
 
+// conflictReasonCreativeAssetReferenceMissing is update-campaign's ConflictError.reason for a
+// config edit refused because the configuration newly names a creative asset that no longer
+// exists for the brief (see domain.ErrCreativeAssetReferenceMissing). Pinned literally by
+// TestUpdateCampaign_ConfigNamingAMissingAssetIsRefused and listed in the design Enum in
+// design/connection.go — keep the three in step by hand.
+const conflictReasonCreativeAssetReferenceMissing = "creative_asset_reference_missing"
+
 // ToggleCampaignStatus pauses/resumes a campaign ON THE AD PLATFORM, then persists the new
 // status. Unlike UpdateCampaign (DB-only), the platform call happens FIRST — the row is
 // updated only after the platform confirms, so a persisted "paused" always reflects reality.
@@ -2372,6 +2379,19 @@ func mapBriefErr(err error) error {
 			Code:    "409",
 			Reason:  conflictReason("creative_asset_in_use"),
 			Message: domain.ErrCreativeAssetInUse.Error() + "; delete that campaign, or reconcile a dispatch stuck pending, then retry",
+		}
+	case errors.Is(err, domain.ErrCreativeAssetReferenceMissing):
+		// The inverse refusal to creative_asset_in_use above, and it carries a reason for the
+		// same purpose: a client that just lost an asset has to tell "re-upload the image" from
+		// "the brief is full" or "someone else is writing", and prose alone does not give it
+		// that. err.Error() rather than the sentinel's text because the repo appends the ids
+		// that failed to resolve — supplied by this request and canonicalized, never anything a
+		// platform returned — and naming them is what makes the remedy actionable when a config
+		// references more than one asset.
+		return &briefs.ConflictError{
+			Code:    "409",
+			Reason:  conflictReason(conflictReasonCreativeAssetReferenceMissing),
+			Message: err.Error() + "; upload the asset again, or remove the reference, then retry",
 		}
 	case errors.Is(err, domain.ErrConflict):
 		return &briefs.ConflictError{Code: "409", Message: "the resource already exists"}

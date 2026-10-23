@@ -124,6 +124,29 @@ var (
 	// case, and it is the one a caller is most likely to be surprised by.
 	ErrCreativeAssetInUse = errors.New("a live campaign on this brief could still need the creative asset")
 
+	// ErrCreativeAssetReferenceMissing indicates a campaign replace refused because the config
+	// it would store NEWLY names a creative asset that does not exist for the campaign's
+	// (project, brief). Decided inside the replace's transaction, after the brief row lock, so
+	// the answer cannot be invalidated by a delete that commits a moment later: a delete has to
+	// take the same brief lock to run at all.
+	//
+	// It is the inverse of ErrCreativeAssetInUse, and the two close the same window from
+	// opposite sides. The delete guard stops an asset from going away while a campaign names
+	// it; this stops a campaign from starting to name an asset that is already gone. Without it
+	// a delete that wins the brief lock first sees no reference, removes the row, and the
+	// replace waiting behind it then commits a snapshot naming an id nothing resolves.
+	//
+	// Scoped to NEWLY introduced ids — present in the incoming snapshot, absent from the one
+	// stored on the row — so a caller that carries an already-dangling reference through
+	// unchanged is not newly refused. ReplaceCampaign's other four callers (the bid, budget and
+	// status-toggle persists, and persistMetaAdSetRecord) write back exactly the snapshot they
+	// read, so under that scope none of them can ever newly fail.
+	//
+	// Maps to 409 with reason "creative_asset_reference_missing", not 400: the request was well
+	// formed and named an id that existed when the caller read the brief. The remedy is to
+	// upload the asset again or drop the reference, then retry.
+	ErrCreativeAssetReferenceMissing = errors.New("the campaign configuration references a creative asset that no longer exists for this brief")
+
 	// ErrPreconditionFailed indicates an optimistic-concurrency version
 	// mismatch on a conditional update (stale If-Match). Maps to 412.
 	ErrPreconditionFailed = errors.New("version precondition failed")

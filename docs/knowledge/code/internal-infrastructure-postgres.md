@@ -2296,6 +2296,63 @@ and the same row at `created` does not), and
 `TestLiveReplaceCampaignTakesTheBriefLockBeforeWritingTheSnapshot` pins the addition direction — a
 replace that adds a reference waits on the brief lock a concurrent `DeleteAsset` holds.
 
+### The losing side of that same race: `checkNewSnapshotAssetRefs`
+
+The brief lock ORDERS the replace against the delete; it does not say which of the two won. When
+the DELETE won, the replace resumes holding a snapshot that names a row which no longer exists,
+and nothing downstream notices — `config_snapshot` is `jsonb` with no foreign key to
+`creative_assets`. `campaign_snapshot_assets.go` closes that side: between the brief lock and the
+guarded UPDATE, `ReplaceCampaign` resolves the asset ids the incoming snapshot NEWLY names and
+refuses with `domain.ErrCreativeAssetReferenceMissing` (409,
+`reason = creative_asset_reference_missing`) when any of them is absent for the campaign's
+`(project_id, brief_id)`. It is the inverse of `ErrCreativeAssetInUse`, and the two close the one
+window from opposite sides. Four properties are load-bearing:
+
+- **Inside the transaction, after the lock.** Any check made outside it can be invalidated by a
+  delete that commits a moment later; under the lock the delete had to take, the answer still
+  holds when the UPDATE runs.
+- **NEWLY introduced ids only** — present in the incoming snapshot, absent from the one stored on
+  the row. `ReplaceCampaign` rewrites `config_snapshot` for every caller, so a whole-snapshot
+  check would make the bid, budget, status-toggle and `persistMetaAdSetRecord` persists start
+  failing over an asset deleted days earlier. Under this scope those four write back exactly what
+  they read and can never newly fail. The stated cost: a reference that is ALREADY dangling stays
+  dangling, which the dispatchers' own pre-create refusals cover.
+- **Extraction is driven by the KEY, case-insensitively, and ids are canonicalized.**
+  `config_snapshot` is the caller's own JSON (`redactedConfigSnapshot` re-marshals a decoded
+  `map[string]any`), and every dispatcher binds it with `encoding/json`, whose field matching is
+  case-insensitive — so `imageAssetId`, `ImageAssetID` and `imageassetid` all name a real asset.
+  Collecting every uuid-SHAPED value instead would sweep in the brief, project and audience ids a
+  snapshot legitimately carries and refuse perfectly good configurations. `uuid.Parse` then
+  canonicalizes, so a re-sent id in another of its four accepted spellings is not read as new.
+- **Scoped to `(project_id, brief_id)` alone**, deliberately NOT borrowing
+  `getCreativeAssetQuery`'s archival `EXISTS` predicate: that would newly refuse every
+  config-bearing edit on an archived brief, which is allowed today.
+
+`upsertCampaignQuery` is the only other statement that writes `config_snapshot`, and it is
+deliberately NOT guarded. The two writes mean opposite things: `ReplaceCampaign` records an intent
+the caller can still revise, so a refusal costs a retry, while `UpsertCampaign` records a campaign
+the dispatcher has already created upstream — refusing there would reject the local record of a
+live, spending ad and manufacture the orphan class this repo treats as its most serious defect.
+The asset is not in question on that path either, because the dispatcher resolved it before its
+first upstream call. The write that can still be taken back is checked; the write reporting an
+accomplished fact is not.
+
+A `pgx.ErrNoRows` on the stored-snapshot read returns nil rather than an error, leaving the
+guarded UPDATE as the sole owner of the 404-vs-412 verdict. The refusal names the ids that did
+not resolve — safe because the caller supplied them in that same request and they were
+canonicalized, so nothing from a platform or another tenant appears in the message.
+
+`TestLiveReplaceCampaignRefusesASnapshotWhoseAssetTheDeleteAlreadyRemoved` is the direction the
+test above cannot reach: the holder transaction takes the brief lock, DELETES the asset and
+commits, and the waiting replace is then refused with the stored snapshot untouched.
+`TestLiveReplaceCampaignCarriesAnAlreadyDanglingReferenceThrough` is its contrast and pins the
+scope — a pass-through caller, and a re-spelled identical id, both still succeed — so a change
+that widened the check to the whole snapshot could not pass the pair. The extractor's own
+spellings are unit-tested in `campaign_snapshot_assets_test.go`, and
+`dispatch.TestPlatformConfigsNameTheirAssetUnderOneKey` is the cross-package drift guard: it
+marshals all five platform configs and fails if any spells the key something the extractor would
+skip.
+
 Only `status = 'deleted'` campaigns are ignored — legal in multiples, since
 `uq_campaigns_brief_platform_variant_slot_version_live` is partial `WHERE status <> 'deleted'`.
 `TestCreativeAssetRepo_DeleteAsset_RefusesWhileALiveCampaignCouldNeedIt` drives every arm

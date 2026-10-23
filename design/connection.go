@@ -223,7 +223,7 @@ var ConflictError = Type("conflict-error", func() {
 		// The enum is not documentation: the GENERATED CLIENT decoder validates the response
 		// body against it (InvalidEnumValueError), so a reason the server emits and this list
 		// omits is not an undocumented value — it is a 409 no generated client can read.
-		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use")
+		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing")
 		Example("already_exists")
 	})
 })

@@ -1390,6 +1390,17 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 		return nil, fmt.Errorf("replace campaign: lock brief: %w", lerr)
 	}
 
+	// The lock above orders this replace against a concurrent DeleteAsset; it does not say which
+	// of the two won. When the DELETE won, the snapshot this statement is about to write can name
+	// an asset whose row is already gone, and nothing downstream of the UPDATE would notice.
+	// checkNewSnapshotAssetRefs asks that question here, under the lock the delete had to
+	// release, and refuses the replacement rather than publishing a dangling reference. Scoped to
+	// ids this replace NEWLY introduces — see the function for why that scope is what keeps the
+	// four pass-through callers from ever newly failing.
+	if aerr := r.checkNewSnapshotAssetRefs(ctx, tx, c); aerr != nil {
+		return nil, aerr
+	}
+
 	updatedBy, err := marshalActor(c.UpdatedBy)
 	if err != nil {
 		return nil, fmt.Errorf("replace campaign: %w", err)

@@ -203,6 +203,18 @@ one.
   `campaign_dispatch_in_flight` did for update-campaign) is a design edit plus `make apigen`,
   never a service-side constant on its own.
 
+  `creative_asset_reference_missing` is the fourth reason added that way, and the first on
+  `update-campaign` that is about an ASSET rather than the campaign's own state: a configuration
+  that NEWLY names a stored asset which no longer exists for the brief is refused `409` naming
+  the ids that did not resolve. It is the inverse of `creative_asset_in_use` — one refuses the
+  delete, the other the edit that lost the race to it — so the two slugs are a pair and a client
+  handling asset lifecycle needs both. References already on the stored configuration are carried
+  through unchanged and are never refused, which is what keeps the bid, budget and status-toggle
+  edits out of its blast radius. The slug lives in three places kept in step BY HAND — the
+  `Enum` in `design/connection.go`, the service constant, and the `update-campaign` Description —
+  and only the service half is pinned by a test, for the reason given above: a test that calls
+  the service directly never crosses the generated encoder and so cannot observe the Enum at all.
+
 Like upload, none of the three carries an ETag, for the reason given above.
 
 `get-asset-plan` (LFXV2-2665) is the fifth method on that surface and the one that answers the
