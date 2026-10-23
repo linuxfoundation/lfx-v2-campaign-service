@@ -11,6 +11,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // monitorScopeEntry builds one scope row whose Result records the creating account under key.
@@ -74,6 +75,40 @@ func TestMonitorScopeForAccount_RedditRefusesUnknownProvenance(t *testing.T) {
 	if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
 		t.Fatalf("err = %v, want ErrCampaignProvenanceUnknown", err)
 	}
+}
+
+// TestMonitorScopePrecheck pins the credential-free refusals the orchestrator runs before the
+// project's scope: each platform's own account id shape check, and X's TWITTER_METRICS_ENABLED
+// gate, so a disabled X monitor is a 400 whatever the project has recorded.
+func TestMonitorScopePrecheck(t *testing.T) {
+	t.Setenv(constants.EnvTwitterMetricsEnabled, "true")
+	cases := []struct {
+		name      string
+		scoper    service.AccountMonitorScoper
+		valid     string
+		malformed string
+	}{
+		{"google ads", &GoogleAdsDispatcher{}, "1234567890", "123-456-7890"},
+		{"meta", &MetaDispatcher{}, "act_1001", "1001"},
+		{"reddit", &RedditDispatcher{}, "a2_owner", "a2-owner"},
+		{"x", &TwitterDispatcher{}, "18ce54d4x5t", "18ce54d4x5t!"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.scoper.MonitorScopePrecheck(tc.valid); err != nil {
+				t.Fatalf("precheck(%q) = %v, want nil", tc.valid, err)
+			}
+			if err := tc.scoper.MonitorScopePrecheck(tc.malformed); !errors.Is(err, domain.ErrAccountIDMalformed) {
+				t.Fatalf("precheck(%q) = %v, want ErrAccountIDMalformed", tc.malformed, err)
+			}
+		})
+	}
+	t.Run("x disabled", func(t *testing.T) {
+		t.Setenv(constants.EnvTwitterMetricsEnabled, "")
+		if err := (&TwitterDispatcher{}).MonitorScopePrecheck("18ce54d4x5t"); !errors.Is(err, domain.ErrAccountMetricsUnsupported) {
+			t.Fatalf("precheck = %v, want ErrAccountMetricsUnsupported while the flag is off", err)
+		}
+	})
 }
 
 // TestMonitorScopeForAccount_LinkedInAndMicrosoftAreNotScoped pins that only the shared-tenancy

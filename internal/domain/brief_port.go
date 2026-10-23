@@ -156,8 +156,9 @@ type CampaignReader interface {
 	// excludes: the project's SOFT-DELETED campaigns on platform that have an upstream id, with
 	// the same provenance blob and the same project_id/platform scoping in SQL. A local delete
 	// neither stops nor deletes the upstream campaign (BriefService.DeleteCampaign), so the
-	// account monitor still shows such a campaign while it may be spending. Returns an EMPTY
-	// slice, not an error, when there are none.
+	// account monitor still shows such a campaign while it may be spending. A campaign another
+	// project now holds LIVE (adopted after this project's delete) is excluded: it is that
+	// project's campaign. Returns an EMPTY slice, not an error, when there are none.
 	ListProjectPlatformDeletedCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error)
 
 	// ListRecentProjectPlatformCampaigns returns at most limit of the project's campaigns on

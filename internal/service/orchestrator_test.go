@@ -303,12 +303,20 @@ func (r *fakeCampaignRepo) ListProjectPlatformDeletedCampaignIDs(_ context.Conte
 		return out, nil
 	}
 	out := make([]model.ProjectCampaignScope, 0)
+	held := append(append([]*model.Campaign{}, r.upserted...), r.adopted...)
+	// The SQL's NOT EXISTS: an id another project holds live is that project's campaign.
+	liveElsewhere := map[string]bool{}
+	for _, c := range held {
+		if c != nil && c.ProjectID != projectID && c.Platform == platform && c.Status != "deleted" {
+			liveElsewhere[c.PlatformCampaignID] = true
+		}
+	}
 	seen := map[string]bool{}
-	for _, c := range append(append([]*model.Campaign{}, r.upserted...), r.adopted...) {
+	for _, c := range held {
 		if c == nil || c.ProjectID != projectID || c.Platform != platform || c.Status != "deleted" {
 			continue
 		}
-		if c.PlatformCampaignID == "" || seen[c.PlatformCampaignID] {
+		if c.PlatformCampaignID == "" || seen[c.PlatformCampaignID] || liveElsewhere[c.PlatformCampaignID] {
 			continue
 		}
 		seen[c.PlatformCampaignID] = true

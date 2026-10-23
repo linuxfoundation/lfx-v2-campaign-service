@@ -189,17 +189,26 @@ func TestListProjectPlatformCampaignIDs_IsScopedInSQL(t *testing.T) {
 
 // TestListProjectPlatformDeletedCampaignIDs_IsScopedInSQL pins the account monitor's soft-deleted
 // scope to the same boundary as the live one above, with the status predicate inverted: only
-// this project's deleted rows on this platform that have an upstream id.
+// this project's deleted rows on this platform that have an upstream id, and none that another
+// project now holds live.
 func TestListProjectPlatformDeletedCampaignIDs_IsScopedInSQL(t *testing.T) {
 	q := normalizeWS(listProjectPlatformDeletedCampaignIDsQuery)
+	outer, sub, ok := strings.Cut(q, "NOT EXISTS")
+	require.True(t, ok, "a campaign another project holds live must be excluded")
 
-	require.Contains(t, q, "project_id=$1", "the project scope must be applied in SQL")
-	require.Contains(t, q, "platform=$2", "the platform must be part of the scope")
-	require.Contains(t, q, "status = 'deleted'", "this read returns the soft-deleted rows the live scope excludes")
-	require.NotContains(t, q, livePredicate, "the live predicate would make this read always empty")
-	require.Contains(t, q, "platform_campaign_id <> ''", "rows with no upstream id must be excluded")
-	require.Contains(t, strings.ToUpper(q), "SELECT DISTINCT PLATFORM_CAMPAIGN_ID, RESULT",
+	require.Contains(t, outer, "c.project_id=$1", "the project scope must be applied in SQL")
+	require.Contains(t, outer, "c.platform=$2", "the platform must be part of the scope")
+	require.Contains(t, outer, "c.status = 'deleted'", "this read returns the soft-deleted rows the live scope excludes")
+	require.NotContains(t, outer, livePredicate, "the live predicate would make this read always empty")
+	require.Contains(t, outer, "c.platform_campaign_id <> ''", "rows with no upstream id must be excluded")
+	require.Contains(t, strings.ToUpper(outer), "SELECT DISTINCT C.PLATFORM_CAMPAIGN_ID, C.RESULT",
 		"the id and its provenance are needed and nothing else")
+
+	// The live owner wins: the same upstream id on a live row of ANOTHER project hides this one.
+	require.Contains(t, sub, "l.platform = c.platform")
+	require.Contains(t, sub, "l.platform_campaign_id = c.platform_campaign_id")
+	require.Contains(t, sub, "l."+livePredicate, "only a LIVE row elsewhere takes the campaign over")
+	require.Contains(t, sub, "l.project_id <> c.project_id", "this project's own live row is in the live scope already")
 }
 
 // The HubSpot email monitor reads per recorded email, so its scope query is the tenant boundary

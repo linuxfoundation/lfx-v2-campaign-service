@@ -612,10 +612,20 @@ func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, proje
 // on status: the project's SOFT-DELETED campaigns with an upstream id, scoped by project_id and
 // platform in SQL for the same reason. A local delete does not touch the ad platform, so the
 // account monitor reads these too — a deleted campaign may still be spending.
-const listProjectPlatformDeletedCampaignIDsQuery = `SELECT DISTINCT platform_campaign_id, result FROM campaigns
-	WHERE project_id=$1 AND platform=$2 AND status = 'deleted'
-	  AND platform_campaign_id IS NOT NULL AND platform_campaign_id <> ''
-	ORDER BY platform_campaign_id ASC`
+//
+// The NOT EXISTS hands the campaign to its LIVE owner. The per-platform binding indexes cover
+// live rows only, so once this project deletes its row another project can adopt the same
+// upstream campaign; from then on it is that project's campaign and must not stay in this
+// project's monitor. Matched on the id alone, not its provenance: on Reddit and X an id is only
+// unique within an account, so a live row on another account with the same id also hides this
+// one — the conservative direction for a read that exists to keep projects apart.
+const listProjectPlatformDeletedCampaignIDsQuery = `SELECT DISTINCT c.platform_campaign_id, c.result FROM campaigns c
+	WHERE c.project_id=$1 AND c.platform=$2 AND c.status = 'deleted'
+	  AND c.platform_campaign_id IS NOT NULL AND c.platform_campaign_id <> ''
+	  AND NOT EXISTS (SELECT 1 FROM campaigns l
+	    WHERE l.platform = c.platform AND l.platform_campaign_id = c.platform_campaign_id
+	      AND l.status <> 'deleted' AND l.project_id <> c.project_id)
+	ORDER BY c.platform_campaign_id ASC`
 
 // ListProjectPlatformDeletedCampaignIDs returns the upstream campaign ids of this project's
 // soft-deleted campaigns on platform. Returns an EMPTY slice, not an error, when there are none.

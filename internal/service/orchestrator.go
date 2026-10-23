@@ -452,11 +452,17 @@ type AccountMonitorReader interface {
 // implements it never answers the monitor account-wide. A platform that does not implement it
 // keeps the account-wide read.
 //
-// scope is never empty: the orchestrator answers an empty scope with an empty monitor before
-// calling this. ANY entry recorded under an account other than accountID must fail the call with
-// an error wrapping ErrCampaignAccountMismatch, never be dropped: a partly matching scope reduced
-// to the matching ids would be reported as the project's whole picture.
+// MonitorScopePrecheck runs FIRST, before the scope is read: the credential-free refusals the
+// dispatcher's own monitor read would answer (a disabled monitor, a malformed accountID), so a
+// 400 the platform's read promises does not turn into a 200 or a 409 depending on which campaigns
+// the project happens to have recorded. It must not resolve a credential or call the platform.
+//
+// MonitorScopeForAccount's scope is never empty: the orchestrator answers an empty scope with an
+// empty monitor before calling it. ANY entry recorded under an account other than accountID must
+// fail the call with an error wrapping ErrCampaignAccountMismatch, never be dropped: a partly
+// matching scope reduced to the matching ids would be reported as the project's whole picture.
 type AccountMonitorScoper interface {
+	MonitorScopePrecheck(accountID string) error
 	MonitorScopeForAccount(scope []model.ProjectCampaignScope, accountID string) ([]string, error)
 }
 
@@ -2985,7 +2991,8 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 // scopeAccountMonitor resolves the project's campaign scope for an account-monitor read.
 //
 // scoped is false when platform's dispatcher does not implement AccountMonitorScoper: its
-// account is not recorded as shared, and the monitor keeps its account-wide read. Otherwise ids
+// account is not recorded as shared, and the monitor keeps its account-wide read. Otherwise the
+// scoper's MonitorScopePrecheck runs before anything is read, and ids
 // is the set of upstream campaign ids the monitor may return — EMPTY when the project has no
 // campaigns on platform, which the caller answers without any upstream call, exactly as
 // ReadKeywordPerformance does. A live scope entry recorded under a different account than
@@ -3000,6 +3007,11 @@ func (o *Orchestrator) scopeAccountMonitor(ctx context.Context, projectID string
 	scoper, ok := o.dispatchers[platform].(AccountMonitorScoper)
 	if !ok {
 		return nil, false, nil
+	}
+	// Before the scope, so a disabled monitor or a malformed account id answers its 400 whatever
+	// the project has recorded — an empty scope would otherwise answer 200 for both.
+	if err := scoper.MonitorScopePrecheck(accountID); err != nil {
+		return nil, true, err
 	}
 	scope, err := o.projectCampaignScope(ctx, projectID, platform)
 	if err != nil {

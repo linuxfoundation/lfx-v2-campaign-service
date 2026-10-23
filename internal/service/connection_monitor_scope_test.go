@@ -52,9 +52,12 @@ func fakeMonitorScope(scope []model.ProjectCampaignScope, accountID string) ([]s
 // that also implements AccountMonitorScoper, counting every upstream read.
 type scopedLiveDispatcher struct {
 	mockAccountMetricsReaderDispatcher
-	mu    sync.Mutex
-	reads int
+	mu       sync.Mutex
+	reads    int
+	precheck error
 }
+
+func (d *scopedLiveDispatcher) MonitorScopePrecheck(string) error { return d.precheck }
 
 func (d *scopedLiveDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
 	d.mu.Lock()
@@ -71,8 +74,11 @@ func (d *scopedLiveDispatcher) MonitorScopeForAccount(scope []model.ProjectCampa
 // the live campaign list as well as fakeReportReader's own submit/check counts.
 type scopedReportDispatcher struct {
 	*fakeReportReader
-	lists int
+	lists    int
+	precheck error
 }
+
+func (d *scopedReportDispatcher) MonitorScopePrecheck(string) error { return d.precheck }
 
 func (d *scopedReportDispatcher) ListAccountCampaigns(ctx context.Context, projectID string, platform model.Provider, accountID string) ([]model.AccountCampaignMetrics, error) {
 	d.mu.Lock()
@@ -414,6 +420,56 @@ func TestMonitorAccount_DeletedCampaignsStayVisible(t *testing.T) {
 		}
 		if d.reads != 0 {
 			t.Errorf("upstream reads = %d, want 0", d.reads)
+		}
+	})
+}
+
+// The dispatcher's credential-free refusals answer before the scope is read, so a disabled monitor
+// or a malformed account id is the same 400 whether the project has no campaigns (which would
+// otherwise be 200 empty) or a campaign on another account (otherwise 409).
+func TestMonitorAccount_PrecheckAnswersBeforeTheScope(t *testing.T) {
+	disabled := fmt.Errorf("x account monitor is disabled: %w", domain.ErrAccountMetricsUnsupported)
+	malformed := fmt.Errorf("bad shape: %w", domain.ErrAccountIDMalformed)
+	scopes := []struct {
+		name     string
+		ids      []string
+		accounts map[string]string
+	}{
+		{"empty scope", []string{}, nil},
+		{"scope on another account", []string{"c1"}, map[string]string{"c1": "another-account"}},
+	}
+	for _, sc := range scopes {
+		t.Run("x disabled/"+sc.name, func(t *testing.T) {
+			reader, store := twitterScopeFixture()
+			reader.precheck = disabled
+			_, err := monitorTwitter(twitterScopeService(reader, store, scopeRepo(sc.ids, sc.accounts)), "a1")
+			if _, ok := err.(*conn.BadRequestError); !ok {
+				t.Fatalf("err = %T %v, want the disabled monitor's 400", err, err)
+			}
+			if reader.lists != 0 || reader.submits != 0 || store.gets != 0 {
+				t.Errorf("lists=%d submits=%d store gets=%d, want no upstream or store call", reader.lists, reader.submits, store.gets)
+			}
+		})
+		for _, tc := range scopedLiveCases() {
+			t.Run(tc.name+" malformed account/"+sc.name, func(t *testing.T) {
+				d := &scopedLiveDispatcher{mockAccountMetricsReaderDispatcher: mockAccountMetricsReaderDispatcher{rows: tc.live}, precheck: malformed}
+				_, err := tc.call(liveScopeService(tc.provider, d, scopeRepo(sc.ids, sc.accounts)), tc.account)
+				if _, ok := err.(*conn.BadRequestError); !ok {
+					t.Fatalf("err = %T %v, want the malformed account id's 400", err, err)
+				}
+				if d.reads != 0 {
+					t.Errorf("upstream reads = %d, want 0", d.reads)
+				}
+			})
+		}
+	}
+	t.Run("precheck runs before the scope lookup", func(t *testing.T) {
+		d := &scopedLiveDispatcher{mockAccountMetricsReaderDispatcher: mockAccountMetricsReaderDispatcher{rows: scopedLiveCases()[0].live}, precheck: malformed}
+		repo := &fakeCampaignRepo{scopeErr: errors.New("db down")}
+		_, err := liveScopeService(model.ProviderGoogleAds, d, repo).MonitorGoogleAdsAccount(context.Background(),
+			&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: "1234567890", Days: 30})
+		if _, ok := err.(*conn.BadRequestError); !ok {
+			t.Fatalf("err = %T %v, want the precheck's 400 rather than the scope lookup's failure", err, err)
 		}
 	})
 }

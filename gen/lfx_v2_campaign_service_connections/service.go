@@ -548,12 +548,15 @@ type Service interface {
 	// campaigns recorded on the platform gets an empty monitor without any
 	// upstream call. A recorded campaign created under a different account than
 	// account_id fails the read with 409 rather than returning a partial picture.
-	// {project_id} also resolves which stored connection credential reads
-	// account_id. Unlike GET .../connection-google-ads/accounts, this endpoint
-	// resolves the project's OWN connection only and does not fall back to the
-	// shared LF system credential: a project with campaigns but no Google Ads
-	// connection of its own gets a 404, not the LF account's data. A pure read:
-	// nothing is persisted.
+	// Campaigns deleted in this service stay in the monitor, because a local
+	// delete does not stop the upstream campaign, but only while one is proven to
+	// belong to account_id and no other project holds it; otherwise it is omitted,
+	// never a 409. {project_id} also resolves which stored connection credential
+	// reads account_id. Unlike GET .../connection-google-ads/accounts, this
+	// endpoint resolves the project's OWN connection only and does not fall back
+	// to the shared LF system credential: a project with campaigns but no Google
+	// Ads connection of its own gets a 404, not the LF account's data. A pure
+	// read: nothing is persisted.
 	MonitorGoogleAdsAccount(context.Context, *MonitorGoogleAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read every campaign visible on a LinkedIn Ads account, live from the
 	// platform, with pacing and action items derived by this service's ported rule
@@ -569,7 +572,10 @@ type Service interface {
 	// campaigns recorded on the platform gets an empty monitor without any
 	// upstream call. A recorded campaign created under a different account than
 	// account_id fails the read with 409 rather than returning a partial picture.
-	// A pure read: nothing is persisted.
+	// Campaigns deleted in this service stay in the monitor, because a local
+	// delete does not stop the upstream campaign, but only while one is proven to
+	// belong to account_id and no other project holds it; otherwise it is omitted,
+	// never a 409. A pure read: nothing is persisted.
 	MonitorMetaAdsAccount(context.Context, *MonitorMetaAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read this project's own campaigns on a Reddit Ads account, live from the
 	// platform, with pacing and action items derived by this service's ported rule
@@ -579,7 +585,10 @@ type Service interface {
 	// campaigns recorded on the platform gets an empty monitor without any
 	// upstream call. A recorded campaign created under a different account than
 	// account_id fails the read with 409 rather than returning a partial picture.
-	// A pure read: nothing is persisted.
+	// Campaigns deleted in this service stay in the monitor, because a local
+	// delete does not stop the upstream campaign, but only while one is proven to
+	// belong to account_id and no other project holds it; otherwise it is omitted,
+	// never a 409. A pure read: nothing is persisted.
 	MonitorRedditAdsAccount(context.Context, *MonitorRedditAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read every live campaign on a Microsoft Advertising account with pacing and
 	// action items derived by this service's rule engine. Account-scoped, not
@@ -600,16 +609,19 @@ type Service interface {
 	// rules and totals. A project with no campaigns recorded on the platform gets
 	// an empty monitor without any upstream call. A recorded campaign created
 	// under a different account than account_id fails the read with 409 rather
-	// than returning a partial picture. The campaign list (names, statuses,
-	// budgets, and flights from the line items) is read live; delivery metrics
-	// come from X's asynchronous stats jobs — X's synchronous stats are capped at
-	// 7 days per request — so they are served from the last report that finished —
-	// see metrics_as_of and metrics_pending — while the next one builds. The first
-	// read for an account and window therefore returns campaigns with
-	// fetch_failed=true and metrics_pending=true. Conversions are never reported
-	// for X. Saved reports are cached platform data, not a record of anything this
-	// service did; the saved report covers the whole account, and only the
-	// response is scoped. The scope refusals carry reason
+	// than returning a partial picture. Campaigns deleted in this service stay in
+	// the monitor, because a local delete does not stop the upstream campaign, but
+	// only while one is proven to belong to account_id and no other project holds
+	// it; otherwise it is omitted, never a 409. The campaign list (names,
+	// statuses, budgets, and flights from the line items) is read live; delivery
+	// metrics come from X's asynchronous stats jobs — X's synchronous stats are
+	// capped at 7 days per request — so they are served from the last report that
+	// finished — see metrics_as_of and metrics_pending — while the next one
+	// builds. The first read for an account and window therefore returns campaigns
+	// with fetch_failed=true and metrics_pending=true. Conversions are never
+	// reported for X. Saved reports are cached platform data, not a record of
+	// anything this service did; the saved report covers the whole account, and
+	// only the response is scoped. The scope refusals carry reason
 	// campaign_account_mismatch (a recorded campaign belongs to another account)
 	// or campaign_scope_invalid (a recorded campaign id the platform cannot read).
 	// Two account states are also refused with 409 rather than served metrics that

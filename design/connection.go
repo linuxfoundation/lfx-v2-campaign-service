@@ -2569,6 +2569,9 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"rules and totals. A project with no campaigns recorded on the platform gets an empty monitor " +
 			"without any upstream call. A recorded campaign created under a different account than " +
 			"account_id fails the read with 409 rather than returning a partial picture. " +
+			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
+			"upstream campaign, but only while one is proven to belong to account_id and no other project " +
+			"holds it; otherwise it is omitted, never a 409. " +
 			"{project_id} also resolves which stored connection credential reads account_id. Unlike " +
 			"GET .../connection-google-ads/accounts, this endpoint resolves the project's OWN connection " +
 			"only and does not fall back to the shared LF system credential: a project with campaigns " +
@@ -2655,8 +2658,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"upstream account is shared across foundations, so the account read is filtered to them before " +
 			"rules and totals. A project with no campaigns recorded on the platform gets an empty monitor " +
 			"without any upstream call. A recorded campaign created under a different account than " +
-			"account_id fails the read with 409 rather than returning a partial picture. A pure read: " +
-			"nothing is persisted.")
+			"account_id fails the read with 409 rather than returning a partial picture. " +
+			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
+			"upstream campaign, but only while one is proven to belong to account_id and no other project " +
+			"holds it; otherwise it is omitted, never a 409. " +
+			"A pure read: nothing is persisted.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -2699,8 +2705,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"upstream account is shared across foundations, so the account read is filtered to them before " +
 			"rules and totals. A project with no campaigns recorded on the platform gets an empty monitor " +
 			"without any upstream call. A recorded campaign created under a different account than " +
-			"account_id fails the read with 409 rather than returning a partial picture. A pure read: " +
-			"nothing is persisted.")
+			"account_id fails the read with 409 rather than returning a partial picture. " +
+			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
+			"upstream campaign, but only while one is proven to belong to account_id and no other project " +
+			"holds it; otherwise it is omitted, never a 409. " +
+			"A pure read: nothing is persisted.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -2790,8 +2799,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"upstream account is shared across foundations, so the account read is filtered to them before " +
 			"rules and totals. A project with no campaigns recorded on the platform gets an empty monitor " +
 			"without any upstream call. A recorded campaign created under a different account than " +
-			"account_id fails the read with 409 rather than returning a partial picture. The " +
-			"campaign list (names, statuses, budgets, and flights from the line items) is read live; " +
+			"account_id fails the read with 409 rather than returning a partial picture. " +
+			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
+			"upstream campaign, but only while one is proven to belong to account_id and no other project " +
+			"holds it; otherwise it is omitted, never a 409. " +
+			"The campaign list (names, statuses, budgets, and flights from the line items) is read live; " +
 			"delivery metrics come from X's asynchronous stats jobs — X's synchronous stats are capped at " +
 			"7 days per request — so they are served from the last report that finished — see " +
 			"metrics_as_of and metrics_pending — while the next one builds. The first read for an account " +

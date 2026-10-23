@@ -557,9 +557,16 @@ The four monitors are now project-scoped inside the service, for every
 caller (ROOT included), at one choke point mirroring
 `Orchestrator.ReadKeywordPerformance`:
 
-1. `scopeAccountMonitor` reads the project's campaign scope from SQL
-   (`projectCampaignScope` → `ListProjectPlatformCampaignIDs`, filtered on
-   `project_id`).
+1. `scopeAccountMonitor` first runs the dispatcher's `MonitorScopePrecheck`:
+   the credential-free refusals its own read would answer with 400 — every
+   platform's `account_id` shape check, and on X the `TWITTER_METRICS_ENABLED`
+   gate (`twitterMonitorPrecheck`, shared with `resolveTwitterMonitorClient`).
+   Without it a disabled X monitor answered 200 empty or 409 depending on what
+   the project had recorded. Then it reads the project's campaign scope from
+   SQL (`projectCampaignScope` → `ListProjectPlatformCampaignIDs`, filtered on
+   `project_id`). The requested-account guards on Meta, Reddit and X need the
+   stored connection, so they still run after the scope: a wrong `account_id`
+   there gets 200 empty or 409 before it can reach their 400.
 2. An empty scope answers 200 with an empty monitor before any upstream call
    and before the connection is resolved — so a project with no campaigns and
    no connection gets 200, not 404, as the insight reads already do. On X it
@@ -575,8 +582,11 @@ caller (ROOT included), at one choke point mirroring
    and the monitor is where one still spending shows up. Each is checked on its
    own: it is kept when it is proven to belong to `account_id`, and dropped and
    logged otherwise, never a 409 — a deleted row cannot be re-dispatched or
-   reconciled, so that refusal would have no remedy. The empty-scope answer in
-   step 2 therefore needs both lists empty.
+   reconciled, so that refusal would have no remedy. A deleted campaign another
+   project now holds LIVE is left out in SQL (the query's `NOT EXISTS`): the
+   per-platform binding indexes cover live rows only, so another project can
+   adopt a campaign after this one deleted it, and from then on it is that
+   project's. The empty-scope answer in step 2 therefore needs both lists empty.
 4. The unchanged account read runs, and only rows whose
    `platform_campaign_id` is in the scoped set are kept, BEFORE the rule engine
    and `monitorTotals` — so action items and totals describe the same rows.

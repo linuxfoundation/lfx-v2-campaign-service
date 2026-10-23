@@ -474,10 +474,15 @@ only the requesting project's own campaigns — the `platform_campaign_id`s reco
 shares. The marker is the optional dispatcher capability `service.AccountMonitorScoper`: the
 dispatchers of the shared-tenancy platforms implement it (`internal/dispatch/account_monitor_scope.go`),
 and `Orchestrator.ReadAccountCampaignMetrics` / `ReadReportedAccountCampaigns` filter the account
-read to the project's scope before rules and totals run. A project with no campaigns on the platform
-gets an empty monitor with no upstream call. A recorded campaign created under a different account
-than the requested one fails the read with 409 rather than a partial picture
-(lfx-self-serve-ops#897). LinkedIn and Microsoft do not implement the capability, so their monitors
+read to the project's scope before rules and totals run. Before the scope is read, the dispatcher's
+credential-free precheck (`MonitorScopePrecheck`) answers the 400s its own read would: a malformed
+`account_id`, and on X a monitor switched off by `TWITTER_METRICS_ENABLED`. A project with no
+campaigns on the platform gets an empty monitor with no upstream call. A live recorded campaign
+created under a different account than the requested one fails the read with 409 rather than a
+partial picture (lfx-self-serve-ops#897). The project's campaigns deleted in this service stay in
+the scope, because a local delete does not stop the upstream campaign, but only while one is proven
+to belong to the requested account and no other project holds it live (adopted after the delete);
+otherwise it is omitted, never a 409. LinkedIn and Microsoft do not implement the capability, so their monitors
 stay account-wide. Implementing it is how a platform is recorded as shared in code: if a platform's
 tenancy changes, change its dispatcher in the same change as the tables here.
 
@@ -487,7 +492,10 @@ tenancy changes, change its dispatcher in the same change as the tables here.
 `account_id` other than the one the project's own connection stores
 (`domain.ErrAccountNotManagedByConnection`, 400). The check is LIVE on LinkedIn, where a project can
 name another foundation's account, and DEFENSIVE on Meta, Reddit and X, where every project's stored
-account is the same shared one. Google Ads has no such guard and needs none for isolation: project
+account is the same shared one. On Meta, Reddit and X the guard needs the stored connection, so it
+runs only after project scoping: a wrong `account_id` there gets 200 empty when the project has no
+campaigns recorded on the platform, and 409 when its recorded campaigns belong to another account;
+only a scope that fits the requested account reaches the 400. Google Ads has no such guard and needs none for isolation: project
 scoping means naming another customer returns only this project's campaigns recorded there, or a
 409. Microsoft's guard runs regardless of its unrecorded tenancy. If a platform moves to an account per foundation,
 or Microsoft's account is recorded, update both tables here in the same change.
