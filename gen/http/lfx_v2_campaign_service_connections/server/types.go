@@ -6302,10 +6302,12 @@ type GoogleAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -6431,13 +6433,13 @@ type AccountMonitorActionItemResponseBody struct {
 // AccountMonitorTotalsResponseBody is used to define fields on response body
 // types.
 type AccountMonitorTotalsResponseBody struct {
-	// Account-wide spend over the window.
+	// Spend over the window, summed over the returned campaigns.
 	Spend float64 `form:"spend" json:"spend" xml:"spend"`
-	// Account-wide impressions over the window.
+	// Impressions over the window, summed over the returned campaigns.
 	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
-	// Account-wide clicks over the window.
+	// Clicks over the window, summed over the returned campaigns.
 	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
-	// Account-wide conversions over the window, summed over the campaigns that
+	// Conversions over the window, summed over the returned campaigns that
 	// reported a conversion measurement. ABSENT when none of them did — not a
 	// measured 0.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
@@ -6447,12 +6449,12 @@ type AccountMonitorTotalsResponseBody struct {
 	// How many of the campaign_count campaigns have fetch_failed=true. The totals
 	// include those rows at what they carry — zero for a row whose metrics could
 	// not be read — so a non-zero value means the totals may UNDERSTATE the
-	// account, by up to this many campaigns' delivery. An upper bound rather than
-	// an exact count of rows missing from the sum: fetch_failed also marks a row
-	// whose budget or flight alone was unreadable while its metrics were read and
-	// summed. pacing_unknown=true alone does not count a row (every fetch_failed
-	// row also has it, but most pacing_unknown rows were read in full). 0 means
-	// every campaign in the sum was fully read.
+	// returned campaigns, by up to this many campaigns' delivery. An upper bound
+	// rather than an exact count of rows missing from the sum: fetch_failed also
+	// marks a row whose budget or flight alone was unreadable while its metrics
+	// were read and summed. pacing_unknown=true alone does not count a row (every
+	// fetch_failed row also has it, but most pacing_unknown rows were read in
+	// full). 0 means every campaign in the sum was fully read.
 	UnmeasuredCampaigns int `form:"unmeasured_campaigns" json:"unmeasured_campaigns" xml:"unmeasured_campaigns"`
 }
 
@@ -6468,10 +6470,12 @@ type LinkedinAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -6525,10 +6529,12 @@ type MetaAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -6582,10 +6588,12 @@ type RedditAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -6639,10 +6647,12 @@ type MicrosoftAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -6696,10 +6706,12 @@ type TwitterAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these

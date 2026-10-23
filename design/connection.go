@@ -1242,21 +1242,21 @@ var AccountMonitorActionItem = Type("account-monitor-action-item", func() {
 	})
 })
 
-// AccountMonitorTotals is the account-wide aggregate reported next to the per-campaign rows —
+// AccountMonitorTotals is the aggregate reported next to the per-campaign rows —
 // see model.AccountMonitorTotals. Always the sum of the campaigns array in the same response,
 // on every platform, so the aggregate and the list can never describe different populations.
 var AccountMonitorTotals = Type("account-monitor-totals", func() {
-	Attribute("spend", Float64, "Account-wide spend over the window.", func() { Example(6090.0) })
-	Attribute("impressions", Int64, "Account-wide impressions over the window.", func() { Example(184200) })
-	Attribute("clicks", Int64, "Account-wide clicks over the window.", func() { Example(11420) })
+	Attribute("spend", Float64, "Spend over the window, summed over the returned campaigns.", func() { Example(6090.0) })
+	Attribute("impressions", Int64, "Impressions over the window, summed over the returned campaigns.", func() { Example(184200) })
+	Attribute("clicks", Int64, "Clicks over the window, summed over the returned campaigns.", func() { Example(11420) })
 	// Not required, for the same reason the per-campaign conversions attribute is not: absent
 	// is the honest answer when no row in the sum measured conversions, and a 0 there would be
 	// the aggregate restating a measurement none of the rows made.
-	Attribute("conversions", Float64, "Account-wide conversions over the window, summed over the campaigns that reported a conversion measurement. ABSENT when none of them did — not a measured 0.", func() { Example(212.5) })
+	Attribute("conversions", Float64, "Conversions over the window, summed over the returned campaigns that reported a conversion measurement. ABSENT when none of them did — not a measured 0.", func() { Example(212.5) })
 	Attribute("campaign_count", Int, "How many campaigns the totals reflect: the length of the campaigns array these totals sum.", func() { Example(2) })
 	// Required and never omitted: 0 is a statement ("every row was read"), not an absence. A
-	// count rather than a boolean so a renderer can say how much of the account is missing.
-	Attribute("unmeasured_campaigns", Int, "How many of the campaign_count campaigns have fetch_failed=true. The totals include those rows at what they carry — zero for a row whose metrics could not be read — so a non-zero value means the totals may UNDERSTATE the account, by up to this many campaigns' delivery. An upper bound rather than an exact count of rows missing from the sum: fetch_failed also marks a row whose budget or flight alone was unreadable while its metrics were read and summed. pacing_unknown=true alone does not count a row (every fetch_failed row also has it, but most pacing_unknown rows were read in full). 0 means every campaign in the sum was fully read.", func() {
+	// count rather than a boolean so a renderer can say how much of the sum is missing.
+	Attribute("unmeasured_campaigns", Int, "How many of the campaign_count campaigns have fetch_failed=true. The totals include those rows at what they carry — zero for a row whose metrics could not be read — so a non-zero value means the totals may UNDERSTATE the returned campaigns, by up to this many campaigns' delivery. An upper bound rather than an exact count of rows missing from the sum: fetch_failed also marks a row whose budget or flight alone was unreadable while its metrics were read and summed. pacing_unknown=true alone does not count a row (every fetch_failed row also has it, but most pacing_unknown rows were read in full). 0 means every campaign in the sum was fully read.", func() {
 		Minimum(0)
 		// 0, not a non-zero count: no campaign row in any monitor method's example
 		// (design/account_monitor_examples.go) has fetch_failed=true, so any other value here
@@ -1286,10 +1286,10 @@ var AccountMonitor = Type("account-monitor", func() {
 	// No example on campaigns or action_items (nor on the type, below): rows and findings differ
 	// per platform, so each monitor method publishes its own whole-response example — see
 	// design/account_monitor_examples.go.
-	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "Every campaign visible on the account, with the rule engine's per-row pacing output attached.", func() {
+	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only those this service recorded for the project, on LinkedIn and Microsoft Ads every campaign visible on the account — with the rule engine's per-row pacing output attached.", func() {
 		Meta("openapi:example", "false")
 	})
-	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "The rule engine's findings across the account's campaigns.", func() {
+	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "The rule engine's findings across the returned campaigns.", func() {
 		Meta("openapi:example", "false")
 	})
 	Attribute("totals", AccountMonitorTotals)
@@ -2555,7 +2555,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	// (everything the credential reaches). On the four platforms whose single ad account is
 	// shared by every foundation — Google Ads, Meta, Reddit and X (docs/architecture.md,
 	// "Account Tenancy") — the response is then reduced to the campaigns this service recorded
-	// for {project_id}, and a recorded campaign that cannot be proven to belong to account_id is
+	// for {project_id}, and a live recorded campaign whose recorded account is not account_id is
 	// a 409 (lfx-self-serve-ops#897). LinkedIn and Microsoft stay account-scoped.
 	//
 	// days is a plain bounded integer, NOT model.MetricsWindow: MetricsWindow is a closed
@@ -2570,8 +2570,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"without any upstream call. A recorded campaign created under a different account than " +
 			"account_id fails the read with 409 rather than returning a partial picture. " +
 			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
-			"upstream campaign, but only while one is proven to belong to account_id and no other project " +
-			"holds it; otherwise it is omitted, never a 409. " +
+			"upstream campaign, unless it was recorded under a different customer than account_id or " +
+			"another project now holds it live; such a campaign is omitted, never a 409. " +
 			"{project_id} also resolves which stored connection credential reads account_id. Unlike " +
 			"GET .../connection-google-ads/accounts, this endpoint resolves the project's OWN connection " +
 			"only and does not fall back to the shared LF system credential: a project with campaigns " +
@@ -2660,8 +2660,9 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"without any upstream call. A recorded campaign created under a different account than " +
 			"account_id fails the read with 409 rather than returning a partial picture. " +
 			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
-			"upstream campaign, but only while one is proven to belong to account_id and no other project " +
-			"holds it; otherwise it is omitted, never a 409. " +
+			"upstream campaign, unless it was recorded under a different account than account_id, its " +
+			"stored id is not one the platform can read, or another project now holds it live; such a " +
+			"campaign is omitted, never a 409. " +
 			"A pure read: nothing is persisted.")
 		Payload(func() {
 			bearerToken()
@@ -2707,8 +2708,9 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"without any upstream call. A recorded campaign created under a different account than " +
 			"account_id fails the read with 409 rather than returning a partial picture. " +
 			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
-			"upstream campaign, but only while one is proven to belong to account_id and no other project " +
-			"holds it; otherwise it is omitted, never a 409. " +
+			"upstream campaign, unless it does not record account_id as the account it was created " +
+			"under, its stored id is not one the platform can read, or another project now holds it " +
+			"live; such a campaign is omitted, never a 409. " +
 			"A pure read: nothing is persisted.")
 		Payload(func() {
 			bearerToken()
@@ -2801,8 +2803,9 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"without any upstream call. A recorded campaign created under a different account than " +
 			"account_id fails the read with 409 rather than returning a partial picture. " +
 			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
-			"upstream campaign, but only while one is proven to belong to account_id and no other project " +
-			"holds it; otherwise it is omitted, never a 409. " +
+			"upstream campaign, unless it was recorded under a different account than account_id, its " +
+			"stored id is not one the platform can read, or another project now holds it live; such a " +
+			"campaign is omitted, never a 409. " +
 			"The campaign list (names, statuses, budgets, and flights from the line items) is read live; " +
 			"delivery metrics come from X's asynchronous stats jobs — X's synchronous stats are capped at " +
 			"7 days per request — so they are served from the last report that finished — see " +

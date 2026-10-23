@@ -3000,9 +3000,10 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 //
 // The project's SOFT-DELETED campaigns are in ids too: a local delete does not stop the upstream
 // campaign (BriefService.DeleteCampaign), and the monitor is where one still spending is seen.
-// Each is checked on its own and kept only when the scoper proves it belongs to accountID; one
-// that cannot be proven is dropped and logged, never a 409. A deleted row cannot be re-dispatched
-// or reconciled, so a 409 on it would have no remedy, and dropping it shows nothing unproven.
+// Each is checked on its own by the same MonitorScopeForAccount rule as the live scope, and kept
+// unless the scoper refuses it (a different recorded account; on Reddit, also an unrecorded one;
+// an id the platform cannot read). A refused one is dropped and logged, never a 409: a deleted row
+// cannot be re-dispatched or reconciled, so a 409 on it would have no remedy.
 func (o *Orchestrator) scopeAccountMonitor(ctx context.Context, projectID string, platform model.Provider, accountID string) (ids map[string]bool, scoped bool, err error) {
 	scoper, ok := o.dispatchers[platform].(AccountMonitorScoper)
 	if !ok {
@@ -3034,7 +3035,7 @@ func (o *Orchestrator) scopeAccountMonitor(ctx context.Context, projectID string
 	for _, d := range deleted {
 		campaignIDs, derr := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{d}, accountID)
 		if derr != nil {
-			slog.InfoContext(ctx, "account monitor: soft-deleted campaign not shown, it cannot be proven to belong to the monitored account",
+			slog.InfoContext(ctx, "account monitor: soft-deleted campaign not shown, it does not fit the monitored account",
 				"project_id", projectID, "platform", string(platform), "error", safeErrSummary(derr))
 			continue
 		}

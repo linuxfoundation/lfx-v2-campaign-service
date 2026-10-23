@@ -371,7 +371,7 @@ func TestMonitorAccount_ScopeOnAnotherAccountIs409(t *testing.T) {
 
 // A locally deleted campaign keeps running upstream (DeleteCampaign is local-only), so the monitor
 // still shows it — even as the project's only one, which must therefore reach the platform. A
-// deleted row that cannot be proven to belong to the monitored account is dropped, never a 409:
+// deleted row the scoper refuses for the monitored account is dropped, never a 409:
 // it cannot be re-dispatched or reconciled, so the refusal would have no remedy.
 func TestMonitorAccount_DeletedCampaignsStayVisible(t *testing.T) {
 	for _, tc := range scopedLiveCases() {

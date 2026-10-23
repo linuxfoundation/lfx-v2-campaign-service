@@ -480,9 +480,10 @@ credential-free precheck (`MonitorScopePrecheck`) answers the 400s its own read 
 campaigns on the platform gets an empty monitor with no upstream call. A live recorded campaign
 created under a different account than the requested one fails the read with 409 rather than a
 partial picture (lfx-self-serve-ops#897). The project's campaigns deleted in this service stay in
-the scope, because a local delete does not stop the upstream campaign, but only while one is proven
-to belong to the requested account and no other project holds it live (adopted after the delete);
-otherwise it is omitted, never a 409. LinkedIn and Microsoft do not implement the capability, so their monitors
+the scope, because a local delete does not stop the upstream campaign, unless one does not fit the
+requested account — recorded under a different account (on Reddit, also recording none), or carrying
+an id the platform cannot read — or another project now holds it live (adopted after the delete);
+such a campaign is omitted, never a 409. LinkedIn and Microsoft do not implement the capability, so their monitors
 stay account-wide. Implementing it is how a platform is recorded as shared in code: if a platform's
 tenancy changes, change its dispatcher in the same change as the tables here.
 
@@ -574,7 +575,8 @@ This service's own reads do not parse names. The project-scoped reads — the ke
 insights and the Google Ads, Meta, Reddit and X account monitors — attribute an upstream campaign to
 a project by `campaigns.project_id`, the row this service wrote when it created or adopted the
 campaign. A campaign this service neither created nor adopted is therefore not in any project's
-monitor, however it is named.
+Google Ads, Meta, Reddit or X monitor, however it is named (the LinkedIn and Microsoft monitors stay
+account-wide).
 
 ## Migration Path
 

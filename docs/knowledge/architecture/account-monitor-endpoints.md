@@ -580,10 +580,13 @@ caller (ROOT included), at one choke point mirroring
    The project's SOFT-DELETED campaigns (`ListProjectPlatformDeletedCampaignIDs`)
    join the set too, because a local delete does not stop the upstream campaign
    and the monitor is where one still spending shows up. Each is checked on its
-   own: it is kept when it is proven to belong to `account_id`, and dropped and
-   logged otherwise, never a 409 — a deleted row cannot be re-dispatched or
-   reconciled, so that refusal would have no remedy. A deleted campaign another
-   project now holds LIVE is left out in SQL (the query's `NOT EXISTS`): the
+   own, by the same helper and the same rule as the live rows: it is kept
+   unless it does not fit `account_id` — a recorded account that differs (on
+   Reddit, also none recorded; Google Ads, Meta and X treat an unrecorded
+   account as unknown and proceed), or an id the platform cannot read — and
+   then it is dropped and logged, never a 409: a deleted row cannot be
+   re-dispatched or reconciled, so that refusal would have no remedy. A
+   deleted campaign another project now holds LIVE is left out in SQL (the query's `NOT EXISTS`): the
    per-platform binding indexes cover live rows only, so another project can
    adopt a campaign after this one deleted it, and from then on it is that
    project's. The empty-scope answer in step 2 therefore needs both lists empty.
@@ -795,7 +798,7 @@ differential diff, since fixed:
 `campaign_count` rows carry `fetch_failed=true`, counted in `monitorTotals` over the same
 post-`evaluate` rows the sums cover. The sums still include those rows at whatever they carry —
 zero for a row whose metrics could not be read — so a non-zero count means the totals may
-UNDERSTATE the account by up to that many campaigns' delivery. Decisions:
+UNDERSTATE the returned campaigns by up to that many campaigns' delivery. Decisions:
 
 - **An upper bound, not an exact count.** `fetch_failed` also marks a row whose budget or flight
   alone was unreadable while its metrics were read and summed (Google, LinkedIn, Meta, Microsoft,
