@@ -23,7 +23,10 @@ removes the value the predicate keys on, and a writer that adds one the reader's
 preaching the sweep has to perform one, and a partial enumeration there is worse than none — the
 next editor trusts the list instead of redoing it. `campaigns.status` has FIVE writers:
 `claimCampaignDispatchQuery`, `upsertCampaignQuery`, `replaceCampaignQuery`, `adoptCampaignQuery`
-and `deleteCampaignQuery`. The two INSERTs cannot move an existing row off `pending`.
+and `deleteCampaignQuery`. The two INSERTs — the claim and the adopt — cannot move an existing row
+off `pending`. `upsertCampaignQuery` is not guarded against this delete but ORDERED against it, on
+both arms, for the reasons the `config_snapshot` sweep already gives; saying so explicitly is part
+of the lesson, because a list that accounts for four of five sends the next reader looking.
 `deleteCampaignQuery` writes `status='deleted'` — the one value the query's own
 `c.status <> 'deleted'` predicate reads — and is held off by `DeleteCampaign`'s whitelist
 (`model.CampaignStatusDeletable`, which fails closed on anything unrecognised) under its own

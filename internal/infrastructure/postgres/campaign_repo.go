@@ -1353,8 +1353,9 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	// `c`, so it is only decisive because every caller passes a campaign LOADED from that table
 	// (brief.go, brief_bid.go, brief_budget.go and meta_ad_sets.go, the last via a copy of the
 	// loaded row). A future caller that synthesized a BriefID would make the miss reachable --
-	// and would land on the scan below rather than on silence. The scan is there for the predicate's next editor: it converts any
-	// future miss from a silent loss of the lock into ErrNotFound, which is the behaviour the
+	// and would land on the scan below rather than on silence. The scan is there for the
+	// predicate's next editor: it converts any future miss from a silent loss of the lock into
+	// ErrNotFound, which is the behaviour the
 	// sibling callers of the asset-side query already have (CreateAsset maps ErrNoRows the same
 	// way). Do not read it as evidence that the lock could fail today.
 	var briefStatus string
