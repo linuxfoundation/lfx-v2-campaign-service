@@ -25,8 +25,11 @@ import (
 //   - The reason slug is the literal `campaign_dispatch_in_flight`. The slug is enforced by the
 //     GENERATED CLIENT decoder against the Enum in design/connection.go, so a reason that drifts
 //     from that list is not an undocumented value — it is a 409 no generated client can read.
-//     Pinning the literal here is what keeps the three copies (design Enum, service constant,
-//     wire value) from drifting apart silently.
+//     What this test pins is the SERVICE half of that pair: the constant against the value the
+//     service actually returns. It calls UpdateCampaign directly and never crosses the generated
+//     encoder, so it cannot observe the Enum at all -- delete the member from design/connection.go
+//     and re-run make apigen and this test stays green while every generated client starts failing
+//     to decode the 409. The Enum is kept in step BY HAND; the constant's own comment says so.
 //   - The refusal happened BEFORE the claim. Validating first keeps an invalid request from
 //     taking the campaign's write lock, which acquires a dedicated pooled connection and blocks
 //     every other writer for that campaign. camps.claims is the only way to observe this: the

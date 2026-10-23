@@ -1723,6 +1723,14 @@ Without the lock nothing ordered that write against a concurrent
 `CreativeAssetRepo.DeleteAsset`: the UPDATE touches `campaigns` only, and the per-campaign
 advisory lock a caller may already hold is keyed on the CAMPAIGN, not the brief.
 
+The lock is on the BRIEF row, so its cost is wider than the delete it was added to order against:
+every `ReplaceCampaign` on a brief now serializes against every OTHER `ReplaceCampaign` on that
+brief — the budget edit, the bid edit, the name edit and the toggle's status persist, across all
+of that brief's campaigns — each waiter holding a pooled connection while it waits. With no
+pool-level `lock_timeout` or `statement_timeout` configured, the only bound on that wait is the
+caller's context, and on a busy brief this sibling contention, rather than a concurrent asset
+delete, is the realistic way `ToggleCampaignStatus`'s 5 s `persistResultTimeout` gets spent.
+
 ## DeleteCampaign's guards
 
 `DeleteCampaign` takes a `SELECT status, version … FOR UPDATE` lock inside one

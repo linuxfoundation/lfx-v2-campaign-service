@@ -1319,6 +1319,16 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	// status is recoverable by reconciliation, an asset whose bytes are gone while a snapshot still
 	// names it is not -- but it is a real cost, not a free ordering.
 	//
+	// The delete is not the only waiter, and is not the likeliest one. The lock is on the BRIEF
+	// row, so every ReplaceCampaign on a brief now serializes against every OTHER ReplaceCampaign
+	// on that same brief -- the budget edit, the bid edit, the name edit and the toggle's status
+	// persist, across all of that brief's campaigns. A bulk edit that previously ran its platforms
+	// concurrently now runs them one at a time, each waiter holding a pooled connection while it
+	// waits. On a busy brief that sibling contention, not a concurrent asset delete, is the
+	// realistic way the 5s persist budget above gets spent. There is no pool-level lock_timeout or
+	// statement_timeout (see the note in service/creative_asset.go), so the only bound on a wait
+	// here is the caller's context.
+	//
 	// It is taken unconditionally rather than only when config_snapshot changed, because this
 	// statement cannot tell: it writes the column either way, and a caller that "did not change"
 	// the config still re-writes the value it read, which is exactly how a concurrently-added
@@ -1344,7 +1354,15 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	// re-flowed, which this branch has already paid for twice. DeleteAsset takes the brief lock
 	// and nothing else.
 	//
-	// IT IS KEYED ON brief_id ALONE, AND THE RESULT IS CHECKED. Both halves matter. The asset
+	// IT IS KEYED ON brief_id ALONE, AND THE ERROR IS CHECKED. Both halves matter. "The error",
+	// not the scanned status: briefStatus below is read and deliberately never consulted. The
+	// asset-side callers of the sibling query DO act on it -- CreateAsset refuses an archived
+	// brief -- so the asymmetry is worth stating rather than leaving a reader to infer a status
+	// check from the variable's name. A replace under an archived brief stays allowed; that is
+	// pre-existing behaviour and this change does not alter it. The column is projected only
+	// because the lock is taken by a SELECT ... FOR UPDATE, which has to select something.
+	//
+	// The asset
 	// endpoints' version of this statement (lockBriefForAssetWriteQuery) also tests project_id,
 	// because they take a project from the request path and must refuse a brief owned by someone
 	// else; this call has already resolved and authorized its campaign, and a row lock on `id` is
