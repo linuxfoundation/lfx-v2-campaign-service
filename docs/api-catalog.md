@@ -130,10 +130,13 @@ enough — a client that keys on it will do the wrong thing for one of them.** K
 `reason` field of the error body, which is a stable slug: `stale_approval`,
 `audience_build_in_flight`, or `already_exists`. Do NOT key on the message text — it is
 reworded whenever an operator finds it unclear, and the wording below has already changed
-twice. `reason` is populated by the audiences endpoints, by `create-campaigns` for
-`ab_test_unsupported_send_type` (see its row above), and by `toggle-campaign-status` for
-`campaign_adopted` (a resume of an adopted campaign; see its row below); every other briefs-endpoint conflict is still
-distinguished in message prose and sets no slug. Absent means unspecified:
+twice. `reason` is populated by the audiences endpoints and by five briefs-endpoint conflicts:
+`create-campaigns` sets `ab_test_unsupported_send_type` (see its row above);
+`toggle-campaign-status` sets `campaign_adopted` (a resume of an adopted campaign; see its row
+below); `update-campaign` sets `campaign_dispatch_in_flight` (a config edit on a campaign whose
+creation has not finished on the ad platform); and `delete-creative-asset` sets
+`creative_asset_quota_exceeded` and `creative_asset_in_use`. Every other briefs-endpoint conflict
+is still distinguished in message prose and sets no slug. Absent means unspecified:
 fall back to the message there.
 
 | `reason` | Message contains | Cause | Remedy |

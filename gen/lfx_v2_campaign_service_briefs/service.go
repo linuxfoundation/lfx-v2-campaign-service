@@ -197,7 +197,12 @@ type Service interface {
 	// the brief. The AI model is optional — without it configured this endpoint
 	// returns 503.
 	GenerateEmailCopy(context.Context, *GenerateEmailCopyPayload) (res *EmailCopy, err error)
-	// Replace a campaign (requires If-Match).
+	// Replace a campaign (requires If-Match). A request carrying a configuration
+	// is refused with 409 reason=campaign_dispatch_in_flight while the campaign's
+	// creation has not finished on the ad platform — its status is still 'pending'
+	// — because a dispatcher may still be resolving the configuration this request
+	// would overwrite. Retry once the status is no longer 'pending'. A name-only
+	// edit is NOT refused and stays available throughout.
 	UpdateCampaign(context.Context, *UpdateCampaignPayload) (res *Campaign, err error)
 	// Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist
 	// the new status. Unlike update-campaign (which only writes the DB row), this

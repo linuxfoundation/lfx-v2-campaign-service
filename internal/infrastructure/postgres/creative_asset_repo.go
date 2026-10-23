@@ -210,11 +210,13 @@ const creativeAssetQuotaQuery = `SELECT count(*), COALESCE(sum(byte_size), 0),
 // The two callers in THIS file take this lock and nothing else, so neither can close that cycle.
 // ReplaceCampaign's third caller-site takes this lock without ever taking a slot lock: the only
 // lock its caller may already hold is ClaimCampaignVersion's per-CAMPAIGN advisory lock, a
-// different lock from the per-slot one, and taken with pg_try_advisory_lock, which never waits --
-// a holder that can never be a waiter cannot be an edge in a wait cycle. It also takes this lock
-// as the opening statement of its transaction, so it holds no `campaigns` row lock while waiting
-// here. Nothing acquires a slot lock while holding this one, which is the direction that would
-// close the cycle.
+// different lock from the per-slot one, and taken with pg_try_advisory_lock, so nobody ever BLOCKS
+// on it. That is what matters, and the direction is INTO the holder rather than out of it: the
+// replace does go on to wait for this brief lock, but a lock with no waiters is never an in-edge
+// to its holder, and a node no edge enters cannot sit on a cycle. It also takes this lock as the
+// opening statement of its transaction, so it holds no `campaigns` row lock while waiting here.
+// Nothing acquires a slot lock while holding this one, which is the direction that would close
+// the cycle.
 const lockBriefForAssetWriteQuery = `SELECT status FROM campaign_briefs
 	WHERE id = $1 AND project_id = $2 FOR UPDATE`
 
@@ -551,6 +553,18 @@ func (r *CreativeAssetRepo) ListAssets(ctx context.Context, projectID, briefID s
 // then matches no arm: the delete proceeds against an asset the in-flight dispatch is about to
 // read. 'pending' survives that, because UpdateCampaign cannot write status (it refuses any
 // status change) and now refuses a config edit on a pending campaign outright.
+//
+// THE OTHER WRITER, AND WHY IT NEEDS NOTHING. config_snapshot has exactly two writers:
+// ReplaceCampaign, handled above, and UpsertCampaign (campaign_repo.go), the dispatch-result
+// write -- the claim itself only ever writes NULL. UpsertCampaign is ordered against this delete
+// already, on both of its arms and for two different reasons. Its CONFLICT arm finalizes the
+// claim's own row, which stays 'pending' until that transaction commits, so a concurrent delete
+// reads 'pending' and refuses on the first arm for the entire window the row is exposed; once it
+// commits, the snapshot is visible to the next delete. Its INSERT arm writes a new row, and
+// inserting brief_id fires the foreign key's FOR KEY SHARE on campaign_briefs, which this delete's
+// FOR UPDATE blocks -- the same mechanism the claim relies on, for free. ReplaceCampaign has
+// neither property: its UPDATE leaves brief_id untouched, fires no FK trigger and takes no lock,
+// which is the whole reason the explicit lock had to be added there and nowhere else.
 //
 // The general lesson, recorded because it is cheap to re-break: an arm that keys on a column's
 // VALUE is only as good as the full set of writers of that column. 'pending' is durable here

@@ -1330,8 +1330,10 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	// holds no row lock on `campaigns` while it waits here; a delete blocked behind a campaigns row
 	// is therefore never blocked behind this replace. Second, the only lock a caller may already
 	// hold is ClaimCampaignVersion's per-campaign advisory lock, taken with pg_try_advisory_lock --
-	// it never waits, so its holder can never itself be a waiter, and a lock whose holders never
-	// wait cannot appear in a wait cycle at all. DeleteAsset takes the brief lock and nothing else.
+	// so nobody ever BLOCKS on it. The direction that matters is INTO the holder, not out of it:
+	// this replace does go on to wait, right here, for the brief. But a lock with no waiters is
+	// never an in-edge to its holder, and a node no edge enters cannot sit on a cycle, whatever it
+	// waits for next. DeleteAsset takes the brief lock and nothing else.
 	//
 	// RowsAffected is deliberately not checked. A campaign row carries a brief_id foreign key, so
 	// the brief exists for any row this replace can target; treating a zero count as an error

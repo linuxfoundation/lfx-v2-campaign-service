@@ -2240,8 +2240,10 @@ Lock ORDER is slot → brief for every transaction taking both (`AdoptCampaign`)
 holds the slot lock while waiting for the brief's. `CreateAsset` and `DeleteAsset` take the brief
 lock and nothing else; `ReplaceCampaign` takes the brief lock and never a slot lock — the only
 lock its caller may already hold is `ClaimCampaignVersion`'s per-CAMPAIGN advisory lock, which is
-a different lock and is taken with `pg_try_advisory_lock`, so its holder never waits and can never
-be an edge in a wait cycle. The replace also takes the brief lock as its transaction's opening
+a different lock and is taken with `pg_try_advisory_lock`, so nobody ever BLOCKS on it. The
+direction that matters is INTO the holder, not out of it — the replace does go on to wait for the
+brief lock — but a lock with no waiters is never an in-edge to its holder, and a node no edge
+enters cannot sit on a cycle. The replace also takes the brief lock as its transaction's opening
 statement, so it holds no `campaigns` row lock while waiting for it. Nothing anywhere acquires a
 slot lock while already holding the brief's — so no transaction can close that cycle.
 `TestLiveDeleteAssetWaitsForAnInFlightDispatchClaim` holds an uncommitted claim insert on a
