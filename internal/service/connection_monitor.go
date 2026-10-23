@@ -225,8 +225,10 @@ var monitorScopeConflictPlatforms = map[model.Provider]bool{
 // as the whole. Arm order and wording follow classifyInsightsErrorFor, which answers the same
 // refusals on the insight reads; every other error is delegated unchanged.
 //
-// X's monitor declares AccountMonitorConflictError, whose reason is required, so its 409 carries
-// one; the other three declare the shared ConflictError. The account ids stay in the log.
+// Every 409 here carries its reason: X's monitor declares AccountMonitorConflictError and the
+// other three AccountMonitorScopeConflictError, both of which require one. Neither is the shared
+// ConflictError, whose published example is a connection collision no monitor returns. The
+// account ids stay in the log.
 func (s *ConnectionService) classifyMonitorError(ctx context.Context, projectID string, platform model.Provider, d accountDiscovery, err error) error {
 	if !monitorScopeConflictPlatforms[platform] {
 		return s.classifyDiscoveryError(ctx, projectID, d, err)
@@ -255,7 +257,7 @@ func (s *ConnectionService) classifyMonitorError(ctx context.Context, projectID 
 	if platform == model.ProviderTwitterAds {
 		return &conn.AccountMonitorConflictError{Code: "409", Reason: reason, Message: message}
 	}
-	return &conn.ConflictError{Code: "409", Message: message}
+	return &conn.AccountMonitorScopeConflictError{Code: "409", Reason: reason, Message: message}
 }
 
 // monitorAccount is the shared body of the four live-read monitor-*-ads-account handlers: validate,

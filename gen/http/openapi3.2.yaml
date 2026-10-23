@@ -8825,7 +8825,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: monitor-google-ads-account lfx-v2-campaign-service-connections
-            description: 'Read this project''s own campaigns on a Google Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Project-scoped: only campaigns this service recorded for the project are returned; the upstream account is shared across foundations, so the account read is filtered to them before rules and totals. A project with no campaigns recorded on the platform gets an empty monitor without any upstream call. A recorded campaign created under a different account than account_id fails the read with 409 rather than returning a partial picture. Campaigns deleted in this service stay in the monitor, because a local delete does not stop the upstream campaign, unless it was recorded under a different customer than account_id or another project now holds it live; such a campaign is omitted, never a 409. {project_id} also resolves which stored connection credential reads account_id. Unlike GET .../connection-google-ads/accounts, this endpoint resolves the project''s OWN connection only and does not fall back to the shared LF system credential: a project with campaigns but no Google Ads connection of its own gets a 404, not the LF account''s data. A pure read: nothing is persisted.'
+            description: 'Read this project''s own campaigns on a Google Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Project-scoped: only campaigns this service recorded for the project are returned; the upstream account is shared across foundations, so the account read is filtered to them before rules and totals. A project with no campaigns recorded on the platform gets an empty monitor without any upstream call. A recorded campaign created under a different account than account_id, or recording none, fails the read with 409 rather than returning a partial picture. Campaigns deleted in this service stay in the monitor, because a local delete does not stop the upstream campaign, unless it does not record account_id as the customer it was created under or another project has since taken it over; such a campaign is omitted, never a 409. {project_id} also resolves which stored connection credential reads account_id. Unlike GET .../connection-google-ads/accounts, this endpoint resolves the project''s OWN connection only and does not fall back to the shared LF system credential: a project with campaigns but no Google Ads connection of its own gets a 404, not the LF account''s data. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#monitor-google-ads-account
             parameters:
                 - name: account_id
@@ -8958,15 +8958,15 @@ paths:
                                 code: "404"
                                 message: The connection was not found.
                 "409":
-                    description: 'Conflict: A campaign recorded for this project was created under a different customer than account_id'
+                    description: 'Conflict: A campaign recorded for this project does not fit the monitored account: created under a different customer than account_id, or recording none (see reason)'
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/ConflictError'
+                                $ref: '#/components/schemas/AccountMonitorScopeConflictError'
                             example:
                                 code: "409"
-                                message: A connection for this provider already exists on the project.
-                                reason: already_exists
+                                message: some of this project's campaigns were created under a different ad account than the one being monitored — monitor the account that owns them, or re-dispatch or reconcile those campaigns onto this one, to monitor this account
+                                reason: campaign_account_mismatch
                 "413":
                     description: 'PayloadTooLarge: Payload too large'
                     content:
@@ -11757,7 +11757,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: monitor-meta-ads-account lfx-v2-campaign-service-connections
-            description: 'Read this project''s own campaigns on a Meta Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Project-scoped: only campaigns this service recorded for the project are returned; the upstream account is shared across foundations, so the account read is filtered to them before rules and totals. A project with no campaigns recorded on the platform gets an empty monitor without any upstream call. A recorded campaign created under a different account than account_id fails the read with 409 rather than returning a partial picture. Campaigns deleted in this service stay in the monitor, because a local delete does not stop the upstream campaign, unless it was recorded under a different account than account_id, its stored id is not one the platform can read, or another project now holds it live; such a campaign is omitted, never a 409. A pure read: nothing is persisted.'
+            description: 'Read this project''s own campaigns on a Meta Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Project-scoped: only campaigns this service recorded for the project are returned; the upstream account is shared across foundations, so the account read is filtered to them before rules and totals. A project with no campaigns recorded on the platform gets an empty monitor without any upstream call. A recorded campaign created under a different account than account_id fails the read with 409 rather than returning a partial picture. Campaigns deleted in this service stay in the monitor, because a local delete does not stop the upstream campaign, unless it was recorded under a different account than account_id, its stored id is not one the platform can read, or another project has since taken it over; such a campaign is omitted, never a 409. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#monitor-meta-ads-account
             parameters:
                 - name: account_id
@@ -11886,15 +11886,15 @@ paths:
                                 code: "404"
                                 message: The connection was not found.
                 "409":
-                    description: 'Conflict: A campaign recorded for this project does not fit the monitored account: created under a different account, or carrying an id the platform cannot read'
+                    description: 'Conflict: A campaign recorded for this project does not fit the monitored account: created under a different account, or carrying an id the platform cannot read (see reason)'
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/ConflictError'
+                                $ref: '#/components/schemas/AccountMonitorScopeConflictError'
                             example:
                                 code: "409"
-                                message: A connection for this provider already exists on the project.
-                                reason: already_exists
+                                message: some of this project's campaigns were created under a different ad account than the one being monitored — monitor the account that owns them, or re-dispatch or reconcile those campaigns onto this one, to monitor this account
+                                reason: campaign_account_mismatch
                 "413":
                     description: 'PayloadTooLarge: Payload too large'
                     content:
@@ -13567,7 +13567,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: monitor-reddit-ads-account lfx-v2-campaign-service-connections
-            description: 'Read this project''s own campaigns on a Reddit Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Project-scoped: only campaigns this service recorded for the project are returned; the upstream account is shared across foundations, so the account read is filtered to them before rules and totals. A project with no campaigns recorded on the platform gets an empty monitor without any upstream call. A recorded campaign created under a different account than account_id fails the read with 409 rather than returning a partial picture. Campaigns deleted in this service stay in the monitor, because a local delete does not stop the upstream campaign, unless it does not record account_id as the account it was created under, its stored id is not one the platform can read, or another project now holds it live; such a campaign is omitted, never a 409. A pure read: nothing is persisted.'
+            description: 'Read this project''s own campaigns on a Reddit Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Project-scoped: only campaigns this service recorded for the project are returned; the upstream account is shared across foundations, so the account read is filtered to them before rules and totals. A project with no campaigns recorded on the platform gets an empty monitor without any upstream call. A recorded campaign created under a different account than account_id fails the read with 409 rather than returning a partial picture. Campaigns deleted in this service stay in the monitor, because a local delete does not stop the upstream campaign, unless it does not record account_id as the account it was created under, its stored id is not one the platform can read, or another project has since taken it over; such a campaign is omitted, never a 409. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#monitor-reddit-ads-account
             parameters:
                 - name: account_id
@@ -13696,15 +13696,15 @@ paths:
                                 code: "404"
                                 message: The connection was not found.
                 "409":
-                    description: 'Conflict: A campaign recorded for this project does not fit the monitored account: created under a different account, recording none, or carrying an id the platform cannot read'
+                    description: 'Conflict: A campaign recorded for this project does not fit the monitored account: created under a different account, recording none, or carrying an id the platform cannot read (see reason)'
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/ConflictError'
+                                $ref: '#/components/schemas/AccountMonitorScopeConflictError'
                             example:
                                 code: "409"
-                                message: A connection for this provider already exists on the project.
-                                reason: already_exists
+                                message: some of this project's campaigns were created under a different ad account than the one being monitored — monitor the account that owns them, or re-dispatch or reconcile those campaigns onto this one, to monitor this account
+                                reason: campaign_account_mismatch
                 "413":
                     description: 'PayloadTooLarge: Payload too large'
                     content:
@@ -14479,7 +14479,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: monitor-twitter-ads-account lfx-v2-campaign-service-connections
-            description: 'Read this project''s own live campaigns on an X (Twitter) Ads account with pacing and action items derived by this service''s rule engine, resolved from the project''s OWN connection only. Project-scoped: only campaigns this service recorded for the project are returned; the upstream account is shared across foundations, so the account read is filtered to them before rules and totals. A project with no campaigns recorded on the platform gets an empty monitor without any upstream call. A recorded campaign created under a different account than account_id fails the read with 409 rather than returning a partial picture. Campaigns deleted in this service stay in the monitor, because a local delete does not stop the upstream campaign, unless it was recorded under a different account than account_id, its stored id is not one the platform can read, or another project now holds it live; such a campaign is omitted, never a 409. The campaign list (names, statuses, budgets, and flights from the line items) is read live; delivery metrics come from X''s asynchronous stats jobs — X''s synchronous stats are capped at 7 days per request — so they are served from the last report that finished — see metrics_as_of and metrics_pending — while the next one builds. The first read for an account and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. Conversions are never reported for X. Saved reports are cached platform data, not a record of anything this service did; the saved report covers the whole account, and only the response is scoped. The scope refusals carry reason campaign_account_mismatch (a recorded campaign belongs to another account) or campaign_scope_invalid (a recorded campaign id the platform cannot read). Two account states are also refused with 409 rather than served metrics that would be wrong: more than 200 campaigns active in the window (reason account_too_many_active_campaigns — one report covers at most ten X stats jobs of 20 campaigns), and an account timezone whose local midnight is not a whole UTC hour, such as Asia/Kolkata (reason account_timezone_unsupported — X accepts whole-hour window bounds only, so the account''s own days cannot be queried exactly). A 90-day window that crosses a DST fall-back covers the trailing 89 whole local days, because 90 such days are 90 days and an hour, over X''s 90-day limit.'
+            description: 'Read this project''s own live campaigns on an X (Twitter) Ads account with pacing and action items derived by this service''s rule engine, resolved from the project''s OWN connection only. Project-scoped: only campaigns this service recorded for the project are returned; the upstream account is shared across foundations, so the account read is filtered to them before rules and totals. A project with no campaigns recorded on the platform gets an empty monitor without any upstream call. A recorded campaign created under a different account than account_id, or recording none, fails the read with 409 rather than returning a partial picture. Campaigns deleted in this service stay in the monitor, because a local delete does not stop the upstream campaign, unless it does not record account_id as the account it was created under, its stored id is not one the platform can read, or another project has since taken it over; such a campaign is omitted, never a 409. The campaign list (names, statuses, budgets, and flights from the line items) is read live; delivery metrics come from X''s asynchronous stats jobs — X''s synchronous stats are capped at 7 days per request — so they are served from the last report that finished — see metrics_as_of and metrics_pending — while the next one builds. The first read for an account and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. Conversions are never reported for X. Saved reports are cached platform data, not a record of anything this service did; the saved report covers the whole account, and only the response is scoped. The scope refusals carry reason campaign_account_mismatch (a recorded campaign belongs to another account or records none) or campaign_scope_invalid (a recorded campaign id the platform cannot read). Two account states are also refused with 409 rather than served metrics that would be wrong: more than 200 campaigns active in the window on the whole shared account, every project''s campaigns counted and not only this project''s (reason account_too_many_active_campaigns — one report covers at most ten X stats jobs of 20 campaigns), and an account timezone whose local midnight is not a whole UTC hour, such as Asia/Kolkata (reason account_timezone_unsupported — X accepts whole-hour window bounds only, so the account''s own days cannot be queried exactly). A 90-day window that crosses a DST fall-back covers the trailing 89 whole local days, because 90 such days are 90 days and an hour, over X''s 90-day limit.'
             operationId: lfx-v2-campaign-service-connections#monitor-twitter-ads-account
             parameters:
                 - name: account_id
@@ -14612,14 +14612,14 @@ paths:
                                 code: "404"
                                 message: The connection was not found.
                 "409":
-                    description: 'Conflict: The account cannot be monitored as it stands: too many active campaigns, a timezone off the whole UTC hour, or a recorded campaign that does not fit the account (see reason)'
+                    description: 'Conflict: The account cannot be monitored as it stands: too many active campaigns on the shared account, a timezone off the whole UTC hour, or a recorded campaign that does not fit the account (see reason)'
                     content:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/AccountMonitorConflictError'
                             example:
                                 code: "409"
-                                message: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads)
+                                message: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads, counted across every project on the shared account)
                                 reason: account_too_many_active_campaigns
                 "413":
                     description: 'PayloadTooLarge: Payload too large'
@@ -17377,10 +17377,10 @@ components:
                 message:
                     type: string
                     description: Error message
-                    example: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads)
+                    example: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads, counted across every project on the shared account)
                 reason:
                     type: string
-                    description: 'Why the account cannot be monitored as it stands: account_too_many_active_campaigns (more campaigns active in the window than one report covers), account_timezone_unsupported (the account''s timezone does not start its days on a whole UTC hour), campaign_account_mismatch (a campaign recorded for this project was created under a different account) or campaign_scope_invalid (a campaign recorded for this project has an id the platform cannot read).'
+                    description: 'Why the account cannot be monitored as it stands: account_too_many_active_campaigns (more campaigns active in the window than one report covers, counted across every project on the shared account, not only this project''s campaigns), account_timezone_unsupported (the account''s timezone does not start its days on a whole UTC hour), campaign_account_mismatch (a campaign recorded for this project was created under a different account, or does not record which) or campaign_scope_invalid (a campaign recorded for this project has an id the platform cannot read).'
                     example: account_too_many_active_campaigns
                     enum:
                         - account_too_many_active_campaigns
@@ -17389,8 +17389,34 @@ components:
                         - campaign_scope_invalid
             example:
                 code: "409"
-                message: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads)
+                message: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads, counted across every project on the shared account)
                 reason: account_too_many_active_campaigns
+            required:
+                - code
+                - message
+                - reason
+        AccountMonitorScopeConflictError:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: HTTP status code
+                    example: "409"
+                message:
+                    type: string
+                    description: Error message
+                    example: some of this project's campaigns were created under a different ad account than the one being monitored — monitor the account that owns them, or re-dispatch or reconcile those campaigns onto this one, to monitor this account
+                reason:
+                    type: string
+                    description: 'Why the project''s recorded campaigns cannot be read under the monitored account: campaign_account_mismatch (a campaign recorded for this project was created under a different account, or does not record which) or campaign_scope_invalid (a campaign recorded for this project has an id the platform cannot read).'
+                    example: campaign_account_mismatch
+                    enum:
+                        - campaign_account_mismatch
+                        - campaign_scope_invalid
+            example:
+                code: "409"
+                message: some of this project's campaigns were created under a different ad account than the one being monitored — monitor the account that owns them, or re-dispatch or reconcile those campaigns onto this one, to monitor this account
+                reason: campaign_account_mismatch
             required:
                 - code
                 - message

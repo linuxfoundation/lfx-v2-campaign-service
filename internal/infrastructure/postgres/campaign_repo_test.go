@@ -204,10 +204,13 @@ func TestListProjectPlatformDeletedCampaignIDs_IsScopedInSQL(t *testing.T) {
 	require.Contains(t, strings.ToUpper(outer), "SELECT DISTINCT C.PLATFORM_CAMPAIGN_ID, C.RESULT",
 		"the id and its provenance are needed and nothing else")
 
-	// The live owner wins: the same upstream id on a live row of ANOTHER project hides this one.
+	// The latest owner wins: the same upstream id on ANOTHER project's row hides this one when
+	// that row is live, or was recorded later whatever its status — so an adopter deleting its
+	// own row does not hand the campaign back.
 	require.Contains(t, sub, "l.platform = c.platform")
 	require.Contains(t, sub, "l.platform_campaign_id = c.platform_campaign_id")
-	require.Contains(t, sub, "l."+livePredicate, "only a LIVE row elsewhere takes the campaign over")
+	require.Contains(t, sub, "(l."+livePredicate+" OR l.created_at > c.created_at)",
+		"a live row elsewhere, or a later one of any status, takes the campaign over")
 	require.Contains(t, sub, "l.project_id <> c.project_id", "this project's own live row is in the live scope already")
 }
 

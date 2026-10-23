@@ -3001,8 +3001,8 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 // The project's SOFT-DELETED campaigns are in ids too: a local delete does not stop the upstream
 // campaign (BriefService.DeleteCampaign), and the monitor is where one still spending is seen.
 // Each is checked on its own by the same MonitorScopeForAccount rule as the live scope, and kept
-// unless the scoper refuses it (a different recorded account; on Reddit, also an unrecorded one;
-// an id the platform cannot read). A refused one is dropped and logged, never a 409: a deleted row
+// unless the scoper refuses it (a different recorded account; on Google Ads, Reddit and X, also an
+// unrecorded one; an id the platform cannot read). A refused one is dropped and logged, never a 409: a deleted row
 // cannot be re-dispatched or reconciled, so a 409 on it would have no remedy.
 func (o *Orchestrator) scopeAccountMonitor(ctx context.Context, projectID string, platform model.Provider, accountID string) (ids map[string]bool, scoped bool, err error) {
 	scoper, ok := o.dispatchers[platform].(AccountMonitorScoper)

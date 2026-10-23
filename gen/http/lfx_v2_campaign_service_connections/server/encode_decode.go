@@ -10206,6 +10206,19 @@ func EncodeMonitorGoogleAdsAccountError(encoder func(context.Context, http.Respo
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "Conflict":
+			var res *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorGoogleAdsAccountConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
 		case "BadRequest":
 			var res *lfxv2campaignserviceconnections.BadRequestError
 			errors.As(v, &res)
@@ -10218,19 +10231,6 @@ func EncodeMonitorGoogleAdsAccountError(encoder func(context.Context, http.Respo
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusBadRequest)
-			return enc.Encode(body)
-		case "Conflict":
-			var res *lfxv2campaignserviceconnections.ConflictError
-			errors.As(v, &res)
-			enc := encoder(ctx, w)
-			var body any
-			if formatter != nil {
-				body = formatter(ctx, res)
-			} else {
-				body = NewMonitorGoogleAdsAccountConflictResponseBody(res)
-			}
-			w.Header().Set("goa-error", res.GoaErrorName())
-			w.WriteHeader(http.StatusConflict)
 			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
@@ -10561,6 +10561,19 @@ func EncodeMonitorMetaAdsAccountError(encoder func(context.Context, http.Respons
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "Conflict":
+			var res *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorMetaAdsAccountConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
 		case "BadRequest":
 			var res *lfxv2campaignserviceconnections.BadRequestError
 			errors.As(v, &res)
@@ -10573,19 +10586,6 @@ func EncodeMonitorMetaAdsAccountError(encoder func(context.Context, http.Respons
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusBadRequest)
-			return enc.Encode(body)
-		case "Conflict":
-			var res *lfxv2campaignserviceconnections.ConflictError
-			errors.As(v, &res)
-			enc := encoder(ctx, w)
-			var body any
-			if formatter != nil {
-				body = formatter(ctx, res)
-			} else {
-				body = NewMonitorMetaAdsAccountConflictResponseBody(res)
-			}
-			w.Header().Set("goa-error", res.GoaErrorName())
-			w.WriteHeader(http.StatusConflict)
 			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
@@ -10744,6 +10744,19 @@ func EncodeMonitorRedditAdsAccountError(encoder func(context.Context, http.Respo
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "Conflict":
+			var res *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorRedditAdsAccountConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
 		case "BadRequest":
 			var res *lfxv2campaignserviceconnections.BadRequestError
 			errors.As(v, &res)
@@ -10756,19 +10769,6 @@ func EncodeMonitorRedditAdsAccountError(encoder func(context.Context, http.Respo
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusBadRequest)
-			return enc.Encode(body)
-		case "Conflict":
-			var res *lfxv2campaignserviceconnections.ConflictError
-			errors.As(v, &res)
-			enc := encoder(ctx, w)
-			var body any
-			if formatter != nil {
-				body = formatter(ctx, res)
-			} else {
-				body = NewMonitorRedditAdsAccountConflictResponseBody(res)
-			}
-			w.Header().Set("goa-error", res.GoaErrorName())
-			w.WriteHeader(http.StatusConflict)
 			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError

@@ -334,9 +334,9 @@ func TestMonitorAccount_ScopeOnAnotherAccountIs409(t *testing.T) {
 			d := &scopedLiveDispatcher{mockAccountMetricsReaderDispatcher: mockAccountMetricsReaderDispatcher{rows: tc.live}}
 			repo := scopeRepo([]string{"c1", "c2"}, map[string]string{"c2": "another-account"})
 			_, err := tc.call(liveScopeService(tc.provider, d, repo), tc.account)
-			var ce *conn.ConflictError
-			if !errors.As(err, &ce) || ce.Code != "409" {
-				t.Fatalf("err = %T %v, want a 409 ConflictError", err, err)
+			var ce *conn.AccountMonitorScopeConflictError
+			if !errors.As(err, &ce) || ce.Code != "409" || ce.Reason != "campaign_account_mismatch" {
+				t.Fatalf("err = %T %v, want a 409 AccountMonitorScopeConflictError with reason campaign_account_mismatch", err, err)
 			}
 			if !strings.Contains(ce.Message, "to monitor this account") {
 				t.Errorf("message = %q, want the monitor's remedy", ce.Message)
@@ -535,25 +535,30 @@ func TestClassifyMonitorError(t *testing.T) {
 		name     string
 		err      error
 		contains string
+		reason   string
 	}{
-		{"mixed names both remedies", mixed, "others do not record"},
-		{"unknown provenance asks for re-dispatch", unknown, "do not record which ad account"},
-		{"mismatch", fmt.Errorf("wrapped: %w", domain.ErrCampaignAccountMismatch), "than the one being monitored — monitor the account that owns them"},
-		{"unreadable id", fmt.Errorf("wrapped: %w", domain.ErrAudienceScopeInvalid), "an id the platform cannot read"},
+		{"mixed names both remedies", mixed, "others do not record", "campaign_account_mismatch"},
+		{"unknown provenance asks for re-dispatch", unknown, "do not record which ad account", "campaign_account_mismatch"},
+		{"mismatch", fmt.Errorf("wrapped: %w", domain.ErrCampaignAccountMismatch), "than the one being monitored — monitor the account that owns them", "campaign_account_mismatch"},
+		{"unreadable id", fmt.Errorf("wrapped: %w", domain.ErrAudienceScopeInvalid), "an id the platform cannot read", "campaign_scope_invalid"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Google, Meta and Reddit declare AccountMonitorScopeConflictError, never the shared
+			// ConflictError whose published example is a connection collision; every 409 carries
+			// its reason.
 			err := svc.classifyMonitorError(context.Background(), "p", model.ProviderRedditAds, redditAdsAccountDiscovery, tc.err)
-			var ce *conn.ConflictError
-			if !errors.As(err, &ce) || ce.Code != "409" || !strings.Contains(ce.Message, tc.contains) {
-				t.Fatalf("err = %T %v, want a 409 ConflictError containing %q", err, err, tc.contains)
+			var ce *conn.AccountMonitorScopeConflictError
+			if !errors.As(err, &ce) || ce.Code != "409" || ce.Reason != tc.reason || !strings.Contains(ce.Message, tc.contains) {
+				t.Fatalf("err = %T %v, want a 409 AccountMonitorScopeConflictError with reason %q containing %q", err, err, tc.reason, tc.contains)
 			}
 		})
 	}
 	t.Run("linkedin is delegated unchanged", func(t *testing.T) {
 		err := svc.classifyMonitorError(context.Background(), "p", model.ProviderLinkedInAds, linkedInAdsMonitorDiscovery, domain.ErrCampaignAccountMismatch)
 		var ce *conn.ConflictError
-		if errors.As(err, &ce) {
+		var sce *conn.AccountMonitorScopeConflictError
+		if errors.As(err, &ce) || errors.As(err, &sce) {
 			t.Fatalf("err = %v, want classifyDiscoveryError's answer, not a 409 the method does not declare", err)
 		}
 	})

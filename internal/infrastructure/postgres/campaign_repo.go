@@ -613,18 +613,23 @@ func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, proje
 // platform in SQL for the same reason. A local delete does not touch the ad platform, so the
 // account monitor reads these too — a deleted campaign may still be spending.
 //
-// The NOT EXISTS hands the campaign to its LIVE owner. The per-platform binding indexes cover
+// The NOT EXISTS hands the campaign to its LATEST owner. The per-platform binding indexes cover
 // live rows only, so once this project deletes its row another project can adopt the same
 // upstream campaign; from then on it is that project's campaign and must not stay in this
-// project's monitor. Matched on the id alone, not its provenance: on Reddit and X an id is only
-// unique within an account, so a live row on another account with the same id also hides this
-// one — the conservative direction for a read that exists to keep projects apart.
+// project's monitor. Another project's row takes it over when it is live, OR when it was
+// recorded later than this one whatever its status: an adoption always inserts a new row, and
+// if the adopter then deletes its row too, a live-only test would find no owner left and hand
+// the campaign — with the adopter's budget and spend — back to this project. Matched on the id
+// alone, not its provenance: on Reddit and X an id is only unique within an account, so another
+// account's row with the same id also hides this one — the conservative direction for a read
+// that exists to keep projects apart.
 const listProjectPlatformDeletedCampaignIDsQuery = `SELECT DISTINCT c.platform_campaign_id, c.result FROM campaigns c
 	WHERE c.project_id=$1 AND c.platform=$2 AND c.status = 'deleted'
 	  AND c.platform_campaign_id IS NOT NULL AND c.platform_campaign_id <> ''
 	  AND NOT EXISTS (SELECT 1 FROM campaigns l
 	    WHERE l.platform = c.platform AND l.platform_campaign_id = c.platform_campaign_id
-	      AND l.status <> 'deleted' AND l.project_id <> c.project_id)
+	      AND l.project_id <> c.project_id
+	      AND (l.status <> 'deleted' OR l.created_at > c.created_at))
 	ORDER BY c.platform_campaign_id ASC`
 
 // ListProjectPlatformDeletedCampaignIDs returns the upstream campaign ids of this project's

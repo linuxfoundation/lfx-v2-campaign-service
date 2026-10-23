@@ -67,14 +67,59 @@ func TestMonitorScopeForAccount(t *testing.T) {
 	}
 }
 
-// TestMonitorScopeForAccount_RedditRefusesUnknownProvenance pins the Reddit-only strictness: a row
-// that records no creating account cannot be proven to name a campaign on the monitored account.
-func TestMonitorScopeForAccount_RedditRefusesUnknownProvenance(t *testing.T) {
-	scope := []model.ProjectCampaignScope{{PlatformCampaignID: "camp1"}}
-	_, err := (&RedditDispatcher{}).MonitorScopeForAccount(scope, "a2_owner")
-	if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
-		t.Fatalf("err = %v, want ErrCampaignProvenanceUnknown", err)
+// TestMonitorScopeForAccount_RefusesUnknownProvenance pins the strictness Google Ads, Reddit and X
+// share on the monitor: a row that records no creating account cannot be proven to name a campaign
+// on the monitored account, alone or beside a matching one, and beside a mismatching one it is the
+// mixed fault that names both remedies. Meta keeps the permissive read.
+func TestMonitorScopeForAccount_RefusesUnknownProvenance(t *testing.T) {
+	cases := []struct {
+		name    string
+		scoper  service.AccountMonitorScoper
+		key     string
+		account string
+		other   string
+		ids     [2]string
+	}{
+		{"google ads", &GoogleAdsDispatcher{}, "customerId", "1234567890", "9876543210", [2]string{"111", "222"}},
+		{"reddit", &RedditDispatcher{}, "accountId", "a2_owner", "a2_other", [2]string{"camp1", "camp2"}},
+		{"x", &TwitterDispatcher{}, "AccountID", "18ce54d4x5t", "18ce54aaaaa", [2]string{"hkqkb", "hkqkc"}},
 	}
+	for _, tc := range cases {
+		unrecorded := model.ProjectCampaignScope{PlatformCampaignID: tc.ids[1]}
+		t.Run(tc.name+"/unrecorded entry fails the scope", func(t *testing.T) {
+			for _, scope := range [][]model.ProjectCampaignScope{
+				{unrecorded},
+				{monitorScopeEntry(tc.ids[0], tc.key, tc.account), unrecorded},
+			} {
+				got, err := tc.scoper.MonitorScopeForAccount(scope, tc.account)
+				if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) || !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+					t.Fatalf("err = %v, want ErrCampaignProvenanceUnknown joined with ErrCampaignAccountMismatch", err)
+				}
+				if errors.Is(err, domain.ErrCampaignProvenanceMixed) {
+					t.Fatalf("err = %v: no entry mismatches, so this is not the mixed fault", err)
+				}
+				if got != nil {
+					t.Fatalf("ids = %v on a refusal, want nil", got)
+				}
+			}
+		})
+		t.Run(tc.name+"/unrecorded beside mismatched is the mixed fault", func(t *testing.T) {
+			scope := []model.ProjectCampaignScope{monitorScopeEntry(tc.ids[0], tc.key, tc.other), unrecorded}
+			_, err := tc.scoper.MonitorScopeForAccount(scope, tc.account)
+			for _, want := range []error{domain.ErrCampaignProvenanceMixed, domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch} {
+				if !errors.Is(err, want) {
+					t.Fatalf("err = %v, want it to wrap %v", err, want)
+				}
+			}
+		})
+	}
+
+	t.Run("meta keeps an unrecorded entry", func(t *testing.T) {
+		got, err := (&MetaDispatcher{}).MonitorScopeForAccount([]model.ProjectCampaignScope{{PlatformCampaignID: "120000001"}}, "act_1001")
+		if err != nil || len(got) != 1 {
+			t.Fatalf("ids, err = %v, %v; want the one id", got, err)
+		}
+	})
 }
 
 // TestMonitorScopePrecheck pins the credential-free refusals the orchestrator runs before the

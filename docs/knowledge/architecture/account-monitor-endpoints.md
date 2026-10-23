@@ -574,7 +574,11 @@ caller (ROOT included), at one choke point mirroring
 3. The dispatcher's `MonitorScopeForAccount` checks each entry's recorded
    creation account against `account_id` with the same provenance helpers the
    insight reads use (`googleAdsScopeForCustomer`, `metaScopeForAccount`,
-   `redditScopeForAccount`, `twitterScopeForAccount`). ANY mismatch fails the
+   `redditScopeForAccount`, `twitterScopeForAccount`). On Google Ads and X the
+   monitor is stricter than those reads: `requireRecordedMonitorProvenance`
+   also refuses a row that records no creating account, as Reddit's helper
+   does, because their ids are unique only within an account and the monitor
+   may read an account the row was never created under. ANY mismatch fails the
    read closed — a partly matching scope is never reduced to the matching ids,
    because the response has no field that could disclose the omission.
    The project's SOFT-DELETED campaigns (`ListProjectPlatformDeletedCampaignIDs`)
@@ -582,24 +586,29 @@ caller (ROOT included), at one choke point mirroring
    and the monitor is where one still spending shows up. Each is checked on its
    own, by the same helper and the same rule as the live rows: it is kept
    unless it does not fit `account_id` — a recorded account that differs (on
-   Reddit, also none recorded; Google Ads, Meta and X treat an unrecorded
-   account as unknown and proceed), or an id the platform cannot read — and
+   Google Ads, Reddit and X, also none recorded; Meta treats an unrecorded
+   account as unknown and proceeds), or an id the platform cannot read — and
    then it is dropped and logged, never a 409: a deleted row cannot be
    re-dispatched or reconciled, so that refusal would have no remedy. A
-   deleted campaign another project now holds LIVE is left out in SQL (the query's `NOT EXISTS`): the
-   per-platform binding indexes cover live rows only, so another project can
-   adopt a campaign after this one deleted it, and from then on it is that
-   project's. The empty-scope answer in step 2 therefore needs both lists empty.
+   deleted campaign another project has taken over is left out in SQL (the
+   query's `NOT EXISTS`): the per-platform binding indexes cover live rows only,
+   so another project can adopt a campaign after this one deleted it, and from
+   then on it is that project's. Another project's row takes it over when it is
+   live OR was recorded later (`created_at`) whatever its status, so the adopter
+   deleting its own row too does not hand the campaign back. The empty-scope answer in step 2 therefore needs both lists empty.
 4. The unchanged account read runs, and only rows whose
    `platform_campaign_id` is in the scoped set are kept, BEFORE the rule engine
    and `monitorTotals` — so action items and totals describe the same rows.
 
 The 409s are mapped by `classifyMonitorError` (`connection_monitor.go`), with
 `classifyInsightsErrorFor`'s arm order and remedies: provenance mixed, then
-unknown (Reddit only — it refuses a row that records no creating account),
-then mismatch, then an unreadable stored id. Google, Meta and Reddit answer
-`ConflictError`; X answers its own `AccountMonitorConflictError` with `reason`
-`campaign_account_mismatch` or `campaign_scope_invalid`. The arms apply only
+unknown (Google Ads, Reddit and X — they refuse a row that records no creating
+account), then mismatch, then an unreadable stored id. Google, Meta and Reddit
+answer `AccountMonitorScopeConflictError` and X its own
+`AccountMonitorConflictError`, each with a required `reason`
+`campaign_account_mismatch` or `campaign_scope_invalid`. Neither is the shared
+`ConflictError`, whose published example (`already_exists`, a connection
+collision) is a response no monitor returns. The arms apply only
 to those four platforms, so LinkedIn and Microsoft can never produce a 409
 their designs do not declare.
 
@@ -953,7 +962,8 @@ with `TwitterDispatcher` as a second implementation. Nothing was forked.
   comma-joined (≤10 jobs, ~210 bytes in a TEXT column). No active campaign gives the sentinel
   `none`, which Check answers as a finished empty report without calling X. An account with
   more than 200 campaigns active in the window (`twitter.MaxMonitorActiveCampaigns`, ten jobs
-  of 20) is refused before any job is created rather than half-reported
+  of 20) — counted on the whole shared account, every project's campaigns included, because the
+  report is read account-wide and only the response is scoped — is refused before any job is created rather than half-reported
   (`twitter.ErrTooManyActiveCampaigns` → `domain.ErrAccountTooManyActiveCampaigns` → **409**,
   reason `account_too_many_active_campaigns`).
 - **Permanent refusals fail the read.** Unlike a transient submit failure (logged, retried on

@@ -5520,16 +5520,6 @@ type CreateHubspotCampaignUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
-// MonitorGoogleAdsAccountBadRequestResponseBody is the type of the
-// "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
-// endpoint HTTP response body for the "BadRequest" error.
-type MonitorGoogleAdsAccountBadRequestResponseBody struct {
-	// HTTP status code
-	Code string `form:"code" json:"code" xml:"code"`
-	// Error message
-	Message string `form:"message" json:"message" xml:"message"`
-}
-
 // MonitorGoogleAdsAccountConflictResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
 // endpoint HTTP response body for the "Conflict" error.
@@ -5538,9 +5528,22 @@ type MonitorGoogleAdsAccountConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
-	// Stable machine-readable discriminator, present only where an endpoint
-	// returns more than one kind of conflict. Absent means unspecified.
-	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+	// Why the project's recorded campaigns cannot be read under the monitored
+	// account: campaign_account_mismatch (a campaign recorded for this project was
+	// created under a different account, or does not record which) or
+	// campaign_scope_invalid (a campaign recorded for this project has an id the
+	// platform cannot read).
+	Reason string `form:"reason" json:"reason" xml:"reason"`
+}
+
+// MonitorGoogleAdsAccountBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
+// endpoint HTTP response body for the "BadRequest" error.
+type MonitorGoogleAdsAccountBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
 }
 
 // MonitorGoogleAdsAccountServiceUnavailableResponseBody is the type of the
@@ -5653,16 +5656,6 @@ type MonitorLinkedinAdsAccountUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
-// MonitorMetaAdsAccountBadRequestResponseBody is the type of the
-// "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
-// endpoint HTTP response body for the "BadRequest" error.
-type MonitorMetaAdsAccountBadRequestResponseBody struct {
-	// HTTP status code
-	Code string `form:"code" json:"code" xml:"code"`
-	// Error message
-	Message string `form:"message" json:"message" xml:"message"`
-}
-
 // MonitorMetaAdsAccountConflictResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
 // endpoint HTTP response body for the "Conflict" error.
@@ -5671,9 +5664,22 @@ type MonitorMetaAdsAccountConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
-	// Stable machine-readable discriminator, present only where an endpoint
-	// returns more than one kind of conflict. Absent means unspecified.
-	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+	// Why the project's recorded campaigns cannot be read under the monitored
+	// account: campaign_account_mismatch (a campaign recorded for this project was
+	// created under a different account, or does not record which) or
+	// campaign_scope_invalid (a campaign recorded for this project has an id the
+	// platform cannot read).
+	Reason string `form:"reason" json:"reason" xml:"reason"`
+}
+
+// MonitorMetaAdsAccountBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
+// endpoint HTTP response body for the "BadRequest" error.
+type MonitorMetaAdsAccountBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
 }
 
 // MonitorMetaAdsAccountServiceUnavailableResponseBody is the type of the
@@ -5726,16 +5732,6 @@ type MonitorMetaAdsAccountUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
-// MonitorRedditAdsAccountBadRequestResponseBody is the type of the
-// "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
-// endpoint HTTP response body for the "BadRequest" error.
-type MonitorRedditAdsAccountBadRequestResponseBody struct {
-	// HTTP status code
-	Code string `form:"code" json:"code" xml:"code"`
-	// Error message
-	Message string `form:"message" json:"message" xml:"message"`
-}
-
 // MonitorRedditAdsAccountConflictResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
 // endpoint HTTP response body for the "Conflict" error.
@@ -5744,9 +5740,22 @@ type MonitorRedditAdsAccountConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
-	// Stable machine-readable discriminator, present only where an endpoint
-	// returns more than one kind of conflict. Absent means unspecified.
-	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+	// Why the project's recorded campaigns cannot be read under the monitored
+	// account: campaign_account_mismatch (a campaign recorded for this project was
+	// created under a different account, or does not record which) or
+	// campaign_scope_invalid (a campaign recorded for this project has an id the
+	// platform cannot read).
+	Reason string `form:"reason" json:"reason" xml:"reason"`
+}
+
+// MonitorRedditAdsAccountBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
+// endpoint HTTP response body for the "BadRequest" error.
+type MonitorRedditAdsAccountBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
 }
 
 // MonitorRedditAdsAccountServiceUnavailableResponseBody is the type of the
@@ -5875,9 +5884,11 @@ type MonitorTwitterAdsAccountConflictResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 	// Why the account cannot be monitored as it stands:
 	// account_too_many_active_campaigns (more campaigns active in the window than
-	// one report covers), account_timezone_unsupported (the account's timezone
-	// does not start its days on a whole UTC hour), campaign_account_mismatch (a
-	// campaign recorded for this project was created under a different account) or
+	// one report covers, counted across every project on the shared account, not
+	// only this project's campaigns), account_timezone_unsupported (the account's
+	// timezone does not start its days on a whole UTC hour),
+	// campaign_account_mismatch (a campaign recorded for this project was created
+	// under a different account, or does not record which) or
 	// campaign_scope_invalid (a campaign recorded for this project has an id the
 	// platform cannot read).
 	Reason string `form:"reason" json:"reason" xml:"reason"`
@@ -12941,6 +12952,18 @@ func NewCreateHubspotCampaignUnauthorizedResponseBody(res *lfxv2campaignservicec
 	return body
 }
 
+// NewMonitorGoogleAdsAccountConflictResponseBody builds the HTTP response body
+// from the result of the "monitor-google-ads-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorGoogleAdsAccountConflictResponseBody(res *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError) *MonitorGoogleAdsAccountConflictResponseBody {
+	body := &MonitorGoogleAdsAccountConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
 // NewMonitorGoogleAdsAccountBadRequestResponseBody builds the HTTP response
 // body from the result of the "monitor-google-ads-account" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -12948,18 +12971,6 @@ func NewMonitorGoogleAdsAccountBadRequestResponseBody(res *lfxv2campaignservicec
 	body := &MonitorGoogleAdsAccountBadRequestResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
-	}
-	return body
-}
-
-// NewMonitorGoogleAdsAccountConflictResponseBody builds the HTTP response body
-// from the result of the "monitor-google-ads-account" endpoint of the
-// "lfx-v2-campaign-service-connections" service.
-func NewMonitorGoogleAdsAccountConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *MonitorGoogleAdsAccountConflictResponseBody {
-	body := &MonitorGoogleAdsAccountConflictResponseBody{
-		Code:    res.Code,
-		Message: res.Message,
-		Reason:  res.Reason,
 	}
 	return body
 }
@@ -13085,6 +13096,18 @@ func NewMonitorLinkedinAdsAccountUnauthorizedResponseBody(res *lfxv2campaignserv
 	return body
 }
 
+// NewMonitorMetaAdsAccountConflictResponseBody builds the HTTP response body
+// from the result of the "monitor-meta-ads-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorMetaAdsAccountConflictResponseBody(res *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError) *MonitorMetaAdsAccountConflictResponseBody {
+	body := &MonitorMetaAdsAccountConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
 // NewMonitorMetaAdsAccountBadRequestResponseBody builds the HTTP response body
 // from the result of the "monitor-meta-ads-account" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -13092,18 +13115,6 @@ func NewMonitorMetaAdsAccountBadRequestResponseBody(res *lfxv2campaignservicecon
 	body := &MonitorMetaAdsAccountBadRequestResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
-	}
-	return body
-}
-
-// NewMonitorMetaAdsAccountConflictResponseBody builds the HTTP response body
-// from the result of the "monitor-meta-ads-account" endpoint of the
-// "lfx-v2-campaign-service-connections" service.
-func NewMonitorMetaAdsAccountConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *MonitorMetaAdsAccountConflictResponseBody {
-	body := &MonitorMetaAdsAccountConflictResponseBody{
-		Code:    res.Code,
-		Message: res.Message,
-		Reason:  res.Reason,
 	}
 	return body
 }
@@ -13163,6 +13174,18 @@ func NewMonitorMetaAdsAccountUnauthorizedResponseBody(res *lfxv2campaignservicec
 	return body
 }
 
+// NewMonitorRedditAdsAccountConflictResponseBody builds the HTTP response body
+// from the result of the "monitor-reddit-ads-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorRedditAdsAccountConflictResponseBody(res *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError) *MonitorRedditAdsAccountConflictResponseBody {
+	body := &MonitorRedditAdsAccountConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
 // NewMonitorRedditAdsAccountBadRequestResponseBody builds the HTTP response
 // body from the result of the "monitor-reddit-ads-account" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -13170,18 +13193,6 @@ func NewMonitorRedditAdsAccountBadRequestResponseBody(res *lfxv2campaignservicec
 	body := &MonitorRedditAdsAccountBadRequestResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
-	}
-	return body
-}
-
-// NewMonitorRedditAdsAccountConflictResponseBody builds the HTTP response body
-// from the result of the "monitor-reddit-ads-account" endpoint of the
-// "lfx-v2-campaign-service-connections" service.
-func NewMonitorRedditAdsAccountConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *MonitorRedditAdsAccountConflictResponseBody {
-	body := &MonitorRedditAdsAccountConflictResponseBody{
-		Code:    res.Code,
-		Message: res.Message,
-		Reason:  res.Reason,
 	}
 	return body
 }

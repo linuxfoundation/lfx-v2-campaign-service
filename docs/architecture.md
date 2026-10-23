@@ -481,8 +481,9 @@ campaigns on the platform gets an empty monitor with no upstream call. A live re
 created under a different account than the requested one fails the read with 409 rather than a
 partial picture (lfx-self-serve-ops#897). The project's campaigns deleted in this service stay in
 the scope, because a local delete does not stop the upstream campaign, unless one does not fit the
-requested account — recorded under a different account (on Reddit, also recording none), or carrying
-an id the platform cannot read — or another project now holds it live (adopted after the delete);
+requested account — recorded under a different account (on Google Ads, Reddit and X, also recording
+none), or carrying an id the platform cannot read — or another project has since taken it over
+(holds it live, or recorded it later even if since deleted);
 such a campaign is omitted, never a 409. LinkedIn and Microsoft do not implement the capability, so their monitors
 stay account-wide. Implementing it is how a platform is recorded as shared in code: if a platform's
 tenancy changes, change its dispatcher in the same change as the tables here.
