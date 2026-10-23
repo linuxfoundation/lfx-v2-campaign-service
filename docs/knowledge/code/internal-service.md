@@ -2466,9 +2466,9 @@ calls `DispatchFailureMessage(p, derr, preCreate)`, which says WHY without quoti
   `campaign_created_setup_incomplete` says the setup could not be CONFIRMED rather than that it
   is unfinished, because the cascade's last mutate can answer 2xx with a body this client
   cannot read (`pmax_creative.go`, `demandgen_creative.go`) and the step did commit — the id
-  proves the campaign exists, not that its setup stopped short. Only `internal/dispatch`'s google-ads adapter tags today
-  (`withCreateOutcome`, classified by `googleads.CreateOutcome`); every other provider reaches
-  the unchanged wording, pinned by
+  proves the campaign exists, not that its setup stopped short. Only `internal/dispatch`'s
+  google-ads adapter tags today (`withCreateOutcome`, classified by `googleads.CreateOutcome`);
+  every other provider reaches the unchanged wording, pinned by
   `TestDispatchFailureMessage_UnclassifiedOutcomeIsUnchanged`.
 - On the pre-create path the arms follow `classifyDiscoveryError`'s order: service defect → LF
   system connection missing → no connection (`ErrConnectionAbsent`) → decrypt fault → LF
