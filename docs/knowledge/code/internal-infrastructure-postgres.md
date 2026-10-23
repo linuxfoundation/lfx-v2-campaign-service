@@ -455,8 +455,23 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   still satisfies the first arm, which is what keeps the columns nullable for the pre-release
   rows they are nullable FOR. The CHECK is a NARROWING and owes `000029`'s N-1 argument, which is
   trivial here — an N-1 INSERT lands `(NULL, NULL)` and every existing row is already
-  `(NULL, NULL)` — so it is a plain CHECK rather than `NOT VALID` + `VALIDATE`, for `000029`'s
-  reason. **The backfill is deliberately a SEPARATE step**: the values must come from the same
+  `(NULL, NULL)` — so it is a plain CHECK rather than `NOT VALID` + `VALIDATE`. Be precise about
+  what that does and does not buy. Postgres DOES scan on `ADD CONSTRAINT`: the validation pass
+  runs because the constraint is added without `NOT VALID`, not because a row could fail it, and
+  what is true is that the scan is over rows that are all `(NULL, NULL)`, so it finds nothing and
+  the ACCESS EXCLUSIVE lock is held only as long as that pass. `NOT VALID` does NOT leave a
+  declared-but-unenforced window either — it enforces new writes immediately and defers only the
+  check of pre-existing rows. Splitting the two would also not shorten the lock as written:
+  golang-migrate ships a migration file to a SINGLE `ExecContext` unless `x-multi-statement` is
+  set (`Run()` in `database/pgx/v5/pgx.go` splits only when `p.config.MultiStatementEnabled`, and
+  this repo's `pool.go` never ADDS that parameter). That is a claim about what this repo
+  configures, not about what the deployment can reach: `pgxURL` swaps only the scheme prefix and
+  preserves the query string verbatim, so a `DATABASE_URL` already carrying
+  `x-multi-statement=true` would enable splitting. Absent that, both statements land in one
+  implicit transaction and the ADD's lock is held through the VALIDATE anyway. Getting the weaker
+  `ShareUpdateExclusive` lock for the validate pass needs the statements in SEPARATE migrations.
+
+  **The backfill is deliberately a SEPARATE step**: the values must come from the same
   `image/png` and `image/jpeg` decoders the upload path uses, and Postgres has no image
   decoder, so there is nothing a SQL-side migration could run. NO INDEX is added — `000028`'s
   indexing note already covers list-by-brief via `UNIQUE (brief_id, checksum)`, and neither
@@ -1697,6 +1712,25 @@ second pooled connection beside the claim. Every other caller's handling is unch
 own rows: a raise for the confirmed rollback, and a slow commit under a short deadline for the
 lost acknowledgement.
 
+That transaction's OPENING statement is `lockBriefRowByIDQuery` on the parent brief,
+unconditionally — the same ROW lock `lockBriefForAssetWriteQuery` takes, keyed on `brief_id` alone
+because `campaigns`' FK is on `id` alone and a `project_id` predicate could match nothing, take no
+lock and report no error; the result is scanned, and a miss is `ErrNotFound`.
+`ReplaceCampaign` writes every mutable column — `config_snapshot` included — so
+every one of its callers rewrites the snapshot whether or not it meant to change it, and the
+statement cannot tell the two apart; the hazard belongs to the method, not to any one caller.
+Without the lock nothing ordered that write against a concurrent
+`CreativeAssetRepo.DeleteAsset`: the UPDATE touches `campaigns` only, and the per-campaign
+advisory lock a caller may already hold is keyed on the CAMPAIGN, not the brief.
+
+The lock is on the BRIEF row, so its cost is wider than the delete it was added to order against:
+every `ReplaceCampaign` on a brief now serializes against every OTHER `ReplaceCampaign` on that
+brief — the budget edit, the bid edit, the name edit and the toggle's status persist, across all
+of that brief's campaigns — each waiter holding a pooled connection while it waits. With no
+pool-level `lock_timeout` or `statement_timeout` configured, the only bound on that wait is the
+caller's context, and on a busy brief this sibling contention, rather than a concurrent asset
+delete, is the realistic way `ToggleCampaignStatus`'s 5 s `persistResultTimeout` gets spent.
+
 ## DeleteCampaign's guards
 
 `DeleteCampaign` takes a `SELECT status, version … FOR UPDATE` lock inside one
@@ -2218,23 +2252,106 @@ should have had. Two halves fix it, and both are load-bearing:
 
 Lock ORDER is slot → brief for every transaction taking both (`AdoptCampaign`), because a claim
 holds the slot lock while waiting for the brief's. `CreateAsset` and `DeleteAsset` take the brief
-lock and nothing else, so neither can close that cycle.
+lock and nothing else; `ReplaceCampaign` takes the brief lock and never a slot lock — the only
+lock its caller may already hold is `ClaimCampaignVersion`'s per-CAMPAIGN advisory lock, which is
+a different lock and is taken with `pg_try_advisory_lock`, so nobody ever BLOCKS on it. The scope
+of that is the LOCK, not the backend holding it: no wait-for cycle can route THROUGH the advisory
+lock, because no edge ever enters it. The replace does go on to wait for the brief lock, and it
+does acquire in-edges once it holds that lock — a waiting `DeleteAsset` is one — so the conclusion
+does not rest on the holder being edge-free. It rests on two named claims: **(1)** the brief lock
+is the opening statement of the replace's transaction, so the replace holds no `campaigns` row
+lock while waiting for it; and **(2)** nothing anywhere acquires a slot or per-campaign lock while
+already holding the brief's. Those two close the cycle, and they are named in these same words in
+`campaign_repo.go` and in the dated log entry rather than pointed at by position, because a
+positional reference drifts the moment either surface is re-flowed.
 `TestLiveDeleteAssetWaitsForAnInFlightDispatchClaim` holds an uncommitted claim insert on a
 second connection, proves `DeleteAsset` is BLOCKED on that backend rather than merely slow, then
 commits the claim and requires `ErrCreativeAssetInUse` with the asset still present;
 `TestLiveDeleteAssetSucceedsOnceTheClaimIsDeleted` is its contrast, so a change that simply made
 `DeleteAsset` always refuse could not pass the pair.
 
-It refuses while the brief holds any campaign with `status <> 'deleted'` whose `config_snapshot`
-either names the asset id or **is NULL**. Three details:
+It refuses while the brief holds any campaign with `status <> 'deleted'` that is **`pending`**, or
+whose `config_snapshot` **is NULL**, or whose `config_snapshot` names the asset id. Four details:
 
-- **The NULL arm is exact, not a hedge.** `claimCampaignDispatchQuery` inserts the `pending`
-  claim row with no `config_snapshot` BEFORE the dispatcher reads any asset — so a NULL snapshot
-  on a live row is precisely "a dispatch that may be about to use this asset", and skipping it
-  would let a delete race a claim.
+- **The `pending` arm does not depend on the snapshot at all.** It is the one that holds once a
+  pending row's snapshot has been WRITTEN: the dispatcher takes no lock across the platform call,
+  so a committed non-NULL snapshot on a `pending` row is still "a create that has not resolved",
+  and the two snapshot arms both answer "not referenced" for it. Without this arm such a delete
+  succeeded and the unresolved dispatch went on to use an asset that was gone.
+- **The NULL arm is exact for the CLAIM, and only for it.** `claimCampaignDispatchQuery` inserts
+  the `pending` claim row with no `config_snapshot` BEFORE the dispatcher reads any asset, so a
+  NULL snapshot on a live row is precisely "a dispatch that may be about to use this asset". What
+  it never covered is a writer REPLACING that NULL — `UpdateCampaign` wrote `config_snapshot` too,
+  gated on version rather than on the brief, and `ReplaceCampaign`'s UPDATE touches `campaigns`
+  only, so the brief lock ordered nothing against it. That is what the `pending` arm closes on the
+  reader's side and `ReplaceCampaign`'s own brief lock closes on the writer's.
 - **Both id spellings.** `config_snapshot` keeps `imageAssetId` verbatim, but a caller may send
   the UUID hyphenated or dashless, so the predicate matches both forms, case-insensitively.
 - **`strpos(...) > 0`, not `LIKE`.** No character of a UUID is then a wildcard.
+
+An arm that keys on a column's VALUE is only ever as good as the full set of that column's writers,
+which is why the fix spans both directions: `TestLiveDeleteAssetRefusesWhileACampaignIsPending`
+pins the removal direction (a committed pending snapshot that does not name the asset still blocks,
+and the same row at `created` does not), and
+`TestLiveReplaceCampaignTakesTheBriefLockBeforeWritingTheSnapshot` pins the addition direction — a
+replace that adds a reference waits on the brief lock a concurrent `DeleteAsset` holds.
+
+### The losing side of that same race: `checkNewSnapshotAssetRefs`
+
+The brief lock ORDERS the replace against the delete; it does not say which of the two won. When
+the DELETE won, the replace resumes holding a snapshot that names a row which no longer exists,
+and nothing downstream notices — `config_snapshot` is `jsonb` with no foreign key to
+`creative_assets`. `campaign_snapshot_assets.go` closes that side: between the brief lock and the
+guarded UPDATE, `ReplaceCampaign` resolves the asset ids the incoming snapshot NEWLY names and
+refuses with `domain.ErrCreativeAssetReferenceMissing` (409,
+`reason = creative_asset_reference_missing`) when any of them is absent for the campaign's
+`(project_id, brief_id)`. It is the inverse of `ErrCreativeAssetInUse`, and the two close the one
+window from opposite sides. Four properties are load-bearing:
+
+- **Inside the transaction, after the lock.** Any check made outside it can be invalidated by a
+  delete that commits a moment later; under the lock the delete had to take, the answer still
+  holds when the UPDATE runs.
+- **NEWLY introduced ids only** — present in the incoming snapshot, absent from the one stored on
+  the row. `ReplaceCampaign` rewrites `config_snapshot` for every caller, so a whole-snapshot
+  check would make the bid, budget, status-toggle and `persistMetaAdSetRecord` persists start
+  failing over an asset deleted days earlier. Under this scope those four write back exactly what
+  they read and can never newly fail. The stated cost: a reference that is ALREADY dangling stays
+  dangling, which the dispatchers' own pre-create refusals cover.
+- **Extraction is driven by the KEY, case-insensitively, and ids are canonicalized.**
+  `config_snapshot` is the caller's own JSON (`redactedConfigSnapshot` re-marshals a decoded
+  `map[string]any`), and every dispatcher binds it with `encoding/json`, whose field matching is
+  case-insensitive — so `imageAssetId`, `ImageAssetID` and `imageassetid` all name a real asset.
+  Collecting every uuid-SHAPED value instead would sweep in the brief, project and audience ids a
+  snapshot legitimately carries and refuse perfectly good configurations. `uuid.Parse` then
+  canonicalizes, so a re-sent id in another of its four accepted spellings is not read as new.
+- **Scoped to `(project_id, brief_id)` alone**, deliberately NOT borrowing
+  `getCreativeAssetQuery`'s archival `EXISTS` predicate: that would newly refuse every
+  config-bearing edit on an archived brief, which is allowed today.
+
+`upsertCampaignQuery` is the only other statement that writes `config_snapshot`, and it is
+deliberately NOT guarded. The two writes mean opposite things: `ReplaceCampaign` records an intent
+the caller can still revise, so a refusal costs a retry, while `UpsertCampaign` records a campaign
+the dispatcher has already created upstream — refusing there would reject the local record of a
+live, spending ad and manufacture the orphan class this repo treats as its most serious defect.
+The asset is not in question on that path either, because the dispatcher resolved it before its
+first upstream call. The write that can still be taken back is checked; the write reporting an
+accomplished fact is not.
+
+A `pgx.ErrNoRows` on the stored-snapshot read returns nil rather than an error, leaving the
+guarded UPDATE as the sole owner of the 404-vs-412 verdict. The refusal names the ids that did
+not resolve — safe because the caller supplied them in that same request and they were
+canonicalized, so nothing from a platform or another tenant appears in the message.
+
+`TestLiveReplaceCampaignRefusesASnapshotWhoseAssetTheDeleteAlreadyRemoved` is the direction the
+test above cannot reach: the holder transaction takes the brief lock, DELETES the asset and
+commits, and the waiting replace is then refused with the stored snapshot untouched.
+`TestLiveReplaceCampaignCarriesAnAlreadyDanglingReferenceThrough` is its contrast and pins the
+scope — a pass-through caller, and a re-spelled identical id, both still succeed — so a change
+that widened the check to the whole snapshot could not pass the pair. The extractor's own
+spellings are unit-tested in `campaign_snapshot_assets_test.go`, and
+`dispatch.TestPlatformConfigsNameTheirAssetUnderOneKey` is the cross-package drift guard: it
+marshals all five platform configs and fails if any spells the key something the extractor would
+skip.
 
 Only `status = 'deleted'` campaigns are ignored — legal in multiples, since
 `uq_campaigns_brief_platform_variant_slot_version_live` is partial `WHERE status <> 'deleted'`.

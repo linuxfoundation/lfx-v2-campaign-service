@@ -2012,7 +2012,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("delete-creative-asset", func() {
-		Description("Permanently delete a stored creative asset, freeing its bytes against the brief's quota. Refused with 409 reason=creative_asset_in_use when any live campaign on the brief could still need it: one whose stored configuration names this asset id, and also one whose configuration has not been recorded yet, because a dispatch claims its campaign row before it resolves any asset. Delete the campaign, or reconcile a stuck claim, then retry. This is a HARD delete — unlike a campaign or a brief, which are retired by a status flip — because reclaiming the storage is the entire reason the endpoint exists.")
+		Description("Permanently delete a stored creative asset, freeing its bytes against the brief's quota. Refused with 409 reason=creative_asset_in_use when any live campaign on the brief could still need it: one whose creation has not finished on the ad platform — its status is still 'pending' — whatever its stored configuration says; one whose stored configuration names this asset id; or one whose configuration has not been recorded yet, because a dispatch claims its campaign row before it resolves any asset. Delete the campaign, or reconcile a stuck claim, then retry. This is a HARD delete — unlike a campaign or a brief, which are retired by a status flip — because reclaiming the storage is the entire reason the endpoint exists.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -2226,7 +2226,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("update-campaign", func() {
-		Description("Replace a campaign (requires If-Match).")
+		Description("Replace a campaign (requires If-Match). A request carrying a configuration is refused with 409 reason=campaign_dispatch_in_flight while the campaign's creation has not finished on the ad platform — its status is still 'pending' — because a dispatcher may still be resolving the configuration this request would overwrite. Retry once the status is no longer 'pending'. A name-only edit is NOT refused and stays available throughout. A configuration that NEWLY names a stored creative asset which no longer exists for the brief — typically one deleted between reading the campaign and sending this request — is refused with 409 reason=creative_asset_reference_missing, naming the ids that did not resolve; upload the asset again, or remove the reference, then retry. References already present on the stored configuration are carried through unchanged and are never refused by this check.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()

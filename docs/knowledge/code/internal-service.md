@@ -373,6 +373,20 @@ campaign or reconcile a stuck dispatch and retry — because "the brief is full"
 empty it is not actionable, and because a folder upload has to branch on which refusal it got.
 The discriminator, not the prose, is what it branches on.
 
+A third arm, `ErrCreativeAssetReferenceMissing` → `creative_asset_reference_missing`, is the
+inverse of `creative_asset_in_use` and closes the same window from the other side: the repo
+refuses a replace whose configuration NEWLY names an asset that no longer exists for the brief
+(see [internal/infrastructure/postgres](internal-infrastructure-postgres.md)). It is a 409 rather
+than a 400 — the configuration was well-formed and was valid when the caller read the campaign;
+what changed is the world, and re-uploading then retrying is the remedy, which is also why it
+does not reuse `ErrCreateConfigInvalid`, whose contract is a create-time 400. Its `Message` is
+`err.Error()` plus the remedy, so it carries the ids that failed to resolve: the caller supplied
+them in that same request and the repo canonicalized them, so naming them discloses nothing a
+platform or another tenant owns. `TestUpdateCampaign_ConfigNamingAMissingAssetIsRefused` pins the
+status, the literal slug and the ids in the message, with
+`TestUpdateCampaign_AConfigEditThatResolvesStillSucceeds` as the contrast that a blanket refusal
+could not pass.
+
 ## The platform slot registry and `GetAssetPlan` (LFXV2-2665)
 
 `creative_plan.go` holds two things: the registry of platforms whose image rules this service
@@ -451,6 +465,23 @@ The contract is deliberately NOT tightened: a non-object config (a bare string o
 still accepted and is redacted the same way. No caller in `lfx-v2-ui` was found sending this
 PUT, so the shape a client sends is not pinned down well enough to justify refusing anything.
 Rows written before this redaction are not backfilled.
+
+**A config edit is refused outright while the campaign is `pending`**, with a `409` carrying
+`reason: "campaign_dispatch_in_flight"` (`conflictReasonCampaignDispatchInFlight`). The
+status-mismatch check above it does not cover this: `pending` is not a run status, so a
+`pending → pending` edit carrying a config body passes it. `pending` means the dispatch claim is
+committed but the platform call has not resolved — the dispatcher deliberately holds no lock
+across it — so a config write landing there makes the row disagree with what the platform was
+asked to create, and replaces the NULL `config_snapshot` the creative-asset delete guard reads as
+"could reference anything" with a caller's object, making an asset the in-flight dispatch is
+about to use look deletable. `deleteCreativeAssetQuery` now refuses on `pending` outright as well
+(see [internal/infrastructure/postgres](internal-infrastructure-postgres.md)); this guard is the
+other half, keeping the snapshot honest rather than relying on the reader to compensate. Only a
+config-BEARING edit is refused — a name-only edit stays allowed while pending — and it is
+validated BEFORE the claim, like every other check on this path. The slug is pinned in three
+places that must move together: the `Enum` on `ConflictError.reason` in `design/connection.go`
+(enforced by the GENERATED CLIENT decoder, so a drifting value is a 409 no client can read), the
+service constant, and `TestUpdateCampaign_ConfigEditOnAPendingCampaignIsRefused`.
 
 ## Campaign status toggle
 
