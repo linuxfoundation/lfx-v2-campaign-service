@@ -452,6 +452,23 @@ still accepted and is redacted the same way. No caller in `lfx-v2-ui` was found 
 PUT, so the shape a client sends is not pinned down well enough to justify refusing anything.
 Rows written before this redaction are not backfilled.
 
+**A config edit is refused outright while the campaign is `pending`**, with a `409` carrying
+`reason: "campaign_dispatch_in_flight"` (`conflictReasonCampaignDispatchInFlight`). The
+status-mismatch check above it does not cover this: `pending` is not a run status, so a
+`pending → pending` edit carrying a config body passes it. `pending` means the dispatch claim is
+committed but the platform call has not resolved — the dispatcher deliberately holds no lock
+across it — so a config write landing there makes the row disagree with what the platform was
+asked to create, and replaces the NULL `config_snapshot` the creative-asset delete guard reads as
+"could reference anything" with a caller's object, making an asset the in-flight dispatch is
+about to use look deletable. `deleteCreativeAssetQuery` now refuses on `pending` outright as well
+(see [internal/infrastructure/postgres](internal-infrastructure-postgres.md)); this guard is the
+other half, keeping the snapshot honest rather than relying on the reader to compensate. Only a
+config-BEARING edit is refused — a name-only edit stays allowed while pending — and it is
+validated BEFORE the claim, like every other check on this path. The slug is pinned in three
+places that must move together: the `Enum` on `ConflictError.reason` in `design/connection.go`
+(enforced by the GENERATED CLIENT decoder, so a drifting value is a 409 no client can read), the
+service constant, and `TestUpdateCampaign_ConfigEditOnAPendingCampaignIsRefused`.
+
 ## Campaign status toggle
 
 `BriefService.ToggleCampaignStatus` (backing `PATCH .../campaigns/{id}/status`

@@ -1400,6 +1400,38 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 		}
 		return nil, &briefs.BadRequestError{Code: "400", Message: "status cannot be changed via update-campaign; re-send the campaign's current status (it is set by the create/dispatch flow and the status-toggle endpoint)"}
 	}
+	// Refuse a CONFIG edit while the campaign is still 'pending'. The status-mismatch check
+	// above does not cover this: 'pending' is not a run status, so a pending->pending edit
+	// carrying a config body passes it and goes on to overwrite config_snapshot.
+	//
+	// 'pending' means the dispatch claim's row is committed but the platform call has not
+	// resolved (the dispatcher deliberately holds NO lock across that call -- see
+	// orchestrator.go's note at the INSERT). Two things break if a config write lands in that
+	// window. The dispatch resolves against a config the caller has since replaced, so what
+	// the ad platform was asked to create and what the row says it was asked to create no
+	// longer agree. And the creative-asset delete guard reads config_snapshot to decide
+	// whether an asset is still referenced: a claim inserts the row with a NULL snapshot and
+	// the guard treats NULL as "could reference anything", so replacing that NULL with a
+	// caller's object makes an asset the in-flight dispatch is about to use look unreferenced
+	// and therefore deletable. deleteCreativeAssetQuery now also refuses on 'pending' outright,
+	// so that hole is closed on the delete side regardless of what this path does; this guard
+	// is the other half -- it keeps the snapshot honest rather than relying on the reader to
+	// compensate for a writer that should not have written.
+	//
+	// Only a config-bearing edit is refused. A name-only edit does not touch the snapshot and
+	// stays allowed while pending, so a caller can still correct a typo on a campaign that is
+	// mid-dispatch.
+	//
+	// 409 rather than 400: nothing about the request is malformed, and the same request
+	// succeeds once the dispatch settles. Validated BEFORE claiming, for the reason the block
+	// above gives.
+	if p.Campaign.Config != nil && existing.Status == model.CampaignStatusPending {
+		return nil, &briefs.ConflictError{
+			Code:    "409",
+			Reason:  conflictReason(conflictReasonCampaignDispatchInFlight),
+			Message: "this campaign's creation has not finished on the ad platform yet, so its configuration cannot be replaced; retry once its status is no longer 'pending'",
+		}
+	}
 	// Claim write ownership at the read version BEFORE building the edit, not just
 	// at the final ReplaceCampaign. This path itself has no I/O in between, so a
 	// bare ReplaceCampaign(version) would already be race-free against another
@@ -1455,6 +1487,12 @@ const unconfirmedLockCooldown = 30 * time.Second
 // literally by TestToggleCampaignStatus_ResumeOfAnAdoptedCampaignHasItsOwnReason and listed in
 // the design Enum in design/connection.go — keep the three in step by hand.
 const conflictReasonCampaignAdopted = "campaign_adopted"
+
+// conflictReasonCampaignDispatchInFlight is update-campaign's ConflictError.reason for a CONFIG
+// edit refused because the campaign is still 'pending' — its create has not resolved on the ad
+// platform. Pinned literally by TestUpdateCampaign_ConfigEditOnAPendingCampaignIsRefused and
+// listed in the design Enum in design/connection.go — keep the three in step by hand.
+const conflictReasonCampaignDispatchInFlight = "campaign_dispatch_in_flight"
 
 // ToggleCampaignStatus pauses/resumes a campaign ON THE AD PLATFORM, then persists the new
 // status. Unlike UpdateCampaign (DB-only), the platform call happens FIRST — the row is

@@ -287,3 +287,166 @@ func TestLiveCreateAssetConvertsAHalfKnownPairToUnknown(t *testing.T) {
 		t.Fatalf("a known pair read back as (%d, %d), want (1200, 628)", known.Width, known.Height)
 	}
 }
+
+// TestLiveDeleteAssetRefusesWhileACampaignIsPending pins the `referenced` CTE's status arm —
+// the REMOVAL direction of the config_snapshot hazard, and the one the lock above cannot cover.
+//
+// The claim test above works because the claim's row is still uncommitted and carries a NULL
+// snapshot. This is the case AFTER that: a 'pending' campaign whose snapshot has been written
+// and committed, and whose contents do not name this asset. Nothing is in flight that a lock
+// could order against, and both of the arm's other halves answer "not referenced" — the snapshot
+// is not NULL, and neither strpos finds the id. Before `c.status = 'pending'` was its own arm,
+// the delete therefore succeeded, and the dispatch that had not yet resolved went on to use an
+// asset that was gone.
+//
+// Why a committed non-NULL snapshot on a pending row is reachable at all: update-campaign used to
+// accept a config edit in exactly that window. internal/service/brief.go now refuses one with
+// `campaign_dispatch_in_flight`, which is the writer's half. This is the reader's half, and it
+// holds whatever any writer does — a row can also reach this shape from an older release, or from
+// a path that does not go through update-campaign.
+//
+// The second half of the test is what keeps the arm from being "refuse everything": the same row
+// at status 'created', with the same snapshot, must let the delete through. Without it an arm
+// that ignored status entirely would pass.
+func TestLiveDeleteAssetRefusesWhileACampaignIsPending(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := postgres.NewCreativeAssetRepo(&postgres.Pool{Pool: pool})
+	briefID, project := insertApprovedBrief(ctx, t, pool)
+
+	asset := insertCreativeAsset(ctx, t, repo, project, briefID, 1200, 628, "ee01")
+
+	// A COMMITTED snapshot that does not mention the asset: both strpos halves miss it and the
+	// NULL half does not apply, so status is the only thing left that can refuse the delete.
+	var campaignID string
+	if err := pool.QueryRow(ctx, `INSERT INTO campaigns
+		(project_id, brief_id, platform, variant, slot_version, campaign_name, status, config_snapshot)
+		VALUES ($1, $2, 'reddit-ads', $3, 1, '', 'pending', '{"headline":"nothing to do with the asset"}')
+		RETURNING id`,
+		project, briefID, model.VariantDefault).Scan(&campaignID); err != nil {
+		t.Fatalf("insert the pending campaign: %v", err)
+	}
+
+	if err := repo.DeleteAsset(ctx, project, briefID, asset.ID); !errors.Is(err, domain.ErrCreativeAssetInUse) {
+		t.Fatalf("delete while a campaign is pending: err=%v, want ErrCreativeAssetInUse", err)
+	}
+	if !assetExists(ctx, t, pool, asset.ID) {
+		t.Fatal("the refused delete removed the asset anyway: a 409 must write nothing")
+	}
+
+	// Same row, same snapshot, dispatch resolved. The arm must now stand aside.
+	if _, err := pool.Exec(ctx, `UPDATE campaigns SET status='created' WHERE id=$1`, campaignID); err != nil {
+		t.Fatalf("resolve the campaign: %v", err)
+	}
+	if err := repo.DeleteAsset(ctx, project, briefID, asset.ID); err != nil {
+		t.Fatalf("delete once the campaign is no longer pending and its snapshot does not name the "+
+			"asset: %v", err)
+	}
+	if assetExists(ctx, t, pool, asset.ID) {
+		t.Fatal("DeleteAsset reported success but the row is still stored")
+	}
+}
+
+// TestLiveReplaceCampaignTakesTheBriefLockBeforeWritingTheSnapshot pins the ADDITION direction,
+// which neither the status arm nor the pending guard covers: a campaign that is already 'created'
+// writes a config_snapshot that names an asset the concurrent delete's snapshot did not see.
+//
+// Nothing ordered those two writes before this. ReplaceCampaign's UPDATE touches `campaigns` and
+// nothing else, DeleteAsset's statement reads `campaigns` but locks `campaign_briefs`, and the
+// per-campaign advisory lock a caller may hold is keyed on the CAMPAIGN — so the delete could take
+// its snapshot, see an unreferenced asset, and delete it while a replace adding exactly that
+// reference was in flight. ReplaceCampaign now takes lockBriefForAssetWriteQuery as the opening
+// statement of its transaction, which is the same row lock DeleteAsset takes, so one waits for the
+// other and the second one's statement runs with a snapshot that sees the first.
+//
+// It is the method, not any one caller, that owns this: ReplaceCampaign writes EVERY mutable
+// column including config_snapshot, so all five call sites rewrite the snapshot whether or not
+// they meant to change it. Hence the unconditional lock, and hence a test that asserts the lock is
+// taken rather than one that only exercises a config-bearing caller.
+//
+// The holder here is a plain FOR UPDATE on the brief — exactly what DeleteAsset holds for the
+// duration of its statement — rather than a real concurrent DeleteAsset, because a delete's own
+// lock is released when its single statement ends and that window is too short to observe
+// deterministically. What must be observed is that the replace WAITS; waitForBackendsBlockedBy
+// reports a replace that sailed past as that specific defect rather than as a timeout.
+func TestLiveReplaceCampaignTakesTheBriefLockBeforeWritingTheSnapshot(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	assets := postgres.NewCreativeAssetRepo(&postgres.Pool{Pool: pool})
+	campaigns := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
+	briefID, project := insertApprovedBrief(ctx, t, pool)
+
+	asset := insertCreativeAsset(ctx, t, assets, project, briefID, 1200, 628, "ff01")
+
+	var campaignID string
+	if err := pool.QueryRow(ctx, `INSERT INTO campaigns
+		(project_id, brief_id, platform, variant, slot_version, campaign_name, status, config_snapshot)
+		VALUES ($1, $2, 'reddit-ads', $3, 1, 'before', 'created', '{"headline":"no asset yet"}')
+		RETURNING id`,
+		project, briefID, model.VariantDefault).Scan(&campaignID); err != nil {
+		t.Fatalf("insert the created campaign: %v", err)
+	}
+
+	// Load OUTSIDE the goroutine: GetCampaign takes no lock, so doing it here keeps the only thing
+	// the goroutine can block on being the brief lock itself.
+	loaded, err := campaigns.GetCampaign(ctx, project, briefID, campaignID)
+	if err != nil {
+		t.Fatalf("GetCampaign: %v", err)
+	}
+	version := loaded.Version
+	loaded.ConfigSnapshot = []byte(fmt.Sprintf(`{"image_asset_id":%q}`, asset.ID))
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin the holder transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx,
+		`SELECT status FROM campaign_briefs WHERE id = $1 AND project_id = $2 FOR UPDATE`,
+		briefID, project); err != nil {
+		t.Fatalf("take the brief's write lock: %v", err)
+	}
+	var holderPID int
+	if err := tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&holderPID); err != nil {
+		t.Fatalf("read the holder's backend pid: %v", err)
+	}
+
+	replaceDone := make(chan error, 1)
+	go func() {
+		_, rerr := campaigns.ReplaceCampaign(ctx, loaded, version, domain.CampaignLockToken{}, nil)
+		replaceDone <- rerr
+	}()
+
+	waitForBackendsBlockedBy(ctx, t, pool, holderPID, 1, func() string {
+		select {
+		case rerr := <-replaceDone:
+			return fmt.Sprintf("ReplaceCampaign finished (%v) while another transaction held the "+
+				"brief's FOR UPDATE lock; it must take that lock and wait, or its snapshot write is "+
+				"not ordered against a concurrent DeleteAsset", rerr)
+		default:
+			return ""
+		}
+	})
+
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("release the brief lock: %v", err)
+	}
+
+	select {
+	case rerr := <-replaceDone:
+		if rerr != nil {
+			t.Fatalf("ReplaceCampaign after the brief lock was released: %v", rerr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("ReplaceCampaign still blocked after the brief lock was released")
+	}
+
+	// The reference it added is now visible to the delete's `referenced` check — which is the
+	// outcome the ordering exists to produce, not merely that something blocked.
+	if err := assets.DeleteAsset(ctx, project, briefID, asset.ID); !errors.Is(err, domain.ErrCreativeAssetInUse) {
+		t.Fatalf("delete after the replace named the asset: err=%v, want ErrCreativeAssetInUse", err)
+	}
+	if !assetExists(ctx, t, pool, asset.ID) {
+		t.Fatal("the refused delete removed the asset anyway: a 409 must write nothing")
+	}
+}

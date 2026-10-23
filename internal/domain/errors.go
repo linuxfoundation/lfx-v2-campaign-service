@@ -105,10 +105,14 @@ var (
 	ErrCreativeAssetQuotaExceeded = errors.New("the brief has reached its creative-asset limit")
 
 	// ErrCreativeAssetInUse indicates a delete refused because a live campaign on the brief could
-	// still need the asset: one whose stored config_snapshot names the asset id, or — and this arm
-	// is not a hedge — one whose config_snapshot is NULL, because claimCampaignDispatchQuery
-	// inserts the 'pending' claim row BEFORE the dispatcher resolves any asset. A delete in that
-	// window would otherwise remove bytes a dispatch already in flight is about to read.
+	// still need the asset. Three independent arms: one still 'pending', whatever its snapshot
+	// says; one whose stored config_snapshot names the asset id; or one whose config_snapshot is
+	// NULL. The 'pending' arm leads because it needs no timing argument — a dispatch that has not
+	// resolved may read any of the brief's assets, and a delete in that window would remove bytes
+	// it is about to read. The NULL arm covers the narrower case the claim creates:
+	// claimCampaignDispatchQuery inserts the row BEFORE the dispatcher resolves any asset, so a
+	// snapshot naming it does not exist yet. That is not a hedge, but it is not sufficient on its
+	// own either — the claim is not the only writer of config_snapshot.
 	//
 	// Maps to 409 with reason "creative_asset_in_use". Distinct from ErrConflict because the
 	// remedy is specific: delete the campaign, or reconcile a claim stuck in 'pending', then

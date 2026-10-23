@@ -192,9 +192,11 @@ const creativeAssetQuotaQuery = `SELECT count(*), COALESCE(sum(byte_size), 0),
 		COALESCE(bool_or(checksum = $2), false)
 	FROM creative_assets WHERE brief_id = $1`
 
-// lockBriefForAssetWriteQuery is the brief row lock every write to a brief's library takes first.
-// CreateAsset takes it to order itself against a concurrent ArchiveBrief; DeleteAsset takes it to
-// order itself against a concurrent dispatch claim (see deleteCreativeAssetQuery).
+// lockBriefForAssetWriteQuery is the brief row lock every write that can affect a brief's asset
+// library takes first. CreateAsset takes it to order itself against a concurrent ArchiveBrief;
+// DeleteAsset takes it to order itself against a concurrent dispatch claim (see
+// deleteCreativeAssetQuery); campaign_repo.go's ReplaceCampaign takes it because it rewrites
+// config_snapshot, the column DeleteAsset reads to decide whether an asset is still referenced.
 //
 // FOR UPDATE is the strength that matters, because of what it conflicts with rather than what it
 // excludes here: claimCampaignDispatchQuery's INSERT takes FOR KEY SHARE on this same brief row as
@@ -205,7 +207,11 @@ const creativeAssetQuotaQuery = `SELECT count(*), COALESCE(sum(byte_size), 0),
 // Lock ORDER: a transaction holding this must not go on to take the per-slot advisory lock.
 // campaign_repo.go's AdoptCampaign fixes the order as slot -> brief for every transaction that
 // takes both, precisely because a claim holds the slot lock while waiting for the brief's.
-// Both callers here take this lock and nothing else, so neither can close that cycle.
+// The two callers in THIS file take this lock and nothing else, so neither can close that cycle.
+// ReplaceCampaign does take both, and takes them in that same slot -> brief order: its caller may
+// already hold the per-campaign advisory lock from ClaimCampaignVersion, and the brief lock is the
+// opening statement of the replace's own transaction. Nothing acquires a slot lock while holding
+// this one, which is the direction that would close the cycle.
 const lockBriefForAssetWriteQuery = `SELECT status FROM campaign_briefs
 	WHERE id = $1 AND project_id = $2 FOR UPDATE`
 
@@ -520,16 +526,33 @@ func (r *CreativeAssetRepo) ListAssets(ctx context.Context, projectID, briefID s
 // claim's insert holds until commit; this statement then runs as the NEXT statement in that
 // transaction, with a fresh snapshot that sees any claim which won the race.
 //
-// The `referenced` arm has two halves and both are exact.
+// The `referenced` arm has three halves.
 //
+//   - status = 'pending'. The claim row's provisioning state, held from the claim's INSERT until
+//     the dispatcher resolves the platform call. This is the arm that actually decides the
+//     in-flight case, and it keys on the column the dispatch itself owns.
 //   - A NULL config_snapshot. claimCampaignDispatchQuery (campaign_repo.go) inserts the claim row
 //     with no snapshot, BEFORE the dispatcher resolves any asset. So a NULL snapshot is not "we
-//     cannot tell" — it is precisely the window in which a reference is about to be created and
-//     does not exist yet. Refusing is the only answer that cannot delete bytes out from under an
-//     in-flight dispatch.
+//     cannot tell" — it is the shape a claim is born with.
 //   - The id appearing in the snapshot's text. config_snapshot is persisted UNENCRYPTED and its
 //     sanitization strips URL query/fragment and credentials but keeps imageAssetId VERBATIM
 //     (reddit_asset.go, linkedin.go), so a stored asset reference survives into it as its id.
+//
+// WHY 'pending' IS A SEPARATE ARM AND NOT REDUNDANT WITH THE NULL ONE. The NULL arm was once
+// relied on alone to cover the in-flight window, on the reasoning that a claim inserts NULL and
+// nothing else writes the column until the dispatch resolves. The second half of that is false.
+// UpdateCampaign (internal/service/brief.go) writes config_snapshot too, it is gated on the
+// campaign's VERSION rather than on the brief, and ReplaceCampaign's UPDATE touches `campaigns`
+// only — so the brief lock this delete takes does not order the two at all. A config edit landing
+// while the campaign is still pending replaces that NULL with the caller's object, and the row
+// then matches no arm: the delete proceeds against an asset the in-flight dispatch is about to
+// read. 'pending' survives that, because UpdateCampaign cannot write status (it refuses any
+// status change) and now refuses a config edit on a pending campaign outright.
+//
+// The general lesson, recorded because it is cheap to re-break: an arm that keys on a column's
+// VALUE is only as good as the full set of writers of that column. 'pending' is durable here
+// because the delete and the dispatch are the only writers of status on this path; NULL was not,
+// because a second writer existed outside the dispatch flow.
 //
 // A TEXT SEARCH RATHER THAN A JSON PATH, and the trade is accepted rather than overlooked. The
 // snapshot carries an asset id under a different key per platform (redditConfig.imageAssetId,
@@ -570,7 +593,8 @@ const deleteCreativeAssetQuery = `WITH target AS (
 		WHERE c.brief_id = $3 AND c.project_id = $2
 		  AND c.status <> 'deleted'
 		  AND (
-			c.config_snapshot IS NULL
+			c.status = 'pending'
+			OR c.config_snapshot IS NULL
 			OR strpos(lower(c.config_snapshot::text), lower(t.id::text)) > 0
 			OR strpos(lower(c.config_snapshot::text), replace(lower(t.id::text), '-', '')) > 0
 		  )

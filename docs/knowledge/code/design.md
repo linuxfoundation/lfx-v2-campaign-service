@@ -185,8 +185,9 @@ one.
 - **Delete is a `204` with no body, and HARD.** Campaigns and briefs retire by a status flip;
   this row is removed, because reclaiming the storage against the quota is the entire reason the
   endpoint exists. It is refused `409` while any live campaign on the brief could still need the
-  asset, which includes a campaign whose configuration has not been recorded yet (see
-  [internal/infrastructure/postgres](internal-infrastructure-postgres.md) for why that arm is
+  asset, which includes a campaign whose configuration has not been recorded yet AND any campaign
+  still `pending`, whatever its recorded configuration says (see
+  [internal/infrastructure/postgres](internal-infrastructure-postgres.md) for why each arm is
   exact rather than a hedge).
 - **No new error type.** Both refusals are the `Conflict`/`ConflictError` that
   `commonBriefErrors()` already declares, separated by the `reason` discriminator —
@@ -194,6 +195,13 @@ one.
   `ab_test_unsupported_send_type` uses, and for the same reason: a folder upload sending many
   files has to branch on WHICH refusal it got (stop and prompt the user to free space, versus
   skip this one file), and the two are indistinguishable from prose.
+
+  `ConflictError.reason` is an `Enum` in `design/connection.go`, and that list is enforced by the
+  GENERATED CLIENT decoder, not only documented by it: a reason the server emits and the list
+  omits raises `InvalidEnumValueError` client-side — it is not an undocumented value, it is a
+  `409` no generated client can read. So ADDING a conflict reason (as
+  `campaign_dispatch_in_flight` did for update-campaign) is a design edit plus `make apigen`,
+  never a service-side constant on its own.
 
 Like upload, none of the three carries an ETag, for the reason given above.
 

@@ -1296,6 +1296,39 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Lock the parent brief FIRST, as the opening statement of this transaction, to order this
+	// write against a concurrent CreativeAssetRepo.DeleteAsset.
+	//
+	// WHY THIS IS THE REPLACE'S PROBLEM AND NOT ONLY UpdateCampaign'S. This statement writes
+	// EVERY mutable column, config_snapshot included, so every caller -- the config edit, the
+	// budget and bid updates, the status toggle's persist -- rewrites the snapshot it read
+	// earlier in the request. DeleteAsset decides whether an asset is still referenced by
+	// reading that column under its own brief lock. Without this lock the two are not ordered
+	// at all: ReplaceCampaign's UPDATE touches `campaigns` only, and the per-slot advisory lock
+	// the caller may hold is per-CAMPAIGN, so neither one conflicts with the brief row DeleteAsset
+	// takes. A replace that commits just after the delete's reference check re-publishes a
+	// snapshot naming an asset whose bytes are already gone; a replace that commits just before
+	// it is correctly seen. Taking the brief lock makes which of those happened a decided
+	// question instead of a race.
+	//
+	// It is taken unconditionally rather than only when config_snapshot changed, because this
+	// statement cannot tell: it writes the column either way, and a caller that "did not change"
+	// the config still re-writes the value it read, which is exactly how a concurrently-added
+	// reference gets dropped back out.
+	//
+	// LOCK ORDER is slot -> brief, which is the order campaign_repo.go's AdoptCampaign fixes for
+	// every transaction taking both, and the order creative_asset_repo.go's note at
+	// lockBriefForAssetWriteQuery requires. A caller holding the per-slot advisory lock reaches
+	// the brief lock here and never the reverse, and DeleteAsset takes the brief lock and nothing
+	// else, so no cycle is reachable.
+	//
+	// RowsAffected is deliberately not checked. A campaign row carries a brief_id foreign key, so
+	// the brief exists for any row this replace can target; treating a zero count as an error
+	// would turn an already-valid write into a failure for no reachable case.
+	if _, lerr := tx.Exec(ctx, lockBriefForAssetWriteQuery, c.BriefID, c.ProjectID); lerr != nil {
+		return nil, fmt.Errorf("replace campaign: lock brief: %w", lerr)
+	}
+
 	updatedBy, err := marshalActor(c.UpdatedBy)
 	if err != nil {
 		return nil, fmt.Errorf("replace campaign: %w", err)

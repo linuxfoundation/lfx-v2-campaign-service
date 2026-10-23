@@ -14824,6 +14824,7 @@ definitions:
                     - audience_provenance_immutable
                     - ab_test_unsupported_send_type
                     - campaign_adopted
+                    - campaign_dispatch_in_flight
                     - creative_asset_quota_exceeded
                     - creative_asset_in_use
         example:

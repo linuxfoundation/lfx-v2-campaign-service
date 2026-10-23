@@ -129,10 +129,15 @@ type CreativeAssetRepository interface {
 	// brief's quota.
 	//
 	// It is REFUSED with ErrCreativeAssetInUse when any campaign on the brief with status other
-	// than 'deleted' could still need the asset: one whose config_snapshot names the asset id, or
-	// one whose config_snapshot is NULL. The NULL arm is exact rather than cautious — the dispatch
-	// claim inserts its 'pending' campaign row before the dispatcher reads any asset, so that is
-	// precisely the window in which a referencing snapshot does not exist yet.
+	// than 'deleted' could still need the asset. Three independent arms: one still 'pending',
+	// whatever its snapshot says; one whose config_snapshot names the asset id; or one whose
+	// config_snapshot is NULL.
+	//
+	// The 'pending' arm leads and is the timing-independent one — status is read under the same
+	// brief lock the delete already holds, so it needs no ordering argument. It also covers what
+	// the NULL arm alone does not: a claim's row starts with a NULL snapshot, but it is not the
+	// only writer of that column, so a committed non-NULL snapshot on a still-unresolved campaign
+	// must block the delete too. The NULL arm remains for a row a writer has not reached yet.
 	//
 	// The found-but-refused and not-found outcomes are decided against ONE snapshot: checking
 	// references in a separate round trip would leave a window in which a dispatch claims a
@@ -144,6 +149,11 @@ type CreativeAssetRepository interface {
 	// commits. Without that, a delete can win the race and leave a dispatch resolving a campaign
 	// whose asset is gone, instead of returning the ErrCreativeAssetInUse the caller should have
 	// had.
+	//
+	// The same obligation runs in the other direction, against a writer that ADDS a reference:
+	// a campaign that is already resolved can store a snapshot naming an asset this delete just
+	// decided was unreferenced. An implementation must order itself against every writer of the
+	// column it reads, not only against the claim that creates the row.
 	//
 	// Same malformed-id obligation as GetAsset: the CALLER validates assetID and briefID.
 	DeleteAsset(ctx context.Context, projectID, briefID, assetID string) error

@@ -455,8 +455,18 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   still satisfies the first arm, which is what keeps the columns nullable for the pre-release
   rows they are nullable FOR. The CHECK is a NARROWING and owes `000029`'s N-1 argument, which is
   trivial here — an N-1 INSERT lands `(NULL, NULL)` and every existing row is already
-  `(NULL, NULL)` — so it is a plain CHECK rather than `NOT VALID` + `VALIDATE`, for `000029`'s
-  reason. **The backfill is deliberately a SEPARATE step**: the values must come from the same
+  `(NULL, NULL)` — so it is a plain CHECK rather than `NOT VALID` + `VALIDATE`. Be precise about
+  what that does and does not buy. Postgres DOES scan on `ADD CONSTRAINT`: the validation pass
+  runs because the constraint is added without `NOT VALID`, not because a row could fail it, and
+  what is true is that the scan is over rows that are all `(NULL, NULL)`, so it finds nothing and
+  the ACCESS EXCLUSIVE lock is held only as long as that pass. `NOT VALID` does NOT leave a
+  declared-but-unenforced window either — it enforces new writes immediately and defers only the
+  check of pre-existing rows. Splitting the two would also not shorten the lock as written:
+  golang-migrate ships a migration file to a SINGLE `ExecContext` unless `x-multi-statement` is
+  set (`Run()` in `database/pgx/v5/pgx.go` splits only when `p.config.MultiStatementEnabled`, and
+  this repo's `pool.go` never sets it), so both statements land in one implicit transaction and
+  the ADD's lock is held through the VALIDATE anyway. Getting the weaker
+  `ShareUpdateExclusive` lock for the validate pass needs the statements in SEPARATE migrations. **The backfill is deliberately a SEPARATE step**: the values must come from the same
   `image/png` and `image/jpeg` decoders the upload path uses, and Postgres has no image
   decoder, so there is nothing a SQL-side migration could run. NO INDEX is added — `000028`'s
   indexing note already covers list-by-brief via `UNIQUE (brief_id, checksum)`, and neither
@@ -1697,6 +1707,16 @@ second pooled connection beside the claim. Every other caller's handling is unch
 own rows: a raise for the confirmed rollback, and a slow commit under a short deadline for the
 lost acknowledgement.
 
+That transaction's OPENING statement is `lockBriefForAssetWriteQuery` on the parent brief,
+unconditionally. `ReplaceCampaign` writes every mutable column — `config_snapshot` included — so
+every one of its callers rewrites the snapshot whether or not it meant to change it, and the
+statement cannot tell the two apart; the hazard belongs to the method, not to any one caller.
+Without the lock nothing ordered that write against a concurrent
+`CreativeAssetRepo.DeleteAsset`: the UPDATE touches `campaigns` only, and the per-campaign
+advisory lock a caller may already hold is keyed on the CAMPAIGN, not the brief. `RowsAffected` is
+deliberately unchecked — the `brief_id` foreign key guarantees the brief exists for any row this
+replace can target.
+
 ## DeleteCampaign's guards
 
 `DeleteCampaign` takes a `SELECT status, version … FOR UPDATE` lock inside one
@@ -2218,23 +2238,40 @@ should have had. Two halves fix it, and both are load-bearing:
 
 Lock ORDER is slot → brief for every transaction taking both (`AdoptCampaign`), because a claim
 holds the slot lock while waiting for the brief's. `CreateAsset` and `DeleteAsset` take the brief
-lock and nothing else, so neither can close that cycle.
+lock and nothing else; `ReplaceCampaign` takes both in that same slot → brief order, and nothing
+anywhere acquires a slot lock while already holding the brief's — so no transaction can close
+that cycle.
 `TestLiveDeleteAssetWaitsForAnInFlightDispatchClaim` holds an uncommitted claim insert on a
 second connection, proves `DeleteAsset` is BLOCKED on that backend rather than merely slow, then
 commits the claim and requires `ErrCreativeAssetInUse` with the asset still present;
 `TestLiveDeleteAssetSucceedsOnceTheClaimIsDeleted` is its contrast, so a change that simply made
 `DeleteAsset` always refuse could not pass the pair.
 
-It refuses while the brief holds any campaign with `status <> 'deleted'` whose `config_snapshot`
-either names the asset id or **is NULL**. Three details:
+It refuses while the brief holds any campaign with `status <> 'deleted'` that is **`pending`**, or
+whose `config_snapshot` **is NULL**, or whose `config_snapshot` names the asset id. Four details:
 
-- **The NULL arm is exact, not a hedge.** `claimCampaignDispatchQuery` inserts the `pending`
-  claim row with no `config_snapshot` BEFORE the dispatcher reads any asset — so a NULL snapshot
-  on a live row is precisely "a dispatch that may be about to use this asset", and skipping it
-  would let a delete race a claim.
+- **The `pending` arm does not depend on the snapshot at all.** It is the one that holds once a
+  pending row's snapshot has been WRITTEN: the dispatcher takes no lock across the platform call,
+  so a committed non-NULL snapshot on a `pending` row is still "a create that has not resolved",
+  and the two snapshot arms both answer "not referenced" for it. Without this arm such a delete
+  succeeded and the unresolved dispatch went on to use an asset that was gone.
+- **The NULL arm is exact for the CLAIM, and only for it.** `claimCampaignDispatchQuery` inserts
+  the `pending` claim row with no `config_snapshot` BEFORE the dispatcher reads any asset, so a
+  NULL snapshot on a live row is precisely "a dispatch that may be about to use this asset". What
+  it never covered is a writer REPLACING that NULL — `UpdateCampaign` wrote `config_snapshot` too,
+  gated on version rather than on the brief, and `ReplaceCampaign`'s UPDATE touches `campaigns`
+  only, so the brief lock ordered nothing against it. That is what the `pending` arm closes on the
+  reader's side and `ReplaceCampaign`'s own brief lock closes on the writer's.
 - **Both id spellings.** `config_snapshot` keeps `imageAssetId` verbatim, but a caller may send
   the UUID hyphenated or dashless, so the predicate matches both forms, case-insensitively.
 - **`strpos(...) > 0`, not `LIKE`.** No character of a UUID is then a wildcard.
+
+An arm that keys on a column's VALUE is only ever as good as the full set of that column's
+writers, which is why the fix spans both directions: `TestLiveDeleteAssetRefusesWhileACampaignIsPending`
+pins the removal direction (a committed pending snapshot that does not name the asset still
+blocks, and the same row at `created` does not), and
+`TestLiveReplaceCampaignTakesTheBriefLockBeforeWritingTheSnapshot` pins the addition direction —
+a replace that adds a reference waits on the brief lock a concurrent `DeleteAsset` holds.
 
 Only `status = 'deleted'` campaigns are ignored — legal in multiples, since
 `uq_campaigns_brief_platform_variant_slot_version_live` is partial `WHERE status <> 'deleted'`.
