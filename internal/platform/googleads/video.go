@@ -179,7 +179,7 @@ func (c *Client) createVideoCampaignCascade(ctx context.Context, in CampaignInpu
 
 	namePartial := func() *CampaignResult {
 		return &CampaignResult{
-			Platform:           "google-ads",
+			Platform:           platformGoogleAds,
 			AccountLabel:       c.account.Label,
 			CustomerID:         c.account.CustomerID,
 			CampaignName:       campaignName,
@@ -225,7 +225,9 @@ func (c *Client) createVideoCampaignCascade(ctx context.Context, in CampaignInpu
 		budgetResource, budgetID = resource, id
 		steps = append(steps, reuseSteps...)
 	case createOutcomeAmbiguous(err):
-		return namePartial(), fmt.Errorf("google-ads video budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
+		// Resolved against the account rather than reported as unknown — see
+		// ambiguousBudgetCreateOutcome; every channel takes this arm identically.
+		return c.ambiguousBudgetCreateOutcome(ctx, "video", budgetName, namePartial, err)
 	default:
 		return nil, fmt.Errorf("google-ads video budget creation failed: %w", err)
 	}

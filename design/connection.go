@@ -219,7 +219,11 @@ var NotFoundError = Type("not-found-error", func() {
 var ConflictError = Type("conflict-error", func() {
 	errorAttrs("409", "A connection for this provider already exists on the project.")
 	Attribute("reason", String, "Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.", func() {
-		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted")
+		// Every value `conflictReason` is called with in internal/service must appear here.
+		// The enum is not documentation: the GENERATED CLIENT decoder validates the response
+		// body against it (InvalidEnumValueError), so a reason the server emits and this list
+		// omits is not an undocumented value — it is a 409 no generated client can read.
+		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "creative_asset_quota_exceeded", "creative_asset_in_use")
 		Example("already_exists")
 	})
 })
