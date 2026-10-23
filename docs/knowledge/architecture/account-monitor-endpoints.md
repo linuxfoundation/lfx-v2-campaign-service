@@ -594,8 +594,12 @@ caller (ROOT included), at one choke point mirroring
    query's `NOT EXISTS`): the per-platform binding indexes cover live rows only,
    so another project can adopt a campaign after this one deleted it, and from
    then on it is that project's. Another project's row takes it over when it is
-   live OR was recorded later (`created_at`) whatever its status, so the adopter
-   deleting its own row too does not hand the campaign back. The empty-scope answer in step 2 therefore needs both lists empty.
+   live OR bound the id later whatever its status, so the adopter deleting its
+   own row too does not hand the campaign back. "Bound later" compares
+   `platform_bound_at` (migration `000048`), falling back to `created_at` for
+   rows with no stamp; `created_at` alone is the dispatch CLAIM time, and a
+   dispatch that binds an existing upstream campaign can claim before another
+   project's adopt-then-delete and bind after it. The empty-scope answer in step 2 therefore needs both lists empty.
 4. The unchanged account read runs, and only rows whose
    `platform_campaign_id` is in the scoped set are kept, BEFORE the rule engine
    and `monitorTotals` — so action items and totals describe the same rows.

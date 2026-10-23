@@ -616,10 +616,18 @@ func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, proje
 // The NOT EXISTS hands the campaign to its LATEST owner. The per-platform binding indexes cover
 // live rows only, so once this project deletes its row another project can adopt the same
 // upstream campaign; from then on it is that project's campaign and must not stay in this
-// project's monitor. Another project's row takes it over when it is live, OR when it was
-// recorded later than this one whatever its status: an adoption always inserts a new row, and
-// if the adopter then deletes its row too, a live-only test would find no owner left and hand
-// the campaign — with the adopter's budget and spend — back to this project. Matched on the id
+// project's monitor. Another project's row takes it over when it is live, OR when it bound the
+// id later than this one whatever its status: if the adopter then deletes its row too, a
+// live-only test would find no owner left and hand the campaign — with the adopter's budget and
+// spend — back to this project.
+//
+// "Bound later" is platform_bound_at (000048), NOT created_at. A dispatch's created_at is its
+// claim INSERT, made before the platform call; a dispatch that binds an EXISTING upstream
+// campaign (Google's adoptExisting, Meta's same-name reuse) can claim, wait out another
+// project's adopt-then-delete, and only then bind, so ordering by created_at would rank the
+// current owner first and expose its budget and spend to the former one. COALESCE to created_at
+// for rows with no stamp — written before 000048 or by an N-1 binary during a rollout — which is
+// exact for adoptions and the only evidence those rows carry. Matched on the id
 // alone, not its provenance: on Reddit and X an id is only unique within an account, so another
 // account's row with the same id also hides this one — the conservative direction for a read
 // that exists to keep projects apart.
@@ -629,7 +637,8 @@ const listProjectPlatformDeletedCampaignIDsQuery = `SELECT DISTINCT c.platform_c
 	  AND NOT EXISTS (SELECT 1 FROM campaigns l
 	    WHERE l.platform = c.platform AND l.platform_campaign_id = c.platform_campaign_id
 	      AND l.project_id <> c.project_id
-	      AND (l.status <> 'deleted' OR l.created_at > c.created_at))
+	      AND (l.status <> 'deleted'
+	        OR COALESCE(l.platform_bound_at, l.created_at) > COALESCE(c.platform_bound_at, c.created_at)))
 	ORDER BY c.platform_campaign_id ASC`
 
 // ListProjectPlatformDeletedCampaignIDs returns the upstream campaign ids of this project's
@@ -822,10 +831,24 @@ func (r *CampaignRepo) getCampaignBySlot(ctx context.Context, projectID, briefID
 const upsertCampaignQuery = `INSERT INTO campaigns
 	(project_id, brief_id, job_id, platform, variant, platform_campaign_id, campaign_name, status,
 	 budget_amount, budget_type, start_date, end_date, config_snapshot, result, created_by, updated_by,
-	 ran_on_system_account, slot_version)
-	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17,$18)
+	 ran_on_system_account, slot_version, platform_bound_at)
+	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17,$18,
+	        CASE WHEN NULLIF($5::text, '') IS NOT NULL THEN clock_timestamp() END)
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO UPDATE SET
 		job_id=EXCLUDED.job_id, platform_campaign_id=EXCLUDED.platform_campaign_id,
+		-- platform_bound_at (000048) is stamped when this write gives the row an upstream id it
+		-- did not hold — on a normal dispatch, this arm finalizing the claim. created_at cannot
+		-- stand in for it: the claim INSERT set that before the platform call, and a dispatch
+		-- that binds an EXISTING upstream campaign can finish after another project adopted and
+		-- deleted it (see listProjectPlatformDeletedCampaignIDsQuery). The owning job's re-upsert
+		-- of the same id keeps the first stamp. clock_timestamp(), not now(): the stamp orders
+		-- bindings, so it is when this statement ran, not when its transaction began.
+		platform_bound_at=CASE
+			WHEN NULLIF(EXCLUDED.platform_campaign_id, '') IS NOT NULL
+			 AND EXCLUDED.platform_campaign_id IS DISTINCT FROM NULLIF(campaigns.platform_campaign_id, '')
+			THEN clock_timestamp()
+			ELSE campaigns.platform_bound_at
+		END,
 		campaign_name=EXCLUDED.campaign_name, status=EXCLUDED.status,
 		budget_amount=EXCLUDED.budget_amount, budget_type=EXCLUDED.budget_type,
 		start_date=EXCLUDED.start_date, end_date=EXCLUDED.end_date,
@@ -1119,9 +1142,13 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 // resolved credential in scope, so the deferred stampProvenance DOES record which account
 // served it. The two paths answer differently because they genuinely know different things:
 // one resolved a credential and used it, the other was handed an id by a caller.
+//
+// platform_bound_at (000048) is stamped unconditionally: an adoption always carries its
+// upstream id, so the row is bound the moment it exists. See upsertCampaignQuery.
 const adoptCampaignQuery = `INSERT INTO campaigns
-	(project_id, brief_id, platform, variant, platform_campaign_id, campaign_name, status, result, created_by, updated_by)
-	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
+	(project_id, brief_id, platform, variant, platform_campaign_id, campaign_name, status, result, created_by, updated_by,
+	 platform_bound_at)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,clock_timestamp())
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO NOTHING
 	RETURNING ` + campaignCols
 

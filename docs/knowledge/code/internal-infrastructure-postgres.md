@@ -468,6 +468,24 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `(1200, NULL)`, `(NULL, 628)`, `(1200, 0)` and `(1200, -628)` each raising SQLSTATE `23514` on
   `creative_assets_dimensions_positive`, with `(NULL, NULL)` and `(1200, 628)` accepted.
 
+- `000048` — `platform_bound_at` TIMESTAMPTZ on `campaigns`, NULLABLE with NO default
+  (lfx-self-serve-ops#897). It records WHEN a row took its upstream id, which `created_at`
+  does not: a dispatch's `created_at` is its `ClaimCampaignDispatch` placeholder, inserted
+  before the platform call, and `upsertCampaignQuery` binds the id later. The account
+  monitor's deleted-campaign scope (`listProjectPlatformDeletedCampaignIDsQuery`) hands a
+  campaign every project has deleted to whichever row bound it LAST, so ordering by
+  `created_at` let a dispatch that claimed first but bound after another project's
+  adopt-then-delete (Google `adoptExisting`, Meta same-name reuse) rank as the former owner.
+  Written with `clock_timestamp()` by `upsertCampaignQuery`'s INSERT arm when it carries an id,
+  by its conflict arm only when the id CHANGES (the owning job's re-upsert keeps the first
+  stamp), and unconditionally by `adoptCampaignQuery`. EXPAND only: an N-1 write leaves it
+  `NULL`, which the reader takes as `COALESCE(platform_bound_at, created_at)` — exact for
+  adoptions and for pre-`000048` rows, whose only evidence is `created_at` — so there is no
+  backfill. A `DEFAULT now()` would be wrong, not just imprecise: it would stamp the claim.
+  Pinned by `TestCampaignWritesStampPlatformBoundAt` (statement shapes),
+  `TestListProjectPlatformDeletedCampaignIDs_Live` (claim order and binding order disagreeing,
+  both ways) and `TestLiveClaimThenUpsertStampsPlatformBoundAt` (under `dbtest/`).
+
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
 
 `campaign_jobs` is append-only — nothing else in the service deletes a row — so it

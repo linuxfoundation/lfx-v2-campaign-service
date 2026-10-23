@@ -190,7 +190,7 @@ func TestListProjectPlatformCampaignIDs_IsScopedInSQL(t *testing.T) {
 // TestListProjectPlatformDeletedCampaignIDs_IsScopedInSQL pins the account monitor's soft-deleted
 // scope to the same boundary as the live one above, with the status predicate inverted: only
 // this project's deleted rows on this platform that have an upstream id, and none that another
-// project now holds live.
+// project now holds live or bound later.
 func TestListProjectPlatformDeletedCampaignIDs_IsScopedInSQL(t *testing.T) {
 	q := normalizeWS(listProjectPlatformDeletedCampaignIDsQuery)
 	outer, sub, ok := strings.Cut(q, "NOT EXISTS")
@@ -205,12 +205,16 @@ func TestListProjectPlatformDeletedCampaignIDs_IsScopedInSQL(t *testing.T) {
 		"the id and its provenance are needed and nothing else")
 
 	// The latest owner wins: the same upstream id on ANOTHER project's row hides this one when
-	// that row is live, or was recorded later whatever its status — so an adopter deleting its
-	// own row does not hand the campaign back.
+	// that row is live, or BOUND the id later whatever its status — so an adopter deleting its
+	// own row does not hand the campaign back. Bound, not created: a dispatch's created_at is its
+	// claim, made before it binds anything (000048).
 	require.Contains(t, sub, "l.platform = c.platform")
 	require.Contains(t, sub, "l.platform_campaign_id = c.platform_campaign_id")
-	require.Contains(t, sub, "(l."+livePredicate+" OR l.created_at > c.created_at)",
-		"a live row elsewhere, or a later one of any status, takes the campaign over")
+	require.Contains(t, sub, "(l."+livePredicate+
+		" OR COALESCE(l.platform_bound_at, l.created_at) > COALESCE(c.platform_bound_at, c.created_at))",
+		"a live row elsewhere, or one of any status that bound the id later, takes the campaign over")
+	require.NotContains(t, sub, "l.created_at > c.created_at",
+		"claim insertion order is not binding order")
 	require.Contains(t, sub, "l.project_id <> c.project_id", "this project's own live row is in the live scope already")
 }
 
@@ -521,6 +525,32 @@ func TestUpsertCampaignDoesNotRewriteCreatedBy(t *testing.T) {
 			"an absent column is never written at all. Guarding on the stored value is what "+
 			"stamps the claim row once and freezes it — including a stored FALSE, which a "+
 			"COALESCE on EXCLUDED would still let a later TRUE overwrite")
+}
+
+// TestCampaignWritesStampPlatformBoundAt pins where platform_bound_at (000048) is written. The
+// deleted-campaign scope orders ownership by it, so a write that binds an upstream id without
+// stamping it falls back to created_at — the claim time — and reopens the ordering it replaced.
+//
+// The conflict arm is the one a real dispatch takes (the claim INSERTed the row), and it must
+// stamp only when the id CHANGES: the owning job re-upserts its finalized row with the same id,
+// and re-stamping then would move its binding later than a takeover that really came after it.
+func TestCampaignWritesStampPlatformBoundAt(t *testing.T) {
+	insertArm, updateArm, found := strings.Cut(upsertCampaignQuery, "DO UPDATE SET")
+	require.True(t, found, "upsertCampaignQuery has no DO UPDATE SET arm")
+	assert.Contains(t, normalizeWS(insertArm),
+		"CASE WHEN NULLIF($5::text, '') IS NOT NULL THEN clock_timestamp() END",
+		"the INSERT arm must stamp a row it creates with an upstream id, and only then")
+
+	setList, _, _ := strings.Cut(stripSQLComments(updateArm), "RETURNING")
+	assert.Contains(t, normalizeWS(setList),
+		"platform_bound_at=CASE WHEN NULLIF(EXCLUDED.platform_campaign_id, '') IS NOT NULL "+
+			"AND EXCLUDED.platform_campaign_id IS DISTINCT FROM NULLIF(campaigns.platform_campaign_id, '') "+
+			"THEN clock_timestamp() ELSE campaigns.platform_bound_at END",
+		"the conflict arm must stamp when the write binds a new upstream id and keep the stamp otherwise")
+
+	assert.Contains(t, normalizeWS(adoptCampaignQuery), "platform_bound_at) VALUES",
+		"an adoption binds its id on INSERT and must stamp it")
+	assert.Contains(t, normalizeWS(adoptCampaignQuery), "$9,$9,clock_timestamp())")
 }
 
 // stripSQLComments removes `-- ...` line comments so an assertion can be made about the
