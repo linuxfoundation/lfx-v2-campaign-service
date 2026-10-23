@@ -1334,9 +1334,15 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	// this replace does go on to wait, right here, for the brief. The scope of that claim is the
 	// LOCK, not the backend holding it: no wait-for cycle can route THROUGH the advisory lock,
 	// because no edge ever enters it. The backend does acquire in-edges once it holds the brief's
-	// FOR UPDATE -- a waiting DeleteAsset is exactly such an edge -- and the no-deadlock conclusion
-	// rests on the two claims above, not on this one. DeleteAsset takes the brief lock and nothing
-	// else.
+	// FOR UPDATE -- a waiting DeleteAsset is exactly such an edge -- so the no-deadlock conclusion
+	// does not rest on the holder being edge-free. It rests on two NAMED claims: (1) the brief lock
+	// is the opening statement of this transaction, so the replace holds no `campaigns` row lock
+	// while waiting for it; and (2) nothing anywhere acquires a slot or per-campaign lock while
+	// already holding the brief's. Those two close the cycle, and they are named in these same
+	// words in the internal-infrastructure-postgres concept and in the dated log entry rather than
+	// pointed at by position -- a positional reference drifts the moment any of the three is
+	// re-flowed, which this branch has already paid for twice. DeleteAsset takes the brief lock
+	// and nothing else.
 	//
 	// IT IS KEYED ON brief_id ALONE, AND THE RESULT IS CHECKED. Both halves matter. The asset
 	// endpoints' version of this statement (lockBriefForAssetWriteQuery) also tests project_id,

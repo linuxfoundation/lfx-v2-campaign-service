@@ -137,10 +137,9 @@ below); `update-campaign` sets `campaign_dispatch_in_flight` (a config edit on a
 `pending`, whose creation has not finished on the ad platform); `upload-creative-asset` sets
 `creative_asset_quota_exceeded`; and `delete-creative-asset` sets `creative_asset_in_use`. Note
 that the two creative-asset slugs are on OPPOSITE endpoints — the quota refusal is on the upload,
-the in-use refusal on the delete — which is why a folder upload branching on `reason` must look for
-the quota slug on its POST. Every other briefs-endpoint conflict
-is still distinguished in message prose and sets no slug. Absent means unspecified:
-fall back to the message there.
+the in-use refusal on the delete — which is why a folder upload branching on `reason` must look
+for the quota slug on its POST. Every other briefs-endpoint conflict is still distinguished in
+message prose and sets no slug. Absent means unspecified: fall back to the message there.
 
 | `reason` | Message contains | Cause | Remedy |
 |---|---|---|---|

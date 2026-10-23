@@ -619,7 +619,7 @@ func (r *CreativeAssetRepo) ListAssets(ctx context.Context, projectID, briefID s
 // That accounts for four. The fifth, upsertCampaignQuery, is not GUARDED against this delete but
 // ORDERED against it, on both arms -- see THE OTHER WRITER, AND WHY IT NEEDS NOTHING above. That
 // paragraph sweeps config_snapshot rather than status, so it is named here too: a reader walking
-// this list must not have to guess that the answer is under a heading framed around a different
+// this list must not have to guess that the answer is in a paragraph that sweeps a different
 // column.
 //
 // Finally, two statements are not status WRITERS but still touch a 'pending' row --
@@ -685,7 +685,8 @@ const deleteCreativeAssetQuery = `WITH target AS (
 // DeleteAsset permanently removes a stored asset, or returns ErrNotFound when no such asset
 // exists for that brief, or ErrCreativeAssetInUse when a live campaign on the brief could still
 // need it -- "need" rather than "reference", because the 'pending' arm refuses a campaign whose
-// snapshot provably does not name the asset. See ErrCreativeAssetInUse, whose text is the 409 body.
+// snapshot provably does not name the asset. See ErrCreativeAssetInUse, whose text IS the 409
+// body.
 //
 // It locks the parent brief and then runs the delete as a SECOND statement on that transaction.
 // Both halves are load-bearing: the lock orders this against a dispatch claim that is mid-flight,

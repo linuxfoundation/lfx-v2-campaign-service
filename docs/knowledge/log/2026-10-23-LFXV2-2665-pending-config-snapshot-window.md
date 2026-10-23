@@ -1,7 +1,7 @@
 # 2026-10-23 — close the pending-dispatch window around `config_snapshot`
 
 **Fix** — the creative-asset delete guard reads `campaigns.config_snapshot` to decide whether an
-asset is still referenced. Yesterday's entry
+asset is still referenced. The earlier entry of the same day
 (`2026-10-23-LFXV2-2665-creative-asset-delete-ordering.md`) ordered that read against a dispatch
 claim's INSERT. It did not cover what happens once the claim's row EXISTS and a different writer
 changes the column the guard reads. Three changes close that, in both directions, plus two
@@ -110,13 +110,17 @@ order. It takes no slot lock at all. The only lock its caller may already hold i
 `ClaimCampaignVersion`'s, which is keyed on the CAMPAIGN, not the slot — and is taken with
 `pg_try_advisory_lock`, so nobody ever BLOCKS on it, for a documented pool reason. The scope of
 that is the LOCK, not the backend holding it: no wait-for cycle can route THROUGH the advisory
-lock, because no edge ever enters it. The holder does go on to wait for the brief lock, and it does
-acquire in-edges once it holds that lock — a waiting `DeleteAsset` is one — so the conclusion rests
-on the two claims that follow, not on the holder being edge-free. The brief lock is the opening statement of the replace's transaction, so it
-holds no `campaigns` row lock while waiting for it. Nothing anywhere acquires a slot lock while
-holding the brief's. The lesson is the smaller one: naming the wrong lock produces an argument that
-sounds rigorous and proves nothing, and two locks called "advisory" in the same file are exactly
-where that happens.
+lock, because no edge ever enters it. The holder does go on to wait for the brief lock, and it
+does acquire in-edges once it holds that lock — a waiting `DeleteAsset` is one — so the conclusion
+does not rest on the holder being edge-free. It rests on two named claims: **(1)** the brief lock
+is the opening statement of the replace's transaction, so the replace holds no `campaigns` row
+lock while waiting for it; and **(2)** nothing anywhere acquires a slot or per-campaign lock while
+already holding the brief's. Those two are what close the cycle, and they are stated in these same
+words in `campaign_repo.go` and in the `internal-infrastructure-postgres` concept — named rather
+than pointed at, because a positional reference ("the two claims above/below") drifts the moment
+either surface is re-flowed. The lesson is the smaller one: naming the wrong lock produces an
+argument that sounds rigorous and proves nothing, and two locks called "advisory" in the same file
+are exactly where that happens.
 
 **A new arm is a change to what the 409 PROMISES, in every place that says it.** The `pending` arm
 refuses a campaign whose snapshot provably does not name the asset, so two inherited sentences
@@ -125,11 +129,11 @@ became false the moment it landed and had to move with it. `delete-creative-asse
 configuration says" — in this repo's vocabulary that is three statuses
 (`CampaignStatusNeedsReconciliation` covers `group_created` and `unconfirmed` too), and for those
 two only the snapshot arms run, so the sentence promised a refusal the query does not make; it now
-names `pending`, as the sibling `update-campaign` description already did. `ErrCreativeAssetInUse`'s
-text — which is the 409 body — said "still references the creative asset", which is exactly what the
-`pending` arm does not establish; it now reads "could still need". **The general lesson: when a
-guard gains an arm, sweep every surface that describes the guard, including the error string, not
-only the ones the diff already touches.**
+names `pending`, as the sibling `update-campaign` description already did.
+`ErrCreativeAssetInUse`'s text — which is the 409 body — said "still references the creative
+asset", which is exactly what the `pending` arm does not establish; it now reads "could still
+need". **The general lesson: when a guard gains an arm, sweep every surface that describes the
+guard, including the error string, not only the ones the diff already touches.**
 
 **A new conflict reason is a DESIGN edit.** `ConflictError.reason` is an `Enum` in
 `design/connection.go`, and the generated client's decoder ENFORCES it: a reason the server emits
@@ -147,7 +151,10 @@ new writes IMMEDIATELY, deferring only the check of pre-existing rows. The corre
 records why splitting would not shorten the lock as written: golang-migrate ships a migration file
 to a SINGLE `ExecContext` unless `x-multi-statement` is set — `Run()` in
 `database/pgx/v5/pgx.go` splits only when `p.config.MultiStatementEnabled`, and this repo's
-`pool.go` never sets it — so `ADD ... NOT VALID` and `VALIDATE CONSTRAINT` would land in one
+`pool.go` never ADDS that parameter. That is a claim about what this repo configures, not about
+what the deployment can reach: `pgxURL` swaps only the scheme prefix and preserves the query
+string verbatim, so a `DATABASE_URL` already carrying `x-multi-statement=true` would enable
+splitting. Absent that, `ADD ... NOT VALID` and `VALIDATE CONSTRAINT` would land in one
 implicit transaction and the ACCESS EXCLUSIVE lock would be held through both. The constraint
 itself is unchanged.
 

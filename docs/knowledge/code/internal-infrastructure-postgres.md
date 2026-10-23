@@ -464,9 +464,14 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   check of pre-existing rows. Splitting the two would also not shorten the lock as written:
   golang-migrate ships a migration file to a SINGLE `ExecContext` unless `x-multi-statement` is
   set (`Run()` in `database/pgx/v5/pgx.go` splits only when `p.config.MultiStatementEnabled`, and
-  this repo's `pool.go` never sets it), so both statements land in one implicit transaction and
-  the ADD's lock is held through the VALIDATE anyway. Getting the weaker
-  `ShareUpdateExclusive` lock for the validate pass needs the statements in SEPARATE migrations. **The backfill is deliberately a SEPARATE step**: the values must come from the same
+  this repo's `pool.go` never ADDS that parameter). That is a claim about what this repo
+  configures, not about what the deployment can reach: `pgxURL` swaps only the scheme prefix and
+  preserves the query string verbatim, so a `DATABASE_URL` already carrying
+  `x-multi-statement=true` would enable splitting. Absent that, both statements land in one
+  implicit transaction and the ADD's lock is held through the VALIDATE anyway. Getting the weaker
+  `ShareUpdateExclusive` lock for the validate pass needs the statements in SEPARATE migrations.
+
+  **The backfill is deliberately a SEPARATE step**: the values must come from the same
   `image/png` and `image/jpeg` decoders the upload path uses, and Postgres has no image
   decoder, so there is nothing a SQL-side migration could run. NO INDEX is added — `000028`'s
   indexing note already covers list-by-brief via `UNIQUE (brief_id, checksum)`, and neither
@@ -2245,9 +2250,12 @@ a different lock and is taken with `pg_try_advisory_lock`, so nobody ever BLOCKS
 of that is the LOCK, not the backend holding it: no wait-for cycle can route THROUGH the advisory
 lock, because no edge ever enters it. The replace does go on to wait for the brief lock, and it
 does acquire in-edges once it holds that lock — a waiting `DeleteAsset` is one — so the conclusion
-rests on the two claims around it, not on the holder being edge-free. The replace takes the brief lock as its transaction's opening
-statement, so it holds no `campaigns` row lock while waiting for it. Nothing anywhere acquires a
-slot lock while already holding the brief's — so no transaction can close that cycle.
+does not rest on the holder being edge-free. It rests on two named claims: **(1)** the brief lock
+is the opening statement of the replace's transaction, so the replace holds no `campaigns` row
+lock while waiting for it; and **(2)** nothing anywhere acquires a slot or per-campaign lock while
+already holding the brief's. Those two close the cycle, and they are named in these same words in
+`campaign_repo.go` and in the dated log entry rather than pointed at by position, because a
+positional reference drifts the moment either surface is re-flowed.
 `TestLiveDeleteAssetWaitsForAnInFlightDispatchClaim` holds an uncommitted claim insert on a
 second connection, proves `DeleteAsset` is BLOCKED on that backend rather than merely slow, then
 commits the claim and requires `ErrCreativeAssetInUse` with the asset still present;
@@ -2273,12 +2281,12 @@ whose `config_snapshot` **is NULL**, or whose `config_snapshot` names the asset 
   the UUID hyphenated or dashless, so the predicate matches both forms, case-insensitively.
 - **`strpos(...) > 0`, not `LIKE`.** No character of a UUID is then a wildcard.
 
-An arm that keys on a column's VALUE is only ever as good as the full set of that column's
-writers, which is why the fix spans both directions: `TestLiveDeleteAssetRefusesWhileACampaignIsPending`
-pins the removal direction (a committed pending snapshot that does not name the asset still
-blocks, and the same row at `created` does not), and
-`TestLiveReplaceCampaignTakesTheBriefLockBeforeWritingTheSnapshot` pins the addition direction —
-a replace that adds a reference waits on the brief lock a concurrent `DeleteAsset` holds.
+An arm that keys on a column's VALUE is only ever as good as the full set of that column's writers,
+which is why the fix spans both directions: `TestLiveDeleteAssetRefusesWhileACampaignIsPending`
+pins the removal direction (a committed pending snapshot that does not name the asset still blocks,
+and the same row at `created` does not), and
+`TestLiveReplaceCampaignTakesTheBriefLockBeforeWritingTheSnapshot` pins the addition direction — a
+replace that adds a reference waits on the brief lock a concurrent `DeleteAsset` holds.
 
 Only `status = 'deleted'` campaigns are ignored — legal in multiples, since
 `uq_campaigns_brief_platform_variant_slot_version_live` is partial `WHERE status <> 'deleted'`.
