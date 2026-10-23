@@ -1425,6 +1425,14 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	// 409 rather than 400: nothing about the request is malformed, and the same request
 	// succeeds once the dispatch settles. Validated BEFORE claiming, for the reason the block
 	// above gives.
+	//
+	// 'pending' ALONE, deliberately. model.CampaignStatusNeedsReconciliation also covers
+	// 'group_created' and 'unconfirmed', and both were considered here and excluded: each one
+	// means the dispatch has already run and left a durable record behind, so the snapshot IS
+	// written and a config edit has something real to replace. 'pending' is the only status that
+	// means "a dispatcher may still be resolving this campaign's assets", which is the condition
+	// this guard and DeleteAsset's matching CTE arm are both about. Widening either one to the
+	// full reconciliation set would refuse edits on campaigns that are merely stuck.
 	if p.Campaign.Config != nil && existing.Status == model.CampaignStatusPending {
 		return nil, &briefs.ConflictError{
 			Code:    "409",

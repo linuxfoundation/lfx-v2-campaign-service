@@ -1304,23 +1304,34 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	// budget and bid updates, the status toggle's persist -- rewrites the snapshot it read
 	// earlier in the request. DeleteAsset decides whether an asset is still referenced by
 	// reading that column under its own brief lock. Without this lock the two are not ordered
-	// at all: ReplaceCampaign's UPDATE touches `campaigns` only, and the per-slot advisory lock
-	// the caller may hold is per-CAMPAIGN, so neither one conflicts with the brief row DeleteAsset
-	// takes. A replace that commits just after the delete's reference check re-publishes a
-	// snapshot naming an asset whose bytes are already gone; a replace that commits just before
-	// it is correctly seen. Taking the brief lock makes which of those happened a decided
-	// question instead of a race.
+	// at all: ReplaceCampaign's UPDATE touches `campaigns` only, and the advisory lock the caller
+	// may hold is ClaimCampaignVersion's, keyed on the CAMPAIGN, so neither one conflicts with the
+	// brief row DeleteAsset takes. A replace that commits just after the delete's reference check
+	// re-publishes a snapshot naming an asset whose bytes are already gone; a replace that commits
+	// just before it is correctly seen. Taking the brief lock makes which of those happened a
+	// decided question instead of a race.
+	//
+	// It is not free. The lock is held for the rest of this transaction, so a concurrent delete on
+	// the same brief waits for the replace to commit. ToggleCampaignStatus's persist runs under
+	// persistResultTimeout (orchestrator.go), a 5s budget on a context deliberately detached from
+	// the request's; a brief held long enough can time that persist out and leave the "platform and
+	// DB diverged" log the orchestrator writes for it. That is the intended trade -- a diverged
+	// status is recoverable by reconciliation, an asset whose bytes are gone while a snapshot still
+	// names it is not -- but it is a real cost, not a free ordering.
 	//
 	// It is taken unconditionally rather than only when config_snapshot changed, because this
 	// statement cannot tell: it writes the column either way, and a caller that "did not change"
 	// the config still re-writes the value it read, which is exactly how a concurrently-added
 	// reference gets dropped back out.
 	//
-	// LOCK ORDER is slot -> brief, which is the order campaign_repo.go's AdoptCampaign fixes for
-	// every transaction taking both, and the order creative_asset_repo.go's note at
-	// lockBriefForAssetWriteQuery requires. A caller holding the per-slot advisory lock reaches
-	// the brief lock here and never the reverse, and DeleteAsset takes the brief lock and nothing
-	// else, so no cycle is reachable.
+	// NO CYCLE IS REACHABLE, for two independent reasons, neither of which is the slot -> brief
+	// order AdoptCampaign fixes -- that order is about the per-SLOT transaction lock, which this
+	// path never takes. First, this is the OPENING statement of the transaction, so the replace
+	// holds no row lock on `campaigns` while it waits here; a delete blocked behind a campaigns row
+	// is therefore never blocked behind this replace. Second, the only lock a caller may already
+	// hold is ClaimCampaignVersion's per-campaign advisory lock, taken with pg_try_advisory_lock --
+	// it never waits, so its holder can never itself be a waiter, and a lock whose holders never
+	// wait cannot appear in a wait cycle at all. DeleteAsset takes the brief lock and nothing else.
 	//
 	// RowsAffected is deliberately not checked. A campaign row carries a brief_id foreign key, so
 	// the brief exists for any row this replace can target; treating a zero count as an error

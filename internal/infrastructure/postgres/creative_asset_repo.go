@@ -204,14 +204,17 @@ const creativeAssetQuotaQuery = `SELECT count(*), COALESCE(sum(byte_size), 0),
 // that has already inserted forces the delete to wait for that claim to commit — which is exactly
 // the ordering the delete needs and cannot get from its own snapshot.
 //
-// Lock ORDER: a transaction holding this must not go on to take the per-slot advisory lock.
+// Lock ORDER: a transaction holding this must not go on to take the per-SLOT advisory lock.
 // campaign_repo.go's AdoptCampaign fixes the order as slot -> brief for every transaction that
 // takes both, precisely because a claim holds the slot lock while waiting for the brief's.
 // The two callers in THIS file take this lock and nothing else, so neither can close that cycle.
-// ReplaceCampaign does take both, and takes them in that same slot -> brief order: its caller may
-// already hold the per-campaign advisory lock from ClaimCampaignVersion, and the brief lock is the
-// opening statement of the replace's own transaction. Nothing acquires a slot lock while holding
-// this one, which is the direction that would close the cycle.
+// ReplaceCampaign's third caller-site takes this lock without ever taking a slot lock: the only
+// lock its caller may already hold is ClaimCampaignVersion's per-CAMPAIGN advisory lock, a
+// different lock from the per-slot one, and taken with pg_try_advisory_lock, which never waits --
+// a holder that can never be a waiter cannot be an edge in a wait cycle. It also takes this lock
+// as the opening statement of its transaction, so it holds no `campaigns` row lock while waiting
+// here. Nothing acquires a slot lock while holding this one, which is the direction that would
+// close the cycle.
 const lockBriefForAssetWriteQuery = `SELECT status FROM campaign_briefs
 	WHERE id = $1 AND project_id = $2 FOR UPDATE`
 

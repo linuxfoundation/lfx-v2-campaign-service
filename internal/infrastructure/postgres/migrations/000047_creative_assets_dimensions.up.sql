@@ -80,8 +80,11 @@ ALTER TABLE creative_assets
 -- Splitting this into ADD ... NOT VALID plus a VALIDATE CONSTRAINT would also not shorten the lock
 -- as written, which is why it is not done as a follow-up edit to this file. golang-migrate ships a
 -- migration file to a single ExecContext unless x-multi-statement is set -- Run() in
--- database/pgx/v5/pgx.go splits only when p.config.MultiStatementEnabled, and this repo's pool.go
--- never sets it -- so both statements would land in ONE implicit transaction and the ACCESS
+-- database/pgx/v5/pgx.go splits only when p.config.MultiStatementEnabled, which the driver reads
+-- off the connection URL. This repo's pool.go never ADDS that parameter, but it does not strip the
+-- operator's query string either, so a DATABASE_URL already carrying x-multi-statement=true would
+-- enable splitting -- the claim is about what this repo configures, not about what the deployment
+-- can reach. Under the default both statements land in ONE implicit transaction and the ACCESS
 -- EXCLUSIVE lock taken by the ADD would be held until that transaction committed, VALIDATE
 -- included. Getting the weaker ShareUpdateExclusive lock for the validate pass requires the two
 -- statements in SEPARATE migrations, which is a change to make when a table is big enough to

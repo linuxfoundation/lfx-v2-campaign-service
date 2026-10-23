@@ -57,9 +57,19 @@ whole reason the lock had to be added there and nowhere else.
 only when the config actually changed. Reading the five call sites reversed that:
 `ReplaceCampaign` writes EVERY mutable column, `nullJSON(c.ConfigSnapshot)` included, so every
 caller rewrites the snapshot whether or not it meant to, and the statement cannot tell the two
-apart. The hazard is the method's, not any one caller's. Lock ORDER is unchanged and still
-acyclic: `AdoptCampaign` fixes slot → brief, `ReplaceCampaign` takes both in that order, and
-nothing anywhere acquires a slot lock while holding the brief's.
+apart. The hazard is the method's, not any one caller's.
+
+**The acyclicity argument, stated against the right lock.** The first draft of these comments said
+`ReplaceCampaign` takes the per-slot lock and the brief lock in `AdoptCampaign`'s slot → brief
+order. It takes no slot lock at all. The only lock its caller may already hold is
+`ClaimCampaignVersion`'s, which is keyed on the CAMPAIGN, not the slot — and is taken with
+`pg_try_advisory_lock`, which never waits, for a documented pool reason. A lock whose holders never
+wait cannot be an edge in a wait cycle, so that caller cannot close one however the order is
+written. Independently, the brief lock is the opening statement of the replace's transaction, so it
+holds no `campaigns` row lock while waiting for it. Nothing anywhere acquires a slot lock while
+holding the brief's. The lesson is the smaller one: naming the wrong lock produces an argument that
+sounds rigorous and proves nothing, and two locks called "advisory" in the same file are exactly
+where that happens.
 
 **A new conflict reason is a DESIGN edit.** `ConflictError.reason` is an `Enum` in
 `design/connection.go`, and the generated client's decoder ENFORCES it: a reason the server emits

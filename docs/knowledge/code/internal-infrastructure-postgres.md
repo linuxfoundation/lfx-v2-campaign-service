@@ -2238,9 +2238,12 @@ should have had. Two halves fix it, and both are load-bearing:
 
 Lock ORDER is slot → brief for every transaction taking both (`AdoptCampaign`), because a claim
 holds the slot lock while waiting for the brief's. `CreateAsset` and `DeleteAsset` take the brief
-lock and nothing else; `ReplaceCampaign` takes both in that same slot → brief order, and nothing
-anywhere acquires a slot lock while already holding the brief's — so no transaction can close
-that cycle.
+lock and nothing else; `ReplaceCampaign` takes the brief lock and never a slot lock — the only
+lock its caller may already hold is `ClaimCampaignVersion`'s per-CAMPAIGN advisory lock, which is
+a different lock and is taken with `pg_try_advisory_lock`, so its holder never waits and can never
+be an edge in a wait cycle. The replace also takes the brief lock as its transaction's opening
+statement, so it holds no `campaigns` row lock while waiting for it. Nothing anywhere acquires a
+slot lock while already holding the brief's — so no transaction can close that cycle.
 `TestLiveDeleteAssetWaitsForAnInFlightDispatchClaim` holds an uncommitted claim insert on a
 second connection, proves `DeleteAsset` is BLOCKED on that backend rather than merely slow, then
 commits the claim and requires `ErrCreativeAssetInUse` with the asset still present;

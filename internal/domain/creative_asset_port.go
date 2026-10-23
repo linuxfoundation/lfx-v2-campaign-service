@@ -152,8 +152,11 @@ type CreativeAssetRepository interface {
 	//
 	// The same obligation runs in the other direction, against a writer that ADDS a reference:
 	// a campaign that is already resolved can store a snapshot naming an asset this delete just
-	// decided was unreferenced. An implementation must order itself against every writer of the
-	// column it reads, not only against the claim that creates the row.
+	// decided was unreferenced. An implementation must account for every writer of the column it
+	// reads, not only the claim that creates the row — which does not always mean adding a lock.
+	// A writer already ordered against this delete by some other mechanism, or one whose rows this
+	// delete refuses on the 'pending' arm for the whole window it is exposed, needs nothing further;
+	// the postgres repo records which of its two writers falls into which case.
 	//
 	// Same malformed-id obligation as GetAsset: the CALLER validates assetID and briefID.
 	DeleteAsset(ctx context.Context, projectID, briefID, assetID string) error

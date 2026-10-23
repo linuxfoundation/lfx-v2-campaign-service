@@ -89,13 +89,14 @@ type Service interface {
 	GetAssetPlan(context.Context, *GetAssetPlanPayload) (res *CreativeAssetPlan, err error)
 	// Permanently delete a stored creative asset, freeing its bytes against the
 	// brief's quota. Refused with 409 reason=creative_asset_in_use when any live
-	// campaign on the brief could still need it: one whose stored configuration
-	// names this asset id, and also one whose configuration has not been recorded
-	// yet, because a dispatch claims its campaign row before it resolves any
-	// asset. Delete the campaign, or reconcile a stuck claim, then retry. This is
-	// a HARD delete — unlike a campaign or a brief, which are retired by a status
-	// flip — because reclaiming the storage is the entire reason the endpoint
-	// exists.
+	// campaign on the brief could still need it: one whose creation has not
+	// finished on the ad platform yet, whatever its stored configuration says; one
+	// whose stored configuration names this asset id; or one whose configuration
+	// has not been recorded yet, because a dispatch claims its campaign row before
+	// it resolves any asset. Delete the campaign, or reconcile a stuck claim, then
+	// retry. This is a HARD delete — unlike a campaign or a brief, which are
+	// retired by a status flip — because reclaiming the storage is the entire
+	// reason the endpoint exists.
 	DeleteCreativeAsset(context.Context, *DeleteCreativeAssetPayload) (err error)
 	// Create campaigns across the selected platforms (async -> job). Besides the
 	// request-shape 400s (an unknown or duplicate platform, new_version on a
