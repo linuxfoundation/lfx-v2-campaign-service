@@ -1348,8 +1348,12 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	// brief's would match NO row, take NO lock and return NO error -- the one hazard this
 	// statement is here to remove, failing silently. The PREDICATE is what removes that hazard;
 	// be precise about what the scan adds on top of it. On id alone the FK guarantees a match, so
-	// an Exec would take the same lock in every reachable case and pgx.ErrNoRows is unreachable
-	// while the FK stands. The scan is there for the predicate's next editor: it converts any
+	// an Exec would take the same lock in every reachable case and pgx.ErrNoRows is unreachable.
+	// That rests on TWO legs, not one: the FK constrains rows in `campaigns`, not the in-memory
+	// `c`, so it is only decisive because every caller passes a campaign LOADED from that table
+	// (brief.go, brief_bid.go, brief_budget.go and meta_ad_sets.go, the last via a copy of the
+	// loaded row). A future caller that synthesized a BriefID would make the miss reachable --
+	// and would land on the scan below rather than on silence. The scan is there for the predicate's next editor: it converts any
 	// future miss from a silent loss of the lock into ErrNotFound, which is the behaviour the
 	// sibling callers of the asset-side query already have (CreateAsset maps ErrNoRows the same
 	// way). Do not read it as evidence that the lock could fail today.

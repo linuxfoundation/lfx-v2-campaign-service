@@ -19,6 +19,26 @@ general lesson: an arm that keys on a column's VALUE is only as good as the full
 column's writers, and the sweep has to run repo-wide and in BOTH directions** — a writer that
 removes the value the predicate keys on, and a writer that adds one the reader's snapshot misses.
 
+**Running that sweep on `status`, to the end.** The new first arm keys on `status`, so the comment
+preaching the sweep has to perform one, and a partial enumeration there is worse than none — the
+next editor trusts the list instead of redoing it. `campaigns.status` has FIVE writers:
+`claimCampaignDispatchQuery`, `upsertCampaignQuery`, `replaceCampaignQuery`, `adoptCampaignQuery`
+and `deleteCampaignQuery`. The two INSERTs cannot move an existing row off `pending`.
+`deleteCampaignQuery` writes `status='deleted'` — the one value the query's own
+`c.status <> 'deleted'` predicate reads — and is held off by `DeleteCampaign`'s whitelist
+(`model.CampaignStatusDeletable`, which fails closed on anything unrecognised) under its own
+`FOR UPDATE`. `replaceCampaignQuery` is held off by `ToggleCampaignStatus`, its only caller that
+sets a new status, which refuses a `pending` row on **status itself**
+(`!model.CampaignStatusToggleable`, true only for `created`/`active`/`paused`). An earlier draft
+of this argument cited the orchestrator's `ErrCampaignNotProvisioned` refusal instead: that guard
+is real and platform-independent, but it runs after the status check has already narrowed the row
+to one of those three, so it was never what kept a `pending` row out. **The general lesson, again:
+when you name the guard that makes an arm durable, name the one that keys on the same column the
+arm does — a guard reached by an inferential step ("a pending campaign has no platform id yet")
+leaves no trail back here for whoever relaxes the real one.** `DeleteDispatchClaim` and
+`ClearDispatchClaim` remove a `pending` row outright rather than restatusing it, and move in the
+safe direction: a claim that is gone will never resolve, so the asset becoming deletable is right.
+
 **Removal direction — the reader.** `deleteCreativeAssetQuery`'s `referenced` CTE gains
 `c.status = 'pending'` as an independent first arm. It holds whatever the snapshot contains, so a
 committed non-NULL snapshot on an unresolved campaign still blocks the delete. This is the

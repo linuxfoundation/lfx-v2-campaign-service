@@ -117,6 +117,7 @@ var (
 	// Maps to 409 with reason "creative_asset_in_use". Distinct from ErrConflict because the
 	// remedy is specific: delete the campaign, or reconcile a claim stuck in 'pending', then
 	// retry — not change the request.
+	//
 	// The wording is "could still need" rather than "references" on purpose: the 'pending' arm
 	// refuses a campaign whose snapshot provably does NOT name the asset, because a dispatcher may
 	// still be about to resolve it. A message promising a reference would be false in exactly that

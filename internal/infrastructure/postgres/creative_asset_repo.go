@@ -595,16 +595,30 @@ func (r *CreativeAssetRepo) ListAssets(ctx context.Context, projectID, briefID s
 // The general lesson, recorded because it is cheap to re-break: an arm that keys on a column's
 // VALUE is only as good as the full set of writers of that column. NULL failed that test, because
 // a second writer of config_snapshot existed outside the dispatch flow. So run the same sweep on
-// status, and note that it has THREE writers, not two: the claim, UpsertCampaign's dispatch
-// result, and replaceCampaignQuery, which writes status=$2 like every other mutable column.
-// ReplaceCampaign is the one that could move a row OFF 'pending' while this delete is deciding.
-// What keeps it away from a pending row is not the replace itself but ToggleCampaignStatus, its
-// only caller that sets a new status (brief.go): the orchestrator refuses any campaign with an
-// empty platform_campaign_id with ErrCampaignNotProvisioned before the platform is contacted and
-// before the status is assigned (orchestrator.go), and a 'pending' campaign has no platform id
-// yet -- that is what 'pending' means. Every other ReplaceCampaign caller carries the loaded
-// status through unchanged. The arm is durable because of that guard, so a change to it is a
-// change to this arm.
+// status, and run it to the END rather than stopping at the writer that prompted the question.
+// There are FIVE, in campaign_repo.go: claimCampaignDispatchQuery, upsertCampaignQuery,
+// replaceCampaignQuery (status=$2, like every other mutable column), adoptCampaignQuery and
+// deleteCampaignQuery. Two cannot move an existing row off 'pending': adoptCampaignQuery INSERTs
+// a new row, and so does the claim. Two of the remaining three are held off by a guard, and
+// naming the guard is the point -- a change to it is a change to this arm:
+//
+//   - replaceCampaignQuery. Its only caller that sets a NEW status is ToggleCampaignStatus
+//     (brief.go); every other caller carries the loaded status through unchanged. That caller
+//     refuses a 'pending' row on STATUS ITSELF, before anything else: !CampaignStatusToggleable,
+//     which is true only for created/active/paused, and whose one escape hatch is a pause of a
+//     created_degraded row. The orchestrator's ErrCampaignNotProvisioned refusal
+//     (orchestrator.go) is a real second line -- platform-independent, before the platform is
+//     contacted and before the status is assigned -- but it is NOT what keeps a pending row out,
+//     because by the time it runs the status is already one of created/active/paused.
+//   - deleteCampaignQuery writes status='deleted', the one value this query's own
+//     `c.status <> 'deleted'` predicate reads, so it would drop a row out of the CTE entirely.
+//     DeleteCampaign fails closed on anything it does not recognise as settled
+//     (model.CampaignStatusDeletable is a whitelist) and so refuses 'pending' with ErrConflict,
+//     under its own FOR UPDATE re-read.
+//
+// Two statements remove a 'pending' row outright rather than restatusing it -- DeleteDispatchClaim
+// and ClearDispatchClaim -- and both move in the safe direction: a claim that is gone is a
+// dispatch that will never resolve, so the asset becoming deletable is the correct outcome.
 //
 // A TEXT SEARCH RATHER THAN A JSON PATH, and the trade is accepted rather than overlooked. The
 // snapshot carries an asset id under a different key per platform (redditConfig.imageAssetId,
@@ -662,7 +676,8 @@ const deleteCreativeAssetQuery = `WITH target AS (
 
 // DeleteAsset permanently removes a stored asset, or returns ErrNotFound when no such asset
 // exists for that brief, or ErrCreativeAssetInUse when a live campaign on the brief could still
-// reference it.
+// need it -- "need" rather than "reference", because the 'pending' arm refuses a campaign whose
+// snapshot provably does not name the asset. See ErrCreativeAssetInUse, whose text is the 409 body.
 //
 // It locks the parent brief and then runs the delete as a SECOND statement on that transaction.
 // Both halves are load-bearing: the lock orders this against a dispatch claim that is mid-flight,
