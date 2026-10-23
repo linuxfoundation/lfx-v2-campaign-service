@@ -355,7 +355,7 @@ func TestLiveDeleteAssetRefusesWhileACampaignIsPending(t *testing.T) {
 // nothing else, DeleteAsset's statement reads `campaigns` but locks `campaign_briefs`, and the
 // per-campaign advisory lock a caller may hold is keyed on the CAMPAIGN — so the delete could take
 // its snapshot, see an unreferenced asset, and delete it while a replace adding exactly that
-// reference was in flight. ReplaceCampaign now takes lockBriefForAssetWriteQuery as the opening
+// reference was in flight. ReplaceCampaign now takes lockBriefRowByIDQuery as the opening
 // statement of its transaction, which is the same row lock DeleteAsset takes, so one waits for the
 // other and the second one's statement runs with a snapshot that sees the first.
 //

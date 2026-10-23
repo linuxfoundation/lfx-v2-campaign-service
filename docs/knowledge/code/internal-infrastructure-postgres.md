@@ -1707,8 +1707,11 @@ second pooled connection beside the claim. Every other caller's handling is unch
 own rows: a raise for the confirmed rollback, and a slow commit under a short deadline for the
 lost acknowledgement.
 
-That transaction's OPENING statement is `lockBriefForAssetWriteQuery` on the parent brief,
-unconditionally. `ReplaceCampaign` writes every mutable column — `config_snapshot` included — so
+That transaction's OPENING statement is `lockBriefRowByIDQuery` on the parent brief,
+unconditionally — the same ROW lock `lockBriefForAssetWriteQuery` takes, keyed on `brief_id` alone
+because `campaigns`' FK is on `id` alone and a `project_id` predicate could match nothing, take no
+lock and report no error; the result is scanned, and a miss is `ErrNotFound`.
+`ReplaceCampaign` writes every mutable column — `config_snapshot` included — so
 every one of its callers rewrites the snapshot whether or not it meant to change it, and the
 statement cannot tell the two apart; the hazard belongs to the method, not to any one caller.
 Without the lock nothing ordered that write against a concurrent
@@ -2240,10 +2243,11 @@ Lock ORDER is slot → brief for every transaction taking both (`AdoptCampaign`)
 holds the slot lock while waiting for the brief's. `CreateAsset` and `DeleteAsset` take the brief
 lock and nothing else; `ReplaceCampaign` takes the brief lock and never a slot lock — the only
 lock its caller may already hold is `ClaimCampaignVersion`'s per-CAMPAIGN advisory lock, which is
-a different lock and is taken with `pg_try_advisory_lock`, so nobody ever BLOCKS on it. The
-direction that matters is INTO the holder, not out of it — the replace does go on to wait for the
-brief lock — but a lock with no waiters is never an in-edge to its holder, and a node no edge
-enters cannot sit on a cycle. The replace also takes the brief lock as its transaction's opening
+a different lock and is taken with `pg_try_advisory_lock`, so nobody ever BLOCKS on it. The scope
+of that is the LOCK, not the backend holding it: no wait-for cycle can route THROUGH the advisory
+lock, because no edge ever enters it. The replace does go on to wait for the brief lock, and it
+does acquire in-edges once it holds that lock — a waiting `DeleteAsset` is one — so the conclusion
+rests on the two claims around it, not on the holder being edge-free. The replace takes the brief lock as its transaction's opening
 statement, so it holds no `campaigns` row lock while waiting for it. Nothing anywhere acquires a
 slot lock while already holding the brief's — so no transaction can close that cycle.
 `TestLiveDeleteAssetWaitsForAnInFlightDispatchClaim` holds an uncommitted claim insert on a

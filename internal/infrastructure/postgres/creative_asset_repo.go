@@ -195,8 +195,9 @@ const creativeAssetQuotaQuery = `SELECT count(*), COALESCE(sum(byte_size), 0),
 // lockBriefForAssetWriteQuery is the brief row lock every write that can affect a brief's asset
 // library takes first. CreateAsset takes it to order itself against a concurrent ArchiveBrief;
 // DeleteAsset takes it to order itself against a concurrent dispatch claim (see
-// deleteCreativeAssetQuery); campaign_repo.go's ReplaceCampaign takes it because it rewrites
-// config_snapshot, the column DeleteAsset reads to decide whether an asset is still referenced.
+// deleteCreativeAssetQuery); campaign_repo.go's ReplaceCampaign takes the same ROW lock through
+// lockBriefRowByIDQuery below, because it rewrites config_snapshot, the column DeleteAsset reads
+// to decide whether an asset is still referenced.
 //
 // FOR UPDATE is the strength that matters, because of what it conflicts with rather than what it
 // excludes here: claimCampaignDispatchQuery's INSERT takes FOR KEY SHARE on this same brief row as
@@ -208,17 +209,37 @@ const creativeAssetQuotaQuery = `SELECT count(*), COALESCE(sum(byte_size), 0),
 // campaign_repo.go's AdoptCampaign fixes the order as slot -> brief for every transaction that
 // takes both, precisely because a claim holds the slot lock while waiting for the brief's.
 // The two callers in THIS file take this lock and nothing else, so neither can close that cycle.
-// ReplaceCampaign's third caller-site takes this lock without ever taking a slot lock: the only
+// ReplaceCampaign's third site takes this row lock without ever taking a slot lock: the only
 // lock its caller may already hold is ClaimCampaignVersion's per-CAMPAIGN advisory lock, a
 // different lock from the per-slot one, and taken with pg_try_advisory_lock, so nobody ever BLOCKS
-// on it. That is what matters, and the direction is INTO the holder rather than out of it: the
-// replace does go on to wait for this brief lock, but a lock with no waiters is never an in-edge
-// to its holder, and a node no edge enters cannot sit on a cycle. It also takes this lock as the
+// on it. The scope of that is the LOCK, not the backend holding it: no wait-for cycle can route
+// THROUGH the advisory lock, because no edge ever enters it. The replace's backend does acquire
+// in-edges once it holds this brief lock -- a waiting DeleteAsset is one -- so the no-deadlock
+// conclusion rests on the slot-lock claims here, not on that. It also takes this lock as the
 // opening statement of its transaction, so it holds no `campaigns` row lock while waiting here.
 // Nothing acquires a slot lock while holding this one, which is the direction that would close
 // the cycle.
 const lockBriefForAssetWriteQuery = `SELECT status FROM campaign_briefs
 	WHERE id = $1 AND project_id = $2 FOR UPDATE`
+
+// lockBriefRowByIDQuery takes the SAME row lock as lockBriefForAssetWriteQuery, keyed on the
+// brief id ALONE. It exists for ReplaceCampaign, and the difference is deliberate rather than a
+// shortcut. The two asset endpoints receive a project from the request path and must refuse a
+// brief owned by someone else, so project_id belongs in THEIR predicate as an authorization
+// check. ReplaceCampaign has already resolved and authorized its campaign by the time it gets
+// here; all it needs is the brief's row lock, and a row lock on `id` is the same lock whatever
+// else the WHERE clause tests.
+//
+// Carrying project_id across would be actively wrong here, because `campaigns` has a brief_id
+// foreign key on id ALONE (`brief_id UUID NOT NULL REFERENCES campaign_briefs(id)`, 000002) --
+// campaign_audiences, creative_assets and wizard_sessions were each upgraded to a composite
+// (brief_id, project_id) FK and `campaigns` never was. So the FK guarantees a match on id and
+// guarantees nothing about project_id, and a two-column predicate on a row whose columns
+// disagreed would match nothing, take NO lock and return NO error: the one hazard this statement
+// exists to remove, failing silently. On id alone the FK makes a miss mean the brief is genuinely
+// gone, which the caller scans for and refuses.
+const lockBriefRowByIDQuery = `SELECT status FROM campaign_briefs
+	WHERE id = $1 FOR UPDATE`
 
 // CreateAsset stores an uploaded image and returns it, or ErrNotFound when the parent brief is
 // absent, archived, or owned by another project. Idempotent on (brief_id, checksum).
@@ -560,7 +581,12 @@ func (r *CreativeAssetRepo) ListAssets(ctx context.Context, projectID, briefID s
 // already, on both of its arms and for two different reasons. Its CONFLICT arm finalizes the
 // claim's own row, which stays 'pending' until that transaction commits, so a concurrent delete
 // reads 'pending' and refuses on the first arm for the entire window the row is exposed; once it
-// commits, the snapshot is visible to the next delete. Its INSERT arm writes a new row, and
+// commits, the snapshot is visible to the next delete. That holds only so long as every caller
+// claims first, which is what makes the conflicting row the claim's own 'pending' one -- a future
+// caller reaching this arm over a SETTLED row would be ordered against nothing and would need
+// ReplaceCampaign's explicit lock. upsertCampaignQuery says the same thing about its created_by
+// column: it must stay safe for a caller that reaches it WITHOUT a claim in front of it, and this
+// exemption is exactly the part that would not. Its INSERT arm writes a new row, and
 // inserting brief_id fires the foreign key's FOR KEY SHARE on campaign_briefs, which this delete's
 // FOR UPDATE blocks -- the same mechanism the claim relies on, for free. ReplaceCampaign has
 // neither property: its UPDATE leaves brief_id untouched, fires no FK trigger and takes no lock,

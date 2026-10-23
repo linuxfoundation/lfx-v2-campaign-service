@@ -38,16 +38,34 @@ should not have written.
 can write a snapshot that ADDS a reference to an asset a concurrent `DeleteAsset` decided was
 unreferenced. Nothing ordered those two: the replace's UPDATE touches `campaigns`, the delete
 locks `campaign_briefs`, and the per-campaign advisory lock a caller may hold is keyed on the
-CAMPAIGN. `ReplaceCampaign` now takes `lockBriefForAssetWriteQuery` as the OPENING statement of
-its transaction — the same row lock `DeleteAsset` takes, so one waits for the other and the
+CAMPAIGN. `ReplaceCampaign` now takes `lockBriefRowByIDQuery` as the OPENING statement of
+its transaction — the same brief ROW lock `DeleteAsset` takes, so one waits for the other and the
 second's statement runs on a snapshot that sees the first.
+
+**Why that statement is keyed on `brief_id` alone, and scanned.** The asset endpoints' version of
+it tests `project_id` as well, because they take a project from the request path and must refuse a
+brief owned by someone else. Carrying that across would have been a silent bug rather than extra
+safety: `campaigns.brief_id` is a foreign key on `id` ALONE (000002) — `campaign_audiences`,
+`creative_assets` and `wizard_sessions` were each upgraded to a composite `(brief_id, project_id)`
+FK and `campaigns` never was — so a row whose `project_id` disagreed with its brief's would match
+no row, take NO lock and return NO error, leaving the replace exactly as unordered as before the
+statement existed. The live fixtures prove the disagreement is reachable: several seed a campaign
+with a `project_id` unrelated to its brief's. On `id` alone the FK makes a miss mean the brief is
+genuinely gone, and the result is scanned (`pgx.ErrNoRows` → `ErrNotFound`) rather than discarded —
+an unchecked `Exec` would be indistinguishable from no statement at all. **The general lesson: a
+lock statement whose result is not checked can fail to take the lock and say nothing, and widening
+its predicate "for safety" is exactly how that happens.**
 
 **The other writer, swept and left alone.** `config_snapshot` has exactly two writers:
 `ReplaceCampaign` and `UpsertCampaign`, the dispatch-result write. `UpsertCampaign` needs no
 change, and the reason is worth recording so nobody re-derives it. Its CONFLICT arm finalizes the
 claim's own row, which is `pending` until that transaction commits — so a concurrent delete reads
 `pending` and refuses on the new first arm, and once the upsert commits the snapshot is visible to
-the next delete. Its INSERT arm writes a new row, and inserting `brief_id` fires the foreign key's
+the next delete. That exemption is CONDITIONAL on every caller claiming first, which is what makes
+the conflicting row the claim's own `pending` one; `upsertCampaignQuery` explicitly wants to stay
+safe for a future caller that reaches it with no claim in front of it, and such a caller landing on
+a settled row would be ordered against nothing and would need `ReplaceCampaign`'s explicit lock.
+Its INSERT arm writes a new row, and inserting `brief_id` fires the foreign key's
 `FOR KEY SHARE` on `campaign_briefs`, which the delete's `FOR UPDATE` blocks — so that arm is
 already ordered against the delete, for free, by the FK. `ReplaceCampaign` has neither property:
 its UPDATE leaves `brief_id` untouched, so no FK trigger fires and no lock is taken. That is the
@@ -63,10 +81,11 @@ apart. The hazard is the method's, not any one caller's.
 `ReplaceCampaign` takes the per-slot lock and the brief lock in `AdoptCampaign`'s slot → brief
 order. It takes no slot lock at all. The only lock its caller may already hold is
 `ClaimCampaignVersion`'s, which is keyed on the CAMPAIGN, not the slot — and is taken with
-`pg_try_advisory_lock`, so nobody ever BLOCKS on it, for a documented pool reason. The useful
-direction is INTO the holder, not out of it — the holder does go on to wait for the brief lock —
-but a lock with no waiters is never an in-edge to its holder, and a node no edge enters cannot sit
-on a cycle. Independently, the brief lock is the opening statement of the replace's transaction, so it
+`pg_try_advisory_lock`, so nobody ever BLOCKS on it, for a documented pool reason. The scope of
+that is the LOCK, not the backend holding it: no wait-for cycle can route THROUGH the advisory
+lock, because no edge ever enters it. The holder does go on to wait for the brief lock, and it does
+acquire in-edges once it holds that lock — a waiting `DeleteAsset` is one — so the conclusion rests
+on the two claims that follow, not on the holder being edge-free. The brief lock is the opening statement of the replace's transaction, so it
 holds no `campaigns` row lock while waiting for it. Nothing anywhere acquires a slot lock while
 holding the brief's. The lesson is the smaller one: naming the wrong lock produces an argument that
 sounds rigorous and proves nothing, and two locks called "advisory" in the same file are exactly

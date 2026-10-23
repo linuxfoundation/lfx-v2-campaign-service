@@ -1331,14 +1331,29 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	// is therefore never blocked behind this replace. Second, the only lock a caller may already
 	// hold is ClaimCampaignVersion's per-campaign advisory lock, taken with pg_try_advisory_lock --
 	// so nobody ever BLOCKS on it. The direction that matters is INTO the holder, not out of it:
-	// this replace does go on to wait, right here, for the brief. But a lock with no waiters is
-	// never an in-edge to its holder, and a node no edge enters cannot sit on a cycle, whatever it
-	// waits for next. DeleteAsset takes the brief lock and nothing else.
+	// this replace does go on to wait, right here, for the brief. The scope of that claim is the
+	// LOCK, not the backend holding it: no wait-for cycle can route THROUGH the advisory lock,
+	// because no edge ever enters it. The backend does acquire in-edges once it holds the brief's
+	// FOR UPDATE -- a waiting DeleteAsset is exactly such an edge -- and the no-deadlock conclusion
+	// rests on the two claims above, not on this one. DeleteAsset takes the brief lock and nothing
+	// else.
 	//
-	// RowsAffected is deliberately not checked. A campaign row carries a brief_id foreign key, so
-	// the brief exists for any row this replace can target; treating a zero count as an error
-	// would turn an already-valid write into a failure for no reachable case.
-	if _, lerr := tx.Exec(ctx, lockBriefForAssetWriteQuery, c.BriefID, c.ProjectID); lerr != nil {
+	// IT IS KEYED ON brief_id ALONE, AND THE RESULT IS CHECKED. Both halves matter. The asset
+	// endpoints' version of this statement (lockBriefForAssetWriteQuery) also tests project_id,
+	// because they take a project from the request path and must refuse a brief owned by someone
+	// else; this call has already resolved and authorized its campaign, and a row lock on `id` is
+	// the same lock either way. Carrying project_id across would break it: `campaigns` has a
+	// brief_id foreign key on id ALONE (000002), never upgraded to the composite (brief_id,
+	// project_id) form its sibling tables got, so a row whose project_id disagreed with its
+	// brief's would match NO row, take NO lock and return NO error -- the one hazard this
+	// statement is here to remove, failing silently. On id alone the FK makes a miss mean the
+	// brief is genuinely gone, so the result is scanned and refused rather than discarded:
+	// an unchecked Exec here would be indistinguishable from the statement not existing.
+	var briefStatus string
+	if lerr := tx.QueryRow(ctx, lockBriefRowByIDQuery, c.BriefID).Scan(&briefStatus); lerr != nil {
+		if errors.Is(lerr, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
 		return nil, fmt.Errorf("replace campaign: lock brief: %w", lerr)
 	}
 
