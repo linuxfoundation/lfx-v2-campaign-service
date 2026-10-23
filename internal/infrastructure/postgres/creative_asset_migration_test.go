@@ -67,9 +67,11 @@ func TestMigration000047_IsExpandOnly(t *testing.T) {
 // where a mismatch lands two strings and a timestamp one slot out and surfaces as a scan type
 // error at runtime, not at compile time.
 //
-// The NULLIF on the insert is the other half. The model's zero pair means "unknown" and the
+// The insert's NULL conversion is the other half. The model's zero pair means "unknown" and the
 // column's spelling of that is NULL; a bare $n would write a literal 0, which 000047's CHECK
-// refuses outright — turning a legitimate dimensionless write into an insert failure.
+// refuses outright — turning a legitimate dimensionless write into an insert failure. It must
+// convert the two columns as a PAIR: per-column NULLIFs would store (1200, NULL) for a half-zero
+// model, a half-known shape that classifies against nothing and that 000047's CHECK refuses.
 func TestCreativeAssetColumnsCarryDimensions(t *testing.T) {
 	assert.Contains(t, creativeAssetCols, "COALESCE(width, 0)")
 	assert.Contains(t, creativeAssetCols, "COALESCE(height, 0)")
@@ -82,6 +84,32 @@ func TestCreativeAssetColumnsCarryDimensions(t *testing.T) {
 	// field is still the trailing column.
 	assert.True(t, strings.HasSuffix(creativeAssetColsWithBytes, ", bytes"))
 
-	assert.Contains(t, createCreativeAssetQuery, "NULLIF($6::int, 0), NULLIF($7::int, 0)",
+	// The pair conversion: both columns are decided by the SAME predicate over BOTH parameters,
+	// which is what makes (1200, 0) store (NULL, NULL) rather than a half-known (1200, NULL).
+	insert := normalizeWS(createCreativeAssetQuery)
+	assert.Contains(t, insert, "CASE WHEN $6::int > 0 AND $7::int > 0 THEN $6::int END",
 		"a zero dimension must be written as NULL, not as a literal 0 the CHECK refuses")
+	assert.Contains(t, insert, "CASE WHEN $6::int > 0 AND $7::int > 0 THEN $7::int END",
+		"height must be decided by the same pair predicate as width, not on its own")
+	assert.NotContains(t, insert, "NULLIF($6::int, 0)",
+		"per-column NULLIF decides each dimension alone and can persist a half-known pair")
+}
+
+// TestDimensionsCheckRejectsAHalfKnownPair pins the NOT NULLs in 000047's CHECK.
+//
+// They look redundant beside `width > 0 AND height > 0` and are not. A CHECK admits anything that
+// is not false, and for (1200, NULL) the positive arm without them evaluates to NULL — so Postgres
+// would ACCEPT exactly the half-known pair the constraint exists to refuse. This asserts on the
+// migration text because the constraint is the thing under test and a unit test has no database;
+// the behaviour itself is covered by dbtest's TestLiveDimensionsCheckRefusesAHalfKnownPair, which
+// inserts (1200, NULL) against a real Postgres and requires SQLSTATE 23514 on this constraint.
+func TestDimensionsCheckRejectsAHalfKnownPair(t *testing.T) {
+	up, err := fs.ReadFile(migrations.FS, "000047_creative_assets_dimensions.up.sql")
+	require.NoError(t, err)
+	// Comments are stripped first: the prose above the constraint discusses the very predicate
+	// being asserted, so matching the raw file could pass on the explanation alone.
+	stmts := normalizeWS(stripSQLComments(string(up)))
+
+	assert.Contains(t, stmts, "(width IS NULL AND height IS NULL) OR (width IS NOT NULL AND height IS NOT NULL AND width > 0 AND height > 0)",
+		"without the explicit NOT NULLs the positive arm evaluates to NULL for (1200, NULL), which a CHECK accepts")
 }

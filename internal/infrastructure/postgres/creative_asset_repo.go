@@ -132,11 +132,28 @@ const creativeAssetCols = `id::text, project_id::text, brief_id::text,
 // CreateAudience has one (that insert holds a (brief,platform) build lease whose row a lost ack
 // would strand).
 //
-// width/height go in through NULLIF(..., 0). The model's zero pair means "dimensions unknown"
-// (see model.CreativeAsset), and the column's meaning for that is NULL — writing a literal 0 would
-// both lie and be refused by 000047's CHECK (width > 0 AND height > 0). Every upload through
-// internal/service supplies a real pair, so the NULLIF is for a repository caller or a backfill
-// that legitimately has none.
+// width/height are converted to NULL as a PAIR, not column by column. The model's zero pair means
+// "dimensions unknown" (see model.CreativeAsset), and the column's meaning for that is NULL —
+// writing a literal 0 would both lie and be refused by 000047's CHECK.
+//
+// Two independent NULLIF(..., 0) calls would be the obvious spelling and would be wrong, because
+// they decide each column on its own: a caller holding (1200, 0) would store (1200, NULL), which
+// is a half-known shape — a width with no height classifies against nothing, and a reader that
+// tests only one column would then treat the row as having a known shape. The CASE pair makes the
+// two columns answer one question, so such a row stores (NULL, NULL): honestly unknown, and
+// classified as unclassified rather than as the wrong shape. 000047's CHECK refuses the half-known
+// pair outright, so this is the writer agreeing with the constraint rather than tripping it.
+//
+// The predicate is `> 0` rather than `<> 0`, so a NEGATIVE dimension is also stored as unknown
+// instead of reaching the CHECK. That is a deliberate widening of what the old NULLIF admitted:
+// a negative is not a shape, 000047 refuses it, and the only question is whether the caller
+// learns that as SQLSTATE 23514 — a 500 on an upload — or as an honestly unknown pair. No
+// reachable caller produces one (image.DecodeConfig cannot), so the choice only decides how a
+// repository caller or a backfill misbehaves, and storing unknown is the recoverable half: the
+// classifier reports the row as unclassified rather than the write failing outright.
+//
+// Every upload through internal/service supplies a real pair, so this is for a repository caller
+// or a backfill that legitimately has none.
 //
 // The ON CONFLICT arm deliberately does NOT fill in dimensions on a re-upload of an asset stored
 // before 000047. That would make the table insert-only EXCEPT for these two columns, contradicting
@@ -145,7 +162,10 @@ const creativeAssetCols = `id::text, project_id::text, brief_id::text,
 // 000047's comment.
 const createCreativeAssetQuery = `INSERT INTO creative_assets
 		(project_id, brief_id, mime_type, byte_size, checksum, width, height, bytes, created_by)
-		SELECT $1, $2, $3, $4, $5, NULLIF($6::int, 0), NULLIF($7::int, 0), $8, $9
+		SELECT $1, $2, $3, $4, $5,
+			CASE WHEN $6::int > 0 AND $7::int > 0 THEN $6::int END,
+			CASE WHEN $6::int > 0 AND $7::int > 0 THEN $7::int END,
+			$8, $9
 		WHERE EXISTS (
 			SELECT 1 FROM campaign_briefs
 			WHERE id = $2 AND project_id = $1 AND status <> 'archived'
@@ -172,6 +192,23 @@ const creativeAssetQuotaQuery = `SELECT count(*), COALESCE(sum(byte_size), 0),
 		COALESCE(bool_or(checksum = $2), false)
 	FROM creative_assets WHERE brief_id = $1`
 
+// lockBriefForAssetWriteQuery is the brief row lock every write to a brief's library takes first.
+// CreateAsset takes it to order itself against a concurrent ArchiveBrief; DeleteAsset takes it to
+// order itself against a concurrent dispatch claim (see deleteCreativeAssetQuery).
+//
+// FOR UPDATE is the strength that matters, because of what it conflicts with rather than what it
+// excludes here: claimCampaignDispatchQuery's INSERT takes FOR KEY SHARE on this same brief row as
+// its foreign-key check, and holds it until COMMIT. FOR UPDATE blocks FOR KEY SHARE, so a claim
+// that has already inserted forces the delete to wait for that claim to commit — which is exactly
+// the ordering the delete needs and cannot get from its own snapshot.
+//
+// Lock ORDER: a transaction holding this must not go on to take the per-slot advisory lock.
+// campaign_repo.go's AdoptCampaign fixes the order as slot -> brief for every transaction that
+// takes both, precisely because a claim holds the slot lock while waiting for the brief's.
+// Both callers here take this lock and nothing else, so neither can close that cycle.
+const lockBriefForAssetWriteQuery = `SELECT status FROM campaign_briefs
+	WHERE id = $1 AND project_id = $2 FOR UPDATE`
+
 // CreateAsset stores an uploaded image and returns it, or ErrNotFound when the parent brief is
 // absent, archived, or owned by another project. Idempotent on (brief_id, checksum).
 //
@@ -196,8 +233,7 @@ func (r *CreativeAssetRepo) CreateAsset(ctx context.Context, a *model.CreativeAs
 	// straddle a concurrent archival exactly as the unlocked insert did. Whichever transaction
 	// takes this lock first runs to completion before the other observes the row.
 	var status string
-	lockQ := `SELECT status FROM campaign_briefs WHERE id = $1 AND project_id = $2 FOR UPDATE`
-	if lerr := tx.QueryRow(ctx, lockQ, a.BriefID, a.ProjectID).Scan(&status); lerr != nil {
+	if lerr := tx.QueryRow(ctx, lockBriefForAssetWriteQuery, a.BriefID, a.ProjectID).Scan(&status); lerr != nil {
 		if errors.Is(lerr, pgx.ErrNoRows) {
 			// Absent, or owned by another project. Both are ErrNotFound for the same reason the
 			// insert's gate collapses them: telling them apart leaks whether a brief the caller
@@ -474,6 +510,16 @@ func (r *CreativeAssetRepo) ListAssets(ctx context.Context, projectID, briefID s
 // delete, claimCampaignDispatchQuery could insert a 'pending' campaign row and a dispatch could
 // begin reading the very bytes being removed.
 //
+// ONE SNAPSHOT IS NECESSARY AND NOT SUFFICIENT, and the difference is why DeleteAsset wraps this
+// in a transaction that locks the brief first. Under READ COMMITTED a statement's snapshot is
+// taken when the statement BEGINS, so this statement closes the gap between its own check and its
+// own delete but says nothing about a claim that commits after that instant: such a claim is
+// invisible to `referenced`, the delete proceeds, and the dispatcher then resolves a campaign
+// whose asset is gone — a failed dispatch rather than the clean 409 the caller should have had.
+// lockBriefForAssetWriteQuery is what orders the two, by conflicting with the FOR KEY SHARE the
+// claim's insert holds until commit; this statement then runs as the NEXT statement in that
+// transaction, with a fresh snapshot that sees any claim which won the race.
+//
 // The `referenced` arm has two halves and both are exact.
 //
 //   - A NULL config_snapshot. claimCampaignDispatchQuery (campaign_repo.go) inserts the claim row
@@ -484,6 +530,15 @@ func (r *CreativeAssetRepo) ListAssets(ctx context.Context, projectID, briefID s
 //   - The id appearing in the snapshot's text. config_snapshot is persisted UNENCRYPTED and its
 //     sanitization strips URL query/fragment and credentials but keeps imageAssetId VERBATIM
 //     (reddit_asset.go, linkedin.go), so a stored asset reference survives into it as its id.
+//
+// A TEXT SEARCH RATHER THAN A JSON PATH, and the trade is accepted rather than overlooked. The
+// snapshot carries an asset id under a different key per platform (redditConfig.imageAssetId,
+// twitterConfig.imageAssetId, and so on), so one substring test covers every platform in one
+// place where a structured check would need a path per platform and would silently stop matching
+// the day a platform adds a sixth. The failure mode decides it: a coincidental match refuses a
+// delete that would have been safe (a 409 the operator can act on), while a missed match deletes
+// bytes a live campaign still points at. Only one of those is recoverable, so the fuzzier test is
+// the safe one here. Revisit if config_snapshot's shape is ever restructured.
 //
 // Two forms are matched, lower-cased on both sides: the hyphenated form and the 32-character
 // dashless form. That is exhaustive over the four shapes uuid.Parse accepts, because the
@@ -532,10 +587,39 @@ const deleteCreativeAssetQuery = `WITH target AS (
 // DeleteAsset permanently removes a stored asset, or returns ErrNotFound when no such asset
 // exists for that brief, or ErrCreativeAssetInUse when a live campaign on the brief could still
 // reference it.
+//
+// It locks the parent brief and then runs the delete as a SECOND statement on that transaction.
+// Both halves are load-bearing: the lock orders this against a dispatch claim that is mid-flight,
+// and the second statement is what gives the reference check a snapshot taken AFTER the lock was
+// granted. Running the delete as the locking statement itself would leave it on the snapshot the
+// transaction already had and reintroduce exactly the race the lock was taken to close.
 func (r *CreativeAssetRepo) DeleteAsset(ctx context.Context, projectID, briefID, assetID string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("delete creative asset: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Exec rather than QueryRow, unlike CreateAsset and the sibling repositories' brief locks:
+	// this caller wants the LOCK and not the projection. The delete statement below re-reads the
+	// brief under that lock and owns the archived-brief rule (its `target` CTE requires
+	// status <> 'archived'), so interpreting the status here would duplicate that rule in a second
+	// place, free to drift from it. A row count of zero means the brief is absent or another
+	// tenant's — ErrNotFound, as every other access to a brief's children returns.
+	tag, lerr := tx.Exec(ctx, lockBriefForAssetWriteQuery, briefID, projectID)
+	if lerr != nil {
+		return fmt.Errorf("delete creative asset: lock brief: %w", lerr)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+
 	var found, deleted bool
-	if err := r.db.QueryRow(ctx, deleteCreativeAssetQuery, assetID, projectID, briefID).Scan(&found, &deleted); err != nil {
+	if err := tx.QueryRow(ctx, deleteCreativeAssetQuery, assetID, projectID, briefID).Scan(&found, &deleted); err != nil {
 		return fmt.Errorf("delete creative asset: %w", err)
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return fmt.Errorf("delete creative asset: commit: %w", cerr)
 	}
 	switch {
 	case !found:

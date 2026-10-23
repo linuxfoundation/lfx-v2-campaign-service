@@ -48,11 +48,19 @@ ALTER TABLE creative_assets
 
 -- Dimensions are a property of the stored image, so -- exactly like byte_size's
 -- CHECK (byte_size = octet_length(bytes)) -- the table, not only the writer, enforces that what is
--- recorded could describe a real one. The CHECK is written so NULL passes: in SQL,
--- NULL > 0 is NULL, not false, and a CHECK admits anything that is not false, so the pre-release
--- rows this column is nullable FOR are unaffected. What it refuses is a row that claims a
--- dimension of zero or a negative one, and a row that records one dimension without the other --
--- a half-known shape is not classifiable and nothing should be able to persist it.
+-- recorded could describe a real one. What it refuses is a row that claims a dimension of zero or
+-- a negative one, and a row that records one dimension without the other -- a half-known shape is
+-- not classifiable and nothing should be able to persist it.
+--
+-- THE SECOND ARM SPELLS OUT ITS NOT NULLs, and they are load-bearing rather than redundant with
+-- `> 0`. A CHECK admits anything that is not false, and in SQL an unknown operand poisons the
+-- whole expression: for (1200, NULL) the first arm is plainly false, while the second evaluates
+-- `1200 > 0 AND NULL > 0` to NULL, so the constraint's result is `false OR NULL` = NULL and
+-- Postgres ACCEPTS the row. Writing it as `width > 0 AND height > 0` alone would therefore make
+-- the half-known pair this constraint exists to refuse the one case that slips through. With the
+-- NOT NULLs in front, that same row evaluates the second arm to false and is rejected, while
+-- (NULL, NULL) still satisfies the first arm untouched -- which is what keeps the column nullable
+-- for the pre-release rows it is nullable FOR.
 --
 -- A CHECK is a narrowing, so it owes the same N-1 argument 000029 made, and it is simpler here:
 -- an N-1 INSERT names neither column, so both land NULL and satisfy the first arm. No existing row
@@ -69,5 +77,5 @@ ALTER TABLE creative_assets
     ADD CONSTRAINT creative_assets_dimensions_positive
     CHECK (
         (width IS NULL AND height IS NULL)
-        OR (width > 0 AND height > 0)
+        OR (width IS NOT NULL AND height IS NOT NULL AND width > 0 AND height > 0)
     );

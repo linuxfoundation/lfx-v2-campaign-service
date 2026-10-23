@@ -444,10 +444,16 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   no correct default would make that insert fail. So `NULL` MEANS "stored before the service
   recorded dimensions" and readers must treat it as UNKNOWN, not as zero — a classifier that
   coerced `NULL` to `0` would report every pre-existing asset as failing every slot's minimum.
-  `CHECK ((width IS NULL AND height IS NULL) OR (width > 0 AND height > 0))` enforces the pair
-  at the table, the way `byte_size`'s equality CHECK does: `NULL > 0` is `NULL` and a CHECK
-  admits anything not false, so pre-release rows pass, while zero, negative, and half-known
-  shapes are refused. The CHECK is a NARROWING and owes `000029`'s N-1 argument, which is
+  `CHECK ((width IS NULL AND height IS NULL) OR (width IS NOT NULL AND height IS NOT NULL AND
+  width > 0 AND height > 0))` enforces the pair at the table, the way `byte_size`'s equality
+  CHECK does. **The second arm's `IS NOT NULL`s are load-bearing, not redundant with `> 0`.** A
+  CHECK admits anything that is not false, and an unknown operand poisons the comparison: for
+  `(1200, NULL)` the arm `width > 0 AND height > 0` evaluates to `NULL`, so the constraint's
+  result is `false OR NULL` = `NULL` and Postgres ACCEPTS the row — the half-known shape the
+  constraint exists to refuse would be the one case that slips through. With the `IS NOT NULL`s
+  in front, that row evaluates the second arm to false and is rejected, while `(NULL, NULL)`
+  still satisfies the first arm, which is what keeps the columns nullable for the pre-release
+  rows they are nullable FOR. The CHECK is a NARROWING and owes `000029`'s N-1 argument, which is
   trivial here — an N-1 INSERT lands `(NULL, NULL)` and every existing row is already
   `(NULL, NULL)` — so it is a plain CHECK rather than `NOT VALID` + `VALIDATE`, for `000029`'s
   reason. **The backfill is deliberately a SEPARATE step**: the values must come from the same
@@ -456,7 +462,11 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   indexing note already covers list-by-brief via `UNIQUE (brief_id, checksum)`, and neither
   dimension is ever a search predicate: a slot rule is a ratio with a tolerance plus two
   minimums, decided in Go over assets already loaded. Pinned by
-  `TestMigration000047_IsExpandOnly`.
+  `TestMigration000047_IsExpandOnly` for the expand-only DDL,
+  `TestDimensionsCheckRejectsAHalfKnownPair` for the `IS NOT NULL`s in the migration text, and
+  `TestLiveDimensionsCheckRefusesAHalfKnownPair` (under `dbtest/`) for the behaviour itself —
+  `(1200, NULL)`, `(NULL, 628)`, `(1200, 0)` and `(1200, -628)` each raising SQLSTATE `23514` on
+  `creative_assets_dimensions_positive`, with `(NULL, NULL)` and `(1200, 628)` accepted.
 
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
 
@@ -2076,14 +2086,28 @@ transaction. Seven things are doing work here and each has a failure mode if cha
   limits that silently disagree.
 - **`width`/`height` cross the NULL↔zero boundary in BOTH directions, once per direction.** The
   model's pair is `int`, where zero means UNKNOWN; the column's spelling of unknown is `NULL`
-  (`000047`). So the insert binds `NULLIF($6::int, 0), NULLIF($7::int, 0)` — a bare `$n` would
-  write a literal `0`, which `000047`'s CHECK refuses outright, turning a legitimate
-  dimensionless write into an insert failure — and `creativeAssetCols` reads back
+  (`000047`). So the insert binds each column through the SAME predicate over BOTH parameters —
+  `CASE WHEN $6::int > 0 AND $7::int > 0 THEN $6::int END` and the matching one for `$7` — a
+  bare `$n` would write a literal `0`, which `000047`'s CHECK refuses outright, turning a
+  legitimate dimensionless write into an insert failure. **Two independent `NULLIF(..., 0)`
+  calls are the obvious spelling and are wrong**: they decide each column alone, so a caller
+  holding `(1200, 0)` would attempt `(1200, NULL)` — a half-known shape that classifies against
+  nothing and that `000047`'s CHECK refuses, so the insert fails with SQLSTATE `23514` instead
+  of storing an honest unknown. The pair predicate makes such a row store `(NULL, NULL)`. Its
+  `> 0` also widens what the old `NULLIF` admitted: a NEGATIVE dimension is stored as unknown
+  rather than reaching the CHECK. No reachable caller produces one (`image.DecodeConfig`
+  cannot), so that choice only decides how a repository caller or a backfill misbehaves, and
+  an unclassified row is the recoverable half of `23514` on the write.
+  `creativeAssetCols` reads back
   `COALESCE(width, 0), COALESCE(height, 0)`, so both scanners can bind plain `int` fields
   rather than `*int`. The columns sit between `checksum` and `created_by` in `creativeAssetCols`
   and the scanners bind POSITIONALLY, so a column added anywhere but the matching scanner slot
   assigns the wrong value to the wrong field. `TestCreativeAssetColumnsCarryDimensions` pins
-  both the `NULLIF` and the ordering. The `ON CONFLICT` arm deliberately does NOT backfill
+  both the pair predicate and the ordering in the source text; `dbtest`'s
+  `TestLiveCreateAssetConvertsAHalfKnownPairToUnknown` pins the conversion itself against a real
+  database, reading the raw columns rather than the `COALESCE`d ones — through the repository a
+  stored `0` and a stored `NULL` are indistinguishable, so only a column-level read can show
+  that `(1200, 0)` landed as two NULLs. The `ON CONFLICT` arm deliberately does NOT backfill
   dimensions on a re-upload: that would contradict the stated insert-only immutability and
   would backfill only the arbitrary subset of rows somebody happened to re-send.
 - **The returned column set OMITS `bytes`.** `creativeAssetCols` (used by the write and the
@@ -2121,6 +2145,15 @@ That test is IN-PACKAGE (`package postgres`, alongside `audience_reconcile_live_
 rather than under `dbtest/`, because `NewCreativeAssetRepo` needs the instrumented `*Pool`
 wrapper that `dbtest.Pool` does not expose; it follows the same `TEST_DATABASE_URL`-gated
 skip/fail-on-CI convention and the same `UniqueID` discipline as the rest of the live suite.
+
+`dbtest/creative_asset_live_test.go` carries the four properties that need a database AND a
+second connection — concurrency and constraint behaviour the in-package live tests cannot
+reach, because `dbtest` is where a test can hold an uncommitted transaction on one connection
+while a call under test runs on another and `waitForBackendsBlockedBy` proves it is parked:
+`TestLiveDeleteAssetWaitsForAnInFlightDispatchClaim` (the brief lock),
+`TestLiveDeleteAssetSucceedsOnceTheClaimIsDeleted` (the contrast that keeps it honest),
+`TestLiveDimensionsCheckRefusesAHalfKnownPair` and
+`TestLiveCreateAssetConvertsAHalfKnownPairToUnknown`.
 
 ### The per-brief quota, and the three read/delete methods (LFXV2-2665)
 
@@ -2162,11 +2195,35 @@ COMMITTED to disagree with the list printed beside it.
 `TestCreativeAssetRepo_ListAssets_SeparatesAnEmptyLibraryFromAnInvisibleBrief` is the pair that
 justifies the join shape.
 
-`DeleteAsset` is a HARD delete — the row is removed, not status-flipped — and it is one statement
-of three CTEs (`target`, `referenced`, `removed`) returning `found`/`deleted`. One round trip,
-one snapshot: `!found` → `ErrNotFound`, `found && !deleted` → `ErrCreativeAssetInUse`, otherwise
-nil. The reference check must live in the same statement as the delete, because the window
-between a separate check and the delete is exactly when a dispatch claim can appear.
+`DeleteAsset` is a HARD delete — the row is removed, not status-flipped — and the delete itself
+is one statement of three CTEs (`target`, `referenced`, `removed`) returning `found`/`deleted`:
+`!found` → `ErrNotFound`, `found && !deleted` → `ErrCreativeAssetInUse`, otherwise nil. The
+reference check must live in the same statement as the delete, because the window between a
+separate check and the delete is exactly when a dispatch claim can appear.
+
+**One snapshot is necessary and NOT sufficient**, so that statement runs inside a transaction
+that takes `lockBriefForAssetWriteQuery` on the parent brief FIRST. Under READ COMMITTED a
+statement's snapshot is taken when the STATEMENT begins, so the three-CTE statement closes the
+gap between its own check and its own delete and says nothing about a claim committing a moment
+later: that claim is invisible to `referenced`, the delete proceeds, and the dispatcher then
+resolves a campaign whose asset is gone — a failed dispatch instead of the clean 409 the caller
+should have had. Two halves fix it, and both are load-bearing:
+
+- **The lock.** `claimCampaignDispatchQuery`'s INSERT takes `FOR KEY SHARE` on the same brief row
+  as its foreign-key check and holds it to COMMIT. `FOR UPDATE` conflicts with `FOR KEY SHARE`,
+  so a claim that has already inserted forces the delete to WAIT for it — the ordering the
+  delete cannot get from its own snapshot.
+- **The delete as the NEXT statement.** Running it as the locking statement itself would leave
+  it on the snapshot the transaction already had and reintroduce the very race the lock closes.
+
+Lock ORDER is slot → brief for every transaction taking both (`AdoptCampaign`), because a claim
+holds the slot lock while waiting for the brief's. `CreateAsset` and `DeleteAsset` take the brief
+lock and nothing else, so neither can close that cycle.
+`TestLiveDeleteAssetWaitsForAnInFlightDispatchClaim` holds an uncommitted claim insert on a
+second connection, proves `DeleteAsset` is BLOCKED on that backend rather than merely slow, then
+commits the claim and requires `ErrCreativeAssetInUse` with the asset still present;
+`TestLiveDeleteAssetSucceedsOnceTheClaimIsDeleted` is its contrast, so a change that simply made
+`DeleteAsset` always refuse could not pass the pair.
 
 It refuses while the brief holds any campaign with `status <> 'deleted'` whose `config_snapshot`
 either names the asset id or **is NULL**. Three details:

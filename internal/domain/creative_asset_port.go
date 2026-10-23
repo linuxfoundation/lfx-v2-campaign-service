@@ -134,9 +134,16 @@ type CreativeAssetRepository interface {
 	// claim inserts its 'pending' campaign row before the dispatcher reads any asset, so that is
 	// precisely the window in which a referencing snapshot does not exist yet.
 	//
-	// The found-but-refused and not-found outcomes are decided in ONE statement against ONE
-	// snapshot. Checking references in a separate round trip would leave a window in which a
-	// dispatch claims a campaign between the check and the delete.
+	// The found-but-refused and not-found outcomes are decided against ONE snapshot: checking
+	// references in a separate round trip would leave a window in which a dispatch claims a
+	// campaign between the check and the delete. That is necessary and not sufficient, and the
+	// rest is an obligation on the IMPLEMENTATION rather than a detail of one: a snapshot taken
+	// before an in-flight claim commits cannot see it either, so an implementation must also
+	// ORDER itself against such a claim — the postgres repo does it by locking the parent brief
+	// first, since the claim's insert holds a conflicting row lock on that brief until it
+	// commits. Without that, a delete can win the race and leave a dispatch resolving a campaign
+	// whose asset is gone, instead of returning the ErrCreativeAssetInUse the caller should have
+	// had.
 	//
 	// Same malformed-id obligation as GetAsset: the CALLER validates assetID and briefID.
 	DeleteAsset(ctx context.Context, projectID, briefID, assetID string) error
