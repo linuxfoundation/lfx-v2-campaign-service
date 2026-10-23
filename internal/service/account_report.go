@@ -141,6 +141,16 @@ func (o *Orchestrator) ReadReportedAccountCampaigns(ctx context.Context, project
 		// has no store wired. Unclassified, so it reaches the caller as the retryable 503.
 		return nil, fmt.Errorf("%s account monitor: saved-report store is not configured", platform)
 	}
+	// The project's scope, before the store or the platform is touched — see
+	// ReadAccountCampaignMetrics, which gates the live read the same way. An empty scope reads
+	// nothing: no saved report, no list, no submission.
+	scopeIDs, scoped, scopeErr := o.scopeAccountMonitor(ctx, projectID, platform, accountID)
+	if scopeErr != nil {
+		return nil, scopeErr
+	}
+	if scoped && len(scopeIDs) == 0 {
+		return &model.ReportedAccountRead{Rows: []model.AccountCampaignMetrics{}}, nil
+	}
 
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
@@ -178,6 +188,12 @@ func (o *Orchestrator) ReadReportedAccountCampaigns(ctx context.Context, project
 	}
 
 	read := mergeAccountReport(campaigns, snap)
+	// Only the response is scoped: the saved report keeps the account-wide rows, keyed by
+	// project/platform/account/days as before. The report's own metadata (as-of, window,
+	// pending) describes the read and is kept unchanged.
+	if scoped {
+		read.Rows = filterMonitorRows(read.Rows, scopeIDs)
+	}
 	// Last, and on what is left of the shared budget, capped at accountCurrencyReadTimeout: the
 	// currency is a label for the amounts, never a reason to fail or to starve the report steps
 	// above, which keep the metrics fresh.

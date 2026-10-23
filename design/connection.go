@@ -229,17 +229,34 @@ var ConflictError = Type("conflict-error", func() {
 })
 
 // AccountMonitorConflictError is the 409 body of monitor-twitter-ads-account, the one endpoint
-// that refuses an account as it stands. It has its OWN type rather than reusing ConflictError
+// that refuses an account as it stands (and, like the other shared-tenancy monitors, a project
+// scope that does not fit the account). It has its OWN type rather than reusing ConflictError
 // because ConflictError's published example is a connection collision (`already_exists`, "A
 // connection for this provider already exists") — reusing it advertised, in the generated
 // contract, a response this method can never return. Here the example is one of the method's
-// two real refusals, and `reason` is REQUIRED with exactly those two values: every 409 this
-// method answers sets one, so a client never has to fall back to the message.
+// real refusals, and `reason` is REQUIRED with exactly those values: every 409 this method
+// answers sets one, so a client never has to fall back to the message.
 var AccountMonitorConflictError = Type("account-monitor-conflict-error", func() {
-	errorAttrs("409", "the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads)")
-	Attribute("reason", String, "Why the account cannot be monitored as it stands: account_too_many_active_campaigns (more campaigns active in the window than one report covers) or account_timezone_unsupported (the account's timezone does not start its days on a whole UTC hour).", func() {
-		Enum("account_too_many_active_campaigns", "account_timezone_unsupported")
+	errorAttrs("409", "the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads, counted across every project on the shared account)")
+	Attribute("reason", String, "Why the account cannot be monitored as it stands: account_too_many_active_campaigns (more campaigns active in the window than one report covers, counted across every project on the shared account, not only this project's campaigns), account_timezone_unsupported (the account's timezone does not start its days on a whole UTC hour), campaign_account_mismatch (a campaign recorded for this project was created under a different account, or does not record which) or campaign_scope_invalid (a campaign recorded for this project has an id the platform cannot read).", func() {
+		Enum("account_too_many_active_campaigns", "account_timezone_unsupported", "campaign_account_mismatch", "campaign_scope_invalid")
 		Example("account_too_many_active_campaigns")
+	})
+	Required("reason")
+})
+
+// AccountMonitorScopeConflictError is the 409 body of monitor-google-ads-account,
+// monitor-meta-ads-account and monitor-reddit-ads-account: the project's recorded campaigns do not
+// all fit the monitored account. It has its own type for the reason AccountMonitorConflictError
+// does — ConflictError's published example is a connection collision these methods can never
+// return — and is not AccountMonitorConflictError itself, whose example and two of whose reasons
+// are X's account-state refusals, which these three never answer. `reason` is REQUIRED with
+// exactly the values these methods emit: classifyMonitorError sets one on every 409 they return.
+var AccountMonitorScopeConflictError = Type("account-monitor-scope-conflict-error", func() {
+	errorAttrs("409", "some of this project's campaigns were created under a different ad account than the one being monitored — monitor the account that owns them, or re-dispatch or reconcile those campaigns onto this one, to monitor this account")
+	Attribute("reason", String, "Why the project's recorded campaigns cannot be read under the monitored account: campaign_account_mismatch (a campaign recorded for this project was created under a different account, or does not record which) or campaign_scope_invalid (a campaign recorded for this project has an id the platform cannot read).", func() {
+		Enum("campaign_account_mismatch", "campaign_scope_invalid")
+		Example("campaign_account_mismatch")
 	})
 	Required("reason")
 })
@@ -1245,21 +1262,21 @@ var AccountMonitorActionItem = Type("account-monitor-action-item", func() {
 	})
 })
 
-// AccountMonitorTotals is the account-wide aggregate reported next to the per-campaign rows —
+// AccountMonitorTotals is the aggregate reported next to the per-campaign rows —
 // see model.AccountMonitorTotals. Always the sum of the campaigns array in the same response,
 // on every platform, so the aggregate and the list can never describe different populations.
 var AccountMonitorTotals = Type("account-monitor-totals", func() {
-	Attribute("spend", Float64, "Account-wide spend over the window.", func() { Example(6090.0) })
-	Attribute("impressions", Int64, "Account-wide impressions over the window.", func() { Example(184200) })
-	Attribute("clicks", Int64, "Account-wide clicks over the window.", func() { Example(11420) })
+	Attribute("spend", Float64, "Spend over the window, summed over the returned campaigns.", func() { Example(6090.0) })
+	Attribute("impressions", Int64, "Impressions over the window, summed over the returned campaigns.", func() { Example(184200) })
+	Attribute("clicks", Int64, "Clicks over the window, summed over the returned campaigns.", func() { Example(11420) })
 	// Not required, for the same reason the per-campaign conversions attribute is not: absent
 	// is the honest answer when no row in the sum measured conversions, and a 0 there would be
 	// the aggregate restating a measurement none of the rows made.
-	Attribute("conversions", Float64, "Account-wide conversions over the window, summed over the campaigns that reported a conversion measurement. ABSENT when none of them did — not a measured 0.", func() { Example(212.5) })
+	Attribute("conversions", Float64, "Conversions over the window, summed over the returned campaigns that reported a conversion measurement. ABSENT when none of them did — not a measured 0.", func() { Example(212.5) })
 	Attribute("campaign_count", Int, "How many campaigns the totals reflect: the length of the campaigns array these totals sum.", func() { Example(2) })
 	// Required and never omitted: 0 is a statement ("every row was read"), not an absence. A
-	// count rather than a boolean so a renderer can say how much of the account is missing.
-	Attribute("unmeasured_campaigns", Int, "How many of the campaign_count campaigns have fetch_failed=true. The totals include those rows at what they carry — zero for a row whose metrics could not be read — so a non-zero value means the totals may UNDERSTATE the account, by up to this many campaigns' delivery. An upper bound rather than an exact count of rows missing from the sum: fetch_failed also marks a row whose budget or flight alone was unreadable while its metrics were read and summed. pacing_unknown=true alone does not count a row (every fetch_failed row also has it, but most pacing_unknown rows were read in full). 0 means every campaign in the sum was fully read.", func() {
+	// count rather than a boolean so a renderer can say how much of the sum is missing.
+	Attribute("unmeasured_campaigns", Int, "How many of the campaign_count campaigns have fetch_failed=true. The totals include those rows at what they carry — zero for a row whose metrics could not be read — so a non-zero value means the totals may UNDERSTATE the returned campaigns, by up to this many campaigns' delivery. An upper bound rather than an exact count of rows missing from the sum: fetch_failed also marks a row whose budget or flight alone was unreadable while its metrics were read and summed. pacing_unknown=true alone does not count a row (every fetch_failed row also has it, but most pacing_unknown rows were read in full). 0 means every campaign in the sum was fully read.", func() {
 		Minimum(0)
 		// 0, not a non-zero count: no campaign row in any monitor method's example
 		// (design/account_monitor_examples.go) has fetch_failed=true, so any other value here
@@ -1289,10 +1306,10 @@ var AccountMonitor = Type("account-monitor", func() {
 	// No example on campaigns or action_items (nor on the type, below): rows and findings differ
 	// per platform, so each monitor method publishes its own whole-response example — see
 	// design/account_monitor_examples.go.
-	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "Every campaign visible on the account, with the rule engine's per-row pacing output attached.", func() {
+	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only those this service recorded for the project, on LinkedIn and Microsoft Ads every campaign visible on the account — with the rule engine's per-row pacing output attached.", func() {
 		Meta("openapi:example", "false")
 	})
-	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "The rule engine's findings across the account's campaigns.", func() {
+	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "The rule engine's findings across the returned campaigns.", func() {
 		Meta("openapi:example", "false")
 	})
 	Attribute("totals", AccountMonitorTotals)
@@ -2546,7 +2563,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
-	// Account-scoped monitor reads. Four separate methods rather than a union, for the same
+	// Account monitor reads. Separate methods rather than a union, for the same
 	// reason the list-*-accounts methods above are separate: Goa cannot express a
 	// per-platform result union, and the house convention is one method per platform sharing
 	// one result type (AccountMonitor). Every ad platform gets one here, Reddit included — it
@@ -2555,20 +2572,31 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	//
 	// account_id is supplied by the caller rather than resolved from the stored connection:
 	// this ports the BFF's account-scoped monitor endpoints, which read a raw ad account
-	// (everything the credential reaches), not this service's own persisted Campaign rows —
-	// same scoping rule as list-*-accounts above. days is a plain bounded integer, NOT
-	// model.MetricsWindow: MetricsWindow is a closed 7-value enum that cannot express an
-	// arbitrary day count, and the BFF's own date-range math computes an explicit range from
-	// an integer days directly.
+	// (everything the credential reaches). On the four platforms whose single ad account is
+	// shared by every foundation — Google Ads, Meta, Reddit and X (docs/architecture.md,
+	// "Account Tenancy") — the response is then reduced to the campaigns this service recorded
+	// for {project_id}, and a live recorded campaign whose recorded account is not account_id is
+	// a 409 (lfx-self-serve-ops#897). LinkedIn and Microsoft stay account-scoped.
+	//
+	// days is a plain bounded integer, NOT model.MetricsWindow: MetricsWindow is a closed
+	// 7-value enum that cannot express an arbitrary day count, and the BFF's own date-range
+	// math computes an explicit range from an integer days directly.
 	Method("monitor-google-ads-account", func() {
-		Description("Read every campaign visible on a Google Ads account, live from the platform, with " +
-			"pacing and action items derived by this service's ported rule engine. Account-scoped, not " +
-			"project-scoped: {project_id} resolves which stored connection credential to use, and the " +
-			"read enumerates everything that credential reaches on account_id, not only campaigns this " +
-			"service created. Unlike GET .../connection-google-ads/accounts, this endpoint resolves the " +
-			"project's OWN connection only and does not fall back to the shared LF system credential: a " +
-			"project with no Google Ads connection of its own gets a 404, not the LF account's data. A " +
-			"pure read: nothing is persisted.")
+		Description("Read this project's own campaigns on a Google Ads account, live from the platform, with " +
+			"pacing and action items derived by this service's ported rule engine. " +
+			"Project-scoped: only campaigns this service recorded for the project are returned; the " +
+			"upstream account is shared across foundations, so the account read is filtered to them before " +
+			"rules and totals. A project with no campaigns recorded on the platform gets an empty monitor " +
+			"without any upstream call. A recorded campaign created under a different account than " +
+			"account_id, or recording none, fails the read with 409 rather than returning a partial picture. " +
+			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
+			"upstream campaign, unless it does not record account_id as the customer it was created under " +
+			"or another project has since taken it over; such a campaign is omitted, never a 409. " +
+			"{project_id} also resolves which stored connection credential reads account_id. Unlike " +
+			"GET .../connection-google-ads/accounts, this endpoint resolves the project's OWN connection " +
+			"only and does not fall back to the shared LF system credential: a project with campaigns " +
+			"but no Google Ads connection of its own gets a 404, not the LF account's data. A pure read: " +
+			"nothing is persisted.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -2586,6 +2614,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
+		Error("Conflict", AccountMonitorScopeConflictError, "A campaign recorded for this project does not fit the monitored account: created under a different customer than account_id, or recording none (see reason)")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -2597,6 +2626,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Param("days")
 			Response(StatusOK, accountMonitorExampleBody(googleAccountMonitorBody, googleAccountMonitorExample()))
 			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
@@ -2605,7 +2635,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	Method("monitor-linkedin-ads-account", func() {
 		Description("Read every campaign visible on a LinkedIn Ads account, live from the platform, with " +
 			"pacing and action items derived by this service's ported rule engine. Account-scoped, not " +
-			"project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is " +
+			"project-scoped: {project_id} resolves which stored connection credential to use, and the " +
+			"read enumerates everything that credential reaches on account_id. A pure read: nothing is " +
 			"persisted.")
 		Payload(func() {
 			bearerToken()
@@ -2641,10 +2672,18 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	})
 
 	Method("monitor-meta-ads-account", func() {
-		Description("Read every campaign visible on a Meta Ads account, live from the platform, with " +
-			"pacing and action items derived by this service's ported rule engine. Account-scoped, not " +
-			"project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is " +
-			"persisted.")
+		Description("Read this project's own campaigns on a Meta Ads account, live from the platform, with " +
+			"pacing and action items derived by this service's ported rule engine. " +
+			"Project-scoped: only campaigns this service recorded for the project are returned; the " +
+			"upstream account is shared across foundations, so the account read is filtered to them before " +
+			"rules and totals. A project with no campaigns recorded on the platform gets an empty monitor " +
+			"without any upstream call. A recorded campaign created under a different account than " +
+			"account_id fails the read with 409 rather than returning a partial picture. " +
+			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
+			"upstream campaign, unless it was recorded under a different account than account_id, its " +
+			"stored id is not one the platform can read, or another project has since taken it over; " +
+			"such a campaign is omitted, never a 409. " +
+			"A pure read: nothing is persisted.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -2662,6 +2701,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
+		Error("Conflict", AccountMonitorScopeConflictError, "A campaign recorded for this project does not fit the monitored account: created under a different account, or carrying an id the platform cannot read (see reason)")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -2673,15 +2713,25 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Param("days")
 			Response(StatusOK, accountMonitorExampleBody(metaAccountMonitorBody, metaAccountMonitorExample()))
 			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
 	})
 
 	Method("monitor-reddit-ads-account", func() {
-		Description("Read every campaign visible on a Reddit Ads account, live from the platform, with " +
-			"pacing and action items derived by this service's ported rule engine. Account-scoped, not " +
-			"project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.")
+		Description("Read this project's own campaigns on a Reddit Ads account, live from the platform, with " +
+			"pacing and action items derived by this service's ported rule engine. " +
+			"Project-scoped: only campaigns this service recorded for the project are returned; the " +
+			"upstream account is shared across foundations, so the account read is filtered to them before " +
+			"rules and totals. A project with no campaigns recorded on the platform gets an empty monitor " +
+			"without any upstream call. A recorded campaign created under a different account than " +
+			"account_id fails the read with 409 rather than returning a partial picture. " +
+			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
+			"upstream campaign, unless it does not record account_id as the account it was created " +
+			"under, its stored id is not one the platform can read, or another project has since taken " +
+			"it over; such a campaign is omitted, never a 409. " +
+			"A pure read: nothing is persisted.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -2699,6 +2749,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
+		Error("Conflict", AccountMonitorScopeConflictError, "A campaign recorded for this project does not fit the monitored account: created under a different account, recording none, or carrying an id the platform cannot read (see reason)")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -2710,6 +2761,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Param("days")
 			Response(StatusOK, accountMonitorExampleBody(redditAccountMonitorBody, redditAccountMonitorExample()))
 			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
@@ -2717,8 +2769,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 
 	Method("monitor-microsoft-ads-account", func() {
 		Description("Read every live campaign on a Microsoft Advertising account with pacing and action " +
-			"items derived by this service's rule engine. Account-scoped, not project-scoped, the same way " +
-			"monitor-google-ads-account is, and resolved from the project's OWN connection only. The " +
+			"items derived by this service's rule engine. Account-scoped, not project-scoped: the read " +
+			"enumerates everything the project's OWN connection reaches on account_id. The " +
 			"campaign list (names, statuses, daily budgets) is read live; delivery metrics come from " +
 			"Microsoft's asynchronous Reporting service, which takes minutes to build a report, so they are " +
 			"served from the last report that finished — see metrics_as_of and metrics_pending — while the " +
@@ -2762,17 +2814,30 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 	Method("monitor-twitter-ads-account", func() {
-		Description("Read every live campaign on an X (Twitter) Ads account with pacing and action items " +
-			"derived by this service's rule engine. Account-scoped, not project-scoped, the same way " +
-			"monitor-google-ads-account is, and resolved from the project's OWN connection only. The " +
-			"campaign list (names, statuses, budgets, and flights from the line items) is read live; " +
+		Description("Read this project's own live campaigns on an X (Twitter) Ads account with pacing and " +
+			"action items derived by this service's rule engine, resolved from the project's OWN connection " +
+			"only. " +
+			"Project-scoped: only campaigns this service recorded for the project are returned; the " +
+			"upstream account is shared across foundations, so the account read is filtered to them before " +
+			"rules and totals. A project with no campaigns recorded on the platform gets an empty monitor " +
+			"without any upstream call. A recorded campaign created under a different account than " +
+			"account_id, or recording none, fails the read with 409 rather than returning a partial picture. " +
+			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
+			"upstream campaign, unless it does not record account_id as the account it was created under, " +
+			"its stored id is not one the platform can read, or another project has since taken it over; " +
+			"such a campaign is omitted, never a 409. " +
+			"The campaign list (names, statuses, budgets, and flights from the line items) is read live; " +
 			"delivery metrics come from X's asynchronous stats jobs — X's synchronous stats are capped at " +
 			"7 days per request — so they are served from the last report that finished — see " +
 			"metrics_as_of and metrics_pending — while the next one builds. The first read for an account " +
 			"and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. " +
 			"Conversions are never reported for X. Saved reports are cached platform data, not a record " +
-			"of anything this service did. Two account states are refused with 409 rather than served " +
-			"metrics that would be wrong: more than 200 campaigns active in the window (reason " +
+			"of anything this service did; the saved report covers the whole account, and only the response " +
+			"is scoped. The scope refusals carry reason campaign_account_mismatch (a recorded campaign " +
+			"belongs to another account or records none) or campaign_scope_invalid (a recorded campaign " +
+			"id the platform cannot read). Two account states are also refused with 409 rather than served " +
+			"metrics that would be wrong: more than 200 campaigns active in the window on the whole shared " +
+			"account, every project's campaigns counted and not only this project's (reason " +
 			"account_too_many_active_campaigns — one report covers at most ten X stats jobs of 20 " +
 			"campaigns), and an account timezone whose local midnight is not a whole UTC hour, such as " +
 			"Asia/Kolkata (reason account_timezone_unsupported — X accepts whole-hour window bounds only, " +
@@ -2799,7 +2864,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
-		Error("Conflict", AccountMonitorConflictError, "The account cannot be monitored as it stands: too many active campaigns, or a timezone off the whole UTC hour (see reason)")
+		Error("Conflict", AccountMonitorConflictError, "The account cannot be monitored as it stands: too many active campaigns on the shared account, a timezone off the whole UTC hour, or a recorded campaign that does not fit the account (see reason)")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")

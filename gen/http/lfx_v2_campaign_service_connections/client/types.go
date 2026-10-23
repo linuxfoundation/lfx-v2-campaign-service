@@ -5520,6 +5520,22 @@ type CreateHubspotCampaignUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// MonitorGoogleAdsAccountConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
+// endpoint HTTP response body for the "Conflict" error.
+type MonitorGoogleAdsAccountConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Why the project's recorded campaigns cannot be read under the monitored
+	// account: campaign_account_mismatch (a campaign recorded for this project was
+	// created under a different account, or does not record which) or
+	// campaign_scope_invalid (a campaign recorded for this project has an id the
+	// platform cannot read).
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
 // MonitorGoogleAdsAccountBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -5640,6 +5656,22 @@ type MonitorLinkedinAdsAccountUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// MonitorMetaAdsAccountConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
+// endpoint HTTP response body for the "Conflict" error.
+type MonitorMetaAdsAccountConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Why the project's recorded campaigns cannot be read under the monitored
+	// account: campaign_account_mismatch (a campaign recorded for this project was
+	// created under a different account, or does not record which) or
+	// campaign_scope_invalid (a campaign recorded for this project has an id the
+	// platform cannot read).
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
 // MonitorMetaAdsAccountBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -5698,6 +5730,22 @@ type MonitorMetaAdsAccountUnauthorizedResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorRedditAdsAccountConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
+// endpoint HTTP response body for the "Conflict" error.
+type MonitorRedditAdsAccountConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Why the project's recorded campaigns cannot be read under the monitored
+	// account: campaign_account_mismatch (a campaign recorded for this project was
+	// created under a different account, or does not record which) or
+	// campaign_scope_invalid (a campaign recorded for this project has an id the
+	// platform cannot read).
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // MonitorRedditAdsAccountBadRequestResponseBody is the type of the
@@ -5836,8 +5884,13 @@ type MonitorTwitterAdsAccountConflictResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 	// Why the account cannot be monitored as it stands:
 	// account_too_many_active_campaigns (more campaigns active in the window than
-	// one report covers) or account_timezone_unsupported (the account's timezone
-	// does not start its days on a whole UTC hour).
+	// one report covers, counted across every project on the shared account, not
+	// only this project's campaigns), account_timezone_unsupported (the account's
+	// timezone does not start its days on a whole UTC hour),
+	// campaign_account_mismatch (a campaign recorded for this project was created
+	// under a different account, or does not record which) or
+	// campaign_scope_invalid (a campaign recorded for this project has an id the
+	// platform cannot read).
 	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
@@ -6260,10 +6313,12 @@ type GoogleAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -6389,13 +6444,13 @@ type AccountMonitorActionItemResponseBody struct {
 // AccountMonitorTotalsResponseBody is used to define fields on response body
 // types.
 type AccountMonitorTotalsResponseBody struct {
-	// Account-wide spend over the window.
+	// Spend over the window, summed over the returned campaigns.
 	Spend *float64 `form:"spend,omitempty" json:"spend,omitempty" xml:"spend,omitempty"`
-	// Account-wide impressions over the window.
+	// Impressions over the window, summed over the returned campaigns.
 	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
-	// Account-wide clicks over the window.
+	// Clicks over the window, summed over the returned campaigns.
 	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
-	// Account-wide conversions over the window, summed over the campaigns that
+	// Conversions over the window, summed over the returned campaigns that
 	// reported a conversion measurement. ABSENT when none of them did — not a
 	// measured 0.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
@@ -6405,12 +6460,12 @@ type AccountMonitorTotalsResponseBody struct {
 	// How many of the campaign_count campaigns have fetch_failed=true. The totals
 	// include those rows at what they carry — zero for a row whose metrics could
 	// not be read — so a non-zero value means the totals may UNDERSTATE the
-	// account, by up to this many campaigns' delivery. An upper bound rather than
-	// an exact count of rows missing from the sum: fetch_failed also marks a row
-	// whose budget or flight alone was unreadable while its metrics were read and
-	// summed. pacing_unknown=true alone does not count a row (every fetch_failed
-	// row also has it, but most pacing_unknown rows were read in full). 0 means
-	// every campaign in the sum was fully read.
+	// returned campaigns, by up to this many campaigns' delivery. An upper bound
+	// rather than an exact count of rows missing from the sum: fetch_failed also
+	// marks a row whose budget or flight alone was unreadable while its metrics
+	// were read and summed. pacing_unknown=true alone does not count a row (every
+	// fetch_failed row also has it, but most pacing_unknown rows were read in
+	// full). 0 means every campaign in the sum was fully read.
 	UnmeasuredCampaigns *int `form:"unmeasured_campaigns,omitempty" json:"unmeasured_campaigns,omitempty" xml:"unmeasured_campaigns,omitempty"`
 }
 
@@ -6426,10 +6481,12 @@ type LinkedinAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -6483,10 +6540,12 @@ type MetaAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -6540,10 +6599,12 @@ type RedditAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -6597,10 +6658,12 @@ type MicrosoftAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -6654,10 +6717,12 @@ type TwitterAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -13214,6 +13279,19 @@ func NewMonitorGoogleAdsAccountAccountMonitorOK(body *MonitorGoogleAdsAccountRes
 	return v
 }
 
+// NewMonitorGoogleAdsAccountConflict builds a
+// lfx-v2-campaign-service-connections service monitor-google-ads-account
+// endpoint Conflict error.
+func NewMonitorGoogleAdsAccountConflict(body *MonitorGoogleAdsAccountConflictResponseBody) *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError {
+	v := &lfxv2campaignserviceconnections.AccountMonitorScopeConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  *body.Reason,
+	}
+
+	return v
+}
+
 // NewMonitorGoogleAdsAccountBadRequest builds a
 // lfx-v2-campaign-service-connections service monitor-google-ads-account
 // endpoint BadRequest error.
@@ -13428,6 +13506,19 @@ func NewMonitorMetaAdsAccountAccountMonitorOK(body *MonitorMetaAdsAccountRespons
 	return v
 }
 
+// NewMonitorMetaAdsAccountConflict builds a
+// lfx-v2-campaign-service-connections service monitor-meta-ads-account
+// endpoint Conflict error.
+func NewMonitorMetaAdsAccountConflict(body *MonitorMetaAdsAccountConflictResponseBody) *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError {
+	v := &lfxv2campaignserviceconnections.AccountMonitorScopeConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  *body.Reason,
+	}
+
+	return v
+}
+
 // NewMonitorMetaAdsAccountBadRequest builds a
 // lfx-v2-campaign-service-connections service monitor-meta-ads-account
 // endpoint BadRequest error.
@@ -13531,6 +13622,19 @@ func NewMonitorRedditAdsAccountAccountMonitorOK(body *MonitorRedditAdsAccountRes
 		v.ActionItems[i] = unmarshalAccountMonitorActionItemResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorActionItem(val)
 	}
 	v.Totals = unmarshalAccountMonitorTotalsResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorTotals(body.Totals)
+
+	return v
+}
+
+// NewMonitorRedditAdsAccountConflict builds a
+// lfx-v2-campaign-service-connections service monitor-reddit-ads-account
+// endpoint Conflict error.
+func NewMonitorRedditAdsAccountConflict(body *MonitorRedditAdsAccountConflictResponseBody) *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError {
+	v := &lfxv2campaignserviceconnections.AccountMonitorScopeConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  *body.Reason,
+	}
 
 	return v
 }
@@ -20665,6 +20769,26 @@ func ValidateCreateHubspotCampaignUnauthorizedResponseBody(body *CreateHubspotCa
 	return
 }
 
+// ValidateMonitorGoogleAdsAccountConflictResponseBody runs the validations
+// defined on MonitorGoogleAdsAccountConflictResponseBody
+func ValidateMonitorGoogleAdsAccountConflictResponseBody(body *MonitorGoogleAdsAccountConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("reason", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "campaign_account_mismatch" || *body.Reason == "campaign_scope_invalid") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"campaign_account_mismatch", "campaign_scope_invalid"}))
+		}
+	}
+	return
+}
+
 // ValidateMonitorGoogleAdsAccountBadRequestResponseBody runs the validations
 // defined on MonitorGoogleAdsAccountBadRequestResponseBody
 func ValidateMonitorGoogleAdsAccountBadRequestResponseBody(body *MonitorGoogleAdsAccountBadRequestResponseBody) (err error) {
@@ -20811,6 +20935,26 @@ func ValidateMonitorLinkedinAdsAccountUnauthorizedResponseBody(body *MonitorLink
 	return
 }
 
+// ValidateMonitorMetaAdsAccountConflictResponseBody runs the validations
+// defined on MonitorMetaAdsAccountConflictResponseBody
+func ValidateMonitorMetaAdsAccountConflictResponseBody(body *MonitorMetaAdsAccountConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("reason", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "campaign_account_mismatch" || *body.Reason == "campaign_scope_invalid") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"campaign_account_mismatch", "campaign_scope_invalid"}))
+		}
+	}
+	return
+}
+
 // ValidateMonitorMetaAdsAccountBadRequestResponseBody runs the validations
 // defined on MonitorMetaAdsAccountBadRequestResponseBody
 func ValidateMonitorMetaAdsAccountBadRequestResponseBody(body *MonitorMetaAdsAccountBadRequestResponseBody) (err error) {
@@ -20879,6 +21023,26 @@ func ValidateMonitorMetaAdsAccountUnauthorizedResponseBody(body *MonitorMetaAdsA
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorRedditAdsAccountConflictResponseBody runs the validations
+// defined on MonitorRedditAdsAccountConflictResponseBody
+func ValidateMonitorRedditAdsAccountConflictResponseBody(body *MonitorRedditAdsAccountConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("reason", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "campaign_account_mismatch" || *body.Reason == "campaign_scope_invalid") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"campaign_account_mismatch", "campaign_scope_invalid"}))
+		}
 	}
 	return
 }
@@ -21042,8 +21206,8 @@ func ValidateMonitorTwitterAdsAccountConflictResponseBody(body *MonitorTwitterAd
 		err = goa.MergeErrors(err, goa.MissingFieldError("reason", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported" || *body.Reason == "campaign_account_mismatch" || *body.Reason == "campaign_scope_invalid") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"account_too_many_active_campaigns", "account_timezone_unsupported", "campaign_account_mismatch", "campaign_scope_invalid"}))
 		}
 	}
 	return

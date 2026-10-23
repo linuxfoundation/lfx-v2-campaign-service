@@ -807,6 +807,10 @@ func (r *campaignEditRepo) ListProjectPlatformCampaignIDs(context.Context, strin
 	return nil, nil
 }
 
+func (r *campaignEditRepo) ListProjectPlatformDeletedCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
+	return nil, nil
+}
+
 func (r *campaignEditRepo) ListRecentProjectPlatformCampaigns(context.Context, string, model.Provider, int) ([]*model.Campaign, error) {
 	return nil, nil
 }

@@ -171,6 +171,11 @@ type fakeCampaignRepo struct {
 	// scope (or an EMPTY one) without dispatching campaigns to produce it. nil means "derive
 	// it from the campaigns this fake holds".
 	scopeIDs []string
+	// deletedScopeIDs pins the project's soft-deleted scope (ListProjectPlatformDeletedCampaignIDs)
+	// the same way, with provenance from scopeResults; deletedScopeErr makes it fail. nil derives
+	// it from the held campaigns whose Status is "deleted".
+	deletedScopeIDs []string
+	deletedScopeErr error
 	// resolveErr forces ResolvePlatformCampaign to fail, for the error-mapping case.
 	resolveErr error
 	// scopeResults pins the provenance blob for a scopeIDs entry, so a test can exercise the
@@ -274,6 +279,44 @@ func (r *fakeCampaignRepo) ListProjectPlatformCampaignIDs(_ context.Context, pro
 			continue
 		}
 		if c.PlatformCampaignID == "" || seen[c.PlatformCampaignID] {
+			continue
+		}
+		seen[c.PlatformCampaignID] = true
+		out = append(out, model.ProjectCampaignScope{PlatformCampaignID: c.PlatformCampaignID, Result: c.Result})
+	}
+	return out, nil
+}
+
+// ListProjectPlatformDeletedCampaignIDs mirrors its SQL: ListProjectPlatformCampaignIDs above for
+// the project's soft-deleted rows only.
+func (r *fakeCampaignRepo) ListProjectPlatformDeletedCampaignIDs(_ context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.deletedScopeErr != nil {
+		return nil, r.deletedScopeErr
+	}
+	if r.deletedScopeIDs != nil {
+		out := make([]model.ProjectCampaignScope, 0, len(r.deletedScopeIDs))
+		for _, id := range r.deletedScopeIDs {
+			out = append(out, model.ProjectCampaignScope{PlatformCampaignID: id, Result: r.scopeResults[id]})
+		}
+		return out, nil
+	}
+	out := make([]model.ProjectCampaignScope, 0)
+	held := append(append([]*model.Campaign{}, r.upserted...), r.adopted...)
+	// The SQL's NOT EXISTS: an id another project holds live is that project's campaign.
+	liveElsewhere := map[string]bool{}
+	for _, c := range held {
+		if c != nil && c.ProjectID != projectID && c.Platform == platform && c.Status != "deleted" {
+			liveElsewhere[c.PlatformCampaignID] = true
+		}
+	}
+	seen := map[string]bool{}
+	for _, c := range held {
+		if c == nil || c.ProjectID != projectID || c.Platform != platform || c.Status != "deleted" {
+			continue
+		}
+		if c.PlatformCampaignID == "" || seen[c.PlatformCampaignID] || liveElsewhere[c.PlatformCampaignID] {
 			continue
 		}
 		seen[c.PlatformCampaignID] = true
