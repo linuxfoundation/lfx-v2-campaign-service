@@ -133,8 +133,8 @@ reworded whenever an operator finds it unclear, and the wording below has alread
 twice. `reason` is populated by the audiences endpoints and by five briefs-endpoint conflicts:
 `create-campaigns` sets `ab_test_unsupported_send_type` (see its row above);
 `toggle-campaign-status` sets `campaign_adopted` (a resume of an adopted campaign; see its row
-below); `update-campaign` sets `campaign_dispatch_in_flight` (a config edit on a campaign whose
-creation has not finished on the ad platform); `upload-creative-asset` sets
+below); `update-campaign` sets `campaign_dispatch_in_flight` (a config edit on a campaign still
+`pending`, whose creation has not finished on the ad platform); `upload-creative-asset` sets
 `creative_asset_quota_exceeded`; and `delete-creative-asset` sets `creative_asset_in_use`. Note
 that the two creative-asset slugs are on OPPOSITE endpoints — the quota refusal is on the upload,
 the in-use refusal on the delete — which is why a folder upload branching on `reason` must look for

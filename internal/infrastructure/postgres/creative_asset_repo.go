@@ -593,9 +593,18 @@ func (r *CreativeAssetRepo) ListAssets(ctx context.Context, projectID, briefID s
 // which is the whole reason the explicit lock had to be added there and nowhere else.
 //
 // The general lesson, recorded because it is cheap to re-break: an arm that keys on a column's
-// VALUE is only as good as the full set of writers of that column. 'pending' is durable here
-// because the delete and the dispatch are the only writers of status on this path; NULL was not,
-// because a second writer existed outside the dispatch flow.
+// VALUE is only as good as the full set of writers of that column. NULL failed that test, because
+// a second writer of config_snapshot existed outside the dispatch flow. So run the same sweep on
+// status, and note that it has THREE writers, not two: the claim, UpsertCampaign's dispatch
+// result, and replaceCampaignQuery, which writes status=$2 like every other mutable column.
+// ReplaceCampaign is the one that could move a row OFF 'pending' while this delete is deciding.
+// What keeps it away from a pending row is not the replace itself but ToggleCampaignStatus, its
+// only caller that sets a new status (brief.go): the orchestrator refuses any campaign with an
+// empty platform_campaign_id with ErrCampaignNotProvisioned before the platform is contacted and
+// before the status is assigned (orchestrator.go), and a 'pending' campaign has no platform id
+// yet -- that is what 'pending' means. Every other ReplaceCampaign caller carries the loaded
+// status through unchanged. The arm is durable because of that guard, so a change to it is a
+// change to this arm.
 //
 // A TEXT SEARCH RATHER THAN A JSON PATH, and the trade is accepted rather than overlooked. The
 // snapshot carries an asset id under a different key per platform (redditConfig.imageAssetId,

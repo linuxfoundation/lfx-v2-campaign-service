@@ -51,10 +51,12 @@ FK and `campaigns` never was — so a row whose `project_id` disagreed with its 
 no row, take NO lock and return NO error, leaving the replace exactly as unordered as before the
 statement existed. The live fixtures prove the disagreement is reachable: several seed a campaign
 with a `project_id` unrelated to its brief's. On `id` alone the FK makes a miss mean the brief is
-genuinely gone, and the result is scanned (`pgx.ErrNoRows` → `ErrNotFound`) rather than discarded —
-an unchecked `Exec` would be indistinguishable from no statement at all. **The general lesson: a
-lock statement whose result is not checked can fail to take the lock and say nothing, and widening
-its predicate "for safety" is exactly how that happens.**
+genuinely gone. The result is scanned (`pgx.ErrNoRows` → `ErrNotFound`) as well, and it is worth
+being precise about which half does the work: the PREDICATE removes the hazard, and with the FK
+standing, `ErrNoRows` is unreachable and an `Exec` would take the same lock. The scan is for the
+predicate's next editor — it turns any future miss into a loud 404 instead of a silent loss of the
+lock. **The general lesson: a lock statement whose predicate can miss will fail to take the lock
+and say nothing, and widening that predicate "for safety" is exactly how it comes to miss.**
 
 **The other writer, swept and left alone.** `config_snapshot` has exactly two writers:
 `ReplaceCampaign` and `UpsertCampaign`, the dispatch-result write. `UpsertCampaign` needs no
@@ -90,6 +92,19 @@ holds no `campaigns` row lock while waiting for it. Nothing anywhere acquires a 
 holding the brief's. The lesson is the smaller one: naming the wrong lock produces an argument that
 sounds rigorous and proves nothing, and two locks called "advisory" in the same file are exactly
 where that happens.
+
+**A new arm is a change to what the 409 PROMISES, in every place that says it.** The `pending` arm
+refuses a campaign whose snapshot provably does not name the asset, so two inherited sentences
+became false the moment it landed and had to move with it. `delete-creative-asset`'s Goa
+`Description` said "one whose creation has not finished on the ad platform yet, whatever its stored
+configuration says" — in this repo's vocabulary that is three statuses
+(`CampaignStatusNeedsReconciliation` covers `group_created` and `unconfirmed` too), and for those
+two only the snapshot arms run, so the sentence promised a refusal the query does not make; it now
+names `pending`, as the sibling `update-campaign` description already did. `ErrCreativeAssetInUse`'s
+text — which is the 409 body — said "still references the creative asset", which is exactly what the
+`pending` arm does not establish; it now reads "could still need". **The general lesson: when a
+guard gains an arm, sweep every surface that describes the guard, including the error string, not
+only the ones the diff already touches.**
 
 **A new conflict reason is a DESIGN edit.** `ConflictError.reason` is an `Enum` in
 `design/connection.go`, and the generated client's decoder ENFORCES it: a reason the server emits

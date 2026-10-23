@@ -1346,9 +1346,13 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	// brief_id foreign key on id ALONE (000002), never upgraded to the composite (brief_id,
 	// project_id) form its sibling tables got, so a row whose project_id disagreed with its
 	// brief's would match NO row, take NO lock and return NO error -- the one hazard this
-	// statement is here to remove, failing silently. On id alone the FK makes a miss mean the
-	// brief is genuinely gone, so the result is scanned and refused rather than discarded:
-	// an unchecked Exec here would be indistinguishable from the statement not existing.
+	// statement is here to remove, failing silently. The PREDICATE is what removes that hazard;
+	// be precise about what the scan adds on top of it. On id alone the FK guarantees a match, so
+	// an Exec would take the same lock in every reachable case and pgx.ErrNoRows is unreachable
+	// while the FK stands. The scan is there for the predicate's next editor: it converts any
+	// future miss from a silent loss of the lock into ErrNotFound, which is the behaviour the
+	// sibling callers of the asset-side query already have (CreateAsset maps ErrNoRows the same
+	// way). Do not read it as evidence that the lock could fail today.
 	var briefStatus string
 	if lerr := tx.QueryRow(ctx, lockBriefRowByIDQuery, c.BriefID).Scan(&briefStatus); lerr != nil {
 		if errors.Is(lerr, pgx.ErrNoRows) {

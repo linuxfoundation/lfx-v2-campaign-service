@@ -1716,9 +1716,7 @@ every one of its callers rewrites the snapshot whether or not it meant to change
 statement cannot tell the two apart; the hazard belongs to the method, not to any one caller.
 Without the lock nothing ordered that write against a concurrent
 `CreativeAssetRepo.DeleteAsset`: the UPDATE touches `campaigns` only, and the per-campaign
-advisory lock a caller may already hold is keyed on the CAMPAIGN, not the brief. `RowsAffected` is
-deliberately unchecked — the `brief_id` foreign key guarantees the brief exists for any row this
-replace can target.
+advisory lock a caller may already hold is keyed on the CAMPAIGN, not the brief.
 
 ## DeleteCampaign's guards
 

@@ -117,7 +117,11 @@ var (
 	// Maps to 409 with reason "creative_asset_in_use". Distinct from ErrConflict because the
 	// remedy is specific: delete the campaign, or reconcile a claim stuck in 'pending', then
 	// retry — not change the request.
-	ErrCreativeAssetInUse = errors.New("a live campaign on this brief still references the creative asset")
+	// The wording is "could still need" rather than "references" on purpose: the 'pending' arm
+	// refuses a campaign whose snapshot provably does NOT name the asset, because a dispatcher may
+	// still be about to resolve it. A message promising a reference would be false in exactly that
+	// case, and it is the one a caller is most likely to be surprised by.
+	ErrCreativeAssetInUse = errors.New("a live campaign on this brief could still need the creative asset")
 
 	// ErrPreconditionFailed indicates an optimistic-concurrency version
 	// mismatch on a conditional update (stale If-Match). Maps to 412.
