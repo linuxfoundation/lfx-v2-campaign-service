@@ -395,7 +395,12 @@ func TestLiveReplaceCampaignTakesTheBriefLockBeforeWritingTheSnapshot(t *testing
 		t.Fatalf("GetCampaign: %v", err)
 	}
 	version := loaded.Version
-	loaded.ConfigSnapshot = []byte(fmt.Sprintf(`{"image_asset_id":%q}`, asset.ID))
+	// The key must be one BOTH sides recognise. The delete guard matches the id as a substring of
+	// the snapshot text, so any key at all would make this test pass — but snapshotAssetIDs keys on
+	// `imageassetid` with case folded and nothing else, and encoding/json does not ignore
+	// underscores either, so an `image_asset_id` fixture would add a reference no dispatcher could
+	// ever resolve and would route around checkNewSnapshotAssetRefs entirely.
+	loaded.ConfigSnapshot = []byte(fmt.Sprintf(`{"imageAssetId":%q}`, asset.ID))
 
 	tx, err := pool.Begin(ctx)
 	if err != nil {
