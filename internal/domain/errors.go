@@ -88,6 +88,33 @@ var (
 	// this service, not the answer an API client should get. Maps to 400.
 	ErrBriefIdentityPairInvalid = errors.New("this delivery type and stage cannot be combined")
 
+	// ErrCreativeAssetQuotaExceeded indicates an upload refused because the brief already holds
+	// model.MaxCreativeAssetsPerBrief assets, or because this upload's bytes would take it past
+	// model.MaxCreativeAssetBytesPerBrief. Decided inside the insert's transaction, after the
+	// brief row lock, so the count it is judged against cannot be stale.
+	//
+	// 409 rather than 400, and a distinct sentinel rather than ErrConflict, for the usual reason
+	// in this file: the request is perfectly well formed, nothing about it conflicts with another
+	// resource, and "resource already exists" is actively wrong — nothing the caller asked for
+	// exists. The remedy is to delete an asset and retry, which delete-creative-asset makes
+	// actionable. It surfaces with reason "creative_asset_quota_exceeded".
+	//
+	// A DEDUPE hit never raises it: identical bytes re-sent to the same brief resolve to the
+	// existing row and store nothing, so counting that against the quota would make a plain retry
+	// fail — the exact opposite of what the (brief_id, checksum) uniqueness is for.
+	ErrCreativeAssetQuotaExceeded = errors.New("the brief has reached its creative-asset limit")
+
+	// ErrCreativeAssetInUse indicates a delete refused because a live campaign on the brief could
+	// still need the asset: one whose stored config_snapshot names the asset id, or — and this arm
+	// is not a hedge — one whose config_snapshot is NULL, because claimCampaignDispatchQuery
+	// inserts the 'pending' claim row BEFORE the dispatcher resolves any asset. A delete in that
+	// window would otherwise remove bytes a dispatch already in flight is about to read.
+	//
+	// Maps to 409 with reason "creative_asset_in_use". Distinct from ErrConflict because the
+	// remedy is specific: delete the campaign, or reconcile a claim stuck in 'pending', then
+	// retry — not change the request.
+	ErrCreativeAssetInUse = errors.New("a live campaign on this brief still references the creative asset")
+
 	// ErrPreconditionFailed indicates an optimistic-concurrency version
 	// mismatch on a conditional update (stale If-Match). Maps to 412.
 	ErrPreconditionFailed = errors.New("version precondition failed")

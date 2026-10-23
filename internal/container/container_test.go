@@ -1645,6 +1645,18 @@ func (fakeCreativeAssetRepo) GetAssetSize(_ context.Context, _, _, _ string) (in
 	return 0, domain.ErrNotFound
 }
 
+func (fakeCreativeAssetRepo) GetAssetMetadata(_ context.Context, _, _, _ string) (*model.CreativeAsset, error) {
+	return nil, domain.ErrNotFound
+}
+
+func (fakeCreativeAssetRepo) ListAssets(_ context.Context, _, _ string) ([]*model.CreativeAsset, int, int64, error) {
+	return nil, 0, 0, domain.ErrNotFound
+}
+
+func (fakeCreativeAssetRepo) DeleteAsset(_ context.Context, _, _, _ string) error {
+	return domain.ErrNotFound
+}
+
 // TestRegisterDispatchers_BindsMetaCreativeAssetRepo pins the PRODUCTION wiring for the
 // creative-asset read path on the Meta dispatcher.
 //

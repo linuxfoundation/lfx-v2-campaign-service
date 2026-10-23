@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -769,5 +770,449 @@ func TestCreativeAssetRepo_CreateAsset_SerializesAgainstArchival(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("found %d creative_assets rows under an archived brief, want 0", n)
+	}
+}
+
+// insertCreativeAssetTestCampaign inserts one campaign on a brief with the given status and
+// config_snapshot, returning nothing: every caller cares only that the row exists, because
+// DeleteAsset's refusal is driven by the EXISTENCE of a matching campaign, not its identity.
+//
+// snapshot is `any` rather than a string so a caller can pass nil for the NULL case — which is
+// not an edge case here but the main one: claimCampaignDispatchQuery inserts its 'pending' claim
+// row with no snapshot at all, before the dispatcher has resolved any asset.
+func insertCreativeAssetTestCampaign(ctx context.Context, t *testing.T, pool *Pool, projectID, briefID, status string, snapshot any) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO campaigns (project_id, brief_id, platform, variant, slot_version,
+		                       campaign_name, status, config_snapshot)
+		VALUES ($1, $2, 'meta-ads', 'a', 1, 'n', $3, $4::jsonb)`,
+		projectID, briefID, status, snapshot); err != nil {
+		t.Fatalf("insert campaign (status=%s): %v", status, err)
+	}
+}
+
+// TestCreativeAssetRepo_CreateAsset_EnforcesPerBriefCount pins the count arm of the per-brief
+// quota, and the dedupe exemption that sits inside it.
+//
+// The BYTE arm is deliberately not exercised here: reaching MaxCreativeAssetBytesPerBrief means
+// inserting 512 MiB through the connection, which would dominate the suite's runtime for a branch
+// of the same `if` the count arm already proves is reached. What IS asserted below is the part a
+// reader cannot check by inspection — that the check runs inside the insert's transaction, after
+// the brief lock, and that a re-upload of bytes already stored is not counted against it.
+//
+// The dedupe exemption is the subtlety worth a test. Without it, a brief sitting exactly at the
+// cap would refuse a plain RETRY of an upload it already holds: the client re-sends identical
+// bytes, the row already exists, nothing would be stored — and it would still get a 409. That is
+// the opposite of what (brief_id, checksum) uniqueness is for.
+func TestCreativeAssetRepo_CreateAsset_EnforcesPerBriefCount(t *testing.T) {
+	pool := creativeAssetTestPool(t)
+	ctx := context.Background()
+	repo := NewCreativeAssetRepo(pool)
+
+	briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+
+	// Fill the brief to exactly the cap. The first asset's checksum is kept so the dedupe case
+	// below re-sends bytes that are genuinely already stored.
+	var firstChecksum string
+	for i := 0; i < model.MaxCreativeAssetsPerBrief; i++ {
+		a := newTestAsset(t, projectID, briefID)
+		if _, _, err := repo.CreateAsset(ctx, a); err != nil {
+			t.Fatalf("CreateAsset #%d while filling to the cap: %v", i, err)
+		}
+		if i == 0 {
+			firstChecksum = a.Checksum
+		}
+	}
+
+	t.Run("one past the cap is refused", func(t *testing.T) {
+		_, _, err := repo.CreateAsset(ctx, newTestAsset(t, projectID, briefID))
+		if !errors.Is(err, domain.ErrCreativeAssetQuotaExceeded) {
+			t.Fatalf("err = %v, want domain.ErrCreativeAssetQuotaExceeded", err)
+		}
+	})
+
+	t.Run("the refusal stores nothing", func(t *testing.T) {
+		var count int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM creative_assets WHERE brief_id = $1`, briefID).Scan(&count); err != nil {
+			t.Fatalf("count assets: %v", err)
+		}
+		if count != model.MaxCreativeAssetsPerBrief {
+			t.Fatalf("brief holds %d assets, want %d — the refused insert must not have committed",
+				count, model.MaxCreativeAssetsPerBrief)
+		}
+	})
+
+	t.Run("a dedupe hit is admitted at the cap", func(t *testing.T) {
+		dup := newTestAsset(t, projectID, briefID)
+		dup.Checksum = firstChecksum
+		got, created, err := repo.CreateAsset(ctx, dup)
+		if err != nil {
+			t.Fatalf("CreateAsset with an already-stored checksum at the cap: %v — a retry of an "+
+				"upload the brief already holds stores nothing and must not be refused", err)
+		}
+		if created {
+			t.Error("created = true for an already-stored checksum; want the idempotent path")
+		}
+		if got.Checksum != firstChecksum {
+			t.Errorf("checksum = %q, want the existing row's %q", got.Checksum, firstChecksum)
+		}
+	})
+
+	t.Run("another brief is unaffected", func(t *testing.T) {
+		// The quota is per brief, so a full brief must not block a sibling. The aggregate is
+		// scoped by brief_id alone; this is what proves that scoping is real rather than
+		// accidentally global.
+		otherBriefID, otherProjectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+		if _, _, err := repo.CreateAsset(ctx, newTestAsset(t, otherProjectID, otherBriefID)); err != nil {
+			t.Fatalf("CreateAsset on an empty sibling brief: %v", err)
+		}
+	})
+}
+
+// TestCreativeAssetRepo_GetAssetMetadata_ScopesLikeGetAssetWithoutBytes pins the two properties
+// that make this a separate method: identical scoping to GetAsset, and no blob.
+//
+// Asserting Bytes is nil is the whole point of the method existing. If it quietly selected the
+// bytes column, every metadata read would ship up to 30 MiB that is then discarded — invisible in
+// behaviour, visible only in the database's egress, which is exactly the kind of regression no
+// other assertion in this file would catch.
+func TestCreativeAssetRepo_GetAssetMetadata_ScopesLikeGetAssetWithoutBytes(t *testing.T) {
+	pool := creativeAssetTestPool(t)
+	ctx := context.Background()
+	repo := NewCreativeAssetRepo(pool)
+
+	briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+	asset := newTestAsset(t, projectID, briefID)
+	asset.Width, asset.Height = 1200, 628
+	stored, _, err := repo.CreateAsset(ctx, asset)
+	if err != nil {
+		t.Fatalf("CreateAsset: %v", err)
+	}
+
+	t.Run("in-scope read returns metadata and no bytes", func(t *testing.T) {
+		got, err := repo.GetAssetMetadata(ctx, projectID, briefID, stored.ID)
+		if err != nil {
+			t.Fatalf("GetAssetMetadata: %v", err)
+		}
+		if got.Bytes != nil {
+			t.Errorf("Bytes is %d bytes long, want nil — the metadata read must not materialise the blob", len(got.Bytes))
+		}
+		if got.Checksum != asset.Checksum || got.ByteSize != asset.ByteSize || got.MimeType != asset.MimeType {
+			t.Errorf("metadata mismatch: got sum=%q size=%d mime=%q", got.Checksum, got.ByteSize, got.MimeType)
+		}
+		if got.Width != 1200 || got.Height != 628 {
+			t.Errorf("dimensions = %dx%d, want 1200x628", got.Width, got.Height)
+		}
+	})
+
+	t.Run("wrong project is ErrNotFound", func(t *testing.T) {
+		if _, err := repo.GetAssetMetadata(ctx, creativeAssetUniqueID(t, "wrong-proj"), briefID, stored.ID); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("err = %v, want domain.ErrNotFound", err)
+		}
+	})
+
+	t.Run("wrong brief is ErrNotFound", func(t *testing.T) {
+		otherBriefID, _ := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+		if _, err := repo.GetAssetMetadata(ctx, projectID, otherBriefID, stored.ID); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("err = %v, want domain.ErrNotFound", err)
+		}
+	})
+
+	t.Run("an archived parent brief hides the metadata too", func(t *testing.T) {
+		liveBriefID, liveProjectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+		created, _, err := repo.CreateAsset(ctx, newTestAsset(t, liveProjectID, liveBriefID))
+		if err != nil {
+			t.Fatalf("CreateAsset under the active brief: %v", err)
+		}
+		if _, err := repo.GetAssetMetadata(ctx, liveProjectID, liveBriefID, created.ID); err != nil {
+			t.Fatalf("GetAssetMetadata before archival: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE campaign_briefs SET status='archived' WHERE id=$1`, liveBriefID); err != nil {
+			t.Fatalf("archive the parent brief: %v", err)
+		}
+		if _, err := repo.GetAssetMetadata(ctx, liveProjectID, liveBriefID, created.ID); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("err = %v, want domain.ErrNotFound — archival applies to every read of a brief's children", err)
+		}
+	})
+
+	t.Run("absent asset is ErrNotFound", func(t *testing.T) {
+		if _, err := repo.GetAssetMetadata(ctx, projectID, briefID, "00000000-0000-4000-8000-000000000000"); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("err = %v, want domain.ErrNotFound", err)
+		}
+	})
+}
+
+// TestCreativeAssetRepo_ListAssets_SeparatesAnEmptyLibraryFromAnInvisibleBrief pins the single
+// decision the list query's shape exists for.
+//
+// Selecting from creative_assets alone returns zero rows for BOTH "this brief holds nothing" and
+// "this brief is archived, foreign, or does not exist" — so an unprivileged caller probing any id
+// would be told it owns an empty library. Driving the query FROM campaign_briefs with a LEFT JOIN
+// is what separates them: the empty brief yields one all-NULL row, the invisible brief yields
+// none. The two subtests below are the pair; neither alone proves anything.
+func TestCreativeAssetRepo_ListAssets_SeparatesAnEmptyLibraryFromAnInvisibleBrief(t *testing.T) {
+	pool := creativeAssetTestPool(t)
+	ctx := context.Background()
+	repo := NewCreativeAssetRepo(pool)
+
+	t.Run("an empty brief lists nothing and is not an error", func(t *testing.T) {
+		briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+		assets, count, bytesUsed, err := repo.ListAssets(ctx, projectID, briefID)
+		if err != nil {
+			t.Fatalf("ListAssets on an empty brief: %v", err)
+		}
+		if assets == nil {
+			t.Error("assets is nil, want a non-nil empty slice — the result type publishes it as []")
+		}
+		if len(assets) != 0 || count != 0 || bytesUsed != 0 {
+			t.Errorf("len=%d count=%d bytes=%d, want 0, 0, 0", len(assets), count, bytesUsed)
+		}
+	})
+
+	t.Run("an absent brief is ErrNotFound", func(t *testing.T) {
+		_, _, _, err := repo.ListAssets(ctx, creativeAssetUniqueID(t, "nobody"), "00000000-0000-4000-8000-000000000000")
+		if !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("err = %v, want domain.ErrNotFound", err)
+		}
+	})
+
+	t.Run("an archived brief is ErrNotFound", func(t *testing.T) {
+		briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "archived")
+		_, _, _, err := repo.ListAssets(ctx, projectID, briefID)
+		if !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("err = %v, want domain.ErrNotFound", err)
+		}
+	})
+
+	t.Run("a foreign project is ErrNotFound", func(t *testing.T) {
+		briefID, _ := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+		_, _, _, err := repo.ListAssets(ctx, creativeAssetUniqueID(t, "wrong-proj"), briefID)
+		if !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("err = %v, want domain.ErrNotFound", err)
+		}
+	})
+}
+
+// TestCreativeAssetRepo_ListAssets_ReturnsOwnRowsOldestFirstWithTotals covers the rest of the
+// contract: scoping, order, and totals derived from the rows actually returned.
+//
+// The totals matter more than they look. They are what the upload path's quota check compares
+// against, so a list whose figures came from anywhere other than its own rows would publish a
+// quota the insert does not enforce — and the client would discover the disagreement only by
+// being refused.
+func TestCreativeAssetRepo_ListAssets_ReturnsOwnRowsOldestFirstWithTotals(t *testing.T) {
+	pool := creativeAssetTestPool(t)
+	ctx := context.Background()
+	repo := NewCreativeAssetRepo(pool)
+
+	briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+	var want []string
+	var wantBytes int64
+	for i := 0; i < 3; i++ {
+		a := newTestAsset(t, projectID, briefID)
+		stored, _, err := repo.CreateAsset(ctx, a)
+		if err != nil {
+			t.Fatalf("CreateAsset #%d: %v", i, err)
+		}
+		want = append(want, stored.ID)
+		wantBytes += a.ByteSize
+	}
+	// A second brief's asset must not leak in. Without the join's brief predicate this is the
+	// row that would.
+	otherBriefID, otherProjectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+	if _, _, err := repo.CreateAsset(ctx, newTestAsset(t, otherProjectID, otherBriefID)); err != nil {
+		t.Fatalf("CreateAsset on the sibling brief: %v", err)
+	}
+
+	assets, count, bytesUsed, err := repo.ListAssets(ctx, projectID, briefID)
+	if err != nil {
+		t.Fatalf("ListAssets: %v", err)
+	}
+	if count != 3 || len(assets) != 3 {
+		t.Fatalf("count = %d, len(assets) = %d, want 3 and 3 — only this brief's rows", count, len(assets))
+	}
+	if bytesUsed != wantBytes {
+		t.Errorf("bytes_used = %d, want %d (the sum of exactly the rows returned)", bytesUsed, wantBytes)
+	}
+	for i, a := range assets {
+		if a.ID != want[i] {
+			t.Errorf("assets[%d].ID = %q, want %q — oldest first", i, a.ID, want[i])
+		}
+		if a.Bytes != nil {
+			t.Errorf("assets[%d] carries %d bytes, want nil — the list is metadata only", i, len(a.Bytes))
+		}
+		if a.ProjectID != projectID || a.BriefID != briefID {
+			t.Errorf("assets[%d] scoped to %q/%q, want %q/%q", i, a.ProjectID, a.BriefID, projectID, briefID)
+		}
+	}
+}
+
+// TestCreativeAssetRepo_DeleteAsset_RefusesWhileALiveCampaignCouldNeedIt is the reference check,
+// arm by arm.
+//
+// Each subtest gets its own brief and asset. Sharing one would make the cases order-dependent —
+// the first successful delete removes the row every later case needs — and an order-dependent
+// test of a refusal is one that can pass because nothing was there to delete.
+func TestCreativeAssetRepo_DeleteAsset_RefusesWhileALiveCampaignCouldNeedIt(t *testing.T) {
+	pool := creativeAssetTestPool(t)
+	ctx := context.Background()
+	repo := NewCreativeAssetRepo(pool)
+
+	// newAsset stands up a fresh brief holding one asset, and returns both.
+	newAsset := func(t *testing.T) (assetID, briefID, projectID string) {
+		t.Helper()
+		briefID, projectID = insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+		stored, _, err := repo.CreateAsset(ctx, newTestAsset(t, projectID, briefID))
+		if err != nil {
+			t.Fatalf("CreateAsset: %v", err)
+		}
+		return stored.ID, briefID, projectID
+	}
+	assertStillStored := func(t *testing.T, assetID string) {
+		t.Helper()
+		var exists bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM creative_assets WHERE id = $1)`, assetID).Scan(&exists); err != nil {
+			t.Fatalf("check the asset survived: %v", err)
+		}
+		if !exists {
+			t.Fatal("the asset was deleted despite the refusal — the delete and its guard must be one statement")
+		}
+	}
+
+	t.Run("an unreferenced asset is deleted", func(t *testing.T) {
+		assetID, briefID, projectID := newAsset(t)
+		if err := repo.DeleteAsset(ctx, projectID, briefID, assetID); err != nil {
+			t.Fatalf("DeleteAsset: %v", err)
+		}
+		var exists bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM creative_assets WHERE id = $1)`, assetID).Scan(&exists); err != nil {
+			t.Fatalf("check the asset is gone: %v", err)
+		}
+		if exists {
+			t.Error("the row survived a successful delete — this is a HARD delete, the storage is the point")
+		}
+	})
+
+	t.Run("a campaign naming the asset refuses the delete", func(t *testing.T) {
+		assetID, briefID, projectID := newAsset(t)
+		insertCreativeAssetTestCampaign(ctx, t, pool, projectID, briefID, "created",
+			`{"creative":{"imageAssetId":"`+assetID+`"}}`)
+		if err := repo.DeleteAsset(ctx, projectID, briefID, assetID); !errors.Is(err, domain.ErrCreativeAssetInUse) {
+			t.Fatalf("err = %v, want domain.ErrCreativeAssetInUse", err)
+		}
+		assertStillStored(t, assetID)
+	})
+
+	t.Run("a campaign naming the asset without hyphens refuses the delete", func(t *testing.T) {
+		// uuid.Parse accepts the 32-character dashless form, so a snapshot can legitimately carry
+		// the id in that shape. Matching only the hyphenated spelling would let a delete through
+		// that frees bytes a live campaign still resolves.
+		assetID, briefID, projectID := newAsset(t)
+		insertCreativeAssetTestCampaign(ctx, t, pool, projectID, briefID, "created",
+			`{"creative":{"imageAssetId":"`+strings.ReplaceAll(assetID, "-", "")+`"}}`)
+		if err := repo.DeleteAsset(ctx, projectID, briefID, assetID); !errors.Is(err, domain.ErrCreativeAssetInUse) {
+			t.Fatalf("err = %v, want domain.ErrCreativeAssetInUse", err)
+		}
+		assertStillStored(t, assetID)
+	})
+
+	t.Run("a campaign with no snapshot yet refuses the delete", func(t *testing.T) {
+		// This is the arm that is not a hedge. claimCampaignDispatchQuery inserts the 'pending'
+		// claim row with config_snapshot NULL BEFORE the dispatcher resolves any asset, so a
+		// delete in that window frees bytes a dispatch already in flight is about to read — and
+		// no snapshot naming the asset exists yet to prevent it.
+		assetID, briefID, projectID := newAsset(t)
+		insertCreativeAssetTestCampaign(ctx, t, pool, projectID, briefID, "pending", nil)
+		if err := repo.DeleteAsset(ctx, projectID, briefID, assetID); !errors.Is(err, domain.ErrCreativeAssetInUse) {
+			t.Fatalf("err = %v, want domain.ErrCreativeAssetInUse — a claim without a snapshot is "+
+				"exactly the window in which a referencing snapshot does not exist yet", err)
+		}
+		assertStillStored(t, assetID)
+	})
+
+	t.Run("a deleted campaign does not block the delete", func(t *testing.T) {
+		// The counterpart to the NULL arm: if 'deleted' rows held assets hostage, a brief's
+		// storage could never be reclaimed, since campaigns are retired by a status flip and
+		// their rows stay forever. A soft-deleted campaign dispatches nothing.
+		assetID, briefID, projectID := newAsset(t)
+		insertCreativeAssetTestCampaign(ctx, t, pool, projectID, briefID, "deleted",
+			`{"creative":{"imageAssetId":"`+assetID+`"}}`)
+		insertCreativeAssetTestCampaign(ctx, t, pool, projectID, briefID, "deleted", nil)
+		if err := repo.DeleteAsset(ctx, projectID, briefID, assetID); err != nil {
+			t.Fatalf("DeleteAsset with only soft-deleted campaigns on the brief: %v", err)
+		}
+	})
+
+	t.Run("a campaign naming a different asset does not block the delete", func(t *testing.T) {
+		assetID, briefID, projectID := newAsset(t)
+		insertCreativeAssetTestCampaign(ctx, t, pool, projectID, briefID, "created",
+			`{"creative":{"imageAssetId":"00000000-0000-4000-8000-000000000000"}}`)
+		if err := repo.DeleteAsset(ctx, projectID, briefID, assetID); err != nil {
+			t.Fatalf("DeleteAsset: %v — only a campaign that could need THIS asset may refuse it", err)
+		}
+	})
+
+	t.Run("a campaign on another brief does not block the delete", func(t *testing.T) {
+		assetID, briefID, projectID := newAsset(t)
+		otherBriefID, otherProjectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+		insertCreativeAssetTestCampaign(ctx, t, pool, otherProjectID, otherBriefID, "pending", nil)
+		if err := repo.DeleteAsset(ctx, projectID, briefID, assetID); err != nil {
+			t.Fatalf("DeleteAsset: %v — the reference check is scoped to the asset's own brief", err)
+		}
+	})
+
+	t.Run("wrong project, wrong brief, archived parent and absent id are all ErrNotFound", func(t *testing.T) {
+		assetID, briefID, projectID := newAsset(t)
+		if err := repo.DeleteAsset(ctx, creativeAssetUniqueID(t, "wrong-proj"), briefID, assetID); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("wrong project: err = %v, want domain.ErrNotFound", err)
+		}
+		otherBriefID, _ := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+		if err := repo.DeleteAsset(ctx, projectID, otherBriefID, assetID); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("wrong brief: err = %v, want domain.ErrNotFound", err)
+		}
+		if err := repo.DeleteAsset(ctx, projectID, briefID, "00000000-0000-4000-8000-000000000000"); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("absent id: err = %v, want domain.ErrNotFound", err)
+		}
+		// None of those may have removed the row they failed to address.
+		assertStillStored(t, assetID)
+
+		if _, err := pool.Exec(ctx, `UPDATE campaign_briefs SET status='archived' WHERE id=$1`, briefID); err != nil {
+			t.Fatalf("archive the parent brief: %v", err)
+		}
+		if err := repo.DeleteAsset(ctx, projectID, briefID, assetID); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("archived parent: err = %v, want domain.ErrNotFound", err)
+		}
+		assertStillStored(t, assetID)
+	})
+}
+
+// TestCreativeAssetRepo_DeleteAsset_FreesTheBriefsQuota closes the loop between the two features
+// this commit adds: the delete endpoint exists BECAUSE the quota refuses, and its 409 tells the
+// caller to delete and retry. If deleting did not actually move the count, that remedy would be
+// advice to no effect — a brief would be permanently full with no way back.
+func TestCreativeAssetRepo_DeleteAsset_FreesTheBriefsQuota(t *testing.T) {
+	pool := creativeAssetTestPool(t)
+	ctx := context.Background()
+	repo := NewCreativeAssetRepo(pool)
+
+	briefID, projectID := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+	var firstID string
+	for i := 0; i < model.MaxCreativeAssetsPerBrief; i++ {
+		stored, _, err := repo.CreateAsset(ctx, newTestAsset(t, projectID, briefID))
+		if err != nil {
+			t.Fatalf("CreateAsset #%d: %v", i, err)
+		}
+		if i == 0 {
+			firstID = stored.ID
+		}
+	}
+	if _, _, err := repo.CreateAsset(ctx, newTestAsset(t, projectID, briefID)); !errors.Is(err, domain.ErrCreativeAssetQuotaExceeded) {
+		t.Fatalf("err = %v, want domain.ErrCreativeAssetQuotaExceeded at the cap", err)
+	}
+	if err := repo.DeleteAsset(ctx, projectID, briefID, firstID); err != nil {
+		t.Fatalf("DeleteAsset: %v", err)
+	}
+	if _, _, err := repo.CreateAsset(ctx, newTestAsset(t, projectID, briefID)); err != nil {
+		t.Fatalf("CreateAsset after freeing one slot: %v — the 409's remedy must actually work", err)
 	}
 }

@@ -470,10 +470,94 @@ type UploadCreativeAssetOKResponseBody struct {
 	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
 	// brief
 	Checksum string `form:"checksum" json:"checksum" xml:"checksum"`
+	// Pixel width, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Width *int `form:"width,omitempty" json:"width,omitempty" xml:"width,omitempty"`
+	// Pixel height, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Height *int `form:"height,omitempty" json:"height,omitempty" xml:"height,omitempty"`
 	// "true" when this request stored the asset; "false" when an identical upload
 	// already existed. Set only on the upload response, where it selects 201 vs
 	// 200.
 	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
+}
+
+// ListCreativeAssetsResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint
+// HTTP response body.
+type ListCreativeAssetsResponseBody struct {
+	// Every asset stored for this brief, oldest first. Each carries metadata only
+	// — the image bytes are served by the signed creative-asset URL, never inline
+	// here.
+	Assets []*CreativeAssetResponseBody `form:"assets" json:"assets" xml:"assets"`
+	// Number of assets stored for this brief.
+	Count int `form:"count" json:"count" xml:"count"`
+	// Maximum assets one brief may hold. An upload that would exceed it is refused
+	// with 409 reason=creative_asset_quota_exceeded.
+	CountLimit int `form:"count_limit" json:"count_limit" xml:"count_limit"`
+	// Total stored bytes across those assets.
+	BytesUsed int64 `form:"bytes_used" json:"bytes_used" xml:"bytes_used"`
+	// Maximum total stored bytes one brief may hold. Enforced alongside
+	// count_limit; either one alone bounds the wrong thing — a count cap still
+	// admits that many maximum-sized images, and a byte cap alone still admits
+	// unboundedly many tiny ones.
+	BytesLimit int64 `form:"bytes_limit" json:"bytes_limit" xml:"bytes_limit"`
+}
+
+// GetCreativeAssetResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
+// response body.
+type GetCreativeAssetResponseBody struct {
+	// Creative asset UUID
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Parent brief
+	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
+	// Stored image MIME type, as verified from the bytes (not merely the declared
+	// header)
+	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
+	// Size of the stored image in bytes
+	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
+	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
+	// brief
+	Checksum string `form:"checksum" json:"checksum" xml:"checksum"`
+	// Pixel width, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Width *int `form:"width,omitempty" json:"width,omitempty" xml:"width,omitempty"`
+	// Pixel height, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Height *int `form:"height,omitempty" json:"height,omitempty" xml:"height,omitempty"`
+	// "true" when this request stored the asset; "false" when an identical upload
+	// already existed. Set only on the upload response, where it selects 201 vs
+	// 200.
+	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
+}
+
+// GetAssetPlanResponseBody is the type of the "lfx-v2-campaign-service-briefs"
+// service "get-asset-plan" endpoint HTTP response body.
+type GetAssetPlanResponseBody struct {
+	// The platforms this plan covers, after defaulting — echoed so a caller who
+	// sent no filter knows what was actually evaluated.
+	Platforms []string `form:"platforms" json:"platforms" xml:"platforms"`
+	// Every slot that received at least one asset, in platform catalog order.
+	Assignments []*CreativeSlotAssignmentResponseBody `form:"assignments" json:"assignments" xml:"assignments"`
+	// Every required slot or cross-slot rule the library leaves short. Empty means
+	// this library can fill every requested platform.
+	Gaps []*CreativeSlotGapResponseBody `form:"gaps" json:"gaps" xml:"gaps"`
+	// Assets whose dimensions were never recorded, so their shape is unknown. They
+	// are NOT counted against any slot and NOT reported as failing one: unknown is
+	// a different answer from wrong, and a dimension backfill makes them
+	// classifiable without the operator doing anything.
+	Unclassified []string `form:"unclassified" json:"unclassified" xml:"unclassified"`
+	// Assets whose dimensions are known and which this plan did not place in any
+	// slot. Wider than "nothing would accept them": an asset also appears here
+	// when every slot that would take it was already filled to its minimum, or
+	// when a sibling slot had already spent a shared group ceiling. The mirror of
+	// gaps: not only "what am I missing" but "which of the files I just dropped is
+	// this plan not using" — with no gaps reported, what is listed here is surplus
+	// rather than unusable.
+	Unused []string `form:"unused" json:"unused" xml:"unused"`
 }
 
 // CreateCampaignsResponseBody is the type of the
@@ -1748,6 +1832,298 @@ type UploadCreativeAssetPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
 // HTTP response body for the "Unauthorized" error.
 type UploadCreativeAssetUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListCreativeAssetsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint
+// HTTP response body for the "BadRequest" error.
+type ListCreativeAssetsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListCreativeAssetsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint
+// HTTP response body for the "Conflict" error.
+type ListCreativeAssetsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// ListCreativeAssetsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type ListCreativeAssetsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListCreativeAssetsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint
+// HTTP response body for the "InternalServerError" error.
+type ListCreativeAssetsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListCreativeAssetsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint
+// HTTP response body for the "NotFound" error.
+type ListCreativeAssetsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListCreativeAssetsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type ListCreativeAssetsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListCreativeAssetsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint
+// HTTP response body for the "Unauthorized" error.
+type ListCreativeAssetsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCreativeAssetBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
+// response body for the "BadRequest" error.
+type GetCreativeAssetBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCreativeAssetConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
+// response body for the "Conflict" error.
+type GetCreativeAssetConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetCreativeAssetServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type GetCreativeAssetServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCreativeAssetInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
+// response body for the "InternalServerError" error.
+type GetCreativeAssetInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCreativeAssetNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
+// response body for the "NotFound" error.
+type GetCreativeAssetNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCreativeAssetPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetCreativeAssetPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCreativeAssetUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetCreativeAssetUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "BadRequest" error.
+type GetAssetPlanBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "Conflict" error.
+type GetAssetPlanConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetAssetPlanServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type GetAssetPlanServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "InternalServerError" error.
+type GetAssetPlanInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "NotFound" error.
+type GetAssetPlanNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetAssetPlanPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetAssetPlanUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCreativeAssetBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-creative-asset" endpoint
+// HTTP response body for the "BadRequest" error.
+type DeleteCreativeAssetBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCreativeAssetConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-creative-asset" endpoint
+// HTTP response body for the "Conflict" error.
+type DeleteCreativeAssetConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// DeleteCreativeAssetServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-creative-asset" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type DeleteCreativeAssetServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCreativeAssetInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-creative-asset" endpoint
+// HTTP response body for the "InternalServerError" error.
+type DeleteCreativeAssetInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCreativeAssetNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-creative-asset" endpoint
+// HTTP response body for the "NotFound" error.
+type DeleteCreativeAssetNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCreativeAssetPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-creative-asset" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type DeleteCreativeAssetPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCreativeAssetUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-creative-asset" endpoint
+// HTTP response body for the "Unauthorized" error.
+type DeleteCreativeAssetUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -3934,10 +4310,75 @@ type CreativeAssetResponseBody struct {
 	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
 	// brief
 	Checksum string `form:"checksum" json:"checksum" xml:"checksum"`
+	// Pixel width, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Width *int `form:"width,omitempty" json:"width,omitempty" xml:"width,omitempty"`
+	// Pixel height, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Height *int `form:"height,omitempty" json:"height,omitempty" xml:"height,omitempty"`
 	// "true" when this request stored the asset; "false" when an identical upload
 	// already existed. Set only on the upload response, where it selects 201 vs
 	// 200.
 	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
+}
+
+// CreativeSlotAssignmentResponseBody is used to define fields on response body
+// types.
+type CreativeSlotAssignmentResponseBody struct {
+	// Stable identifier for this slot: platform/channel/slot, or platform/slot
+	// where the platform has a single ad shape. It is the join key between a plan
+	// row and an operator override, so it survives a round trip through a client
+	// unchanged.
+	SlotKey string `form:"slot_key" json:"slot_key" xml:"slot_key"`
+	// Campaign platform this slot belongs to, using the same identifier a campaign
+	// config carries ("google-ads").
+	Platform string `form:"platform" json:"platform" xml:"platform"`
+	// Ad channel within the platform whose rules differ from its siblings
+	// ("PERFORMANCE_MAX", "DEMAND_GEN", "DISPLAY"). Absent where the platform has
+	// a single ad shape.
+	Channel *string `form:"channel,omitempty" json:"channel,omitempty" xml:"channel,omitempty"`
+	// Wire name of the slot within its channel — the asset field type or payload
+	// array key a campaign config puts this image under.
+	Slot string `form:"slot" json:"slot" xml:"slot"`
+	// Operator-facing name of the slot. It NAMES ITS CHANNEL, because three Google
+	// channels each have a slot called "logo image" under different rules and a
+	// bare "logo image" would not say which creative is meant.
+	Label string `form:"label" json:"label" xml:"label"`
+	// The slot's rule as a sentence an operator can act on — ratio, tolerance and
+	// pixel floor, plus the byte cap where one applies.
+	Requirement string `form:"requirement" json:"requirement" xml:"requirement"`
+	// Assets assigned to this slot, best fit first. An asset may appear in several
+	// slots: one library feeds every platform, and the same square image
+	// legitimately serves a 1:1 slot on each. It never appears twice within one
+	// slot.
+	AssetIds []string `form:"asset_ids" json:"asset_ids" xml:"asset_ids"`
+	// Images the platform requires in this slot. 0 marks the slot optional.
+	MinCount int `form:"min_count" json:"min_count" xml:"min_count"`
+	// Images the platform will accept in this slot. 0 means the platform states no
+	// per-slot ceiling; a shared ceiling across sibling slots may still apply.
+	MaxCount int `form:"max_count" json:"max_count" xml:"max_count"`
+}
+
+// CreativeSlotGapResponseBody is used to define fields on response body types.
+type CreativeSlotGapResponseBody struct {
+	// Campaign platform whose rule is unmet.
+	Platform string `form:"platform" json:"platform" xml:"platform"`
+	// Ad channel whose rule is unmet. Absent where the platform has a single ad
+	// shape.
+	Channel *string `form:"channel,omitempty" json:"channel,omitempty" xml:"channel,omitempty"`
+	// The slot this shortfall belongs to. ABSENT when the requirement spans
+	// several slots and no single one of them is required on its own.
+	SlotKey *string `form:"slot_key,omitempty" json:"slot_key,omitempty" xml:"slot_key,omitempty"`
+	// Operator-facing name of the unmet requirement.
+	Label string `form:"label" json:"label" xml:"label"`
+	// How many more images the requirement needs beyond what the plan could
+	// assign. Always at least 1.
+	Need int `form:"need" json:"need" xml:"need"`
+	// What is missing and what would satisfy it, as the sentence an operator takes
+	// back to their designer. It names every shape that would close the gap, not
+	// just one, so an either-or requirement does not send someone to produce an
+	// image they did not need.
+	Reason string `form:"reason" json:"reason" xml:"reason"`
 }
 
 // EmailMetricsResponseBody is used to define fields on response body types.
@@ -4659,6 +5100,8 @@ func NewUploadCreativeAssetCreatedResponseBody(res *lfxv2campaignservicebriefs.C
 		MimeType:  res.MimeType,
 		ByteSize:  res.ByteSize,
 		Checksum:  res.Checksum,
+		Width:     res.Width,
+		Height:    res.Height,
 		Created:   res.Created,
 	}
 	return body
@@ -4675,7 +5118,108 @@ func NewUploadCreativeAssetOKResponseBody(res *lfxv2campaignservicebriefs.Creati
 		MimeType:  res.MimeType,
 		ByteSize:  res.ByteSize,
 		Checksum:  res.Checksum,
+		Width:     res.Width,
+		Height:    res.Height,
 		Created:   res.Created,
+	}
+	return body
+}
+
+// NewListCreativeAssetsResponseBody builds the HTTP response body from the
+// result of the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCreativeAssetsResponseBody(res *lfxv2campaignservicebriefs.CreativeAssetList) *ListCreativeAssetsResponseBody {
+	body := &ListCreativeAssetsResponseBody{
+		Count:      res.Count,
+		CountLimit: res.CountLimit,
+		BytesUsed:  res.BytesUsed,
+		BytesLimit: res.BytesLimit,
+	}
+	if res.Assets != nil {
+		body.Assets = make([]*CreativeAssetResponseBody, len(res.Assets))
+		for i, val := range res.Assets {
+			if val == nil {
+				body.Assets[i] = nil
+				continue
+			}
+			body.Assets[i] = marshalLfxv2campaignservicebriefsCreativeAssetToCreativeAssetResponseBody(val)
+		}
+	} else {
+		body.Assets = []*CreativeAssetResponseBody{}
+	}
+	return body
+}
+
+// NewGetCreativeAssetResponseBody builds the HTTP response body from the
+// result of the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCreativeAssetResponseBody(res *lfxv2campaignservicebriefs.CreativeAsset) *GetCreativeAssetResponseBody {
+	body := &GetCreativeAssetResponseBody{
+		ID:        res.ID,
+		ProjectID: res.ProjectID,
+		BriefID:   res.BriefID,
+		MimeType:  res.MimeType,
+		ByteSize:  res.ByteSize,
+		Checksum:  res.Checksum,
+		Width:     res.Width,
+		Height:    res.Height,
+		Created:   res.Created,
+	}
+	return body
+}
+
+// NewGetAssetPlanResponseBody builds the HTTP response body from the result of
+// the "get-asset-plan" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewGetAssetPlanResponseBody(res *lfxv2campaignservicebriefs.CreativeAssetPlan) *GetAssetPlanResponseBody {
+	body := &GetAssetPlanResponseBody{}
+	if res.Platforms != nil {
+		body.Platforms = make([]string, len(res.Platforms))
+		for i, val := range res.Platforms {
+			body.Platforms[i] = val
+		}
+	} else {
+		body.Platforms = []string{}
+	}
+	if res.Assignments != nil {
+		body.Assignments = make([]*CreativeSlotAssignmentResponseBody, len(res.Assignments))
+		for i, val := range res.Assignments {
+			if val == nil {
+				body.Assignments[i] = nil
+				continue
+			}
+			body.Assignments[i] = marshalLfxv2campaignservicebriefsCreativeSlotAssignmentToCreativeSlotAssignmentResponseBody(val)
+		}
+	} else {
+		body.Assignments = []*CreativeSlotAssignmentResponseBody{}
+	}
+	if res.Gaps != nil {
+		body.Gaps = make([]*CreativeSlotGapResponseBody, len(res.Gaps))
+		for i, val := range res.Gaps {
+			if val == nil {
+				body.Gaps[i] = nil
+				continue
+			}
+			body.Gaps[i] = marshalLfxv2campaignservicebriefsCreativeSlotGapToCreativeSlotGapResponseBody(val)
+		}
+	} else {
+		body.Gaps = []*CreativeSlotGapResponseBody{}
+	}
+	if res.Unclassified != nil {
+		body.Unclassified = make([]string, len(res.Unclassified))
+		for i, val := range res.Unclassified {
+			body.Unclassified[i] = val
+		}
+	} else {
+		body.Unclassified = []string{}
+	}
+	if res.Unused != nil {
+		body.Unused = make([]string, len(res.Unused))
+		for i, val := range res.Unused {
+			body.Unused[i] = val
+		}
+	} else {
+		body.Unused = []string{}
 	}
 	return body
 }
@@ -5919,6 +6463,318 @@ func NewUploadCreativeAssetPayloadTooLargeResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-briefs" service.
 func NewUploadCreativeAssetUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *UploadCreativeAssetUnauthorizedResponseBody {
 	body := &UploadCreativeAssetUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListCreativeAssetsBadRequestResponseBody builds the HTTP response body
+// from the result of the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCreativeAssetsBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *ListCreativeAssetsBadRequestResponseBody {
+	body := &ListCreativeAssetsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListCreativeAssetsConflictResponseBody builds the HTTP response body from
+// the result of the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCreativeAssetsConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *ListCreativeAssetsConflictResponseBody {
+	body := &ListCreativeAssetsConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewListCreativeAssetsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCreativeAssetsServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *ListCreativeAssetsServiceUnavailableResponseBody {
+	body := &ListCreativeAssetsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListCreativeAssetsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCreativeAssetsInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *ListCreativeAssetsInternalServerErrorResponseBody {
+	body := &ListCreativeAssetsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListCreativeAssetsNotFoundResponseBody builds the HTTP response body from
+// the result of the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCreativeAssetsNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *ListCreativeAssetsNotFoundResponseBody {
+	body := &ListCreativeAssetsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListCreativeAssetsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCreativeAssetsPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *ListCreativeAssetsPayloadTooLargeResponseBody {
+	body := &ListCreativeAssetsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListCreativeAssetsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCreativeAssetsUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *ListCreativeAssetsUnauthorizedResponseBody {
+	body := &ListCreativeAssetsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCreativeAssetBadRequestResponseBody builds the HTTP response body from
+// the result of the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCreativeAssetBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *GetCreativeAssetBadRequestResponseBody {
+	body := &GetCreativeAssetBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCreativeAssetConflictResponseBody builds the HTTP response body from
+// the result of the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCreativeAssetConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *GetCreativeAssetConflictResponseBody {
+	body := &GetCreativeAssetConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetCreativeAssetServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCreativeAssetServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *GetCreativeAssetServiceUnavailableResponseBody {
+	body := &GetCreativeAssetServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCreativeAssetInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCreativeAssetInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *GetCreativeAssetInternalServerErrorResponseBody {
+	body := &GetCreativeAssetInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCreativeAssetNotFoundResponseBody builds the HTTP response body from
+// the result of the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCreativeAssetNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GetCreativeAssetNotFoundResponseBody {
+	body := &GetCreativeAssetNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCreativeAssetPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCreativeAssetPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *GetCreativeAssetPayloadTooLargeResponseBody {
+	body := &GetCreativeAssetPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCreativeAssetUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCreativeAssetUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *GetCreativeAssetUnauthorizedResponseBody {
+	body := &GetCreativeAssetUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanBadRequestResponseBody builds the HTTP response body from the
+// result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *GetAssetPlanBadRequestResponseBody {
+	body := &GetAssetPlanBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanConflictResponseBody builds the HTTP response body from the
+// result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *GetAssetPlanConflictResponseBody {
+	body := &GetAssetPlanConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetAssetPlanServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *GetAssetPlanServiceUnavailableResponseBody {
+	body := &GetAssetPlanServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanInternalServerErrorResponseBody builds the HTTP response body
+// from the result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *GetAssetPlanInternalServerErrorResponseBody {
+	body := &GetAssetPlanInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanNotFoundResponseBody builds the HTTP response body from the
+// result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GetAssetPlanNotFoundResponseBody {
+	body := &GetAssetPlanNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *GetAssetPlanPayloadTooLargeResponseBody {
+	body := &GetAssetPlanPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *GetAssetPlanUnauthorizedResponseBody {
+	body := &GetAssetPlanUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCreativeAssetBadRequestResponseBody builds the HTTP response body
+// from the result of the "delete-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCreativeAssetBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *DeleteCreativeAssetBadRequestResponseBody {
+	body := &DeleteCreativeAssetBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCreativeAssetConflictResponseBody builds the HTTP response body
+// from the result of the "delete-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCreativeAssetConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *DeleteCreativeAssetConflictResponseBody {
+	body := &DeleteCreativeAssetConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewDeleteCreativeAssetServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "delete-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCreativeAssetServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *DeleteCreativeAssetServiceUnavailableResponseBody {
+	body := &DeleteCreativeAssetServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCreativeAssetInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "delete-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCreativeAssetInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *DeleteCreativeAssetInternalServerErrorResponseBody {
+	body := &DeleteCreativeAssetInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCreativeAssetNotFoundResponseBody builds the HTTP response body
+// from the result of the "delete-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCreativeAssetNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *DeleteCreativeAssetNotFoundResponseBody {
+	body := &DeleteCreativeAssetNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCreativeAssetPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "delete-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCreativeAssetPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *DeleteCreativeAssetPayloadTooLargeResponseBody {
+	body := &DeleteCreativeAssetPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCreativeAssetUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "delete-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCreativeAssetUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *DeleteCreativeAssetUnauthorizedResponseBody {
+	body := &DeleteCreativeAssetUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -8331,6 +9187,53 @@ func NewUploadCreativeAssetPayload(body *UploadCreativeAssetRequestBody, project
 	}
 	v.ProjectID = projectID
 	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListCreativeAssetsPayload builds a lfx-v2-campaign-service-briefs service
+// list-creative-assets endpoint payload.
+func NewListCreativeAssetsPayload(projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.ListCreativeAssetsPayload {
+	v := &lfxv2campaignservicebriefs.ListCreativeAssetsPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetCreativeAssetPayload builds a lfx-v2-campaign-service-briefs service
+// get-creative-asset endpoint payload.
+func NewGetCreativeAssetPayload(projectID string, briefID string, assetID string, bearerToken *string) *lfxv2campaignservicebriefs.GetCreativeAssetPayload {
+	v := &lfxv2campaignservicebriefs.GetCreativeAssetPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.AssetID = assetID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetAssetPlanPayload builds a lfx-v2-campaign-service-briefs service
+// get-asset-plan endpoint payload.
+func NewGetAssetPlanPayload(projectID string, briefID string, platforms []string, bearerToken *string) *lfxv2campaignservicebriefs.GetAssetPlanPayload {
+	v := &lfxv2campaignservicebriefs.GetAssetPlanPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.Platforms = platforms
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewDeleteCreativeAssetPayload builds a lfx-v2-campaign-service-briefs
+// service delete-creative-asset endpoint payload.
+func NewDeleteCreativeAssetPayload(projectID string, briefID string, assetID string, bearerToken *string) *lfxv2campaignservicebriefs.DeleteCreativeAssetPayload {
+	v := &lfxv2campaignservicebriefs.DeleteCreativeAssetPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.AssetID = assetID
 	v.BearerToken = bearerToken
 
 	return v

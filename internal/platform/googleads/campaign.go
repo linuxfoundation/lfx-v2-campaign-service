@@ -1392,7 +1392,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// the meta/twitter name-only partials.
 	campaignNamePartial := func() *CampaignResult {
 		return &CampaignResult{
-			Platform:     "google-ads",
+			Platform:     platformGoogleAds,
 			AccountLabel: c.account.Label,
 			// Stamped on the PARTIAL, not just the success result: every returned result —
 			// including every ambiguous/duplicate partial — descends from this closure, so a

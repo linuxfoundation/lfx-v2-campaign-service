@@ -151,12 +151,78 @@ are selected by the `created` attribute via `Response(StatusCreated, Tag("create
 a default `Response(StatusOK)`; both share one body shape. The 201 arm also declares
 `Body(CreativeAsset)` explicitly: since goa v3.31 an implicit response body drops the attribute its
 `Tag` tests, which would silently remove `created` from the 201 body; an explicit `Body` is used as
-declared. Neither carries an ETag: creative
+declared. The `CreativeAsset` result type carries OPTIONAL `width`/`height` attributes, each
+`Minimum(1)` and deliberately absent from `Required` (LFXV2-2665): an asset stored before the
+service recorded dimensions has none, and `Required` would make those rows unserializable.
+Absent means "dimensions unknown" — a published `0` would be read as a real measurement failing
+every slot minimum, which is why `Minimum(1)` refuses it at the schema too. Neither carries an
+ETag: creative
 assets are insert-only and carry no version, so there is no optimistic-concurrency
 handle to return (contrast the campaign/audience updates that require `If-Match`). `project_id`
 uses the permissive UUID-or-slug attribute, not the slug-only one `create-campaigns` needs,
 because the asset is bound to a campaign later by its own id and the id is never stamped into a
 campaign name.
+
+`list-creative-assets`, `get-creative-asset` and `delete-creative-asset` (LFXV2-2665) complete
+that surface: before this, upload was the only creative-asset method, so a brief's library was
+write-only — nothing could enumerate it, and nothing could free its bytes. A folder upload is
+the use case that makes those gaps blocking, because it is a SEQUENCE of requests rather than
+one.
+
+- **The list result is a `CreativeAssetList`, not a bare array.** Alongside `assets` it carries
+  `count`/`count_limit` and `bytes_used`/`bytes_limit`, and all five are REQUIRED. Publishing the
+  ceilings beside the totals is what lets a client decide before it starts sending: with only the
+  rows, a caller discovers a full brief by sending the file that gets refused, having already
+  paid for every round trip before it. Making them required is what separates "the library is
+  empty" from "the server declined to compute a total" — "0 of 100 used" is exactly the state a
+  folder picker has to render correctly. The method takes no limit or cursor: a brief stored
+  before the quota existed may hold more than `count_limit`, and its full set is precisely what
+  an operator must see in order to delete back down to it.
+- **`get-creative-asset` exists separately from a list filter** because it is the metadata read
+  the signed-asset route does not provide — that route serves bytes, this one answers "what shape
+  is this asset". `created` is absent here, as it is everywhere but upload: its only job is
+  selecting 201 versus 200 on that one method.
+- **Delete is a `204` with no body, and HARD.** Campaigns and briefs retire by a status flip;
+  this row is removed, because reclaiming the storage against the quota is the entire reason the
+  endpoint exists. It is refused `409` while any live campaign on the brief could still need the
+  asset, which includes a campaign whose configuration has not been recorded yet (see
+  [internal/infrastructure/postgres](internal-infrastructure-postgres.md) for why that arm is
+  exact rather than a hedge).
+- **No new error type.** Both refusals are the `Conflict`/`ConflictError` that
+  `commonBriefErrors()` already declares, separated by the `reason` discriminator —
+  `creative_asset_quota_exceeded` and `creative_asset_in_use` — the same mechanism
+  `ab_test_unsupported_send_type` uses, and for the same reason: a folder upload sending many
+  files has to branch on WHICH refusal it got (stop and prompt the user to free space, versus
+  skip this one file), and the two are indistinguishable from prose.
+
+Like upload, none of the three carries an ETag, for the reason given above.
+
+`get-asset-plan` (LFXV2-2665) is the fifth method on that surface and the one that answers the
+operator's actual question: not "what have I stored" but **"can this brief launch, and if not,
+what is missing?"** It is `GET .../creative-assets/plan` — a PURE READ that stores nothing and
+attaches nothing, so an operator may call it as often as they like while still deciding, and
+the override they eventually send replaces a row in the plan rather than racing it.
+
+- **`platforms` is a REPEATABLE query parameter**, not a comma-joined list: a platform
+  identifier is opaque, and a separator inside one would need an escaping rule nothing else in
+  this API has. Absent means every platform whose slot rules the service publishes, which is
+  the answer "is my library ready" wants. A platform the service does not know is **ignored,
+  not refused** — see [internal/service](internal-service.md) — and the echoed `platforms`
+  field is what makes the drop visible.
+- **The result is four lists and all of them are REQUIRED**: `assignments`, `gaps`,
+  `unclassified` and `unused`. Empty is a real answer here — no gaps is precisely the state
+  that means ready to launch — so each must serialize as `[]` rather than `null`.
+- **`creative-slot-gap` makes `slot_key` OPTIONAL while `label` is required.** A requirement
+  can span several slots (Google needs Demand Gen's landscape marketing image *or* its square
+  one), and such a gap belongs to no single slot; the label names the requirement instead.
+  Every other gap field — platform, need, reason — is required, because a gap with no stated
+  remedy is not worth returning.
+- **`requirement` travels with a FULL slot too**, not only a gap. The operator's next question
+  after "what fits here" is "what else would", and re-deriving that sentence client-side would
+  mean keeping a second copy of every platform's image geometry in the browser.
+- **No ETag**, and for a different reason than upload's: the plan is DERIVED and holds no
+  version of its own. It changes when the library changes, and the library's own methods are
+  where a concurrency guard would belong.
 
 ## The audience-builder service (LFXV2-2770)
 

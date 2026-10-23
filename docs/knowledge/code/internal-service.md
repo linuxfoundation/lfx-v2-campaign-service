@@ -285,6 +285,25 @@ holding it across the checksum and the insert would shed concurrent uploads for 
 free. Stage 2b is not redundant with the wire admission — they bound different quantities with
 different worst cases, and neither subsumes the other.
 
+**Stage 1's dimensions are PERSISTED, not discarded** (LFXV2-2665, migration `000047`). The
+handler writes `cfg.Width`/`cfg.Height` onto the stored `model.CreativeAsset` alongside the
+checksum. They are the per-platform slot classifier's entire input — which slot an image can
+fill is a question about its shape — and recovering them later would mean detoasting a blob of
+up to 30 MiB to re-read a header this request already parsed; stage 3 discards the decoded
+image, so `cfg` is the only source left. Nothing unvalidated is stored: these are the same two
+numbers stage 2 bounded and stage 3 then decoded successfully against.
+
+On the way OUT the pair is optional, and that is the contract the rest of the stack depends on.
+`creativeAssetResult` sets the response's `width`/`height` only when BOTH are `> 0`, copying to
+locals first so a later mutation of the stored model cannot reach a result already handed to the
+transport. A zero pair means UNKNOWN — what an asset stored before `000047` reads back as — so
+publishing a literal `0` would be read downstream as "fails every slot minimum" rather than "not
+classifiable". A half-known pair publishes as absent too; the table refuses to store one, and
+the result would be unusable anyway. Pinned by
+`TestBriefService_UploadCreativeAsset_PersistsHeaderDimensions` (a deliberately non-square
+3x7 fixture, because every other fixture here is 2x2 and cannot detect a width/height
+transposition) and `TestCreativeAssetResult_UnknownDimensionsAreAbsentNotZero`.
+
 The set of registered decoders (`image/png`,
 `image/jpeg`, blank-imported) is only the UPPER bound; `mimeForImageFormat` is the authoritative
 allow-list, so another package importing `image/gif` cannot widen what this endpoint accepts.
@@ -325,6 +344,78 @@ binds it in the same step as the brief repos, and BOTH startup paths bind throug
 `bindBriefLiveBackends` helper — the interface forces the method to exist, only the shared helper
 forces it to be CALLED, and the handler's 503 is deliberately indistinguishable from the
 no-database mode's, so a mis-wired live container cannot be detected from the outside.
+
+## Reading and deleting stored creative assets (LFXV2-2665)
+
+`ListCreativeAssets`, `GetCreativeAsset` and `DeleteCreativeAsset` sit beside the upload handler
+and are deliberately thin: the quota arithmetic and the delete's reference check are both the
+repository's, not theirs. All three take the same typed `503` on an unwired repo, for the reason
+the upload handler gives.
+
+`ListCreativeAssets` publishes `model.MaxCreativeAssetsPerBrief` and
+`model.MaxCreativeAssetBytesPerBrief` as `count_limit`/`bytes_limit` beside the totals the repo
+computed. It reads the SAME constants the repository enforces against, which is what makes a
+drift between the published ceiling and the enforced one a test failure rather than a client
+that is quietly told the wrong number
+(`TestListCreativeAssets_PublishesTheEnforcedQuota`). The slice is always non-nil — an empty
+library serializes as `[]`, never `null` — and an invisible brief is a 404 from the repo instead
+(`TestListCreativeAssets_EmptyLibraryIsAnEmptyArray`).
+
+`GetCreativeAsset` reads through the port's `GetAssetMetadata` rather than `GetAsset`. The
+response carries no bytes, so the existing method would detoast up to 30 MiB of `BYTEA` only to
+discard it; that is the whole reason the fifth port method exists. `created` stays nil here, as
+it does everywhere but upload.
+
+`mapBriefErr` gains two arms, both `409`, both carrying a `reason` from `conflictReason`:
+`ErrCreativeAssetQuotaExceeded` → `creative_asset_quota_exceeded` and `ErrCreativeAssetInUse` →
+`creative_asset_in_use`. Each message appends the remedy — delete an asset and retry; delete the
+campaign or reconcile a stuck dispatch and retry — because "the brief is full" with no way to
+empty it is not actionable, and because a folder upload has to branch on which refusal it got.
+The discriminator, not the prose, is what it branches on.
+
+## The platform slot registry and `GetAssetPlan` (LFXV2-2665)
+
+`creative_plan.go` holds two things: the registry of platforms whose image rules this service
+publishes, and the handler that runs a brief's library against them.
+
+**`slotCatalogs()` is the registry, and it lives HERE deliberately.**
+[internal/creative](internal-creative.md) depends on nothing, each platform package publishes
+its own rows (`googleads.ImageSlotCatalog()`), and this layer is the only one that already
+imports every platform — so it is the one place that can name them all without an import cycle,
+and without dragging six API clients into a binary that only wanted to classify an image.
+Adding a platform is one entry here plus a `creative.Catalog` in that platform's package;
+nothing in `internal/creative` changes.
+
+`GetAssetPlan` reads through `ListAssets`, not a bytes-bearing port method: classifying needs an
+id and two integers, all of them columns on the row, and detoasting up to 30 MiB of `BYTEA` per
+asset to compare two numbers would be the entire cost of the endpoint. `Ordinal` comes from the
+LIST INDEX — the repository's oldest-first order — because it is the classifier's last ranking
+tie-break and therefore what makes a reloaded plan identical to the one the operator was looking
+at; an index rather than a `created_at`, because two files uploaded in one batch can share a
+timestamp and an index cannot.
+
+`requestedCatalog` resolves the `platforms` filter. An **empty** filter means every registered
+platform. An **unknown** one is dropped rather than refused: it publishes no slots, so it can
+produce neither an assignment nor a gap, and a client built against a newer release should get
+the plan for the platforms this one does know rather than a 400 and nothing. The drop is visible
+in the echoed `platforms`, so a caller can still tell that what it asked for is not what it got.
+Duplicates are deduped and the result is **sorted**, because the classifier fills slots in
+catalog order and an unsorted map range would otherwise let a shared group ceiling fall to a
+different platform between two identical requests.
+
+Every list on the wire is a non-nil slice (`idList`). An empty `gaps` is the answer that means
+"this library can launch", so it must be distinguishable from a field the server declined to
+compute — and a nil slice renders as JSON `null`, which is that other answer. `Channel` and
+`SlotKey` are pointers set only when non-empty: a gap raised by a cross-slot requirement names
+no slot at all, because Google's reciprocal landscape-or-square pair belongs to neither member
+and naming one would send the operator to make exactly the image they did not need.
+
+A route detail worth pinning rather than reasoning about: `/creative-assets/plan` sits under the
+same prefix as `/creative-assets/{asset_id}`, and the generated muxer is the only layer that
+decides between them. `TestGetAssetPlanRoute_WinsAgainstTheAssetIDWildcard` registers both on a
+real `goahttp.NewMuxer()` and asserts the literal segment wins, because the failure mode —
+arriving at the single-asset handler as `asset_id="plan"` — is a 404 that looks like a missing
+asset.
 
 ## Campaign config update: the caller's config is redacted before `config_snapshot`
 
