@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -107,5 +108,57 @@ func TestListProjectPlatformDeletedCampaignIDs_Live(t *testing.T) {
 	empty, err := NewCampaignRepo(pool).ListProjectPlatformDeletedCampaignIDs(ctx, "no-such-project", model.ProviderMetaAds)
 	if err != nil || empty == nil || len(empty) != 0 {
 		t.Errorf("unknown project = %#v, %v; want an empty, non-nil slice", empty, err)
+	}
+
+	// The final monitor snapshot sees live and deleted rows together, with the SAME
+	// latest-owner rule as above. A takeover after the initial scope must remove an id
+	// that was originally live, not just ids originally read as deleted.
+	monitorIDs := func() []string {
+		t.Helper()
+		scope, scopeErr := NewCampaignRepo(pool).ListProjectPlatformMonitorCampaignIDs(ctx, projectA, model.ProviderMetaAds)
+		if scopeErr != nil {
+			t.Fatalf("monitor snapshot: %v", scopeErr)
+		}
+		out := make([]string, 0, len(scope))
+		for _, entry := range scope {
+			out = append(out, entry.PlatformCampaignID)
+		}
+		return out
+	}
+	wantMonitor := append(append([]string{}, want...), live)
+	sort.Strings(wantMonitor)
+	if ids := monitorIDs(); fmt.Sprint(ids) != fmt.Sprint(wantMonitor) {
+		t.Fatalf("monitor ids = %v, want live + eligible deleted %v", ids, wantMonitor)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE campaigns SET status = 'deleted'
+		WHERE project_id = $1 AND platform = 'meta-ads' AND platform_campaign_id = $2`, projectA, live); err != nil {
+		t.Fatalf("delete initially live campaign: %v", err)
+	}
+	insert(briefB, projectB, live, "created")
+	if ids := monitorIDs(); fmt.Sprint(ids) != fmt.Sprint(want) {
+		t.Fatalf("after takeover ids = %v, want %v: originally live id must also be revalidated", ids, want)
+	}
+	empty, err = NewCampaignRepo(pool).ListProjectPlatformMonitorCampaignIDs(ctx, "no-such-project", model.ProviderMetaAds)
+	if err != nil || empty == nil || len(empty) != 0 {
+		t.Errorf("unknown project's monitor scope = %#v, %v; want empty, non-nil", empty, err)
+	}
+}
+
+func TestCampaignMonitorHistoryIndex_Live(t *testing.T) {
+	pool := creativeAssetTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var valid, allStatuses, nonUnique bool
+	var definition string
+	err := pool.QueryRow(ctx, `SELECT i.indisvalid AND i.indisready, i.indpred IS NULL, NOT i.indisunique,
+		pg_get_indexdef(i.indexrelid) FROM pg_index i
+		WHERE i.indexrelid = 'idx_campaigns_platform_campaign_history'::regclass`).Scan(
+		&valid, &allStatuses, &nonUnique, &definition)
+	if err != nil {
+		t.Fatalf("read monitor history index: %v", err)
+	}
+	if !valid || !allStatuses || !nonUnique || !strings.Contains(definition, "(platform, platform_campaign_id)") {
+		t.Fatalf("invalid monitor history index: valid=%t allStatuses=%t nonUnique=%t definition=%s",
+			valid, allStatuses, nonUnique, definition)
 	}
 }

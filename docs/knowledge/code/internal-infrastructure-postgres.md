@@ -501,6 +501,22 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `TestListProjectPlatformDeletedCampaignIDs_Live` (claim order and binding order disagreeing,
   both ways) and `TestLiveClaimThenUpsertStampsPlatformBoundAt` (under `dbtest/`).
 
+- `000049` — a concurrent, non-unique, non-partial index
+  `idx_campaigns_platform_campaign_history` on `(platform, platform_campaign_id)`.
+  The account monitor's latest-owner lookup examines deleted bindings as well as
+  live ones, so the per-provider live-only unique indexes cannot cover it.
+  `ListProjectPlatformMonitorCampaignIDs` evaluates live and eligible deleted rows
+  in one statement snapshot for the post-upstream ownership recheck, sharing the
+  deleted-scope `NOT EXISTS` predicate. The response intersects that snapshot with
+  its initial scope and fails closed on lookup errors. No ownership lock is held
+  across provider calls or response delivery. Both migration directions have one
+  concurrent statement; the up migration deliberately omits `IF NOT EXISTS` so
+  an INVALID leftover cannot silently pass a retry. Drop that leftover before
+  forcing the migration back to 48 and retrying. Pinned by
+  `TestMigration000049_IndexesAllBindingHistoryConcurrently`,
+  `TestCampaignMonitorHistoryIndex_Live`, and the final snapshot assertions in
+  `TestListProjectPlatformDeletedCampaignIDs_Live`.
+
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
 
 `campaign_jobs` is append-only — nothing else in the service deletes a row — so it

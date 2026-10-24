@@ -325,6 +325,18 @@ func (r *fakeCampaignRepo) ListProjectPlatformDeletedCampaignIDs(_ context.Conte
 	return out, nil
 }
 
+func (r *fakeCampaignRepo) ListProjectPlatformMonitorCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	live, err := r.ListProjectPlatformCampaignIDs(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	deleted, err := r.ListProjectPlatformDeletedCampaignIDs(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	return append(live, deleted...), nil
+}
+
 // ResolvePlatformCampaign mirrors the real query rather than returning canned refs: it filters
 // on the same four predicates (project, platform, upstream id, not-deleted) and returns EVERY
 // match. That matters because the behaviour under test is what the service does with an

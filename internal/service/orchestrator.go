@@ -2983,6 +2983,10 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 	// The upstream read is account-wide; only the project's own campaigns leave this service.
 	// Filtered before the rule engine runs, so action items and totals describe the same rows.
 	if scoped {
+		scopeIDs, serr = o.revalidateAccountMonitorScope(ctx, projectID, platform, accountID, scopeIDs)
+		if serr != nil {
+			return nil, serr
+		}
 		read.Rows = filterMonitorRows(read.Rows, scopeIDs)
 	}
 	return read, nil
@@ -3044,6 +3048,35 @@ func (o *Orchestrator) scopeAccountMonitor(ctx context.Context, projectID string
 		}
 	}
 	return ids, true, nil
+}
+
+// revalidateAccountMonitorScope shrinks the initial authorization using ONE fresh database
+// snapshot after all platform work. It never admits a newly acquired id, and a database
+// failure returns no data. This catches takeovers committed during either precheck query
+// or the platform read; it does not lock ownership through response delivery.
+func (o *Orchestrator) revalidateAccountMonitorScope(ctx context.Context, projectID string, platform model.Provider, accountID string, initial map[string]bool) (map[string]bool, error) {
+	scope, err := o.campaigns.ListProjectPlatformMonitorCampaignIDs(ctx, projectID, platform)
+	if err != nil {
+		return nil, fmt.Errorf("revalidate account monitor scope for project %s on %s: %w", projectID, platform, err)
+	}
+	scoper := o.dispatchers[platform].(AccountMonitorScoper) // only called for scoped monitors
+	ids := make(map[string]bool, len(initial))
+	for _, entry := range scope {
+		if !initial[entry.PlatformCampaignID] {
+			continue
+		}
+		current, scopeErr := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{entry}, accountID)
+		if scopeErr != nil {
+			// Changed or unreadable provenance cannot authorize the captured campaign.
+			continue
+		}
+		for _, id := range current {
+			if initial[id] {
+				ids[id] = true
+			}
+		}
+	}
+	return ids, nil
 }
 
 // filterMonitorRows keeps only the rows whose upstream campaign id is in ids, matched by

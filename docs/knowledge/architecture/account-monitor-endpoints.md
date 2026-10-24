@@ -600,9 +600,27 @@ caller (ROOT included), at one choke point mirroring
    rows with no stamp; `created_at` alone is the dispatch CLAIM time, and a
    dispatch that binds an existing upstream campaign can claim before another
    project's adopt-then-delete and bind after it. The empty-scope answer in step 2 therefore needs both lists empty.
-4. The unchanged account read runs, and only rows whose
-   `platform_campaign_id` is in the scoped set are kept, BEFORE the rule engine
-   and `monitorTotals` — so action items and totals describe the same rows.
+4. The unchanged account read runs. After ALL upstream work (including the
+   report-backed monitor's best-effort currency read), `revalidateAccountMonitorScope`
+   reads live and eligible deleted bindings together with
+   `ListProjectPlatformMonitorCampaignIDs`: one SQL statement, hence one database
+   snapshot, with the same latest-owner predicate as the deleted precheck. Repeating
+   the two precheck queries would keep an originally live id if a delete/adopt
+   committed between them. A lookup error fails closed, without returning rows.
+   The dispatcher rechecks each candidate's account provenance; an entry it now
+   refuses is omitted. The final set is intersected with the initial authorization,
+   never widened to campaigns acquired during the read. Only rows in that
+   intersection are kept, BEFORE the rule engine and `monitorTotals`, so action
+   items and totals describe the same rows. Regression coverage blocks both monitor
+   paths during the upstream read, transfers ownership, then completes the read;
+   it also covers a transfer between precheck queries and during X's currency read.
+   This catches transfers committed before the final snapshot; it does not lock
+   ownership until response delivery or claim to serialize reads with transfers.
+5. Migration `000049` adds the non-unique, all-status
+   `idx_campaigns_platform_campaign_history (platform, platform_campaign_id)`
+   concurrently. The existing live-only binding indexes cannot support the
+   historical takeover lookup. Binding uniqueness and soft-delete semantics stay
+   unchanged.
 
 The 409s are mapped by `classifyMonitorError` (`connection_monitor.go`), with
 `classifyInsightsErrorFor`'s arm order and remedies: provenance mixed, then

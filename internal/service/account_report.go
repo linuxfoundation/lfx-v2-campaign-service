@@ -191,14 +191,19 @@ func (o *Orchestrator) ReadReportedAccountCampaigns(ctx context.Context, project
 	// Only the response is scoped: the saved report keeps the account-wide rows, keyed by
 	// project/platform/account/days as before. The report's own metadata (as-of, window,
 	// pending) describes the read and is kept unchanged.
-	if scoped {
-		read.Rows = filterMonitorRows(read.Rows, scopeIDs)
-	}
 	// Last, and on what is left of the shared budget, capped at accountCurrencyReadTimeout: the
 	// currency is a label for the amounts, never a reason to fail or to starve the report steps
 	// above, which keep the metrics fresh.
 	if cr, ok := d.(AccountCurrencyReader); ok {
 		read.Currency = o.readAccountCurrency(callCtx, ctx, cr, key)
+	}
+	// Recheck after every upstream operation, including the best-effort currency read.
+	if scoped {
+		scopeIDs, scopeErr = o.revalidateAccountMonitorScope(ctx, projectID, platform, accountID, scopeIDs)
+		if scopeErr != nil {
+			return nil, scopeErr
+		}
+		read.Rows = filterMonitorRows(read.Rows, scopeIDs)
 	}
 	return read, nil
 }

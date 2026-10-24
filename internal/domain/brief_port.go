@@ -162,6 +162,12 @@ type CampaignReader interface {
 	// that project's campaign. Returns an EMPTY slice, not an error, when there are none.
 	ListProjectPlatformDeletedCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error)
 
+	// ListProjectPlatformMonitorCampaignIDs reads live and eligible soft-deleted campaign
+	// bindings in ONE database snapshot, using the same takeover rule as the deleted scope.
+	// Monitors revalidate after upstream work and intersect with their initial scope so a
+	// concurrent delete/adopt cannot leave a formerly live id authorized. Errors fail closed.
+	ListProjectPlatformMonitorCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error)
+
 	// ListRecentProjectPlatformCampaigns returns at most limit of the project's campaigns on
 	// platform that have an upstream id — SOFT-DELETED ONES INCLUDED (a local delete does not
 	// stop or delete the upstream email; Status says which) — NEWEST FIRST (created_at, then id,

@@ -631,20 +631,38 @@ func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, proje
 // alone, not its provenance: on Reddit and X an id is only unique within an account, so another
 // account's row with the same id also hides this one — the conservative direction for a read
 // that exists to keep projects apart.
-const listProjectPlatformDeletedCampaignIDsQuery = `SELECT DISTINCT c.platform_campaign_id, c.result FROM campaigns c
-	WHERE c.project_id=$1 AND c.platform=$2 AND c.status = 'deleted'
-	  AND c.platform_campaign_id IS NOT NULL AND c.platform_campaign_id <> ''
-	  AND NOT EXISTS (SELECT 1 FROM campaigns l
+// Shared by the deleted precheck and the final monitor snapshot; the ownership rule
+// must not drift between the two reads.
+const monitorCampaignNotTakenOver = `NOT EXISTS (SELECT 1 FROM campaigns l
 	    WHERE l.platform = c.platform AND l.platform_campaign_id = c.platform_campaign_id
 	      AND l.project_id <> c.project_id
 	      AND (l.status <> 'deleted'
-	        OR COALESCE(l.platform_bound_at, l.created_at) > COALESCE(c.platform_bound_at, c.created_at)))
+	        OR COALESCE(l.platform_bound_at, l.created_at) > COALESCE(c.platform_bound_at, c.created_at)))`
+
+const listProjectPlatformDeletedCampaignIDsQuery = `SELECT DISTINCT c.platform_campaign_id, c.result FROM campaigns c
+	WHERE c.project_id=$1 AND c.platform=$2 AND c.status = 'deleted'
+	  AND c.platform_campaign_id IS NOT NULL AND c.platform_campaign_id <> ''
+	  AND ` + monitorCampaignNotTakenOver + `
 	ORDER BY c.platform_campaign_id ASC`
 
 // ListProjectPlatformDeletedCampaignIDs returns the upstream campaign ids of this project's
 // soft-deleted campaigns on platform. Returns an EMPTY slice, not an error, when there are none.
 func (r *CampaignRepo) ListProjectPlatformDeletedCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
 	return r.queryProjectCampaignScope(ctx, listProjectPlatformDeletedCampaignIDsQuery, "project platform deleted campaign ids", projectID, platform)
+}
+
+// listProjectPlatformMonitorCampaignIDsQuery sees live rows, deleted rows and competing
+// bindings in one statement snapshot. Repeating the two precheck queries would allow a
+// delete/adopt between them to retain an id that was live only in the first snapshot.
+const listProjectPlatformMonitorCampaignIDsQuery = `SELECT DISTINCT c.platform_campaign_id, c.result FROM campaigns c
+	WHERE c.project_id=$1 AND c.platform=$2
+	  AND c.platform_campaign_id IS NOT NULL AND c.platform_campaign_id <> ''
+	  AND (c.status <> 'deleted' OR ` + monitorCampaignNotTakenOver + `)
+	ORDER BY c.platform_campaign_id ASC`
+
+// ListProjectPlatformMonitorCampaignIDs returns the project's current monitor bindings.
+func (r *CampaignRepo) ListProjectPlatformMonitorCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	return r.queryProjectCampaignScope(ctx, listProjectPlatformMonitorCampaignIDsQuery, "project platform monitor campaign ids", projectID, platform)
 }
 
 // queryProjectCampaignScope runs one of the (platform_campaign_id, result) scope queries above;

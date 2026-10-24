@@ -844,3 +844,31 @@ func TestLockAdoptBriefQuery_IsProjectScoped(t *testing.T) {
 	require.Contains(t, upper, "FOR UPDATE",
 		"the lock must use FOR UPDATE to serialize concurrent mutations")
 }
+
+func TestListProjectPlatformMonitorCampaignIDs_UsesOneScopedSnapshot(t *testing.T) {
+	q := normalizeWS(listProjectPlatformMonitorCampaignIDsQuery)
+	require.Contains(t, q, "c.project_id=$1 AND c.platform=$2")
+	require.Contains(t, q, "c.platform_campaign_id IS NOT NULL AND c.platform_campaign_id <> ''")
+	require.Contains(t, q, "(c.status <> 'deleted' OR "+normalizeWS(monitorCampaignNotTakenOver)+")",
+		"live and eligible deleted bindings must be evaluated in the same statement snapshot")
+	require.Equal(t, 1, strings.Count(q, "SELECT DISTINCT"))
+	require.Contains(t, q, "SELECT DISTINCT c.platform_campaign_id, c.result")
+}
+
+func TestMigration000049_IndexesAllBindingHistoryConcurrently(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		want string
+	}{
+		{"000049_campaigns_platform_campaign_history.up.sql", "CREATE INDEX CONCURRENTLY idx_campaigns_platform_campaign_history ON campaigns (platform, platform_campaign_id);"},
+		{"000049_campaigns_platform_campaign_history.down.sql", "DROP INDEX CONCURRENTLY IF EXISTS idx_campaigns_platform_campaign_history;"},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			data, err := fs.ReadFile(migrations.FS, tc.file)
+			require.NoError(t, err)
+			sql := regexp.MustCompile(`(?m)--.*$`).ReplaceAllString(string(data), "")
+			require.Equal(t, tc.want, normalizeWS(sql),
+				"one concurrent statement; all statuses; non-unique; no silent invalid-index reuse")
+		})
+	}
+}
