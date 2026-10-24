@@ -796,6 +796,11 @@ type campaignEditRepo struct {
 	// the try-lock losing: the real repo answers ErrCampaignWriteInProgress immediately
 	// rather than waiting for the holder.
 	claimErr error
+	// replaceErr, when set, is returned by ReplaceCampaign instead of the written campaign,
+	// and nothing is recorded. It models the refusals the real repo decides INSIDE its
+	// transaction — where a fake cannot stand in for the lock — so a service test can still
+	// pin how such a sentinel is mapped onto the wire.
+	replaceErr error
 }
 
 func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
@@ -849,6 +854,11 @@ func (r *campaignEditRepo) AdoptCampaign(_ context.Context, c *model.Campaign, _
 }
 func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64, _ domain.CampaignLockToken, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	r.got = c
+	if r.replaceErr != nil {
+		// Refused inside the transaction: no version bump and no index payload, because the
+		// real repo rolls back rather than committing a row it then refuses.
+		return nil, r.replaceErr
+	}
 	// The version bump lives here, not in the claim — mirroring the real repo, which
 	// increments inside the same transaction that writes the outbox event.
 	r.cur.Version++

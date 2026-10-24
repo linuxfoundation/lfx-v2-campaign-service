@@ -64,11 +64,31 @@ ALTER TABLE creative_assets
 --
 -- A CHECK is a narrowing, so it owes the same N-1 argument 000029 made, and it is simpler here:
 -- an N-1 INSERT names neither column, so both land NULL and satisfy the first arm. No existing row
--- can violate it either -- before this migration the columns do not exist, so every row is
--- (NULL, NULL). There is nothing to scan and no old writer that starts failing, so it is stated as
--- a plain CHECK rather than NOT VALID + VALIDATE, for 000029's reason: the ACCESS EXCLUSIVE lock
--- is momentary over rows that cannot violate it, and the constraint is enforced for future writes
--- immediately rather than leaving a declared-but-unenforced window.
+-- can violate it either -- the columns are added by this same migration, so every existing row is
+-- (NULL, NULL). It is stated as a plain CHECK rather than NOT VALID + VALIDATE CONSTRAINT, but be
+-- precise about what that does and does not buy, because an earlier version of this comment was
+-- wrong on both halves:
+--
+--   - Postgres DOES scan on ADD CONSTRAINT. The validation pass runs because the constraint is
+--     added without NOT VALID, not because any row could fail it; "there is nothing to scan" was
+--     false. What is true is that the scan is over a table whose rows are all (NULL, NULL), so it
+--     finds nothing and the ACCESS EXCLUSIVE lock is held only for as long as that pass takes.
+--   - NOT VALID does NOT leave a declared-but-unenforced window. It enforces the constraint on new
+--     writes IMMEDIATELY and defers only the check of pre-existing rows. The reason to prefer a
+--     plain CHECK here is the scan being empty, not any gap in enforcement.
+--
+-- Splitting this into ADD ... NOT VALID plus a VALIDATE CONSTRAINT would also not shorten the lock
+-- as written, which is why it is not done as a follow-up edit to this file. golang-migrate ships a
+-- migration file to a single ExecContext unless x-multi-statement is set -- Run() in
+-- database/pgx/v5/pgx.go splits only when p.config.MultiStatementEnabled, which the driver reads
+-- off the connection URL. This repo's pool.go never ADDS that parameter, but it does not strip the
+-- operator's query string either, so a DATABASE_URL already carrying x-multi-statement=true would
+-- enable splitting -- the claim is about what this repo configures, not about what the deployment
+-- can reach. Under the default both statements land in ONE implicit transaction and the ACCESS
+-- EXCLUSIVE lock taken by the ADD would be held until that transaction committed, VALIDATE
+-- included. Getting the weaker ShareUpdateExclusive lock for the validate pass requires the two
+-- statements in SEPARATE migrations, which is a change to make when a table is big enough to
+-- warrant it, not here.
 -- DROP ... IF EXISTS before ADD, as 000041 does: ADD CONSTRAINT has no IF NOT EXISTS form, so
 -- this is how a re-run of a partially-applied migration stays idempotent rather than failing on
 -- a duplicate-object error.

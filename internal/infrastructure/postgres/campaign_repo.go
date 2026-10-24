@@ -1359,6 +1359,109 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Lock the parent brief FIRST, as the opening statement of this transaction, to order this
+	// write against a concurrent CreativeAssetRepo.DeleteAsset.
+	//
+	// WHY THIS IS THE REPLACE'S PROBLEM AND NOT ONLY UpdateCampaign'S. This statement writes
+	// EVERY mutable column, config_snapshot included, so every caller -- the config edit, the
+	// budget and bid updates, the status toggle's persist -- rewrites the snapshot it read
+	// earlier in the request. DeleteAsset decides whether an asset is still referenced by
+	// reading that column under its own brief lock. Without this lock the two are not ordered
+	// at all: ReplaceCampaign's UPDATE touches `campaigns` only, and the advisory lock the caller
+	// may hold is ClaimCampaignVersion's, keyed on the CAMPAIGN, so neither one conflicts with the
+	// brief row DeleteAsset takes. A replace that commits just after the delete's reference check
+	// re-publishes a snapshot naming an asset whose bytes are already gone; a replace that commits
+	// just before it is correctly seen. Taking the brief lock makes which of those happened a
+	// decided question instead of a race.
+	//
+	// It is not free. The lock is held for the rest of this transaction, so a concurrent delete on
+	// the same brief waits for the replace to commit. ToggleCampaignStatus's persist runs under
+	// persistResultTimeout (orchestrator.go), a 5s budget on a context deliberately detached from
+	// the request's; a brief held long enough can time that persist out and leave the "platform and
+	// DB diverged" log the orchestrator writes for it. That is the intended trade -- a diverged
+	// status is recoverable by reconciliation, an asset whose bytes are gone while a snapshot still
+	// names it is not -- but it is a real cost, not a free ordering.
+	//
+	// The delete is not the only waiter, and is not the likeliest one. The lock is on the BRIEF
+	// row, so every ReplaceCampaign on a brief now serializes against every OTHER ReplaceCampaign
+	// on that same brief -- the budget edit, the bid edit, the name edit and the toggle's status
+	// persist, across all of that brief's campaigns. A bulk edit that previously ran its platforms
+	// concurrently now runs them one at a time, each waiter holding a pooled connection while it
+	// waits. On a busy brief that sibling contention, not a concurrent asset delete, is the
+	// realistic way the 5s persist budget above gets spent. There is no pool-level lock_timeout or
+	// statement_timeout (see the note in service/creative_asset.go), so the only bound on a wait
+	// here is the caller's context.
+	//
+	// It is taken unconditionally rather than only when config_snapshot changed, because this
+	// statement cannot tell: it writes the column either way, and a caller that "did not change"
+	// the config still re-writes the value it read, which is exactly how a concurrently-added
+	// reference gets dropped back out.
+	//
+	// NO CYCLE IS REACHABLE, for two independent reasons, neither of which is the slot -> brief
+	// order AdoptCampaign fixes -- that order is about the per-SLOT transaction lock, which this
+	// path never takes. First, this is the OPENING statement of the transaction, so the replace
+	// holds no row lock on `campaigns` while it waits here; a delete blocked behind a campaigns row
+	// is therefore never blocked behind this replace. Second, the only lock a caller may already
+	// hold is ClaimCampaignVersion's per-campaign advisory lock, taken with pg_try_advisory_lock --
+	// so nobody ever BLOCKS on it. The direction that matters is INTO the holder, not out of it:
+	// this replace does go on to wait, right here, for the brief. The scope of that claim is the
+	// LOCK, not the backend holding it: no wait-for cycle can route THROUGH the advisory lock,
+	// because no edge ever enters it. The backend does acquire in-edges once it holds the brief's
+	// FOR UPDATE -- a waiting DeleteAsset is exactly such an edge -- so the no-deadlock conclusion
+	// does not rest on the holder being edge-free. It rests on two NAMED claims: (1) the brief lock
+	// is the opening statement of this transaction, so the replace holds no `campaigns` row lock
+	// while waiting for it; and (2) nothing anywhere acquires a slot or per-campaign lock while
+	// already holding the brief's. Those two close the cycle, and they are named in these same
+	// words in the internal-infrastructure-postgres concept and in the dated log entry rather than
+	// pointed at by position -- a positional reference drifts the moment any of the three is
+	// re-flowed, which this branch has already paid for twice. DeleteAsset takes the brief lock
+	// and nothing else.
+	//
+	// IT IS KEYED ON brief_id ALONE, AND THE ERROR IS CHECKED. Both halves matter. "The error",
+	// not the scanned status: briefStatus below is read and deliberately never consulted. The
+	// asset-side callers of the sibling query DO act on it -- CreateAsset refuses an archived
+	// brief -- so the asymmetry is worth stating rather than leaving a reader to infer a status
+	// check from the variable's name. A replace under an archived brief stays allowed; that is
+	// pre-existing behaviour and this change does not alter it. The column is projected only
+	// because the lock is taken by a SELECT ... FOR UPDATE, which has to select something.
+	//
+	// The asset
+	// endpoints' version of this statement (lockBriefForAssetWriteQuery) also tests project_id,
+	// because they take a project from the request path and must refuse a brief owned by someone
+	// else; this call has already resolved and authorized its campaign, and a row lock on `id` is
+	// the same lock either way. Carrying project_id across would break it: `campaigns` has a
+	// brief_id foreign key on id ALONE (000002), never upgraded to the composite (brief_id,
+	// project_id) form its sibling tables got, so a row whose project_id disagreed with its
+	// brief's would match NO row, take NO lock and return NO error -- the one hazard this
+	// statement is here to remove, failing silently. The PREDICATE is what removes that hazard;
+	// be precise about what the scan adds on top of it. On id alone the FK guarantees a match, so
+	// an Exec would take the same lock in every reachable case and pgx.ErrNoRows is unreachable.
+	// That rests on TWO legs, not one: the FK constrains rows in `campaigns`, not the in-memory
+	// `c`, so it is only decisive because every caller passes a campaign LOADED from that table
+	// (brief.go, brief_bid.go, brief_budget.go and meta_ad_sets.go, the last via a copy of the
+	// loaded row). A future caller that synthesized a BriefID would make the miss reachable --
+	// and would land on the scan below rather than on silence. The scan is there for the
+	// predicate's next editor: it converts any future miss from a silent loss of the lock into
+	// ErrNotFound, which is the behaviour the sibling callers of the asset-side query already
+	// have (CreateAsset maps ErrNoRows the same way). Do not read it as evidence that the lock
+	// could fail today.
+	var briefStatus string
+	if lerr := tx.QueryRow(ctx, lockBriefRowByIDQuery, c.BriefID).Scan(&briefStatus); lerr != nil {
+		if errors.Is(lerr, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("replace campaign: lock brief: %w", lerr)
+	}
+
+	// Position is the whole point: after the brief lock above, before the UPDATE below. The lock
+	// orders this replace against a concurrent DeleteAsset but does not say which of the two won,
+	// and when the delete won the snapshot about to be written can name a row that is already
+	// gone. See checkNewSnapshotAssetRefs for why the question has to be asked inside this
+	// transaction and why it covers only newly introduced ids — do not restate it here.
+	if aerr := r.checkNewSnapshotAssetRefs(ctx, tx, c); aerr != nil {
+		return nil, aerr
+	}
+
 	updatedBy, err := marshalActor(c.UpdatedBy)
 	if err != nil {
 		return nil, fmt.Errorf("replace campaign: %w", err)

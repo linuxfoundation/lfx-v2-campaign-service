@@ -105,15 +105,43 @@ var (
 	ErrCreativeAssetQuotaExceeded = errors.New("the brief has reached its creative-asset limit")
 
 	// ErrCreativeAssetInUse indicates a delete refused because a live campaign on the brief could
-	// still need the asset: one whose stored config_snapshot names the asset id, or — and this arm
-	// is not a hedge — one whose config_snapshot is NULL, because claimCampaignDispatchQuery
-	// inserts the 'pending' claim row BEFORE the dispatcher resolves any asset. A delete in that
-	// window would otherwise remove bytes a dispatch already in flight is about to read.
+	// still need the asset. Three independent arms: one still 'pending', whatever its snapshot
+	// says; one whose stored config_snapshot names the asset id; or one whose config_snapshot is
+	// NULL. The 'pending' arm leads because it needs no timing argument — a dispatch that has not
+	// resolved may read any of the brief's assets, and a delete in that window would remove bytes
+	// it is about to read. The NULL arm covers the narrower case the claim creates:
+	// claimCampaignDispatchQuery inserts the row BEFORE the dispatcher resolves any asset, so a
+	// snapshot naming it does not exist yet. That is not a hedge, but it is not sufficient on its
+	// own either — the claim is not the only writer of config_snapshot.
 	//
 	// Maps to 409 with reason "creative_asset_in_use". Distinct from ErrConflict because the
 	// remedy is specific: delete the campaign, or reconcile a claim stuck in 'pending', then
 	// retry — not change the request.
-	ErrCreativeAssetInUse = errors.New("a live campaign on this brief still references the creative asset")
+	//
+	// The wording is "could still need" rather than "references" on purpose: the 'pending' arm
+	// refuses a campaign whose snapshot provably does NOT name the asset, because a dispatcher may
+	// still be about to resolve it. A message promising a reference would be false in exactly that
+	// case, and it is the one a caller is most likely to be surprised by.
+	ErrCreativeAssetInUse = errors.New("a live campaign on this brief could still need the creative asset")
+
+	// ErrCreativeAssetReferenceMissing indicates a campaign replace refused because the config
+	// it would store NEWLY names a creative asset that does not exist for the campaign's
+	// (project, brief) — an id present in the incoming snapshot and absent from the stored one.
+	// A caller that carries an already-dangling reference through unchanged is NOT refused.
+	//
+	// It is the inverse of ErrCreativeAssetInUse, and the two close the same window from
+	// opposite sides: the delete guard stops an asset going away while a campaign names it,
+	// this stops a campaign starting to name an asset that is already gone.
+	//
+	// Maps to 409 with reason "creative_asset_reference_missing", not 400: the request was well
+	// formed and named an id that existed when the caller read the brief. The remedy is to
+	// upload the asset again or drop the reference, then retry.
+	//
+	// How the decision is reached — why it must run inside the replace's transaction under the
+	// brief lock, and why the scope is newly introduced ids — is argued once, on
+	// (*CampaignRepo).checkNewSnapshotAssetRefs in internal/infrastructure/postgres. Service
+	// callers of this sentinel do not need those mechanics; do not restate them here.
+	ErrCreativeAssetReferenceMissing = errors.New("the campaign configuration references a creative asset that no longer exists for this brief")
 
 	// ErrPreconditionFailed indicates an optimistic-concurrency version
 	// mismatch on a conditional update (stale If-Match). Maps to 412.

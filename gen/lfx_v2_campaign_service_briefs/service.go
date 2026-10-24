@@ -89,13 +89,14 @@ type Service interface {
 	GetAssetPlan(context.Context, *GetAssetPlanPayload) (res *CreativeAssetPlan, err error)
 	// Permanently delete a stored creative asset, freeing its bytes against the
 	// brief's quota. Refused with 409 reason=creative_asset_in_use when any live
-	// campaign on the brief could still need it: one whose stored configuration
-	// names this asset id, and also one whose configuration has not been recorded
-	// yet, because a dispatch claims its campaign row before it resolves any
-	// asset. Delete the campaign, or reconcile a stuck claim, then retry. This is
-	// a HARD delete — unlike a campaign or a brief, which are retired by a status
-	// flip — because reclaiming the storage is the entire reason the endpoint
-	// exists.
+	// campaign on the brief could still need it: one whose creation has not
+	// finished on the ad platform — its status is still 'pending' — whatever its
+	// stored configuration says; one whose stored configuration names this asset
+	// id; or one whose configuration has not been recorded yet, because a dispatch
+	// claims its campaign row before it resolves any asset. Delete the campaign,
+	// or reconcile a stuck claim, then retry. This is a HARD delete — unlike a
+	// campaign or a brief, which are retired by a status flip — because reclaiming
+	// the storage is the entire reason the endpoint exists.
 	DeleteCreativeAsset(context.Context, *DeleteCreativeAssetPayload) (err error)
 	// Create campaigns across the selected platforms (async -> job). Besides the
 	// request-shape 400s (an unknown or duplicate platform, new_version on a
@@ -196,7 +197,18 @@ type Service interface {
 	// the brief. The AI model is optional — without it configured this endpoint
 	// returns 503.
 	GenerateEmailCopy(context.Context, *GenerateEmailCopyPayload) (res *EmailCopy, err error)
-	// Replace a campaign (requires If-Match).
+	// Replace a campaign (requires If-Match). A request carrying a configuration
+	// is refused with 409 reason=campaign_dispatch_in_flight while the campaign's
+	// creation has not finished on the ad platform — its status is still 'pending'
+	// — because a dispatcher may still be resolving the configuration this request
+	// would overwrite. Retry once the status is no longer 'pending'. A name-only
+	// edit is NOT refused and stays available throughout. A configuration that
+	// NEWLY names a stored creative asset which no longer exists for the brief —
+	// typically one deleted between reading the campaign and sending this request
+	// — is refused with 409 reason=creative_asset_reference_missing, naming the
+	// ids that did not resolve; upload the asset again, or remove the reference,
+	// then retry. References already present on the stored configuration are
+	// carried through unchanged and are never refused by this check.
 	UpdateCampaign(context.Context, *UpdateCampaignPayload) (res *Campaign, err error)
 	// Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist
 	// the new status. Unlike update-campaign (which only writes the DB row), this
