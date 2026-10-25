@@ -70,6 +70,30 @@ func (d *takeoverReportDispatcher) ReadAccountCurrency(context.Context, string, 
 	return "USD", nil
 }
 
+func TestMonitorAccount_RevalidationWithoutScoperFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		dispatchers map[model.Provider]PlatformDispatcher
+	}{
+		{name: "missing dispatcher"},
+		{
+			name: "dispatcher without scoper",
+			dispatchers: map[model.Provider]PlatformDispatcher{
+				model.ProviderGoogleAds: &mockAccountMetricsReaderDispatcher{},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &takeoverScopeRepo{fakeCampaignRepo: scopeRepo([]string{"c1"}, nil)}
+			o := NewOrchestrator(repo, newFakeJobRepo(), tc.dispatchers)
+			ids, err := o.revalidateAccountMonitorScope(context.Background(), "p", model.ProviderGoogleAds, "1234567890", map[string]bool{"c1": true})
+			if err == nil || ids != nil {
+				t.Fatalf("revalidation without scoper = %v, %v; want no IDs and an error", ids, err)
+			}
+		})
+	}
+}
+
 func TestMonitorAccount_RevalidatesOwnershipAfterUpstreamReads(t *testing.T) {
 	for _, reportBacked := range []bool{false, true} {
 		for _, stage := range []string{"between scope queries", "during campaign read", "deleted during campaign read", "during currency read", "snapshot failure", "changed provenance"} {

@@ -607,6 +607,9 @@ caller (ROOT included), at one choke point mirroring
    snapshot, with the same latest-owner predicate as the deleted precheck. Repeating
    the two precheck queries would keep an originally live id if a delete/adopt
    committed between them. A lookup error fails closed, without returning rows.
+   Revalidation also returns an error, rather than panicking, if the dispatcher is
+   missing or does not implement `AccountMonitorScoper`; it never authorizes ids
+   without a scoper, even if a caller bypasses the normal `scoped` guard.
    The dispatcher rechecks each candidate's account provenance; an entry it now
    refuses is omitted. The final set is intersected with the initial authorization,
    never widened to campaigns acquired during the read. Only rows in that

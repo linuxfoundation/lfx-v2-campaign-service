@@ -3059,7 +3059,10 @@ func (o *Orchestrator) revalidateAccountMonitorScope(ctx context.Context, projec
 	if err != nil {
 		return nil, fmt.Errorf("revalidate account monitor scope for project %s on %s: %w", projectID, platform, err)
 	}
-	scoper := o.dispatchers[platform].(AccountMonitorScoper) // only called for scoped monitors
+	scoper, ok := o.dispatchers[platform].(AccountMonitorScoper)
+	if !ok {
+		return nil, fmt.Errorf("revalidate account monitor scope: %s has no monitor scoper", platform)
+	}
 	ids := make(map[string]bool, len(initial))
 	for _, entry := range scope {
 		if !initial[entry.PlatformCampaignID] {
