@@ -1667,6 +1667,29 @@ when redaction moves to a boundary, every caller that was redacting that boundar
 part of the change, and "it is still safe" is not enough — a second pass degrades the
 message even when it cannot leak.
 
+### A test that reads a credentials column reports length and digest, never the value (#161)
+
+The redaction rules above are about errors the SERVICE renders. The same discipline binds a
+test's own failure message once the value it is comparing was `SELECT`ed out of a credentials
+column: `t.Errorf("... = %q", blob)` puts that column's bytes into the build log, and a build
+log is not a more private place than a pod log. The standard is `len(blob)` plus
+`sha256.Sum256(blob)` on both sides of the comparison —
+`credential_roundtrip_live_test.go` established it and `connection_live_test.go` now matches.
+
+Two things this is NOT. It is not a claim that the fixture is sensitive: the stored value is
+the literal `ciphertext-v2`, so printing it today leaks nothing. The rule is written about the
+SHAPE of what reaches a log, as elsewhere in the repo, because the concrete risk is that this
+test is what the next credential test's author copies. And it is not satisfied by length
+alone: the losing rotation's `ciphertext-v3` is the SAME length as `ciphertext-v2` — exactly
+the mismatch the assertion exists to catch — so a lengths-only message would trade the leak
+for a test that fails without saying why. Hence both.
+
+The boundary is a value read back out of Postgres. A test that prints a credential-shaped
+literal it wrote into an in-memory fake (`internal/dispatch/credcache_test.go`,
+`internal/bootstrap/sysacct_test.go`, `cmd/verify-metrics/main_test.go`) is a different
+category and is not covered: the test supplied that string itself, and the log learns nothing
+the source file does not already say.
+
 ## `CreateAudienceForApprovedBrief`'s ambiguous-commit path
 
 A `tx.Commit(ctx)` failure does not prove PostgreSQL rolled back — the server can commit the
