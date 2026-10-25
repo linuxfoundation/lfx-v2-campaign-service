@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 )
 
 // TestConnectAndMigrateWithholdsTheExplicitDSN pins the redaction on the arm of
@@ -76,6 +78,14 @@ import (
 //
 // So the pin costs this one test's parallelism and buys independence from every possible
 // value of TEST_DATABASE_URL. That is the trade, and it is deliberate.
+//
+// Since #178 the migrate arm no longer calls a redactor at all: postgres.Migrate redacts
+// every error it returns, against the one dsn it was handed. The history above is kept
+// because it is why these probe values are chosen, and every one of those reasons still
+// holds -- the same identifier comparison runs, one layer down, and a probe sharing a field
+// with TEST_DATABASE_URL would still pass for the wrong reason. What changed is only WHERE
+// the comparison happens, and the final assertion below compares against Migrate's rendering
+// accordingly.
 func TestConnectAndMigrateWithholdsTheExplicitDSN(t *testing.T) {
 	// No t.Parallel: t.Setenv forbids it, and pinning the environment is what makes this
 	// test independent of whatever TEST_DATABASE_URL happens to hold. See the note above
@@ -138,6 +148,13 @@ func TestConnectAndMigrateWithholdsTheExplicitDSN(t *testing.T) {
 	// unrelated pinned DSN must PRESERVE it -- if an unrelated DSN withheld it too, then
 	// withholding says nothing about the argument, and the wrong-DSN seam this test
 	// exists to pin would still be invisible.
+	//
+	// This now pins SafeDSNErrFor for the NewPool arm rather than for the migrate arm.
+	// Since #178 the migrate arm's own wrong-DSN seam is closed by construction --
+	// postgres.Migrate redacts against the single dsn it was handed, so there is no
+	// second DSN for a caller to pass by mistake -- but NewPool below still redacts at
+	// the call site, with the explicit-vs-environment choice still live, so the property
+	// this check establishes is still load-bearing for that arm.
 	const unrelatedDSN = "postgres://otheruser:otherpw@other.invalid:5432/otherdb?sslmode=disable" // secretlint-disable-line -- synthetic unrelated DSN; the wrong-DSN seam is invisible without it
 	if kept := SafeDSNErrFor(unrelatedDSN, rawErr); !strings.Contains(kept, user) {
 		t.Errorf("SafeDSNErrFor(unrelated dsn) = %q, want the probe's text preserved; an "+
@@ -145,19 +162,19 @@ func TestConnectAndMigrateWithholdsTheExplicitDSN(t *testing.T) {
 			"show WHICH dsn the redacting arm was handed", kept)
 	}
 
-	// What this last pair checks is that connectAndMigrate WIRES THE REDACTOR IN -- that
-	// its output is the redactor's rendering rather than something the wrapper invented.
-	// It is deliberately NOT a diagnosability check, and an earlier comment here wrongly
-	// called it one.
+	// What this last pair checks is that connectAndMigrate PASSES THE REDACTED ERROR
+	// THROUGH -- that its output is the redactor's rendering rather than something the
+	// wrapper invented. It is deliberately NOT a diagnosability check, and an earlier
+	// comment here wrongly called it one.
 	//
 	// It cannot be one on this input. The control above proves rawErr names `user`, so
-	// SafeDSNErrFor necessarily takes the identifier-present branch and returns the fixed
+	// the redactor necessarily takes the identifier-present branch and returns the fixed
 	// sentinel; the underlying fault ("no such host") is dropped with the rest of the
 	// text. Rendered, to be sure rather than to assume:
 	//
 	//   rawErr   = failed to connect to `user=probeuser database=probedb`: hostname
 	//              resolving error: lookup dbtest-probe.invalid: no such host
-	//   redacted = the driver's message names a value from TEST_DATABASE_URL (it is
+	//   redacted = the driver's message names a value from the database DSN (it is
 	//              withheld: the user, database and host are half of the credential)
 	//
 	// So any non-empty constant would satisfy the comparison, and asserting "the operator
@@ -166,16 +183,29 @@ func TestConnectAndMigrateWithholdsTheExplicitDSN(t *testing.T) {
 	// where it can actually be observed: TestSafeDSNErrKeepsDriverTextForNonURLErrors and
 	// TestSafeDSNErrDoesNotOverMatchEmbeddedIdentifiers.
 	//
+	// The comparison is against postgres.Migrate's OWN error rather than against
+	// SafeDSNErrFor's, and that changed with #178. Migrate now redacts at its boundary,
+	// so the rendering this arm must carry is the one Migrate produced; calling
+	// SafeDSNErrFor here would be asking the arm to redact an already-redacted error,
+	// which is the double-redaction the fix removed (see connectAndMigrate). The probe
+	// host is unresolvable, so the direct call fails the same way and its rendering is
+	// the fixed sentinel -- deterministic, not a second sample of a flaky value.
+	//
 	// The empty check still earns its place: a redactor returning "" would make the leak
 	// loop above vacuous, and Contains(got, "") is true for every string.
-	redacted := SafeDSNErrFor(dsn, rawErr)
+	direct := postgres.Migrate(dsn)
+	if direct == nil {
+		t.Fatal("precondition failed: postgres.Migrate succeeded against the probe DSN, " +
+			"so there is no rendering for the arm to carry")
+	}
+	redacted := direct.Error()
 	if redacted == "" {
-		t.Fatal("SafeDSNErrFor returned an empty rendering; withholding everything is not " +
-			"redaction, and would make the leak assertions above vacuous")
+		t.Fatal("postgres.Migrate returned an empty rendering; withholding everything is " +
+			"not redaction, and would make the leak assertions above vacuous")
 	}
 	if !strings.Contains(got, redacted) {
 		t.Errorf("connectAndMigrate = %q, want it to carry the redactor's rendering %q; "+
-			"the arm must emit what SafeDSNErrFor returned rather than a message of its "+
-			"own", got, redacted)
+			"the arm must emit what postgres.Migrate returned rather than a message of "+
+			"its own", got, redacted)
 	}
 }

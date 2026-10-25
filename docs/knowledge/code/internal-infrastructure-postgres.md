@@ -1417,6 +1417,23 @@ DSN: `*pgconn.ConnectError` formats ``failed to connect to `user=%s database=%s`
 from the `Config`. A `%v` on any connect arm therefore puts the configured credential into
 the build log. The package renders those errors through one of two helpers instead.
 
+The implementation lives in package `postgres` (`dsnredact.go`), not here. It moved when the
+same leak was found on `Migrate`'s own error paths (#178, below): the reasoning was never
+test-only. `dbtest`'s two helpers are now one-line delegations that supply
+`TEST_DATABASE_URL` as the source name. The production boundary supplies no variable name at
+all — it renders "the database DSN" (`migrateDSNSource`), because `Migrate` is handed a `dsn`
+string and is told nothing about where the caller read it: the service reads `DATABASE_URL`,
+the harness reads `TEST_DATABASE_URL` and then rewrites it for the scratch path. A caller
+that knows the name adds it in its own wrapping (`migrate TEST_DATABASE_URL: …`). Everything
+in this section about WHICH secret a call is compared against is unchanged by that move.
+
+It landed in `internal/infrastructure/postgres` rather than in `pkg/redact`, whose package
+doc states the one-implementation rule it is obeying, because it is not URL redaction: it
+parses the DSN with `pgconn.ParseConfig` to learn what the configured identifiers ARE, and
+`pkg/redact` imports only `net/url` and `strings`. Moving it there would put a driver
+dependency into the package every other redaction site depends on. `redact.URLUserinfo` is
+still the backstop it runs on the surviving text.
+
 The two differ only in WHICH secret they compare against, and that is the whole of the
 contract:
 
@@ -1584,6 +1601,71 @@ so a later change does not undo the fix by reviving either:
 
 The pin costs that one test's parallelism and buys independence from every possible value of
 `TEST_DATABASE_URL`.
+
+### `Migrate` redacts at the boundary, not at the leaking line (#178)
+
+The production path had the same defect the test path was fixed for, and it had it in two
+places at once. `Migrate` returned `fmt.Errorf("init migrator: %w", err)` around
+`migrate.NewWithSourceInstance`, whose `*url.Error` carries the WHOLE DSN including the
+password; and it returned `checkNoInvalidIndexes`'s and `m.Up()`'s connect failures bare,
+each of which carries ``failed to connect to `user=… database=…` ``. `container.go` logs
+that error at startup and again on every background retry.
+
+The fix wraps the one exported entry point — `Migrate` calls `runMigrations` and passes the
+result through `redactMigrateErr` — rather than repairing each site. Three reasons, in order
+of weight: the leak is not one site, so a site-by-site fix leaves the next site added
+unguarded; `dsn` is given only to `Migrate`, so a boundary fix is the only one that keeps it
+from needing to reach a logging caller; and the sites differ in error TYPE but not in what
+must be withheld.
+
+Two parts of the design are load-bearing and easy to undo:
+
+* **The `*url.Error`'s cause is DISCARDED, not unwrapped.** Unwrapping removes the `URL`
+  field and looks like the fix, but `net/url`'s causes QUOTE the fragment they choked on, and
+  that fragment can be part of the password: `…:s3cret%zzpw@…` yields
+  `invalid URL escape "%zz"`. `TestMigrateDoesNotLeakTheDSNOnAnUnparseableURL` chooses its
+  password so that this half-fix fails it, and also asserts the `*url.Error` is no longer
+  reachable through `errors.As` — a caller that fishes a cause out of the chain and logs it
+  is the shape the defect had in the first place.
+* **Every other error keeps `Unwrap()`.** `container.go` classifies with
+  `IsPermanentMigrationErr`, which is `errors.As` on `migrate.ErrDirty` plus `errors.Is` on
+  the three index sentinels. Break the chain and a permanent failure reads as transient and
+  the pod 503-loops on a schema no retry can fix.
+
+The index sentinels — `ErrInvalidIndex`, `ErrMissingRequiredIndex`,
+`ErrRequiredIndexMismatch` — pass through `redactMigrateErr` untouched, with no identifier
+comparison. Their text is this package's own, built from the catalog: the index names and the
+`CREATE INDEX` an operator has to run. Comparing it against the DSN would withhold the
+remediation from any deployment whose database is named after a table it indexes, which is a
+realistic naming. The split is safe only because the connect failures that CAN carry
+identifiers are deliberately not wrapped in those sentinels — `checkNoInvalidIndexes` keeps a
+connect failure retryable and unwrapped — so nothing reaches the passthrough by that route.
+
+**The issue's own reachability claim did not survive a probe, and the correction matters.**
+#178 reports the password reaching the pod log through container boot. It does not:
+`ValidateMigrationDSN` runs unconditionally at `container.go:477`, before `initDatabase` ever
+calls `Migrate`, and it rejects every parse-failure shape with `dsnParseError`'s static text.
+A 14-shape probe found no DSN that clears that gate and then hits a `*url.Error` inside
+`Migrate`. The password arm is reachable only for a caller that invokes `postgres.Migrate`
+without the gate — the live tests do exactly that, and so would any future caller. What the
+pod log DOES receive is the second arm: the username and database name, on every connect
+failure, at startup and on every retry. By `pkg/redact`'s own contract those are half a
+credential, so the defect is real; the arm is not the one the issue names.
+
+**Redacting at a boundary creates a double-redaction hazard in callers that were already
+redacting, and here it was destructive rather than merely redundant.** `dbtest`'s
+`connectAndMigrate` wrapped `Migrate`'s error in `SafeDSNErrFor` — correct before the fix,
+wrong after it, and its two regression pins went red and said so. A second pass cannot be a
+no-op, for two reasons that are both consequences of the first pass doing its job: the
+`*url.Error` has been DISCARDED from the chain, so the second pass can no longer tell a parse
+failure from a connect failure and reports the wrong one; and when the DSN does not parse,
+`dsnIdentifiersPresent` has nothing to compare against and withholds unconditionally, so an
+already-safe, specific message is replaced by the generic sentinel. The fix is for the caller
+to stop redacting — `Migrate`'s error is safe by construction — while the `NewPool` arm two
+lines below KEEPS its `SafeDSNErrFor`, because nothing redacts behind it. The general rule:
+when redaction moves to a boundary, every caller that was redacting that boundary's error is
+part of the change, and "it is still safe" is not enough — a second pass degrades the
+message even when it cannot leak.
 
 ## `CreateAudienceForApprovedBrief`'s ambiguous-commit path
 

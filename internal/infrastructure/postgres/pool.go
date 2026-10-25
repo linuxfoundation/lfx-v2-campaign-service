@@ -128,7 +128,22 @@ func (p *Pool) checkReady(ctx context.Context, ping func(context.Context) error)
 //
 // On success it verifies the schema carries no INVALID index (checkNoInvalidIndexes) —
 // the one failure a migration can leave behind that a re-run reports as success.
+//
+// Every error it returns has been through redactMigrateErr, so no caller can print the DSN
+// by printing the error. The redaction is HERE, at the boundary, rather than at each of the
+// failing sites inside, because the leak is not one site: a malformed URL leaks the whole DSN
+// out of migrate.NewWithSourceInstance, and every failure to CONNECT — from Up() and from
+// checkNoInvalidIndexes alike — leaks the user and database out of pgx's own message, at
+// startup and again on every retry. A site-by-site fix leaves the next site to be added
+// unguarded; wrapping the one exported entry point makes every path safe by construction and
+// keeps the DSN, which only this function is given, from needing to reach a logging caller.
+// errors.Is/As still see through it — see safeDSNError for why that matters to
+// IsPermanentMigrationErr.
 func Migrate(dsn string) error {
+	return redactMigrateErr(dsn, runMigrations(dsn))
+}
+
+func runMigrations(dsn string) error {
 	src, err := iofs.New(migrations.FS, ".")
 	if err != nil {
 		return fmt.Errorf("open migration source: %w", err)

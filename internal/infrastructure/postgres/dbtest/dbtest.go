@@ -45,20 +45,16 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
-	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 )
 
 // EnvDatabaseURL names the database the live tests run against.
@@ -171,24 +167,28 @@ func verdict(dsn, ci string) (reason string, fatal bool) {
 func connectAndMigrate(dsn string) (*pgxpool.Pool, error) {
 	if err := postgres.Migrate(dsn); err != nil {
 		// The DSN is named, never printed -- and the ERROR has to be redacted for that
-		// discipline to hold. A plain %w here would put TEST_DATABASE_URL (with its CI
-		// `user:password@`) into the build log via Pool's t.Fatalf.
+		// discipline to hold. A plain %w of an UNREDACTED migrate error would put
+		// TEST_DATABASE_URL (with its CI `user:password@`) into the build log via Pool's
+		// t.Fatalf.
 		//
-		// SafeDSNErrFor(dsn, ...), not SafeDSNErr. Two things make the difference matter,
-		// and an earlier version of this call got both wrong while still LOOKING redacted:
+		// There is no SafeDSNErrFor here, and that is the fix for #178 rather than a
+		// regression of it: postgres.Migrate now redacts at its own boundary, against the
+		// dsn IT was handed, so every error it returns is already safe to print. Redacting
+		// a second time here is not belt-and-braces, it is destructive -- the first pass
+		// has already discarded the *url.Error (deliberately: see SafeDSNErr), so a second
+		// pass can no longer tell the parse failure apart from a connect failure, and
+		// reports the wrong one. TestConnectAndMigrateDoesNotEchoTheDSN caught exactly
+		// that.
 		//
-		//   - SafeDSNErr compares against the ENVIRONMENT's DSN(), and this function is
-		//     handed an EXPLICIT dsn. On the scratch path they differ, because the scratch
-		//     DSN is rewritten from TEST_DATABASE_URL, so the comparison was against the
-		//     wrong string and withheld nothing.
-		//   - Which arm of the redactor runs is not what it appears. golang-migrate wraps
-		//     pgx's *pgconn.ConnectError, which is NOT a *url.Error, so the wholesale
-		//     *url.Error arm does not apply here; control reaches the string arm, and the
-		//     string arm is precisely the one whose correctness depends on the DSN it is
-		//     given. Together those printed `user=... database=...` in full.
+		// The wrong-DSN seam the old comment here warned about -- redacting the ENVIRONMENT's
+		// DSN() while holding an explicit, rewritten scratch dsn, which compared against the
+		// wrong string and withheld nothing -- is now closed by construction rather than by
+		// care at the call site: Migrate is handed one dsn and redacts against that one.
+		// The seam is still live for the NewPool arm below, which does still redact here.
 		//
-		// TestConnectAndMigrateWithholdsTheExplicitDSN pins this behaviourally.
-		return nil, fmt.Errorf("migrate %s: %s", EnvDatabaseURL, SafeDSNErrFor(dsn, err))
+		// The env var's NAME is this package's knowledge, not Migrate's, so it is added
+		// here; Migrate's own rendering says "the database DSN" (see migrateDSNSource).
+		return nil, fmt.Errorf("migrate %s: %s", EnvDatabaseURL, err)
 	}
 	// 30s covers a cold container that has just passed its health check but is still
 	// warming, which is the slow case on a CI runner. It bounds the POOL open only;
@@ -262,13 +262,6 @@ func UniqueID(t *testing.T, suffix string) string {
 	return strings.ToLower(name+"-"+suffix) + "-" + hex.EncodeToString(b[:])
 }
 
-// dsnUnparseableMsg is the single rendering of the *url.Error arm, shared by SafeDSNErr and
-// SafeDSNErrFor. It is a constant rather than a literal at each site so the two cannot drift:
-// two formatting sites disagreeing about what "redacted" means is the bug that produced
-// pkg/redact in the first place.
-const dsnUnparseableMsg = "the DSN does not parse as a URL (the value and the parser's " +
-	"message are withheld: both can carry the credential)"
-
 // SafeDSNErr renders an error that may carry the DSN into a form safe to print.
 //
 // The DSN is the one value this package must never let reach a log. Locally it is a
@@ -278,93 +271,16 @@ const dsnUnparseableMsg = "the DSN does not parse as a URL (the value and the pa
 // throughout this package -- and on the paths below that discipline is defeated by the
 // error itself, which repeats the input it was given.
 //
-// Two error shapes do it. `url.Parse` fails with a `*url.Error`, whose Error() is
-// `fmt.Sprintf("%s %q: %s", Op, URL, Err)` -- the whole raw URL, credentials included.
-// `migrate.NewWithSourceInstance` reaches `database.Open`, which parses the URL and wraps
-// that same `*url.Error` as "failed to open database: parse %q: ...". Both were verified
-// against a password-bearing DSN, and both leaked it in full.
+// The implementation is postgres.SafeDSNErr. It moved there when the same leak was found on
+// postgres.Migrate's OWN error paths (#178): the reasoning was never test-only -- it is the
+// service's no-echo rule, and pkg/redact's package doc is explicit that two sites disagreeing
+// about what "redacted" means is the bug that produced it. Every error shape this was built
+// against, and every case where it deliberately keeps the driver's text, is documented on
+// that function; this file keeps only the convenience of reading the environment.
 //
-// For a *url.Error the cause is DISCARDED, not unwrapped. Unwrapping to `ue.Err` removes
-// the URL and is most of the fix, but net/url's causes QUOTE THE FRAGMENT they choked on,
-// and that fragment can be part of the credential: `postgres://u:%zz@h/db` yields
-// `invalid URL escape "%zz"`, which is the entire password, and a longer password
-// containing "%zz" leaks that slice of itself. A message that reproduces any part of an
-// unvalidated value cannot honour the no-echo rule, so nothing derived from the input is
-// carried. This is the same reasoning, and the same conclusion, as internal/platform/llm's
-// proxy-URL constructor.
-//
-// Nothing a caller could use is lost: net/url's causes are unexported types or plain
-// strings, so errors.Is/As reach nothing through them. The operator learns that the DSN
-// does not parse and which variable to go and look at, which is the actionable part; the
-// specific malformation is not worth a credential.
-//
-// Errors that are NOT a *url.Error keep their text, since they are driver and connection
-// failures whose messages are diagnostic rather than echoes of the input -- but only after
-// they are checked against the CONFIGURED DSN's own identifiers, because that premise does
-// not hold on its own.
-//
-// redact.URLUserinfo was the backstop here and it is not sufficient, because it understands
-// only URL-shaped `user:pass@` text. A DSN has a second legal shape. pgx accepts KEYWORD/VALUE
-// connection strings (`host=h user=u password=p dbname=d`), and its errors are built from that
-// shape, so a URL-shaped redactor passes them through untouched. Verified against pgx v5.9.2:
-//
-//   - `*pgconn.ConnectError` renders a "failed to connect to ..." message embedding a
-//     user=%s database=%s fragment built from Config fields -- the username,
-//     verbatim, on every connection failure.
-//   - `*pgconn.ParseConfigError` renders the whole connection string through pgx's own
-//     `redactPW`, which masks `password=` and userinfo but KEEPS the username in every branch.
-//
-// Neither unwraps to a *url.Error, so the arm above never sees them, and both reached the
-// URL-shaped fallback and were returned unchanged.
-//
-// Scrubbing those two templates is the fix this rejects. It is a denylist, and the shape that
-// defeats it is already in evidence: the username also arrives from a channel that has nothing
-// to do with DSN formatting at all. PostgreSQL itself quotes the role and database in its
-// diagnostics -- `role "u" does not exist` (28000), `database "d" does not exist` (3D000),
-// `password authentication failed for user "u"` (28P01) -- so the identifier appears in text
-// the SERVER generated, which no amount of template-matching on our side can anticipate.
-//
-// So the test is on VALUES, not on shapes. pgconn.ParseConfig reads both DSN forms into the
-// same Config, giving the user, password, database and host actually configured; if the
-// rendered error contains any of them, the message is replaced WHOLESALE with a sentinel.
-// This is the discipline internal/infrastructure/config's redactDatabaseURL already applies to
-// the same value class, for the same stated reason -- a keyword DSN is not safely parseable as
-// userinfo, so it is masked rather than picked apart.
-//
-// The replacement is wholesale rather than surgical because excising the matched bytes is its
-// own defect: an identifier may be short or ordinary (`app`, `a`, a database literally named
-// `connection`) and cutting it out of the driver's prose corrupts the diagnosis into something
-// an operator cannot read -- trading a leak for an unreadable log rather than fixing either.
-// A message that must be censored is one this package declines to reproduce.
-//
-// A message with NO configured identifier in it keeps its text in full, which is what preserves
-// diagnosability: `connection refused`, `password authentication failed`, `does not exist` and
-// the rest name the fault, and those are the errors an operator actually meets.
-//
-// The condition is the identifier, never the error class. Those same messages OFTEN do name a
-// configured value -- `password authentication failed for user "x"`, pgx's
-// "failed to connect to `user=%s database=%s`" -- and are withheld when they do. Nothing here
-// treats a class as inherently safe; the comparison decides every message on its own text.
-// redact.URLUserinfo still runs on the surviving text as the URL-shaped backstop.
-//
-// When the DSN cannot be parsed at all there are no identifiers to compare against, so no
-// message can be PROVEN clean and the sentinel applies unconditionally. That is the safe
-// direction for the case where the value is least trustworthy, and it is unreachable in the
-// ordinary run: an unparseable DSN fails at Migrate, which is the *url.Error arm above.
-//
-// Callers pass the error, never the DSN.
-//
-// It is exported so the harness in this package and the live tests in dbtest_test share ONE
-// implementation. Two formatting sites disagreeing about what "redacted" means is the bug
-// that produced pkg/redact in the first place.
+// Exported so the harness in this package and the live tests in dbtest_test share ONE
+// implementation.
 func SafeDSNErr(err error) string {
-	if err == nil {
-		return "<nil>"
-	}
-	var ue *url.Error
-	if errors.As(err, &ue) {
-		return dsnUnparseableMsg
-	}
 	return SafeDSNErrFor(DSN(), err)
 }
 
@@ -387,135 +303,5 @@ func SafeDSNErr(err error) string {
 // entirely. The tests pass the value they mean, never touch the environment, and can all
 // run in parallel; the harness keeps its one-argument convenience.
 func SafeDSNErrFor(dsn string, err error) string {
-	if err == nil {
-		return "<nil>"
-	}
-	var ue *url.Error
-	if errors.As(err, &ue) {
-		return dsnUnparseableMsg
-	}
-	msg := redact.URLUserinfo(err.Error())
-	if dsnIdentifiersPresent(dsn, msg) {
-		return "the driver's message names a value from " + EnvDatabaseURL + " (it is " +
-			"withheld: the user, database and host are half of the credential)"
-	}
-	return msg
-}
-
-// dsnIdentifiersPresent reports whether msg reproduces any identifier from the configured
-// DSN.
-//
-// The DSN is an ARGUMENT rather than an environment read, so the comparison has no hidden
-// input: see SafeDSNErrFor for why the environment version is a caller convenience only.
-//
-// pgconn.ParseConfig is what makes this shape-independent: it accepts BOTH the URL and the
-// keyword/value forms and yields the same Config, so the comparison is against what the DSN
-// MEANS rather than against how it was written.
-//
-// The absent and the unparseable cases are NOT the same, and the difference is deliberate:
-//
-//   - An UNPARSEABLE DSN reports true -- withhold. A value was configured and carries a
-//     credential, but nothing can be extracted to clear a message against, so no message can
-//     be proven safe. Failing open here would restore the leak in exactly the case where the
-//     configured value is least well understood.
-//   - An ABSENT DSN reports false -- keep the text. There is no configured value, so there is
-//     no credential for a message to reproduce; withholding would suppress every diagnostic in
-//     the package while protecting nothing. This is the laptop case, where every live test
-//     skips anyway.
-//
-// So callers must NOT read this as fail-closed on absence: absence means "nothing to protect",
-// not "protect everything".
-//
-// The empty-string guard is not decoration. A DSN with no password (the local peer-auth case)
-// leaves Config.Password empty, and strings.Contains(msg, "") is true for every message, so
-// omitting it would withhold every error the package ever prints.
-//
-// The comparison is on WORD BOUNDARIES rather than on raw substrings, and that distinction is
-// load-bearing for exactly the environment this package protects. CI's TEST_DATABASE_URL uses
-// the user and password "postgres", and "postgres" is a substring of "postgresql" -- so a raw
-// strings.Contains matched ordinary driver prose that merely names the protocol
-// ("unsupported postgresql wire protocol version 2", "lookup postgresql.svc failed") and
-// replaced it with the withhold sentinel. That is a real cost, not a cosmetic one: it fires
-// on generic short identifiers (postgres, test, db, root are all common), and it destroys the
-// message in the one configuration the package is meant to keep diagnosable, which is the
-// diagnosability half of this helper's contract.
-//
-// A credential is reproduced when the message names it as a VALUE -- `user=postgres`,
-// role "postgres", database "postgres" -- and in every such form the identifier is bounded by
-// a non-word character (=, ", space, backtick, end of string). An embedding inside a longer
-// word ("postgresql") is a different token and reproduces nothing. Matching that boundary
-// keeps every genuine echo and drops the false ones; verified against both sets below in
-// TestSafeDSNErrDoesNotOverMatchEmbeddedIdentifiers.
-//
-// The match is case-insensitive because Postgres folds unquoted identifiers to lower case,
-// so a DSN written `user=Postgres` reaches the driver's prose as `postgres`; comparing
-// case-sensitively would miss that echo.
-func dsnIdentifiersPresent(dsn, msg string) bool {
-	if dsn == "" {
-		return false
-	}
-	cfg, err := pgconn.ParseConfig(dsn)
-	if err != nil {
-		return true
-	}
-	ids := []string{cfg.Password, cfg.User, cfg.Database, cfg.Host}
-	// A multi-host DSN parses its SECONDARY hosts into Fallbacks, and cfg.Host holds only
-	// the first. pgx dials each in turn and names the one that failed -- with
-	// originalHostname, so the message carries the host as WRITTEN in the DSN. Comparing
-	// against cfg.Host alone therefore cleared any error naming only a fallback, and it
-	// printed in full: verified, a DSN of primary/secondary/third against
-	// `failed to connect to host "secondary.invalid"` returned that text verbatim.
-	//
-	// Fallbacks also carry the per-host User/Password/Database, but those are copied from
-	// the top-level config for every entry, so the host is the only field that adds
-	// anything. It is included per fallback anyway rather than assumed: the cost is a
-	// string compare and the assumption is pgx's to change.
-	for _, fb := range cfg.Fallbacks {
-		ids = append(ids, fb.Host)
-	}
-	for _, id := range ids {
-		if id != "" && namesIdentifier(msg, id) {
-			return true
-		}
-	}
-	return false
-}
-
-// namesIdentifier reports whether msg reproduces id as a whole token rather than as a
-// fragment of a longer word.
-//
-// Written as an explicit scan rather than a regexp because the identifier is arbitrary
-// operator-supplied text: building a pattern from it means escaping it correctly on every
-// call, and a DSN field is exactly the kind of value that contains regexp metacharacters.
-// A scan has no such failure mode and does not recompile per error.
-func namesIdentifier(msg, id string) bool {
-	lowMsg, lowID := strings.ToLower(msg), strings.ToLower(id)
-	for i := 0; ; {
-		j := strings.Index(lowMsg[i:], lowID)
-		if j < 0 {
-			return false
-		}
-		start := i + j
-		end := start + len(lowID)
-		if !isWordByte(lowMsg, start-1) && !isWordByte(lowMsg, end) {
-			return true
-		}
-		// Advance one byte, not one match: overlapping occurrences must all be tried, or
-		// a bounded echo sitting immediately after an embedded one would be missed.
-		i = start + 1
-		if i >= len(lowMsg) {
-			return false
-		}
-	}
-}
-
-// isWordByte reports whether the byte at position i is part of an identifier token.
-// Out-of-range positions are NOT word bytes, which is what makes a match at the very start
-// or end of the message count as bounded.
-func isWordByte(s string, i int) bool {
-	if i < 0 || i >= len(s) {
-		return false
-	}
-	c := s[i]
-	return c == '_' || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9')
+	return postgres.SafeDSNErr(dsn, EnvDatabaseURL, err)
 }
