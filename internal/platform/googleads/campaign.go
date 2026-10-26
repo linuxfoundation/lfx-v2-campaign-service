@@ -331,6 +331,25 @@ type CampaignInput struct {
 	// carries image URLs, so its bytes ARE fetched before the budget mutate. See
 	// display_creative.go.
 	DisplayCreative DisplayCreative
+
+	// ResolvedImages supplies the bytes for creative image entries the caller has ALREADY
+	// resolved, keyed by the exact slot entry string it put in the creative above.
+	//
+	// It exists because an image may come from the caller's own asset library rather than
+	// from a URL (LFXV2-2665): the dispatcher loads those bytes under its own memory budget
+	// and hands them over here, and the entry string for one of them is not a URL at all but
+	// `lfx-asset:<uuid>`. A slot entry present in this map is NOT fetched; a slot entry
+	// absent from it is a URL and is fetched exactly as before.
+	//
+	// What it does NOT do is skip validation. A pre-resolved image runs through the same
+	// per-image size cap, the same image.DecodeConfig (decode, never a Content-Type sniff)
+	// and the same slot minimum-size and aspect-ratio check as a downloaded one, in the same
+	// phase, before the budget mutate. None of those checks is a property of HTTP, and an
+	// image that skipped them would be the one way to get a wrong-ratio asset past the
+	// preflight and into the ad mutate, which runs after the campaign exists.
+	//
+	// Nil is the ordinary case: a creative made entirely of URLs supplies no map.
+	ResolvedImages map[string][]byte
 }
 
 // AdGroupResult is one ad group the cascade attempted, and everything created

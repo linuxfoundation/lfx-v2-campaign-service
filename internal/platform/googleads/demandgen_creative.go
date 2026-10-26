@@ -252,6 +252,10 @@ type demandGenCreativePlan struct {
 	descriptions     []string
 	businessName     string
 	callToActionText string
+	// resolved is CampaignInput.ResolvedImages, carried on the plan so the fetch phase
+	// needs nothing but the plan — the same reason urls is carried here rather than
+	// re-read from the input.
+	resolved map[string][]byte
 	// present is false when the caller asked for no creative, which leaves the
 	// pre-existing "no ad" behaviour intact.
 	present bool
@@ -285,12 +289,12 @@ func validateDemandGenCreative(kind string, in CampaignInput) (demandGenCreative
 		return demandGenCreativePlan{}, fmt.Errorf("google-ads Demand Gen creative (marketing images, logos, business name) is supported on Demand Gen campaigns only, not on %s", kind)
 	}
 
-	plan := demandGenCreativePlan{present: true, urls: make([][]string, len(demandGenImageSlots))}
+	plan := demandGenCreativePlan{present: true, urls: make([][]string, len(demandGenImageSlots)), resolved: in.ResolvedImages}
 
 	raw := [][]string{d.MarketingImages, d.SquareMarketingImages, d.PortraitImages, d.TallPortraitImages, d.LogoImages}
 	marketing := 0
 	for i, slot := range demandGenImageSlots {
-		urls, err := validateImageURLs(slot, raw[i])
+		urls, err := validateImageEntries(slot, raw[i], in.ResolvedImages)
 		if err != nil {
 			return demandGenCreativePlan{}, err
 		}
@@ -411,16 +415,49 @@ func textWeight(s string) int {
 	return w
 }
 
-// validateImageURLs checks the SHAPE of each URL in one slot. Everything about the
-// image itself — that it exists, decodes, and has the right dimensions — is
-// checked in fetchDemandGenImages, because none of it is knowable from the string.
-func validateImageURLs(slot imageSlot, in []string) ([]string, error) {
+// ResolvedImageRefPrefix marks a creative image slot entry whose bytes the CALLER has already
+// resolved and supplied in CampaignInput.ResolvedImages, rather than a URL this client fetches.
+//
+// Exported because it is a CONTRACT with the caller that builds both halves — the entry string
+// and the map key — and a contract spelled twice is a contract that can drift. internal/dispatch
+// uses this constant itself rather than repeating the literal.
+//
+// A URI scheme rather than an invented sentinel: that is what the string is, the identity of an
+// image that is not at a URL. It can never collide with a caller's own entry, because a URL entry
+// is refused below unless it is https with a host.
+const ResolvedImageRefPrefix = "lfx-asset:"
+
+// validateImageEntries checks the SHAPE of each entry in one slot. Everything about the image
+// itself — that it exists, decodes, and has the right dimensions — is checked in the fetch phase,
+// because none of it is knowable from the string.
+//
+// An entry carrying ResolvedImageRefPrefix is checked against the supplied map instead of against
+// the URL rules: the only thing knowable about it here is whether its bytes actually arrived. The
+// DUPLICATE rule applies to both kinds and for the same reason — the same image attached twice is
+// two assets on one ad, which Google refuses, and the repeat consumes one of the slot's few
+// places.
+func validateImageEntries(slot imageSlot, in []string, resolved map[string][]byte) ([]string, error) {
 	out := make([]string, 0, len(in))
 	seen := make(map[string]struct{}, len(in))
 	for i, rawURL := range in {
 		raw := strings.TrimSpace(rawURL)
 		if raw == "" {
 			return nil, fmt.Errorf("google-ads %s %d has no URL", slot.label, i)
+		}
+		if strings.HasPrefix(raw, ResolvedImageRefPrefix) {
+			// Absent bytes are a CALLER invariant failure, not a caller input error: the
+			// same code wrote this entry and was meant to fill the map. Refused here
+			// rather than at the fetch so it lands with every other preflight refusal,
+			// before anything upstream exists.
+			if _, ok := resolved[raw]; !ok {
+				return nil, fmt.Errorf("google-ads %s %d names %s but no resolved image bytes were supplied for it", slot.label, i, capForError(raw))
+			}
+			if _, dup := seen[raw]; dup {
+				return nil, fmt.Errorf("google-ads %s %s is listed more than once", slot.label, capForError(raw))
+			}
+			seen[raw] = struct{}{}
+			out = append(out, raw)
+			continue
 		}
 		u, err := url.Parse(raw)
 		if err != nil {
@@ -484,7 +521,7 @@ func (c *Client) fetchDemandGenImages(ctx context.Context, plan demandGenCreativ
 	if !plan.present {
 		return nil, nil
 	}
-	return c.fetchSlotImages(ctx, demandGenImageSlots, plan.urls)
+	return c.fetchSlotImages(ctx, demandGenImageSlots, plan.urls, plan.resolved)
 }
 
 // fetchSlotImages is the channel-independent half of the fetch: given a slot table and a
@@ -496,6 +533,12 @@ func (c *Client) fetchDemandGenImages(ctx context.Context, plan demandGenCreativ
 // A second copy would be a second place for one of those to lapse. What IS channel
 // specific is the slot table, which carries the ratios, the minimums and the labels, and
 // that is the parameter.
+//
+// resolved carries bytes the CALLER already has for entries it marked with
+// ResolvedImageRefPrefix — a creative image held in this service's own asset library
+// rather than at a URL. Such an entry skips the download and nothing else: it is
+// validated by the same validateImageBytes, counted into the same running byte total, and
+// attached in the same slot position. Nil is the ordinary case.
 // creativeFetchBudget is how long the fetch phase may run: the SMALLER of the caller's
 // share and the absolute ceiling.
 //
@@ -518,7 +561,7 @@ func creativeFetchBudget(ctx context.Context) time.Duration {
 	return budget
 }
 
-func (c *Client) fetchSlotImages(ctx context.Context, slots []imageSlot, urls [][]string) ([]fetchedImage, error) {
+func (c *Client) fetchSlotImages(ctx context.Context, slots []imageSlot, urls [][]string, resolved map[string][]byte) ([]fetchedImage, error) {
 	total := 0
 	for _, u := range urls {
 		total += len(u)
@@ -550,6 +593,23 @@ func (c *Client) fetchSlotImages(ctx context.Context, slots []imageSlot, urls []
 	for slotIdx, slotURLs := range urls {
 		slot := slots[slotIdx]
 		for _, u := range slotURLs {
+			// An entry the caller already resolved is NOT fetched — there is nowhere
+			// to fetch it from — but it is validated identically, runs through the same
+			// running byte total, and is attached in the same slot position. Checked by
+			// map membership rather than by the prefix alone so a missing entry cannot
+			// silently fall through to an HTTP request for "lfx-asset:…"; the shape
+			// validator has already refused that case, and this is its backstop.
+			if data, ok := resolved[u]; ok {
+				if err := validateImageBytes(slot, u, data); err != nil {
+					return nil, err
+				}
+				fetched += len(data)
+				if fetched > maxCreativeTotalImageBytes {
+					return nil, fmt.Errorf("google-ads creative images total more than the %d byte limit across all slots", maxCreativeTotalImageBytes)
+				}
+				out = append(out, fetchedImage{slot: slotIdx, url: u, data: data})
+				continue
+			}
 			data, err := c.fetchOneImage(fetchCtx, slot, u)
 			if err != nil {
 				// Said plainly, because "context deadline exceeded" on its own would
@@ -607,24 +667,52 @@ func (c *Client) fetchOneImage(ctx context.Context, slot imageSlot, rawURL strin
 	if err != nil {
 		return nil, fmt.Errorf("google-ads %s %q could not be read: %w", slot.label, redactURLForError(rawURL), redactedCause{err})
 	}
+	// Everything from here on is a property of the bytes, not of the download, and is
+	// the same check the pre-resolved path runs. See validateImageBytes.
+	if err := validateImageBytes(slot, rawURL, data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// imageRefForError renders a slot entry for an error message.
+//
+// redactURLForError is wrong for a resolved-asset entry and wrong SILENTLY:
+// url.Parse("lfx-asset:<uuid>") succeeds and the result is absolute, but its Host is
+// empty, which is the one condition redactURLForError treats as unrenderable — so the
+// whole entry collapses to the literal "(redacted)" and a refusal naming an asset would
+// name nothing at all. There is also nothing to redact: the id is this service's own
+// primary key, not a credential, unlike a signed creative URL whose query string IS one.
+func imageRefForError(ref string) string {
+	if strings.HasPrefix(ref, ResolvedImageRefPrefix) {
+		return capForError(ref)
+	}
+	return redactURLForError(ref)
+}
+
+// validateImageBytes applies every check that is a property of the BYTES rather than of
+// how they arrived: the per-image size cap, that there are any, that they decode as one
+// of the three formats Google accepts, and the slot's geometry.
+//
+// Shared by the fetched path and the pre-resolved path, and shared rather than copied for
+// the reason the whole preflight exists: a pre-resolved image that skipped these would be
+// the one way to get a 601x314 image past validation and into the ad mutate, which runs
+// after the budget and campaign have committed.
+func validateImageBytes(slot imageSlot, ref string, data []byte) error {
 	if len(data) > maxDemandGenImageBytes {
-		return nil, fmt.Errorf("google-ads %s %q is larger than the %d byte limit", slot.label, redactURLForError(rawURL), maxDemandGenImageBytes)
+		return fmt.Errorf("google-ads %s %q is larger than the %d byte limit", slot.label, imageRefForError(ref), maxDemandGenImageBytes)
 	}
 	if len(data) == 0 {
-		return nil, fmt.Errorf("google-ads %s %q returned an empty body", slot.label, redactURLForError(rawURL))
+		return fmt.Errorf("google-ads %s %q has no image bytes", slot.label, imageRefForError(ref))
 	}
-
 	// Decoded rather than sniffed by Content-Type: the header is the serving host's
 	// claim, image.DecodeConfig is the bytes themselves, and only the registered
 	// decoders — GIF, JPEG, PNG — are the formats Google accepts here.
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("google-ads %s %q is not a usable GIF, JPEG or PNG: %w", slot.label, redactURLForError(rawURL), err)
+		return fmt.Errorf("google-ads %s %q is not a usable GIF, JPEG or PNG: %w", slot.label, imageRefForError(ref), err)
 	}
-	if err := checkImageGeometry(slot, rawURL, format, cfg.Width, cfg.Height); err != nil {
-		return nil, err
-	}
-	return data, nil
+	return checkImageGeometry(slot, ref, format, cfg.Width, cfg.Height)
 }
 
 // checkImageGeometry applies the slot's minimum size and aspect ratio.
@@ -632,12 +720,12 @@ func (c *Client) fetchOneImage(ctx context.Context, slot imageSlot, rawURL strin
 // Both are Google's own rules, so enforcing them refuses nothing Google would have
 // accepted — it only moves the refusal from the ad mutate, which runs after the
 // budget, campaign and ad group are committed, to before any of them exist.
-func checkImageGeometry(slot imageSlot, rawURL, format string, w, h int) error {
+func checkImageGeometry(slot imageSlot, ref, format string, w, h int) error {
 	if w <= 0 || h <= 0 {
-		return fmt.Errorf("google-ads %s %q reports a %dx%d image, which is not usable", slot.label, redactURLForError(rawURL), w, h)
+		return fmt.Errorf("google-ads %s %q reports a %dx%d image, which is not usable", slot.label, imageRefForError(ref), w, h)
 	}
 	if w < slot.minW || h < slot.minH {
-		return fmt.Errorf("google-ads %s %q is %dx%d (%s), below the %dx%d minimum", slot.label, redactURLForError(rawURL), w, h, format, slot.minW, slot.minH)
+		return fmt.Errorf("google-ads %s %q is %dx%d (%s), below the %dx%d minimum", slot.label, imageRefForError(ref), w, h, format, slot.minW, slot.minH)
 	}
 	// Compared as a ratio of float64s against Google's documented +-1%. The target
 	// is built from the two integers so the documented value stays the value in the
@@ -645,7 +733,7 @@ func checkImageGeometry(slot imageSlot, rawURL, format string, w, h int) error {
 	want := float64(slot.ratioW) / float64(slot.ratioH)
 	got := float64(w) / float64(h)
 	if diff := (got - want) / want; diff > demandGenAspectTolerance || diff < -demandGenAspectTolerance {
-		return fmt.Errorf("google-ads %s %q is %dx%d, an aspect ratio of %.4f — Google requires %d:%d (%.4f) within %.0f%%", slot.label, redactURLForError(rawURL), w, h, got, slot.ratioW, slot.ratioH, want, demandGenAspectTolerance*100)
+		return fmt.Errorf("google-ads %s %q is %dx%d, an aspect ratio of %.4f — Google requires %d:%d (%.4f) within %.0f%%", slot.label, imageRefForError(ref), w, h, got, slot.ratioW, slot.ratioH, want, demandGenAspectTolerance*100)
 	}
 	return nil
 }

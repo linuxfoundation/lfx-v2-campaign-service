@@ -974,7 +974,7 @@ func TestValidateImageURLs_ErrorsNeverEchoTheQueryString(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := validateImageURLs(slot, tc.in)
+			_, err := validateImageEntries(slot, tc.in, nil)
 			if err == nil {
 				t.Fatal("expected a refusal")
 			}
@@ -1054,7 +1054,7 @@ func TestFetchSlotImages_TotalBytesCapIsAcrossEverySlot(t *testing.T) {
 		t.Fatalf("fixture is wrong: the %d images must span both slots", over)
 	}
 
-	if _, err := c.fetchSlotImages(context.Background(), slots, urls); err == nil {
+	if _, err := c.fetchSlotImages(context.Background(), slots, urls, nil); err == nil {
 		t.Errorf("%d images of %d bytes total more than the %d byte cap and must be refused", over, each, maxCreativeTotalImageBytes)
 	} else if !strings.Contains(err.Error(), "across all slots") {
 		t.Errorf("expected the creative-wide total refusal, got: %v", err)
@@ -1069,7 +1069,7 @@ func TestFetchSlotImages_TotalBytesCapIsAcrossEverySlot(t *testing.T) {
 	for len(under[0])+len(under[1]) > maxCreativeTotalImageBytes/each {
 		under[0] = under[0][:len(under[0])-1]
 	}
-	got, err := c.fetchSlotImages(context.Background(), slots, under)
+	got, err := c.fetchSlotImages(context.Background(), slots, under, nil)
 	if err != nil {
 		t.Fatalf("%d images of %d bytes stay under the %d byte cap and must be accepted: %v", len(under[0])+len(under[1]), each, maxCreativeTotalImageBytes, err)
 	}
@@ -1105,7 +1105,7 @@ func TestFetchSlotImages_FetchPhaseCannotSpendTheWholeDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	_, err := c.fetchSlotImages(ctx, slots, urls)
+	_, err := c.fetchSlotImages(ctx, slots, urls, nil)
 	if err == nil {
 		t.Fatal("the fetch phase must stop at its share of the deadline, not run on")
 	}
@@ -1129,7 +1129,7 @@ func TestFetchSlotImages_NoCallerDeadlineIsLeftUnbounded(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := imageFetchTestClient(t)
-	got, err := c.fetchSlotImages(context.Background(), demandGenImageSlots[:1], [][]string{{srv.URL + "/a.png"}})
+	got, err := c.fetchSlotImages(context.Background(), demandGenImageSlots[:1], [][]string{{srv.URL + "/a.png"}}, nil)
 	if err != nil {
 		t.Fatalf("a caller with no deadline must fetch as before: %v", err)
 	}
