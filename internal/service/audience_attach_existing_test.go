@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -249,4 +250,19 @@ func numericIDs(from, n int) []string {
 		out = append(out, strconv.Itoa(from+i))
 	}
 	return out
+}
+
+// A list squatting on a standing suppression list's name is a 409 naming it, not a 500: the
+// operator has a list to rename, and a retry would hit it again.
+func TestAttachExistingAudienceMapsAStandingListConflictTo409(t *testing.T) {
+	conflict := &audience.StandingListConflictError{Name: "LFX Standard Suppressions - proj-1", ListID: "77", Reason: "is not a DYNAMIC list"}
+	svc, repo := attachService(t, &attachExplorer{err: fmt.Errorf("audience attach: %w", conflict)})
+
+	_, err := svc.AttachExistingAudience(context.Background(), attachPayload("brief-1"))
+	var ce *explore.ConflictError
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, "409", ce.Code)
+	assert.Contains(t, ce.Message, `"LFX Standard Suppressions - proj-1" (id 77)`)
+	assert.Contains(t, ce.Message, "rename or remove it in HubSpot")
+	assert.Zero(t, repo.calls)
 }

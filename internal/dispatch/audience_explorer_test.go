@@ -1866,7 +1866,9 @@ func composeExplorer(srvURL string) *AudienceExplorer {
 	repo := &scopedConnReader{rows: map[string]*model.Connection{
 		"proj-1": activeHubSpotConn(goodHubSpotCreds),
 	}}
-	return NewAudienceExplorer(NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srvURL)), nil, nil, nil)
+	x := NewAudienceExplorer(NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srvURL)), nil, nil, nil)
+	x.sleep = func(context.Context, time.Duration) error { return nil }
+	return x
 }
 
 // TestComposeMaster_TakenName_CreatesUnderTheSelectionFingerprint is the "master lists are

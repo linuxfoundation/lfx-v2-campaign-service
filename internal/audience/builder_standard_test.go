@@ -96,3 +96,48 @@ func TestMasterListWithSuppressionsFilter_ExcludesEveryListOnEveryPath(t *testin
 	_, err = MasterListWithSuppressionsFilter([]string{"10"}, nil)
 	assert.Error(t, err)
 }
+
+// Two long editions sharing a prefix select different registrants, so they must not share a
+// list name: the second would otherwise reuse the first's list.
+func TestCurrentRegistrantsName_LongEditionsSharingAPrefixDiffer(t *testing.T) {
+	prefix := strings.Repeat("Open Source Summit ", 12)
+	a := CurrentRegistrantsName(prefix + "Europe 2026")
+	b := CurrentRegistrantsName(prefix + "Japan 2026")
+	assert.NotEqual(t, a, b)
+	assert.Equal(t, a, CurrentRegistrantsName(" "+prefix+"Europe 2026 "), "stable for the same edition")
+	assert.LessOrEqual(t, utf8.RuneCountInString(a), MaxListNameLength)
+	assert.True(t, strings.HasSuffix(a, " - Current Registrants"))
+}
+
+func TestRegistrantsListMatches(t *testing.T) {
+	own, err := CurrentRegistrantsFilter("KubeCon NA 2026")
+	require.NoError(t, err)
+	assert.True(t, RegistrantsListMatches(own, "KubeCon NA 2026"))
+	assert.True(t, RegistrantsListMatches(own, " kubecon  na 2026"), "case and spacing are not a different edition")
+	assert.False(t, RegistrantsListMatches(own, "KubeCon NA 2025"))
+
+	wider, err := MasterListFilter([]string{"123"})
+	require.NoError(t, err)
+	assert.False(t, RegistrantsListMatches(wider, "KubeCon NA 2026"), "a list that is not a registration list")
+	assert.False(t, RegistrantsListMatches(nil, "KubeCon NA 2026"))
+}
+
+func TestStandingFilterIsUnion(t *testing.T) {
+	union, err := MasterListFilter([]string{"1", "2"})
+	require.NoError(t, err)
+	assert.True(t, StandingFilterIsUnion(union))
+	assert.True(t, StandingFilterIsUnion(nil))
+
+	narrowed, err := MasterListWithSuppressionFilter([]string{"1"}, "2")
+	require.NoError(t, err)
+	assert.False(t, StandingFilterIsUnion(narrowed), "a NOT_IN_LIST condition a rewrite would drop")
+
+	registrants, err := CurrentRegistrantsFilter("KubeCon NA 2026")
+	require.NoError(t, err)
+	assert.False(t, StandingFilterIsUnion(registrants), "an event condition a rewrite would drop")
+
+	both := json.RawMessage(`{"filterBranchType":"OR","filters":[],"filterBranches":[{"filterBranchType":"AND","filterBranches":[],"filters":[` +
+		`{"filterType":"IN_LIST","operator":"IN_LIST","listId":"1"},{"filterType":"IN_LIST","operator":"IN_LIST","listId":"2"}]}]}`)
+	assert.False(t, StandingFilterIsUnion(both), "an AND of two lists covers neither")
+	assert.False(t, StandingFilterIsUnion(json.RawMessage(`{`)))
+}

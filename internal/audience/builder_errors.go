@@ -102,3 +102,26 @@ func (e *ComposePartialError) Error() string {
 }
 
 func (e *ComposePartialError) Unwrap() []error { return []error{ErrComposePartial, e.Err} }
+
+// ErrStandingListConflict means a list already holds the name of one of the service's
+// standing suppression lists (the project's standard list, or an edition's current
+// registrants) but is not a list the service can safely reuse: not DYNAMIC, or selecting
+// something other than what the name promises. List names are unique per portal, so the
+// service can neither reuse it nor create its own beside it; an operator must rename or
+// remove the conflicting list in HubSpot.
+var ErrStandingListConflict = errors.New("audience: a list holding a standing suppression list's name cannot be reused")
+
+// StandingListConflictError names the conflicting list and why it cannot be reused. Name
+// and ListID are the portal's own; Reason is this service's text and never upstream
+// material.
+type StandingListConflictError struct {
+	Name   string
+	ListID string
+	Reason string
+}
+
+func (e *StandingListConflictError) Error() string {
+	return fmt.Sprintf("HubSpot list %q (id %s) %s; rename or remove it in HubSpot so the service can use its own list under that name", e.Name, e.ListID, e.Reason)
+}
+
+func (e *StandingListConflictError) Unwrap() error { return ErrStandingListConflict }

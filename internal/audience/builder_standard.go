@@ -4,10 +4,13 @@
 package audience
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // StandardSuppressionName is the name of the project's one standing standard suppression
@@ -30,9 +33,74 @@ func RegistrantsEditionOK(editionName string) bool {
 // CurrentRegistrantsName is the name of the list holding the current edition's registrants.
 // editionName is the event name WITH its year, exactly as the registration event records it,
 // so each edition gets its own list and a repeat send for that edition reuses it.
+//
+// An edition too long to fit is cut AND tagged with a short hash of the whole edition. The
+// filter always selects the full edition, so two long editions sharing a prefix would
+// otherwise share one name -- and the second would reuse the first's list, suppressing the
+// wrong edition's registrants. A name that fits is unchanged.
 func CurrentRegistrantsName(editionName string) string {
 	const suffix = " - Current Registrants"
-	return cutName(strings.TrimSpace(editionName), MaxListNameLength-len(suffix)) + suffix
+	edition := strings.TrimSpace(editionName)
+	room := MaxListNameLength - utf8.RuneCountInString(suffix)
+	if utf8.RuneCountInString(edition) <= room {
+		return edition + suffix
+	}
+	sum := sha256.Sum256([]byte(edition))
+	tag := " #" + hex.EncodeToString(sum[:])[:8]
+	return cutName(edition, room-utf8.RuneCountInString(tag)) + tag + suffix
+}
+
+// RegistrantsListMatches reports whether a list found under an edition's
+// CurrentRegistrantsName really is that edition's registrants list: its filter selects the
+// completed registrations of exactly that edition and nothing else (RegistrationEvidence's
+// exclusive case). The name alone proves nothing -- list search is case-insensitive and an
+// operator can create or edit a list under any name -- and reusing a list that selects a
+// different edition, or anything wider, would suppress the wrong people.
+func RegistrantsListMatches(filter json.RawMessage, editionName string) bool {
+	editions, exclusive := RegistrationEvidence(filter)
+	if !exclusive || len(editions) != 1 {
+		return false
+	}
+	norm := func(s string) string { return strings.ToLower(strings.Join(strings.Fields(s), " ")) }
+	return norm(editions[0]) == norm(editionName)
+}
+
+// StandingFilterIsUnion reports whether a standing list's filter is only a union of list
+// memberships -- every condition an IN_LIST filter, each one a whole OR alternative -- which
+// is the shape MasterListFilter writes. Only then can the list be rewritten from its
+// CoveredListIDs without losing anything; any other condition (an AND of lists, a property
+// filter added by hand) would be dropped by the rewrite. An empty filter is a union of
+// nothing.
+func StandingFilterIsUnion(filter json.RawMessage) bool {
+	var root qaBranch
+	if len(filter) == 0 {
+		return true
+	}
+	if json.Unmarshal(filter, &root) != nil {
+		return false
+	}
+	union := true
+	referenced := map[string]struct{}{}
+	root.walk(func(b qaBranch) {
+		switch strings.ToUpper(strings.TrimSpace(b.FilterBranchType)) {
+		case "", "AND", "OR":
+		default:
+			union = false
+		}
+		for _, f := range b.Filters {
+			id := strings.TrimSpace(f.ListID.String())
+			if f.FilterType != "IN_LIST" || f.Operator != "IN_LIST" || id == "" {
+				union = false
+				continue
+			}
+			referenced[id] = struct{}{}
+		}
+	})
+	if !union {
+		return false
+	}
+	covered := CoveredListIDs(filter)
+	return len(covered) == len(referenced)
 }
 
 // CurrentRegistrantsFilter selects everyone who completed the registration event for

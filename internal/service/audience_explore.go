@@ -762,6 +762,17 @@ func audienceExploreErr(ctx context.Context, op, projectID string, err error) er
 	switch {
 	case errors.Is(err, audience.ErrListNotFound):
 		return &explore.NotFoundError{Code: "404", Message: "no list in this project's HubSpot portal matches that reference"}
+	case errors.Is(err, audience.ErrStandingListConflict):
+		// 409, not 500: a list in the portal holds the name of one of the standing suppression
+		// lists but is not one the service can reuse. Nothing is wrong with the service and a
+		// retry hits the same list; an operator must rename or remove it. The message names
+		// it, from this service's own typed error -- never upstream text.
+		var conflict *audience.StandingListConflictError
+		msg := "a list in the HubSpot portal already holds a standing suppression list's name but cannot be reused; rename or remove it in HubSpot"
+		if errors.As(err, &conflict) {
+			msg = conflict.Error()
+		}
+		return &explore.ConflictError{Code: "409", Message: msg}
 	case errors.Is(err, audience.ErrInvalidRequest), errors.Is(err, audience.ErrEventNameUnresolved):
 		// 400, not 500: nothing is wrong with the service, and the fix is a different
 		// request — a resolvable list reference, or an event URL whose page declares a

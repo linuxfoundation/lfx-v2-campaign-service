@@ -31,6 +31,18 @@ type suppressionPortal struct {
 	// failSearch answers a search for this query with a 500, as a rate-limited or flaky
 	// HubSpot would.
 	failSearch string
+	// processing overrides a list's processingType on read; every other list is DYNAMIC.
+	processing map[string]string
+	// lagSearches makes the next N searches for a name miss it, as HubSpot's search index
+	// does for a list created moments ago.
+	lagSearches map[string]int
+	// refuseCreate answers every create with this status and creates nothing; when
+	// refuseCreateStores is set the list "already exists" under the requested name (stored
+	// with refuseFilter), as when a concurrent caller created it first.
+	refuseCreate       int
+	refuseCreateStores bool
+	refuseFilter       json.RawMessage
+	searches           map[string]int
 }
 
 // standardPortal holds every standard term's list (7001 onward, named by its search term)
@@ -74,14 +86,29 @@ func (p *suppressionPortal) serve(t *testing.T) *httptest.Server {
 				_, _ = io.WriteString(w, `{"status":"error","message":"upstream"}`)
 				return
 			}
+			if p.searches == nil {
+				p.searches = map[string]int{}
+			}
+			p.searches[body.Query]++
 			lists := []map[string]any{}
-			if id, ok := p.byName[body.Query]; ok {
+			if p.lagSearches[body.Query] > 0 {
+				p.lagSearches[body.Query]--
+			} else if id, ok := p.byName[body.Query]; ok {
 				lists = append(lists, map[string]any{"listId": id, "name": body.Query, "objectTypeId": "0-1"})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"lists": lists, "hasMore": false})
 		case r.URL.Path == "/crm/v3/lists" && r.Method == http.MethodPost:
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			if p.refuseCreate != 0 {
+				if name, _ := body["name"].(string); p.refuseCreateStores {
+					p.byName[name] = "4242"
+					p.filters["4242"] = p.refuseFilter
+				}
+				w.WriteHeader(p.refuseCreate)
+				_, _ = io.WriteString(w, `{"status":"error","category":"VALIDATION_ERROR","message":"list name taken"}`)
+				return
+			}
 			p.created = append(p.created, body)
 			id := fmt.Sprintf("%d", 9000+len(p.created))
 			name, _ := body["name"].(string)
@@ -99,7 +126,11 @@ func (p *suppressionPortal) serve(t *testing.T) *httptest.Server {
 			_, _ = io.WriteString(w, `{}`)
 		case strings.HasPrefix(r.URL.Path, "/crm/v3/lists/") && r.Method == http.MethodGet:
 			id := strings.TrimPrefix(r.URL.Path, "/crm/v3/lists/")
-			list := map[string]any{"listId": id, "name": p.nameOf(id), "objectTypeId": "0-1", "size": 10}
+			processing := "DYNAMIC"
+			if v, ok := p.processing[id]; ok {
+				processing = v
+			}
+			list := map[string]any{"listId": id, "name": p.nameOf(id), "objectTypeId": "0-1", "size": 10, "processingType": processing}
 			if f, ok := p.filters[id]; ok {
 				list["filterBranch"] = f
 			}
@@ -327,4 +358,175 @@ func TestAttachExisting_YearlessEdition_RefusedBeforeAnyWrite(t *testing.T) {
 	created, updated := portal.writes()
 	assert.Empty(t, created, "the standing list must not be created by a request that is then refused")
 	assert.Empty(t, updated)
+}
+
+// standingWith seeds the project's standing list "77" covering ids.
+func standingWith(t *testing.T, p *suppressionPortal, ids []string) {
+	t.Helper()
+	filter, err := audience.MasterListFilter(ids)
+	require.NoError(t, err)
+	p.byName[audience.StandardSuppressionName("proj-1")] = "77"
+	p.filters["77"] = filter
+}
+
+// A quarter rotation: the term now resolves to the new quarter's list while the old one still
+// holds people not yet copied over. The new list is added and the old one is kept.
+func TestAttachExisting_QuarterRotation_GrowsTheStandingListAndKeepsTheOldList(t *testing.T) {
+	portal, std := standardPortal()
+	standingWith(t, portal, std)
+	portal.byName[audience.StandardSuppressionTerms[0].SearchTerm] = "8001"
+	x := composeExplorer(portal.serve(t).URL)
+	selection := append([]string{"8001"}, std[1:]...)
+
+	outcome, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, selection, "")
+	require.NoError(t, err)
+	require.NotNil(t, outcome.Suppression)
+	assert.Equal(t, "77", outcome.Suppression.ListID)
+	_, updated := portal.writes()
+	assert.Equal(t, []string{"77"}, updated)
+	assert.ElementsMatch(t, append([]string{"8001"}, std...), audience.CoveredListIDs(portal.filters["77"]),
+		"the old quarter's list stays: dropping it would stop suppressing its members on every send")
+}
+
+// A term that stops resolving is not a decision to stop suppressing its list.
+func TestAttachExisting_TermNoLongerResolves_KeepsItsListAndWritesNothing(t *testing.T) {
+	portal, std := standardPortal()
+	standingWith(t, portal, std)
+	delete(portal.byName, audience.StandardSuppressionTerms[0].SearchTerm)
+	x := composeExplorer(portal.serve(t).URL)
+
+	outcome, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, std[1:], "")
+	require.NoError(t, err)
+	require.NotNil(t, outcome.Suppression)
+	created, updated := portal.writes()
+	assert.Empty(t, created)
+	assert.Empty(t, updated, "nothing new to add, so nothing is written")
+	assert.ElementsMatch(t, std, audience.CoveredListIDs(portal.filters["77"]))
+}
+
+// A list an operator added to the standing list by hand survives both a read and a growth.
+func TestAttachExisting_ManuallyAddedList_IsKept(t *testing.T) {
+	portal, std := standardPortal()
+	standingWith(t, portal, append(append([]string{}, std...), "5555"))
+	x := composeExplorer(portal.serve(t).URL)
+
+	_, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, std, "")
+	require.NoError(t, err)
+	_, updated := portal.writes()
+	assert.Empty(t, updated, "an extra member is not a reason to rewrite")
+
+	portal.byName[audience.StandardSuppressionTerms[0].SearchTerm] = "8001"
+	_, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, append([]string{"8001"}, std[1:]...), "")
+	require.NoError(t, err)
+	_, updated = portal.writes()
+	assert.Equal(t, []string{"77"}, updated)
+	assert.ElementsMatch(t, append(append([]string{"8001"}, std...), "5555"), audience.CoveredListIDs(portal.filters["77"]))
+}
+
+func TestAttachExisting_StandingListNotDynamic_IsAConflictNamingIt(t *testing.T) {
+	portal, std := standardPortal()
+	standingWith(t, portal, std)
+	portal.processing = map[string]string{"77": "MANUAL"}
+	x := composeExplorer(portal.serve(t).URL)
+
+	_, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, std, "")
+	require.ErrorIs(t, err, audience.ErrStandingListConflict)
+	assert.Contains(t, err.Error(), `"LFX Standard Suppressions - proj-1" (id 77)`)
+	created, updated := portal.writes()
+	assert.Empty(t, created)
+	assert.Empty(t, updated)
+}
+
+// A standing list edited by hand into something other than a union of lists is not
+// rewritten when it must grow: the rewrite would silently drop the hand-made condition.
+func TestAttachExisting_StandingListNotAUnion_RefusesToRewrite(t *testing.T) {
+	portal, std := standardPortal()
+	narrowed, err := audience.MasterListWithSuppressionFilter(std[:1], std[1])
+	require.NoError(t, err)
+	portal.byName[audience.StandardSuppressionName("proj-1")] = "77"
+	portal.filters["77"] = narrowed
+	x := composeExplorer(portal.serve(t).URL)
+
+	_, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, std, "")
+	require.ErrorIs(t, err, audience.ErrStandingListConflict)
+	_, updated := portal.writes()
+	assert.Empty(t, updated)
+}
+
+// The create is refused because the name exists (a concurrent caller made it) while search
+// has not indexed it yet: the list is looked up again and reused, not reported as a 500.
+func TestAttachExisting_StandingCreateRaced_RelooksAndReuses(t *testing.T) {
+	portal, std := standardPortal()
+	name := audience.StandardSuppressionName("proj-1")
+	full, err := audience.MasterListFilter(std)
+	require.NoError(t, err)
+	portal.refuseCreate, portal.refuseCreateStores, portal.refuseFilter = http.StatusBadRequest, true, full
+	portal.lagSearches = map[string]int{name: 2}
+	x := composeExplorer(portal.serve(t).URL)
+
+	outcome, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, std, "")
+	require.NoError(t, err)
+	require.NotNil(t, outcome.Suppression)
+	assert.Equal(t, "4242", outcome.Suppression.ListID)
+	created, updated := portal.writes()
+	assert.Empty(t, created)
+	assert.Empty(t, updated)
+	assert.Equal(t, 3, portal.searches[name], "one look before the create, two after it")
+}
+
+func TestAttachExisting_RegistrantsCreateRaced_RelooksAndReuses(t *testing.T) {
+	portal, _ := standardPortal()
+	const edition = "Open Source Summit Europe 2026"
+	filter, err := audience.CurrentRegistrantsFilter(edition)
+	require.NoError(t, err)
+	portal.refuseCreate, portal.refuseCreateStores, portal.refuseFilter = http.StatusConflict, true, filter
+	portal.lagSearches = map[string]int{audience.CurrentRegistrantsName(edition): 1}
+	x := composeExplorer(portal.serve(t).URL)
+
+	outcome, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, []string{"6001"}, edition)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"6001", "4242"}, outcome.AttachedSuppressionIDs)
+}
+
+// A refused create whose list never appears keeps the create's error, after a bounded number
+// of looks.
+func TestAttachExisting_StandingCreateRefusedAndNeverFound_Fails(t *testing.T) {
+	portal, std := standardPortal()
+	portal.refuseCreate = http.StatusBadRequest
+	x := composeExplorer(portal.serve(t).URL)
+
+	_, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, std, "")
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, audience.ErrStandingListConflict)
+	assert.Equal(t, 1+3, portal.searches[audience.StandardSuppressionName("proj-1")])
+}
+
+func TestAttachExisting_RegistrantsListForAnotherEdition_IsAConflict(t *testing.T) {
+	portal, _ := standardPortal()
+	const edition = "KubeCon + CloudNativeCon Europe 2026"
+	other, err := audience.CurrentRegistrantsFilter("KubeCon + CloudNativeCon Europe 2025")
+	require.NoError(t, err)
+	portal.byName[audience.CurrentRegistrantsName(edition)] = "88"
+	portal.filters["88"] = other
+	x := composeExplorer(portal.serve(t).URL)
+
+	_, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, []string{"6001"}, edition)
+	require.ErrorIs(t, err, audience.ErrStandingListConflict)
+	assert.Contains(t, err.Error(), "(id 88)")
+	created, _ := portal.writes()
+	assert.Empty(t, created)
+}
+
+func TestAttachExisting_RegistrantsListNotDynamic_IsAConflict(t *testing.T) {
+	portal, _ := standardPortal()
+	const edition = "KubeCon + CloudNativeCon Europe 2026"
+	filter, err := audience.CurrentRegistrantsFilter(edition)
+	require.NoError(t, err)
+	portal.byName[audience.CurrentRegistrantsName(edition)] = "88"
+	portal.filters["88"] = filter
+	portal.processing = map[string]string{"88": "SNAPSHOT"}
+	x := composeExplorer(portal.serve(t).URL)
+
+	_, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, []string{"6001"}, edition)
+	require.ErrorIs(t, err, audience.ErrStandingListConflict)
 }

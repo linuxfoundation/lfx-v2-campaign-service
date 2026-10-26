@@ -4501,19 +4501,47 @@ The suppressions then go through `resolveSuppressions`, shared with `ComposeMast
   `StandardSuppressionTerms` entry (the same lookup `SuppressionLists` serves). When the selection
   holds EVERY resolved standard list, they are replaced by `ensureStandardList`: the list named
   `audience.StandardSuppressionName(projectID)` (`LFX Standard Suppressions - <project>`, no date or
-  fingerprint), found with `exactList`, created on first use as their union, and refreshed in place
-  with `UpdateListFilters` only when its `CoveredListIDs` differ from the resolved set. It is the
-  outcome's `Suppression`. A PARTIAL standard selection is attached list by list instead, because
-  the union would exclude a list the operator unticked.
+  fingerprint), found with `exactList`, created on first use as their union, and otherwise only
+  ever GROWN: the new filter is the union of the lists it already covers (`CoveredListIDs`) and the
+  resolved set, written with `UpdateListFilters` only when that union adds an id. It never
+  shrinks, because every audience in the project excludes this one list and dispatch applies its id
+  at send time: a quarter rotation (the old quarter's list still holds people while the new one
+  fills), a term that stops resolving, search lag or a list an operator added by hand must not stop
+  suppressing anyone. A list found under the name is reused only when it is `DYNAMIC`, and is grown
+  only when its filter is a pure union of lists (`audience.StandingFilterIsUnion`) that the rewrite
+  reproduces; otherwise it is an `audience.StandingListConflictError` naming the list (409). It is
+  the outcome's `Suppression`. A PARTIAL standard selection is attached list by list instead,
+  because the union would exclude a list the operator unticked.
 - **Everything else stays its own entry** in `AttachedSuppressionIDs`: brand, event-specific and
   Exclude-marked lists.
 - **Current registrants.** With a registrants edition (event name with year), `ensureRegistrantsList`
   finds or creates `audience.CurrentRegistrantsName(edition)` from
   `audience.CurrentRegistrantsFilter` (the registration custom event, `event_name` IS_EQUAL_TO the
-  edition) and appends it as its own entry.
+  edition) and appends it as its own entry. A list found under that name is reused only when it is
+  `DYNAMIC` and its filter selects exactly this edition's registrations
+  (`audience.RegistrantsListMatches`); the name match is case-insensitive and anyone can create a
+  list under any name, so anything else is a `StandingListConflictError` naming it (409). The name
+  of an edition too long to fit is cut and tagged with a short hash of the full edition, so two
+  long editions sharing a prefix never share a list.
 
-Both standing lists are found by exact name before any create, so a repeat or retry reuses them and
-an unconfirmed create is safe to retry; a create failure is an error and nothing is recorded.
+Both standing lists are found by exact name before any create (`findOrCreateStanding`), so a repeat
+or retry reuses them. HubSpot list names are unique per portal, so a create can be REFUSED because
+a concurrent attach or compose made the list first, or because an earlier create landed and search
+has not indexed it yet; a create can also be unconfirmed. In both cases the name is looked up again
+up to three times with a short backoff (`standingRelookupWaits`, under two seconds in all) and what
+is found is used; only when it is still not found does the create's own error stand, with its
+unconfirmed classification intact. A permission rejection is not retried. Nothing is recorded on
+any failure.
+
+Not established (2026-10-26): whether `current_registrants_event` names an edition that actually
+has registrations. The only check is that it carries a year (`audience.RegistrantsEditionOK`). The
+warehouse resolver (`ResolvePastEditions`) returns PAST editions only, from
+`event_registrations`, so it can neither confirm a current edition nor tell a misspelt one from a
+new edition with no registrations yet; a misspelt edition therefore builds a list that matches
+nobody. Likewise the standing standard list is named from `project_id` as given: the audience routes
+accept a UUID or a slug and the service has no UUID-to-slug resolver, so one project addressed both
+ways gets two standing lists (each correct on its own; case differences alone collapse, because
+the name match is case-insensitive).
 `SuppressionLists` adds a `current_registrants` row (with `WillCreate` when the list does not exist
 yet: a read never creates) and reports the standing standard list when it already exists.
 

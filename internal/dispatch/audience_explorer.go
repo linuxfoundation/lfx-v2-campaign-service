@@ -75,6 +75,22 @@ type AudienceExplorer struct {
 	// now is injected so the quarter segment of a derived list name is testable. It
 	// is never nil after construction.
 	now func() time.Time
+	// sleep waits between re-lookups of a standing list whose create was refused or
+	// unconfirmed (findOrCreateStanding). Injected so tests do not wait; never nil after
+	// construction.
+	sleep func(ctx context.Context, d time.Duration) error
+}
+
+// sleepCtx waits d, or until ctx is done.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // NewAudienceExplorer constructs the explorer. fetcher, parser and llm may each be
@@ -97,7 +113,7 @@ func NewAudienceExplorer(builder *AudienceBuilder, fetcher eventPageReader, pars
 	if isNilIface(parser) {
 		parser = nil
 	}
-	return &AudienceExplorer{builder: builder, fetcher: fetcher, parser: parser, llm: llm, now: time.Now}
+	return &AudienceExplorer{builder: builder, fetcher: fetcher, parser: parser, llm: llm, now: time.Now, sleep: sleepCtx}
 }
 
 // isNilIface reports whether v is either an untyped nil interface or an interface
