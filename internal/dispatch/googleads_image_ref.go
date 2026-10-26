@@ -122,9 +122,16 @@ type googleAdsImageRefs []googleAdsImageRef
 // for the reason googleAdsSnapshotConfig gives — config_snapshot is persisted UNENCRYPTED and a
 // creative URL can carry a signed query string that is itself the credential for the asset.
 //
-// An asset-backed entry is left ALONE, and must be: the id is this service's own primary key,
-// not a credential, and it is the very value checkNewSnapshotAssetRefs reads back out of the
+// An asset-backed entry's ID is left ALONE, and must be: the id is this service's own primary
+// key, not a credential, and it is the very value checkNewSnapshotAssetRefs reads back out of the
 // snapshot. Reducing it would make the stored reference unresolvable and the guard blind.
+//
+// Its URL is NOT exempt, and the reduction is unconditional for that reason. A ref carrying both
+// is refused at resolve time, but sanitizing runs on whatever the caller sent — and refusal and
+// persistence are not the same path, so "it would have been refused" is not an argument that the
+// value never reaches the snapshot. The exemption is a property of the ID FIELD, so keying it on
+// the ENTRY left a credential-bearing URL unreduced beside an asset id. sanitizeSnapshotURL maps
+// "" to "", so an asset-backed entry with no URL — every one of them — is unaffected.
 func sanitizeSnapshotImageRefs(in googleAdsImageRefs) googleAdsImageRefs {
 	if len(in) == 0 {
 		return nil
@@ -132,9 +139,7 @@ func sanitizeSnapshotImageRefs(in googleAdsImageRefs) googleAdsImageRefs {
 	out := make(googleAdsImageRefs, len(in))
 	for i, ref := range in {
 		out[i] = ref
-		if !ref.namesAsset() {
-			out[i].URL = sanitizeSnapshotURL(ref.URL)
-		}
+		out[i].URL = sanitizeSnapshotURL(ref.URL)
 	}
 	return out
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
 )
 
 const (
@@ -232,6 +233,56 @@ func TestResolveGoogleCreativeAssets_RefusesAnAssetThatDoesNotExist(t *testing.T
 	if err == nil || !isPreflightRefusal(err) {
 		t.Fatalf("err = %v, want a preflight refusal", err)
 	}
+}
+
+// The PER-IMAGE cap, checked on the recorded size so the oversized asset is never materialised —
+// the same shape the LinkedIn, X and Microsoft dispatch paths apply against their own platform's
+// MaxImageBytes, and the one Google's asset path was missing.
+//
+// Without it the only thing standing between a 300 MiB stored asset and this process was the
+// per-dispatch 240 MiB aggregate: an asset UNDER that but far over Google's own per-image limit
+// was read in full, reserved for, base64-expanded and marshalled into the assets:mutate body
+// before the platform client refused it on bytes it should never have been handed.
+//
+// sizeOverride rather than real bytes, because the fixture cannot be the evidence here: a PNG
+// large enough to trip a 5 MiB cap is not something a test should encode, and loads() == 0 is a
+// stronger assertion than any byte count — it proves the refusal happened before GetAsset.
+func TestResolveGoogleCreativeAssets_RefusesAnOversizedAssetWithoutLoadingIt(t *testing.T) {
+	brief := gaBrief()
+	store := &scopedCreativeAssets{
+		projectID: brief.ProjectID, briefID: brief.ID, assetID: gaAssetID,
+		asset:        &model.CreativeAsset{ID: gaAssetID, MimeType: model.MimeTypePNG, Bytes: []byte("x")},
+		sizeOverride: googleads.MaxImageBytes + 1,
+	}
+	budget := NewAssetReserver(MaxConcurrentVariantAssetBytes, time.Second)
+	d := gaDispatcher(store, budget)
+
+	_, _, err := d.resolveGoogleCreativeAssets(context.Background(), brief, gaConfigWithRefs(googleAdsImageRef{ImageAssetID: gaAssetID}))
+	if err == nil {
+		t.Fatal("an asset over the per-image cap was accepted")
+	}
+	if !isPreflightRefusal(err) {
+		t.Errorf("err = %v, want a preflight refusal so nothing upstream is created", err)
+	}
+	if !strings.Contains(err.Error(), gaAssetID) || !strings.Contains(err.Error(), "marketingImages") {
+		t.Errorf("the refusal names neither the asset nor the slot: %v", err)
+	}
+	// googleads.MaxImageBytes is THIS SERVICE's per-image memory bound, not Google's asset
+	// limit, which is larger. The LinkedIn and Microsoft refusals next door name genuine vendor
+	// caps, so their wording is false if it is copied here; this pins the difference.
+	if !strings.Contains(err.Error(), "this service handles at most") {
+		t.Errorf("the refusal does not attribute the cap to this service: %v", err)
+	}
+	if n := store.loads(); n != 0 {
+		t.Errorf("GetAsset was called %d times; the oversized asset was materialised anyway", n)
+	}
+	// The failure path releases what it took. Taking the whole budget afterwards is the only
+	// assertion that distinguishes "released" from "never reserved" having also passed.
+	rel, ok := budget.reserve(context.Background(), MaxConcurrentVariantAssetBytes)
+	if !ok {
+		t.Fatal("the budget was not whole after the refusal; a reservation leaked")
+	}
+	rel()
 }
 
 // With no store bound, an asset-backed entry is refused cleanly BEFORE spend rather than

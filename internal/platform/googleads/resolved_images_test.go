@@ -181,8 +181,8 @@ func TestFetchSlotImages_ResolvedBytesCountIntoTheCreativeTotal(t *testing.T) {
 	// encoded PNG is genuinely large, and sharing the slice keeps the test's own memory
 	// to a single image while the running total sees every reference.
 	img := noisePNG(t, 1200, 628)
-	if len(img) > maxDemandGenImageBytes {
-		t.Fatalf("fixture is wrong: %d bytes exceeds the per-image cap of %d", len(img), maxDemandGenImageBytes)
+	if len(img) > MaxImageBytes {
+		t.Fatalf("fixture is wrong: %d bytes exceeds the per-image cap of %d", len(img), MaxImageBytes)
 	}
 	over := maxCreativeTotalImageBytes/len(img) + 1
 

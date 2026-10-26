@@ -116,6 +116,31 @@ func TestSanitizeSnapshotImageRefs_ReducesURLsAndLeavesAssetIDs(t *testing.T) {
 	}
 }
 
+// The exemption is a property of the ID FIELD, not of the ENTRY. An entry carrying BOTH is
+// refused at resolve time, but refusal and persistence are different paths and the sanitizer
+// runs on whatever the caller sent — so keying the exemption on namesAsset() left a signed URL
+// in the unencrypted snapshot beside an asset id. The reduction is unconditional now, which is
+// safe in the ordinary case precisely because SnapshotURL maps "" to "".
+func TestSanitizeSnapshotImageRefs_ReducesTheURLEvenBesideAnAssetID(t *testing.T) {
+	const assetID = "22222222-2222-4222-8222-222222222222"
+	in := googleAdsImageRefs{
+		{URL: "https://cdn.example.org/a.png?X-Amz-Signature=s3cr3t-asset-key", ImageAssetID: assetID},
+		{ImageAssetID: assetID},
+	}
+	got := sanitizeSnapshotImageRefs(in)
+	if strings.Contains(got[0].URL, "s3cr3t") {
+		t.Errorf("the signing query survived beside an asset id: %q", got[0].URL)
+	}
+	if got[0].ImageAssetID != assetID {
+		t.Errorf("the asset id was rewritten to %q", got[0].ImageAssetID)
+	}
+	// An asset-backed entry with no URL — every one of them in practice — is untouched, so this
+	// change cannot alter the shape MarshalJSON persists for the configs that exist today.
+	if got[1].URL != "" {
+		t.Errorf("an empty URL became %q; the asset-only entry must round-trip unchanged", got[1].URL)
+	}
+}
+
 // slotEntries is the translation at the dispatch/platform boundary: the platform client works in
 // flat per-slot string lists, so an asset becomes one token carrying its id. A URL must pass
 // through byte for byte — the client fetches exactly what the caller wrote.

@@ -61,6 +61,13 @@ signed query string IS the credential — and leaves an asset id alone. The id i
 own primary key and is the exact value the dangling-reference guard reads back out of the
 snapshot; reducing it would make the stored reference unresolvable and the guard blind.
 
+The exemption is a property of the **id field**, not of the entry, and the URL reduction is
+therefore **unconditional**. Keying it on `namesAsset()` left a signed URL unreduced whenever an
+entry carried both — such an entry is refused at resolve time, but refusal and persistence are
+different paths, so "it would have been refused" is no argument that the value never reaches the
+snapshot. Reducing every entry is safe because `redact.SnapshotURL("")` returns `""`, so the
+asset-backed entries that exist in practice — id only, no URL — round-trip unchanged.
+
 ## Before anything is created
 
 `resolveGoogleCreativeAssets` runs in `Dispatch` before `googleads.CampaignInput` is built, which
@@ -116,6 +123,19 @@ signed query string can itself be the credential for the image. That resolver is
 that can still tell a caller's string from one this service rendered — after `slotEntries()` the
 two are the same `[]string`.
 
+That map is assigned at exactly **one** site, `ResolvedImages: resolvedImages` in
+`internal/dispatch/googleads.go`, and nothing below the dispatch layer can notice if the line
+goes away: the resolver's own tests call `resolveGoogleCreativeAssets` directly and the platform
+side's tests build `CampaignInput` themselves, so both suites stay green while every
+stored-asset campaign fails on the money path. `googleads_resolved_images_wiring_test.go` closes
+that hole from the outside — a Demand Gen config naming stored assets, dispatched over the fake
+API server, asserting the stored **bytes** appear base64-encoded in the `assets:mutate` body and
+that the asset ids do not. One channel is enough because all three share that single assignment
+and `fetchSlotImages` below it; what differs is the per-channel mapper, and each of those is
+already pinned platform-side. (The dial-guard constraint recorded in
+`googleads_display_wiring_test.go` is about *fetching*; a pre-resolved entry is never fetched, so
+this path reaches `assets:mutate` with no test-only hole.)
+
 ## What a pre-resolved image does not skip
 
 `validateImageEntries` checks a token against the supplied map instead of against the URL rules —
@@ -142,3 +162,23 @@ token and wrong silently: `lfx-asset:<uuid>` parses and is absolute but has no `
 condition it treats as unrenderable, so a refusal naming an asset would collapse to the literal
 `(redacted)` and name nothing. There is also nothing to redact — the id is a primary key, not a
 credential.
+
+## The per-image cap is applied twice, and the first time is on the SIZE
+
+`resolveGoogleCreativeAssets` refuses an asset larger than `googleads.MaxImageBytes` immediately
+after `GetAssetSize` and **before** `reserve` or `GetAsset`, so an oversized blob is never
+materialised and no allowance is taken for it. This is the same placement the aggregate
+`maxVariantAssetBytes` ceiling already used, and the same shape the LinkedIn, X and Microsoft
+dispatch paths in this package already had against their own `<platform>.MaxImageBytes`
+(`linkedin_creative.go`, `twitter_creative.go`, `microsoft_creative.go`); Google's new path was
+the only sibling missing it.
+
+The bound comes from the `googleads` **package** — the same constant every slot in
+`ImageSlotCatalog` carries and the one the fetch path enforces with a `LimitReader` — rather than a
+literal spelled a second time in `internal/dispatch`, so the two halves cannot drift. It is **not**
+Google's own limit, which is larger: it is the bound on what this service will hold in memory per
+image, and the refusal says so rather than borrowing the siblings' "the vendor rejects this"
+wording, which on those platforms names a genuine vendor cap. It was previously named
+`maxDemandGenImageBytes`, which was a misnomer: `fetchSlotImages`, `fetchOneImage` and
+`validateImageBytes` are shared by Demand Gen, Display and Performance Max alike, so the cap was
+never Demand Gen's. Exporting it as `MaxImageBytes` matches the three siblings deliberately.

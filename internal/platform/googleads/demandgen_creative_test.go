@@ -557,7 +557,7 @@ func TestFetchOneImage_SizeCapBindsOnAnUndeclaredLength(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
 		chunk := bytes.Repeat([]byte{0}, 1<<16)
-		for written := 0; written <= maxDemandGenImageBytes; written += len(chunk) {
+		for written := 0; written <= MaxImageBytes; written += len(chunk) {
 			if _, err := w.Write(chunk); err != nil {
 				return
 			}
@@ -1019,7 +1019,7 @@ func TestFetchSlotImages_TotalBytesCapIsAcrossEverySlot(t *testing.T) {
 	// carrying a known byte size. Each one is comfortably under the per-image cap, so
 	// nothing but the SUM can refuse them.
 	const each = 3 << 20
-	if each > maxDemandGenImageBytes {
+	if each > MaxImageBytes {
 		t.Fatalf("fixture is wrong: a %d byte image is already over the per-image cap", each)
 	}
 	pad := bytes.Repeat([]byte{0}, each)

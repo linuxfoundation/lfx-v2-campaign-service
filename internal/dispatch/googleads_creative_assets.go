@@ -13,6 +13,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
 )
 
 // Google creative assets, resolved from the library rather than fetched (LFXV2-2665).
@@ -204,6 +205,24 @@ func (d *GoogleAdsDispatcher) resolveGoogleCreativeAssets(ctx context.Context, b
 					return nil, func() {}, domain.PreflightRefusalf("google-ads %s entry %d references creative asset %s, which does not exist for this brief", slot.label, i+1, assetID)
 				}
 				return nil, func() {}, fmt.Errorf("google-ads %s entry %d: size creative asset %s: %w", slot.label, i+1, assetID, serr)
+			}
+			// The PER-IMAGE ceiling, checked here for the same reason the aggregate one is:
+			// on the size, before the blob is loaded or any allowance is reserved, so an
+			// oversized asset is refused without ever being materialised. The bound is taken
+			// from the googleads package — the same constant every slot in ImageSlotCatalog
+			// carries and the one the fetch path enforces with a LimitReader — rather than a
+			// literal spelled again here, so the two halves cannot drift. The LinkedIn, X and
+			// Microsoft paths in this package do exactly this against their own package's
+			// MaxImageBytes.
+			//
+			// The refusal does NOT say Google rejects the image, because that is not what this
+			// cap is: googleads.MaxImageBytes is the bound on what this service is willing to
+			// hold in memory per image, and Google's own asset limit is larger (see the
+			// constant's doc comment). The siblings' equivalent messages name genuine vendor
+			// limits; borrowing their wording here would make a false claim.
+			if size > googleads.MaxImageBytes {
+				return nil, func() {}, domain.PreflightRefusalf("google-ads %s entry %d references creative asset %s, which is %d bytes; this service handles at most %d bytes per creative image",
+					slot.label, i+1, assetID, size, googleads.MaxImageBytes)
 			}
 			// The PER-DISPATCH ceiling, applied to the size rather than to loaded bytes, so
 			// the asset that trips it is never materialised.

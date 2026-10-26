@@ -106,11 +106,20 @@ const (
 	// not part of this total.
 	maxDemandGenMarketingImages = 20
 
-	// maxDemandGenImageBytes caps a single downloaded image. Google's own image
-	// asset limit is larger; this is the bound on what this service is willing to
-	// pull over the network and hold in memory per image, and it is enforced with a
-	// LimitReader rather than by trusting Content-Length.
-	maxDemandGenImageBytes = 5 << 20 // 5 MiB
+	// MaxImageBytes caps a SINGLE image for every Google image slot — Demand Gen,
+	// Display and Performance Max all fetch through fetchSlotImages and all carry it
+	// on their slot specs (see ImageSlotCatalog, pinned by slot_catalog_test.go).
+	// Google's own image asset limit is larger; this is the bound on what this
+	// service is willing to hold in memory per image, and on the fetch path it is
+	// enforced with a LimitReader rather than by trusting Content-Length.
+	//
+	// Exported because an image no longer has to be fetched to reach that memory: a
+	// creative may name a STORED asset, and internal/dispatch has to refuse an
+	// oversized one on its recorded size BEFORE it loads the blob, which is exactly
+	// what the LinkedIn, X and Microsoft dispatch paths already do against their own
+	// <platform>.MaxImageBytes. The name matches those three deliberately — a cap
+	// spelled differently per platform is a cap a reader has to go looking for.
+	MaxImageBytes = 5 << 20 // 5 MiB
 
 	// maxCreativeTotalImageBytes caps the SUM of every image in one creative.
 	//
@@ -702,7 +711,7 @@ func (c *Client) fetchOneImage(ctx context.Context, slot imageSlot, rawURL strin
 	// uploading a truncated image is the failure this bound exists to prevent.
 	// Content-Length is deliberately not trusted — it is a claim by the same host
 	// that is serving the bytes.
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxDemandGenImageBytes+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, MaxImageBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("google-ads %s %q could not be read: %w", slot.label, redactURLForError(rawURL), redactedCause{err})
 	}
@@ -738,8 +747,8 @@ func imageRefForError(ref string) string {
 // the one way to get a 601x314 image past validation and into the ad mutate, which runs
 // after the budget and campaign have committed.
 func validateImageBytes(slot imageSlot, ref string, data []byte) error {
-	if len(data) > maxDemandGenImageBytes {
-		return fmt.Errorf("google-ads %s %q is larger than the %d byte limit", slot.label, imageRefForError(ref), maxDemandGenImageBytes)
+	if len(data) > MaxImageBytes {
+		return fmt.Errorf("google-ads %s %q is larger than the %d byte limit", slot.label, imageRefForError(ref), MaxImageBytes)
 	}
 	if len(data) == 0 {
 		return fmt.Errorf("google-ads %s %q has no image bytes", slot.label, imageRefForError(ref))
