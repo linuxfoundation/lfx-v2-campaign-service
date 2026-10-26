@@ -13,16 +13,17 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 )
 
-// migrateDSNSource is what Migrate's own redaction calls the DSN it was handed.
+// dsnSourceDescription is what this package's own redaction calls the DSN it was handed.
+// Both startup boundaries use it: Migrate and NewPool.
 //
-// It is deliberately a DESCRIPTION rather than an environment variable's name. Migrate takes
-// a dsn string and is told nothing about where the caller got it: the service reads
+// It is deliberately a DESCRIPTION rather than an environment variable's name. Both take a
+// dsn string and are told nothing about where the caller got it: the service reads
 // DATABASE_URL, the live-test harness reads TEST_DATABASE_URL and then REWRITES it for the
 // scratch-database path, so any variable name hard-coded here would be a guess, and wrong in
 // the harness. A caller that does know names it in its own wrapping — dbtest's
 // connectAndMigrate prefixes "migrate TEST_DATABASE_URL: " — which is where that knowledge
 // belongs.
-const migrateDSNSource = "the database DSN"
+const dsnSourceDescription = "the database DSN"
 
 // dsnUnparseableMsg is the single rendering of the *url.Error arm. It is a constant rather
 // than a literal at each site so the two cannot drift: two formatting sites disagreeing
@@ -34,8 +35,8 @@ const dsnUnparseableMsg = "the DSN does not parse as a URL (the value and the pa
 //
 // dsnSource names where the DSN came from, for an operator who has to go and fix it: the
 // name of the variable that carries it ("TEST_DATABASE_URL" in the live-test harness), or a
-// description where the caller does not know the variable (migrateDSNSource, used by
-// Migrate's own boundary redaction). It is only ever the NAME or the description; the VALUE
+// description where the caller does not know the variable (dsnSourceDescription, used by
+// this package's own boundary redaction). It is only ever the NAME or the description; the VALUE
 // is the one thing this function exists to keep out of the log.
 //
 // Two error shapes defeat the report-the-name-not-the-value discipline by repeating the
@@ -236,8 +237,9 @@ func isWordByte(s string, i int) bool {
 	return c == '_' || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9')
 }
 
-// safeDSNError is the error Migrate returns: a message that has been through SafeDSNErr,
-// with the original retained for errors.Is/As and NEVER for display.
+// safeDSNError is the error this package's DSN-taking boundaries return — Migrate and
+// NewPool: a message that has been through SafeDSNErr, with the original retained for
+// errors.Is/As and NEVER for display.
 //
 // Splitting those two is what lets the redaction be total without costing the caller
 // anything. container.go classifies a migration failure with IsPermanentMigrationErr
@@ -277,10 +279,25 @@ func redactMigrateErr(dsn string, err error) error {
 		errors.Is(err, ErrRequiredIndexMismatch) {
 		return err
 	}
+	return newSafeDSNError(dsn, err)
+}
+
+// newSafeDSNError wraps err so that every format verb sees only redacted text while
+// errors.Is/As still reach the original.
+//
+// It is shared by Migrate and NewPool rather than written out at each site for the reason
+// dsnUnparseableMsg is a constant: two boundaries in one package disagreeing about what
+// "redacted" means is how the first leak got in. The *url.Error arm discards the cause
+// instead of retaining it — leaving it reachable through errors.As would hand the next
+// caller the raw URL this wrapper exists to withhold.
+//
+// It does NOT classify sentinels; that judgement belongs to each boundary. Migrate has
+// index sentinels of its own that must pass through untouched, and NewPool has none.
+func newSafeDSNError(dsn string, err error) error {
 	cause := err
 	var ue *url.Error
 	if errors.As(err, &ue) {
 		cause = nil
 	}
-	return &safeDSNError{msg: SafeDSNErr(dsn, migrateDSNSource, err), cause: cause}
+	return &safeDSNError{msg: SafeDSNErr(dsn, dsnSourceDescription, err), cause: cause}
 }

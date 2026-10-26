@@ -1420,9 +1420,10 @@ the build log. The package renders those errors through one of two helpers inste
 The implementation lives in package `postgres` (`dsnredact.go`), not here. It moved when the
 same leak was found on `Migrate`'s own error paths (#178, below): the reasoning was never
 test-only. `dbtest`'s two helpers are now one-line delegations that supply
-`TEST_DATABASE_URL` as the source name. The production boundary supplies no variable name at
-all — it renders "the database DSN" (`migrateDSNSource`), because `Migrate` is handed a `dsn`
-string and is told nothing about where the caller read it: the service reads `DATABASE_URL`,
+`TEST_DATABASE_URL` as the source name. The production boundaries supply no variable name at
+all — they render "the database DSN" (`dsnSourceDescription`), because `Migrate` and `NewPool`
+are each handed a `dsn`
+string and are told nothing about where the caller read it: the service reads `DATABASE_URL`,
 the harness reads `TEST_DATABASE_URL` and then rewrites it for the scratch path. A caller
 that knows the name adds it in its own wrapping (`migrate TEST_DATABASE_URL: …`). Everything
 in this section about WHICH secret a call is compared against is unchanged by that move.
@@ -1661,11 +1662,42 @@ no-op, for two reasons that are both consequences of the first pass doing its jo
 failure from a connect failure and reports the wrong one; and when the DSN does not parse,
 `dsnIdentifiersPresent` has nothing to compare against and withholds unconditionally, so an
 already-safe, specific message is replaced by the generic sentinel. The fix is for the caller
-to stop redacting — `Migrate`'s error is safe by construction — while the `NewPool` arm two
-lines below KEEPS its `SafeDSNErrFor`, because nothing redacts behind it. The general rule:
+to stop redacting — `Migrate`'s error is safe by construction. The general rule:
 when redaction moves to a boundary, every caller that was redacting that boundary's error is
 part of the change, and "it is still safe" is not enough — a second pass degrades the
 message even when it cannot leak.
+
+### `NewPool` is held to the same boundary, because it is `Migrate`'s nearest sibling (#178)
+
+Fixing `Migrate` alone would have left the leak open on the arm a pod meets more often.
+`NewPool` is in the same file, takes the same `dsn` string, and `container.go` calls the two
+of them seventeen lines apart on the same startup path — `postgres.NewPool(ctx, dsn)` at
+`initDatabase`, then `migrateDone <- postgres.Migrate(dsn)` — wrapping and propagating both
+to a logging caller. Its connect and ping arms returned `fmt.Errorf("…: %w", err)` bare, and
+a probe against pgx v5.9.2 rendered exactly the template this section is about:
+``ping database: failed to connect to `user=… database=…` ``. Migrations run once; a
+database that is not up yet fails the ping on every restart, so this was the higher-frequency
+half of the same defect.
+
+Both arms now go through `newSafeDSNError`, the wrapper `redactMigrateErr` was factored down
+to so the two boundaries cannot drift about what "redacted" means. The arm labels — `open
+pgx pool:`, `ping database:` — survive, because an operator still has to tell the two apart;
+only the driver's prose is replaced.
+
+**The `ParseConfig` arm is deliberately NOT routed through it.** It already returns
+`dsnParseError`, whose `Error()` is a static `invalid DATABASE_URL (redacted; …)` and which
+names the variable an operator has to go and fix. Redacting it a second time would swap that
+for the generic "does not parse as a URL" sentinel and say less, for no gain — both are
+already DSN-free. This is the double-redaction hazard above, met inside a single function
+rather than across a call, and `TestNewPoolDoesNotDoubleRedactTheParseArm` is the pin,
+because collapsing the three arms into one wrapper is the tidying-up a later reader is most
+likely to attempt.
+
+`dbtest.connectAndMigrate`'s `NewPool` arm therefore stops redacting too, exactly as its
+`Migrate` arm did — the general rule above applied to this change rather than restated. That
+arm is still not reachable from the suite (`Migrate` connects first, so an unreachable DSN
+fails on the arm above), which is why the redaction it depends on is pinned in package
+`postgres` by `TestNewPoolDoesNotLeakIdentifiersWhenThePingFails` rather than here.
 
 ### A test that reads a credentials column reports length and digest, never the value (#161)
 

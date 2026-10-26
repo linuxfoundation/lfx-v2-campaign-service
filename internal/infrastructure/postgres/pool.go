@@ -69,6 +69,16 @@ func (e *dsnParseError) Unwrap() error { return e.err }
 
 // NewPool opens an instrumented pgx connection pool for the given DSN and
 // verifies connectivity with a ping.
+//
+// Every arm is DSN-free by construction, the same guarantee Migrate makes and for
+// the same reason: NewContainer wraps this error and main logs it. The connect and
+// ping arms go through newSafeDSNError because pgx renders a *pgconn.ConnectError
+// as "failed to connect to `user=%s database=%s`" — verified against pgx v5.9.2 —
+// so the commonest startup failure in k8s, a database that is not up yet, would
+// otherwise put the user and database name in every restart's logs. The ParseConfig
+// arm keeps its pre-existing dsnParseError instead: that wrapper already renders a
+// static message, and routing an already-redacted error through the redaction a
+// second time would replace a precise diagnostic with a generic one.
 func NewPool(ctx context.Context, dsn string) (*Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -78,14 +88,14 @@ func NewPool(ctx context.Context, dsn string) (*Pool, error) {
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("open pgx pool: %w", err)
+		return nil, fmt.Errorf("open pgx pool: %w", newSafeDSNError(dsn, err))
 	}
 	if err := pool.Ping(ctx); err != nil {
 		// Close in the background so a failed ping returns immediately rather
 		// than blocking startup while the pool drains (an unreachable DB in k8s
 		// can otherwise wedge boot until the liveness probe restarts the pod).
 		go pool.Close()
-		return nil, fmt.Errorf("ping database: %w", err)
+		return nil, fmt.Errorf("ping database: %w", newSafeDSNError(dsn, err))
 	}
 	return &Pool{Pool: pool}, nil
 }

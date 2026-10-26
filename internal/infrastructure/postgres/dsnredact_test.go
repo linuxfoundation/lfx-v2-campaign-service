@@ -4,6 +4,7 @@
 package postgres
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // The three leaks these tests pin were each verified against origin/main before the fix:
@@ -143,5 +145,93 @@ func TestSafeDSNErrKeepsAMessageThatNamesNothing(t *testing.T) {
 
 	if got := SafeDSNErr(dsn, "DATABASE_URL", errors.New(msg)); got != msg {
 		t.Errorf("a message naming no configured value was withheld: got %q, want %q", got, msg)
+	}
+}
+
+// NewPool is Migrate's nearest sibling: same package, same dsn string, and container.go
+// calls the two of them seventeen lines apart on the same startup path, wrapping and
+// propagating both to a logging caller. Redacting one and not the other would have left the
+// leak open on the arm a pod meets MORE often — a database that is not up yet fails the ping
+// on every restart, whereas migrations run once.
+//
+// Like the Migrate tests above, these reach no database: port 1 on the loopback interface is
+// closed, so the connection is refused immediately.
+
+// TestNewPoolDoesNotLeakIdentifiersWhenThePingFails pins the arm the probe caught. Before the
+// fix the error read "ping database: failed to connect to `user=leakuser database=leakdb`",
+// which is the same pgx template, and the same half-credential, that #178 closed in Migrate.
+func TestNewPoolDoesNotLeakIdentifiersWhenThePingFails(t *testing.T) {
+	t.Parallel()
+
+	const (
+		secret   = "s3cretpw"
+		leakUser = "leakuser"
+		leakDB   = "leakdb"
+	)
+	dsn := "postgres://" + leakUser + ":" + secret + "@127.0.0.1:1/" + leakDB + "?sslmode=disable"
+
+	pool, err := NewPool(context.Background(), dsn)
+	if err == nil {
+		pool.Close()
+		t.Fatal("NewPool reported success against a closed port")
+	}
+	msg := err.Error()
+	for _, forbidden := range []string{secret, leakUser, leakDB} {
+		if strings.Contains(msg, forbidden) {
+			t.Errorf("NewPool error reproduces %q: %s", forbidden, msg)
+		}
+	}
+	// The operator still has to be able to tell the two failing arms apart, so the arm
+	// label survives the redaction — only the driver's prose is replaced.
+	if !strings.Contains(msg, "ping database") {
+		t.Errorf("NewPool error no longer says which arm failed: %s", msg)
+	}
+}
+
+// TestNewPoolKeepsTheConnectErrorReachable is the identity half, matching
+// TestRedactedMigrateErrorKeepsItsIdentity. Nothing in the tree classifies this error today,
+// but the wrapper is the kind of thing a later caller reaches for, and a redaction that
+// silently severs the chain would make that classification wrong rather than impossible.
+func TestNewPoolKeepsTheConnectErrorReachable(t *testing.T) {
+	t.Parallel()
+
+	dsn := "postgres://leakuser:s3cretpw@127.0.0.1:1/leakdb?sslmode=disable"
+
+	pool, err := NewPool(context.Background(), dsn)
+	if err == nil {
+		pool.Close()
+		t.Fatal("NewPool reported success against a closed port")
+	}
+	var ce *pgconn.ConnectError
+	if !errors.As(err, &ce) {
+		t.Errorf("redaction broke the errors.As chain: %v", err)
+	}
+}
+
+// TestNewPoolDoesNotDoubleRedactTheParseArm pins the arm deliberately left alone. ParseConfig
+// failures already return dsnParseError, whose message is static and names DATABASE_URL;
+// putting that through the DSN redaction as well would swap a precise diagnostic for the
+// generic "does not parse as a URL" and tell the operator less, for no gain — both are
+// already DSN-free. This is the regression guard for exactly the tidying-up a later reader is
+// most likely to attempt.
+func TestNewPoolDoesNotDoubleRedactTheParseArm(t *testing.T) {
+	t.Parallel()
+
+	const secret = "s3cret%zzpw"
+	dsn := "postgres://leakuser:" + secret + "@db.invalid:5432/leakdb"
+
+	pool, err := NewPool(context.Background(), dsn)
+	if err == nil {
+		pool.Close()
+		t.Fatal("NewPool accepted an unparseable DSN")
+	}
+	msg := err.Error()
+	for _, forbidden := range []string{secret, "%zz", dsn, "leakuser", "leakdb", "db.invalid"} {
+		if strings.Contains(msg, forbidden) {
+			t.Errorf("NewPool error reproduces %q: %s", forbidden, msg)
+		}
+	}
+	if !strings.Contains(msg, "invalid DATABASE_URL") {
+		t.Errorf("the parse arm lost its own diagnostic to a second redaction: %s", msg)
 	}
 }

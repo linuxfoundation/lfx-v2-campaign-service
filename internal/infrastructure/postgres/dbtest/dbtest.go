@@ -184,10 +184,11 @@ func connectAndMigrate(dsn string) (*pgxpool.Pool, error) {
 		// DSN() while holding an explicit, rewritten scratch dsn, which compared against the
 		// wrong string and withheld nothing -- is now closed by construction rather than by
 		// care at the call site: Migrate is handed one dsn and redacts against that one.
-		// The seam is still live for the NewPool arm below, which does still redact here.
+		// The NewPool arm below is now the same shape, for the same reason.
 		//
 		// The env var's NAME is this package's knowledge, not Migrate's, so it is added
-		// here; Migrate's own rendering says "the database DSN" (see migrateDSNSource).
+		// here; Migrate's own rendering says "the database DSN" (see
+		// dsnSourceDescription).
 		return nil, fmt.Errorf("migrate %s: %s", EnvDatabaseURL, err)
 	}
 	// 30s covers a cold container that has just passed its health check but is still
@@ -200,18 +201,27 @@ func connectAndMigrate(dsn string) (*pgxpool.Pool, error) {
 
 	p, err := postgres.NewPool(ctx, dsn)
 	if err != nil {
-		// Redacted for the same reason as the migrate arm above, and it is a SEPARATE
-		// arm: NewPool's ping failure wraps pgx's *pgconn.ConnectError, whose Error()
-		// renders "failed to connect to `user=%s database=%s`" straight from the parsed
-		// Config. A %w here put the configured user and database into the build log via
-		// Pool's t.Fatalf, verified by rendering a failing NewPool against a throwaway
-		// DSN. SafeDSNErrFor, not SafeDSNErr, for the same reason as the migrate arm.
+		// No SafeDSNErrFor here either, and for the same reason as the migrate arm: as of
+		// the NewPool sibling fix, NewPool redacts at its own boundary against the dsn IT
+		// was handed, so every error it returns is already safe to print. What this arm
+		// used to guard was real — NewPool's ping failure wrapped pgx's
+		// *pgconn.ConnectError, whose Error() renders "failed to connect to
+		// `user=%s database=%s`" straight from the parsed Config, and a %w put the
+		// configured user and database into the build log via Pool's t.Fatalf — but it is
+		// guarded at the source now.
+		//
+		// A second pass would be destructive in the same two ways the migrate arm's
+		// comment sets out: it can no longer tell NewPool's parse arm (dsnParseError,
+		// which keeps its own specific "invalid DATABASE_URL" text) from its connect arm,
+		// and an unparseable dsn leaves dsnIdentifiersPresent nothing to compare against,
+		// so it withholds an already-safe message unconditionally.
 		//
 		// NOT pinned by a test, and it should be read that way. Reaching this arm needs a
 		// DSN that migrates successfully and THEN fails its ping, but postgres.Migrate
-		// connects first, so any unreachable DSN fails above. Reverting this line leaves
-		// the suite green.
-		return nil, fmt.Errorf("open pool %s: %s", EnvDatabaseURL, SafeDSNErrFor(dsn, err))
+		// connects first, so any unreachable DSN fails above. Changing this line leaves
+		// the suite green; the redaction it relies on is pinned in package postgres by
+		// TestNewPoolDoesNotLeakIdentifiersWhenThePingFails.
+		return nil, fmt.Errorf("open pool %s: %s", EnvDatabaseURL, err)
 	}
 	// postgres.Pool EMBEDS *pgxpool.Pool; handing back the embedded value keeps this
 	// package from re-exporting the instrumented wrapper's surface to tests.
