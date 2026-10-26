@@ -1417,6 +1417,25 @@ DSN: `*pgconn.ConnectError` formats ``failed to connect to `user=%s database=%s`
 from the `Config`. A `%v` on any connect arm therefore puts the configured credential into
 the build log. The package renders those errors through one of two helpers instead.
 
+The implementation lives in package `postgres` (`dsnredact.go`), not here. It moved when the
+same leak was found on `Migrate`'s own error paths (#178, below): the reasoning was never
+test-only. `dbtest`'s two helpers are now one-line delegations that supply
+`TEST_DATABASE_URL` as the source name. The production boundaries supply no variable name at
+all — they render "the database DSN" (`dsnSourceDescription`), because `Migrate` and `NewPool`
+are each handed a `dsn`
+string and are told nothing about where the caller read it: the service reads `DATABASE_URL`,
+the harness reads `TEST_DATABASE_URL` and then rewrites it for the scratch path. A caller
+that knows the name adds it in its own wrapping (`migrate TEST_DATABASE_URL: …`). Everything
+in this section about WHICH secret a call is compared against is unchanged by that move.
+
+It landed in `internal/infrastructure/postgres` rather than in `pkg/redact`, whose package
+doc states the one-implementation rule it is obeying, because it is not URL redaction: it
+parses the DSN with `pgconn.ParseConfig` to learn what the configured identifiers ARE, and
+`pkg/redact` imports only `net/url` and `strings`. Moving it there would put a driver
+dependency into the package every other redaction site depends on. `redact.URLUserinfo` is
+still the backstop it runs on the surviving text — but the identifier comparison is made
+against the RAW text as well as the backstop's output, for the reason below.
+
 The two differ only in WHICH secret they compare against, and that is the whole of the
 contract:
 
@@ -1424,6 +1443,40 @@ contract:
   failing call used the environment's DSN.
 * `SafeDSNErrFor(dsn, err)` compares against an EXPLICIT DSN. Required wherever the calling
   function was handed one.
+
+### The backstop can destroy the token the comparison is looking for (#178)
+
+`SafeDSNErr` ran `redact.URLUserinfo` first and compared the configured identifiers against
+its OUTPUT. That order is wrong in one direction and the direction matters: the backstop is
+URL-shaped and destructive on prose, so it can erase the very substring the comparison exists
+to find, and the comparison then reports no match on text that still names the identifier.
+
+`redact.URLUserinfo` rewrites everything up to the last pre-query `@` as `***@` and truncates
+at `?`. Any configured identifier containing `@` or `?` is therefore unfindable after it runs.
+This is not hypothetical: **Azure Database for PostgreSQL issues usernames shaped
+`user@servername`**. With `cfg.User = "svc@pgsrv"`, PostgreSQL's 28P01 reads `password
+authentication failed for user "svc@pgsrv"`; the backstop turns that into `***@pgsrv"`, the
+comparison against `svc@pgsrv` misses, and the line is returned — with the SERVER half of the
+credential intact.
+
+The fix compares against both: `dsnIdentifiersPresent(dsn, raw) || dsnIdentifiersPresent(dsn,
+msg)`. Raw first, so a destroyed token is still caught; the redacted text is still compared
+because the backstop can also CREATE a match the raw text does not have. Neither comparison
+subsumes the other, which is why both run rather than one replacing the other.
+`TestSafeDSNErrWithholdsAnAtShapedUsername` pins it, and asserts the fault kind survives too —
+the failing behaviour also omitted the username entirely, so an assertion that only checked
+for absence would have passed on the broken code.
+
+### A SQLSTATE is checked for shape before it is concatenated (#178)
+
+`dsnFaultKind` appends `sqlstate=` + `pgErr.Code` to a message that reaches a log line. The
+code is server-controlled text, and nothing guaranteed it was five alphanumerics: a hostile or
+corrupt value carrying a newline would forge a second log record. `isSQLState` gates it — a
+SHAPE check (length 5, `[0-9A-Z]`), deliberately not a membership check against the published
+class list, because a valid code this service has never heard of must still be reportable. It
+is hand-written rather than a regexp because it runs on an error path.
+`TestDSNFaultKindRejectsAHostileSQLState` carries the injection case plus the near-misses
+(four characters, six, empty, lowercase, embedded space) and a positive control.
 
 **A redactor call is not evidence of redaction.** The leak that opened LFXV2-2643 survived
 five review rounds with a redactor plainly present at the leaking line: `connectAndMigrate`
@@ -1584,6 +1637,187 @@ so a later change does not undo the fix by reviving either:
 
 The pin costs that one test's parallelism and buys independence from every possible value of
 `TEST_DATABASE_URL`.
+
+### `Migrate` redacts at the boundary, not at the leaking line (#178)
+
+The production path had the same defect the test path was fixed for, and it had it in two
+places at once. `Migrate` returned `fmt.Errorf("init migrator: %w", err)` around
+`migrate.NewWithSourceInstance`, whose `*url.Error` carries the WHOLE DSN including the
+password; and it returned `checkNoInvalidIndexes`'s and `m.Up()`'s connect failures bare,
+each of which carries ``failed to connect to `user=… database=…` ``. `container.go` logs
+that error at startup and again on every background retry.
+
+The fix wraps the one exported entry point — `Migrate` calls `runMigrations` and passes the
+result through `redactMigrateErr` — rather than repairing each site. Three reasons, in order
+of weight: the leak is not one site, so a site-by-site fix leaves the next site added
+unguarded; `dsn` is given only to `Migrate`, so a boundary fix is the only one that keeps it
+from needing to reach a logging caller; and the sites differ in error TYPE but not in what
+must be withheld.
+
+Two parts of the design are load-bearing and easy to undo:
+
+* **The `*url.Error`'s cause is DISCARDED, not unwrapped.** Unwrapping removes the `URL`
+  field and looks like the fix, but `net/url`'s causes QUOTE the fragment they choked on, and
+  that fragment can be part of the password: `…:s3cret%zzpw@…` yields
+  `invalid URL escape "%zz"`. `TestMigrateDoesNotLeakTheDSNOnAnUnparseableURL` chooses its
+  password so that this half-fix fails it, and also asserts the `*url.Error` is no longer
+  reachable through `errors.As` — a caller that fishes a cause out of the chain and logs it
+  is the shape the defect had in the first place.
+* **Every other error keeps `Unwrap()`.** `container.go` classifies with
+  `IsPermanentMigrationErr`, which is `errors.As` on `migrate.ErrDirty` plus `errors.Is` on
+  the three index sentinels. Break the chain and a permanent failure reads as transient and
+  the pod 503-loops on a schema no retry can fix.
+
+The index sentinels — `ErrInvalidIndex`, `ErrMissingRequiredIndex`,
+`ErrRequiredIndexMismatch` — pass through `redactMigrateErr` untouched, with no identifier
+comparison. Their text is this package's own, built from the catalog: the index names and the
+`CREATE INDEX` an operator has to run. Comparing it against the DSN would withhold the
+remediation from any deployment whose database is named after a table it indexes, which is a
+realistic naming. The split is safe only because the connect failures that CAN carry
+identifiers are deliberately not wrapped in those sentinels — `checkNoInvalidIndexes` keeps a
+connect failure retryable and unwrapped — so nothing reaches the passthrough by that route.
+
+**Check this before adding a fourth exemption: the test is `errors.Is`, so an exemption
+covers the WHOLE CHAIN.** Anything wrapped ABOVE an exempt sentinel escapes redaction too,
+including text a future caller adds. For the three index sentinels that is intended — the
+wrapping text is package-composed remediation DDL. For `errDSNNotURLScheme` the argument is
+that it carries no dynamic text, and that is a property of its CALL SITES (`pool.go:1058`
+returns it bare), not of the sentinel itself: wrapping a DSN-bearing message around it at any
+future site would leak through an exemption that still looks correct where it is written.
+`TestDSNNotURLSchemeIsReturnedBare` pins the call site rather than the sentinel, which is the
+half that can actually change.
+
+**`errDSNNotURLScheme` joins them, and missing it was a self-censoring bug.** `pgxURL`'s
+rejection used to be a `fmt.Errorf` literal, so it went through the comparison like driver
+prose. It is package-authored constant text — it names `DATABASE_URL` and the two schemes
+that are accepted — but the DSN that provokes it is a KEYWORD DSN, and a keyword DSN's user
+and database are exactly what `pgconn.ParseConfig` extracts. On the commonest one,
+`user=postgres dbname=postgres`, the literal `postgres://` inside the message is a bounded
+match for `cfg.User`, so the one error that tells an operator their DSN is the wrong SHAPE
+was the one most certain to replace itself with the withhold sentinel. It is now a sentinel
+`var`, exempt on exactly the argument written for the index sentinels, and
+`TestMigrateKeepsItsOwnWrongSchemeRejection` pins both halves: the shape diagnostic survives,
+and the password in that keyword DSN still does not appear. Unreachable from the service —
+`container.go:477` gates on `ValidateMigrationDSN` first — but reachable from every direct
+`postgres.Migrate` caller, and `dbtest` is one today.
+
+**When the comparison DOES withhold, the fault's KIND still goes out.** The wholesale
+replacement is deliberate (see above), but a bare sentinel leaves nothing to act on, and the
+case is not hypothetical: a failing `m.Up()` is wrapped `apply migrations: %w` and its server
+text goes through the same comparison, so on a deployment whose database is named after a
+table it migrates — `relation "campaigns" already exists` on a database named `campaigns` —
+the operator got the sentinel and nothing else. `dsnFaultKind` appends `error_class=` and,
+for a `*pgconn.PgError`, `sqlstate=`. Neither can reproduce an identifier: the class is fixed
+at compile time and a SQLSTATE is five characters from a closed set. This is the split
+`probeErrAttrs` already made for the index probe's warnings.
+
+The classes are named explicitly by `errors.As` against a short allowlist — `*pgconn.PgError`,
+`*pgconn.ConnectError`, `*pgconn.ParseConfigError` — rather than printed with `%T`, and both
+`%T` forms were rendered before that was settled. `%T` on the error itself says
+`*fmt.wrapError`, because everything reaching here has been wrapped for context; `%T` on its
+root cause says `*errors.joinError`, because pgx joins its per-host dial failures. An
+unrecognised error contributes nothing, which is how an allowlist declines.
+
+**The issue's own reachability claim did not survive a probe, and the correction matters.**
+#178 reports the password reaching the pod log through container boot. It does not:
+`ValidateMigrationDSN` runs unconditionally at `container.go:477`, before `initDatabase` ever
+calls `Migrate`, and it rejects every parse-failure shape with `dsnParseError`'s static text.
+A 14-shape probe found no DSN that clears that gate and then hits a `*url.Error` inside
+`Migrate`. The password arm is reachable only for a caller that invokes `postgres.Migrate`
+without the gate — the live tests do exactly that, and so would any future caller. What the
+pod log DOES receive is the second arm: the username and database name, on every connect
+failure, at startup and on every retry. By `pkg/redact`'s own contract those are half a
+credential, so the defect is real; the arm is not the one the issue names.
+
+**Redacting at a boundary creates a double-redaction hazard in callers that were already
+redacting, and here it was destructive rather than merely redundant.** `dbtest`'s
+`connectAndMigrate` wrapped `Migrate`'s error in `SafeDSNErrFor` — correct before the fix,
+wrong after it, and its two regression pins went red and said so. A second pass cannot be a
+no-op, for two reasons that are both consequences of the first pass doing its job: the
+`*url.Error` has been DISCARDED from the chain, so the second pass can no longer tell a parse
+failure from a connect failure and reports the wrong one; and when the DSN does not parse,
+`dsnIdentifiersPresent` has nothing to compare against and withholds unconditionally, so an
+already-safe, specific message is replaced by the generic sentinel. The fix is for the caller
+to stop redacting — `Migrate`'s error is safe by construction. The general rule:
+when redaction moves to a boundary, every caller that was redacting that boundary's error is
+part of the change, and "it is still safe" is not enough — a second pass degrades the
+message even when it cannot leak.
+
+### `NewPool` is held to the same boundary, because it is `Migrate`'s nearest sibling (#178)
+
+Fixing `Migrate` alone would have left the leak open on the arm a pod meets more often.
+`NewPool` is in the same file, takes the same `dsn` string, and `container.go` calls the two
+of them seventeen lines apart on the same startup path — `postgres.NewPool(ctx, dsn)` at
+`initDatabase`, then `migrateDone <- postgres.Migrate(dsn)` — wrapping and propagating both
+to a logging caller. Its connect and ping arms returned `fmt.Errorf("…: %w", err)` bare, and
+a probe against pgx v5.9.2 rendered exactly the template this section is about:
+``ping database: failed to connect to `user=… database=…` ``. Migrations run once; a
+database that is not up yet fails the ping on every restart, so this was the higher-frequency
+half of the same defect.
+
+Both arms now go through `newSafeDSNError`, the wrapper `redactMigrateErr` was factored down
+to so the two boundaries cannot drift about what "redacted" means. The arm labels — `open
+pgx pool:`, `ping database:` — survive, because an operator still has to tell the two apart;
+only the driver's prose is replaced.
+
+**The `ParseConfig` arm is deliberately NOT routed through it.** It already returns
+`dsnParseError`, whose `Error()` is a static `invalid DATABASE_URL (redacted; …)` and which
+names the variable an operator has to go and fix. Redacting it a second time would swap that
+for the generic "does not parse as a URL" sentinel and say less, for no gain — both are
+already DSN-free. This is the double-redaction hazard above, met inside a single function
+rather than across a call, and `TestNewPoolDoesNotDoubleRedactTheParseArm` is the pin,
+because collapsing the three arms into one wrapper is the tidying-up a later reader is most
+likely to attempt.
+
+`dbtest.connectAndMigrate`'s `NewPool` arm therefore stops redacting too, exactly as its
+`Migrate` arm did — the general rule above applied to this change rather than restated. That
+arm is still not reachable from the suite (`Migrate` connects first, so an unreachable DSN
+fails on the arm above), which is why the redaction it depends on is pinned in package
+`postgres` by `TestNewPoolDoesNotLeakIdentifiersWhenThePingFails` rather than here.
+
+### A test that reads a credentials column reports length and digest, never the value (#161)
+
+The redaction rules above are about errors the SERVICE renders. The same discipline binds a
+test's own failure message once the value it is comparing was `SELECT`ed out of a credentials
+column: `t.Errorf("... = %q", blob)` puts that column's bytes into the build log, and a build
+log is not a more private place than a pod log. The standard is `dbtest.BlobDigest(blob)` on
+both sides of the comparison — one exported helper rather than a digest written out at each
+site, so `credential_roundtrip_live_test.go` and `connection_live_test.go` cannot drift apart
+about what "safe to print" means, for the reason `SafeDSNErr` is exported.
+
+**The digest is KEYED, and that is the point of the helper (#178).** `BlobDigest` renders
+`"%d bytes hmac[:8]=%x"` — the length, and the first eight bytes of an HMAC-SHA-256 under
+`blobDigestKey`, a 32-byte key generated once per test process from `crypto/rand` and never
+printed. An unkeyed digest beside an exact byte length is an offline verification oracle:
+anyone holding the log line hashes each candidate of that length and compares. **Truncation
+does not close that**, and the review round that landed this helper first claimed it did — a
+wrong guess collides in eight bytes with probability 2^-64, so a match still confirms the
+secret, and truncation only starts to help once the guess space approaches 2^64, which is not
+the low-entropy case. (The same text called eight bytes 2^64 of collision resistance; the
+birthday bound is 2^32 and 2^64 is the preimage figure.) The HMAC is what closes it: equal
+inputs still render equal inside the run that printed them, which is all any call site needs —
+every one renders both operands into ONE failure message — and the line cannot be recomputed
+offline. Two of the four call sites digest decrypted PLAINTEXT, which is why this is not
+cosmetic. Eight bytes is still what gets printed, because a failure message only has to tell
+two blobs apart. `TestBlobDigestReportsShapeNotValue` (`dbtest_test.go`) pins the properties —
+the bytes never appear, the length survives, the hex is 16 characters, and the printed digest
+is not the plain SHA-256 of the input, so a revert to `sha256.Sum256` fails rather than merely
+renaming a label — because the live tests SKIP without `TEST_DATABASE_URL` and would otherwise
+give the rendering no runtime coverage at all.
+
+Two things this is NOT. It is not a claim that the fixture is sensitive: the stored value is
+the literal `ciphertext-v2`, so printing it today leaks nothing. The rule is written about the
+SHAPE of what reaches a log, as elsewhere in the repo, because the concrete risk is that this
+test is what the next credential test's author copies. And it is not satisfied by length
+alone: the losing rotation's `ciphertext-v3` is the SAME length as `ciphertext-v2` — exactly
+the mismatch the assertion exists to catch — so a lengths-only message would trade the leak
+for a test that fails without saying why. Hence both.
+
+The boundary is a value read back out of Postgres. A test that prints a credential-shaped
+literal it wrote into an in-memory fake (`internal/dispatch/credcache_test.go`,
+`internal/bootstrap/sysacct_test.go`, `cmd/verify-metrics/main_test.go`) is a different
+category and is not covered: the test supplied that string itself, and the log learns nothing
+the source file does not already say.
 
 ## `CreateAudienceForApprovedBrief`'s ambiguous-commit path
 
