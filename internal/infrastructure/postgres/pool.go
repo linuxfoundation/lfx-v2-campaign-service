@@ -1055,8 +1055,23 @@ func pgxURL(dsn string) (string, error) {
 			return "pgx5://" + strings.TrimPrefix(dsn, prefix), nil
 		}
 	}
-	return "", fmt.Errorf("DATABASE_URL must be a postgres:// or postgresql:// URL; keyword DSNs and the internal pgx5:// scheme are not supported")
+	return "", errDSNNotURLScheme
 }
+
+// errDSNNotURLScheme is pgxURL's rejection, a sentinel rather than a fmt.Errorf literal so
+// that redactMigrateErr can let it through untouched.
+//
+// It needs that exemption for the same reason the index sentinels have one, and more
+// urgently. The text is a package constant — it names DATABASE_URL and the two schemes that
+// are accepted, and nothing in it comes from the DSN — so the no-echo rule has nothing to
+// say about it. But the DSN that provokes it is a keyword DSN, and a keyword DSN's user and
+// database are exactly what pgconn.ParseConfig extracts: on the commonest one of all,
+// `user=postgres dbname=postgres`, the literal "postgres://" in this message is a bounded
+// match for cfg.User, so the identifier comparison replaced it with the withhold sentinel.
+// The one error that tells an operator their DSN is the wrong SHAPE was the one most
+// certain to censor itself.
+var errDSNNotURLScheme = errors.New("DATABASE_URL must be a postgres:// or postgresql:// URL; " +
+	"keyword DSNs and the internal pgx5:// scheme are not supported")
 
 // ensure the pgx5 migrate driver is linked.
 var _ = pgx.Postgres{}

@@ -235,3 +235,92 @@ func TestNewPoolDoesNotDoubleRedactTheParseArm(t *testing.T) {
 		t.Errorf("the parse arm lost its own diagnostic to a second redaction: %s", msg)
 	}
 }
+
+// The two tests below close the review finding that the boundary redaction also ran over
+// text this package authored itself and over the server's own DDL prose — both of which can
+// name an identifier without ever having been handed the DSN.
+
+// TestMigrateKeepsItsOwnWrongSchemeRejection pins the self-censoring case. pgxURL's rejection
+// is a package constant naming DATABASE_URL and the two schemes it accepts, but the DSN that
+// provokes it is a keyword DSN — and on the commonest one of all, user and database are both
+// `postgres`, which the literal "postgres://" in that very message matches on a word
+// boundary. The error that says "your DSN is the wrong shape" was therefore withheld exactly
+// when the DSN was the wrong shape. It reaches no database: pgxURL rejects on the prefix.
+func TestMigrateKeepsItsOwnWrongSchemeRejection(t *testing.T) {
+	t.Parallel()
+
+	//nolint:gosec // synthetic keyword DSN; no real credential. secretlint-disable-line
+	const dsn = "host=db.invalid user=postgres password=s3cretpw dbname=postgres sslmode=disable"
+
+	err := Migrate(dsn)
+	if err == nil {
+		t.Fatal("Migrate accepted a keyword DSN")
+	}
+	if !errors.Is(err, errDSNNotURLScheme) {
+		t.Fatalf("Migrate no longer reports the wrong-scheme rejection: %v", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "must be a postgres:// or postgresql:// URL") {
+		t.Errorf("the shape diagnostic was replaced by the withhold sentinel: %s", msg)
+	}
+	// The exemption must not become a hole: the text is a constant, so it carries no part
+	// of the DSN it was handed, and the password above is the proof.
+	if strings.Contains(msg, "s3cretpw") {
+		t.Errorf("the exempt rejection reproduces the password: %s", msg)
+	}
+}
+
+// TestSafeDSNErrCarriesTheFaultKindWhenItWithholds pins the other half: when the comparison
+// does withhold, the operator still gets what identifies the fault. A server error naming a
+// table that shares the database's name is the realistic production case — the message is
+// dropped, but `42P07` is what makes the sentinel actionable, and it cannot carry an
+// identifier.
+func TestSafeDSNErrCarriesTheFaultKindWhenItWithholds(t *testing.T) {
+	t.Parallel()
+
+	//nolint:gosec // synthetic DSN; no real credential. secretlint-disable-line
+	const dsn = "postgres://campaigns:s3cretpw@db.invalid:5432/campaigns?sslmode=disable"
+	pgErr := &pgconn.PgError{Code: "42P07", Message: `relation "campaigns" already exists`}
+
+	got := SafeDSNErr(dsn, dsnSourceDescription, fmt.Errorf("apply migrations: %w", pgErr))
+	if strings.Contains(got, "campaigns") {
+		t.Fatalf("the withheld message still names the database: %s", got)
+	}
+	if !strings.Contains(got, "sqlstate=42P07") {
+		t.Errorf("the withhold dropped the SQLSTATE, leaving nothing to diagnose: %s", got)
+	}
+	if !strings.Contains(got, "error_class=*pgconn.PgError") {
+		t.Errorf("the withhold dropped the error class: %s", got)
+	}
+	// An error this package cannot name contributes nothing — the allowlist declines by
+	// staying silent rather than printing a wrapper's type as though it were a fault.
+	plain := SafeDSNErr(dsn, dsnSourceDescription, errors.New("dial campaigns: refused"))
+	if strings.Contains(plain, "error_class=") || strings.Contains(plain, "sqlstate=") {
+		t.Errorf("an unrecognised error was given a kind: %s", plain)
+	}
+}
+
+// TestNewPoolWithholdCarriesTheConnectClass is the production-path half of the test above:
+// the arm a pod actually meets on restart is a refused connection, and its rendering has to
+// reach the operator as something more than "withheld". pgx joins its per-host dial failures
+// and the ping arm wraps the result, so neither %T on the error nor %T on its root cause
+// names the fault — this pins that the explicit class survives both.
+func TestNewPoolWithholdCarriesTheConnectClass(t *testing.T) {
+	t.Parallel()
+
+	dsn := "postgres://leakuser:s3cretpw@127.0.0.1:1/leakdb?sslmode=disable"
+	pool, err := NewPool(context.Background(), dsn)
+	if err == nil {
+		pool.Close()
+		t.Fatal("NewPool reported success against a closed port")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "error_class=*pgconn.ConnectError") {
+		t.Errorf("the withheld ping failure names no fault class: %s", msg)
+	}
+	for _, forbidden := range []string{"s3cretpw", "leakuser", "leakdb"} {
+		if strings.Contains(msg, forbidden) {
+			t.Errorf("the kind suffix reintroduced %q: %s", forbidden, msg)
+		}
+	}
+}

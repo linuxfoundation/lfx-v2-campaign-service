@@ -88,13 +88,16 @@ const dsnUnparseableMsg = "the DSN does not parse as a URL (the value and the pa
 //
 // So the test is on VALUES, not on shapes. pgconn.ParseConfig reads both DSN forms into the
 // same Config, giving the user, password, database and host actually configured; if the
-// rendered error contains any of them, the message is replaced WHOLESALE with a sentinel.
+// rendered error contains any of them, the message is replaced WHOLESALE with a sentinel,
+// to which dsnFaultKind appends the fault's kind — the Go type and any SQLSTATE, never a
+// byte of the message itself.
 //
 // The replacement is wholesale rather than surgical because excising the matched bytes is its
 // own defect: an identifier may be short or ordinary (`app`, `a`, a database literally named
 // `connection`) and cutting it out of the driver's prose corrupts the diagnosis into something
 // an operator cannot read — trading a leak for an unreadable log rather than fixing either.
-// A message that must be censored is one this package declines to reproduce.
+// A message that must be censored is one this package declines to reproduce. The kind is the
+// part that survives precisely because it is not derived from the text; see dsnFaultKind.
 //
 // A message with NO configured identifier in it keeps its text in full, which is what preserves
 // diagnosability: `connection refused`, `password authentication failed`, `does not exist` and
@@ -122,9 +125,55 @@ func SafeDSNErr(dsn, dsnSource string, err error) string {
 	msg := redact.URLUserinfo(err.Error())
 	if dsnIdentifiersPresent(dsn, msg) {
 		return "the driver's message names a value from " + dsnSource + " (it is " +
-			"withheld: the user, database and host are half of the credential)"
+			"withheld: the user, database and host are half of the credential)" +
+			dsnFaultKind(err)
 	}
 	return msg
+}
+
+// dsnFaultKind renders what identifies a withheld error's KIND, for appending to the
+// sentinel above.
+//
+// It carries the Go type and, for a server error, the SQLSTATE — and nothing else. Neither
+// can reproduce a DSN identifier: the type name is fixed at compile time, and a SQLSTATE is
+// five characters from a closed set the standard defines. The server's MESSAGE, which is
+// where the role and database names actually appear, is still dropped.
+//
+// This is the split probeErrAttrs already makes for the index probe's warnings, and it is
+// here for the reason that one exists: the wholesale replacement is deliberate, but a bare
+// sentinel leaves an operator with nothing to act on. A failing migration on a deployment
+// whose database is named after a table it migrates — `relation "campaigns" already exists`
+// on a database named `campaigns`, a realistic naming — otherwise rendered as the sentinel
+// alone. `sqlstate=42P07` is a line that can go on a ticket; "withheld" is not.
+//
+// The classes are named EXPLICITLY, by errors.As, rather than printed with %T off err or
+// off its root cause, and that is not fussiness — both of those were tried and rendered.
+// Every error reaching here has been wrapped for context ("apply migrations: %w",
+// "ping database: %w"), so %T on err itself says *fmt.wrapError; unwrapping to the end
+// instead lands on *errors.joinError, because pgx joins its per-host dial failures. Neither
+// names a fault. probeErrAttrs can use %T because it is handed the step's error unwrapped,
+// at the point of failure.
+//
+// An unrecognised error therefore contributes NOTHING, which is the right default for an
+// allowlist: this function may only add text whose provenance it can vouch for, and saying
+// nothing is how it declines.
+func dsnFaultKind(err error) string {
+	var (
+		pgErr    *pgconn.PgError
+		connErr  *pgconn.ConnectError
+		parseErr *pgconn.ParseConfigError
+	)
+	switch {
+	case errors.As(err, &pgErr):
+		// The server answered and named a condition; the SQLSTATE is that condition's
+		// code, and the only field of a PgError that cannot quote an identifier.
+		return " [error_class=*pgconn.PgError sqlstate=" + pgErr.Code + "]"
+	case errors.As(err, &connErr):
+		return " [error_class=*pgconn.ConnectError]"
+	case errors.As(err, &parseErr):
+		return " [error_class=*pgconn.ParseConfigError]"
+	}
+	return ""
 }
 
 // dsnIdentifiersPresent reports whether msg reproduces any identifier from the configured
@@ -270,13 +319,18 @@ func (e *safeDSNError) Unwrap() error { return e.cause }
 // would trade a leak that is not there for an unrunnable fix. The split is safe because the
 // connect failures that CAN carry identifiers are deliberately not wrapped in these
 // sentinels: checkNoInvalidIndexes keeps them retryable and unwrapped.
+//
+// errDSNNotURLScheme is exempt on exactly that argument, and it was missed when the
+// argument was first written: it is package-authored constant text that cannot carry a
+// credential, and its own comment records the self-censoring it was losing.
 func redactMigrateErr(dsn string, err error) error {
 	if err == nil {
 		return nil
 	}
 	if errors.Is(err, ErrInvalidIndex) ||
 		errors.Is(err, ErrMissingRequiredIndex) ||
-		errors.Is(err, ErrRequiredIndexMismatch) {
+		errors.Is(err, ErrRequiredIndexMismatch) ||
+		errors.Is(err, errDSNNotURLScheme) {
 		return err
 	}
 	return newSafeDSNError(dsn, err)

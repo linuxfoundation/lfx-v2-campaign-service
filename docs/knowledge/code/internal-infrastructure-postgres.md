@@ -1642,6 +1642,37 @@ realistic naming. The split is safe only because the connect failures that CAN c
 identifiers are deliberately not wrapped in those sentinels — `checkNoInvalidIndexes` keeps a
 connect failure retryable and unwrapped — so nothing reaches the passthrough by that route.
 
+**`errDSNNotURLScheme` joins them, and missing it was a self-censoring bug.** `pgxURL`'s
+rejection used to be a `fmt.Errorf` literal, so it went through the comparison like driver
+prose. It is package-authored constant text — it names `DATABASE_URL` and the two schemes
+that are accepted — but the DSN that provokes it is a KEYWORD DSN, and a keyword DSN's user
+and database are exactly what `pgconn.ParseConfig` extracts. On the commonest one,
+`user=postgres dbname=postgres`, the literal `postgres://` inside the message is a bounded
+match for `cfg.User`, so the one error that tells an operator their DSN is the wrong SHAPE
+was the one most certain to replace itself with the withhold sentinel. It is now a sentinel
+`var`, exempt on exactly the argument written for the index sentinels, and
+`TestMigrateKeepsItsOwnWrongSchemeRejection` pins both halves: the shape diagnostic survives,
+and the password in that keyword DSN still does not appear. Unreachable from the service —
+`container.go:477` gates on `ValidateMigrationDSN` first — but reachable from every direct
+`postgres.Migrate` caller, and `dbtest` is one today.
+
+**When the comparison DOES withhold, the fault's KIND still goes out.** The wholesale
+replacement is deliberate (see above), but a bare sentinel leaves nothing to act on, and the
+case is not hypothetical: a failing `m.Up()` is wrapped `apply migrations: %w` and its server
+text goes through the same comparison, so on a deployment whose database is named after a
+table it migrates — `relation "campaigns" already exists` on a database named `campaigns` —
+the operator got the sentinel and nothing else. `dsnFaultKind` appends `error_class=` and,
+for a `*pgconn.PgError`, `sqlstate=`. Neither can reproduce an identifier: the class is fixed
+at compile time and a SQLSTATE is five characters from a closed set. This is the split
+`probeErrAttrs` already made for the index probe's warnings.
+
+The classes are named explicitly by `errors.As` against a short allowlist — `*pgconn.PgError`,
+`*pgconn.ConnectError`, `*pgconn.ParseConfigError` — rather than printed with `%T`, and both
+`%T` forms were rendered before that was settled. `%T` on the error itself says
+`*fmt.wrapError`, because everything reaching here has been wrapped for context; `%T` on its
+root cause says `*errors.joinError`, because pgx joins its per-host dial failures. An
+unrecognised error contributes nothing, which is how an allowlist declines.
+
 **The issue's own reachability claim did not survive a probe, and the correction matters.**
 #178 reports the password reaching the pod log through container boot. It does not:
 `ValidateMigrationDSN` runs unconditionally at `container.go:477`, before `initDatabase` ever

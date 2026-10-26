@@ -174,10 +174,14 @@ func TestConnectAndMigrateWithholdsTheExplicitDSN(t *testing.T) {
 	//
 	//   rawErr   = failed to connect to `user=probeuser database=probedb`: hostname
 	//              resolving error: lookup dbtest-probe.invalid: no such host
-	//   redacted = the driver's message names a value from the database DSN (it is
+	//   redacted = the driver's message names a value from TEST_DATABASE_URL (it is
 	//              withheld: the user, database and host are half of the credential)
+	//              [error_class=*pgconn.ConnectError]
 	//
-	// So any non-empty constant would satisfy the comparison, and asserting "the operator
+	// The trailing class is dsnFaultKind's, and it does not make this a diagnosability
+	// check either: it reports the fault's KIND, which is the same for a refused dial as
+	// for this unresolvable host, while the fault itself is still gone. So any constant
+	// carrying that suffix would satisfy the comparison, and asserting "the operator
 	// still gets the fault" here would be false. Diagnosability on messages that name NO
 	// configured identifier -- connection refused, authentication failed -- is pinned
 	// where it can actually be observed: TestSafeDSNErrKeepsDriverTextForNonURLErrors and
