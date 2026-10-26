@@ -281,9 +281,9 @@ func TestImageSlotCatalog_GeometryComesFromTheChannelTables(t *testing.T) {
 		if spec.Label != row.label {
 			t.Errorf("slot %q is labelled %q, but its table row is labelled %q", spec.Key(), spec.Label, row.label)
 		}
-		if spec.MaxBytes != maxDemandGenImageBytes {
-			t.Errorf("slot %q caps at %d bytes; every googleads image is fetched under maxDemandGenImageBytes (%d)",
-				spec.Key(), spec.MaxBytes, maxDemandGenImageBytes)
+		if spec.MaxBytes != MaxImageBytes {
+			t.Errorf("slot %q caps at %d bytes; every googleads image is fetched under MaxImageBytes (%d)",
+				spec.Key(), spec.MaxBytes, MaxImageBytes)
 		}
 		if spec.Platform != platformGoogleAds {
 			t.Errorf("slot %q reports platform %q, want %q", spec.Key(), spec.Platform, platformGoogleAds)

@@ -1281,20 +1281,25 @@ adGroups?:                      — OPTIONAL multiple themed ad groups (LFXV2-26
                                   failure partway through leaves the groups before it in place — the
                                   error names which group of how many failed and how many were created.
 demandGenCreative?:             — OPTIONAL Demand Gen ad (LFXV2-2665). DEMAND GEN ONLY, and REFUSED on
-  {marketingImages?: string[],    Search — the mirror of every SEARCH ONLY entry above. Supplying it is
+  {marketingImages?: ImageRef[],  Search — the mirror of every SEARCH ONLY entry above. Supplying it is
    squareMarketingImages?:        what turns a Demand Gen campaign from a shell into one that can serve:
-     string[],                    omitted, the campaign is still created with NO AD, exactly as before
-   portraitImages?: string[],     this field existed, and a human must add creative in the Google Ads UI.
-   tallPortraitImages?: string[],
-   logoImages?: string[],         Images are given as https URLs that THIS SERVICE fetches and uploads as
-   headlines?: string[],          Google Ads image assets; Google is never handed the URL. The fetch is
-   descriptions?: string[],       anonymous (no credentials are sent), follows no redirects, refuses any
-   businessName?: string,         address that is not a public IP, caps each body at 5 MiB AND the sum
-   callToActionText?: string}     of every image in one creative at 64 MiB, and accepts only PNG, JPEG
-                                  and GIF. Every image is fetched and checked BEFORE the first budget
-                                  mutate, so a bad URL cannot strand a paid campaign. The 64 MiB total
-                                  is a separate refusal from the per-image cap: images that each pass
-                                  5 MiB and every count and shape bound can still be refused on the sum.
+     ImageRef[],                  omitted, the campaign is still created with NO AD, exactly as before
+   portraitImages?: ImageRef[],   this field existed, and a human must add creative in the Google Ads UI.
+   tallPortraitImages?: ImageRef[],
+   logoImages?: ImageRef[],       Each image entry is EITHER an https URL string OR an object
+   headlines?: string[],          {"imageAssetId": "<uuid>"} naming a creative asset already stored for
+   descriptions?: string[],       this brief; Google is handed uploaded image assets and never the URL.
+   businessName?: string,         A URL is fetched by THIS SERVICE anonymously (no credentials are
+   callToActionText?: string}     sent), following no redirects, refusing any address that is not a
+                                  public IP, and accepting only PNG, JPEG and GIF. An `imageAssetId` is
+                                  NOT fetched — its bytes come from this service's own asset store — but
+                                  runs through the identical format, decode, size and shape checks. Each
+                                  body is capped at 5 MiB and the sum of every image in one creative at
+                                  64 MiB, both counting stored assets. Every image is resolved and
+                                  checked BEFORE the first budget mutate, so neither a bad URL nor an
+                                  unreadable asset can strand a paid campaign. The 64 MiB total is a
+                                  separate refusal from the per-image cap: images that each pass 5 MiB
+                                  and every count and shape bound can still be refused on the sum.
                                   Fetching is sequential and bounded per image AND as a phase: it may
                                   spend at most HALF the request's remaining deadline, so a set of slow
                                   image hosts is refused here rather than leaving the campaign mutates
@@ -1307,7 +1312,9 @@ demandGenCreative?:             — OPTIONAL Demand Gen ad (LFXV2-2665). DEMAND 
                                     tallPortraitImages       9:16,   min 600x1067
                                     logoImages               1:1,    min 128x128
                                   Aspect ratios are allowed Google's documented +-1%. A URL must be
-                                  https with a host, and may not repeat within its list.
+                                  https with a host, and an `imageAssetId` must name a creative asset
+                                  stored for this brief. No entry may repeat within its list. A URL
+                                  may also be written as an object, {"url": "<https url>"}.
 
                                   At most 20 marketing images COMBINED across the four marketing lists
                                   (not 20 each), and at least one `marketingImages` OR one
@@ -1327,18 +1334,18 @@ demandGenCreative?:             — OPTIONAL Demand Gen ad (LFXV2-2665). DEMAND 
                                   after the assets upload still reports the asset ids, so a retry does
                                   not lose them. The same validation runs on the `adoptExisting` path.
 performanceMaxCreative?:        — OPTIONAL Performance Max ASSET GROUP (LFXV2-2665). PERFORMANCE MAX
-  {marketingImages?: string[],    ONLY, and REFUSED on every other `channel`. Performance Max has no ad
+  {marketingImages?: ImageRef[],  ONLY, and REFUSED on every other `channel`. Performance Max has no ad
    squareMarketingImages?:        groups and no ads: this field IS its creative. Omitted, the campaign
-     string[],                    is still created, with no asset group — reconcilable in the Google Ads
-   portraitImages?: string[],     UI, and the same shape `adoptExisting` needs for a campaign whose asset
-   logoImages?: string[],         group was built by hand.
+     ImageRef[],                  is still created, with no asset group — reconcilable in the Google Ads
+   portraitImages?: ImageRef[],   UI, and the same shape `adoptExisting` needs for a campaign whose asset
+   logoImages?: ImageRef[],       group was built by hand.
    landscapeLogoImages?:
-     string[],                    Images are given as https URLs that THIS SERVICE fetches and uploads as
-   headlines?: string[],          Google Ads image assets, under exactly the rules `demandGenCreative`
-   longHeadlines?: string[],      states (anonymous, no redirects, public IPs only, 5 MiB per image and
-   descriptions?: string[],       64 MiB across the whole creative, PNG/JPEG/GIF only, every image
-   businessName?: string,         fetched and checked BEFORE the first budget mutate). Google is never
-                                  handed the URL.
+     ImageRef[],                  Image entries take both shapes `demandGenCreative` defines — an https
+   headlines?: string[],          URL THIS SERVICE fetches, or {"imageAssetId": "<uuid>"} naming a stored
+   longHeadlines?: string[],      creative asset, not fetched but checked identically — under exactly
+   descriptions?: string[],       that field's rules (anonymous, no redirects, public IPs only, 5 MiB per
+   businessName?: string,         image, 64 MiB per creative, PNG/JPEG/GIF only, every image resolved and
+                                  checked BEFORE the first budget mutate). Google never gets the URL.
    youtubeVideoIds?: string[],
    assetGroupName?: string,       Each list has its own shape, checked against the decoded image:
    path1?: string,                  marketingImages          1.91:1, min 600x314
@@ -1430,18 +1437,18 @@ videoCreative?:                 — OPTIONAL Video RESPONSIVE VIDEO AD (LFXV2-26
                                   retry does not create a second ad. The same validation runs on the
                                   `adoptExisting` path.
 displayCreative?:               — OPTIONAL Display RESPONSIVE DISPLAY AD (LFXV2-2665). DISPLAY ONLY, and
-  {marketingImages?: string[],    REFUSED on every other `channel`. Omitted, the campaign and its ad
+  {marketingImages?: ImageRef[],  REFUSED on every other `channel`. Omitted, the campaign and its ad
    squareMarketingImages?:        group are still created with NO AD — reconcilable in the Google Ads
-     string[],                    UI, and the shape `adoptExisting` needs for a campaign whose ad was
-   logoImages?: string[],         built by hand. The closing step says NO AD in those words so an
-   squareLogoImages?: string[],   operator is never told a campaign is ready when nothing can serve.
+     ImageRef[],                  UI, and the shape `adoptExisting` needs for a campaign whose ad was
+   logoImages?: ImageRef[],       built by hand. The closing step says NO AD in those words so an
+   squareLogoImages?: ImageRef[], operator is never told a campaign is ready when nothing can serve.
    headlines?: string[],
-   longHeadline?: string,         Images are given as https URLs that THIS SERVICE fetches and uploads
-   descriptions?: string[],       as Google Ads image assets, under exactly the rules
-   businessName?: string,         `demandGenCreative` states (anonymous, no redirects, public IPs only,
-   callToActionText?: string}     5 MiB per image and 64 MiB across the whole creative, PNG/JPEG/GIF
-                                  only, every image fetched and checked BEFORE the first budget
-                                  mutate). Google is never handed the URL.
+   longHeadline?: string,         Image entries take both shapes `demandGenCreative` defines — an https
+   descriptions?: string[],       URL THIS SERVICE fetches, or {"imageAssetId": "<uuid>"} naming a stored
+   businessName?: string,         creative asset, not fetched but checked identically — under exactly
+   callToActionText?: string}     that field's rules (anonymous, no redirects, public IPs only, 5 MiB per
+                                  image, 64 MiB per creative, PNG/JPEG/GIF only, every image resolved and
+                                  checked BEFORE the first budget mutate). Google never gets the URL.
 
                                   FOUR image slots, and they are neither Demand Gen's five nor
                                   Performance Max's five — there is no portrait shape here, and

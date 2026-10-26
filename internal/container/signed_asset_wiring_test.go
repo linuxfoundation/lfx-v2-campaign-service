@@ -92,6 +92,9 @@ func TestBindCreativeAssetSharing(t *testing.T) {
 	ld, ok := m[model.ProviderLinkedInAds].(*dispatch.LinkedInDispatcher)
 	require.True(t, ok)
 	assert.True(t, ld.SharesAssetReserver(cont.assetReserver), "LinkedIn must charge the shared reserver")
+	gd, ok := m[model.ProviderGoogleAds].(*dispatch.GoogleAdsDispatcher)
+	require.True(t, ok)
+	assert.True(t, gd.SharesAssetReserver(cont.assetReserver), "Google must charge the shared reserver")
 	assert.True(t, cont.SignedAssets.UsesBudget(cont.assetReserver), "the signed-asset route must charge the shared reserver")
 
 	unbound := registerDispatchers(nil, nil, nil, nil, nil)
@@ -118,6 +121,43 @@ func TestBindCreativeAssetSharing_LinkedInSharesTheContainerReserver(t *testing.
 	cont.bindCreativeAssetSharing(m, postgres.NewCreativeAssetRepo(nil))
 	assert.True(t, ld.SharesAssetReserver(cont.assetReserver),
 		"bindCreativeAssetSharing must re-point the LinkedIn dispatcher at the container's shared reserver")
+}
+
+// TestBindCreativeAssetSharing_GoogleSharesTheContainerReserver: Google is the newest and the
+// heaviest asset holder — fourteen creative image slots, each of which may name a stored asset — so
+// it is the one dispatcher whose omission from bindCreativeAssetSharing would cost the most. Same
+// identity assertion as LinkedIn's, for the same reason: AssetReserverIsSet is true for either
+// budget, so only identity distinguishes the container's reserver from registerDispatchers' own.
+func TestBindCreativeAssetSharing_GoogleSharesTheContainerReserver(t *testing.T) {
+	cont, err := NewContainer(&config.Config{Host: "*", Port: "8080"})
+	require.NoError(t, err)
+	require.NotNil(t, cont.assetReserver)
+
+	m := registerDispatchers(nil, nil, nil, postgres.NewCreativeAssetRepo(nil), nil)
+	gd, ok := m[model.ProviderGoogleAds].(*dispatch.GoogleAdsDispatcher)
+	require.True(t, ok)
+	require.False(t, gd.SharesAssetReserver(cont.assetReserver), "premise: registerDispatchers binds its own reserver")
+
+	cont.bindCreativeAssetSharing(m, postgres.NewCreativeAssetRepo(nil))
+	assert.True(t, gd.SharesAssetReserver(cont.assetReserver),
+		"bindCreativeAssetSharing must re-point the Google dispatcher at the container's shared reserver")
+}
+
+// registerDispatchers must hand the Google dispatcher the asset STORE as well as the reserver —
+// without it every asset-backed Google slot is refused as "not configured", which is a refusal
+// before spend rather than a crash, and therefore silent in every other test.
+func TestRegisterDispatchers_GoogleGetsTheCreativeAssetStore(t *testing.T) {
+	bound := registerDispatchers(nil, nil, nil, postgres.NewCreativeAssetRepo(nil), nil)
+	gd, ok := bound[model.ProviderGoogleAds].(*dispatch.GoogleAdsDispatcher)
+	require.True(t, ok)
+	assert.True(t, gd.CreativeAssetRepoIsSet(), "the Google dispatcher must receive the creative asset store")
+
+	// The concrete-pointer guard: a nil *postgres.CreativeAssetRepo must leave the field unbound,
+	// not bound to a non-nil interface holding a nil pointer.
+	unbound := registerDispatchers(nil, nil, nil, nil, nil)
+	gu, ok := unbound[model.ProviderGoogleAds].(*dispatch.GoogleAdsDispatcher)
+	require.True(t, ok)
+	assert.False(t, gu.CreativeAssetRepoIsSet(), "a nil store must leave the Google path unbound, not bound to a typed nil")
 }
 
 // Both live paths — the fast path and the cold-start retry — must call

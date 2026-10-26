@@ -203,7 +203,7 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 	// never created is the shape that invites someone to make the two disagree.
 	var images []fetchedImage
 	if pf.pmax.present {
-		images, err = c.fetchSlotImages(ctx, performanceMaxImageSlots, pf.pmax.urls)
+		images, err = c.fetchSlotImages(ctx, performanceMaxImageSlots, pf.pmax.urls, pf.pmax.resolved)
 		if err != nil {
 			return nil, err // pre-create: nothing was sent
 		}
