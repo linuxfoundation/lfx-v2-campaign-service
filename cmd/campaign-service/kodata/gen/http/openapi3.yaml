@@ -12,7 +12,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-audience-builder
             summary: attach-existing-audience lfx-v2-campaign-service-audience-builder
-            description: Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. When every resolved standard suppression list is supplied they are recorded as the project's standing standard suppression list, and with current_registrants_event the edition's current-registrants list is recorded too; those two lists, found by name and reused, are the only lists HubSpot may create here.
+            description: 'Record lists that already exist in the project''s HubSpot portal as a brief''s built audience, without composing a new master. Every id is read back from the portal first. When every resolved standard suppression list is supplied they are recorded as the project''s standing standard suppression list, and with current_registrants_event the edition''s current-registrants list is recorded too; those two lists, found by name and reused, are the only lists HubSpot may create here, so an attach creates at most two. The recorded and returned suppression_list_ids are therefore not the input ids: the standing list''s id replaces the standard ids, and the registrants list''s id is appended. A list already holding either name that cannot safely be reused is a 409 naming it.'
             operationId: lfx-v2-campaign-service-audience-builder#attach-existing-audience
             parameters:
                 - name: project_id
@@ -17824,7 +17824,7 @@ components:
                     items:
                         type: string
                         example: Aliquam fugit vel nemo aut.
-                    description: The suppression list ids recorded beside it
+                    description: 'The suppression list ids recorded beside it. Not the input ids: a full standard set is recorded as the standing list''s id, and the current-registrants list''s id is appended'
                     example:
                         - Aliquam fugit vel nemo aut.
                         - Earum voluptas ut voluptatem et id.

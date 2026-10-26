@@ -195,7 +195,9 @@ type ComposeAudienceMasterResponseBody struct {
 type AttachExistingAudienceResponseBody struct {
 	// The existing master list, as read back from the portal
 	Master *AudienceComposedListResponseBody `form:"master,omitempty" json:"master,omitempty" xml:"master,omitempty"`
-	// The suppression list ids recorded beside it
+	// The suppression list ids recorded beside it. Not the input ids: a full
+	// standard set is recorded as the standing list's id, and the
+	// current-registrants list's id is appended
 	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
 	// The project's standing standard suppression list, reused across audiences,
 	// recorded in place of the standard lists; absent unless every resolved

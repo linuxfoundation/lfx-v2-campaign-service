@@ -49,7 +49,11 @@ type Service interface {
 	// they are recorded as the project's standing standard suppression list, and
 	// with current_registrants_event the edition's current-registrants list is
 	// recorded too; those two lists, found by name and reused, are the only lists
-	// HubSpot may create here.
+	// HubSpot may create here, so an attach creates at most two. The recorded and
+	// returned suppression_list_ids are therefore not the input ids: the standing
+	// list's id replaces the standard ids, and the registrants list's id is
+	// appended. A list already holding either name that cannot safely be reused is
+	// a 409 naming it.
 	AttachExistingAudience(context.Context, *AttachExistingAudiencePayload) (res *AudienceAttachExistingResult, err error)
 	// Audit a composed master list's filters: signal mapping, regulatory
 	// suppression, exclusion completeness, and whether this edition's own
@@ -126,7 +130,9 @@ type AudienceAttachExistingInput struct {
 type AudienceAttachExistingResult struct {
 	// The existing master list, as read back from the portal
 	Master *AudienceComposedList
-	// The suppression list ids recorded beside it
+	// The suppression list ids recorded beside it. Not the input ids: a full
+	// standard set is recorded as the standing list's id, and the
+	// current-registrants list's id is appended
 	SuppressionListIds []string
 	// The project's standing standard suppression list, reused across audiences,
 	// recorded in place of the standard lists; absent unless every resolved
