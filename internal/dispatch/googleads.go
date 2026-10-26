@@ -508,6 +508,13 @@ type GoogleAdsDispatcher struct {
 	// clientCache's doc comment.
 	clients *clientCache
 	opts    []googleads.Option
+	// creatives and assets are the creative-asset library and the process-wide memory
+	// budget, bound late by registerDispatchers exactly as they are on the Meta, Microsoft,
+	// Twitter and LinkedIn dispatchers. Both may be nil — a nil repo means a config naming
+	// an asset is refused with a message saying so, and a nil *AssetReserver reserves
+	// nothing — so every test dispatcher and the no-database mode keep working unchanged.
+	creatives creativeAssetReader
+	assets    *AssetReserver
 }
 
 // NewGoogleAdsDispatcher builds the adapter from the connection repo + encryptor.
@@ -566,6 +573,19 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err != nil {
 		return nil, notCreated(err)
 	}
+	// Creative images that name a STORED asset are resolved here, before anything upstream
+	// exists, so a missing, oversized or empty asset costs an error and nothing else — the
+	// same placement, and the same reason, as the client's fetch of a creative URL.
+	//
+	// Every failure is notCreated: the claim is released and no budget, campaign or ad group
+	// was mutated. The reservation is held for the WHOLE dispatch, not just this call, because
+	// the bytes are: they ride in the CampaignInput and the client POSTs them to Google later
+	// in this same call. Releasing at the end of the resolve would free budget still occupied.
+	resolvedImages, releaseAssets, err := d.resolveGoogleCreativeAssets(ctx, brief, &cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	defer releaseAssets()
 
 	in := googleads.CampaignInput{
 		EventName: bf.EventName,
@@ -620,6 +640,11 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		PerformanceMaxCreative: googleAdsPerformanceMaxCreative(cfg.PerformanceMaxCreative),
 		VideoCreative:          googleAdsVideoCreative(cfg.VideoCreative),
 		DisplayCreative:        googleAdsDisplayCreative(cfg.DisplayCreative),
+		// The bytes for every asset-backed image entry, keyed by the slot string the
+		// mappers above rendered. Carried on the input rather than on each of the three
+		// creatives because it is one dispatch-wide map: the same asset may be named from
+		// two channels, and the client's fetch phase is shared across all three.
+		ResolvedImages: resolvedImages,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
 		// GA client composes the budget/campaign/ad-group names from these, and a retry
 		// with the same suffix is rejected by whichever family it reaches first —
