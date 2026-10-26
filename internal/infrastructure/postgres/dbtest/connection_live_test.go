@@ -5,7 +5,6 @@ package dbtest_test
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -183,9 +182,9 @@ func TestConnectionUpdateWithCredentialWritesBothInOneStatement(t *testing.T) {
 		projectID).Scan(&blob); err != nil {
 		t.Fatalf("read credentials: %v", err)
 	}
-	// Compared as a string, REPORTED as length + digest (#161). The fixture here is the
-	// literal "ciphertext-v2", so today this message could print it harmlessly — but the
-	// value it reads is the credentials column, and the repo's standard is written about
+	// Compared as a string, REPORTED as length + truncated digest (#161). The fixture here
+	// is the literal "ciphertext-v2", so today this message could print it harmlessly — but
+	// the value it reads is the credentials column, and the repo's standard is written about
 	// the SHAPE of what reaches a log rather than the sensitivity of one fixture (see
 	// internal-dispatch.md on dropping an unmarshal cause that might someday quote
 	// plaintext). The concrete risk is that this test sits where the next credential test
@@ -194,13 +193,15 @@ func TestConnectionUpdateWithCredentialWritesBothInOneStatement(t *testing.T) {
 	// Length AND digest, not length alone: equal lengths with different bytes is exactly
 	// the failure this assertion exists to catch — the losing rotation's "ciphertext-v3"
 	// is the same length as "ciphertext-v2" — so lengths alone would trade the leak for a
-	// test that fails without saying why. Matches credential_roundtrip_live_test.go.
+	// test that fails without saying why. The digest is truncated rather than full for the
+	// reason dbtest.BlobDigest records: a full unsalted digest beside an exact length is an
+	// offline oracle for a low-entropy secret, and a template is exactly where that must not
+	// be set. Matches credential_roundtrip_live_test.go, which shares the helper.
 	const wantCred = "ciphertext-v2"
 	if string(blob) != wantCred {
-		t.Errorf("credentials = %d bytes sha256=%x, want %d bytes sha256=%x — the stored "+
-			"account and credential must come from the SAME rotation",
-			len(blob), sha256.Sum256(blob),
-			len(wantCred), sha256.Sum256([]byte(wantCred)))
+		t.Errorf("credentials = %s, want %s — the stored account and credential must come "+
+			"from the SAME rotation",
+			dbtest.BlobDigest(blob), dbtest.BlobDigest([]byte(wantCred)))
 	}
 }
 

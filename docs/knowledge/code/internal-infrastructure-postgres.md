@@ -1433,7 +1433,8 @@ doc states the one-implementation rule it is obeying, because it is not URL reda
 parses the DSN with `pgconn.ParseConfig` to learn what the configured identifiers ARE, and
 `pkg/redact` imports only `net/url` and `strings`. Moving it there would put a driver
 dependency into the package every other redaction site depends on. `redact.URLUserinfo` is
-still the backstop it runs on the surviving text.
+still the backstop it runs on the surviving text — but the identifier comparison is made
+against the RAW text as well as the backstop's output, for the reason below.
 
 The two differ only in WHICH secret they compare against, and that is the whole of the
 contract:
@@ -1442,6 +1443,40 @@ contract:
   failing call used the environment's DSN.
 * `SafeDSNErrFor(dsn, err)` compares against an EXPLICIT DSN. Required wherever the calling
   function was handed one.
+
+### The backstop can destroy the token the comparison is looking for (#178)
+
+`SafeDSNErr` ran `redact.URLUserinfo` first and compared the configured identifiers against
+its OUTPUT. That order is wrong in one direction and the direction matters: the backstop is
+URL-shaped and destructive on prose, so it can erase the very substring the comparison exists
+to find, and the comparison then reports no match on text that still names the identifier.
+
+`redact.URLUserinfo` rewrites everything up to the last pre-query `@` as `***@` and truncates
+at `?`. Any configured identifier containing `@` or `?` is therefore unfindable after it runs.
+This is not hypothetical: **Azure Database for PostgreSQL issues usernames shaped
+`user@servername`**. With `cfg.User = "svc@pgsrv"`, PostgreSQL's 28P01 reads `password
+authentication failed for user "svc@pgsrv"`; the backstop turns that into `***@pgsrv"`, the
+comparison against `svc@pgsrv` misses, and the line is returned — with the SERVER half of the
+credential intact.
+
+The fix compares against both: `dsnIdentifiersPresent(dsn, raw) || dsnIdentifiersPresent(dsn,
+msg)`. Raw first, so a destroyed token is still caught; the redacted text is still compared
+because the backstop can also CREATE a match the raw text does not have. Neither comparison
+subsumes the other, which is why both run rather than one replacing the other.
+`TestSafeDSNErrWithholdsAnAtShapedUsername` pins it, and asserts the fault kind survives too —
+the failing behaviour also omitted the username entirely, so an assertion that only checked
+for absence would have passed on the broken code.
+
+### A SQLSTATE is checked for shape before it is concatenated (#178)
+
+`dsnFaultKind` appends `sqlstate=` + `pgErr.Code` to a message that reaches a log line. The
+code is server-controlled text, and nothing guaranteed it was five alphanumerics: a hostile or
+corrupt value carrying a newline would forge a second log record. `isSQLState` gates it — a
+SHAPE check (length 5, `[0-9A-Z]`), deliberately not a membership check against the published
+class list, because a valid code this service has never heard of must still be reportable. It
+is hand-written rather than a regexp because it runs on an error path.
+`TestDSNFaultKindRejectsAHostileSQLState` carries the injection case plus the near-misses
+(four characters, six, empty, lowercase, embedded space) and a positive control.
 
 **A redactor call is not evidence of redaction.** The leak that opened LFXV2-2643 survived
 five review rounds with a redactor plainly present at the leaking line: `connectAndMigrate`
@@ -1642,6 +1677,16 @@ realistic naming. The split is safe only because the connect failures that CAN c
 identifiers are deliberately not wrapped in those sentinels — `checkNoInvalidIndexes` keeps a
 connect failure retryable and unwrapped — so nothing reaches the passthrough by that route.
 
+**Check this before adding a fourth exemption: the test is `errors.Is`, so an exemption
+covers the WHOLE CHAIN.** Anything wrapped ABOVE an exempt sentinel escapes redaction too,
+including text a future caller adds. For the three index sentinels that is intended — the
+wrapping text is package-composed remediation DDL. For `errDSNNotURLScheme` the argument is
+that it carries no dynamic text, and that is a property of its CALL SITES (`pool.go:1058`
+returns it bare), not of the sentinel itself: wrapping a DSN-bearing message around it at any
+future site would leak through an exemption that still looks correct where it is written.
+`TestDSNNotURLSchemeIsReturnedBare` pins the call site rather than the sentinel, which is the
+half that can actually change.
+
 **`errDSNNotURLScheme` joins them, and missing it was a self-censoring bug.** `pgxURL`'s
 rejection used to be a `fmt.Errorf` literal, so it went through the comparison like driver
 prose. It is package-authored constant text — it names `DATABASE_URL` and the two schemes
@@ -1735,9 +1780,21 @@ fails on the arm above), which is why the redaction it depends on is pinned in p
 The redaction rules above are about errors the SERVICE renders. The same discipline binds a
 test's own failure message once the value it is comparing was `SELECT`ed out of a credentials
 column: `t.Errorf("... = %q", blob)` puts that column's bytes into the build log, and a build
-log is not a more private place than a pod log. The standard is `len(blob)` plus
-`sha256.Sum256(blob)` on both sides of the comparison —
-`credential_roundtrip_live_test.go` established it and `connection_live_test.go` now matches.
+log is not a more private place than a pod log. The standard is `dbtest.BlobDigest(blob)` on
+both sides of the comparison — one exported helper rather than a digest written out at each
+site, so `credential_roundtrip_live_test.go` and `connection_live_test.go` cannot drift apart
+about what "safe to print" means, for the reason `SafeDSNErr` is exported.
+
+**The digest is TRUNCATED, and that is the point of the helper (#178).** `BlobDigest` renders
+`"%d bytes sha256[:8]=%x"` — the length, and the first EIGHT bytes of the SHA-256, not all
+thirty-two. A full unsalted digest printed beside an exact byte length is an offline
+verification oracle: anyone holding the log line can confirm a guess at a low-entropy secret
+without touching the service. Eight bytes is 2^64 of collision resistance, which nothing in
+this suite will collide across, and is far too short to confirm a guess against. Two of the
+six call sites digest decrypted PLAINTEXT, which is why the truncation is not cosmetic.
+`TestBlobDigestReportsShapeNotValue` (`dbtest_test.go`) pins all three properties — the bytes
+never appear, the length survives, the hex is 16 characters — because the live tests SKIP
+without `TEST_DATABASE_URL` and would otherwise give the rendering no runtime coverage at all.
 
 Two things this is NOT. It is not a claim that the fixture is sensitive: the stored value is
 the literal `ciphertext-v2`, so printing it today leaks nothing. The rule is written about the

@@ -324,3 +324,112 @@ func TestNewPoolWithholdCarriesTheConnectClass(t *testing.T) {
 		}
 	}
 }
+
+// TestSafeDSNErrWithholdsAnAtShapedUsername pins the leak the security round found, which the
+// two tests above do not reach: the identifier comparison used to run over the REDACTED text
+// only, and the redaction itself is what destroys the token.
+//
+// redact.URLUserinfo is written for URLs. It rewrites everything up to the last pre-query `@`
+// as `***@`, so on prose that happens to contain an `@` it eats the start of the line and
+// leaves the tail. Azure Database for PostgreSQL issues usernames of the form `user@servername`
+// — the single commonest way a legitimate username contains an `@` — so `svc@pgsrv` meeting the
+// commonest auth failure of all, 28P01, redacted to `***@pgsrv"`: the SERVER half of the
+// username, emitted and logged, with the comparison finding nothing because the token it was
+// looking for no longer existed as a token.
+//
+// The fix compares against the raw text too. Both halves are asserted, because withholding on
+// the raw text while still RETURNING the redacted fragment would be the same leak.
+func TestSafeDSNErrWithholdsAnAtShapedUsername(t *testing.T) {
+	t.Parallel()
+
+	//nolint:gosec // synthetic DSN; no real credential. secretlint-disable-line
+	const dsn = "postgres://svc@pgsrv:s3cretpw@db.invalid:5432/appdb?sslmode=disable"
+	pgErr := &pgconn.PgError{
+		Code:    "28P01",
+		Message: `password authentication failed for user "svc@pgsrv"`,
+	}
+
+	got := SafeDSNErr(dsn, dsnSourceDescription, fmt.Errorf("ping database: %w", pgErr))
+	for _, forbidden := range []string{"svc@pgsrv", "pgsrv", "s3cretpw"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("the message reproduces %q: %s", forbidden, got)
+		}
+	}
+	// It must be the WITHHOLD, not merely a message that happens to omit the token: the
+	// failing behaviour returned a redacted fragment, which also omits the whole username.
+	if !strings.Contains(got, "sqlstate=28P01") {
+		t.Errorf("the withhold dropped the SQLSTATE, leaving nothing to diagnose: %s", got)
+	}
+	if !strings.Contains(got, "withheld") {
+		t.Errorf("the message was returned rather than withheld: %s", got)
+	}
+}
+
+// TestDSNFaultKindRejectsAHostileSQLState pins that the one server-controlled field this
+// package does print cannot write log content of its own.
+//
+// pgErr.Code is filled in by whatever answers on the other end of the socket. It reaches a log
+// line through string concatenation, so a value carrying a newline could end the line early and
+// forge a second one, and an `=` could forge a key/value pair inside this one. The shape check
+// is what stops that; an unrecognisable code degrades to the class alone rather than to silence,
+// so an operator still learns the server answered.
+func TestDSNFaultKindRejectsAHostileSQLState(t *testing.T) {
+	t.Parallel()
+
+	//nolint:gosec // synthetic DSN; no real credential. secretlint-disable-line
+	const dsn = "postgres://appuser:s3cretpw@db.invalid:5432/appdb?sslmode=disable"
+
+	for _, code := range []string{
+		"42P07\nlevel=info msg=\"all good\"",
+		"42P0",
+		"42P077",
+		"",
+		"42p07",
+		"4 P07",
+	} {
+		pgErr := &pgconn.PgError{Code: code, Message: `relation "appdb" already exists`}
+		got := SafeDSNErr(dsn, dsnSourceDescription, fmt.Errorf("apply migrations: %w", pgErr))
+		if strings.Contains(got, "sqlstate=") {
+			t.Errorf("code %q was printed as a SQLSTATE: %s", code, got)
+		}
+		if !strings.Contains(got, "error_class=*pgconn.PgError") {
+			t.Errorf("code %q cost the operator the error class too: %s", code, got)
+		}
+		if strings.ContainsAny(got, "\n\r") {
+			t.Errorf("code %q put a newline into the rendered line: %q", code, got)
+		}
+	}
+
+	// The well-formed case still carries, so the check is a shape gate and not a removal.
+	ok := SafeDSNErr(dsn, dsnSourceDescription, fmt.Errorf("apply migrations: %w",
+		&pgconn.PgError{Code: "42P07", Message: `relation "appdb" already exists`}))
+	if !strings.Contains(ok, "sqlstate=42P07") {
+		t.Errorf("a valid SQLSTATE was rejected: %s", ok)
+	}
+}
+
+// TestDSNNotURLSchemeIsReturnedBare pins the property redactMigrateErr's exemption rests on.
+//
+// The exemption is an errors.Is test, so it covers the whole CHAIN: anything wrapped ABOVE this
+// sentinel leaves redactMigrateErr unredacted along with it. For the three index sentinels that
+// is deliberate — their wrapping text is the remediation DDL this package composed. For
+// errDSNNotURLScheme the argument is the opposite one, that it carries no dynamic text at all,
+// and that is a property of its call sites rather than of the sentinel. A future caller who
+// wrapped it with a driver or server message would reopen the leak with no other test going
+// red, so this asserts the bare return directly.
+func TestDSNNotURLSchemeIsReturnedBare(t *testing.T) {
+	t.Parallel()
+
+	//nolint:gosec // synthetic keyword DSN; no real credential. secretlint-disable-line
+	const dsn = "host=db.invalid user=appuser password=s3cretpw dbname=appdb sslmode=disable"
+
+	err := Migrate(dsn)
+	if !errors.Is(err, errDSNNotURLScheme) {
+		t.Fatalf("Migrate no longer reports the wrong-scheme rejection: %v", err)
+	}
+	if err.Error() != errDSNNotURLScheme.Error() {
+		t.Fatalf("the sentinel reached redactMigrateErr wrapped with caller text, which the "+
+			"errors.Is exemption passes through unredacted:\n got: %s\nwant: %s",
+			err.Error(), errDSNNotURLScheme.Error())
+	}
+}

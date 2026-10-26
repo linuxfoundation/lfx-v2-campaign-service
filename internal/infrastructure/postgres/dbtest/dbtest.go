@@ -44,6 +44,7 @@ package dbtest
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -314,4 +315,28 @@ func SafeDSNErr(err error) string {
 // run in parallel; the harness keeps its one-argument convenience.
 func SafeDSNErrFor(dsn string, err error) string {
 	return postgres.SafeDSNErr(dsn, EnvDatabaseURL, err)
+}
+
+// BlobDigest renders a byte slice for a FAILURE MESSAGE: its length, and a truncated SHA-256.
+//
+// The tests that call it compare credential ciphertext and, in two places, decrypted plaintext.
+// Printing either verbatim is out of the question, and length alone is not enough -- equal
+// lengths with different bytes is exactly the failure the assertions exist to catch, since a
+// rotation's "ciphertext-v3" is the same length as the "ciphertext-v2" it replaces -- so the
+// digest is what makes a failure legible.
+//
+// The digest is TRUNCATED, and that is the whole reason this is a function rather than
+// `sha256.Sum256(b)` written out at each site. A full unsalted SHA-256 next to an exact byte
+// length is an offline verification oracle: for a low-entropy secret, anyone holding the log
+// line can confirm a guess without touching the service. Against today's fixtures that costs
+// nothing -- they are synthetic literals -- but these assertions are the shape the next
+// credential test gets copied from, and two of the existing call sites already digest
+// PLAINTEXT. Eight bytes is 2^64 of collision resistance, which no two fixtures in this suite
+// will ever collide across, and is far too short to confirm a guess against.
+//
+// Exported so both live-test files share ONE rendering, for the reason SafeDSNErr is exported:
+// two sites disagreeing about what "safe to print" means is how the first leak got in.
+func BlobDigest(b []byte) string {
+	sum := sha256.Sum256(b)
+	return fmt.Sprintf("%d bytes sha256[:8]=%x", len(b), sum[:8])
 }

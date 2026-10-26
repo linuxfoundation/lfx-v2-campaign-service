@@ -107,7 +107,17 @@ const dsnUnparseableMsg = "the DSN does not parse as a URL (the value and the pa
 // configured value — `password authentication failed for user "x"`, pgx's
 // "failed to connect to `user=%s database=%s`" — and are withheld when they do. Nothing here
 // treats a class as inherently safe; the comparison decides every message on its own text.
-// redact.URLUserinfo still runs on the surviving text as the URL-shaped backstop.
+//
+// redact.URLUserinfo still runs as the URL-shaped backstop, but the comparison is made against
+// the RAW text as well as the redacted text, and that order matters. URLUserinfo is written for
+// URLs, not prose: it rewrites everything up to the last pre-query `@` as `***@` and truncates at
+// a `?`. An identifier containing either character therefore survives the redaction only in
+// fragments, and comparing against that output alone misses it. Azure Database for PostgreSQL
+// hands out usernames of the form `user@servername`, so a cfg.User of `svc@pgsrv` meeting
+// `password authentication failed for user "svc@pgsrv"` (28P01) redacts to `***@pgsrv"` — the
+// server half intact, the token no longer matchable. Testing the raw text closes that: the
+// identifier is matched before anything has had a chance to break it up. The redacted text is
+// still tested too, for the converse case where redaction leaves the identifier intact.
 //
 // When the DSN cannot be parsed at all there are no identifiers to compare against, so no
 // message can be PROVEN clean and the sentinel applies unconditionally. That is the safe
@@ -122,8 +132,9 @@ func SafeDSNErr(dsn, dsnSource string, err error) string {
 	if errors.As(err, &ue) {
 		return dsnUnparseableMsg
 	}
-	msg := redact.URLUserinfo(err.Error())
-	if dsnIdentifiersPresent(dsn, msg) {
+	raw := err.Error()
+	msg := redact.URLUserinfo(raw)
+	if dsnIdentifiersPresent(dsn, raw) || dsnIdentifiersPresent(dsn, msg) {
 		return "the driver's message names a value from " + dsnSource + " (it is " +
 			"withheld: the user, database and host are half of the credential)" +
 			dsnFaultKind(err)
@@ -167,13 +178,47 @@ func dsnFaultKind(err error) string {
 	case errors.As(err, &pgErr):
 		// The server answered and named a condition; the SQLSTATE is that condition's
 		// code, and the only field of a PgError that cannot quote an identifier.
-		return " [error_class=*pgconn.PgError sqlstate=" + pgErr.Code + "]"
+		//
+		// It is still a field the SERVER filled in, and this string goes into a log line,
+		// so it is checked for shape before it is concatenated rather than trusted to be
+		// what the standard says. A five-character alphanumeric code cannot carry a
+		// newline or an `=`, and so cannot end the line early or forge a second key/value
+		// pair in it. Anything else contributes the class alone — the same way an
+		// unrecognised error contributes nothing.
+		if isSQLState(pgErr.Code) {
+			return " [error_class=*pgconn.PgError sqlstate=" + pgErr.Code + "]"
+		}
+		return " [error_class=*pgconn.PgError]"
 	case errors.As(err, &connErr):
 		return " [error_class=*pgconn.ConnectError]"
 	case errors.As(err, &parseErr):
 		return " [error_class=*pgconn.ParseConfigError]"
 	}
 	return ""
+}
+
+// isSQLState reports whether code has the shape the SQL standard gives a SQLSTATE: exactly five
+// characters, each a digit or an uppercase letter.
+//
+// It is a shape check, not a membership check. The point is not to decide whether a code is one
+// PostgreSQL defines — servers add their own, and extensions add more — but to establish that
+// the value cannot do anything but name one. A string of this shape has no newline to end a log
+// line early, no `=` to forge a second key/value pair in it, no space, and no quote; so a
+// hostile or compromised server cannot use the field to write log content of its own choosing.
+//
+// It is written out rather than compiled as a regexp because it runs on an error path, where a
+// package-level MustCompile is one more thing that can fail at init for a five-character check.
+func isSQLState(code string) bool {
+	if len(code) != 5 {
+		return false
+	}
+	for i := range len(code) {
+		c := code[i]
+		if (c < '0' || c > '9') && (c < 'A' || c > 'Z') {
+			return false
+		}
+	}
+	return true
 }
 
 // dsnIdentifiersPresent reports whether msg reproduces any identifier from the configured
@@ -323,6 +368,16 @@ func (e *safeDSNError) Unwrap() error { return e.cause }
 // errDSNNotURLScheme is exempt on exactly that argument, and it was missed when the
 // argument was first written: it is package-authored constant text that cannot carry a
 // credential, and its own comment records the self-censoring it was losing.
+//
+// What every one of those exemptions actually rests on, and the thing to check before adding
+// a fourth: the test is errors.Is, so an exemption covers the WHOLE CHAIN, not just the
+// sentinel at its root. Wrap an exempt sentinel in text and that text leaves here unredacted
+// too. For the three index sentinels that is intended and is why they exist — the wrapping
+// text IS the remediation DDL this package composed. errDSNNotURLScheme is the opposite case:
+// its argument is that it carries no dynamic text at all, so it is returned bare at every
+// site, with no %w above it. That is a property of the call sites rather than of the sentinel,
+// which is why TestDSNNotURLSchemeIsReturnedBare pins it: a future caller who wraps it with a
+// driver or server message would reopen the leak here with no other test going red.
 func redactMigrateErr(dsn string, err error) error {
 	if err == nil {
 		return nil
