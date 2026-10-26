@@ -1748,8 +1748,17 @@ fails with `result == nil` and nothing created, which
 
 **The service fetches the images; Google never sees the URL.** Google Ads takes
 image assets as base64 bytes, so a caller-supplied https URL is downloaded here
-and uploaded as an `imageAsset`. That makes this the one place the service
-fetches a caller-controlled address, and the transport is hardened accordingly:
+and uploaded as an `imageAsset`. A slot entry carrying `ResolvedImageRefPrefix` is
+the one exception and is never fetched at all: its bytes come from this service's
+own creative-asset store, loaded before the dispatch began, and
+`validateImageEntries` takes them from `CampaignInput.ResolvedImages` — see
+[Google Ads Creative Image Assets](../architecture/google-creative-assets.md).
+Everything in this list is therefore about the URL path; the checks that are a
+property of the BYTES rather than of the download — the per-image cap, the decode
+and the geometry — run on both, in the shared `validateImageBytes`.
+
+A downloaded URL makes this the one place the service fetches a caller-controlled
+address, and that transport is hardened accordingly:
 
 - **https only**, refused at validation. A plaintext fetch is one an on-path
   attacker can replace with an image of their choosing, which then becomes a real
@@ -1964,9 +1973,11 @@ mandatory, `logoImages` (1:1) is 1–5 with at least one, and `portraitImages` (
 cap of 20. Headlines (3–15), long headlines (1–5) and descriptions (2–5, at least one
 inside the short slot's display width) are **three distinct asset field types**, not one
 list bucketed by length, and a business name is required. Everything above is validated
-in the PURE preflight; the image bytes are fetched by `fetchSlotImages` through the same
-hardened credential-free transport Demand Gen uses, still BEFORE the first budget
-mutate, so a bad image fails with `result == nil` and nothing created.
+in the PURE preflight; the image bytes are supplied by `fetchSlotImages` — downloaded
+through the same hardened credential-free transport Demand Gen uses, or, for an entry
+carrying `ResolvedImageRefPrefix`, read from `CampaignInput.ResolvedImages` with no
+fetch at all — still BEFORE the first budget mutate, so a bad image fails with
+`result == nil` and nothing created.
 
 **The campaign shell differs from Search's in five ways that all matter.**
 `advertisingChannelType: PERFORMANCE_MAX`; `brandGuidelinesEnabled: false`, sent
@@ -2171,7 +2182,11 @@ budget.** `fetchDisplayImages` runs over `displayImageSlots` through the same ha
 transport Demand Gen and Performance Max use (https only, no redirects, public-IP dial
 guard, 5 MiB per image and 64 MiB across the creative, decoder-set format allowlist,
 geometry checked against the decoded image within Google's documented ±1%), and it runs
-BEFORE the first budget mutate, so a refused image strands nothing. The four slots are
+BEFORE the first budget mutate, so a refused image strands nothing. An entry carrying
+`ResolvedImageRefPrefix` is read from `CampaignInput.ResolvedImages` instead of fetched,
+so the first three of those — https, no redirects and the dial guard — do not apply to
+it; the rest are properties of the bytes and run on both, through the shared
+`validateImageBytes` and the same running creative total. The four slots are
 marketing 1.91:1 ≥600x314, square marketing 1:1 ≥300x300, logo 4:1 ≥512x128 and square
 logo 1:1 ≥128x128; at most 15 marketing images COMBINED across the two marketing arrays
 and 5 logos per array. A marketing image **or** a square marketing image is required and

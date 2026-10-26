@@ -180,6 +180,34 @@ func TestResolveGoogleCreativeAssets_RefusesBothSourcesAndNeither(t *testing.T) 
 	}
 }
 
+// The slot-entry scheme is reserved against caller input HERE, which is the only place that can
+// still tell a caller's string from one the resolver wrote. Left through, slotEntries renders it
+// unchanged and the platform client — which tests the prefix before the https rule — would take
+// it for a resolved entry rather than a URL to fetch.
+//
+// The refusal must not echo it: a creative URL can carry a signed query that is the credential
+// for the image, and these messages persist unencrypted as Steps entries.
+func TestResolveGoogleCreativeAssets_RefusesACallerURLUsingTheReservedScheme(t *testing.T) {
+	const secret = "SECRETSIGNATURE"
+	store := gaStoredAsset([]byte("x"))
+	d := gaDispatcher(store, NewAssetReserver(MaxConcurrentVariantAssetBytes, time.Second))
+	ref := googleAdsImageRef{URL: googleAdsImageRefScheme + "https://cdn.example.org/a.png?X-Amz-Signature=" + secret}
+
+	_, _, err := d.resolveGoogleCreativeAssets(context.Background(), gaBrief(), gaConfigWithRefs(ref))
+	if err == nil || !isPreflightRefusal(err) {
+		t.Fatalf("err = %v, want a preflight refusal", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("the refusal echoed the caller's signing query: %v", err)
+	}
+	if !strings.Contains(err.Error(), "marketingImages") {
+		t.Errorf("the refusal does not name the slot: %v", err)
+	}
+	if n := store.callCount(); n != 0 {
+		t.Errorf("the store was consulted %d times for an entry that names no asset", n)
+	}
+}
+
 // An asset id that is not a uuid is the caller's error, refused before any lookup: it is not a
 // key the store could have.
 func TestResolveGoogleCreativeAssets_RefusesAMalformedAssetID(t *testing.T) {

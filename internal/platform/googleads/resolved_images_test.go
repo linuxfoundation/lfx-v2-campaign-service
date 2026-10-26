@@ -76,6 +76,39 @@ func TestValidateImageEntries_ResolvedToken(t *testing.T) {
 	})
 }
 
+// The prefix branch is tested BEFORE the https rule, so any string carrying the prefix lands
+// there — including one a caller wrote into the config. Only the canonical uuid shape the
+// dispatch resolver renders may be treated as a resolved entry, and anything else must be
+// refused without being echoed: all that is known about it is its prefix, and a creative URL's
+// query string can be the credential for the image.
+func TestValidateImageEntries_ResolvedTokenWithAMalformedSuffix(t *testing.T) {
+	slot := demandGenImageSlots[0]
+	const secret = "SECRETSIGNATURE"
+
+	for name, suffix := range map[string]string{
+		"a caller URL":   "https://cdn.example.org/a.png?X-Amz-Signature=" + secret,
+		"not a uuid":     "not-a-uuid",
+		"empty":          "",
+		"uppercase uuid": "11111111-1111-4111-8111-11111111111A",
+	} {
+		t.Run(name, func(t *testing.T) {
+			entry := ResolvedImageRefPrefix + suffix
+			// Supplied in the map too, so the refusal is the shape check firing rather
+			// than the missing-bytes rule.
+			_, err := validateImageEntries(slot, []string{entry}, map[string][]byte{entry: []byte("x")})
+			if err == nil {
+				t.Fatal("a malformed resolved entry was accepted")
+			}
+			if strings.Contains(err.Error(), suffix) && suffix != "" {
+				t.Errorf("the refusal echoed the caller's value: %v", err)
+			}
+			if !strings.Contains(err.Error(), slot.label) {
+				t.Errorf("the refusal does not name the slot: %v", err)
+			}
+		})
+	}
+}
+
 // imageRefForError exists because redactURLForError is wrong for a token and wrong SILENTLY:
 // "lfx-asset:<uuid>" parses, and is absolute, but has no Host — the one condition that collapses
 // the whole value to "(redacted)". A refusal naming an asset would then name nothing.

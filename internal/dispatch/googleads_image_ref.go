@@ -6,7 +6,6 @@ package dispatch
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
@@ -61,10 +60,14 @@ type googleAdsImageRef struct {
 // client, which works in flat per-slot string lists.
 //
 // It is a URI scheme rather than an invented sentinel because that is what the string IS at that
-// point: the identity of an image that is not at a URL. It can never collide with a caller's
-// entry, since a URL ref is refused unless it parses as http(s) with a host, and it keeps the
-// platform-side budget, dedupe and error messages keyed on one string per image exactly as they
-// already were.
+// point: the identity of an image that is not at a URL. It keeps the platform-side budget, dedupe
+// and error messages keyed on one string per image exactly as they already were.
+//
+// It cannot collide with a caller's own entry, but NOT because the https rule catches one: the
+// platform client tests the prefix before it tests the scheme, so a caller string starting with
+// it never reaches the https rule at all. The scheme is reserved at this trust boundary instead —
+// resolveGoogleCreativeAssets refuses a URL-backed entry that carries it — and the client checks
+// the suffix shape as its own backstop. See ResolvedImageRefPrefix.
 //
 // Taken from the platform package rather than spelled again here, because it is a CONTRACT
 // between the two halves — this side writes the entry and the map key, that side matches them —
@@ -94,8 +97,14 @@ func (r *googleAdsImageRef) UnmarshalJSON(b []byte) error {
 
 // MarshalJSON writes a URL-only ref as the bare string it came in as, and anything else as an
 // object — see the file comment for why the asymmetry is the point.
+//
+// The test is namesAsset, the SAME predicate the resolver, slotEntries and the snapshot
+// sanitizer key on. Testing the raw string here instead would disagree with all three for a
+// whitespace-only id: the resolver trims, so such an entry is URL-backed and is never
+// canonicalized, yet this method would still write it as an object carrying an imageAssetId key
+// that checkNewSnapshotAssetRefs then skips — a persisted shape no other path can produce.
 func (r googleAdsImageRef) MarshalJSON() ([]byte, error) {
-	if r.ImageAssetID == "" {
+	if !r.namesAsset() {
 		return json.Marshal(r.URL)
 	}
 	type wire googleAdsImageRef
@@ -162,13 +171,4 @@ func googleAdsImageRefsFromURLs(urls []string) googleAdsImageRefs {
 		out[i] = googleAdsImageRef{URL: u}
 	}
 	return out
-}
-
-// describeGoogleAdsImageRef renders an entry for a refusal message: the asset id, which is not a
-// secret, or the reduced URL, which may be.
-func describeGoogleAdsImageRef(ref googleAdsImageRef) string {
-	if ref.namesAsset() {
-		return fmt.Sprintf("creative asset %s", strings.TrimSpace(ref.ImageAssetID))
-	}
-	return fmt.Sprintf("image URL %s", sanitizeSnapshotURL(ref.URL))
 }

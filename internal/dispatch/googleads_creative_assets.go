@@ -160,6 +160,18 @@ func (d *GoogleAdsDispatcher) resolveGoogleCreativeAssets(ctx context.Context, b
 			if raw != "" && url != "" {
 				return nil, func() {}, domain.PreflightRefusalf("google-ads %s entry %d names both an image URL and creative asset %s; use one or the other", slot.label, i+1, domain.CallerValue(raw))
 			}
+			// The resolved-entry scheme is RESERVED here, at the trust boundary, because this
+			// is the only place that can tell a caller's string from one this resolver wrote.
+			// Downstream it is too late: slotEntries renders a URL-backed ref unchanged, and
+			// the platform client tests the prefix BEFORE the https rule, so such a string
+			// would be taken for a resolved entry and its bytes looked up rather than fetched.
+			//
+			// The value is NOT echoed. All that has been established about it is that it
+			// starts with our scheme, and a caller's creative URL can carry a signed query
+			// string that is itself the credential for the image.
+			if strings.HasPrefix(url, googleAdsImageRefScheme) {
+				return nil, func() {}, domain.PreflightRefusalf("google-ads %s entry %d has an image URL beginning with %q, which is reserved for this service's own stored-asset references; name the asset with imageAssetId instead", slot.label, i+1, googleAdsImageRefScheme)
+			}
 			if raw == "" {
 				continue
 			}

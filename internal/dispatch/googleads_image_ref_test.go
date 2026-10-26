@@ -66,6 +66,26 @@ func TestGoogleAdsImageRef_MarshalKeepsTheShapeItArrivedIn(t *testing.T) {
 	}
 }
 
+// Every path that asks "is this entry asset-backed" must answer the same way, or the snapshot
+// records a shape no other path can produce. A whitespace-only id is URL-backed everywhere else —
+// the resolver trims it, so it is never canonicalized and never resolved — so the encoder must
+// not write it as an object carrying an imageAssetId key that the dangling-reference guard then
+// skips.
+func TestGoogleAdsImageRef_MarshalAgreesWithNamesAsset(t *testing.T) {
+	refs := googleAdsImageRefs{{URL: "https://cdn.example.org/a.png", ImageAssetID: "   "}}
+	if refs[0].namesAsset() {
+		t.Fatal("a whitespace-only id must not read as asset-backed")
+	}
+	out, err := json.Marshal(refs)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	const want = `["https://cdn.example.org/a.png"]`
+	if string(out) != want {
+		t.Errorf("got %s, want %s", out, want)
+	}
+}
+
 // The sanitizer reduces a URL — config_snapshot is persisted UNENCRYPTED and a signed query
 // string IS the credential — but must leave an asset id ALONE. The id is this service's own
 // primary key, and it is the exact value checkNewSnapshotAssetRefs reads back out of the
@@ -121,26 +141,10 @@ func TestGoogleAdsImageRefScheme_IsThePlatformConstant(t *testing.T) {
 	if googleAdsImageRefScheme == "" {
 		t.Fatal("the scheme is empty; every entry would render as a bare uuid")
 	}
-	// A URL ref is refused unless it parses as https with a host, so the token can never
-	// collide with a caller's own entry — but only while it is not itself such a URL.
+	// The scheme is reserved against caller entries by resolveGoogleCreativeAssets, not by the
+	// https rule — but a web scheme would still be the one spelling that could not be reserved
+	// without refusing ordinary creative URLs.
 	if strings.HasPrefix(googleAdsImageRefScheme, "http") {
 		t.Errorf("the scheme %q is a web scheme and could collide with a caller URL", googleAdsImageRefScheme)
-	}
-}
-
-// The refusal message names the asset id, which is not a secret, and REDUCES a URL, which may
-// carry one. A single renderer for both would have to pick one behaviour and would be wrong for
-// the other half of the entries.
-func TestDescribeGoogleAdsImageRef(t *testing.T) {
-	const assetID = "11111111-1111-4111-8111-111111111111"
-	if got := describeGoogleAdsImageRef(googleAdsImageRef{ImageAssetID: assetID}); !strings.Contains(got, assetID) {
-		t.Errorf("an asset ref rendered as %q, which does not name the asset", got)
-	}
-	got := describeGoogleAdsImageRef(googleAdsImageRef{URL: "https://cdn.example.org/a.png?X-Amz-Signature=s3cr3t"})
-	if strings.Contains(got, "s3cr3t") {
-		t.Errorf("the refusal message leaked the signing query: %q", got)
-	}
-	if !strings.Contains(got, "cdn.example.org") {
-		t.Errorf("the refusal message named no host at all: %q", got)
 	}
 }

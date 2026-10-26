@@ -423,9 +423,39 @@ func textWeight(s string) int {
 // uses this constant itself rather than repeating the literal.
 //
 // A URI scheme rather than an invented sentinel: that is what the string is, the identity of an
-// image that is not at a URL. It can never collide with a caller's own entry, because a URL entry
-// is refused below unless it is https with a host.
+// image that is not at a URL.
+//
+// The https rule below does NOT keep a caller's string out of this shape — the prefix is tested
+// first, so such a string never reaches it. What keeps the two apart is the suffix check in
+// validateImageEntries: an entry carrying this prefix is only treated as resolved when the rest
+// of it is the canonical uuid this service's own resolver renders. Anything else is refused
+// without being echoed, because all that is known about it at that point is its prefix.
 const ResolvedImageRefPrefix = "lfx-asset:"
+
+// isResolvedAssetID reports whether s is the canonical uuid rendering a resolved entry carries —
+// 8-4-4-4-12 lowercase hex, exactly what uuid.UUID.String() produces on the dispatch side.
+//
+// Spelled out rather than taken from the uuid package: no client in internal/platform depends on
+// it, and the contract here is not "some uuid" but "the one spelling our own resolver writes".
+func isResolvedAssetID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+				return false
+			}
+		}
+	}
+	return true
+}
 
 // validateImageEntries checks the SHAPE of each entry in one slot. Everything about the image
 // itself — that it exists, decodes, and has the right dimensions — is checked in the fetch phase,
@@ -445,8 +475,17 @@ func validateImageEntries(slot imageSlot, in []string, resolved map[string][]byt
 			return nil, fmt.Errorf("google-ads %s %d has no URL", slot.label, i)
 		}
 		if strings.HasPrefix(raw, ResolvedImageRefPrefix) {
-			// Absent bytes are a CALLER invariant failure, not a caller input error: the
-			// same code wrote this entry and was meant to fill the map. Refused here
+			// The suffix is checked BEFORE the entry is echoed anywhere. This branch is
+			// reached by any string carrying the prefix, including one a caller wrote
+			// into the config, and such a string can be anything at all — a signed URL
+			// whose query is the credential for the image included. Only the canonical
+			// uuid shape the resolver renders is treated as a resolved entry; the rest
+			// is refused naming the slot and position and nothing else.
+			if !isResolvedAssetID(strings.TrimPrefix(raw, ResolvedImageRefPrefix)) {
+				return nil, fmt.Errorf("google-ads %s %d is not a usable image entry: %q is reserved for this service's own stored-asset references", slot.label, i, ResolvedImageRefPrefix)
+			}
+			// Bytes missing for a well-formed entry is a CALLER invariant failure: the
+			// code that wrote this entry is the code that fills the map. Refused here
 			// rather than at the fetch so it lands with every other preflight refusal,
 			// before anything upstream exists.
 			if _, ok := resolved[raw]; !ok {

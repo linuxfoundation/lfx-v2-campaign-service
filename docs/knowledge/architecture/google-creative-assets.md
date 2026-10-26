@@ -48,6 +48,14 @@ that arrived as a bare string is re-encoded as a bare string. `googleAdsSnapshot
 re-marshals the config to persist it, so encoding every URL as `{"url": "…"}` would silently
 rewrite the shape of every pre-existing snapshot on its next write.
 
+`MarshalJSON` decides which shape to write with `namesAsset()`, the same predicate the resolver,
+`slotEntries` and `sanitizeSnapshotImageRefs` use. Testing the raw string instead — as it did
+until the review fix — disagreed with all three for a whitespace-only id: the resolver trims, so
+such an entry is URL-backed and is never canonicalized, yet the encoder still wrote it as an
+object carrying an `imageAssetId` key that `collectSnapshotAssetIDs` skips. Nothing dangled,
+because that collector parses the id, but the snapshot recorded a shape no other path produces —
+the divergence `TestPlatformConfigsNameTheirAssetUnderOneKey` exists to keep out.
+
 `sanitizeSnapshotImageRefs` reduces a URL — `config_snapshot` is persisted **unencrypted** and a
 signed query string IS the credential — and leaves an asset id alone. The id is this service's
 own primary key and is the exact value the dangling-reference guard reads back out of the
@@ -95,14 +103,31 @@ it in `CampaignInput.ResolvedImages`, keyed by that exact entry string.
 `googleads.ResolvedImageRefPrefix` is **exported** and `internal/dispatch` uses it rather than
 repeating the literal: the entry string and the map key are two halves of one contract, and a
 contract spelled twice can drift. The drift would be silent — the client would try to fetch
-`lfx-asset:<uuid>` over HTTP. A URI scheme rather than an invented sentinel, and one that cannot
-collide with a caller's own entry because a URL entry is refused unless it is https with a host.
+`lfx-asset:<uuid>` over HTTP. A URI scheme rather than an invented sentinel: that is what the
+string IS at that point, the identity of an image that is not at a URL.
+
+The scheme is **reserved at the trust boundary**, and not — as this page and three code comments
+claimed until the review fix — by the client's https rule. That rule never sees such a string:
+`validateImageEntries` tests the prefix *before* it parses the URL, so a caller who writes
+`"lfx-asset:…"` straight into a slot lands in the prefix branch. `resolveGoogleCreativeAssets`
+therefore refuses a URL-backed entry whose URL carries the prefix, naming the slot and position
+and **not** echoing the value: all that is known about it there is its prefix, and a creative URL's
+signed query string can itself be the credential for the image. That resolver is the only place
+that can still tell a caller's string from one this service rendered — after `slotEntries()` the
+two are the same `[]string`.
 
 ## What a pre-resolved image does not skip
 
 `validateImageEntries` checks a token against the supplied map instead of against the URL rules —
 absent bytes are a **caller invariant failure**, refused in the shape phase with every other
 preflight refusal — and applies the duplicate rule to tokens exactly as to URLs.
+
+Its first act in that branch is the **suffix check**, before the entry is echoed anywhere:
+`isResolvedAssetID` requires the canonical 8-4-4-4-12 lowercase hex that `uuid.UUID.String()`
+renders on the dispatch side, and anything else is refused naming the slot and position only.
+This is the client-side backstop to the reservation above, and it is spelled out rather than
+taken from `github.com/google/uuid` — no package under `internal/platform` depends on that
+module, and the contract here is not "some uuid" but "the one spelling our own resolver writes".
 
 `fetchSlotImages` then runs a pre-resolved image through `validateImageBytes`, the same function
 the downloaded path runs: the per-image size cap, that there are any bytes, `image.DecodeConfig`
