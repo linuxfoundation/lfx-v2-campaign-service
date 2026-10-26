@@ -891,12 +891,17 @@ func composeErr(ctx context.Context, projectID string, err error) error {
 	return audienceExploreErr(ctx, "compose audience master", projectID, err)
 }
 
-// composePartialMessage distinguishes a CONFIRMED suppression orphan (the master
-// create definitely failed) from an UNCONFIRMED master create, and from an
-// UNCONFIRMED suppression create (HubSpot may have created either despite the
-// error) — the remedy differs: the confirmed case names one list an operator must
-// reconcile, the unconfirmed cases tell them to search by name before assuming
-// nothing happened.
+// composePartialMessage tells the operator what to reconcile for each partial shape.
+//
+// Compose creates no suppression list of its own any more: it excludes the project's standing
+// lists, which are found by name and reused on any repeat, so the shapes a current deployment
+// produces are the record-failed one (Master) and an unconfirmed master (MasterName). The
+// suppression shapes stay in the contract and keep a message, without the "combined" list they
+// used to name.
+//
+// A repeat compose is NOT a safe remedy for a confirmed master: a master created under its
+// derived name is not found again by a repeat, which takes the fingerprinted name and creates a
+// second master beside it (resolveComposeNames). Attaching the existing master is.
 func composePartialMessage(partial *audience.ComposePartialError) string {
 	hasSuppression := partial.Suppression.ListID != "" || partial.Suppression.Name != ""
 	switch {
@@ -905,20 +910,25 @@ func composePartialMessage(partial *audience.ComposePartialError) string {
 		// suppression, so every arm below would describe it wrongly as a create that did
 		// not finish. Nothing needs reconciling in HubSpot here — the lists are correct
 		// and complete; only the link to the campaign is missing.
-		return "the master list and its suppression list were created, but attaching them to the campaign failed — " +
-			"attach the master list to the campaign's audience manually; do not compose again, the lists already exist"
+		return "the master list was created, but attaching it to the campaign failed — " +
+			"attach the master list to the campaign's audience manually; composing again can create a second master list, " +
+			"while the suppression lists it excludes are standing lists that any repeat reuses"
 	case partial.SuppressionUnconfirmed:
-		return "the combined suppression list creation is unconfirmed (it may have been created) — " +
+		return "the suppression list creation is unconfirmed (it may have been created) — " +
 			"search HubSpot for it by name before composing again; do not simply retry"
 	case partial.MasterName != "" && hasSuppression:
-		return "the combined suppression list was created and the master list creation is unconfirmed " +
+		return "the suppression list was created and the master list creation is unconfirmed " +
 			"(it may have been created) — verify both in HubSpot before composing again; do not simply retry"
 	case partial.MasterName != "":
 		return "the master list creation is unconfirmed (it may have been created) — " +
 			"search HubSpot for it by name before composing again; do not simply retry"
+	case hasSuppression:
+		return "the suppression list was created but the master list was not — " +
+			"check the suppression list in HubSpot before composing again; do not simply retry"
 	default:
-		return "the combined suppression list was created but the master list was not — " +
-			"reconcile the suppression list in HubSpot before composing again; do not simply retry"
+		// No production path builds a partial with nothing set; kept so a future one still
+		// reads as "check the portal" rather than as a clean failure.
+		return "compose may have left lists in HubSpot — check the portal before composing again; do not simply retry"
 	}
 }
 

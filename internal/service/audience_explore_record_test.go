@@ -372,7 +372,9 @@ func TestComposeAudienceMasterReportsARecordFailureAsAPartialCarryingTheMaster(t
 	require.NotNil(t, partial.Suppression)
 	assert.Equal(t, "supp-1", partial.Suppression.ListID)
 	assert.Nil(t, partial.MasterName, "MasterName is for an UNCONFIRMED master; this one is confirmed")
-	assert.Contains(t, partial.Message, "do not compose again")
+	assert.Contains(t, partial.Message, "attach the master list to the campaign's audience manually")
+	assert.Contains(t, partial.Message, "composing again can create a second master list")
+	assert.NotContains(t, partial.Message, "combined")
 
 	assert.Equal(t, composeRecordAttempts, repo.calls,
 		"the irreversible half already succeeded, so a transient blip gets one bounded retry")
