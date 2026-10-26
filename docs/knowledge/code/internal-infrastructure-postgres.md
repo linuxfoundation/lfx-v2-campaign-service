@@ -483,6 +483,40 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `(1200, NULL)`, `(NULL, 628)`, `(1200, 0)` and `(1200, -628)` each raising SQLSTATE `23514` on
   `creative_assets_dimensions_positive`, with `(NULL, NULL)` and `(1200, 628)` accepted.
 
+- `000048` — `platform_bound_at` TIMESTAMPTZ on `campaigns`, NULLABLE with NO default
+  (lfx-self-serve-ops#897). It records WHEN a row took its upstream id, which `created_at`
+  does not: a dispatch's `created_at` is its `ClaimCampaignDispatch` placeholder, inserted
+  before the platform call, and `upsertCampaignQuery` binds the id later. The account
+  monitor's deleted-campaign scope (`listProjectPlatformDeletedCampaignIDsQuery`) hands a
+  campaign every project has deleted to whichever row bound it LAST, so ordering by
+  `created_at` let a dispatch that claimed first but bound after another project's
+  adopt-then-delete (Google `adoptExisting`, Meta same-name reuse) rank as the former owner.
+  Written with `clock_timestamp()` by `upsertCampaignQuery`'s INSERT arm when it carries an id,
+  by its conflict arm only when the id CHANGES (the owning job's re-upsert keeps the first
+  stamp), and unconditionally by `adoptCampaignQuery`. EXPAND only: an N-1 write leaves it
+  `NULL`, which the reader takes as `COALESCE(platform_bound_at, created_at)` — exact for
+  adoptions and for pre-`000048` rows, whose only evidence is `created_at` — so there is no
+  backfill. A `DEFAULT now()` would be wrong, not just imprecise: it would stamp the claim.
+  Pinned by `TestCampaignWritesStampPlatformBoundAt` (statement shapes),
+  `TestListProjectPlatformDeletedCampaignIDs_Live` (claim order and binding order disagreeing,
+  both ways) and `TestLiveClaimThenUpsertStampsPlatformBoundAt` (under `dbtest/`).
+
+- `000049` — a concurrent, non-unique, non-partial index
+  `idx_campaigns_platform_campaign_history` on `(platform, platform_campaign_id)`.
+  The account monitor's latest-owner lookup examines deleted bindings as well as
+  live ones, so the per-provider live-only unique indexes cannot cover it.
+  `ListProjectPlatformMonitorCampaignIDs` evaluates live and eligible deleted rows
+  in one statement snapshot for the post-upstream ownership recheck, sharing the
+  deleted-scope `NOT EXISTS` predicate. The response intersects that snapshot with
+  its initial scope and fails closed on lookup errors. No ownership lock is held
+  across provider calls or response delivery. Both migration directions have one
+  concurrent statement; the up migration deliberately omits `IF NOT EXISTS` so
+  an INVALID leftover cannot silently pass a retry. Drop that leftover before
+  forcing the migration back to 48 and retrying. Pinned by
+  `TestMigration000049_IndexesAllBindingHistoryConcurrently`,
+  `TestCampaignMonitorHistoryIndex_Live`, and the final snapshot assertions in
+  `TestListProjectPlatformDeletedCampaignIDs_Live`.
+
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
 
 `campaign_jobs` is append-only — nothing else in the service deletes a row — so it

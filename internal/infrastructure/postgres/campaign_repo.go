@@ -605,9 +605,72 @@ const listProjectPlatformCampaignIDsQuery = `SELECT DISTINCT platform_campaign_i
 // That is an ordinary state — a project that has not run a campaign yet — and the caller renders
 // it as an empty result rather than a failure.
 func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
-	rows, err := r.db.Query(ctx, listProjectPlatformCampaignIDsQuery, projectID, platform)
+	return r.queryProjectCampaignScope(ctx, listProjectPlatformCampaignIDsQuery, "project platform campaign ids", projectID, platform)
+}
+
+// listProjectPlatformDeletedCampaignIDsQuery is listProjectPlatformCampaignIDsQuery's complement
+// on status: the project's SOFT-DELETED campaigns with an upstream id, scoped by project_id and
+// platform in SQL for the same reason. A local delete does not touch the ad platform, so the
+// account monitor reads these too — a deleted campaign may still be spending.
+//
+// The NOT EXISTS hands the campaign to its LATEST owner. The per-platform binding indexes cover
+// live rows only, so once this project deletes its row another project can adopt the same
+// upstream campaign; from then on it is that project's campaign and must not stay in this
+// project's monitor. Another project's row takes it over when it is live, OR when it bound the
+// id later than this one whatever its status: if the adopter then deletes its row too, a
+// live-only test would find no owner left and hand the campaign — with the adopter's budget and
+// spend — back to this project.
+//
+// "Bound later" is platform_bound_at (000048), NOT created_at. A dispatch's created_at is its
+// claim INSERT, made before the platform call; a dispatch that binds an EXISTING upstream
+// campaign (Google's adoptExisting, Meta's same-name reuse) can claim, wait out another
+// project's adopt-then-delete, and only then bind, so ordering by created_at would rank the
+// current owner first and expose its budget and spend to the former one. COALESCE to created_at
+// for rows with no stamp — written before 000048 or by an N-1 binary during a rollout — which is
+// exact for adoptions and the only evidence those rows carry. Matched on the id
+// alone, not its provenance: on Reddit and X an id is only unique within an account, so another
+// account's row with the same id also hides this one — the conservative direction for a read
+// that exists to keep projects apart.
+// Shared by the deleted precheck and the final monitor snapshot; the ownership rule
+// must not drift between the two reads.
+const monitorCampaignNotTakenOver = `NOT EXISTS (SELECT 1 FROM campaigns l
+	    WHERE l.platform = c.platform AND l.platform_campaign_id = c.platform_campaign_id
+	      AND l.project_id <> c.project_id
+	      AND (l.status <> 'deleted'
+	        OR COALESCE(l.platform_bound_at, l.created_at) > COALESCE(c.platform_bound_at, c.created_at)))`
+
+const listProjectPlatformDeletedCampaignIDsQuery = `SELECT DISTINCT c.platform_campaign_id, c.result FROM campaigns c
+	WHERE c.project_id=$1 AND c.platform=$2 AND c.status = 'deleted'
+	  AND c.platform_campaign_id IS NOT NULL AND c.platform_campaign_id <> ''
+	  AND ` + monitorCampaignNotTakenOver + `
+	ORDER BY c.platform_campaign_id ASC`
+
+// ListProjectPlatformDeletedCampaignIDs returns the upstream campaign ids of this project's
+// soft-deleted campaigns on platform. Returns an EMPTY slice, not an error, when there are none.
+func (r *CampaignRepo) ListProjectPlatformDeletedCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	return r.queryProjectCampaignScope(ctx, listProjectPlatformDeletedCampaignIDsQuery, "project platform deleted campaign ids", projectID, platform)
+}
+
+// listProjectPlatformMonitorCampaignIDsQuery sees live rows, deleted rows and competing
+// bindings in one statement snapshot. Repeating the two precheck queries would allow a
+// delete/adopt between them to retain an id that was live only in the first snapshot.
+const listProjectPlatformMonitorCampaignIDsQuery = `SELECT DISTINCT c.platform_campaign_id, c.result FROM campaigns c
+	WHERE c.project_id=$1 AND c.platform=$2
+	  AND c.platform_campaign_id IS NOT NULL AND c.platform_campaign_id <> ''
+	  AND (c.status <> 'deleted' OR ` + monitorCampaignNotTakenOver + `)
+	ORDER BY c.platform_campaign_id ASC`
+
+// ListProjectPlatformMonitorCampaignIDs returns the project's current monitor bindings.
+func (r *CampaignRepo) ListProjectPlatformMonitorCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	return r.queryProjectCampaignScope(ctx, listProjectPlatformMonitorCampaignIDsQuery, "project platform monitor campaign ids", projectID, platform)
+}
+
+// queryProjectCampaignScope runs one of the (platform_campaign_id, result) scope queries above;
+// what names the read in its errors.
+func (r *CampaignRepo) queryProjectCampaignScope(ctx context.Context, query, what, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	rows, err := r.db.Query(ctx, query, projectID, platform)
 	if err != nil {
-		return nil, fmt.Errorf("list project platform campaign ids: %w", err)
+		return nil, fmt.Errorf("list %s: %w", what, err)
 	}
 	defer rows.Close()
 
@@ -618,12 +681,12 @@ func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, proje
 			result []byte
 		)
 		if serr := rows.Scan(&id, &result); serr != nil {
-			return nil, fmt.Errorf("scan project platform campaign id: %w", serr)
+			return nil, fmt.Errorf("scan %s: %w", what, serr)
 		}
 		out = append(out, model.ProjectCampaignScope{PlatformCampaignID: id, Result: result})
 	}
 	if rerr := rows.Err(); rerr != nil {
-		return nil, fmt.Errorf("iterate project platform campaign ids: %w", rerr)
+		return nil, fmt.Errorf("iterate %s: %w", what, rerr)
 	}
 	return out, nil
 }
@@ -786,10 +849,24 @@ func (r *CampaignRepo) getCampaignBySlot(ctx context.Context, projectID, briefID
 const upsertCampaignQuery = `INSERT INTO campaigns
 	(project_id, brief_id, job_id, platform, variant, platform_campaign_id, campaign_name, status,
 	 budget_amount, budget_type, start_date, end_date, config_snapshot, result, created_by, updated_by,
-	 ran_on_system_account, slot_version)
-	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17,$18)
+	 ran_on_system_account, slot_version, platform_bound_at)
+	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17,$18,
+	        CASE WHEN NULLIF($5::text, '') IS NOT NULL THEN clock_timestamp() END)
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO UPDATE SET
 		job_id=EXCLUDED.job_id, platform_campaign_id=EXCLUDED.platform_campaign_id,
+		-- platform_bound_at (000048) is stamped when this write gives the row an upstream id it
+		-- did not hold — on a normal dispatch, this arm finalizing the claim. created_at cannot
+		-- stand in for it: the claim INSERT set that before the platform call, and a dispatch
+		-- that binds an EXISTING upstream campaign can finish after another project adopted and
+		-- deleted it (see listProjectPlatformDeletedCampaignIDsQuery). The owning job's re-upsert
+		-- of the same id keeps the first stamp. clock_timestamp(), not now(): the stamp orders
+		-- bindings, so it is when this statement ran, not when its transaction began.
+		platform_bound_at=CASE
+			WHEN NULLIF(EXCLUDED.platform_campaign_id, '') IS NOT NULL
+			 AND EXCLUDED.platform_campaign_id IS DISTINCT FROM NULLIF(campaigns.platform_campaign_id, '')
+			THEN clock_timestamp()
+			ELSE campaigns.platform_bound_at
+		END,
 		campaign_name=EXCLUDED.campaign_name, status=EXCLUDED.status,
 		budget_amount=EXCLUDED.budget_amount, budget_type=EXCLUDED.budget_type,
 		start_date=EXCLUDED.start_date, end_date=EXCLUDED.end_date,
@@ -1083,9 +1160,13 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 // resolved credential in scope, so the deferred stampProvenance DOES record which account
 // served it. The two paths answer differently because they genuinely know different things:
 // one resolved a credential and used it, the other was handed an id by a caller.
+//
+// platform_bound_at (000048) is stamped unconditionally: an adoption always carries its
+// upstream id, so the row is bound the moment it exists. See upsertCampaignQuery.
 const adoptCampaignQuery = `INSERT INTO campaigns
-	(project_id, brief_id, platform, variant, platform_campaign_id, campaign_name, status, result, created_by, updated_by)
-	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
+	(project_id, brief_id, platform, variant, platform_campaign_id, campaign_name, status, result, created_by, updated_by,
+	 platform_bound_at)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,clock_timestamp())
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO NOTHING
 	RETURNING ` + campaignCols
 

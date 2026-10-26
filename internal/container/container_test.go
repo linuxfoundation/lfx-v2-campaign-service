@@ -181,6 +181,14 @@ func (stubCampaignRepo) ListProjectPlatformCampaignIDs(context.Context, string, 
 	return nil, nil
 }
 
+func (stubCampaignRepo) ListProjectPlatformDeletedCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
+	return nil, nil
+}
+
+func (stubCampaignRepo) ListProjectPlatformMonitorCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
+	return nil, nil
+}
+
 func (stubCampaignRepo) ListRecentProjectPlatformCampaigns(context.Context, string, model.Provider, int) ([]*model.Campaign, error) {
 	return nil, nil
 }

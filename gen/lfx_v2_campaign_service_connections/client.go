@@ -1395,6 +1395,7 @@ func (c *Client) CreateHubspotCampaign(ctx context.Context, p *CreateHubspotCamp
 // the "lfx-v2-campaign-service-connections" service.
 // MonitorGoogleAdsAccount may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *AccountMonitorScopeConflictError): A campaign recorded for this project does not fit the monitored account: created under a different customer than account_id, or recording none (see reason)
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
@@ -1433,6 +1434,7 @@ func (c *Client) MonitorLinkedinAdsAccount(ctx context.Context, p *MonitorLinked
 // "lfx-v2-campaign-service-connections" service.
 // MonitorMetaAdsAccount may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *AccountMonitorScopeConflictError): A campaign recorded for this project does not fit the monitored account: created under a different account, or carrying an id the platform cannot read (see reason)
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
@@ -1452,6 +1454,7 @@ func (c *Client) MonitorMetaAdsAccount(ctx context.Context, p *MonitorMetaAdsAcc
 // the "lfx-v2-campaign-service-connections" service.
 // MonitorRedditAdsAccount may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *AccountMonitorScopeConflictError): A campaign recorded for this project does not fit the monitored account: created under a different account, recording none, or carrying an id the platform cannot read (see reason)
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
@@ -1490,7 +1493,7 @@ func (c *Client) MonitorMicrosoftAdsAccount(ctx context.Context, p *MonitorMicro
 // the "lfx-v2-campaign-service-connections" service.
 // MonitorTwitterAdsAccount may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
-//   - "Conflict" (type *AccountMonitorConflictError): The account cannot be monitored as it stands: too many active campaigns, or a timezone off the whole UTC hour (see reason)
+//   - "Conflict" (type *AccountMonitorConflictError): The account cannot be monitored as it stands: too many active campaigns on the shared account, a timezone off the whole UTC hour, or a recorded campaign that does not fit the account (see reason)
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
