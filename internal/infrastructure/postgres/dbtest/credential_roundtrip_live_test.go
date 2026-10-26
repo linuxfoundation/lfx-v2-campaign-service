@@ -298,10 +298,10 @@ func TestLiveCredentialSurvivesTheRealByteaColumn(t *testing.T) {
 		// Report the mismatch by SHAPE, never by value: this failure prints into CI job
 		// output, and the same lines get copied into tests that do hold a real blob. Length
 		// separates "truncated/padded" from "same size, different bytes"; the digests
-		// separate the latter from a fault this test cannot see. Truncated, because these
-		// two operands are PLAINTEXT: a full unsalted digest beside an exact length would
-		// let anyone holding the CI output confirm a guess at a low-entropy secret offline.
-		// See dbtest.BlobDigest.
+		// separate the latter from a fault this test cannot see. Keyed, because these two
+		// operands are PLAINTEXT: an unkeyed digest beside an exact length would let anyone
+		// holding the CI output confirm a guess at a low-entropy secret offline, and
+		// truncating it does not change that. See dbtest.BlobDigest.
 		t.Fatalf("decrypted blob does not match the plaintext it was sealed from: "+
 			"got %s, want %s",
 			dbtest.BlobDigest(opened), dbtest.BlobDigest(plaintext))

@@ -2,7 +2,7 @@
 
 **Fix** — `dbtest/connection_live_test.go` compared a `credentials` column read back from
 Postgres and rendered it with `%q` on failure, putting the column's bytes into the build log.
-It now reports `len` plus `sha256` on both sides, matching
+It now reports `len` plus a digest on both sides, matching
 `credential_roundtrip_live_test.go`, which already did this.
 
 Length AND digest, not length alone: the losing rotation's `ciphertext-v3` is the same length

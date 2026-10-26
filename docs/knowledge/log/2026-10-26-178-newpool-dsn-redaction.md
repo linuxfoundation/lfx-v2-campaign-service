@@ -8,8 +8,9 @@ lines apart inside `initDatabase` (`postgres.NewPool(ctx, dsn)` at line 1275,
 `migrateDone <- postgres.Migrate(dsn)` at line 1292), wrapping and propagating both to a
 logging caller.
 
-The leak was not reasoned about but rendered. A throwaway probe built `NewPool` against
-`postgres://probeuser:probepass@127.0.0.1:1/probedb` and printed the error text:
+The leak was not reasoned about but rendered. A throwaway probe built `NewPool` against a DSN
+carrying user `probeuser`, a password, host `127.0.0.1:1` and database `probedb`, and printed
+the error text:
 
 ```
 ping database: failed to connect to `user=probeuser database=probedb`: …

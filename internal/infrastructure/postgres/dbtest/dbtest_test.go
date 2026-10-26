@@ -5,6 +5,8 @@ package dbtest
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -169,10 +171,11 @@ func TestCleanupContextIsBoundedAndUncancelled(t *testing.T) {
 //
 // Those assertions compare credential ciphertext and, in two of them, decrypted PLAINTEXT, and
 // their output lands in CI job logs. Two properties matter and neither is self-evident from the
-// call sites: the bytes never appear, and the digest is TRUNCATED. A full unsalted SHA-256
-// printed beside an exact byte length is an offline verification oracle — anyone holding the log
-// line can confirm a guess at a low-entropy secret without touching the service — and these
-// assertions are the shape the next credential test gets copied from.
+// call sites: the bytes never appear, and the digest is KEYED. An unkeyed SHA-256 printed beside
+// an exact byte length is an offline verification oracle — anyone holding the log line hashes
+// each candidate of that length and compares, and truncating the digest does not close that,
+// because a wrong guess collides in the first eight bytes only with probability 2^-64 — and
+// these assertions are the shape the next credential test gets copied from.
 func TestBlobDigestReportsShapeNotValue(t *testing.T) {
 	t.Parallel()
 
@@ -186,16 +189,22 @@ func TestBlobDigestReportsShapeNotValue(t *testing.T) {
 		t.Errorf("the digest line dropped the length, which is what separates a truncating "+
 			"column from a corrupting one: %s", got)
 	}
-	// 8 bytes is 16 hex characters. A full digest is 64, and that is the regression.
+	// 8 bytes is 16 hex characters.
 	const wantHexLen = 16
-	_, hexPart, ok := strings.Cut(got, "sha256[:8]=")
+	_, hexPart, ok := strings.Cut(got, "hmac[:8]=")
 	if !ok {
-		t.Fatalf("the digest line no longer says how much of the digest it printed: %s", got)
+		t.Fatalf("the digest line no longer says how much of which digest it printed: %s", got)
 	}
 	if len(hexPart) != wantHexLen {
-		t.Errorf("digest is %d hex characters, want %d — a full digest beside an exact "+
-			"length is an offline oracle for a low-entropy secret: %s",
-			len(hexPart), wantHexLen, got)
+		t.Errorf("digest is %d hex characters, want %d: %s", len(hexPart), wantHexLen, got)
+	}
+	// The property that actually closes the oracle: the printed digest is NOT one a reader
+	// of the log line can recompute from a guess. Pinned against the unkeyed digest of this
+	// very input, so a revert to sha256.Sum256 fails here rather than only renaming a label.
+	unkeyed := sha256.Sum256([]byte(secret))
+	if strings.Contains(got, hex.EncodeToString(unkeyed[:8])) {
+		t.Errorf("the digest is the plain SHA-256 of the input, so anyone holding the log "+
+			"line can confirm a guess offline; it must be keyed: %s", got)
 	}
 	// Different bytes at the SAME length must still differ, or the assertions it serves
 	// cannot report the failure they exist to catch (ciphertext-v2 vs ciphertext-v3).

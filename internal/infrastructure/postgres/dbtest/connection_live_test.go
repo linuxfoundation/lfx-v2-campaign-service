@@ -193,10 +193,10 @@ func TestConnectionUpdateWithCredentialWritesBothInOneStatement(t *testing.T) {
 	// Length AND digest, not length alone: equal lengths with different bytes is exactly
 	// the failure this assertion exists to catch — the losing rotation's "ciphertext-v3"
 	// is the same length as "ciphertext-v2" — so lengths alone would trade the leak for a
-	// test that fails without saying why. The digest is truncated rather than full for the
-	// reason dbtest.BlobDigest records: a full unsalted digest beside an exact length is an
-	// offline oracle for a low-entropy secret, and a template is exactly where that must not
-	// be set. Matches credential_roundtrip_live_test.go, which shares the helper.
+	// test that fails without saying why. The digest is keyed rather than plain for the
+	// reason dbtest.BlobDigest records: an unkeyed digest beside an exact length is an
+	// offline oracle for a low-entropy secret at any length, and a template is exactly where
+	// that must not be set. Matches credential_roundtrip_live_test.go, which shares the helper.
 	const wantCred = "ciphertext-v2"
 	if string(blob) != wantCred {
 		t.Errorf("credentials = %s, want %s — the stored account and credential must come "+

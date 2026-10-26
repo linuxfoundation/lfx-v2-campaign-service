@@ -102,7 +102,7 @@ func TestMigrateDoesNotLeakIdentifiersWhenTheConnectionFails(t *testing.T) {
 func TestRedactedMigrateErrorKeepsItsIdentity(t *testing.T) {
 	t.Parallel()
 
-	dsn := "postgres://leakuser:s3cretpw@127.0.0.1:1/leakdb"
+	dsn := "postgres://leakuser:s3cretpw@127.0.0.1:1/leakdb" // secretlint-disable-line -- synthetic DSN; the fixture whose identifiers must survive a redacted migrate error
 	dirty := fmt.Errorf("apply migrations: %w", migrate.ErrDirty{Version: 7})
 
 	got := redactMigrateErr(dsn, dirty)
@@ -121,7 +121,7 @@ func TestRedactedMigrateErrorKeepsTheIndexSentinelsReadable(t *testing.T) {
 
 	// A DSN whose database name is also a word in the remediation text: the exact shape
 	// that would be censored if the sentinels went through the comparison.
-	dsn := "postgres://campaigns:s3cretpw@127.0.0.1:1/campaigns"
+	dsn := "postgres://campaigns:s3cretpw@127.0.0.1:1/campaigns" // secretlint-disable-line -- synthetic DSN; its database name is deliberately a word in the remediation text
 	const remediation = "REINDEX INDEX CONCURRENTLY campaigns_brief_id_idx"
 	sentinel := fmt.Errorf("%w: %s", ErrInvalidIndex, remediation)
 
@@ -140,7 +140,7 @@ func TestRedactedMigrateErrorKeepsTheIndexSentinelsReadable(t *testing.T) {
 func TestSafeDSNErrKeepsAMessageThatNamesNothing(t *testing.T) {
 	t.Parallel()
 
-	dsn := "postgres://leakuser:s3cretpw@db.example:5432/leakdb"
+	dsn := "postgres://leakuser:s3cretpw@db.example:5432/leakdb" // secretlint-disable-line -- synthetic DSN; the fixture asserting a message naming none of it is kept whole
 	const msg = "server closed the connection unexpectedly"
 
 	if got := SafeDSNErr(dsn, "DATABASE_URL", errors.New(msg)); got != msg {
@@ -195,7 +195,7 @@ func TestNewPoolDoesNotLeakIdentifiersWhenThePingFails(t *testing.T) {
 func TestNewPoolKeepsTheConnectErrorReachable(t *testing.T) {
 	t.Parallel()
 
-	dsn := "postgres://leakuser:s3cretpw@127.0.0.1:1/leakdb?sslmode=disable"
+	dsn := "postgres://leakuser:s3cretpw@127.0.0.1:1/leakdb?sslmode=disable" // secretlint-disable-line -- synthetic DSN; the fixture asserting the connect error stays reachable
 
 	pool, err := NewPool(context.Background(), dsn)
 	if err == nil {
@@ -249,7 +249,7 @@ func TestNewPoolDoesNotDoubleRedactTheParseArm(t *testing.T) {
 func TestMigrateKeepsItsOwnWrongSchemeRejection(t *testing.T) {
 	t.Parallel()
 
-	//nolint:gosec // synthetic keyword DSN; no real credential. secretlint-disable-line
+	//nolint:gosec // synthetic keyword DSN; no real credential.
 	const dsn = "host=db.invalid user=postgres password=s3cretpw dbname=postgres sslmode=disable"
 
 	err := Migrate(dsn)
@@ -278,8 +278,8 @@ func TestMigrateKeepsItsOwnWrongSchemeRejection(t *testing.T) {
 func TestSafeDSNErrCarriesTheFaultKindWhenItWithholds(t *testing.T) {
 	t.Parallel()
 
-	//nolint:gosec // synthetic DSN; no real credential. secretlint-disable-line
-	const dsn = "postgres://campaigns:s3cretpw@db.invalid:5432/campaigns?sslmode=disable"
+	//nolint:gosec // synthetic DSN; no real credential.
+	const dsn = "postgres://campaigns:s3cretpw@db.invalid:5432/campaigns?sslmode=disable" // secretlint-disable-line -- synthetic DSN; the fixture asserting a withheld message still carries its fault kind
 	pgErr := &pgconn.PgError{Code: "42P07", Message: `relation "campaigns" already exists`}
 
 	got := SafeDSNErr(dsn, dsnSourceDescription, fmt.Errorf("apply migrations: %w", pgErr))
@@ -308,7 +308,7 @@ func TestSafeDSNErrCarriesTheFaultKindWhenItWithholds(t *testing.T) {
 func TestNewPoolWithholdCarriesTheConnectClass(t *testing.T) {
 	t.Parallel()
 
-	dsn := "postgres://leakuser:s3cretpw@127.0.0.1:1/leakdb?sslmode=disable"
+	dsn := "postgres://leakuser:s3cretpw@127.0.0.1:1/leakdb?sslmode=disable" // secretlint-disable-line -- synthetic DSN; the fixture asserting a withheld connect error carries its class
 	pool, err := NewPool(context.Background(), dsn)
 	if err == nil {
 		pool.Close()
@@ -342,8 +342,8 @@ func TestNewPoolWithholdCarriesTheConnectClass(t *testing.T) {
 func TestSafeDSNErrWithholdsAnAtShapedUsername(t *testing.T) {
 	t.Parallel()
 
-	//nolint:gosec // synthetic DSN; no real credential. secretlint-disable-line
-	const dsn = "postgres://svc@pgsrv:s3cretpw@db.invalid:5432/appdb?sslmode=disable"
+	//nolint:gosec // synthetic DSN; no real credential.
+	const dsn = "postgres://svc@pgsrv:s3cretpw@db.invalid:5432/appdb?sslmode=disable" // secretlint-disable-line -- synthetic DSN; its username deliberately carries an @, as Azure spells one
 	pgErr := &pgconn.PgError{
 		Code:    "28P01",
 		Message: `password authentication failed for user "svc@pgsrv"`,
@@ -376,8 +376,8 @@ func TestSafeDSNErrWithholdsAnAtShapedUsername(t *testing.T) {
 func TestDSNFaultKindRejectsAHostileSQLState(t *testing.T) {
 	t.Parallel()
 
-	//nolint:gosec // synthetic DSN; no real credential. secretlint-disable-line
-	const dsn = "postgres://appuser:s3cretpw@db.invalid:5432/appdb?sslmode=disable"
+	//nolint:gosec // synthetic DSN; no real credential.
+	const dsn = "postgres://appuser:s3cretpw@db.invalid:5432/appdb?sslmode=disable" // secretlint-disable-line -- synthetic DSN; the fixture asserting a hostile SQLSTATE is refused
 
 	for _, code := range []string{
 		"42P07\nlevel=info msg=\"all good\"",
@@ -420,7 +420,7 @@ func TestDSNFaultKindRejectsAHostileSQLState(t *testing.T) {
 func TestDSNNotURLSchemeIsReturnedBare(t *testing.T) {
 	t.Parallel()
 
-	//nolint:gosec // synthetic keyword DSN; no real credential. secretlint-disable-line
+	//nolint:gosec // synthetic keyword DSN; no real credential.
 	const dsn = "host=db.invalid user=appuser password=s3cretpw dbname=appdb sslmode=disable"
 
 	err := Migrate(dsn)

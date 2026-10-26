@@ -24,8 +24,8 @@ import (
 func TestOpenReadOnlyPoolDoesNotLeakIdentifiers(t *testing.T) {
 	t.Parallel()
 
-	//nolint:gosec // synthetic DSN; no real credential. secretlint-disable-line
-	const dsn = "postgres://leakuser:s3cretpw@127.0.0.1:1/leakdb?sslmode=disable"
+	//nolint:gosec // synthetic DSN; no real credential.
+	const dsn = "postgres://leakuser:s3cretpw@127.0.0.1:1/leakdb?sslmode=disable" // secretlint-disable-line -- synthetic DSN; the fixture asserting openReadOnlyPool names none of it
 
 	pool, err := openReadOnlyPool(context.Background(), dsn)
 	if err == nil {

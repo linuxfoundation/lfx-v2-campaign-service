@@ -43,10 +43,17 @@ positive control so the test cannot pass by rejecting everything.
 printed a full unsalted `sha256.Sum256(blob)` next to an exact byte length, and two of them
 digest decrypted PLAINTEXT. That pair is an offline verification oracle: anyone holding the
 log line can confirm a guess at a low-entropy secret without touching the service. All six now
-go through `dbtest.BlobDigest`, which truncates to eight bytes — 2^64 of collision resistance,
-which nothing in this suite will collide across, and far too short to confirm a guess against.
-One exported helper rather than six copies, for the reason `SafeDSNErr` is exported: two sites
-disagreeing about what "safe to print" means is how the first leak got in.
+go through `dbtest.BlobDigest`. One exported helper rather than six copies, for the reason
+`SafeDSNErr` is exported: two sites disagreeing about what "safe to print" means is how the
+first leak got in.
+
+The first version of that helper closed the oracle by TRUNCATING the unkeyed digest to eight
+bytes, and this entry said so — "2^64 of collision resistance … far too short to confirm a
+guess against." **That was wrong on both counts and is corrected in
+`2026-10-26-393-blobdigest-keyed.md`:** truncation does not close an offline oracle, because a
+wrong guess collides in eight bytes with probability 2^-64, so a match still confirms; and
+eight bytes is 2^32 of collision resistance by the birthday bound, 2^64 being the preimage
+figure. `BlobDigest` now renders an HMAC-SHA-256 under a per-process key.
 
 **Note** — `redactMigrateErr`'s exemptions are tested with `errors.Is`, so an exemption covers
 the WHOLE CHAIN: anything wrapped ABOVE an exempt sentinel escapes redaction too, including
@@ -65,4 +72,5 @@ only `TestSafeDSNErrWithholdsAnAtShapedUsername`; removing the `isSQLState` gate
 failed only `TestOpenReadOnlyPoolDoesNotLeakIdentifiers`. `BlobDigest` was the one fix with no
 runtime coverage, because the live tests SKIP without `TEST_DATABASE_URL`:
 `TestBlobDigestReportsShapeNotValue` closes that, pinning that the bytes never appear, that
-the length survives, and that the hex is sixteen characters rather than sixty-four.
+the length survives, and that the hex is sixteen characters rather than sixty-four. It gained
+a fourth property when the digest was keyed — see the correction above.

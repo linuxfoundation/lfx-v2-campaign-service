@@ -1785,16 +1785,25 @@ both sides of the comparison — one exported helper rather than a digest writte
 site, so `credential_roundtrip_live_test.go` and `connection_live_test.go` cannot drift apart
 about what "safe to print" means, for the reason `SafeDSNErr` is exported.
 
-**The digest is TRUNCATED, and that is the point of the helper (#178).** `BlobDigest` renders
-`"%d bytes sha256[:8]=%x"` — the length, and the first EIGHT bytes of the SHA-256, not all
-thirty-two. A full unsalted digest printed beside an exact byte length is an offline
-verification oracle: anyone holding the log line can confirm a guess at a low-entropy secret
-without touching the service. Eight bytes is 2^64 of collision resistance, which nothing in
-this suite will collide across, and is far too short to confirm a guess against. Two of the
-six call sites digest decrypted PLAINTEXT, which is why the truncation is not cosmetic.
-`TestBlobDigestReportsShapeNotValue` (`dbtest_test.go`) pins all three properties — the bytes
-never appear, the length survives, the hex is 16 characters — because the live tests SKIP
-without `TEST_DATABASE_URL` and would otherwise give the rendering no runtime coverage at all.
+**The digest is KEYED, and that is the point of the helper (#178).** `BlobDigest` renders
+`"%d bytes hmac[:8]=%x"` — the length, and the first eight bytes of an HMAC-SHA-256 under
+`blobDigestKey`, a 32-byte key generated once per test process from `crypto/rand` and never
+printed. An unkeyed digest beside an exact byte length is an offline verification oracle:
+anyone holding the log line hashes each candidate of that length and compares. **Truncation
+does not close that**, and the review round that landed this helper first claimed it did — a
+wrong guess collides in eight bytes with probability 2^-64, so a match still confirms the
+secret, and truncation only starts to help once the guess space approaches 2^64, which is not
+the low-entropy case. (The same text called eight bytes 2^64 of collision resistance; the
+birthday bound is 2^32 and 2^64 is the preimage figure.) The HMAC is what closes it: equal
+inputs still render equal inside the run that printed them, which is all any call site needs —
+every one renders both operands into ONE failure message — and the line cannot be recomputed
+offline. Two of the four call sites digest decrypted PLAINTEXT, which is why this is not
+cosmetic. Eight bytes is still what gets printed, because a failure message only has to tell
+two blobs apart. `TestBlobDigestReportsShapeNotValue` (`dbtest_test.go`) pins the properties —
+the bytes never appear, the length survives, the hex is 16 characters, and the printed digest
+is not the plain SHA-256 of the input, so a revert to `sha256.Sum256` fails rather than merely
+renaming a label — because the live tests SKIP without `TEST_DATABASE_URL` and would otherwise
+give the rendering no runtime coverage at all.
 
 Two things this is NOT. It is not a claim that the fixture is sensitive: the stored value is
 the literal `ciphertext-v2`, so printing it today leaks nothing. The rule is written about the

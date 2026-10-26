@@ -149,12 +149,15 @@ func TestConnectAndMigrateWithholdsTheExplicitDSN(t *testing.T) {
 	// withholding says nothing about the argument, and the wrong-DSN seam this test
 	// exists to pin would still be invisible.
 	//
-	// This now pins SafeDSNErrFor for the NewPool arm rather than for the migrate arm.
-	// Since #178 the migrate arm's own wrong-DSN seam is closed by construction --
-	// postgres.Migrate redacts against the single dsn it was handed, so there is no
-	// second DSN for a caller to pass by mistake -- but NewPool below still redacts at
-	// the call site, with the explicit-vs-environment choice still live, so the property
-	// this check establishes is still load-bearing for that arm.
+	// What this now pins is SafeDSNErrFor's OWN contract, for the direct callers it still
+	// has in the live tests -- not either arm of connectAndMigrate. Since #178 neither arm
+	// calls it: the migrate arm's wrong-DSN seam is closed by construction, because
+	// postgres.Migrate redacts against the single dsn it was handed and there is no second
+	// DSN for a caller to pass by mistake, and the NewPool arm no longer redacts at the
+	// call site either (see "No SafeDSNErrFor here either" in dbtest.go). The seam survives
+	// wherever a caller still CHOOSES the dsn it redacts against, which the live tests do at
+	// over forty sites across invalid_index, migrate_down and stale_upsert, each passing
+	// the scratch dsn it built. That choice is what this check keeps honest.
 	const unrelatedDSN = "postgres://otheruser:otherpw@other.invalid:5432/otherdb?sslmode=disable" // secretlint-disable-line -- synthetic unrelated DSN; the wrong-DSN seam is invisible without it
 	if kept := SafeDSNErrFor(unrelatedDSN, rawErr); !strings.Contains(kept, user) {
 		t.Errorf("SafeDSNErrFor(unrelated dsn) = %q, want the probe's text preserved; an "+

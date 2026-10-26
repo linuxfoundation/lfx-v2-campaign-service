@@ -43,6 +43,7 @@ package dbtest
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -317,7 +318,27 @@ func SafeDSNErrFor(dsn string, err error) string {
 	return postgres.SafeDSNErr(dsn, EnvDatabaseURL, err)
 }
 
-// BlobDigest renders a byte slice for a FAILURE MESSAGE: its length, and a truncated SHA-256.
+// blobDigestKey keys BlobDigest, and is generated ONCE PER TEST PROCESS and never printed.
+//
+// That is what stops the digest being an offline oracle; see BlobDigest. The key never
+// leaves the process, so it is not a secret anyone has to manage, and it does not need to
+// be stable: every call site renders both digests it compares into ONE failure message,
+// within one run. Digests are deliberately NOT comparable across runs -- nothing compares
+// them that way, and a key that survived the process would be back to a value an attacker
+// could eventually obtain and reuse.
+var blobDigestKey = func() []byte {
+	k := make([]byte, 32)
+	// Discarded because there is nothing to discard: crypto/rand.Read is documented to
+	// never return an error and to always fill b entirely, crashing the program
+	// irrecoverably instead. So neither return value can report a weak key here, and
+	// nothing downstream could detect one either -- a short or zero key still renders
+	// distinct digests for distinct inputs, so no assertion in this package would go red.
+	// The guarantee is the whole argument; errcheck is why it is spelled `_, _ =`.
+	_, _ = rand.Read(k)
+	return k
+}()
+
+// BlobDigest renders a byte slice for a FAILURE MESSAGE: its length, and a truncated KEYED digest.
 //
 // The tests that call it compare credential ciphertext and, in two places, decrypted plaintext.
 // Printing either verbatim is out of the question, and length alone is not enough -- equal
@@ -325,18 +346,27 @@ func SafeDSNErrFor(dsn string, err error) string {
 // rotation's "ciphertext-v3" is the same length as the "ciphertext-v2" it replaces -- so the
 // digest is what makes a failure legible.
 //
-// The digest is TRUNCATED, and that is the whole reason this is a function rather than
-// `sha256.Sum256(b)` written out at each site. A full unsalted SHA-256 next to an exact byte
-// length is an offline verification oracle: for a low-entropy secret, anyone holding the log
-// line can confirm a guess without touching the service. Against today's fixtures that costs
-// nothing -- they are synthetic literals -- but these assertions are the shape the next
-// credential test gets copied from, and two of the existing call sites already digest
-// PLAINTEXT. Eight bytes is 2^64 of collision resistance, which no two fixtures in this suite
-// will ever collide across, and is far too short to confirm a guess against.
+// The digest is KEYED, and that is the whole reason this is a function rather than
+// `sha256.Sum256(b)` written out at each site. A plain SHA-256 next to an exact byte length is
+// an offline verification oracle: for a low-entropy secret, anyone holding the log line hashes
+// each candidate of that length and compares. TRUNCATION DOES NOT CLOSE THAT -- a wrong guess
+// collides in the first eight bytes with probability 2^-64, so a match still confirms the
+// secret -- and an earlier revision of this comment claimed it did. (It also called eight bytes
+// 2^64 of collision resistance; the birthday bound is 2^32, and 2^64 is the preimage figure.
+// Either way the number was never the point: an unkeyed digest of a guessable value is an
+// oracle at any length.) An HMAC under a per-process key is what actually closes it: equal
+// inputs still render equal within the run that printed them, and nobody can recompute the
+// line offline. Against today's fixtures none of this costs anything -- they are synthetic
+// literals -- but these assertions are the shape the next credential test gets copied from,
+// and two of the existing call sites already digest PLAINTEXT.
+//
+// Eight bytes is still what gets printed, because a failure message only has to tell two
+// blobs apart, and no two blobs in this suite will collide across a 2^32 birthday bound.
 //
 // Exported so both live-test files share ONE rendering, for the reason SafeDSNErr is exported:
 // two sites disagreeing about what "safe to print" means is how the first leak got in.
 func BlobDigest(b []byte) string {
-	sum := sha256.Sum256(b)
-	return fmt.Sprintf("%d bytes sha256[:8]=%x", len(b), sum[:8])
+	m := hmac.New(sha256.New, blobDigestKey)
+	m.Write(b)
+	return fmt.Sprintf("%d bytes hmac[:8]=%x", len(b), m.Sum(nil)[:8])
 }
