@@ -120,6 +120,25 @@ func TestRegistrantsListMatches(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, RegistrantsListMatches(wider, "KubeCon NA 2026"), "a list that is not a registration list")
 	assert.False(t, RegistrantsListMatches(nil, "KubeCon NA 2026"))
+
+	// Only a slice of the edition: an AND that adds a contact property beside the registration.
+	sliced := json.RawMessage(`{"filterBranchType":"OR","filters":[],"filterBranches":[{"filterBranchType":"AND",` +
+		`"filters":[{"filterType":"PROPERTY","property":"country","operation":{"operator":"IS_EQUAL_TO","values":["Japan"]}}],` +
+		`"filterBranches":[{"filterBranchType":"UNIFIED_EVENTS","operator":"HAS_COMPLETED","eventTypeId":"` + RegistrationEventTypeID + `","filterBranches":[],` +
+		`"filters":[{"filterType":"PROPERTY","property":"event_name","operation":{"operator":"IS_EQUAL_TO","values":["KubeCon NA 2026"]}}]}]}]}`)
+	editions, exclusive := RegistrationEvidence(sliced)
+	require.True(t, exclusive, "precondition: the exclusive check alone accepts it")
+	require.Equal(t, []string{"KubeCon NA 2026"}, editions)
+	assert.False(t, RegistrantsListMatches(sliced, "KubeCon NA 2026"), "registrants outside Japan would not be suppressed")
+
+	// Only a slice of the edition: an extra filter inside the registration event branch.
+	ticketed := json.RawMessage(`{"filterBranchType":"OR","filters":[],"filterBranches":[{"filterBranchType":"AND","filters":[],` +
+		`"filterBranches":[{"filterBranchType":"UNIFIED_EVENTS","operator":"HAS_COMPLETED","eventTypeId":"` + RegistrationEventTypeID + `","filterBranches":[],` +
+		`"filters":[{"filterType":"PROPERTY","property":"event_name","operation":{"operator":"IS_EQUAL_TO","values":["KubeCon NA 2026"]}},` +
+		`{"filterType":"PROPERTY","property":"ticket_type","operation":{"operator":"IS_EQUAL_TO","values":["Speaker"]}}]}]}]}`)
+	_, exclusive = RegistrationEvidence(ticketed)
+	require.True(t, exclusive, "precondition: the exclusive check alone accepts it")
+	assert.False(t, RegistrantsListMatches(ticketed, "KubeCon NA 2026"), "only speakers would be suppressed")
 }
 
 func TestStandingFilterIsUnion(t *testing.T) {

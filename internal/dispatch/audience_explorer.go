@@ -617,23 +617,31 @@ func (x *AudienceExplorer) SuppressionLists(ctx context.Context, projectID, bran
 			Category: audience.SuppressionCategoryCurrentRegistrants,
 			Name:     name,
 		}
+		// Lenient like the standard rows: a failed search leaves the row with no list id and
+		// WillCreate unset (the picker cannot say whether it exists) rather than failing the
+		// whole picker. A permission rejection still fails it -- see standardRows.
 		hit, lerr := exactList(ctx, client, name)
-		if lerr != nil {
+		switch {
+		case lerr != nil && hubspot.IsPermissionRejection(lerr):
 			return nil, nil, lerr
-		}
-		if hit != nil {
+		case lerr != nil:
+			slog.WarnContext(ctx, "current registrants list search failed", "error", lerr)
+		case hit != nil:
 			row.ListID, row.Size, row.HubSpotURL = hit.ListID, sizeOf(hit), hit.AppURL
-		} else {
+		default:
 			row.WillCreate = true
 		}
 		out = append(out, row)
 	}
 
+	// The standing list is a link for the picker, never a gate: a failed search omits it.
 	hit, lerr := exactList(ctx, client, audience.StandardSuppressionName(projectID))
-	if lerr != nil {
+	switch {
+	case lerr != nil && hubspot.IsPermissionRejection(lerr):
 		return nil, nil, lerr
-	}
-	if hit != nil {
+	case lerr != nil:
+		slog.WarnContext(ctx, "standing standard suppression list search failed", "error", lerr)
+	case hit != nil:
 		row := listRow(hit)
 		standing = &row
 	}

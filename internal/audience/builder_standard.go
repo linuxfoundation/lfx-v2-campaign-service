@@ -51,18 +51,26 @@ func CurrentRegistrantsName(editionName string) string {
 }
 
 // RegistrantsListMatches reports whether a list found under an edition's
-// CurrentRegistrantsName really is that edition's registrants list: its filter selects the
-// completed registrations of exactly that edition and nothing else (RegistrationEvidence's
-// exclusive case). The name alone proves nothing -- list search is case-insensitive and an
-// operator can create or edit a list under any name -- and reusing a list that selects a
-// different edition, or anything wider, would suppress the wrong people.
+// CurrentRegistrantsName really is that edition's registrants list: its filter selects ALL the
+// completed registrations of exactly that edition, and nobody else. The name alone proves
+// nothing -- list search is case-insensitive and an operator can create or edit a list under
+// any name -- and reusing a list that selects a different edition, anything wider, or only a
+// slice of the edition would suppress the wrong people or miss some.
+//
+// Both halves are needed. RegistrationEvidence's exclusive case proves nobody else is in it
+// (every path runs through an exact registration branch), but not that the whole edition is:
+// it reads only the event_name filters of a registration branch, and an AND path counts as
+// registered when any child is, whatever else the AND requires. CoveredEditions proves the
+// whole edition is in it: an edition counts only from a registration branch whose every filter
+// is the event_name equality, standing alone as an OR alternative -- an AND that adds a
+// condition, or an extra filter inside the event branch, covers nothing.
 func RegistrantsListMatches(filter json.RawMessage, editionName string) bool {
-	editions, exclusive := RegistrationEvidence(filter)
-	if !exclusive || len(editions) != 1 {
-		return false
-	}
 	norm := func(s string) string { return strings.ToLower(strings.Join(strings.Fields(s), " ")) }
-	return norm(editions[0]) == norm(editionName)
+	only := func(editions []string) bool {
+		return len(editions) == 1 && norm(editions[0]) == norm(editionName)
+	}
+	editions, exclusive := RegistrationEvidence(filter)
+	return exclusive && only(editions) && only(CoveredEditions(filter))
 }
 
 // StandingFilterIsUnion reports whether a standing list's filter is only a union of list

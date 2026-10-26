@@ -350,6 +350,10 @@ var AudienceComposeMasterResult = Type("audience-compose-master-result", func() 
 	Attribute("master", AudienceComposedList, "The created master list")
 	Attribute("suppression", AudienceComposedList, "The project's standing standard suppression list the master excludes, reused across composes; absent unless every resolved standard list was selected")
 	Attribute("source_list_ids", ArrayOf(String), "The inclusion lists the master unions")
+	// Without it a caller sees only `suppression`, which is set for a full standard set alone,
+	// and never learns the id of anything else the master excludes -- including a
+	// current-registrants list this compose may just have created.
+	Attribute("suppression_list_ids", ArrayOf(String), "Every list the master excludes, in the order attach-existing records them: the standing standard list first (when used), then each other excluded list, then the current-registrants list. Absent when the master excludes nothing")
 	Attribute("audience", AudienceComposeRecordedAudience, "The audience row recorded for brief_id, when one was requested and written")
 	// Required, and separate from `audience`, so no caller has to infer "attached" from an
 	// absent object. An older client reading only `audience` and a newer one reading

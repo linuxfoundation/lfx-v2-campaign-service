@@ -147,6 +147,25 @@ func (x *AudienceExplorer) findOrCreateStanding(ctx context.Context, client *hub
 	return nil, nil, cerr
 }
 
+// standingGrowAttempts bounds how many times ensureStandardList writes the standing list's
+// filter before giving up on a list that keeps being replaced under it.
+const standingGrowAttempts = 3
+
+// reusableStanding refuses a list found under a standing name that the service cannot use as
+// that list: not a contact list, or not DYNAMIC (a static list cannot carry a filter). what
+// names the standing list for the message.
+func reusableStanding(l *hubspot.List, what string) error {
+	if l.ObjectTypeID != "" && l.ObjectTypeID != "0-1" {
+		return &audience.StandingListConflictError{Name: l.Name, ListID: l.ListID,
+			Reason: "has " + what + " name but is not a contact list"}
+	}
+	if !strings.EqualFold(strings.TrimSpace(l.ProcessingType), "DYNAMIC") {
+		return &audience.StandingListConflictError{Name: l.Name, ListID: l.ListID,
+			Reason: "has " + what + " name but is not a DYNAMIC list"}
+	}
+	return nil
+}
+
 // ensureStandardList finds the project's standing standard suppression list by name, creating
 // it on first use, and keeps it covering every id in ids. It only ever GROWS: the new filter
 // is the union of the lists it already covers and ids, written only when that union adds an
@@ -160,9 +179,17 @@ func (x *AudienceExplorer) findOrCreateStanding(ctx context.Context, client *hub
 // search-index lag, or a list an operator added in HubSpot by hand. An unchanged project costs
 // a search and a read, never a write.
 //
-// A list found by name is reused only when it is DYNAMIC (a static list cannot carry the
-// union filter) and, when it must be rewritten, only when its filter is a pure union of lists
-// that the rewrite reproduces. Anything else is a StandingListConflictError naming the list.
+// HubSpot has no conditional filter update, so a read-merge-write can race another writer (a
+// concurrent attach or compose, or an operator) that replaces the filter from an older read.
+// Every write is therefore confirmed by reading the list back: when anything this call meant
+// to keep is missing, it is merged in again, up to standingGrowAttempts writes, and the call
+// then fails rather than report a list that does not cover what it claims. This is not a lock:
+// a stale overwrite that lands after this call's confirming read is not seen here; the next
+// attach or compose with the full standard set re-adds any resolved standard list it dropped.
+//
+// A list found by name is reused only when it is a DYNAMIC contact list, and is grown only
+// when its filter is a pure union of lists that the rewrite reproduces. Anything else is a
+// StandingListConflictError naming the list.
 func (x *AudienceExplorer) ensureStandardList(ctx context.Context, client *hubspot.Client, projectID string, ids []string) (*audience.ComposedList, error) {
 	name := audience.StandardSuppressionName(projectID)
 	filter, err := audience.MasterListFilter(ids)
@@ -180,36 +207,45 @@ func (x *AudienceExplorer) ensureStandardList(ctx context.Context, client *hubsp
 	if err != nil {
 		return nil, fmt.Errorf("read standard suppression list %s: %w", existing.ListID, err)
 	}
-	if !strings.EqualFold(strings.TrimSpace(current.ProcessingType), "DYNAMIC") {
-		return nil, &audience.StandingListConflictError{Name: current.Name, ListID: current.ListID,
-			Reason: "has the project's standard suppression list name but is not a DYNAMIC list"}
-	}
-	covered := audience.CoveredListIDs(current.FilterBranch)
-	union := audience.UniqueIDs(append(append([]string(nil), covered...), ids...))
-	if len(union) > len(covered) {
+	const what = "the project's standard suppression list"
+	want := audience.UniqueIDs(ids)
+	for attempt := 1; ; attempt++ {
+		if rerr := reusableStanding(current, what); rerr != nil {
+			return nil, rerr
+		}
+		covered := audience.CoveredListIDs(current.FilterBranch)
+		want = audience.UniqueIDs(append(append([]string(nil), covered...), want...))
+		if len(want) == len(covered) {
+			return &audience.ComposedList{ListRow: listRow(current)}, nil
+		}
+		if attempt > standingGrowAttempts {
+			return nil, fmt.Errorf("standard suppression list %s was replaced by another writer on each of %d attempts to grow it; retry", current.ListID, standingGrowAttempts)
+		}
 		if !audience.StandingFilterIsUnion(current.FilterBranch) {
 			return nil, &audience.StandingListConflictError{Name: current.Name, ListID: current.ListID,
 				Reason: "must gain a standard suppression list, but its filter holds conditions other than whole lists that a rewrite would drop"}
 		}
-		grown, ferr := audience.MasterListFilter(union)
+		grown, ferr := audience.MasterListFilter(want)
 		if ferr != nil {
 			return nil, ferr
 		}
 		if uerr := client.UpdateListFilters(ctx, current.ListID, grown); uerr != nil {
 			return nil, fmt.Errorf("grow standard suppression list %s: %w", current.ListID, uerr)
 		}
+		if current, err = client.GetList(ctx, current.ListID); err != nil {
+			return nil, fmt.Errorf("confirm standard suppression list %s: %w", existing.ListID, err)
+		}
 	}
-	return &audience.ComposedList{ListRow: listRow(current)}, nil
 }
 
 // ensureRegistrantsList finds or creates the list of the edition's current registrants, from
 // the filter resolveSuppressions already built and validated.
 //
-// A list found by name is reused only when it is DYNAMIC and its filter selects exactly this
-// edition's registrations (audience.RegistrantsListMatches). The name match is
-// case-insensitive and anyone can create a list under any name, so reusing on the name alone
-// could suppress a different edition's registrants, or nobody; such a list is a
-// StandingListConflictError naming it instead.
+// A list found by name is reused only when it is a DYNAMIC contact list whose filter selects
+// all of this edition's registrations and nobody else (audience.RegistrantsListMatches). The
+// name match is case-insensitive and anyone can create a list under any name, so reusing on the
+// name alone could suppress a different edition's registrants, only some of them, or nobody;
+// such a list is a StandingListConflictError naming it instead.
 func (x *AudienceExplorer) ensureRegistrantsList(ctx context.Context, client *hubspot.Client, projectID, edition string, filter json.RawMessage) (*audience.ComposedList, error) {
 	name := audience.CurrentRegistrantsName(edition)
 	existing, created, err := x.findOrCreateStanding(ctx, client, projectID, name, filter)
@@ -223,9 +259,8 @@ func (x *AudienceExplorer) ensureRegistrantsList(ctx context.Context, client *hu
 	if err != nil {
 		return nil, fmt.Errorf("read current registrants list %s: %w", existing.ListID, err)
 	}
-	if !strings.EqualFold(strings.TrimSpace(current.ProcessingType), "DYNAMIC") {
-		return nil, &audience.StandingListConflictError{Name: current.Name, ListID: current.ListID,
-			Reason: "has this edition's current-registrants list name but is not a DYNAMIC list"}
+	if rerr := reusableStanding(current, "this edition's current-registrants list"); rerr != nil {
+		return nil, rerr
 	}
 	if !audience.RegistrantsListMatches(current.FilterBranch, edition) {
 		return nil, &audience.StandingListConflictError{Name: current.Name, ListID: current.ListID,

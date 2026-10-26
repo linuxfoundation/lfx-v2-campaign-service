@@ -4507,9 +4507,16 @@ The suppressions then go through `resolveSuppressions`, shared with `ComposeMast
   shrinks, because every audience in the project excludes this one list and dispatch applies its id
   at send time: a quarter rotation (the old quarter's list still holds people while the new one
   fills), a term that stops resolving, search lag or a list an operator added by hand must not stop
-  suppressing anyone. A list found under the name is reused only when it is `DYNAMIC`, and is grown
-  only when its filter is a pure union of lists (`audience.StandingFilterIsUnion`) that the rewrite
-  reproduces; otherwise it is an `audience.StandingListConflictError` naming the list (409). It is
+  suppressing anyone. HubSpot has no conditional filter update, so every write is confirmed by
+  reading the list back; when an id it meant to keep is missing (another writer replaced the filter
+  from an older read) it is merged again, up to `standingGrowAttempts` (3) writes, then the call
+  fails. That is the whole guarantee: it is not a lock, and a stale overwrite landing AFTER a
+  writer's confirming read is not seen by that writer. A resolved standard list lost that way is
+  re-added by the next attach or compose with the full standard set; a hand-added list is not. A
+  list found under the name is reused only when it is a `DYNAMIC` contact list (`reusableStanding`),
+  and is grown only when its filter is a pure union of lists (`audience.StandingFilterIsUnion`)
+  that the rewrite reproduces; otherwise it is an `audience.StandingListConflictError` naming the
+  list (409). It is
   the outcome's `Suppression`. A PARTIAL standard selection is attached list by list instead,
   because the union would exclude a list the operator unticked.
 - **Everything else stays its own entry** in `AttachedSuppressionIDs`: brand, event-specific and
@@ -4518,8 +4525,10 @@ The suppressions then go through `resolveSuppressions`, shared with `ComposeMast
   finds or creates `audience.CurrentRegistrantsName(edition)` from
   `audience.CurrentRegistrantsFilter` (the registration custom event, `event_name` IS_EQUAL_TO the
   edition) and appends it as its own entry. A list found under that name is reused only when it is
-  `DYNAMIC` and its filter selects exactly this edition's registrations
-  (`audience.RegistrantsListMatches`); the name match is case-insensitive and anyone can create a
+  a `DYNAMIC` contact list whose filter selects ALL of this edition's registrations and nobody else
+  (`audience.RegistrantsListMatches`: `RegistrationEvidence`'s exclusive case for "nobody else", and
+  `CoveredEditions` for "all of it", which rejects an AND adding a condition beside the
+  registration or an extra filter inside the event branch); the name match is case-insensitive and anyone can create a
   list under any name, so anything else is a `StandingListConflictError` naming it (409). The name
   of an edition too long to fit is cut and tagged with a short hash of the full edition, so two
   long editions sharing a prefix never share a list.
@@ -4543,7 +4552,10 @@ accept a UUID or a slug and the service has no UUID-to-slug resolver, so one pro
 ways gets two standing lists (each correct on its own; case differences alone collapse, because
 the name match is case-insensitive).
 `SuppressionLists` adds a `current_registrants` row (with `WillCreate` when the list does not exist
-yet: a read never creates) and reports the standing standard list when it already exists.
+yet: a read never creates) and reports the standing standard list when it already exists. Both
+lookups are lenient like the standard rows: a failed search is logged and leaves the registrants
+row with no list id and `WillCreate` unset, and the standing link omitted; only a permission
+rejection fails the picker.
 
 `LastSent` is ONE portal sweep, ranked by when each email WENT OUT. Every part of that sentence was
 once otherwise, and the endpoint returned no recent sends at all. The event name was searched as a

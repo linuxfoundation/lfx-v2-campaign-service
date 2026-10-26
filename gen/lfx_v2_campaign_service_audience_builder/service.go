@@ -190,6 +190,10 @@ type AudienceComposeMasterResult struct {
 	Suppression *AudienceComposedList
 	// The inclusion lists the master unions
 	SourceListIds []string
+	// Every list the master excludes, in the order attach-existing records them:
+	// the standing standard list first (when used), then each other excluded list,
+	// then the current-registrants list. Absent when the master excludes nothing
+	SuppressionListIds []string
 	// The audience row recorded for brief_id, when one was requested and written
 	Audience *AudienceComposeRecordedAudience
 	// Whether the master was recorded as the brief's audience; false when no

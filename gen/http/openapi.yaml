@@ -12213,6 +12213,17 @@ definitions:
                     - Autem optio.
             suppression:
                 $ref: '#/definitions/AudienceComposedList'
+            suppression_list_ids:
+                type: array
+                items:
+                    type: string
+                    example: Tempore consequatur sed placeat modi sed.
+                description: 'Every list the master excludes, in the order attach-existing records them: the standing standard list first (when used), then each other excluded list, then the current-registrants list. Absent when the master excludes nothing'
+                example:
+                    - Tempore consequatur sed placeat modi sed.
+                    - Molestiae cum quisquam ad illum.
+                    - A aut rerum repellat ducimus.
+                    - Quas nemo qui et molestiae qui.
         example:
             audience:
                 id: Sit nisi rem id ullam tenetur voluptatem.
@@ -12239,6 +12250,11 @@ definitions:
                 list_id: Quia nihil qui ab accusamus tempora culpa.
                 name: Eaque dicta qui numquam.
                 size: 4504693386713616226
+            suppression_list_ids:
+                - Tempore consequatur sed placeat modi sed.
+                - Molestiae cum quisquam ad illum.
+                - A aut rerum repellat ducimus.
+                - Quas nemo qui et molestiae qui.
         required:
             - master
             - source_list_ids

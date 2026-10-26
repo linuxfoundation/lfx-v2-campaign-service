@@ -2085,22 +2085,38 @@ response header — which a proxying BFF does not see. So the BODY is the discri
 `ComposePartial` body carries whichever of three fields describes what actually happened, and the
 presence of ANY of them is the discriminator.
 
-**Five shapes are reachable, and only ONE carries `suppression`** — so keying on
-`suppression.list_id` alone silently rethrows the other three as ordinary failures. That is the
-worst available outcome here, because the fields it discards are the deterministic NAMES the
-operator needs to find lists that may already exist:
+**A current deployment produces two shapes.** Since 2026-10-19 compose creates no suppression list
+of its own (it excludes the project's standing lists, found by name and reused), so the only create
+that can be left unfinished is the master's:
 
-- `suppression` set — the suppression list definitely exists; the master create failed.
-- `suppression_name` set — the suppression create itself is UNCONFIRMED (no id came back).
-- `master_name` set — no exclusions requested, or suppression failed outright; master unconfirmed.
-- `suppression` + `master_name` — suppression exists, master unconfirmed.
-- `master` set — a RECORDING compose (one carrying `brief_id`) whose lists were both created and
-  whose attachment to the brief failed. The only shape with a CONFIRMED master object rather than
-  a name: the lists are usable, so the operator attaches one by hand instead of composing again.
+- `master_name` set — the master create is UNCONFIRMED (no id came back); search for it by name.
+- `master` set — a RECORDING compose (one carrying `brief_id`) whose master was created and whose
+  attachment to the brief failed. The only shape with a CONFIRMED master object rather than a
+  name: the operator attaches it by hand. Composing again is not the remedy, because a master
+  created under its derived name is not found by a repeat, which creates a second master under the
+  fingerprinted name.
 
-`suppression` and `suppression_name` are never both set. See `docs/api-catalog.md` for the
-authoritative list. This is what lets a caller show the operator what WAS or MAY HAVE BEEN created
-rather than offering a retry that would duplicate it — compose is not idempotent.
+`suppression` and `suppression_name` stay in the contract as LEGACY fields from the combined
+suppression list compose used to create; `composePartialMessage` still words them (without
+"combined") but no current path sets them. A caller must still key on the presence of ANY of the
+fields, never on `suppression.list_id` alone. See `docs/api-catalog.md` for the authoritative list.
+This is what lets a caller show the operator what WAS or MAY HAVE BEEN created rather than offering
+a retry that would duplicate it — compose is not idempotent.
+
+A successful compose returns `suppression_list_ids`: every list the master excludes, in the order
+`composedSuppressionIDs` gives both compose and attach-existing (the standing standard list first
+when used, then each other excluded list, the current-registrants list last), and the order the
+recorded row holds. `suppression` alone is set only for a full standard set, so without the ids a
+caller could not learn what else was excluded, including a current-registrants list compose just
+created. attach-existing returns the same ids from the recorded row, which are therefore NOT the ids
+it was sent, and it may itself CREATE up to two lists — the standing standard list and the
+edition's current-registrants list, each on first use.
+
+`audience.ErrStandingListConflict` (a `StandingListConflictError` naming the list) maps to `409`
+`ConflictError` with that message in `audienceExploreErr`: a list already holds one of the standing
+names but cannot be reused (not a DYNAMIC contact list, a standing list that must grow but is not a
+plain union of lists, or a registrants list that does not select exactly that edition). A retry
+hits the same list; an operator must rename or remove it.
 
 There is no streaming variant: Goa v3 has no SSE encoding, so `discover` is a synchronous POST
 here and any progress feel is the caller's own concern.

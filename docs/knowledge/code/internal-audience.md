@@ -472,8 +472,9 @@ the orchestration that calls HubSpot lives in [internal/dispatch](internal-dispa
   project, no date or fingerprint, so every audience reuses it), `CurrentRegistrantsName` and
   `CurrentRegistrantsFilter` (the edition's registrants via the registration custom event; an
   edition too long for the name is cut and tagged with a short hash of the whole edition),
-  `RegistrantsListMatches` and `StandingFilterIsUnion` (whether a list found under a standing name
-  is safe to reuse, or to grow), `SplitStandardSuppressions` (substitute the standing list only for
+  `RegistrantsListMatches` (the whole edition and nobody else: `RegistrationEvidence` exclusive AND
+  `CoveredEditions` exactly that edition) and `StandingFilterIsUnion` (whether a list found under a
+  standing name is safe to reuse, or to grow), `SplitStandardSuppressions` (substitute the standing list only for
   a COMPLETE standard selection), `SameIDSet`, and `MasterListWithSuppressionsFilter` (one
   `NOT_IN_LIST` per excluded list on every inclusion path). A list holding a standing name that
   cannot be reused is `StandingListConflictError` (unwraps to `ErrStandingListConflict`, a 409

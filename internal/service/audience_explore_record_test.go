@@ -380,3 +380,36 @@ func TestComposeAudienceMasterReportsARecordFailureAsAPartialCarryingTheMaster(t
 		"the irreversible half already succeeded, so a transient blip gets one bounded retry")
 	assert.Equal(t, 1, explorer.composeCalls, "the retry is of the INSERT, never of the list creates")
 }
+
+// The compose result names every list the master excludes, in the order the recorded row holds
+// them: `suppression` alone is set only for a full standard set, and would leave the other
+// exclusions -- a current-registrants list this compose created among them -- unreported.
+func TestComposeAudienceMasterReturnsEveryExcludedListID(t *testing.T) {
+	outcome := composedOutcome()
+	outcome.AttachedSuppressionIDs = []string{"brand-1", "registrants-1"}
+	explorer := &fakeExplorer{outcome: outcome}
+	repo := newCountingAudienceRepo()
+	briefs := newFakeBriefRepo()
+	seedBrief(t, briefs, "proj-1", "brief-1")
+	svc := NewAudienceExploreService(explorer)
+	svc.SetAudienceRepo(repo)
+	svc.SetBriefRepo(briefs)
+
+	res, err := svc.ComposeAudienceMaster(context.Background(), composePayload("brief-1"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"supp-1", "brand-1", "registrants-1"}, res.SuppressionListIds)
+	rows := repo.rows()
+	require.Len(t, rows, 1)
+	var recorded []string
+	require.NoError(t, json.Unmarshal(rows[0].SuppressionListIDs, &recorded))
+	assert.Equal(t, recorded, res.SuppressionListIds, "the response and the recorded row agree")
+
+	outcome = composedOutcome()
+	outcome.Suppression = nil
+	outcome.AttachedSuppressionIDs = []string{"registrants-1"}
+	svc = NewAudienceExploreService(&fakeExplorer{outcome: outcome})
+	res, err = svc.ComposeAudienceMaster(context.Background(), composePayload(""))
+	require.NoError(t, err)
+	assert.Nil(t, res.Suppression)
+	assert.Equal(t, []string{"registrants-1"}, res.SuppressionListIds, "a partial standard selection still names what is excluded")
+}

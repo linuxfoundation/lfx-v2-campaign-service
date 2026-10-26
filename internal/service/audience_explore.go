@@ -426,8 +426,9 @@ func (s *AudienceExploreService) ComposeAudienceMaster(ctx context.Context, p *e
 		return nil, composeErr(ctx, p.ProjectID, cerr)
 	}
 	res := &explore.AudienceComposeMasterResult{
-		Master:        composedListResult(&outcome.Master),
-		SourceListIds: outcome.SourceListIDs,
+		Master:             composedListResult(&outcome.Master),
+		SourceListIds:      outcome.SourceListIDs,
+		SuppressionListIds: composedSuppressionIDs(outcome),
 	}
 	if outcome.Suppression != nil {
 		res.Suppression = composedListResult(outcome.Suppression)

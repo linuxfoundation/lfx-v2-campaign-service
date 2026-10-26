@@ -376,12 +376,19 @@ func audienceFromInput(projectID, briefID string, in *audiences.AudienceInput) *
 // later PATCH (which would be refused anyway). And nothing here is caller-supplied except
 // the summary: a client cannot nominate a master list id, a suppression id or a portal it
 // did not just compose.
-func audienceFromCompose(projectID, briefID string, outcome *audience.ComposeOutcome, inclusionSummary string) *model.CampaignAudience {
-	suppression := []string{}
+// composedSuppressionIDs are the lists a compose or attach outcome excludes, in the one order
+// both record and return them: the standing standard list first (when used), then every other
+// excluded list, the current-registrants list last. Never nil.
+func composedSuppressionIDs(outcome *audience.ComposeOutcome) []string {
+	ids := make([]string, 0, 1+len(outcome.AttachedSuppressionIDs))
 	if outcome.Suppression != nil {
-		suppression = append(suppression, outcome.Suppression.ListID)
+		ids = append(ids, outcome.Suppression.ListID)
 	}
-	suppression = append(suppression, outcome.AttachedSuppressionIDs...)
+	return append(ids, outcome.AttachedSuppressionIDs...)
+}
+
+func audienceFromCompose(projectID, briefID string, outcome *audience.ComposeOutcome, inclusionSummary string) *model.CampaignAudience {
+	suppression := composedSuppressionIDs(outcome)
 	summary := inclusionSummary
 	if summary == "" {
 		summary = composedInclusionSummary(outcome)

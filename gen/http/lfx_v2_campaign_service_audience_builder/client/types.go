@@ -182,6 +182,10 @@ type ComposeAudienceMasterResponseBody struct {
 	Suppression *AudienceComposedListResponseBody `form:"suppression,omitempty" json:"suppression,omitempty" xml:"suppression,omitempty"`
 	// The inclusion lists the master unions
 	SourceListIds []string `form:"source_list_ids,omitempty" json:"source_list_ids,omitempty" xml:"source_list_ids,omitempty"`
+	// Every list the master excludes, in the order attach-existing records them:
+	// the standing standard list first (when used), then each other excluded list,
+	// then the current-registrants list. Absent when the master excludes nothing
+	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
 	// The audience row recorded for brief_id, when one was requested and written
 	Audience *AudienceComposeRecordedAudienceResponseBody `form:"audience,omitempty" json:"audience,omitempty" xml:"audience,omitempty"`
 	// Whether the master was recorded as the brief's audience; false when no
@@ -2604,6 +2608,12 @@ func NewComposeAudienceMasterAudienceComposeMasterResultCreated(body *ComposeAud
 	v.SourceListIds = make([]string, len(body.SourceListIds))
 	for i, val := range body.SourceListIds {
 		v.SourceListIds[i] = val
+	}
+	if body.SuppressionListIds != nil {
+		v.SuppressionListIds = make([]string, len(body.SuppressionListIds))
+		for i, val := range body.SuppressionListIds {
+			v.SuppressionListIds[i] = val
+		}
 	}
 	if body.Audience != nil {
 		v.Audience = unmarshalAudienceComposeRecordedAudienceResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceComposeRecordedAudience(body.Audience)
