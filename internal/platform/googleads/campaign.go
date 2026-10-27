@@ -1451,13 +1451,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var budgetResource, budgetID string
 	switch {
 	case err == nil:
-		budgetResource, budgetID, err = firstResourceName(budgetResp)
+		// A 2xx with no/malformed resourceName is a malformed success: the budget WAS
+		// created and only its id is lost, so budgetFromCreateResponse goes and finds it
+		// rather than dead-ending on an orphan nobody can see.
+		var recovered string
+		budgetResource, budgetID, recovered, err = c.budgetFromCreateResponse(ctx, "campaign", budgetName, budgetResp)
 		if err != nil {
-			// A 2xx with no/malformed resourceName is a malformed success: the budget MAY
-			// have been created. UNCONFIRMED, not a clean failure.
-			return campaignNamePartial(), fmt.Errorf("google-ads campaign budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
+			return campaignNamePartial(), err
 		}
 		steps = append(steps, fmt.Sprintf("Campaign budget created: %s (%.2f/day in account currency, STANDARD delivery, non-shared)", budgetID, in.Budget))
+		if recovered != "" {
+			steps = append(steps, recovered)
+		}
 	case isDuplicateBudgetNameErr(err):
 		// A retry with a stable NameSuffix hit a name that already exists: the budget was
 		// (almost certainly) created by a prior attempt whose campaign step failed. If it

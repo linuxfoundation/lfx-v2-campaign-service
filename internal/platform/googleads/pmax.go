@@ -241,11 +241,15 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 	var budgetResource, budgetID string
 	switch {
 	case err == nil:
-		budgetResource, budgetID, err = firstResourceName(budgetResp)
+		var recovered string
+		budgetResource, budgetID, recovered, err = c.budgetFromCreateResponse(ctx, "performance max", budgetName, budgetResp)
 		if err != nil {
-			return namePartial(), fmt.Errorf("google-ads performance max budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
+			return namePartial(), err
 		}
 		steps = append(steps, fmt.Sprintf("Campaign budget created: %s (%.2f/day in account currency)", budgetID, in.Budget))
+		if recovered != "" {
+			steps = append(steps, recovered)
+		}
 	case isDuplicateBudgetNameErr(err):
 		// FIRST, try to ADOPT the budget holding the name. The reasoning below says this
 		// arm is reached only on an UNATTACHED budget; reuseBudgetAfterDuplicateName

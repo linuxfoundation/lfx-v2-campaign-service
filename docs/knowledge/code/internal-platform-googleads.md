@@ -540,17 +540,71 @@ Four details are load-bearing:
   account" is a far better starting point than "it may exist".
 - **Only the no-row outcome is retried, on a detached, bounded context.** A budget
   committed moments before is exactly the one a single immediate read misses, and it is
-  the one that most needs reporting, so `resolveBudgetAfterAmbiguousCreate` re-reads on a
-  250ms→1s schedule (4 attempts, 1750ms of sleep) under a 20s ceiling, mirroring
+  the one that most needs reporting, so the re-reads run on a 250ms→1s schedule (4
+  attempts, 1750ms of sleep) under a 20s ceiling, mirroring
   `reconcileAmbiguousAudienceCommit`'s precedent in `audience_repo.go`. A found budget or
-  any gate error settles the question immediately and is never retried. The context is
-  detached (`context.WithoutCancel`) because one of the three shapes that reach this arm
-  is a transport error, which a cancelled caller context produces — reusing `ctx` would
-  make the feature inert in a shape especially likely to leave an orphan.
+  any gate error settles the question immediately and is never retried. The schedule itself
+  lives in `retryFindBudgetByName`, shared with the unreadable-2xx recovery below;
+  `resolveBudgetAfterAmbiguousCreate` adds only the **detachment**
+  (`context.WithoutCancel`), which belongs to this arm alone, because one of the three
+  shapes that reach it is a transport error — which a cancelled caller context produces —
+  and reusing `ctx` would make the feature inert in exactly the shape most likely to leave
+  an orphan.
 
 The cost is up to four `googleAds:search` calls on the ambiguous path, plus one more when
 a budget IS found (`assertBudgetUnattached` asks the campaign side independently), paid
 only on a failure that was previously unresolvable.
+
+### Recovering a budget from an UNREADABLE 2xx (`budget_lookup.go`, #387)
+
+The third dead end at Step 1, and the only one of the three where Google answered
+**success**. `campaignBudgets:mutate` returns 2xx, but the response carries no
+`results[0].resourceName`, or one with no id segment, so `firstResourceName` can hand back
+nothing to attach a campaign to. Before #387 all five channels failed on the spot with a
+sentence saying the budget was "UNCONFIRMED (may exist)" — leaving the same orphan class the
+DUPLICATE_NAME arm closes, arrived at from the opposite direction: a non-shared, unattached
+budget that appears in no Google Ads UI surface and holds the composed name that blocks
+every later retry of the same brief.
+
+`budgetFromCreateResponse(ctx, channel, budgetName, body)` is now the WHOLE of every
+channel's "read the budget out of a 2xx" step, returning `(resourceName, budgetID,
+recoveryStep, err)`. On the ordinary path it is `firstResourceName` and nothing else — no
+search is issued, which the tests pin. Only when the parse fails does it call
+`recoverBudgetAfterUnreadableCreate`. The `recoveryStep` is returned separately rather than
+appended inside, because the five channels word their own "Campaign budget created" line
+differently and a readback deserves its own sentence in `Steps`.
+
+Three things distinguish this arm from the ambiguous one above:
+
+- **An absence here is a CONTRADICTION, not an answer.** There, Google said nothing, so
+  "no such budget" is evidence that nothing was created and the arm reports it as such.
+  Here Google said 2xx, so a budget of this name provably exists; an account that shows none
+  has returned two answers that cannot both be true, and `recoverBudgetAfterUnreadableCreate`
+  refuses rather than classifying. That is why it is modelled on `findReusableBudget`'s thin
+  wrapper and not on `ambiguousBudgetCreateOutcome`'s three-outcome adapter.
+- **The re-reads matter MORE here, not less.** The commit is confirmed, so a first read that
+  misses can only be replica lag. It shares `retryFindBudgetByName` — the same 4 attempts and
+  20s ceiling — but **not** the detachment: nothing on this path is reached by way of a
+  cancelled caller context, and the caller's own deadline is a legitimate bound on a readback
+  that is holding up a campaign mutate.
+- **The gates are still checked**, even though "Google committed this moments ago" predicts
+  they will pass. The argument is an argument; the row is the evidence. A shared or
+  already-attached budget is refused by `findBudgetByName` exactly as on the DUPLICATE_NAME
+  path, and the resource name handed back is the one `reusableBudget` rebuilds from this
+  client's customer id and the canonical budget id — never the string the unreadable response
+  happened to carry.
+
+When recovery fails, both errors are wrapped with the parse failure FIRST, for the same
+`errors.As` reason as the two arms above, and the partial still carries no
+`CampaignBudgetID`, so `CreateOutcome` is `CreateOutcomeUnconfirmed` and the campaign is
+never attempted — the behaviour before #387, minus the false sentence. The refusal now says
+the budget **WAS** created and only its identity is unsettled: telling an operator it "may
+exist" sends them looking for something that is definitely there.
+
+Out of scope, deliberately: the campaign-side arms where a 2xx **campaign** resource name
+fails to parse (`pmax.go` and siblings, plus `validateCampaignResource`). A billable campaign
+is already running by then, and recovering its identity is a harder problem than recovering a
+budget's.
 
 ## Responsive Search Ad copy + final URL (GA-3a)
 
