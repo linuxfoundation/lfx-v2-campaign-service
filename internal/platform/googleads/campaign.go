@@ -1455,7 +1455,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// created and only its id is lost, so budgetFromCreateResponse goes and finds it
 		// rather than dead-ending on an orphan nobody can see.
 		var recovered string
-		budgetResource, budgetID, recovered, err = c.budgetFromCreateResponse(ctx, "campaign", budgetName, budgetResp)
+		budgetResource, budgetID, recovered, err = c.budgetFromCreateResponse(ctx, "campaign", budgetName, amountMicros, budgetResp)
 		if err != nil {
 			return campaignNamePartial(), err
 		}

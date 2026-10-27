@@ -160,7 +160,7 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 	switch {
 	case err == nil:
 		var recovered string
-		budgetResource, budgetID, recovered, err = c.budgetFromCreateResponse(ctx, "display", budgetName, budgetResp)
+		budgetResource, budgetID, recovered, err = c.budgetFromCreateResponse(ctx, "display", budgetName, pf.amountMicros, budgetResp)
 		if err != nil {
 			return namePartial(), err
 		}

@@ -566,7 +566,7 @@ DUPLICATE_NAME arm closes, arrived at from the opposite direction: a non-shared,
 budget that appears in no Google Ads UI surface and holds the composed name that blocks
 every later retry of the same brief.
 
-`budgetFromCreateResponse(ctx, channel, budgetName, body)` is now the WHOLE of every
+`budgetFromCreateResponse(ctx, channel, budgetName, amountMicros, body)` is now the WHOLE of every
 channel's "read the budget out of a 2xx" step, returning `(resourceName, budgetID,
 recoveryStep, err)`. On the ordinary path it is `firstResourceName` and nothing else — no
 search is issued, which the tests pin. Only when the parse fails does it call
@@ -592,12 +592,27 @@ Three things distinguish this arm from the ambiguous one above:
   already-attached budget is refused by `findBudgetByName` exactly as on the DUPLICATE_NAME
   path, and the resource name handed back is the one `reusableBudget` rebuilds from this
   client's customer id and the canonical budget id — never the string the unreadable response
-  happened to carry.
+  happened to carry. **The amount is a gate here too**, and this is the one place it refuses
+  instead of aligning: the create that just succeeded set the amount, so a row carrying a
+  different one is not this create's budget. The realistic shape is a same-named budget
+  removed shortly before, still served as ENABLED and unattached by a lagging replica —
+  every other gate passes on it, and `assertBudgetUnattached` reads the campaign side, which
+  lags with it, so the amount is the only field separating the two. On the DUPLICATE_NAME
+  path the budget pre-dates the brief, which is why `reuseBudgetAfterDuplicateName` aligns
+  it there instead.
 
-When recovery fails, both errors are wrapped with the parse failure FIRST, for the same
-`errors.As` reason as the two arms above, and the partial still carries no
-`CampaignBudgetID`, so `CreateOutcome` is `CreateOutcomeUnconfirmed` and the campaign is
-never attempted — the behaviour before #387, minus the false sentence. The refusal now says
+When recovery fails, both errors are wrapped with the parse failure first — the order they
+happened in, and the order the two arms above read in. Here that order is **not** an
+`errors.As` guard as it is there: `firstResourceName` returns only a `json.Unmarshal` wrap
+or a plain `fmt.Errorf`, never an `*apiError`, so the chain's first `apiError` is the
+lookup's whichever way the two `%w` are written. What this arm does newly admit is the
+lookup READ's `*apiError` into a chain that previously carried none, which makes
+`domain.UpstreamStatus` resolvable and lets `DispatchFailureMessage` say "the platform
+answered HTTP N" about a create that answered 200 — accepted because the read's status is
+the only upstream signal this path has, and the sentence it decorates already names which
+call succeeded and which did not. The partial still carries no `CampaignBudgetID`, so
+`CreateOutcome` is `CreateOutcomeUnconfirmed` and the campaign is never attempted — the
+behaviour before #387, minus the false sentence. The refusal now says
 the budget **WAS** created and only its identity is unsettled: telling an operator it "may
 exist" sends them looking for something that is definitely there.
 

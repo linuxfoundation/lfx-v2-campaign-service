@@ -242,7 +242,7 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 	switch {
 	case err == nil:
 		var recovered string
-		budgetResource, budgetID, recovered, err = c.budgetFromCreateResponse(ctx, "performance max", budgetName, budgetResp)
+		budgetResource, budgetID, recovered, err = c.budgetFromCreateResponse(ctx, "performance max", budgetName, pf.amountMicros, budgetResp)
 		if err != nil {
 			return namePartial(), err
 		}

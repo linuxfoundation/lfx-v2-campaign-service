@@ -10,10 +10,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
+
+// testBudgetMicros is what sampleInput's Budget of 50 becomes on the wire, and what
+// budgetRow fills in when a test does not say otherwise — so the recovery's amount gate
+// passes on the happy path and a test that wants a mismatch has to state one.
+const testBudgetMicros int64 = 50_000_000
 
 // unreadableBudgetCreate is a 2xx campaignBudgets:mutate response that commits a budget and
 // says nothing usable about which one: a results array with an entry carrying no
@@ -31,7 +37,7 @@ func TestBudgetFromCreateResponse_ReadableResponseNeverTouchesTheAccount(t *test
 	srv, queries := newBudgetLookupServer(t) // zero pages: any search is an unexpected search
 	c := newAccountsTestClient(t, srv)
 
-	resource, id, recovered, err := c.budgetFromCreateResponse(context.Background(), "campaign", testBudgetName,
+	resource, id, recovered, err := c.budgetFromCreateResponse(context.Background(), "campaign", testBudgetName, testBudgetMicros,
 		[]byte(`{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`))
 	if err != nil {
 		t.Fatalf("a parseable response is not a recovery: %v", err)
@@ -58,7 +64,7 @@ func TestRecoverBudgetAfterUnreadableCreate_FindsTheBudgetGoogleCommitted(t *tes
 	)
 	c := newAccountsTestClient(t, srv)
 
-	budget, err := c.recoverBudgetAfterUnreadableCreate(context.Background(), testBudgetName)
+	budget, err := c.recoverBudgetAfterUnreadableCreate(context.Background(), testBudgetName, testBudgetMicros)
 	if err != nil {
 		t.Fatalf("the budget Google committed must be found: %v", err)
 	}
@@ -86,7 +92,7 @@ func TestRecoverBudgetAfterUnreadableCreate_NotVisibleYetIsRetried(t *testing.T)
 	)
 	c := newAccountsTestClient(t, srv)
 
-	budget, err := c.recoverBudgetAfterUnreadableCreate(context.Background(), testBudgetName)
+	budget, err := c.recoverBudgetAfterUnreadableCreate(context.Background(), testBudgetName, testBudgetMicros)
 	if err != nil || budget == nil || budget.ID != "777" {
 		t.Fatalf("got (%+v, %v), want the budget the second look found", budget, err)
 	}
@@ -106,7 +112,7 @@ func TestRecoverBudgetAfterUnreadableCreate_NoRowsIsAContradiction(t *testing.T)
 	srv, queries := newBudgetLookupServer(t, pages...)
 	c := newAccountsTestClient(t, srv)
 
-	budget, err := c.recoverBudgetAfterUnreadableCreate(context.Background(), testBudgetName)
+	budget, err := c.recoverBudgetAfterUnreadableCreate(context.Background(), testBudgetName, testBudgetMicros)
 	if err == nil || !strings.Contains(err.Error(), "contradict") {
 		t.Fatalf("a surviving absence must be refused as a contradiction, got: %v", err)
 	}
@@ -127,7 +133,7 @@ func TestRecoverBudgetAfterUnreadableCreate_AGateFailureRefuses(t *testing.T) {
 	})
 	c := newAccountsTestClient(t, srv)
 
-	if budget, err := c.recoverBudgetAfterUnreadableCreate(context.Background(), testBudgetName); err == nil || budget != nil {
+	if budget, err := c.recoverBudgetAfterUnreadableCreate(context.Background(), testBudgetName, testBudgetMicros); err == nil || budget != nil {
 		t.Fatalf("got (%+v, %v), want the sharing gate's refusal", budget, err)
 	} else if !strings.Contains(err.Error(), "explicitly shared") {
 		t.Errorf("error = %q, want the sharing gate's own sentence", err)
@@ -139,11 +145,27 @@ func TestRecoverBudgetAfterUnreadableCreate_AGateFailureRefuses(t *testing.T) {
 // whole dispatch, leaving a budget nobody could see holding the name every later retry
 // needs. Now the campaign is created AGAINST the recovered budget.
 func TestCreateCampaign_UnreadableBudgetCreateRecoversAndContinues(t *testing.T) {
-	var campaignBody map[string]any
+	// The capture is written on the server's goroutine and read on this one, so it is
+	// guarded and handed back through an accessor — the shape newBudgetLookupServer and
+	// searchPagesHandler already use. decodeRequest, not decode: t.Fatalf calls FailNow,
+	// which is only legal on the test goroutine.
+	var (
+		mu           sync.Mutex
+		campaignBody map[string]any
+	)
 	budgetName := ComposeName(budgetKindFor(""), sampleInput())
 	c := newCampaignClientSearch(t,
 		unreadableBudgetCreate,
-		func(w http.ResponseWriter, r *http.Request) { campaignBody = decode(t, r); okCampaign(w, r) },
+		func(w http.ResponseWriter, r *http.Request) {
+			body, err := decodeRequest(r)
+			if err != nil {
+				t.Errorf("decoding campaign request: %v", err)
+			}
+			mu.Lock()
+			campaignBody = body
+			mu.Unlock()
+			okCampaign(w, r)
+		},
 		okAdGroup, okAdGroupAd,
 		searchPagesHandler(t,
 			[]json.RawMessage{budgetRow(budgetRowOpts{name: budgetName})},
@@ -161,9 +183,12 @@ func TestCreateCampaign_UnreadableBudgetCreateRecoversAndContinues(t *testing.T)
 	if res.CampaignID != "222" {
 		t.Errorf("CampaignID = %q, want 222 — the campaign step must now be reached", res.CampaignID)
 	}
-	ops, _ := campaignBody["operations"].([]any)
+	mu.Lock()
+	body := campaignBody
+	mu.Unlock()
+	ops, _ := body["operations"].([]any)
 	if len(ops) != 1 {
-		t.Fatalf("campaign body = %v", campaignBody)
+		t.Fatalf("campaign body = %v", body)
 	}
 	op, _ := ops[0].(map[string]any)
 	create, _ := op["create"].(map[string]any)
@@ -219,9 +244,34 @@ func TestCreateCampaign_UnrecoverableBudgetCreateStillRefuses(t *testing.T) {
 	}
 }
 
-// TestBudgetFromCreateResponse_WrapsTheParseFailureFirst pins the ordering every arm in
-// budget_lookup.go depends on: errors.As stops at the first *apiError in the chain, so an
-// apiError raised by the lookup READ must never be mistaken for an answer about the create.
+// TestRecoverBudgetAfterUnreadableCreate_AWrongAmountIsNotThisCreatesBudget is the gate the
+// other channels get for free from the DUPLICATE_NAME arm and this path has to state for
+// itself. A same-named budget removed shortly before, still served as ENABLED and
+// unattached by a lagging replica, passes every other gate — the attachment check reads the
+// campaign side, which lags with it. The amount the create itself set is the only field
+// that tells the two budgets apart, so a mismatch refuses instead of aligning: unlike a
+// budget that pre-dates the brief, there is nothing here to bring into line.
+func TestRecoverBudgetAfterUnreadableCreate_AWrongAmountIsNotThisCreatesBudget(t *testing.T) {
+	srv, _ := newBudgetLookupServer(t,
+		[]json.RawMessage{budgetRow(budgetRowOpts{name: testBudgetName, amountMicros: "25000000"})},
+		nil, // attachment check: the stale row looks unattached too
+	)
+	c := newAccountsTestClient(t, srv)
+
+	budget, err := c.recoverBudgetAfterUnreadableCreate(context.Background(), testBudgetName, testBudgetMicros)
+	if err == nil || budget != nil {
+		t.Fatalf("got (%+v, %v), want a refusal — that row is not the budget this create made", budget, err)
+	}
+	if !strings.Contains(err.Error(), "did not make") {
+		t.Errorf("error = %q, want the amount gate's own sentence", err)
+	}
+}
+
+// TestBudgetFromCreateResponse_WrapsTheParseFailureFirst pins the order the two failures are
+// REPORTED in, which is the order they happened in and the order the sibling arms read in.
+// It is not an errors.As test and cannot be one: parseErr comes from firstResourceName,
+// which never returns an *apiError, so the chain's first apiError is the lookup's whichever
+// way the two %w are written.
 func TestBudgetFromCreateResponse_WrapsTheParseFailureFirst(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if writeAccountsToken(w, r) {
@@ -232,7 +282,7 @@ func TestBudgetFromCreateResponse_WrapsTheParseFailureFirst(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c := newAccountsTestClient(t, srv)
 
-	_, _, _, err := c.budgetFromCreateResponse(context.Background(), "display", testBudgetName, []byte(`{"results":[{}]}`))
+	_, _, _, err := c.budgetFromCreateResponse(context.Background(), "display", testBudgetName, testBudgetMicros, []byte(`{"results":[{}]}`))
 	if err == nil {
 		t.Fatal("an unreadable account settles nothing and must be an error")
 	}

@@ -286,21 +286,28 @@ func (c *Client) findReusableBudget(ctx context.Context, budgetName string) (*re
 // its own sentence anyway — it tells the operator the id in the result came from a readback
 // rather than from the create, which is the difference between "Google told us" and "we went
 // and looked".
-func (c *Client) budgetFromCreateResponse(ctx context.Context, channel, budgetName string, body []byte) (resourceName, budgetID, recoveryStep string, err error) {
+func (c *Client) budgetFromCreateResponse(ctx context.Context, channel, budgetName string, amountMicros int64, body []byte) (resourceName, budgetID, recoveryStep string, err error) {
 	resourceName, budgetID, parseErr := firstResourceName(body)
 	if parseErr == nil {
 		return resourceName, budgetID, "", nil
 	}
 
-	budget, recoverErr := c.recoverBudgetAfterUnreadableCreate(ctx, budgetName)
+	budget, recoverErr := c.recoverBudgetAfterUnreadableCreate(ctx, budgetName, amountMicros)
 	if recoverErr != nil {
-		// BOTH are wrapped and the parse failure goes FIRST, for the reason every other arm
-		// in this file spells out: errors.As stops at the first *apiError in the chain, so an
-		// apiError raised by the lookup READ must not be mistaken for an answer about the
-		// create. The sentence does NOT say "UNCONFIRMED (may exist)" as this arm used to —
-		// a 2xx is Google confirming the create, so the budget's EXISTENCE is settled and
-		// only its identity is not. Telling an operator it "may exist" would send them
-		// looking for something that is definitely there.
+		// BOTH are wrapped, the parse failure FIRST, so the message reads in the order the
+		// two failures happened and matches the sibling arms. Unlike those arms, the order
+		// is not load-bearing for errors.As here: parseErr comes from firstResourceName,
+		// which returns only a json.Unmarshal wrap or a plain fmt.Errorf and can never be an
+		// *apiError. What IS new is that this arm admits the lookup READ's *apiError into a
+		// chain that previously carried none, so domain.UpstreamStatus now resolves and
+		// DispatchFailureMessage can say "the platform answered HTTP N" about a create that
+		// answered 200. That is acceptable because the status is the only upstream signal
+		// this path has — the create's own 2xx says nothing about why the identity is
+		// unresolved — and the sentence it decorates already states plainly which call
+		// succeeded and which one did not. The sentence does NOT say "UNCONFIRMED (may
+		// exist)" as this arm used to — a 2xx is Google confirming the create, so the
+		// budget's EXISTENCE is settled and only its identity is not. Telling an operator it
+		// "may exist" would send them looking for something that is definitely there.
 		return "", "", "", fmt.Errorf("google-ads %s budget %q WAS created (campaignBudgets:mutate answered success) but its response carried no usable resource name, and the account did not settle which budget it is, so the campaign was never attempted; find it by name in Google Ads change history before retrying: %w — and the account did not settle it: %w", channel, budgetName, parseErr, recoverErr)
 	}
 
@@ -331,13 +338,27 @@ func (c *Client) budgetFromCreateResponse(ctx context.Context, channel, budgetNa
 // The gates in findBudgetByName are checked even though the argument predicts them, exactly
 // as findReusableBudget checks them: the campaign about to be attached is billable, and
 // "Google said 2xx moments ago" is an argument, not evidence about the row that comes back.
-func (c *Client) recoverBudgetAfterUnreadableCreate(ctx context.Context, budgetName string) (*reusableBudget, error) {
+//
+// THE AMOUNT IS ONE OF THOSE GATES, and it is checked here rather than aligned as the
+// DUPLICATE_NAME arm does. There, the budget pre-dates the brief and a different amount is
+// an old budget to bring into line. Here the create that just succeeded SET the amount, so
+// a row carrying a different one is not this create's budget: the realistic shape is a
+// same-named budget removed shortly before, with a lagging replica still serving it as
+// ENABLED and unattached. Every other gate passes on that row, and the attachment check
+// queries the campaign side, which lags with it — the amount is the only field that
+// separates the two budgets. A mismatch is the same contradiction the no-rows arm refuses
+// on, so it refuses rather than attaching a billable campaign to a budget at an amount
+// nobody asked for.
+func (c *Client) recoverBudgetAfterUnreadableCreate(ctx context.Context, budgetName string, amountMicros int64) (*reusableBudget, error) {
 	budget, found, err := c.retryFindBudgetByName(ctx, budgetName, "after a create whose response carried no usable resource name")
 	if err != nil {
 		return nil, err
 	}
 	if !found {
 		return nil, fmt.Errorf("google-ads campaign budget lookup: Google answered the create with success, so %q exists, but no live budget of that name is visible in account %s after %d reads; refusing to proceed on two answers that contradict each other", budgetName, c.account.CustomerID, ambiguousBudgetResolveAttempts)
+	}
+	if budget.AmountMicros != amountMicros {
+		return nil, fmt.Errorf("google-ads campaign budget lookup: the create that just succeeded set %q to %d micros, but budget %s of that name carries %d; refusing to attach a campaign to a budget this create did not make", budgetName, amountMicros, budget.ID, budget.AmountMicros)
 	}
 	return budget, nil
 }

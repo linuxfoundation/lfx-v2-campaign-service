@@ -206,7 +206,7 @@ func (c *Client) createVideoCampaignCascade(ctx context.Context, in CampaignInpu
 	switch {
 	case err == nil:
 		var recovered string
-		budgetResource, budgetID, recovered, err = c.budgetFromCreateResponse(ctx, "video", budgetName, budgetResp)
+		budgetResource, budgetID, recovered, err = c.budgetFromCreateResponse(ctx, "video", budgetName, pf.amountMicros, budgetResp)
 		if err != nil {
 			return namePartial(), err
 		}

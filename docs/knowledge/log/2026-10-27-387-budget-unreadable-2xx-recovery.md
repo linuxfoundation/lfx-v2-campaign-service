@@ -45,12 +45,28 @@ Three consequences:
 - **The gates are still checked**, though "Google committed this moments ago"
   predicts they will pass. The argument is an argument; the row is the evidence.
   A shared or already-attached budget is refused by `findBudgetByName` exactly
-  as on the DUPLICATE_NAME path.
+  as on the DUPLICATE_NAME path. **The amount is one of those gates here**, and
+  it refuses rather than aligns: the create that just succeeded set the amount,
+  so a row carrying a different one is not this create's budget. The shape that
+  makes this more than theory is a same-named budget removed shortly before,
+  with a lagging replica still serving it as ENABLED and unattached — every
+  other gate passes on it, and the attachment check reads the campaign side,
+  which lags with it. On the DUPLICATE_NAME path the opposite is right: there
+  the budget pre-dates the brief, so a different amount is an old budget to
+  bring into line.
 - **Nothing downstream changed on failure.** Both errors are wrapped with the
-  parse failure FIRST — `errors.As` stops at the first `*apiError`, so one
-  raised by the lookup READ must not be mistaken for an answer about the create
-  — the partial still carries no `CampaignBudgetID`, `CreateOutcome` is still
-  `CreateOutcomeUnconfirmed`, and the campaign is still never attempted.
+  parse failure first, which is the order they happened in and the order the
+  sibling arms read in. That ordering is **not** an `errors.As` guard here, as
+  it is on the DUPLICATE_NAME arm: `firstResourceName` returns only a
+  `json.Unmarshal` wrap or a plain `fmt.Errorf`, never an `*apiError`, so the
+  chain's first `apiError` is the lookup's either way. What is new is that this
+  arm admits the lookup READ's status into a chain that previously carried
+  none, so `DispatchFailureMessage` can now say "the platform answered HTTP N"
+  about a create that answered 200 — accepted because the read's status is the
+  only upstream signal this path has, and the sentence it decorates already
+  names which call succeeded and which did not. The partial still carries no
+  `CampaignBudgetID`, `CreateOutcome` is still `CreateOutcomeUnconfirmed`, and
+  the campaign is still never attempted.
 
 ## One sentence that was false and is gone
 
@@ -58,9 +74,9 @@ The old refusal read "budget creation UNCONFIRMED (`<name>` may exist — verify
 in Google Ads before retrying)". A 2xx **is** Google confirming the create: the
 budget's existence is settled and only its identity is not. The sentence now
 says it **WAS** created, because telling an operator it may exist sends them
-looking for something that is definitely there. No test asserted the old string,
-and `CreateOutcome` reads ids off the partial rather than parsing error text, so
-nothing was coupled to the wording.
+looking for something that is definitely there. No *production* classification
+was coupled to the wording: `CreateOutcome` reads ids off the partial rather
+than parsing error text.
 
 Two existing tests did assert the old `UNCONFIRMED` token — the empty-results
 and malformed-id variants in `campaign_test.go`. Both now assert the new

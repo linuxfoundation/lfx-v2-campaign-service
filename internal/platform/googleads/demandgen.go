@@ -172,7 +172,7 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	switch {
 	case err == nil:
 		var recovered string
-		budgetResource, budgetID, recovered, err = c.budgetFromCreateResponse(ctx, "demand gen", budgetName, budgetResp)
+		budgetResource, budgetID, recovered, err = c.budgetFromCreateResponse(ctx, "demand gen", budgetName, amountMicros, budgetResp)
 		if err != nil {
 			return namePartial(), err
 		}
