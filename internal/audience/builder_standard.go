@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -347,18 +348,72 @@ func HasFilterTree(raw json.RawMessage) bool {
 	return strings.HasPrefix(t, "{")
 }
 
-// CoveredSendList is the first of sendIDs that standingFilter -- the project's standing standard
-// list's filter, as read back -- covers whole, or "". The standing list is shared and only grows,
-// so a list an earlier audience recorded as an INCLUSION can be added to it later by another
-// compose or attach; a send that both targets that list and excludes the standing list would
-// then exclude the whole inclusion. The send paths call this on the recorded ids right before
-// they apply them.
-func CoveredSendList(standingFilter json.RawMessage, sendIDs []string) string {
+// MaxSendListFilterReads bounds the send lists whose filters StandingCoversSend reads back at
+// send time: one GetList each. A composed audience sends to one master; an attach of several
+// existing lists sends to each of them, up to 200, and reading that many on every send is not a
+// check worth its cost, so a larger set is refused rather than half-checked.
+const MaxSendListFilterReads = 50
+
+// ErrTooManySendListsToCheck is StandingCoversSend's refusal for a send of more than
+// MaxSendListFilterReads lists while it excludes the standing list.
+var ErrTooManySendListsToCheck = errors.New("audience: too many send lists to check against the standing suppression list")
+
+// StandingCoversSend reports the first send list the project's standing standard list now
+// covers, directly or through one of its INCLUSION sources, as (sendID, coveredID); both empty
+// when none is covered.
+//
+// The standing list is shared and only grows, so a list an earlier audience recorded as an
+// inclusion can be added to it later. A composed audience records its MASTER as the send list,
+// and the master includes its source lists (IN_LIST); if the standing list covers one of those,
+// excluding it removes that whole inclusion path -- possibly every recipient -- while the master's
+// own id is not covered at all. So each send list's filter is read (readFilter, one GetList) and
+// every IN_LIST source it includes is checked too; NOT_IN_LIST lists are exclusions, not sources.
+// Conservative by design: ANY covered inclusion path refuses, the send-time match for the
+// compose-time rule that a covered inclusion is a 400. A failed read is returned as an error, and
+// more than MaxSendListFilterReads send lists is ErrTooManySendListsToCheck.
+func StandingCoversSend(standingFilter json.RawMessage, sendIDs []string, readFilter func(listID string) (json.RawMessage, error)) (sendID, coveredID string, err error) {
 	covered := CoveredListIDs(standingFilter)
-	for _, id := range sendIDs {
-		if slices.Contains(covered, strings.TrimSpace(id)) {
-			return strings.TrimSpace(id)
+	if len(covered) == 0 {
+		return "", "", nil
+	}
+	sends := UniqueIDs(sendIDs)
+	for _, id := range sends {
+		if slices.Contains(covered, id) {
+			return id, id, nil
 		}
 	}
-	return ""
+	if len(sends) > MaxSendListFilterReads {
+		return "", "", fmt.Errorf("%w: %d send lists, at most %d are checked", ErrTooManySendListsToCheck, len(sends), MaxSendListFilterReads)
+	}
+	for _, id := range sends {
+		filter, rerr := readFilter(id)
+		if rerr != nil {
+			return "", "", rerr
+		}
+		for _, source := range InclusionListIDs(filter) {
+			if slices.Contains(covered, source) {
+				return id, source, nil
+			}
+		}
+	}
+	return "", "", nil
+}
+
+// InclusionListIDs are the lists a filter tree INCLUDES by membership: every IN_LIST filter,
+// wherever it sits, never a NOT_IN_LIST one. An unreadable tree includes nothing.
+func InclusionListIDs(filter json.RawMessage) []string {
+	var root qaBranch
+	if len(filter) == 0 || json.Unmarshal(filter, &root) != nil {
+		return nil
+	}
+	var out []string
+	root.walk(func(b qaBranch) {
+		for _, f := range b.Filters {
+			id := strings.TrimSpace(f.ListID.String())
+			if f.FilterType == "IN_LIST" && f.Operator == "IN_LIST" && id != "" {
+				out = append(out, id)
+			}
+		}
+	})
+	return UniqueIDs(out)
 }

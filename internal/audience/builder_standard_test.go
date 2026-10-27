@@ -5,6 +5,8 @@ package audience
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -336,4 +338,47 @@ func TestCustomInterpretPrompt_KeepsEditionSpelling(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, prompt, `"`+long[0]+`"`)
 	assert.NotContains(t, prompt, "bbb", "a name that does not fit whole is left out, never cut")
+}
+
+func TestStandingCoversSend(t *testing.T) {
+	standing, _ := MasterListFilter([]string{"7001", "500"})
+	master, _ := MasterListWithSuppressionsFilter([]string{"500", "501"}, []string{"9002"})
+	filters := map[string]json.RawMessage{"26724": master}
+	reads := 0
+	read := func(id string) (json.RawMessage, error) {
+		reads++
+		f, ok := filters[id]
+		if !ok {
+			return nil, errors.New("no such list")
+		}
+		return f, nil
+	}
+
+	send, covered, err := StandingCoversSend(standing, []string{"500"}, read)
+	require.NoError(t, err)
+	assert.Equal(t, "500", send)
+	assert.Equal(t, "500", covered, "a directly covered send list needs no read")
+	assert.Zero(t, reads)
+
+	send, covered, err = StandingCoversSend(standing, []string{"26724"}, read)
+	require.NoError(t, err)
+	assert.Equal(t, "26724", send)
+	assert.Equal(t, "500", covered, "ANY covered inclusion path refuses, though 501 is not covered")
+
+	excludesOnly, _ := MasterListFilter([]string{"9002"})
+	send, covered, err = StandingCoversSend(excludesOnly, []string{"26724"}, read)
+	require.NoError(t, err)
+	assert.Empty(t, send+covered, "a NOT_IN_LIST exclusion of the master is not a source")
+
+	_, _, err = StandingCoversSend(standing, []string{"404"}, read)
+	require.Error(t, err, "a failed read is not a pass")
+
+	many := make([]string, MaxSendListFilterReads+1)
+	for i := range many {
+		many[i] = fmt.Sprintf("%d", 100000+i)
+	}
+	_, _, err = StandingCoversSend(standing, many, read)
+	require.ErrorIs(t, err, ErrTooManySendListsToCheck)
+	_, _, err = StandingCoversSend(nil, many, read)
+	require.NoError(t, err, "nothing covered, nothing to read")
 }

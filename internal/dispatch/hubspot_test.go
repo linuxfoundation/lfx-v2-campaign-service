@@ -99,9 +99,11 @@ type hubspotRec struct {
 	standingName   string
 	standingFilter json.RawMessage
 	listSearches   int
-	sendListBody   map[string]any
-	sawClone       bool
-	sawSendList    bool
+	// sendListFilters are the filters GetList returns for other lists (the send lists).
+	sendListFilters map[string]json.RawMessage
+	sendListBody    map[string]any
+	sawClone        bool
+	sawSendList     bool
 	// tokenInfoCalls counts hits on the token-info endpoint. Dispatch must make exactly ONE:
 	// the cross-portal guard verifies the portal and RETURNS it for the provenance stamp, so a
 	// second call would be the duplicate that regression removed.
@@ -467,8 +469,13 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/crm/v3/lists/"):
 			rec.mu.Lock()
 			id, name, filter := rec.standingID, rec.standingName, rec.standingFilter
+			asked := strings.TrimPrefix(r.URL.Path, "/crm/v3/lists/")
+			sendFilter, isSend := rec.sendListFilters[asked]
 			rec.mu.Unlock()
-			if strings.TrimPrefix(r.URL.Path, "/crm/v3/lists/") != id || id == "" {
+			if isSend {
+				id, name, filter = asked, "send list "+asked, sendFilter
+			}
+			if asked != id || id == "" {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
@@ -2128,6 +2135,45 @@ func TestHubSpot_DispatchRefusesASendListTheStandingListNowCovers(t *testing.T) 
 	fine, _ := audience.MasterListFilter([]string{"7001"})
 	srv2, rec2 := hubspotServer(t)
 	rec2.standingID, rec2.standingName, rec2.standingFilter = "77", audience.StandardSuppressionName("cncf"), fine
+	masterOf, _ := audience.MasterListWithSuppressionsFilter([]string{"500", "501"}, []string{"7001"})
+	rec2.sendListFilters = map[string]json.RawMessage{"26724": masterOf}
+	d = NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv2.URL))
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if !rec2.SawSendList() {
+		t.Error("expected the send list to be applied")
+	}
+}
+
+// A composed audience records its MASTER as the send list. The standing list now covers the
+// master's only source list -- not the master itself -- so the send would reach nobody: refused
+// before anything is created. A NOT_IN_LIST exclusion of the master is not a source.
+func TestHubSpot_DispatchRefusesAMasterWhoseSourceTheStandingListNowCovers(t *testing.T) {
+	standing, _ := audience.MasterListFilter([]string{"7001", "500"})
+	master, err := audience.MasterListWithSuppressionsFilter([]string{"500"}, []string{"9002"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, rec := hubspotServer(t)
+	rec.standingID, rec.standingName, rec.standingFilter = "77", audience.StandardSuppressionName("cncf"), standing
+	rec.sendListFilters = map[string]json.RawMessage{"26724": master}
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", []string{"77", "9002"})}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	_, err = d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err == nil || !strings.Contains(err.Error(), `includes list "500"`) {
+		t.Fatalf("want a refusal naming the covered source list, got %v", err)
+	}
+	if rec.SawClone() || rec.SawSendList() {
+		t.Error("nothing may be created when the send's inclusion is excluded")
+	}
+
+	// The standing list covering only the master's EXCLUSION (9002) is not a covered source.
+	standingOnExclusion, _ := audience.MasterListFilter([]string{"7001", "9002"})
+	srv2, rec2 := hubspotServer(t)
+	rec2.standingID, rec2.standingName, rec2.standingFilter = "77", audience.StandardSuppressionName("cncf"), standingOnExclusion
+	rec2.sendListFilters = map[string]json.RawMessage{"26724": master}
 	d = NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv2.URL))
 	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)); err != nil {
 		t.Fatalf("Dispatch: %v", err)

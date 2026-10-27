@@ -1768,10 +1768,30 @@ func wizardStandingCoversSendList(ctx context.Context, client HubSpotWizardClien
 		return &briefs.ConnServiceUnavailableError{Code: "503",
 			Message: "the project's standing suppression list could not be read before applying the recipients; retry"}
 	}
-	if id := audience.CoveredSendList(list.FilterBranch, sendIDs); id != "" {
+	sendID, coveredID, cerr := audience.StandingCoversSend(list.FilterBranch, sendIDs, func(id string) (json.RawMessage, error) {
+		l, gerr := client.GetList(ctx, id)
+		if gerr != nil {
+			return nil, gerr
+		}
+		return l.FilterBranch, nil
+	})
+	switch {
+	case errors.Is(cerr, audience.ErrTooManySendListsToCheck):
+		return &briefs.ConflictError{Code: "409", Message: fmt.Sprintf(
+			"this send goes to more than %d lists and excludes the project's standing standard suppression list %s, so it cannot be checked against it; attach fewer lists",
+			audience.MaxSendListFilterReads, standingID)}
+	case cerr != nil:
+		slog.WarnContext(ctx, "wizard could not read a send list", "error", safeErrSummary(cerr))
+		return &briefs.ConnServiceUnavailableError{Code: "503",
+			Message: "a recipient list could not be read to check it against the project's standing suppression list; retry"}
+	case coveredID == sendID && sendID != "":
 		return &briefs.ConflictError{Code: "409", Message: fmt.Sprintf(
 			"list %s is a recipient list of this send, but the project's standing standard suppression list %s now covers it, so the send would exclude it entirely; remove it from the standing list in HubSpot or rebuild the audience",
-			id, standingID)}
+			sendID, standingID)}
+	case coveredID != "":
+		return &briefs.ConflictError{Code: "409", Message: fmt.Sprintf(
+			"recipient list %s includes list %s, which the project's standing standard suppression list %s now covers, so the send would exclude that whole inclusion; remove it from the standing list in HubSpot or rebuild the audience",
+			sendID, coveredID, standingID)}
 	}
 	return nil
 }
