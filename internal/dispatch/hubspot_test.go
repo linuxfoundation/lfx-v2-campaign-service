@@ -2182,3 +2182,26 @@ func TestHubSpot_DispatchRefusesAMasterWhoseSourceTheStandingListNowCovers(t *te
 		t.Error("expected the send list to be applied")
 	}
 }
+
+// An attach of several lists sends to the lists themselves, so they are checked directly and no
+// send-list filter is read (the fake answers 404 for one, which would refuse): a large attach
+// that excludes the standing list is never refused for its size.
+func TestHubSpot_DispatchMultiListAttachExcludingTheStandingListNeedsNoReads(t *testing.T) {
+	standing, _ := audience.MasterListFilter([]string{"7001"})
+	srv, rec := hubspotServer(t)
+	rec.standingID, rec.standingName, rec.standingFilter = "77", audience.StandardSuppressionName("cncf"), standing
+	includes := make([]string, 200)
+	for i := range includes {
+		includes[i] = fmt.Sprintf("%d", 30000+i)
+	}
+	auds := builtHubSpotAudience(includes[0], []string{"77"})
+	auds[0].IncludeListIDs, _ = json.Marshal(includes)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, fakeAudienceReader{auds: auds}, hubspot.WithBaseURL(srv.URL))
+
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if !rec.SawSendList() {
+		t.Error("expected the 200-list send to be applied")
+	}
+}

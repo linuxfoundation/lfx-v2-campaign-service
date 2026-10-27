@@ -2002,11 +2002,13 @@ reports false numbers:
   id check above passes. After the portal guard and before the clone, `standingCoversSendList`
   searches for `audience.StandardSuppressionName(projectID)` and, only when that list is among the
   suppressions, reads it and refuses (`audience.StandingCoversSend`, a pre-create
-  `PreflightRefusalf` naming the lists) if it covers a send list or any INCLUSION source of one: a
-  composed audience records its MASTER as the send list, so each send list's filter is read too
-  (one `GetList` each, at most `audience.MaxSendListFilterReads` = 50, a larger set refused) and
-  every IN_LIST list it includes is checked; NOT_IN_LIST lists are exclusions, not sources. Any
-  covered inclusion path refuses, matching the compose-time overlap 400. Read-only; a failed read refuses
+  `PreflightRefusalf` naming the lists) if it covers a send list or an INCLUSION source of one.
+  Every send list is checked directly with no read, which covers an attach (it sends to its source
+  lists). A composed audience records its MASTER as its one send list, and the row has no
+  compose-or-attach marker, so the filter is read exactly when the send has ONE list (every
+  composed audience, harmlessly a one-list attach) and its IN_LIST sources are checked;
+  NOT_IN_LIST lists are exclusions, not sources. Any covered inclusion path refuses, matching the
+  compose-time overlap 400. No send is refused for its size. Read-only; a failed read refuses
   too, with nothing created. The email wizard applies the same check
   (`wizardStandingCoversSendList`, a 409).
 

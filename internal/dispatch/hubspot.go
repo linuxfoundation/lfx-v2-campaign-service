@@ -1417,7 +1417,7 @@ func assertAudiencePortal(ctx context.Context, client *hubspot.Client, res *reso
 // standard list while that list now covers one of the send lists, or one of the INCLUSION
 // sources of a send list (a composed master's IN_LIST lists; audience.StandingCoversSend).
 // Read-only: one name search, then -- only when the standing list is among the suppressions --
-// one GetList for it and one per send list, at most audience.MaxSendListFilterReads. A failed read refuses too -- the send cannot be shown to be safe -- and nothing
+// one GetList for it and, for a one-list send (a composed master), one for that list. A failed read refuses too -- the send cannot be shown to be safe -- and nothing
 // is created, so a retry is clean.
 func standingCoversSendList(ctx context.Context, client *hubspot.Client, projectID string, sendIDs, suppressionIDs []string) error {
 	if len(suppressionIDs) == 0 {
@@ -1442,9 +1442,6 @@ func standingCoversSendList(ctx context.Context, client *hubspot.Client, project
 		return l.FilterBranch, nil
 	})
 	switch {
-	case errors.Is(cerr, audience.ErrTooManySendListsToCheck):
-		return domain.PreflightRefusalf("hubspot: the audience sends to more than %d lists and excludes the project's standing standard suppression list %s, so the send cannot be checked against it; attach fewer lists",
-			audience.MaxSendListFilterReads, domain.CallerValue(standing.ListID))
 	case cerr != nil:
 		return fmt.Errorf("hubspot: could not read a send list before the send: %w", cerr)
 	case coveredID == sendID && sendID != "":

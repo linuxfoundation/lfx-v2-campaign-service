@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -348,29 +347,23 @@ func HasFilterTree(raw json.RawMessage) bool {
 	return strings.HasPrefix(t, "{")
 }
 
-// MaxSendListFilterReads bounds the send lists whose filters StandingCoversSend reads back at
-// send time: one GetList each. A composed audience sends to one master; an attach of several
-// existing lists sends to each of them, up to 200, and reading that many on every send is not a
-// check worth its cost, so a larger set is refused rather than half-checked.
-const MaxSendListFilterReads = 50
-
-// ErrTooManySendListsToCheck is StandingCoversSend's refusal for a send of more than
-// MaxSendListFilterReads lists while it excludes the standing list.
-var ErrTooManySendListsToCheck = errors.New("audience: too many send lists to check against the standing suppression list")
-
 // StandingCoversSend reports the first send list the project's standing standard list now
 // covers, directly or through one of its INCLUSION sources, as (sendID, coveredID); both empty
 // when none is covered.
 //
 // The standing list is shared and only grows, so a list an earlier audience recorded as an
-// inclusion can be added to it later. A composed audience records its MASTER as the send list,
-// and the master includes its source lists (IN_LIST); if the standing list covers one of those,
-// excluding it removes that whole inclusion path -- possibly every recipient -- while the master's
-// own id is not covered at all. So each send list's filter is read (readFilter, one GetList) and
-// every IN_LIST source it includes is checked too; NOT_IN_LIST lists are exclusions, not sources.
-// Conservative by design: ANY covered inclusion path refuses, the send-time match for the
-// compose-time rule that a covered inclusion is a 400. A failed read is returned as an error, and
-// more than MaxSendListFilterReads send lists is ErrTooManySendListsToCheck.
+// inclusion can be added to it later. Every send list is checked directly, with no reads: that
+// covers an attach, which sends to its source lists themselves.
+//
+// A composed audience records its MASTER as its one send list, and the master includes its
+// source lists (IN_LIST); if the standing list covers one of those, excluding it removes that
+// whole inclusion path -- possibly every recipient -- while the master's own id is not covered.
+// The recorded audience carries no compose-or-attach marker, so the master's filter is read
+// (readFilter, one GetList) exactly when the send has ONE list: every composed audience, and
+// harmlessly a one-list attach. Its IN_LIST sources are checked too; NOT_IN_LIST lists are
+// exclusions, not sources. Any covered inclusion path refuses, the send-time match for the
+// compose-time rule that a covered inclusion is a 400. A send to several lists is an attach and
+// needs no read, however many lists it has. A failed read is returned as an error.
 func StandingCoversSend(standingFilter json.RawMessage, sendIDs []string, readFilter func(listID string) (json.RawMessage, error)) (sendID, coveredID string, err error) {
 	covered := CoveredListIDs(standingFilter)
 	if len(covered) == 0 {
@@ -382,18 +375,16 @@ func StandingCoversSend(standingFilter json.RawMessage, sendIDs []string, readFi
 			return id, id, nil
 		}
 	}
-	if len(sends) > MaxSendListFilterReads {
-		return "", "", fmt.Errorf("%w: %d send lists, at most %d are checked", ErrTooManySendListsToCheck, len(sends), MaxSendListFilterReads)
+	if len(sends) != 1 {
+		return "", "", nil
 	}
-	for _, id := range sends {
-		filter, rerr := readFilter(id)
-		if rerr != nil {
-			return "", "", rerr
-		}
-		for _, source := range InclusionListIDs(filter) {
-			if slices.Contains(covered, source) {
-				return id, source, nil
-			}
+	filter, rerr := readFilter(sends[0])
+	if rerr != nil {
+		return "", "", rerr
+	}
+	for _, source := range InclusionListIDs(filter) {
+		if slices.Contains(covered, source) {
+			return sends[0], source, nil
 		}
 	}
 	return "", "", nil

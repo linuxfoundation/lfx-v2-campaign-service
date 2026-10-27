@@ -2076,9 +2076,10 @@ audience through `SendListIDs()` too, passes every list to `SetSendList`, and re
 override still refuses more than one id; that refusal predates multi-include and is unchanged. Before
 `SetSendList`, `wizardStandingCoversSendList` refuses with a 409 naming both lists when the
 project's standing standard suppression list is among the send's suppressions and now covers one
-of its send lists, or an IN_LIST source of one (a composed master; `audience.StandingCoversSend`);
-it is shared and grows after the audience is recorded. Read-only: one search, then one `GetList`
-for the standing list and one per send list (at most 50, a larger set a 409); a failed read is a
+of its send lists, or an IN_LIST source of a one-list send (a composed master;
+`audience.StandingCoversSend`); it is shared and grows after the audience is recorded. Read-only:
+one search, then one `GetList` for the standing list and, for a one-list send, one for that list;
+a send to several lists is checked by id only and never refused for its size. A failed read is a
 503 with the draft untouched. Dispatch runs the
 same check (`standingCoversSendList`).
 

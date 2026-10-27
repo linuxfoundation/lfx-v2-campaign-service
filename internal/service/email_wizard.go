@@ -1776,10 +1776,6 @@ func wizardStandingCoversSendList(ctx context.Context, client HubSpotWizardClien
 		return l.FilterBranch, nil
 	})
 	switch {
-	case errors.Is(cerr, audience.ErrTooManySendListsToCheck):
-		return &briefs.ConflictError{Code: "409", Message: fmt.Sprintf(
-			"this send goes to more than %d lists and excludes the project's standing standard suppression list %s, so it cannot be checked against it; attach fewer lists",
-			audience.MaxSendListFilterReads, standingID)}
 	case cerr != nil:
 		slog.WarnContext(ctx, "wizard could not read a send list", "error", safeErrSummary(cerr))
 		return &briefs.ConnServiceUnavailableError{Code: "503",

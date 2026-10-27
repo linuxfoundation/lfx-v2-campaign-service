@@ -373,12 +373,21 @@ func TestStandingCoversSend(t *testing.T) {
 	_, _, err = StandingCoversSend(standing, []string{"404"}, read)
 	require.Error(t, err, "a failed read is not a pass")
 
-	many := make([]string, MaxSendListFilterReads+1)
+	// A 200-list attach sends to its source lists themselves: checked directly, never read, and
+	// never refused for its size.
+	many := make([]string, 200)
 	for i := range many {
 		many[i] = fmt.Sprintf("%d", 100000+i)
 	}
-	_, _, err = StandingCoversSend(standing, many, read)
-	require.ErrorIs(t, err, ErrTooManySendListsToCheck)
-	_, _, err = StandingCoversSend(nil, many, read)
-	require.NoError(t, err, "nothing covered, nothing to read")
+	reads = 0
+	send, covered, err = StandingCoversSend(standing, many, read)
+	require.NoError(t, err)
+	assert.Empty(t, send+covered)
+	assert.Zero(t, reads, "a multi-list send needs no filter reads")
+	many[150] = "500"
+	send, covered, err = StandingCoversSend(standing, many, read)
+	require.NoError(t, err)
+	assert.Equal(t, "500", send+"", "a covered list among them is still caught directly")
+	assert.Equal(t, "500", covered)
+	assert.Zero(t, reads)
 }
