@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	sf "github.com/snowflakedb/gosnowflake/v2"
 )
 
 // ---------------------------------------------------------------------------
@@ -466,3 +468,62 @@ func TestIdent_RejectsInjection(t *testing.T) {
 
 // Ensure the driver value type is what database/sql expects (compile-time guard).
 var _ driver.QueryerContext = (*fakeConn)(nil)
+
+// TestDefaultOpenerDriverNameIsRegistered pins the one link in NewClient that the
+// compiler cannot check: the literal "snowflake" in the default opener's
+// sql.Open (client.go). Every other test injects a fake opener, so the real
+// driver name is exercised nowhere else — a wrong name builds cleanly and fails
+// only at the first query, in production, against a live warehouse.
+//
+// This is not a test of the vendor's init. It is a test of the AGREEMENT between
+// the module this package imports and the string this package opens with, which
+// is exactly what a major-version move (v1 -> /v2, GHSA-qqj6-54q6-cxv6) puts at
+// risk: the import path changes, the string does not, and nothing connects them.
+func TestDefaultOpenerDriverNameIsRegistered(t *testing.T) {
+	const want = "snowflake"
+
+	for _, name := range sql.Drivers() {
+		if name == want {
+			return
+		}
+	}
+	t.Fatalf("driver %q is not registered by the imported gosnowflake module; "+
+		"sql.Open(%q, ...) in NewClient's default opener would fail at the first "+
+		"query. Registered drivers: %v", want, want, sql.Drivers())
+}
+
+// TestDSNEnablesOCSPRevocationChecking pins the behavioural default the v1 -> /v2
+// module move silently flipped.
+//
+// v1 performed OCSP certificate-revocation checking unless DisableOCSPChecks or
+// InsecureMode was set — neither is set here, so it was ON. v2 gates the same code
+// on OCSPEnabled(cfg), which is false for OCSPFailOpenNotSet, the ZERO VALUE of the
+// field this package never used to set. Carrying the config across unchanged
+// therefore compiles, passes every other test in this package, connects fine, and
+// stops checking whether the warehouse's TLS certificate has been revoked.
+//
+// The assertion runs over the DSN rather than the Config literal because the DSN is
+// what NewClient keeps and what sql.Open hands the driver to re-parse — a field set
+// on the literal but dropped on the way through DSN() would be a green test and an
+// unchecked connection. OCSPEnabled itself lives in the driver's internal/config and
+// cannot be called from here, so this asserts its two inputs directly: fail-open
+// mode requested, checks not disabled.
+func TestDSNEnablesOCSPRevocationChecking(t *testing.T) {
+	c, err := NewClient(testConfig(t))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	parsed, err := sf.ParseDSN(c.dsn)
+	if err != nil {
+		t.Fatalf("ParseDSN: %v", err)
+	}
+	if parsed.DisableOCSPChecks {
+		t.Error("DSN disables OCSP checks; the connection would not verify certificate revocation")
+	}
+	if parsed.OCSPFailOpen != sf.OCSPFailOpenTrue {
+		t.Errorf("DSN carries OCSPFailOpen %v, want %v (OCSPFailOpenNotSet, the zero "+
+			"value, turns revocation checking OFF in gosnowflake/v2 — v1 had it on)",
+			parsed.OCSPFailOpen, sf.OCSPFailOpenTrue)
+	}
+}

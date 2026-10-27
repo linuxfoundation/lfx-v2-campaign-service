@@ -1493,6 +1493,19 @@ var CreativeAsset = Type("creative-asset", func() {
 	})
 	Attribute("byte_size", Int64, "Size of the stored image in bytes")
 	Attribute("checksum", String, "Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a brief")
+	// width/height are OPTIONAL — not in Required below — and the reason is a fact about the
+	// data, not a hedge. They were added in the release that began recording them (migration
+	// 000047), so an asset uploaded before it has no dimensions and never will until a backfill
+	// runs. Absent therefore means UNKNOWN, which is a different answer from any number this
+	// field could carry, and marking them Required would force the transport to publish a
+	// fabricated 0 for those rows — a shape no image has, and one a client matching assets to
+	// platform slots would read as "fails every minimum".
+	Attribute("width", Int, "Pixel width, as read from the image header at upload. Absent for an asset stored before the service recorded dimensions.", func() {
+		Minimum(1)
+	})
+	Attribute("height", Int, "Pixel height, as read from the image header at upload. Absent for an asset stored before the service recorded dimensions.", func() {
+		Minimum(1)
+	})
 	// created SELECTS the upload response status and is deliberately NOT Required, so it stays
 	// out of every other representation of this type (get/list responses never set it).
 	//
@@ -1517,6 +1530,90 @@ var CreativeAsset = Type("creative-asset", func() {
 		Example("true")
 	})
 	Required("id", "project_id", "brief_id", "mime_type", "byte_size", "checksum")
+})
+
+// CreativeSlotAssignment is one platform image slot and the stored assets that fill it.
+//
+// It carries `requirement` — the slot's rule rendered as a sentence — even on a slot that is
+// FULL, because the operator's next question after "what fits here" is "what else would".
+// Re-deriving that sentence client-side would mean shipping every platform's geometry to the
+// browser and keeping two copies of it in step.
+var CreativeSlotAssignment = Type("creative-slot-assignment", func() {
+	Attribute("slot_key", String, "Stable identifier for this slot: platform/channel/slot, or platform/slot where the platform has a single ad shape. It is the join key between a plan row and an operator override, so it survives a round trip through a client unchanged.")
+	Attribute("platform", String, "Campaign platform this slot belongs to, using the same identifier a campaign config carries (\"google-ads\").")
+	Attribute("channel", String, "Ad channel within the platform whose rules differ from its siblings (\"PERFORMANCE_MAX\", \"DEMAND_GEN\", \"DISPLAY\"). Absent where the platform has a single ad shape.")
+	Attribute("slot", String, "Wire name of the slot within its channel — the asset field type or payload array key a campaign config puts this image under.")
+	Attribute("label", String, "Operator-facing name of the slot. It NAMES ITS CHANNEL, because three Google channels each have a slot called \"logo image\" under different rules and a bare \"logo image\" would not say which creative is meant.")
+	Attribute("requirement", String, "The slot's rule as a sentence an operator can act on — ratio, tolerance and pixel floor, plus the byte cap where one applies.")
+	Attribute("asset_ids", ArrayOf(String, func() { Format(FormatUUID) }), "Assets assigned to this slot, best fit first. An asset may appear in several slots: one library feeds every platform, and the same square image legitimately serves a 1:1 slot on each. It never appears twice within one slot.")
+	Attribute("min_count", Int, "Images the platform requires in this slot. 0 marks the slot optional.")
+	Attribute("max_count", Int, "Images the platform will accept in this slot. 0 means the platform states no per-slot ceiling; a shared ceiling across sibling slots may still apply.")
+	Required("slot_key", "platform", "slot", "label", "requirement", "asset_ids", "min_count", "max_count")
+})
+
+// CreativeSlotGap is one requirement the library cannot meet.
+//
+// A gap is first-class output, not an error: a plan with gaps is a correct and complete answer
+// about a library that is not yet complete, and it is the most useful thing this endpoint
+// produces. Only REQUIRED shortfalls appear — an optional slot left empty is simply an optional
+// slot left empty, and listing it would bury the shortfalls that actually block a launch.
+//
+// The fields are flat rather than nesting a slot, because a gap may span SEVERAL slots: Google
+// requires Demand Gen's landscape and square marketing images only of each other, so the
+// shortfall belongs to the pair and `slot_key` is then absent.
+var CreativeSlotGap = Type("creative-slot-gap", func() {
+	Attribute("platform", String, "Campaign platform whose rule is unmet.")
+	Attribute("channel", String, "Ad channel whose rule is unmet. Absent where the platform has a single ad shape.")
+	Attribute("slot_key", String, "The slot this shortfall belongs to. ABSENT when the requirement spans several slots and no single one of them is required on its own.")
+	Attribute("label", String, "Operator-facing name of the unmet requirement.")
+	Attribute("need", Int, "How many more images the requirement needs beyond what the plan could assign. Always at least 1.", func() { Minimum(1) })
+	Attribute("reason", String, "What is missing and what would satisfy it, as the sentence an operator takes back to their designer. It names every shape that would close the gap, not just one, so an either-or requirement does not send someone to produce an image they did not need.")
+	Required("platform", "label", "need", "reason")
+})
+
+// CreativeAssetPlan is the whole computed grid: which stored assets fit which platform slots,
+// and what is still missing.
+//
+// It is a pure READ. Nothing is written, no asset is attached to anything, and calling it twice
+// with an unchanged library returns an identical plan — so a client may call it as often as it
+// likes while the operator is still deciding, and an operator override replaces a row here
+// rather than racing it.
+var CreativeAssetPlan = Type("creative-asset-plan", func() {
+	Attribute("platforms", ArrayOf(String), "The platforms this plan covers, after defaulting — echoed so a caller who sent no filter knows what was actually evaluated.")
+	Attribute("assignments", ArrayOf(CreativeSlotAssignment), "Every slot that received at least one asset, in platform catalog order.")
+	Attribute("gaps", ArrayOf(CreativeSlotGap), "Every required slot or cross-slot rule the library leaves short. Empty means this library can fill every requested platform.")
+	Attribute("unclassified", ArrayOf(String, func() { Format(FormatUUID) }), "Assets whose dimensions were never recorded, so their shape is unknown. They are NOT counted against any slot and NOT reported as failing one: unknown is a different answer from wrong, and a dimension backfill makes them classifiable without the operator doing anything.")
+	Attribute("unused", ArrayOf(String, func() { Format(FormatUUID) }), "Assets whose dimensions are known and which this plan did not place in any slot. Wider than \"nothing would accept them\": an asset also appears here when every slot that would take it was already filled to its minimum, or when a sibling slot had already spent a shared group ceiling. The mirror of gaps: not only \"what am I missing\" but \"which of the files I just dropped is this plan not using\" — with no gaps reported, what is listed here is surplus rather than unusable.")
+	// All five are Required so a client never has to tell an omitted list from an empty one.
+	// Empty gaps is the answer that means "ready to launch", and it has to be expressible.
+	Required("platforms", "assignments", "gaps", "unclassified", "unused")
+})
+
+// CreativeAssetList is the brief's creative-asset library: every stored asset, plus the
+// quota the next upload will be judged against.
+//
+// The quota fields are on the LIST rather than only in the 409 an upload returns, and that is
+// the point of putting them here. A folder upload sends many files in sequence; without the
+// limits up front the only way to discover the brief is full is to send file 51 and be
+// refused, having already paid for fifty round trips. With them, a client knows before it
+// starts how many assets and how many bytes it may still add.
+//
+// `count` and `bytes_used` are served rather than left for the client to derive from `assets`.
+// They are computed from the same rows the server read, so they are by construction the figures
+// the upload path's quota check will compare against — a client that totalled `assets` itself
+// would be reimplementing that check, and would diverge the moment an asset exists that the
+// caller cannot see (there are none today).
+var CreativeAssetList = Type("creative-asset-list", func() {
+	Attribute("assets", ArrayOf(CreativeAsset), "Every asset stored for this brief, oldest first. Each carries metadata only — the image bytes are served by the signed creative-asset URL, never inline here.")
+	Attribute("count", Int, "Number of assets stored for this brief.")
+	Attribute("count_limit", Int, "Maximum assets one brief may hold. An upload that would exceed it is refused with 409 reason=creative_asset_quota_exceeded.")
+	Attribute("bytes_used", Int64, "Total stored bytes across those assets.")
+	Attribute("bytes_limit", Int64, "Maximum total stored bytes one brief may hold. Enforced alongside count_limit; either one alone bounds the wrong thing — a count cap still admits that many maximum-sized images, and a byte cap alone still admits unboundedly many tiny ones.")
+	// All five are Required, including the two totals that look redundant beside `assets`.
+	// A client that has to decide whether `count` was omitted or is genuinely zero cannot
+	// tell an empty library from a field the server declined to compute, and "0 of 100 used"
+	// is exactly the state a folder picker must render correctly.
+	Required("assets", "count", "count_limit", "bytes_used", "bytes_limit")
 })
 
 // ─── Brief + campaign service ───
@@ -1719,7 +1816,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("upload-creative-asset", func() {
-		Description("Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account's media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig variant names one by imageAssetId, and at dispatch it is uploaded once through LinkedIn's Images API (an organization-owned image URN) and used as that dark post's article thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320 (vertical) pixels.")
+		Description("Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account's media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig variant names one by imageAssetId, and at dispatch it is uploaded once through LinkedIn's Images API (an organization-owned image URN) and used as that dark post's article thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320 (vertical) pixels. A brief's library is bounded by a per-brief quota on both count and total stored bytes; an upload that would exceed either is refused with 409 and reason creative_asset_quota_exceeded, and list-creative-assets publishes the ceilings and the current totals so a client can see the headroom before it uploads. A re-upload of identical bytes is idempotent and is NOT judged against the quota, since it stores nothing. An archived brief returns 404, matching every other access to a brief's children.")
 		Payload(func() {
 			bearerToken()
 			// Permissive project identifier (UUID or slug), matching the other brief
@@ -1843,6 +1940,98 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 				Body(CreativeAsset)
 			})
 			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("list-creative-assets", func() {
+		Description("List the creative assets stored for a brief, with the per-brief quota the next upload will be judged against. Metadata only: the image bytes are never returned inline — byte_size, width and height exist precisely so a reader can size and classify an asset without loading a blob of up to 30 MiB. Assets are ordered oldest first, and the whole library is returned (it is bounded by count_limit). An archived brief returns 404, matching every other read of a brief's children.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			Required("project_id", "brief_id")
+		})
+		Result(CreativeAssetList)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/creative-assets")
+			Header("bearer_token:Authorization")
+			// No ETag, for the reason upload gives: creative assets are insert-only and
+			// carry no version, so there is no optimistic-concurrency handle to hand back.
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("get-creative-asset", func() {
+		Description("Get one stored creative asset's metadata. The image bytes are not returned here — they are served, when signed creative-asset URLs are configured, by the separate signed-asset route. An asset belonging to another project or brief, or to an archived brief, is 404, the same as one that does not exist.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			creativeAssetIDAttr()
+			Required("project_id", "brief_id", "asset_id")
+		})
+		Result(CreativeAsset)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/creative-assets/{asset_id}")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("get-asset-plan", func() {
+		Description("Match the brief's stored creative assets against the image slots each ad platform publishes, and report what fits where and what is still missing. A pure read: nothing is stored, no asset is attached to a campaign, and an unchanged library always produces an identical plan. Eligibility is the slot's own rule — aspect ratio within the platform's documented tolerance, the pixel floor, and the slot's byte cap — and among eligible assets the closest fit to the slot's target ratio wins, then the larger image, then the earlier upload. An asset may fill slots on several platforms at once but never appears twice in one slot. Assets stored before the service recorded dimensions come back under `unclassified` rather than being judged against a shape they never declared. An archived brief returns 404, matching every other read of a brief's children.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			// Repeatable query parameter (?platforms=google-ads&platforms=...), not a
+			// comma-joined string: a platform identifier is opaque to this endpoint, and a
+			// separator baked into the wire format would have to be escaped the day one
+			// contains it.
+			//
+			// ABSENT means every platform the service publishes slot rules for, which is the
+			// answer an operator asking "is my library ready" actually wants. An unknown
+			// platform is IGNORED rather than refused — it contributes no slots, so it can
+			// produce neither an assignment nor a gap, and a client built against a newer
+			// release asking for a platform this one has not shipped gets the plan for the
+			// platforms it does know instead of a 400 and nothing.
+			Attribute("platforms", ArrayOf(String), "Restrict the plan to these campaign platforms (\"google-ads\"). Repeat the parameter for several. Absent means every platform whose slot rules this service publishes. A platform it does not know is ignored, not refused.", func() {
+				Example([]string{"google-ads"})
+			})
+			Required("project_id", "brief_id")
+		})
+		Result(CreativeAssetPlan)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/creative-assets/plan")
+			Param("platforms")
+			Header("bearer_token:Authorization")
+			// No ETag: the plan is derived, holds no version of its own, and is cheap to
+			// recompute — there is nothing to concurrency-control against.
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("delete-creative-asset", func() {
+		Description("Permanently delete a stored creative asset, freeing its bytes against the brief's quota. Refused with 409 reason=creative_asset_in_use when any live campaign on the brief could still need it: one whose creation has not finished on the ad platform — its status is still 'pending' — whatever its stored configuration says; one whose stored configuration names this asset id; or one whose configuration has not been recorded yet, because a dispatch claims its campaign row before it resolves any asset. Delete the campaign, or reconcile a stuck claim, then retry. This is a HARD delete — unlike a campaign or a brief, which are retired by a status flip — because reclaiming the storage is the entire reason the endpoint exists.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			creativeAssetIDAttr()
+			Required("project_id", "brief_id", "asset_id")
+		})
+		commonBriefErrors()
+		HTTP(func() {
+			DELETE("/projects/{project_id}/briefs/{brief_id}/creative-assets/{asset_id}")
+			Header("bearer_token:Authorization")
+			Response(StatusNoContent)
 			briefErrorResponses()
 		})
 	})
@@ -2044,7 +2233,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("update-campaign", func() {
-		Description("Replace a campaign (requires If-Match).")
+		Description("Replace a campaign (requires If-Match). A request carrying a configuration is refused with 409 reason=campaign_dispatch_in_flight while the campaign's creation has not finished on the ad platform — its status is still 'pending' — because a dispatcher may still be resolving the configuration this request would overwrite. Retry once the status is no longer 'pending'. A name-only edit is NOT refused and stays available throughout. A configuration that NEWLY names a stored creative asset which no longer exists for the brief — typically one deleted between reading the campaign and sending this request — is refused with 409 reason=creative_asset_reference_missing, naming the ids that did not resolve; upload the asset again, or remove the reference, then retry. References already present on the stored configuration are carried through unchanged and are never refused by this check.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -2735,6 +2924,16 @@ func briefIDAttr() {
 
 func campaignIDAttr() {
 	Attribute("campaign_id", String, "Campaign UUID", func() { Format(FormatUUID) })
+}
+
+// creativeAssetIDAttr is the path segment identifying one stored creative asset.
+//
+// `Format(FormatUUID)` is load-bearing rather than documentation: the repository's
+// creative-asset queries bind the id straight into a `::uuid` comparison and the port
+// documents validation as the caller's obligation, so the transport layer rejecting a
+// malformed id is what keeps a typo out of the database as a 400 instead of a 500.
+func creativeAssetIDAttr() {
+	Attribute("asset_id", String, "Creative asset UUID", func() { Format(FormatUUID) })
 }
 
 // metricsWindowEnum applies the platform-agnostic reporting-window vocabulary

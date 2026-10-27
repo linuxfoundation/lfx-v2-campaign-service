@@ -103,23 +103,30 @@ name's LAST occurrence: the last `app.extraEnv` entry wins, an `app.environment`
 `value` when the key is present and its `valueFrom` otherwise, and a `valueFrom` on the effective
 entry (unreadable at render time) counts as on (`TestDeploymentRefusesXStatsJobsOnMultipleReplicas`).
 
-A second render-time guard refuses more than one replica UNCONDITIONALLY — `replicaCount` > 1 or
-`autoscaling.enabled` with `maxReplicas` > 1, whatever any flag says
-(`TestDeploymentRefusesRedditReportsOnMultipleReplicas`). The Reddit reporting budget
+That X guard is the chart's ONLY replica guard. A second one, refusing more than one replica
+unconditionally over the Reddit reporting budget, was added and then retired; the chart now pins
+the opposite (`TestDeploymentAllowsMultipleReplicasForReddit`), because a render-time `fail`
+stopped ArgoCD generating the manifest at all for a production deployment that runs three
+replicas, holding up every unrelated change to this service.
+
+The constraint it was protecting is still real. The Reddit reporting budget
 (`internal/platform/reddit/report_budget.go`, 45 of an ad account's 60 report requests a minute)
-is a per-process ledger, so N replicas could send N × 45. It is not keyed on
-`REDDIT_METRICS_ENABLED` because that flag gates only the Reddit metrics and audience reads: the
-Reddit account monitor (`connection-reddit-ads/account-monitor` →
-`RedditDispatcher.ListAccountCampaignMetrics` → `reddit.Client.ListAccountCampaigns`) is ungated,
-always routed, and spends the same reports quota. (X differs: `TWITTER_METRICS_ENABLED` gates the
-X monitor too, and a runtime lease confines its stats jobs to one pod.) Gating the monitor behind
-the flag instead was rejected: it is a shipped, flag-free feature (with its own alert rules, `internal/service/rules/monitor_reddit.go`),
-and gating it would turn its working answer into a 400. The default deploy is unaffected — the chart ships
-`replicaCount: 1` and no HPA, and the Recreate rollout's migration ordering
-(`TestDeploymentUsesRecreateStrategy`) already rests on one replica. There is no runtime lease
-behind this guard, so it cannot see an out-of-band scale or an external HPA; a shared ledger is
-what would lift it. Because it refuses every multi-replica render, the X guard's test now judges
-each case by WHICH guard's message appears.
+is a per-process ledger, so N replicas each carry a separate 45. `REDDIT_METRICS_ENABLED` does not
+bound it: that flag gates only the Reddit metrics and audience reads, while the Reddit account
+monitor (`connection-reddit-ads/account-monitor` → `ConnectionService.MonitorRedditAdsAccount` →
+`RedditDispatcher.readAccountMonitor`) is ungated and always routed. (Gating the monitor behind
+the flag was rejected: it is a shipped, flag-free feature with its own alert rules,
+`internal/service/rules/monitor_reddit.go`, and gating it would turn its working answer into a
+400.) But always *routed* is not always *polling* — no ticker, cron or subscriber in `internal/`
+or `cmd/` invokes the monitor or the insight reads, so N × 45 is a ceiling concurrent user traffic
+could reach, not a sustained rate, and reaching it costs a 429 on a Monitoring-tab read.
+
+The fix that lifts the ceiling is a SHARED ledger — a token bucket keyed by ad account in
+Postgres. Two shortcuts do not work and should not be proposed: a lease like the X stats jobs'
+makes non-owner pods REFUSE (`domain.ErrStatsJobLeaseNotHeld`), tolerable for flag-gated
+background jobs but not for a user-facing monitor endpoint; and dividing the 45 by the replica
+count leaves 15 at three replicas, below the 24 a single audience read
+(`MaxReportCampaigns` 8 × 3 breakdowns) already needs.
 
 The pod template carries the Prometheus scrape annotations by default (LFXV2-3221):
 `prometheus.io/scrape` and `prometheus.io/path` come from `values.yaml`, while
@@ -144,7 +151,19 @@ deployable.** The Deployment sets `strategy.type: Recreate` (not the RollingUpda
 default) because this service runs its own schema migrations at boot and a
 backward-incompatible one — `000014` dropping `UNIQUE (brief_id, platform)` — must not go
 live while the previous pod still serves writes; RollingUpdate surges the new pod before
-terminating the old, Recreate orders it the other way. The catch is the cutover: flipping
+terminating the old, Recreate orders it the other way.
+
+That ordering holds at ANY replica count — the controller scales the old ReplicaSet to zero
+and waits for every pod to terminate before scaling up the new one — so the guarantee does not
+rest on running a single replica. What DOES scale with replica count is the cost: at the three
+replicas deployments run, every rollout takes the service to zero pods for the migration
+window, a full restart rather than a brief gap on the only pod. The `podDisruptionBudget`
+(`minAvailable: 2` in production) does not soften this: the Deployment controller DELETES those
+pods rather than evicting them, and a PDB constrains only evictions. `/readyz` gates traffic
+until migrations finish, so the window is a hard outage, not a period of errors. Moving
+migrations to a PreSync Job is what retires this and lets RollingUpdate return.
+
+The catch is the cutover: flipping
 an EXISTING Deployment from RollingUpdate to Recreate is rejected by the API server with
 `spec.strategy.rollingUpdate: Forbidden: may not be specified when strategy type is
 'Recreate'`. The old object carries a `strategy.rollingUpdate` block the API server
@@ -180,8 +199,9 @@ so a value another controller owns is overwritten rather than flagged. `spec.rep
 the concrete case here — the chart pins it AND the ArgoCD Application sets
 `ignoreDifferences: /spec/replicas` with `RespectIgnoreDifferences=true`, so an ordinary sync
 leaves an out-of-band `kubectl scale` or an external HPA's value alone, but a full replace
-overwrites it back to `replicaCount`. That is low risk today
-(no HPA in the chart, `replicaCount: 1`), but nothing reminds anyone to remove it. It is
+overwrites it back to `replicaCount` — which, since deployments set their own (production sets
+three), is the value their own values file carries, not the chart default. That is low risk today
+(no HPA in the chart), but nothing reminds anyone to remove it. It is
 retired once schema migrations move out of pod boot into a PreSync Job, after which the
 Deployment returns to RollingUpdate and both the strategy override and the annotation are
 dropped — the cutover hazard the pairing exists to prevent no longer exists once no pod

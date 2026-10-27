@@ -15,7 +15,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/dbtest"
 )
 
-// TestLiveCampaignBiddingStrategyRoundTrips pins migration 000047 (LFXV2-2665) against the real
+// TestLiveCampaignBiddingStrategyRoundTrips pins migration 000050 (LFXV2-2665) against the real
 // schema and repository, through the dispatch's own claim-then-upsert order: the dispatch upsert writes the create's bidding_strategy and starting
 // max_cpc_bid; a later upsert on the same slot fills them only while empty (the stored value wins,
 // so a bid the lever set is never overwritten); ReplaceCampaign round-trips the strategy; and the

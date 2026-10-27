@@ -285,6 +285,25 @@ holding it across the checksum and the insert would shed concurrent uploads for 
 free. Stage 2b is not redundant with the wire admission — they bound different quantities with
 different worst cases, and neither subsumes the other.
 
+**Stage 1's dimensions are PERSISTED, not discarded** (LFXV2-2665, migration `000047`). The
+handler writes `cfg.Width`/`cfg.Height` onto the stored `model.CreativeAsset` alongside the
+checksum. They are the per-platform slot classifier's entire input — which slot an image can
+fill is a question about its shape — and recovering them later would mean detoasting a blob of
+up to 30 MiB to re-read a header this request already parsed; stage 3 discards the decoded
+image, so `cfg` is the only source left. Nothing unvalidated is stored: these are the same two
+numbers stage 2 bounded and stage 3 then decoded successfully against.
+
+On the way OUT the pair is optional, and that is the contract the rest of the stack depends on.
+`creativeAssetResult` sets the response's `width`/`height` only when BOTH are `> 0`, copying to
+locals first so a later mutation of the stored model cannot reach a result already handed to the
+transport. A zero pair means UNKNOWN — what an asset stored before `000047` reads back as — so
+publishing a literal `0` would be read downstream as "fails every slot minimum" rather than "not
+classifiable". A half-known pair publishes as absent too; the table refuses to store one, and
+the result would be unusable anyway. Pinned by
+`TestBriefService_UploadCreativeAsset_PersistsHeaderDimensions` (a deliberately non-square
+3x7 fixture, because every other fixture here is 2x2 and cannot detect a width/height
+transposition) and `TestCreativeAssetResult_UnknownDimensionsAreAbsentNotZero`.
+
 The set of registered decoders (`image/png`,
 `image/jpeg`, blank-imported) is only the UPPER bound; `mimeForImageFormat` is the authoritative
 allow-list, so another package importing `image/gif` cannot widen what this endpoint accepts.
@@ -326,6 +345,92 @@ binds it in the same step as the brief repos, and BOTH startup paths bind throug
 forces it to be CALLED, and the handler's 503 is deliberately indistinguishable from the
 no-database mode's, so a mis-wired live container cannot be detected from the outside.
 
+## Reading and deleting stored creative assets (LFXV2-2665)
+
+`ListCreativeAssets`, `GetCreativeAsset` and `DeleteCreativeAsset` sit beside the upload handler
+and are deliberately thin: the quota arithmetic and the delete's reference check are both the
+repository's, not theirs. All three take the same typed `503` on an unwired repo, for the reason
+the upload handler gives.
+
+`ListCreativeAssets` publishes `model.MaxCreativeAssetsPerBrief` and
+`model.MaxCreativeAssetBytesPerBrief` as `count_limit`/`bytes_limit` beside the totals the repo
+computed. It reads the SAME constants the repository enforces against, which is what makes a
+drift between the published ceiling and the enforced one a test failure rather than a client
+that is quietly told the wrong number
+(`TestListCreativeAssets_PublishesTheEnforcedQuota`). The slice is always non-nil — an empty
+library serializes as `[]`, never `null` — and an invisible brief is a 404 from the repo instead
+(`TestListCreativeAssets_EmptyLibraryIsAnEmptyArray`).
+
+`GetCreativeAsset` reads through the port's `GetAssetMetadata` rather than `GetAsset`. The
+response carries no bytes, so the existing method would detoast up to 30 MiB of `BYTEA` only to
+discard it; that is the whole reason the fifth port method exists. `created` stays nil here, as
+it does everywhere but upload.
+
+`mapBriefErr` gains two arms, both `409`, both carrying a `reason` from `conflictReason`:
+`ErrCreativeAssetQuotaExceeded` → `creative_asset_quota_exceeded` and `ErrCreativeAssetInUse` →
+`creative_asset_in_use`. Each message appends the remedy — delete an asset and retry; delete the
+campaign or reconcile a stuck dispatch and retry — because "the brief is full" with no way to
+empty it is not actionable, and because a folder upload has to branch on which refusal it got.
+The discriminator, not the prose, is what it branches on.
+
+A third arm, `ErrCreativeAssetReferenceMissing` → `creative_asset_reference_missing`, is the
+inverse of `creative_asset_in_use` and closes the same window from the other side: the repo
+refuses a replace whose configuration NEWLY names an asset that no longer exists for the brief
+(see [internal/infrastructure/postgres](internal-infrastructure-postgres.md)). It is a 409 rather
+than a 400 — the configuration was well-formed and was valid when the caller read the campaign;
+what changed is the world, and re-uploading then retrying is the remedy, which is also why it
+does not reuse `ErrCreateConfigInvalid`, whose contract is a create-time 400. Its `Message` is
+`err.Error()` plus the remedy, so it carries the ids that failed to resolve: the caller supplied
+them in that same request and the repo canonicalized them, so naming them discloses nothing a
+platform or another tenant owns. `TestUpdateCampaign_ConfigNamingAMissingAssetIsRefused` pins the
+status, the literal slug and the ids in the message, with
+`TestUpdateCampaign_AConfigEditThatResolvesStillSucceeds` as the contrast that a blanket refusal
+could not pass.
+
+## The platform slot registry and `GetAssetPlan` (LFXV2-2665)
+
+`creative_plan.go` holds two things: the registry of platforms whose image rules this service
+publishes, and the handler that runs a brief's library against them.
+
+**`slotCatalogs()` is the registry, and it lives HERE deliberately.**
+[internal/creative](internal-creative.md) depends on nothing, each platform package publishes
+its own rows (`googleads.ImageSlotCatalog()`), and this layer is the only one that already
+imports every platform — so it is the one place that can name them all without an import cycle,
+and without dragging six API clients into a binary that only wanted to classify an image.
+Adding a platform is one entry here plus a `creative.Catalog` in that platform's package;
+nothing in `internal/creative` changes.
+
+`GetAssetPlan` reads through `ListAssets`, not a bytes-bearing port method: classifying needs an
+id and two integers, all of them columns on the row, and detoasting up to 30 MiB of `BYTEA` per
+asset to compare two numbers would be the entire cost of the endpoint. `Ordinal` comes from the
+LIST INDEX — the repository's oldest-first order — because it is the classifier's last ranking
+tie-break and therefore what makes a reloaded plan identical to the one the operator was looking
+at; an index rather than a `created_at`, because two files uploaded in one batch can share a
+timestamp and an index cannot.
+
+`requestedCatalog` resolves the `platforms` filter. An **empty** filter means every registered
+platform. An **unknown** one is dropped rather than refused: it publishes no slots, so it can
+produce neither an assignment nor a gap, and a client built against a newer release should get
+the plan for the platforms this one does know rather than a 400 and nothing. The drop is visible
+in the echoed `platforms`, so a caller can still tell that what it asked for is not what it got.
+Duplicates are deduped and the result is **sorted**, because the classifier fills slots in
+catalog order and an unsorted map range would otherwise let a shared group ceiling fall to a
+different platform between two identical requests.
+
+Every list on the wire is a non-nil slice (`idList`). An empty `gaps` is the answer that means
+"this library can launch", so it must be distinguishable from a field the server declined to
+compute — and a nil slice renders as JSON `null`, which is that other answer. `Channel` and
+`SlotKey` are pointers set only when non-empty: a gap raised by a cross-slot requirement names
+no slot at all, because Google's reciprocal landscape-or-square pair belongs to neither member
+and naming one would send the operator to make exactly the image they did not need.
+
+A route detail worth pinning rather than reasoning about: `/creative-assets/plan` sits under the
+same prefix as `/creative-assets/{asset_id}`, and the generated muxer is the only layer that
+decides between them. `TestGetAssetPlanRoute_WinsAgainstTheAssetIDWildcard` registers both on a
+real `goahttp.NewMuxer()` and asserts the literal segment wins, because the failure mode —
+arriving at the single-asset handler as `asset_id="plan"` — is a 404 that looks like a missing
+asset.
+
 ## Campaign config update: the caller's config is redacted before `config_snapshot`
 
 `BriefService.UpdateCampaign` (backing `PUT .../campaigns/{id}`) is DB-only and overlays the
@@ -360,6 +465,23 @@ The contract is deliberately NOT tightened: a non-object config (a bare string o
 still accepted and is redacted the same way. No caller in `lfx-v2-ui` was found sending this
 PUT, so the shape a client sends is not pinned down well enough to justify refusing anything.
 Rows written before this redaction are not backfilled.
+
+**A config edit is refused outright while the campaign is `pending`**, with a `409` carrying
+`reason: "campaign_dispatch_in_flight"` (`conflictReasonCampaignDispatchInFlight`). The
+status-mismatch check above it does not cover this: `pending` is not a run status, so a
+`pending → pending` edit carrying a config body passes it. `pending` means the dispatch claim is
+committed but the platform call has not resolved — the dispatcher deliberately holds no lock
+across it — so a config write landing there makes the row disagree with what the platform was
+asked to create, and replaces the NULL `config_snapshot` the creative-asset delete guard reads as
+"could reference anything" with a caller's object, making an asset the in-flight dispatch is
+about to use look deletable. `deleteCreativeAssetQuery` now refuses on `pending` outright as well
+(see [internal/infrastructure/postgres](internal-infrastructure-postgres.md)); this guard is the
+other half, keeping the snapshot honest rather than relying on the reader to compensate. Only a
+config-BEARING edit is refused — a name-only edit stays allowed while pending — and it is
+validated BEFORE the claim, like every other check on this path. The slug is pinned in three
+places that must move together: the `Enum` on `ConflictError.reason` in `design/connection.go`
+(enforced by the GENERATED CLIENT decoder, so a drifting value is a 409 no client can read), the
+service constant, and `TestUpdateCampaign_ConfigEditOnAPendingCampaignIsRefused`.
 
 ## Campaign status toggle
 
@@ -2364,9 +2486,32 @@ calls `DispatchFailureMessage(p, derr, preCreate)`, which says WHY without quoti
 
 - `preCreate` is the orchestrator's own claim verdict (`dispatchErrIsPreCreate(derr) &&
   campaign == nil`), computed once and shared by the claim and the message, so the two cannot
-  disagree. A retained failure (something may exist) is always reported as **could not be
-  confirmed**, with the upstream HTTP status when the chain carries one — never a refusal or a
-  connection class, even if the chain has one.
+  disagree. A retained failure (something may exist) is never reported as a refusal or a
+  connection class, even if the chain has one. Its default is **could not be confirmed**, with
+  the upstream HTTP status when the chain carries one — but since the create-outcome carrier
+  (below) a retained google-ads failure that the dispatcher CLASSIFIED says which state the
+  account is in instead, because "something may have been created" is simply wrong for most of
+  them: a budget-name collision created nothing at all, and a budget created then a campaign
+  definitely refused is a known state, not an unknown one.
+- `domain.UpstreamCreateOutcome(derr)` (`domain/dispatch_failure.go`) reads a
+  `UpstreamCreateOutcomeCarrier` — the POST-request counterpart of `PreflightRefusal`, a
+  separate type because `PreflightRefusal`'s contract is that it wraps only a refusal raised
+  BEFORE the first upstream request, so reusing it would make "nothing was created" claims
+  about requests that were sent. Its six tokens are service-authored constants
+  (`budget_name_taken`, `campaign_name_taken`, `budget_created_campaign_refused`,
+  `budget_created_campaign_unconfirmed`, `campaign_created_setup_incomplete`,
+  `create_unconfirmed`), and this function **switches** on the token to pick one of five fixed
+  sentences — it never formats the token into a message, so #208's rule holds whatever the
+  carrier holds, and an unrecognised token can only fall through to the status/unconfirmed
+  wording. `create_unconfirmed` deliberately has no sentence of its own: it means exactly what
+  that fallback already says. Each sentence claims only what its token's evidence supports:
+  `campaign_created_setup_incomplete` says the setup could not be CONFIRMED rather than that it
+  is unfinished, because the cascade's last mutate can answer 2xx with a body this client
+  cannot read (`pmax_creative.go`, `demandgen_creative.go`) and the step did commit — the id
+  proves the campaign exists, not that its setup stopped short. Only `internal/dispatch`'s google-ads adapter tags today
+  (`withCreateOutcome`, classified by `googleads.CreateOutcome`); every other provider reaches
+  the unchanged wording, pinned by
+  `TestDispatchFailureMessage_UnclassifiedOutcomeIsUnchanged`.
 - On the pre-create path the arms follow `classifyDiscoveryError`'s order: service defect → LF
   system connection missing → no connection (`ErrConnectionAbsent`) → decrypt fault → LF
   system / own connection unusable (with the `unusableConnectionReason` token) → a
@@ -2383,5 +2528,9 @@ calls `DispatchFailureMessage(p, derr, preCreate)`, which says WHY without quoti
 The message is the only change. Claim release/retention, the retained row's status and the
 job's aggregate status are decided before it runs. `TestOrchestrator_PreCreateFailureLogsAClassifiedReason`
 now asserts that the job result carries `(reason: account_not_selected)` and not the error text.
-Google Ads reaches the generic classes only (connection, unconfirmed, fallback); its client
-errors are not marked yet.
+Google Ads reaches the generic classes on the PRE-CREATE path (connection, unconfirmed,
+fallback); its client errors still carry no `PreflightRefusal`. On the retained path it is now
+the one provider that says more than "could not be confirmed": its `*apiError` implements
+`domain.UpstreamStatusCarrier` (see [internal/dispatch](internal-dispatch.md)), so the status
+sentence is reachable for it at all, and the dispatcher tags the failure with a create-outcome
+token that selects one of the five fixed sentences above.

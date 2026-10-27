@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/sha256"
 	"errors"
 	"testing"
 	"unicode/utf8"
@@ -238,11 +237,10 @@ func TestLiveCredentialSurvivesTheRealByteaColumn(t *testing.T) {
 		// CONTENT — an encoding round-trip, a truncating-then-padding driver — prints two
 		// identical numbers and reads like a passing run that somehow failed. The digests
 		// differ whenever the bytes do, at any length, and neither reveals key material.
-		t.Fatalf("credentials column did not round-trip: stored %d bytes sha256=%x, read "+
-			"back %d bytes sha256=%x; GCM authentication cannot survive this, so a decrypt "+
-			"failure here would be reported against the encryptor when the defect is in the column",
-			len(sealed), sha256.Sum256(sealed),
-			len(got.EncryptedCredentials), sha256.Sum256(got.EncryptedCredentials))
+		t.Fatalf("credentials column did not round-trip: stored %s, read back %s; GCM "+
+			"authentication cannot survive this, so a decrypt failure here would be "+
+			"reported against the encryptor when the defect is in the column",
+			dbtest.BlobDigest(sealed), dbtest.BlobDigest(got.EncryptedCredentials))
 	}
 
 	// (2) The NEGATIVE assertion. A broken encryptor that stored cleartext would
@@ -300,10 +298,13 @@ func TestLiveCredentialSurvivesTheRealByteaColumn(t *testing.T) {
 		// Report the mismatch by SHAPE, never by value: this failure prints into CI job
 		// output, and the same lines get copied into tests that do hold a real blob. Length
 		// separates "truncated/padded" from "same size, different bytes"; the digests
-		// separate the latter from a fault this test cannot see.
+		// separate the latter from a fault this test cannot see. Keyed, because these two
+		// operands are PLAINTEXT: an unkeyed digest beside an exact length would let anyone
+		// holding the CI output confirm a guess at a low-entropy secret offline, and
+		// truncating it does not change that. See dbtest.BlobDigest.
 		t.Fatalf("decrypted blob does not match the plaintext it was sealed from: "+
-			"got %d bytes sha256=%x, want %d bytes sha256=%x",
-			len(opened), sha256.Sum256(opened), len(plaintext), sha256.Sum256(plaintext))
+			"got %s, want %s",
+			dbtest.BlobDigest(opened), dbtest.BlobDigest(plaintext))
 	}
 	if created.Version != got.Version {
 		t.Fatalf("Create returned version %d but Get reads %d", created.Version, got.Version)
@@ -399,9 +400,8 @@ func TestLiveSetCredentialRotatesTheBlobAndBumpsVersion(t *testing.T) {
 	if !bytes.Equal(opened, rotatedPlaintext) {
 		// Shape, not value — see the equivalent assertion in
 		// TestLiveCredentialSurvivesTheRealByteaColumn.
-		t.Fatalf("the rotated blob does not open to the rotated plaintext: "+
-			"got %d bytes sha256=%x, want %d bytes sha256=%x",
-			len(opened), sha256.Sum256(opened), len(rotatedPlaintext), sha256.Sum256(rotatedPlaintext))
+		t.Fatalf("the rotated blob does not open to the rotated plaintext: got %s, want %s",
+			dbtest.BlobDigest(opened), dbtest.BlobDigest(rotatedPlaintext))
 	}
 
 	// SetCredential touches ONLY the credential. The account and config columns are

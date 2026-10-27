@@ -2925,7 +2925,9 @@ longer always the fixed `platform campaign creation failed`: `DispatchFailureMes
 [internal/service](internal-service.md), "Dispatch failure reasons in the job result") echoes a
 `domain.PreflightRefusal` verbatim and gives each other class a fixed sentence, but it still never
 renders a dispatcher error's own text, on purpose (the upstream text can carry connection and
-account ids). Google Ads errors are not marked yet and stay generic. A dispatch-time refusal would
+account ids). Google Ads errors are still not marked as pre-flight refusals, but they no longer
+stay generic on the retained path: the adapter tags them with a create-outcome token and the
+client now carries its HTTP status (see "Operator-safe pre-flight refusals" above). A dispatch-time refusal would
 also arrive only after the caller had been told `202`, so the check runs on the synchronous create
 path instead, where it answers before anything is queued.
 
@@ -4859,9 +4861,44 @@ same plan (`TestConfigSnapshot_BiddingRoundTripsThroughTheValidator`).
   caller vouches for the whole chain. `Error()` is unchanged and `Unwrap` keeps
   `errors.Is`/`As` working (for example `BudgetAmountReason`). It deliberately has **no**
   `NoUpstreamCreate`, so marking a message never changes a claim verdict.
-- `domain.UpstreamStatusCarrier`: `UpstreamStatus() int` on every non-Google client's HTTP
-  error type (reddit, linkedin, meta `APIError`, twitter, microsoft, hubspot). It exposes the
-  status and nothing else.
+- `domain.UpstreamStatusCarrier`: `UpstreamStatus() int` on every client's HTTP error type
+  (reddit, linkedin, meta `APIError`, twitter, microsoft, hubspot, and — since the
+  dispatch-failure classification fix — google-ads `*apiError`). It exposes the status and
+  nothing else: `*apiError` is an unexported TYPE, so no caller outside the package can name it
+  in an `errors.As` to reach `Method`, `Path` or `Body` (those are still exported struct fields,
+  so reflective or JSON logging of the error would serialise the body — the carrier widens
+  nothing, it just does not help). Google-ads was the one client missing it, so
+  every google-ads dispatch failure reached `DispatchFailureMessage` carrying no status at all
+  and the status arm was unreachable for it — a definite 400 refusal and an ambiguous 503
+  rendered as the same status-less sentence while `StatusCode` sat on the struct unread.
+- `domain.UpstreamCreateOutcomeCarrier`: `UpstreamCreateOutcome() string`, the POST-request
+  counterpart of `PreflightRefusal` (a separate type on purpose — `PreflightRefusal` promises
+  the refusal came before the first upstream request). It answers one question, as a
+  service-authored token from a fixed six-word vocabulary: what did the failed create leave in
+  the ad account? `internal/dispatch/create_outcome.go`'s `withCreateOutcome` attaches it —
+  `Error()` is the wrapped text unchanged and `Unwrap` keeps the chain, so it ADDS a question
+  and replaces nothing, and every `errors.Is`/`As` a caller already makes (the `*apiError` and
+  its status, a `context.Canceled`) still resolves. The google-ads adapter tags at the ONE wrap
+  every channel's partial failure passes through (`googleads.go`), never at the create paths'
+  ~50 partial-returning arms: `googleads.CreateOutcome(result, err)` reads the state off the
+  partial's ids, because all five create entrypoints build partials to the same escalating
+  contract — pre-budget carries names only, post-budget adds `CampaignBudgetID`, post-campaign
+  adds `CampaignID` — so the ids a partial carries ARE the account state. One call therefore
+  covers all five channels and cannot drift arm by arm. Each duplicate-name refusal
+  (`isDuplicateBudgetNameErr` / `isDuplicateCampaignNameErr`, both definite 4xx) is checked only
+  against the id state of its own step, because `parseErrorCodes` keeps the bare enum value and
+  drops the error family — so a `DUPLICATE_NAME` raised by a LATER mutate in the cascade must
+  not be read as "the budget name was taken, nothing was created". Otherwise the ids decide, and
+  the budget-created case claims a REFUSAL only on positive evidence of one — a definite 4xx
+  `*apiError` in the chain **whose error codes parsed**, since a codeless 4xx could itself be the
+  duplicate-campaign-name refusal that would make "no campaign exists" false. `ErrorCodes` is nil
+  whenever `parseErrorCodes` finds no `GoogleAdsFailure` detail — an unreadable or oversize body
+  (`client.go`), and equally a readable envelope carrying no such detail, the ordinary shape of a
+  401, a 403 or a frontend `INVALID_ARGUMENT` — so the weakening is not confined to rare
+  truncated responses. Everything else there is reported as unconfirmed, because ten arms
+  across the five channels hand back that partial with a plain `fmt.Errorf`: the post-2xx
+  resource-name parse and validation failures, past which the campaign DOES exist, and the
+  `ctx.Err()` arms, where no campaign request was sent at all.
 - `domain.TokenRefreshFailure`: `MarkTokenRefreshFailure` wraps the token-exchange result in
   the reddit, microsoft and linkedin refresh leaders.
 

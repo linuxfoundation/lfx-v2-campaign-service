@@ -605,9 +605,72 @@ const listProjectPlatformCampaignIDsQuery = `SELECT DISTINCT platform_campaign_i
 // That is an ordinary state — a project that has not run a campaign yet — and the caller renders
 // it as an empty result rather than a failure.
 func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
-	rows, err := r.db.Query(ctx, listProjectPlatformCampaignIDsQuery, projectID, platform)
+	return r.queryProjectCampaignScope(ctx, listProjectPlatformCampaignIDsQuery, "project platform campaign ids", projectID, platform)
+}
+
+// listProjectPlatformDeletedCampaignIDsQuery is listProjectPlatformCampaignIDsQuery's complement
+// on status: the project's SOFT-DELETED campaigns with an upstream id, scoped by project_id and
+// platform in SQL for the same reason. A local delete does not touch the ad platform, so the
+// account monitor reads these too — a deleted campaign may still be spending.
+//
+// The NOT EXISTS hands the campaign to its LATEST owner. The per-platform binding indexes cover
+// live rows only, so once this project deletes its row another project can adopt the same
+// upstream campaign; from then on it is that project's campaign and must not stay in this
+// project's monitor. Another project's row takes it over when it is live, OR when it bound the
+// id later than this one whatever its status: if the adopter then deletes its row too, a
+// live-only test would find no owner left and hand the campaign — with the adopter's budget and
+// spend — back to this project.
+//
+// "Bound later" is platform_bound_at (000048), NOT created_at. A dispatch's created_at is its
+// claim INSERT, made before the platform call; a dispatch that binds an EXISTING upstream
+// campaign (Google's adoptExisting, Meta's same-name reuse) can claim, wait out another
+// project's adopt-then-delete, and only then bind, so ordering by created_at would rank the
+// current owner first and expose its budget and spend to the former one. COALESCE to created_at
+// for rows with no stamp — written before 000048 or by an N-1 binary during a rollout — which is
+// exact for adoptions and the only evidence those rows carry. Matched on the id
+// alone, not its provenance: on Reddit and X an id is only unique within an account, so another
+// account's row with the same id also hides this one — the conservative direction for a read
+// that exists to keep projects apart.
+// Shared by the deleted precheck and the final monitor snapshot; the ownership rule
+// must not drift between the two reads.
+const monitorCampaignNotTakenOver = `NOT EXISTS (SELECT 1 FROM campaigns l
+	    WHERE l.platform = c.platform AND l.platform_campaign_id = c.platform_campaign_id
+	      AND l.project_id <> c.project_id
+	      AND (l.status <> 'deleted'
+	        OR COALESCE(l.platform_bound_at, l.created_at) > COALESCE(c.platform_bound_at, c.created_at)))`
+
+const listProjectPlatformDeletedCampaignIDsQuery = `SELECT DISTINCT c.platform_campaign_id, c.result FROM campaigns c
+	WHERE c.project_id=$1 AND c.platform=$2 AND c.status = 'deleted'
+	  AND c.platform_campaign_id IS NOT NULL AND c.platform_campaign_id <> ''
+	  AND ` + monitorCampaignNotTakenOver + `
+	ORDER BY c.platform_campaign_id ASC`
+
+// ListProjectPlatformDeletedCampaignIDs returns the upstream campaign ids of this project's
+// soft-deleted campaigns on platform. Returns an EMPTY slice, not an error, when there are none.
+func (r *CampaignRepo) ListProjectPlatformDeletedCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	return r.queryProjectCampaignScope(ctx, listProjectPlatformDeletedCampaignIDsQuery, "project platform deleted campaign ids", projectID, platform)
+}
+
+// listProjectPlatformMonitorCampaignIDsQuery sees live rows, deleted rows and competing
+// bindings in one statement snapshot. Repeating the two precheck queries would allow a
+// delete/adopt between them to retain an id that was live only in the first snapshot.
+const listProjectPlatformMonitorCampaignIDsQuery = `SELECT DISTINCT c.platform_campaign_id, c.result FROM campaigns c
+	WHERE c.project_id=$1 AND c.platform=$2
+	  AND c.platform_campaign_id IS NOT NULL AND c.platform_campaign_id <> ''
+	  AND (c.status <> 'deleted' OR ` + monitorCampaignNotTakenOver + `)
+	ORDER BY c.platform_campaign_id ASC`
+
+// ListProjectPlatformMonitorCampaignIDs returns the project's current monitor bindings.
+func (r *CampaignRepo) ListProjectPlatformMonitorCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	return r.queryProjectCampaignScope(ctx, listProjectPlatformMonitorCampaignIDsQuery, "project platform monitor campaign ids", projectID, platform)
+}
+
+// queryProjectCampaignScope runs one of the (platform_campaign_id, result) scope queries above;
+// what names the read in its errors.
+func (r *CampaignRepo) queryProjectCampaignScope(ctx context.Context, query, what, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	rows, err := r.db.Query(ctx, query, projectID, platform)
 	if err != nil {
-		return nil, fmt.Errorf("list project platform campaign ids: %w", err)
+		return nil, fmt.Errorf("list %s: %w", what, err)
 	}
 	defer rows.Close()
 
@@ -618,12 +681,12 @@ func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, proje
 			result []byte
 		)
 		if serr := rows.Scan(&id, &result); serr != nil {
-			return nil, fmt.Errorf("scan project platform campaign id: %w", serr)
+			return nil, fmt.Errorf("scan %s: %w", what, serr)
 		}
 		out = append(out, model.ProjectCampaignScope{PlatformCampaignID: id, Result: result})
 	}
 	if rerr := rows.Err(); rerr != nil {
-		return nil, fmt.Errorf("iterate project platform campaign ids: %w", rerr)
+		return nil, fmt.Errorf("iterate %s: %w", what, rerr)
 	}
 	return out, nil
 }
@@ -786,15 +849,29 @@ func (r *CampaignRepo) getCampaignBySlot(ctx context.Context, projectID, briefID
 const upsertCampaignQuery = `INSERT INTO campaigns
 	(project_id, brief_id, job_id, platform, variant, platform_campaign_id, campaign_name, status,
 	 budget_amount, budget_type, start_date, end_date, config_snapshot, result, created_by, updated_by,
-	 ran_on_system_account, slot_version, max_cpc_bid, bidding_strategy)
-	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17,$18,$19,$20)
+	 ran_on_system_account, slot_version, max_cpc_bid, bidding_strategy, platform_bound_at)
+	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17,$18,$19,$20,
+	        CASE WHEN NULLIF($5::text, '') IS NOT NULL THEN clock_timestamp() END)
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO UPDATE SET
 		job_id=EXCLUDED.job_id, platform_campaign_id=EXCLUDED.platform_campaign_id,
+		-- platform_bound_at (000048) is stamped when this write gives the row an upstream id it
+		-- did not hold — on a normal dispatch, this arm finalizing the claim. created_at cannot
+		-- stand in for it: the claim INSERT set that before the platform call, and a dispatch
+		-- that binds an EXISTING upstream campaign can finish after another project adopted and
+		-- deleted it (see listProjectPlatformDeletedCampaignIDsQuery). The owning job's re-upsert
+		-- of the same id keeps the first stamp. clock_timestamp(), not now(): the stamp orders
+		-- bindings, so it is when this statement ran, not when its transaction began.
+		platform_bound_at=CASE
+			WHEN NULLIF(EXCLUDED.platform_campaign_id, '') IS NOT NULL
+			 AND EXCLUDED.platform_campaign_id IS DISTINCT FROM NULLIF(campaigns.platform_campaign_id, '')
+			THEN clock_timestamp()
+			ELSE campaigns.platform_bound_at
+		END,
 		campaign_name=EXCLUDED.campaign_name, status=EXCLUDED.status,
 		budget_amount=EXCLUDED.budget_amount, budget_type=EXCLUDED.budget_type,
 		start_date=EXCLUDED.start_date, end_date=EXCLUDED.end_date,
 		config_snapshot=EXCLUDED.config_snapshot, result=EXCLUDED.result,
-		-- The create path's bidding choice (000047) and its starting manual bid (000039), FILLED
+		-- The create path's bidding choice (000050) and its starting manual bid (000039), FILLED
 		-- ONLY WHILE EMPTY: the STORED value wins. On a normal dispatch this arm lands on the
 		-- claim row, whose two columns are still NULL, so the create's values are written. A
 		-- bid the update-campaign-bid endpoint set later lives in the same column, and an
@@ -917,7 +994,7 @@ const replaceCampaignQuery = `UPDATE campaigns SET
 	-- max_cpc_bid (000039) is written from the loaded row, so every caller that does not
 	-- change the bid writes back exactly what it read. Only update-campaign-bid changes it.
 	max_cpc_bid=$14,
-	-- bidding_strategy (000047) likewise round-trips the loaded row: no update path changes it.
+	-- bidding_strategy (000050) likewise round-trips the loaded row: no update path changes it.
 	bidding_strategy=$15,
 	-- Same COALESCE reasoning as the upsert's conflict arm: an update whose caller had no
 	-- authenticated principal (attributedActor returned nil, having logged it) is an
@@ -1094,9 +1171,13 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 // resolved credential in scope, so the deferred stampProvenance DOES record which account
 // served it. The two paths answer differently because they genuinely know different things:
 // one resolved a credential and used it, the other was handed an id by a caller.
+//
+// platform_bound_at (000048) is stamped unconditionally: an adoption always carries its
+// upstream id, so the row is bound the moment it exists. See upsertCampaignQuery.
 const adoptCampaignQuery = `INSERT INTO campaigns
-	(project_id, brief_id, platform, variant, platform_campaign_id, campaign_name, status, result, created_by, updated_by)
-	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
+	(project_id, brief_id, platform, variant, platform_campaign_id, campaign_name, status, result, created_by, updated_by,
+	 platform_bound_at)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,clock_timestamp())
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO NOTHING
 	RETURNING ` + campaignCols
 
@@ -1306,6 +1387,109 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 		return nil, fmt.Errorf("replace campaign: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock the parent brief FIRST, as the opening statement of this transaction, to order this
+	// write against a concurrent CreativeAssetRepo.DeleteAsset.
+	//
+	// WHY THIS IS THE REPLACE'S PROBLEM AND NOT ONLY UpdateCampaign'S. This statement writes
+	// EVERY mutable column, config_snapshot included, so every caller -- the config edit, the
+	// budget and bid updates, the status toggle's persist -- rewrites the snapshot it read
+	// earlier in the request. DeleteAsset decides whether an asset is still referenced by
+	// reading that column under its own brief lock. Without this lock the two are not ordered
+	// at all: ReplaceCampaign's UPDATE touches `campaigns` only, and the advisory lock the caller
+	// may hold is ClaimCampaignVersion's, keyed on the CAMPAIGN, so neither one conflicts with the
+	// brief row DeleteAsset takes. A replace that commits just after the delete's reference check
+	// re-publishes a snapshot naming an asset whose bytes are already gone; a replace that commits
+	// just before it is correctly seen. Taking the brief lock makes which of those happened a
+	// decided question instead of a race.
+	//
+	// It is not free. The lock is held for the rest of this transaction, so a concurrent delete on
+	// the same brief waits for the replace to commit. ToggleCampaignStatus's persist runs under
+	// persistResultTimeout (orchestrator.go), a 5s budget on a context deliberately detached from
+	// the request's; a brief held long enough can time that persist out and leave the "platform and
+	// DB diverged" log the orchestrator writes for it. That is the intended trade -- a diverged
+	// status is recoverable by reconciliation, an asset whose bytes are gone while a snapshot still
+	// names it is not -- but it is a real cost, not a free ordering.
+	//
+	// The delete is not the only waiter, and is not the likeliest one. The lock is on the BRIEF
+	// row, so every ReplaceCampaign on a brief now serializes against every OTHER ReplaceCampaign
+	// on that same brief -- the budget edit, the bid edit, the name edit and the toggle's status
+	// persist, across all of that brief's campaigns. A bulk edit that previously ran its platforms
+	// concurrently now runs them one at a time, each waiter holding a pooled connection while it
+	// waits. On a busy brief that sibling contention, not a concurrent asset delete, is the
+	// realistic way the 5s persist budget above gets spent. There is no pool-level lock_timeout or
+	// statement_timeout (see the note in service/creative_asset.go), so the only bound on a wait
+	// here is the caller's context.
+	//
+	// It is taken unconditionally rather than only when config_snapshot changed, because this
+	// statement cannot tell: it writes the column either way, and a caller that "did not change"
+	// the config still re-writes the value it read, which is exactly how a concurrently-added
+	// reference gets dropped back out.
+	//
+	// NO CYCLE IS REACHABLE, for two independent reasons, neither of which is the slot -> brief
+	// order AdoptCampaign fixes -- that order is about the per-SLOT transaction lock, which this
+	// path never takes. First, this is the OPENING statement of the transaction, so the replace
+	// holds no row lock on `campaigns` while it waits here; a delete blocked behind a campaigns row
+	// is therefore never blocked behind this replace. Second, the only lock a caller may already
+	// hold is ClaimCampaignVersion's per-campaign advisory lock, taken with pg_try_advisory_lock --
+	// so nobody ever BLOCKS on it. The direction that matters is INTO the holder, not out of it:
+	// this replace does go on to wait, right here, for the brief. The scope of that claim is the
+	// LOCK, not the backend holding it: no wait-for cycle can route THROUGH the advisory lock,
+	// because no edge ever enters it. The backend does acquire in-edges once it holds the brief's
+	// FOR UPDATE -- a waiting DeleteAsset is exactly such an edge -- so the no-deadlock conclusion
+	// does not rest on the holder being edge-free. It rests on two NAMED claims: (1) the brief lock
+	// is the opening statement of this transaction, so the replace holds no `campaigns` row lock
+	// while waiting for it; and (2) nothing anywhere acquires a slot or per-campaign lock while
+	// already holding the brief's. Those two close the cycle, and they are named in these same
+	// words in the internal-infrastructure-postgres concept and in the dated log entry rather than
+	// pointed at by position -- a positional reference drifts the moment any of the three is
+	// re-flowed, which this branch has already paid for twice. DeleteAsset takes the brief lock
+	// and nothing else.
+	//
+	// IT IS KEYED ON brief_id ALONE, AND THE ERROR IS CHECKED. Both halves matter. "The error",
+	// not the scanned status: briefStatus below is read and deliberately never consulted. The
+	// asset-side callers of the sibling query DO act on it -- CreateAsset refuses an archived
+	// brief -- so the asymmetry is worth stating rather than leaving a reader to infer a status
+	// check from the variable's name. A replace under an archived brief stays allowed; that is
+	// pre-existing behaviour and this change does not alter it. The column is projected only
+	// because the lock is taken by a SELECT ... FOR UPDATE, which has to select something.
+	//
+	// The asset
+	// endpoints' version of this statement (lockBriefForAssetWriteQuery) also tests project_id,
+	// because they take a project from the request path and must refuse a brief owned by someone
+	// else; this call has already resolved and authorized its campaign, and a row lock on `id` is
+	// the same lock either way. Carrying project_id across would break it: `campaigns` has a
+	// brief_id foreign key on id ALONE (000002), never upgraded to the composite (brief_id,
+	// project_id) form its sibling tables got, so a row whose project_id disagreed with its
+	// brief's would match NO row, take NO lock and return NO error -- the one hazard this
+	// statement is here to remove, failing silently. The PREDICATE is what removes that hazard;
+	// be precise about what the scan adds on top of it. On id alone the FK guarantees a match, so
+	// an Exec would take the same lock in every reachable case and pgx.ErrNoRows is unreachable.
+	// That rests on TWO legs, not one: the FK constrains rows in `campaigns`, not the in-memory
+	// `c`, so it is only decisive because every caller passes a campaign LOADED from that table
+	// (brief.go, brief_bid.go, brief_budget.go and meta_ad_sets.go, the last via a copy of the
+	// loaded row). A future caller that synthesized a BriefID would make the miss reachable --
+	// and would land on the scan below rather than on silence. The scan is there for the
+	// predicate's next editor: it converts any future miss from a silent loss of the lock into
+	// ErrNotFound, which is the behaviour the sibling callers of the asset-side query already
+	// have (CreateAsset maps ErrNoRows the same way). Do not read it as evidence that the lock
+	// could fail today.
+	var briefStatus string
+	if lerr := tx.QueryRow(ctx, lockBriefRowByIDQuery, c.BriefID).Scan(&briefStatus); lerr != nil {
+		if errors.Is(lerr, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("replace campaign: lock brief: %w", lerr)
+	}
+
+	// Position is the whole point: after the brief lock above, before the UPDATE below. The lock
+	// orders this replace against a concurrent DeleteAsset but does not say which of the two won,
+	// and when the delete won the snapshot about to be written can name a row that is already
+	// gone. See checkNewSnapshotAssetRefs for why the question has to be asked inside this
+	// transaction and why it covers only newly introduced ids — do not restate it here.
+	if aerr := r.checkNewSnapshotAssetRefs(ctx, tx, c); aerr != nil {
+		return nil, aerr
+	}
 
 	updatedBy, err := marshalActor(c.UpdatedBy)
 	if err != nil {
@@ -2135,7 +2319,7 @@ func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 		platform   string
 		pcID       *string
 		budgetType *string
-		// bidding_strategy (000047): NULL on a legacy or adopted row.
+		// bidding_strategy (000050): NULL on a legacy or adopted row.
 		biddingStrategy *string
 		createdBy       []byte
 		updatedBy       []byte

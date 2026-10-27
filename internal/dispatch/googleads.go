@@ -508,6 +508,13 @@ type GoogleAdsDispatcher struct {
 	// clientCache's doc comment.
 	clients *clientCache
 	opts    []googleads.Option
+	// creatives and assets are the creative-asset library and the process-wide memory
+	// budget, bound late by registerDispatchers exactly as they are on the Meta, Microsoft,
+	// Twitter and LinkedIn dispatchers. Both may be nil — a nil repo means a config naming
+	// an asset is refused with a message saying so, and a nil *AssetReserver reserves
+	// nothing — so every test dispatcher and the no-database mode keep working unchanged.
+	creatives creativeAssetReader
+	assets    *AssetReserver
 }
 
 // NewGoogleAdsDispatcher builds the adapter from the connection repo + encryptor.
@@ -566,6 +573,19 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err != nil {
 		return nil, notCreated(err)
 	}
+	// Creative images that name a STORED asset are resolved here, before anything upstream
+	// exists, so a missing, oversized or empty asset costs an error and nothing else — the
+	// same placement, and the same reason, as the client's fetch of a creative URL.
+	//
+	// Every failure is notCreated: the claim is released and no budget, campaign or ad group
+	// was mutated. The reservation is held for the WHOLE dispatch, not just this call, because
+	// the bytes are: they ride in the CampaignInput and the client POSTs them to Google later
+	// in this same call. Releasing at the end of the resolve would free budget still occupied.
+	resolvedImages, releaseAssets, err := d.resolveGoogleCreativeAssets(ctx, brief, &cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	defer releaseAssets()
 
 	in := googleads.CampaignInput{
 		EventName: bf.EventName,
@@ -620,6 +640,11 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		PerformanceMaxCreative: googleAdsPerformanceMaxCreative(cfg.PerformanceMaxCreative),
 		VideoCreative:          googleAdsVideoCreative(cfg.VideoCreative),
 		DisplayCreative:        googleAdsDisplayCreative(cfg.DisplayCreative),
+		// The bytes for every asset-backed image entry, keyed by the slot string the
+		// mappers above rendered. Carried on the input rather than on each of the three
+		// creatives because it is one dispatch-wide map: the same asset may be named from
+		// two channels, and the client's fetch phase is shared across all three.
+		ResolvedImages: resolvedImages,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
 		// GA client composes the budget/campaign/ad-group names from these, and a retry
 		// with the same suffix is rejected by whichever family it reaches first —
@@ -796,7 +821,15 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		// (budget created)" for a definite 4xx — so a blanket prefix would overwrite that
 		// distinction and route an operator to reconcile an ambiguous outcome for what is
 		// actually a definite failure. Wrap with a neutral, provider-tagged prefix instead.
-		return campaignFromGoogleAds(ctx, result, cfg), fmt.Errorf("google-ads dispatch: %w", cerr)
+		//
+		// The classification is attached HERE, on the one wrap every channel's partial
+		// failure passes through, rather than at each of the create paths' partial-returning
+		// arms: googleads.CreateOutcome reads the state off the partial's ids, so one call
+		// covers all five channels and cannot drift arm by arm. It adds a token to the
+		// chain and changes nothing in it — service.DispatchFailureMessage switches on the
+		// token and emits its own sentence, so no upstream text reaches the operator.
+		outcome, _ := googleads.CreateOutcome(result, cerr)
+		return campaignFromGoogleAds(ctx, result, cfg), withCreateOutcome(fmt.Errorf("google-ads dispatch: %w", cerr), outcome)
 	}
 	return campaignFromGoogleAds(ctx, result, cfg), nil
 }
@@ -977,21 +1010,24 @@ func googleAdsPrices(in []googleAdsPriceConfig) []googleads.PriceExtension {
 
 // googleAdsDemandGenCreativeConfig is the wire shape of the Demand Gen creative.
 //
-// Images are URLs, matching reddit's and meta's imageUrl: a caller already hosts the
-// creative somewhere. Google is the one platform that will not fetch a URL itself —
-// ImageAsset takes raw bytes — so the campaign service downloads each one and uploads
-// the bytes. See internal/platform/googleads/demandgen_creative.go, which also carries
-// the hardening that server-side fetch requires.
+// Each image entry is EITHER a URL — matching reddit's and meta's imageUrl, for a caller
+// that already hosts the creative somewhere — OR the id of an asset stored in this
+// service's creative library, written as {"imageAssetId": "<uuid>"}. Google is the one
+// platform that will not fetch a URL itself (ImageAsset takes raw bytes), so either way
+// the campaign service ends up holding the bytes and uploading them; the difference is
+// only where it got them. See googleads_image_ref.go for why an asset entry has to be an
+// object, and internal/platform/googleads/demandgen_creative.go for the hardening that
+// server-side fetch requires and the validation both sources share.
 type googleAdsDemandGenCreativeConfig struct {
 	// Each list is one image shape with its own required aspect ratio and minimum
 	// size, enforced by the client's preflight against Google's documented rules.
 	// At least one of marketingImages or squareMarketingImages is required.
-	MarketingImages       []string `json:"marketingImages"`
-	SquareMarketingImages []string `json:"squareMarketingImages"`
-	PortraitImages        []string `json:"portraitImages"`
-	TallPortraitImages    []string `json:"tallPortraitImages"`
+	MarketingImages       googleAdsImageRefs `json:"marketingImages"`
+	SquareMarketingImages googleAdsImageRefs `json:"squareMarketingImages"`
+	PortraitImages        googleAdsImageRefs `json:"portraitImages"`
+	TallPortraitImages    googleAdsImageRefs `json:"tallPortraitImages"`
 	// LogoImages is required: 1-5 square images.
-	LogoImages []string `json:"logoImages"`
+	LogoImages googleAdsImageRefs `json:"logoImages"`
 	// Headlines and Descriptions are 1-5 each. NOT the Search ad's 15/4 — Demand Gen
 	// has its own counts, though the same display-width limits.
 	Headlines    []string `json:"headlines"`
@@ -1009,11 +1045,11 @@ func googleAdsDemandGenCreative(in *googleAdsDemandGenCreativeConfig) googleads.
 		return googleads.DemandGenCreative{}
 	}
 	return googleads.DemandGenCreative{
-		MarketingImages:       in.MarketingImages,
-		SquareMarketingImages: in.SquareMarketingImages,
-		PortraitImages:        in.PortraitImages,
-		TallPortraitImages:    in.TallPortraitImages,
-		LogoImages:            in.LogoImages,
+		MarketingImages:       in.MarketingImages.slotEntries(),
+		SquareMarketingImages: in.SquareMarketingImages.slotEntries(),
+		PortraitImages:        in.PortraitImages.slotEntries(),
+		TallPortraitImages:    in.TallPortraitImages.slotEntries(),
+		LogoImages:            in.LogoImages.slotEntries(),
 		Headlines:             in.Headlines,
 		Descriptions:          in.Descriptions,
 		BusinessName:          in.BusinessName,
@@ -1082,8 +1118,8 @@ func googleAdsAds(in []googleAdsAdConfig) []googleads.AdSpec {
 }
 
 // googleAdsPerformanceMaxCreativeConfig is the wire shape of the Performance Max
-// asset group. Images are URLs for the same reason the Demand Gen creative's are, and
-// are fetched by the same hardened client — see
+// asset group. Image entries are URLs or stored-asset ids for the same reason the Demand
+// Gen creative's are, and a URL entry is fetched by the same hardened client — see
 // internal/platform/googleads/pmax_creative.go.
 //
 // The counts below are Performance Max's own and are NOT the Demand Gen ones beside
@@ -1094,12 +1130,12 @@ type googleAdsPerformanceMaxCreativeConfig struct {
 	// marketingImages (1.91:1) and squareMarketingImages (1:1) are BOTH required —
 	// unlike Demand Gen, where either satisfies the other. portraitImages (4:5) is
 	// optional, and the three share a combined cap of 20.
-	MarketingImages       []string `json:"marketingImages"`
-	SquareMarketingImages []string `json:"squareMarketingImages"`
-	PortraitImages        []string `json:"portraitImages"`
+	MarketingImages       googleAdsImageRefs `json:"marketingImages"`
+	SquareMarketingImages googleAdsImageRefs `json:"squareMarketingImages"`
+	PortraitImages        googleAdsImageRefs `json:"portraitImages"`
 	// LogoImages (1:1) is required, 1-5. LandscapeLogoImages (4:1) is optional.
-	LogoImages          []string `json:"logoImages"`
-	LandscapeLogoImages []string `json:"landscapeLogoImages"`
+	LogoImages          googleAdsImageRefs `json:"logoImages"`
+	LandscapeLogoImages googleAdsImageRefs `json:"landscapeLogoImages"`
 	// Headlines 3-15, LongHeadlines 1-5 and Descriptions 2-5 are three DISTINCT asset
 	// field types, not one list bucketed by length. At least one description must fit
 	// the short slot (display width 60 or less).
@@ -1128,11 +1164,11 @@ func googleAdsPerformanceMaxCreative(in *googleAdsPerformanceMaxCreativeConfig) 
 		return googleads.PerformanceMaxCreative{}
 	}
 	return googleads.PerformanceMaxCreative{
-		MarketingImages:       in.MarketingImages,
-		SquareMarketingImages: in.SquareMarketingImages,
-		PortraitImages:        in.PortraitImages,
-		LogoImages:            in.LogoImages,
-		LandscapeLogoImages:   in.LandscapeLogoImages,
+		MarketingImages:       in.MarketingImages.slotEntries(),
+		SquareMarketingImages: in.SquareMarketingImages.slotEntries(),
+		PortraitImages:        in.PortraitImages.slotEntries(),
+		LogoImages:            in.LogoImages.slotEntries(),
+		LandscapeLogoImages:   in.LandscapeLogoImages.slotEntries(),
 		Headlines:             in.Headlines,
 		LongHeadlines:         in.LongHeadlines,
 		Descriptions:          in.Descriptions,
@@ -1193,10 +1229,10 @@ type googleAdsDisplayCreativeConfig struct {
 	// capped as a combined total; both LOGO arrays are optional and capped separately.
 	// Their ratios and minimums differ from the same-named Demand Gen and Performance
 	// Max slots, which is why each channel keeps its own slot table.
-	MarketingImages       []string `json:"marketingImages"`
-	SquareMarketingImages []string `json:"squareMarketingImages"`
-	LogoImages            []string `json:"logoImages"`
-	SquareLogoImages      []string `json:"squareLogoImages"`
+	MarketingImages       googleAdsImageRefs `json:"marketingImages"`
+	SquareMarketingImages googleAdsImageRefs `json:"squareMarketingImages"`
+	LogoImages            googleAdsImageRefs `json:"logoImages"`
+	SquareLogoImages      googleAdsImageRefs `json:"squareLogoImages"`
 	// LongHeadline is a SINGLE string, not a list — the one place this channel's shape
 	// departs from its siblings, where Performance Max and Video both take a list of
 	// long headlines. Spelled as a scalar here so the envelope cannot carry a second one
@@ -1218,10 +1254,10 @@ func googleAdsDisplayCreative(in *googleAdsDisplayCreativeConfig) googleads.Disp
 		return googleads.DisplayCreative{}
 	}
 	return googleads.DisplayCreative{
-		MarketingImages:       in.MarketingImages,
-		SquareMarketingImages: in.SquareMarketingImages,
-		LogoImages:            in.LogoImages,
-		SquareLogoImages:      in.SquareLogoImages,
+		MarketingImages:       in.MarketingImages.slotEntries(),
+		SquareMarketingImages: in.SquareMarketingImages.slotEntries(),
+		LogoImages:            in.LogoImages.slotEntries(),
+		SquareLogoImages:      in.SquareLogoImages.slotEntries(),
 		Headlines:             in.Headlines,
 		LongHeadline:          in.LongHeadline,
 		Descriptions:          in.Descriptions,
@@ -1312,11 +1348,11 @@ func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 	// string slices are shared with the caller's config.
 	if cfg.DemandGenCreative != nil {
 		creative := *cfg.DemandGenCreative
-		creative.MarketingImages = sanitizeSnapshotURLs(cfg.DemandGenCreative.MarketingImages)
-		creative.SquareMarketingImages = sanitizeSnapshotURLs(cfg.DemandGenCreative.SquareMarketingImages)
-		creative.PortraitImages = sanitizeSnapshotURLs(cfg.DemandGenCreative.PortraitImages)
-		creative.TallPortraitImages = sanitizeSnapshotURLs(cfg.DemandGenCreative.TallPortraitImages)
-		creative.LogoImages = sanitizeSnapshotURLs(cfg.DemandGenCreative.LogoImages)
+		creative.MarketingImages = sanitizeSnapshotImageRefs(cfg.DemandGenCreative.MarketingImages)
+		creative.SquareMarketingImages = sanitizeSnapshotImageRefs(cfg.DemandGenCreative.SquareMarketingImages)
+		creative.PortraitImages = sanitizeSnapshotImageRefs(cfg.DemandGenCreative.PortraitImages)
+		creative.TallPortraitImages = sanitizeSnapshotImageRefs(cfg.DemandGenCreative.TallPortraitImages)
+		creative.LogoImages = sanitizeSnapshotImageRefs(cfg.DemandGenCreative.LogoImages)
 		snapshot.DemandGenCreative = &creative
 	}
 	// The Performance Max asset group carries image URLs with exactly the same
@@ -1325,11 +1361,11 @@ func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 	// signed URLs persisted in plaintext.
 	if cfg.PerformanceMaxCreative != nil {
 		creative := *cfg.PerformanceMaxCreative
-		creative.MarketingImages = sanitizeSnapshotURLs(cfg.PerformanceMaxCreative.MarketingImages)
-		creative.SquareMarketingImages = sanitizeSnapshotURLs(cfg.PerformanceMaxCreative.SquareMarketingImages)
-		creative.PortraitImages = sanitizeSnapshotURLs(cfg.PerformanceMaxCreative.PortraitImages)
-		creative.LogoImages = sanitizeSnapshotURLs(cfg.PerformanceMaxCreative.LogoImages)
-		creative.LandscapeLogoImages = sanitizeSnapshotURLs(cfg.PerformanceMaxCreative.LandscapeLogoImages)
+		creative.MarketingImages = sanitizeSnapshotImageRefs(cfg.PerformanceMaxCreative.MarketingImages)
+		creative.SquareMarketingImages = sanitizeSnapshotImageRefs(cfg.PerformanceMaxCreative.SquareMarketingImages)
+		creative.PortraitImages = sanitizeSnapshotImageRefs(cfg.PerformanceMaxCreative.PortraitImages)
+		creative.LogoImages = sanitizeSnapshotImageRefs(cfg.PerformanceMaxCreative.LogoImages)
+		creative.LandscapeLogoImages = sanitizeSnapshotImageRefs(cfg.PerformanceMaxCreative.LandscapeLogoImages)
 		snapshot.PerformanceMaxCreative = &creative
 	}
 	// The Display creative carries image URLs with exactly the same exposure, so it is
@@ -1337,26 +1373,13 @@ func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 	// absent from this chain, and only because it holds no URL at all.
 	if cfg.DisplayCreative != nil {
 		creative := *cfg.DisplayCreative
-		creative.MarketingImages = sanitizeSnapshotURLs(cfg.DisplayCreative.MarketingImages)
-		creative.SquareMarketingImages = sanitizeSnapshotURLs(cfg.DisplayCreative.SquareMarketingImages)
-		creative.LogoImages = sanitizeSnapshotURLs(cfg.DisplayCreative.LogoImages)
-		creative.SquareLogoImages = sanitizeSnapshotURLs(cfg.DisplayCreative.SquareLogoImages)
+		creative.MarketingImages = sanitizeSnapshotImageRefs(cfg.DisplayCreative.MarketingImages)
+		creative.SquareMarketingImages = sanitizeSnapshotImageRefs(cfg.DisplayCreative.SquareMarketingImages)
+		creative.LogoImages = sanitizeSnapshotImageRefs(cfg.DisplayCreative.LogoImages)
+		creative.SquareLogoImages = sanitizeSnapshotImageRefs(cfg.DisplayCreative.SquareLogoImages)
 		snapshot.DisplayCreative = &creative
 	}
 	return snapshot
-}
-
-// sanitizeSnapshotURLs is sanitizeSnapshotURL over a list, returning a NEW slice so
-// the caller's backing array is never written through.
-func sanitizeSnapshotURLs(in []string) []string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]string, len(in))
-	for i, u := range in {
-		out[i] = sanitizeSnapshotURL(u)
-	}
-	return out
 }
 
 // campaignFromGoogleAds maps the client result to the persistence model. The

@@ -52,8 +52,52 @@ type Service interface {
 	// through LinkedIn's Images API (an organization-owned image URN) and used as
 	// that dark post's article thumbnail; LinkedIn accepts at most 5,000,000 bytes
 	// and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or
-	// 360x640 to 2430x4320 (vertical) pixels.
+	// 360x640 to 2430x4320 (vertical) pixels. A brief's library is bounded by a
+	// per-brief quota on both count and total stored bytes; an upload that would
+	// exceed either is refused with 409 and reason creative_asset_quota_exceeded,
+	// and list-creative-assets publishes the ceilings and the current totals so a
+	// client can see the headroom before it uploads. A re-upload of identical
+	// bytes is idempotent and is NOT judged against the quota, since it stores
+	// nothing. An archived brief returns 404, matching every other access to a
+	// brief's children.
 	UploadCreativeAsset(context.Context, *UploadCreativeAssetPayload) (res *CreativeAsset, err error)
+	// List the creative assets stored for a brief, with the per-brief quota the
+	// next upload will be judged against. Metadata only: the image bytes are never
+	// returned inline — byte_size, width and height exist precisely so a reader
+	// can size and classify an asset without loading a blob of up to 30 MiB.
+	// Assets are ordered oldest first, and the whole library is returned (it is
+	// bounded by count_limit). An archived brief returns 404, matching every other
+	// read of a brief's children.
+	ListCreativeAssets(context.Context, *ListCreativeAssetsPayload) (res *CreativeAssetList, err error)
+	// Get one stored creative asset's metadata. The image bytes are not returned
+	// here — they are served, when signed creative-asset URLs are configured, by
+	// the separate signed-asset route. An asset belonging to another project or
+	// brief, or to an archived brief, is 404, the same as one that does not exist.
+	GetCreativeAsset(context.Context, *GetCreativeAssetPayload) (res *CreativeAsset, err error)
+	// Match the brief's stored creative assets against the image slots each ad
+	// platform publishes, and report what fits where and what is still missing. A
+	// pure read: nothing is stored, no asset is attached to a campaign, and an
+	// unchanged library always produces an identical plan. Eligibility is the
+	// slot's own rule — aspect ratio within the platform's documented tolerance,
+	// the pixel floor, and the slot's byte cap — and among eligible assets the
+	// closest fit to the slot's target ratio wins, then the larger image, then the
+	// earlier upload. An asset may fill slots on several platforms at once but
+	// never appears twice in one slot. Assets stored before the service recorded
+	// dimensions come back under `unclassified` rather than being judged against a
+	// shape they never declared. An archived brief returns 404, matching every
+	// other read of a brief's children.
+	GetAssetPlan(context.Context, *GetAssetPlanPayload) (res *CreativeAssetPlan, err error)
+	// Permanently delete a stored creative asset, freeing its bytes against the
+	// brief's quota. Refused with 409 reason=creative_asset_in_use when any live
+	// campaign on the brief could still need it: one whose creation has not
+	// finished on the ad platform — its status is still 'pending' — whatever its
+	// stored configuration says; one whose stored configuration names this asset
+	// id; or one whose configuration has not been recorded yet, because a dispatch
+	// claims its campaign row before it resolves any asset. Delete the campaign,
+	// or reconcile a stuck claim, then retry. This is a HARD delete — unlike a
+	// campaign or a brief, which are retired by a status flip — because reclaiming
+	// the storage is the entire reason the endpoint exists.
+	DeleteCreativeAsset(context.Context, *DeleteCreativeAssetPayload) (err error)
 	// Create campaigns across the selected platforms (async -> job). Besides the
 	// request-shape 400s (an unknown or duplicate platform, new_version on a
 	// platform that does not support it, and the like), two dispatch-time rules
@@ -159,7 +203,18 @@ type Service interface {
 	// the brief. The AI model is optional — without it configured this endpoint
 	// returns 503.
 	GenerateEmailCopy(context.Context, *GenerateEmailCopyPayload) (res *EmailCopy, err error)
-	// Replace a campaign (requires If-Match).
+	// Replace a campaign (requires If-Match). A request carrying a configuration
+	// is refused with 409 reason=campaign_dispatch_in_flight while the campaign's
+	// creation has not finished on the ad platform — its status is still 'pending'
+	// — because a dispatcher may still be resolving the configuration this request
+	// would overwrite. Retry once the status is no longer 'pending'. A name-only
+	// edit is NOT refused and stays available throughout. A configuration that
+	// NEWLY names a stored creative asset which no longer exists for the brief —
+	// typically one deleted between reading the campaign and sending this request
+	// — is refused with 409 reason=creative_asset_reference_missing, naming the
+	// ids that did not resolve; upload the asset again, or remove the reference,
+	// then retry. References already present on the stored configuration are
+	// carried through unchanged and are never refused by this check.
 	UpdateCampaign(context.Context, *UpdateCampaignPayload) (res *Campaign, err error)
 	// Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist
 	// the new status. Unlike update-campaign (which only writes the DB row), this
@@ -681,7 +736,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [36]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+var MethodNames = [40]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "list-creative-assets", "get-creative-asset", "get-asset-plan", "delete-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
 
 // AddNegativeKeywordsPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service add-negative-keywords method.
@@ -1261,10 +1316,119 @@ type CreativeAsset struct {
 	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
 	// brief
 	Checksum string
+	// Pixel width, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Width *int
+	// Pixel height, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Height *int
 	// "true" when this request stored the asset; "false" when an identical upload
 	// already existed. Set only on the upload response, where it selects 201 vs
 	// 200.
 	Created *string
+}
+
+// CreativeAssetList is the result type of the lfx-v2-campaign-service-briefs
+// service list-creative-assets method.
+type CreativeAssetList struct {
+	// Every asset stored for this brief, oldest first. Each carries metadata only
+	// — the image bytes are served by the signed creative-asset URL, never inline
+	// here.
+	Assets []*CreativeAsset
+	// Number of assets stored for this brief.
+	Count int
+	// Maximum assets one brief may hold. An upload that would exceed it is refused
+	// with 409 reason=creative_asset_quota_exceeded.
+	CountLimit int
+	// Total stored bytes across those assets.
+	BytesUsed int64
+	// Maximum total stored bytes one brief may hold. Enforced alongside
+	// count_limit; either one alone bounds the wrong thing — a count cap still
+	// admits that many maximum-sized images, and a byte cap alone still admits
+	// unboundedly many tiny ones.
+	BytesLimit int64
+}
+
+// CreativeAssetPlan is the result type of the lfx-v2-campaign-service-briefs
+// service get-asset-plan method.
+type CreativeAssetPlan struct {
+	// The platforms this plan covers, after defaulting — echoed so a caller who
+	// sent no filter knows what was actually evaluated.
+	Platforms []string
+	// Every slot that received at least one asset, in platform catalog order.
+	Assignments []*CreativeSlotAssignment
+	// Every required slot or cross-slot rule the library leaves short. Empty means
+	// this library can fill every requested platform.
+	Gaps []*CreativeSlotGap
+	// Assets whose dimensions were never recorded, so their shape is unknown. They
+	// are NOT counted against any slot and NOT reported as failing one: unknown is
+	// a different answer from wrong, and a dimension backfill makes them
+	// classifiable without the operator doing anything.
+	Unclassified []string
+	// Assets whose dimensions are known and which this plan did not place in any
+	// slot. Wider than "nothing would accept them": an asset also appears here
+	// when every slot that would take it was already filled to its minimum, or
+	// when a sibling slot had already spent a shared group ceiling. The mirror of
+	// gaps: not only "what am I missing" but "which of the files I just dropped is
+	// this plan not using" — with no gaps reported, what is listed here is surplus
+	// rather than unusable.
+	Unused []string
+}
+
+type CreativeSlotAssignment struct {
+	// Stable identifier for this slot: platform/channel/slot, or platform/slot
+	// where the platform has a single ad shape. It is the join key between a plan
+	// row and an operator override, so it survives a round trip through a client
+	// unchanged.
+	SlotKey string
+	// Campaign platform this slot belongs to, using the same identifier a campaign
+	// config carries ("google-ads").
+	Platform string
+	// Ad channel within the platform whose rules differ from its siblings
+	// ("PERFORMANCE_MAX", "DEMAND_GEN", "DISPLAY"). Absent where the platform has
+	// a single ad shape.
+	Channel *string
+	// Wire name of the slot within its channel — the asset field type or payload
+	// array key a campaign config puts this image under.
+	Slot string
+	// Operator-facing name of the slot. It NAMES ITS CHANNEL, because three Google
+	// channels each have a slot called "logo image" under different rules and a
+	// bare "logo image" would not say which creative is meant.
+	Label string
+	// The slot's rule as a sentence an operator can act on — ratio, tolerance and
+	// pixel floor, plus the byte cap where one applies.
+	Requirement string
+	// Assets assigned to this slot, best fit first. An asset may appear in several
+	// slots: one library feeds every platform, and the same square image
+	// legitimately serves a 1:1 slot on each. It never appears twice within one
+	// slot.
+	AssetIds []string
+	// Images the platform requires in this slot. 0 marks the slot optional.
+	MinCount int
+	// Images the platform will accept in this slot. 0 means the platform states no
+	// per-slot ceiling; a shared ceiling across sibling slots may still apply.
+	MaxCount int
+}
+
+type CreativeSlotGap struct {
+	// Campaign platform whose rule is unmet.
+	Platform string
+	// Ad channel whose rule is unmet. Absent where the platform has a single ad
+	// shape.
+	Channel *string
+	// The slot this shortfall belongs to. ABSENT when the requirement spans
+	// several slots and no single one of them is required on its own.
+	SlotKey *string
+	// Operator-facing name of the unmet requirement.
+	Label string
+	// How many more images the requirement needs beyond what the plan could
+	// assign. Always at least 1.
+	Need int
+	// What is missing and what would satisfy it, as the sentence an operator takes
+	// back to their designer. It names every shape that would close the gap, not
+	// just one, so an either-or requirement does not send someone to produce an
+	// image they did not need.
+	Reason string
 }
 
 // DeleteBriefPayload is the payload type of the lfx-v2-campaign-service-briefs
@@ -1291,6 +1455,19 @@ type DeleteCampaignPayload struct {
 	CampaignID string
 	// If-Match header carrying the current ETag/version
 	IfMatch *string
+}
+
+// DeleteCreativeAssetPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service delete-creative-asset method.
+type DeleteCreativeAssetPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Creative asset UUID
+	AssetID string
 }
 
 // EmailCopy is the result type of the lfx-v2-campaign-service-briefs service
@@ -1438,6 +1615,21 @@ type GenerateWizardContentPayload struct {
 	ChangeRequest *string
 }
 
+// GetAssetPlanPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service get-asset-plan method.
+type GetAssetPlanPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Restrict the plan to these campaign platforms ("google-ads"). Repeat the
+	// parameter for several. Absent means every platform whose slot rules this
+	// service publishes. A platform it does not know is ignored, not refused.
+	Platforms []string
+}
+
 // GetBriefMetricsPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service get-brief-metrics method.
 type GetBriefMetricsPayload struct {
@@ -1506,6 +1698,19 @@ type GetCampaignSettingsPayload struct {
 	BriefID string
 	// Campaign UUID
 	CampaignID string
+}
+
+// GetCreativeAssetPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service get-creative-asset method.
+type GetCreativeAssetPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Creative asset UUID
+	AssetID string
 }
 
 // GetJobPayload is the payload type of the lfx-v2-campaign-service-briefs
@@ -1701,6 +1906,17 @@ type KeywordTargetingRemovals struct {
 	Results []*KeywordTargetingRemovalResult
 	// How many results are APPLIED.
 	AppliedCount int
+}
+
+// ListCreativeAssetsPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service list-creative-assets method.
+type ListCreativeAssetsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
 }
 
 // ListMetaAdSetsPayload is the payload type of the

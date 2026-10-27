@@ -6,13 +6,9 @@
 -- 'manual' (a manual max cost-per-click bid, whose starting amount is written to
 -- max_cpc_bid in the same row write).
 --
--- 000047, not 000043: 000042 is on main (#318), and PR #328
--- (fix/LFXV2-2665-adoption-binding-indexes) claims 000043-000046 (per-provider binding indexes).
--- THIS MIGRATION MUST APPLY AFTER 000043-000046. golang-migrate records the highest applied version
--- and never applies a lower one afterwards, so if 000047 reached a database first, 000043-000046
--- would be skipped forever. #328 merged first, so 000043-000046 precede this file on main;
--- TestMigration000047_RequiresItsPredecessorsEmbedded fails if the embedded migrations ever carry
--- 000047 without 000043-000046.
+-- 000050: first numbered 000047, above #328's 000043-000046; main then claimed 000047-000049
+-- while this PR was open, so it moved above them. golang-migrate never applies a version lower
+-- than the highest applied one, so a branch migration must always sit above main's.
 --
 -- What it records. A REQUEST the create path sent, never an observation: an operator can
 -- switch the strategy in the ad platform afterwards, and the bid lever reads the platform

@@ -4026,7 +4026,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: update-campaign lfx-v2-campaign-service-briefs
-            description: Replace a campaign (requires If-Match).
+            description: Replace a campaign (requires If-Match). A request carrying a configuration is refused with 409 reason=campaign_dispatch_in_flight while the campaign's creation has not finished on the ad platform — its status is still 'pending' — because a dispatcher may still be resolving the configuration this request would overwrite. Retry once the status is no longer 'pending'. A name-only edit is NOT refused and stays available throughout. A configuration that NEWLY names a stored creative asset which no longer exists for the brief — typically one deleted between reading the campaign and sending this request — is refused with 409 reason=creative_asset_reference_missing, naming the ids that did not resolve; upload the asset again, or remove the reference, then retry. References already present on the stored configuration are carried through unchanged and are never refused by this check.
             operationId: lfx-v2-campaign-service-briefs#update-campaign
             parameters:
                 - name: project_id
@@ -6245,11 +6245,160 @@ paths:
             security:
                 - jwt_header_Authorization: []
     /projects/{project_id}/briefs/{brief_id}/creative-assets:
+        get:
+            tags:
+                - lfx-v2-campaign-service-briefs
+            summary: list-creative-assets lfx-v2-campaign-service-briefs
+            description: 'List the creative assets stored for a brief, with the per-brief quota the next upload will be judged against. Metadata only: the image bytes are never returned inline — byte_size, width and height exist precisely so a reader can size and classify an asset without loading a blob of up to 30 MiB. Assets are ordered oldest first, and the whole library is returned (it is bounded by count_limit). An archived brief returns 404, matching every other read of a brief''s children.'
+            operationId: lfx-v2-campaign-service-briefs#list-creative-assets
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+                - name: brief_id
+                  in: path
+                  description: Brief UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Brief UUID
+                    example: fef979b7-77a1-48d3-a5cb-a2ea4b3e8145
+                    format: uuid
+                  example: fef979b7-77a1-48d3-a5cb-a2ea4b3e8145
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/CreativeAssetList'
+                            example:
+                                assets:
+                                    - brief_id: Praesentium dolore aut labore qui debitis.
+                                      byte_size: 4945546068272182131
+                                      checksum: Id hic rerum iure odio.
+                                      created: "true"
+                                      height: 6089835885683914289
+                                      id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                                      mime_type: image/jpeg
+                                      project_id: Qui aliquam ea quam dolore est.
+                                      width: 1297412450570756896
+                                    - brief_id: Praesentium dolore aut labore qui debitis.
+                                      byte_size: 4945546068272182131
+                                      checksum: Id hic rerum iure odio.
+                                      created: "true"
+                                      height: 6089835885683914289
+                                      id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                                      mime_type: image/jpeg
+                                      project_id: Qui aliquam ea quam dolore est.
+                                      width: 1297412450570756896
+                                    - brief_id: Praesentium dolore aut labore qui debitis.
+                                      byte_size: 4945546068272182131
+                                      checksum: Id hic rerum iure odio.
+                                      created: "true"
+                                      height: 6089835885683914289
+                                      id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                                      mime_type: image/jpeg
+                                      project_id: Qui aliquam ea quam dolore est.
+                                      width: 1297412450570756896
+                                    - brief_id: Praesentium dolore aut labore qui debitis.
+                                      byte_size: 4945546068272182131
+                                      checksum: Id hic rerum iure odio.
+                                      created: "true"
+                                      height: 6089835885683914289
+                                      id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                                      mime_type: image/jpeg
+                                      project_id: Qui aliquam ea quam dolore est.
+                                      width: 1297412450570756896
+                                bytes_limit: 7549547776033087914
+                                bytes_used: 4713769312342199349
+                                count: 6440019522820428019
+                                count_limit: 8153159168725148156
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
         post:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: upload-creative-asset lfx-v2-campaign-service-briefs
-            description: 'Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account''s media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig variant names one by imageAssetId, and at dispatch it is uploaded once through LinkedIn''s Images API (an organization-owned image URN) and used as that dark post''s article thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320 (vertical) pixels.'
+            description: 'Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account''s media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig variant names one by imageAssetId, and at dispatch it is uploaded once through LinkedIn''s Images API (an organization-owned image URN) and used as that dark post''s article thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320 (vertical) pixels. A brief''s library is bounded by a per-brief quota on both count and total stored bytes; an upload that would exceed either is refused with 409 and reason creative_asset_quota_exceeded, and list-creative-assets publishes the ceilings and the current totals so a client can see the headroom before it uploads. A re-upload of identical bytes is idempotent and is NOT judged against the quota, since it stores nothing. An archived brief returns 404, matching every other access to a brief''s children.'
             operationId: lfx-v2-campaign-service-briefs#upload-creative-asset
             parameters:
                 - name: project_id
@@ -6293,9 +6442,11 @@ paths:
                                 byte_size: 1375386599720306412
                                 checksum: Animi at et.
                                 created: "true"
+                                height: 7578664414102152656
                                 id: 189a1a88-0b9d-4a2c-ab34-a8f1d7e17509
                                 mime_type: image/jpeg
                                 project_id: Quo ut.
+                                width: 7227398246152017746
                 "201":
                     description: Created response.
                     content:
@@ -6307,9 +6458,460 @@ paths:
                                 byte_size: 4945546068272182131
                                 checksum: Id hic rerum iure odio.
                                 created: "true"
+                                height: 6089835885683914289
                                 id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
                                 mime_type: image/jpeg
                                 project_id: Qui aliquam ea quam dolore est.
+                                width: 1297412450570756896
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/briefs/{brief_id}/creative-assets/{asset_id}:
+        delete:
+            tags:
+                - lfx-v2-campaign-service-briefs
+            summary: delete-creative-asset lfx-v2-campaign-service-briefs
+            description: 'Permanently delete a stored creative asset, freeing its bytes against the brief''s quota. Refused with 409 reason=creative_asset_in_use when any live campaign on the brief could still need it: one whose creation has not finished on the ad platform — its status is still ''pending'' — whatever its stored configuration says; one whose stored configuration names this asset id; or one whose configuration has not been recorded yet, because a dispatch claims its campaign row before it resolves any asset. Delete the campaign, or reconcile a stuck claim, then retry. This is a HARD delete — unlike a campaign or a brief, which are retired by a status flip — because reclaiming the storage is the entire reason the endpoint exists.'
+            operationId: lfx-v2-campaign-service-briefs#delete-creative-asset
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+                - name: brief_id
+                  in: path
+                  description: Brief UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Brief UUID
+                    example: cbc781cf-df2d-48bc-9ff0-97432716198c
+                    format: uuid
+                  example: cbc781cf-df2d-48bc-9ff0-97432716198c
+                - name: asset_id
+                  in: path
+                  description: Creative asset UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Creative asset UUID
+                    example: def2798d-00a5-49e0-bee1-b08a0f83fe98
+                    format: uuid
+                  example: def2798d-00a5-49e0-bee1-b08a0f83fe98
+            responses:
+                "204":
+                    description: No Content response.
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+        get:
+            tags:
+                - lfx-v2-campaign-service-briefs
+            summary: get-creative-asset lfx-v2-campaign-service-briefs
+            description: Get one stored creative asset's metadata. The image bytes are not returned here — they are served, when signed creative-asset URLs are configured, by the separate signed-asset route. An asset belonging to another project or brief, or to an archived brief, is 404, the same as one that does not exist.
+            operationId: lfx-v2-campaign-service-briefs#get-creative-asset
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+                - name: brief_id
+                  in: path
+                  description: Brief UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Brief UUID
+                    example: 7811c1bd-3403-4bc4-b867-dc6bc22f6311
+                    format: uuid
+                  example: 7811c1bd-3403-4bc4-b867-dc6bc22f6311
+                - name: asset_id
+                  in: path
+                  description: Creative asset UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Creative asset UUID
+                    example: 4185df79-8d41-4bd4-a505-91cd6043592b
+                    format: uuid
+                  example: 4185df79-8d41-4bd4-a505-91cd6043592b
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/CreativeAsset'
+                            example:
+                                brief_id: Molestiae et exercitationem omnis eius corporis.
+                                byte_size: 7971718854909744411
+                                checksum: Sint impedit iure laudantium dolores error.
+                                created: "true"
+                                height: 4081440319267816624
+                                id: 7264cf0d-954c-46d9-bfbd-a0d44007f6e5
+                                mime_type: image/jpeg
+                                project_id: Esse in quod necessitatibus.
+                                width: 5427018862536424644
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/briefs/{brief_id}/creative-assets/plan:
+        get:
+            tags:
+                - lfx-v2-campaign-service-briefs
+            summary: get-asset-plan lfx-v2-campaign-service-briefs
+            description: 'Match the brief''s stored creative assets against the image slots each ad platform publishes, and report what fits where and what is still missing. A pure read: nothing is stored, no asset is attached to a campaign, and an unchanged library always produces an identical plan. Eligibility is the slot''s own rule — aspect ratio within the platform''s documented tolerance, the pixel floor, and the slot''s byte cap — and among eligible assets the closest fit to the slot''s target ratio wins, then the larger image, then the earlier upload. An asset may fill slots on several platforms at once but never appears twice in one slot. Assets stored before the service recorded dimensions come back under `unclassified` rather than being judged against a shape they never declared. An archived brief returns 404, matching every other read of a brief''s children.'
+            operationId: lfx-v2-campaign-service-briefs#get-asset-plan
+            parameters:
+                - name: platforms
+                  in: query
+                  description: Restrict the plan to these campaign platforms ("google-ads"). Repeat the parameter for several. Absent means every platform whose slot rules this service publishes. A platform it does not know is ignored, not refused.
+                  allowEmptyValue: true
+                  schema:
+                    type: array
+                    items:
+                        type: string
+                        example: Voluptatem quaerat voluptatum ullam fugiat.
+                    description: Restrict the plan to these campaign platforms ("google-ads"). Repeat the parameter for several. Absent means every platform whose slot rules this service publishes. A platform it does not know is ignored, not refused.
+                    example:
+                        - google-ads
+                  example:
+                    - google-ads
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+                - name: brief_id
+                  in: path
+                  description: Brief UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Brief UUID
+                    example: 7c1e3057-941a-44fd-842d-f728f95b8878
+                    format: uuid
+                  example: 7c1e3057-941a-44fd-842d-f728f95b8878
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/CreativeAssetPlan'
+                            example:
+                                assignments:
+                                    - asset_ids:
+                                        - aed9c90f-ae79-4fa2-9a92-6a10a6bf2bb0
+                                        - e2bbe5d3-528c-4a78-8636-57d6ed53ce84
+                                        - 095713a6-ec2f-4bac-beea-60cad09f5084
+                                      channel: Porro sit sit ut.
+                                      label: Corrupti aut.
+                                      max_count: 419834829544664313
+                                      min_count: 2659807505005904171
+                                      platform: Est omnis molestiae rerum sunt.
+                                      requirement: Voluptas omnis dolores et laborum.
+                                      slot: Pariatur repudiandae amet beatae.
+                                      slot_key: Vel fugiat.
+                                    - asset_ids:
+                                        - aed9c90f-ae79-4fa2-9a92-6a10a6bf2bb0
+                                        - e2bbe5d3-528c-4a78-8636-57d6ed53ce84
+                                        - 095713a6-ec2f-4bac-beea-60cad09f5084
+                                      channel: Porro sit sit ut.
+                                      label: Corrupti aut.
+                                      max_count: 419834829544664313
+                                      min_count: 2659807505005904171
+                                      platform: Est omnis molestiae rerum sunt.
+                                      requirement: Voluptas omnis dolores et laborum.
+                                      slot: Pariatur repudiandae amet beatae.
+                                      slot_key: Vel fugiat.
+                                    - asset_ids:
+                                        - aed9c90f-ae79-4fa2-9a92-6a10a6bf2bb0
+                                        - e2bbe5d3-528c-4a78-8636-57d6ed53ce84
+                                        - 095713a6-ec2f-4bac-beea-60cad09f5084
+                                      channel: Porro sit sit ut.
+                                      label: Corrupti aut.
+                                      max_count: 419834829544664313
+                                      min_count: 2659807505005904171
+                                      platform: Est omnis molestiae rerum sunt.
+                                      requirement: Voluptas omnis dolores et laborum.
+                                      slot: Pariatur repudiandae amet beatae.
+                                      slot_key: Vel fugiat.
+                                    - asset_ids:
+                                        - aed9c90f-ae79-4fa2-9a92-6a10a6bf2bb0
+                                        - e2bbe5d3-528c-4a78-8636-57d6ed53ce84
+                                        - 095713a6-ec2f-4bac-beea-60cad09f5084
+                                      channel: Porro sit sit ut.
+                                      label: Corrupti aut.
+                                      max_count: 419834829544664313
+                                      min_count: 2659807505005904171
+                                      platform: Est omnis molestiae rerum sunt.
+                                      requirement: Voluptas omnis dolores et laborum.
+                                      slot: Pariatur repudiandae amet beatae.
+                                      slot_key: Vel fugiat.
+                                gaps:
+                                    - channel: Et dolor.
+                                      label: Necessitatibus voluptatibus.
+                                      need: 2064978707748286749
+                                      platform: Non enim.
+                                      reason: Voluptatem voluptatum.
+                                      slot_key: Earum consequatur doloremque est distinctio.
+                                    - channel: Et dolor.
+                                      label: Necessitatibus voluptatibus.
+                                      need: 2064978707748286749
+                                      platform: Non enim.
+                                      reason: Voluptatem voluptatum.
+                                      slot_key: Earum consequatur doloremque est distinctio.
+                                    - channel: Et dolor.
+                                      label: Necessitatibus voluptatibus.
+                                      need: 2064978707748286749
+                                      platform: Non enim.
+                                      reason: Voluptatem voluptatum.
+                                      slot_key: Earum consequatur doloremque est distinctio.
+                                    - channel: Et dolor.
+                                      label: Necessitatibus voluptatibus.
+                                      need: 2064978707748286749
+                                      platform: Non enim.
+                                      reason: Voluptatem voluptatum.
+                                      slot_key: Earum consequatur doloremque est distinctio.
+                                platforms:
+                                    - Quae id qui omnis.
+                                    - Qui omnis et molestiae hic ut voluptate.
+                                unclassified:
+                                    - aa808f9f-1f7a-4eed-92d5-89466ffaea91
+                                    - 0cc502f3-4913-45cc-bccc-822e3db8c674
+                                unused:
+                                    - 5a77fdfe-3618-4678-87e2-3a5ab7ff64fc
+                                    - b7bd4089-d7f5-4d42-bc88-862b53f53b55
+                                    - c1614e33-cabe-4f16-99aa-915728a273c1
+                                    - 95cef728-d55d-41d5-8e1d-72db47ff76c1
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -8235,7 +8837,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: monitor-google-ads-account lfx-v2-campaign-service-connections
-            description: 'Read every campaign visible on a Google Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Account-scoped, not project-scoped: {project_id} resolves which stored connection credential to use, and the read enumerates everything that credential reaches on account_id, not only campaigns this service created. Unlike GET .../connection-google-ads/accounts, this endpoint resolves the project''s OWN connection only and does not fall back to the shared LF system credential: a project with no Google Ads connection of its own gets a 404, not the LF account''s data. A pure read: nothing is persisted.'
+            description: 'Read this project''s own campaigns on a Google Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Project-scoped: only campaigns this service recorded for the project are returned; the upstream account is shared across foundations, so the account read is filtered to them before rules and totals. A project with no campaigns recorded on the platform gets an empty monitor without any upstream call. A recorded campaign created under a different account than account_id, or recording none, fails the read with 409 rather than returning a partial picture. Campaigns deleted in this service stay in the monitor, because a local delete does not stop the upstream campaign, unless it does not record account_id as the customer it was created under or another project has since taken it over; such a campaign is omitted, never a 409. {project_id} also resolves which stored connection credential reads account_id. Unlike GET .../connection-google-ads/accounts, this endpoint resolves the project''s OWN connection only and does not fall back to the shared LF system credential: a project with campaigns but no Google Ads connection of its own gets a 404, not the LF account''s data. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#monitor-google-ads-account
             parameters:
                 - name: account_id
@@ -8367,6 +8969,16 @@ paths:
                             example:
                                 code: "404"
                                 message: The connection was not found.
+                "409":
+                    description: 'Conflict: A campaign recorded for this project does not fit the monitored account: created under a different customer than account_id, or recording none (see reason)'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AccountMonitorScopeConflictError'
+                            example:
+                                code: "409"
+                                message: some of this project's campaigns were created under a different ad account than the one being monitored — monitor the account that owns them, or re-dispatch or reconcile those campaigns onto this one, to monitor this account
+                                reason: campaign_account_mismatch
                 "413":
                     description: 'PayloadTooLarge: Payload too large'
                     content:
@@ -10253,7 +10865,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: monitor-linkedin-ads-account lfx-v2-campaign-service-connections
-            description: 'Read every campaign visible on a LinkedIn Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.'
+            description: 'Read every campaign visible on a LinkedIn Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Account-scoped, not project-scoped: {project_id} resolves which stored connection credential to use, and the read enumerates everything that credential reaches on account_id. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#monitor-linkedin-ads-account
             parameters:
                 - name: account_id
@@ -11157,7 +11769,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: monitor-meta-ads-account lfx-v2-campaign-service-connections
-            description: 'Read every campaign visible on a Meta Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.'
+            description: 'Read this project''s own campaigns on a Meta Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Project-scoped: only campaigns this service recorded for the project are returned; the upstream account is shared across foundations, so the account read is filtered to them before rules and totals. A project with no campaigns recorded on the platform gets an empty monitor without any upstream call. A recorded campaign created under a different account than account_id fails the read with 409 rather than returning a partial picture. Campaigns deleted in this service stay in the monitor, because a local delete does not stop the upstream campaign, unless it was recorded under a different account than account_id, its stored id is not one the platform can read, or another project has since taken it over; such a campaign is omitted, never a 409. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#monitor-meta-ads-account
             parameters:
                 - name: account_id
@@ -11285,6 +11897,16 @@ paths:
                             example:
                                 code: "404"
                                 message: The connection was not found.
+                "409":
+                    description: 'Conflict: A campaign recorded for this project does not fit the monitored account: created under a different account, or carrying an id the platform cannot read (see reason)'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AccountMonitorScopeConflictError'
+                            example:
+                                code: "409"
+                                message: some of this project's campaigns were created under a different ad account than the one being monitored — monitor the account that owns them, or re-dispatch or reconcile those campaigns onto this one, to monitor this account
+                                reason: campaign_account_mismatch
                 "413":
                     description: 'PayloadTooLarge: Payload too large'
                     content:
@@ -12053,7 +12675,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: monitor-microsoft-ads-account lfx-v2-campaign-service-connections
-            description: Read every live campaign on a Microsoft Advertising account with pacing and action items derived by this service's rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is, and resolved from the project's OWN connection only. The campaign list (names, statuses, daily budgets) is read live; delivery metrics come from Microsoft's asynchronous Reporting service, which takes minutes to build a report, so they are served from the last report that finished — see metrics_as_of and metrics_pending — while the next one builds. The first read for an account and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. Saved reports are cached platform data, not a record of anything this service did.
+            description: 'Read every live campaign on a Microsoft Advertising account with pacing and action items derived by this service''s rule engine. Account-scoped, not project-scoped: the read enumerates everything the project''s OWN connection reaches on account_id. The campaign list (names, statuses, daily budgets) is read live; delivery metrics come from Microsoft''s asynchronous Reporting service, which takes minutes to build a report, so they are served from the last report that finished — see metrics_as_of and metrics_pending — while the next one builds. The first read for an account and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. Saved reports are cached platform data, not a record of anything this service did.'
             operationId: lfx-v2-campaign-service-connections#monitor-microsoft-ads-account
             parameters:
                 - name: account_id
@@ -12957,7 +13579,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: monitor-reddit-ads-account lfx-v2-campaign-service-connections
-            description: 'Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.'
+            description: 'Read this project''s own campaigns on a Reddit Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Project-scoped: only campaigns this service recorded for the project are returned; the upstream account is shared across foundations, so the account read is filtered to them before rules and totals. A project with no campaigns recorded on the platform gets an empty monitor without any upstream call. A recorded campaign created under a different account than account_id fails the read with 409 rather than returning a partial picture. Campaigns deleted in this service stay in the monitor, because a local delete does not stop the upstream campaign, unless it does not record account_id as the account it was created under, its stored id is not one the platform can read, or another project has since taken it over; such a campaign is omitted, never a 409. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#monitor-reddit-ads-account
             parameters:
                 - name: account_id
@@ -13085,6 +13707,16 @@ paths:
                             example:
                                 code: "404"
                                 message: The connection was not found.
+                "409":
+                    description: 'Conflict: A campaign recorded for this project does not fit the monitored account: created under a different account, recording none, or carrying an id the platform cannot read (see reason)'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AccountMonitorScopeConflictError'
+                            example:
+                                code: "409"
+                                message: some of this project's campaigns were created under a different ad account than the one being monitored — monitor the account that owns them, or re-dispatch or reconcile those campaigns onto this one, to monitor this account
+                                reason: campaign_account_mismatch
                 "413":
                     description: 'PayloadTooLarge: Payload too large'
                     content:
@@ -13859,7 +14491,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: monitor-twitter-ads-account lfx-v2-campaign-service-connections
-            description: 'Read every live campaign on an X (Twitter) Ads account with pacing and action items derived by this service''s rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is, and resolved from the project''s OWN connection only. The campaign list (names, statuses, budgets, and flights from the line items) is read live; delivery metrics come from X''s asynchronous stats jobs — X''s synchronous stats are capped at 7 days per request — so they are served from the last report that finished — see metrics_as_of and metrics_pending — while the next one builds. The first read for an account and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. Conversions are never reported for X. Saved reports are cached platform data, not a record of anything this service did. Two account states are refused with 409 rather than served metrics that would be wrong: more than 200 campaigns active in the window (reason account_too_many_active_campaigns — one report covers at most ten X stats jobs of 20 campaigns), and an account timezone whose local midnight is not a whole UTC hour, such as Asia/Kolkata (reason account_timezone_unsupported — X accepts whole-hour window bounds only, so the account''s own days cannot be queried exactly). A 90-day window that crosses a DST fall-back covers the trailing 89 whole local days, because 90 such days are 90 days and an hour, over X''s 90-day limit.'
+            description: 'Read this project''s own live campaigns on an X (Twitter) Ads account with pacing and action items derived by this service''s rule engine, resolved from the project''s OWN connection only. Project-scoped: only campaigns this service recorded for the project are returned; the upstream account is shared across foundations, so the account read is filtered to them before rules and totals. A project with no campaigns recorded on the platform gets an empty monitor without any upstream call. A recorded campaign created under a different account than account_id, or recording none, fails the read with 409 rather than returning a partial picture. Campaigns deleted in this service stay in the monitor, because a local delete does not stop the upstream campaign, unless it does not record account_id as the account it was created under, its stored id is not one the platform can read, or another project has since taken it over; such a campaign is omitted, never a 409. The campaign list (names, statuses, budgets, and flights from the line items) is read live; delivery metrics come from X''s asynchronous stats jobs — X''s synchronous stats are capped at 7 days per request — so they are served from the last report that finished — see metrics_as_of and metrics_pending — while the next one builds. The first read for an account and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. Conversions are never reported for X. Saved reports are cached platform data, not a record of anything this service did; the saved report covers the whole account, and only the response is scoped. The scope refusals carry reason campaign_account_mismatch (a recorded campaign belongs to another account or records none) or campaign_scope_invalid (a recorded campaign id the platform cannot read). Two account states are also refused with 409 rather than served metrics that would be wrong: more than 200 campaigns active in the window on the whole shared account, every project''s campaigns counted and not only this project''s (reason account_too_many_active_campaigns — one report covers at most ten X stats jobs of 20 campaigns), and an account timezone whose local midnight is not a whole UTC hour, such as Asia/Kolkata (reason account_timezone_unsupported — X accepts whole-hour window bounds only, so the account''s own days cannot be queried exactly). A 90-day window that crosses a DST fall-back covers the trailing 89 whole local days, because 90 such days are 90 days and an hour, over X''s 90-day limit.'
             operationId: lfx-v2-campaign-service-connections#monitor-twitter-ads-account
             parameters:
                 - name: account_id
@@ -13992,14 +14624,14 @@ paths:
                                 code: "404"
                                 message: The connection was not found.
                 "409":
-                    description: 'Conflict: The account cannot be monitored as it stands: too many active campaigns, or a timezone off the whole UTC hour (see reason)'
+                    description: 'Conflict: The account cannot be monitored as it stands: too many active campaigns on the shared account, a timezone off the whole UTC hour, or a recorded campaign that does not fit the account (see reason)'
                     content:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/AccountMonitorConflictError'
                             example:
                                 code: "409"
-                                message: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads)
+                                message: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads, counted across every project on the shared account)
                                 reason: account_too_many_active_campaigns
                 "413":
                     description: 'PayloadTooLarge: Payload too large'
@@ -16757,18 +17389,46 @@ components:
                 message:
                     type: string
                     description: Error message
-                    example: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads)
+                    example: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads, counted across every project on the shared account)
                 reason:
                     type: string
-                    description: 'Why the account cannot be monitored as it stands: account_too_many_active_campaigns (more campaigns active in the window than one report covers) or account_timezone_unsupported (the account''s timezone does not start its days on a whole UTC hour).'
+                    description: 'Why the account cannot be monitored as it stands: account_too_many_active_campaigns (more campaigns active in the window than one report covers, counted across every project on the shared account, not only this project''s campaigns), account_timezone_unsupported (the account''s timezone does not start its days on a whole UTC hour), campaign_account_mismatch (a campaign recorded for this project was created under a different account, or does not record which) or campaign_scope_invalid (a campaign recorded for this project has an id the platform cannot read).'
                     example: account_too_many_active_campaigns
                     enum:
                         - account_too_many_active_campaigns
                         - account_timezone_unsupported
+                        - campaign_account_mismatch
+                        - campaign_scope_invalid
             example:
                 code: "409"
-                message: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads)
+                message: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads, counted across every project on the shared account)
                 reason: account_too_many_active_campaigns
+            required:
+                - code
+                - message
+                - reason
+        AccountMonitorScopeConflictError:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: HTTP status code
+                    example: "409"
+                message:
+                    type: string
+                    description: Error message
+                    example: some of this project's campaigns were created under a different ad account than the one being monitored — monitor the account that owns them, or re-dispatch or reconcile those campaigns onto this one, to monitor this account
+                reason:
+                    type: string
+                    description: 'Why the project''s recorded campaigns cannot be read under the monitored account: campaign_account_mismatch (a campaign recorded for this project was created under a different account, or does not record which) or campaign_scope_invalid (a campaign recorded for this project has an id the platform cannot read).'
+                    example: campaign_account_mismatch
+                    enum:
+                        - campaign_account_mismatch
+                        - campaign_scope_invalid
+            example:
+                code: "409"
+                message: some of this project's campaigns were created under a different ad account than the one being monitored — monitor the account that owns them, or re-dispatch or reconcile those campaigns onto this one, to monitor this account
+                reason: campaign_account_mismatch
             required:
                 - code
                 - message
@@ -16783,27 +17443,27 @@ components:
                     format: int64
                 clicks:
                     type: integer
-                    description: Account-wide clicks over the window.
+                    description: Clicks over the window, summed over the returned campaigns.
                     example: 11420
                     format: int64
                 conversions:
                     type: number
-                    description: Account-wide conversions over the window, summed over the campaigns that reported a conversion measurement. ABSENT when none of them did — not a measured 0.
+                    description: Conversions over the window, summed over the returned campaigns that reported a conversion measurement. ABSENT when none of them did — not a measured 0.
                     example: 212.5
                     format: double
                 impressions:
                     type: integer
-                    description: Account-wide impressions over the window.
+                    description: Impressions over the window, summed over the returned campaigns.
                     example: 184200
                     format: int64
                 spend:
                     type: number
-                    description: Account-wide spend over the window.
+                    description: Spend over the window, summed over the returned campaigns.
                     example: 6090
                     format: double
                 unmeasured_campaigns:
                     type: integer
-                    description: 'How many of the campaign_count campaigns have fetch_failed=true. The totals include those rows at what they carry — zero for a row whose metrics could not be read — so a non-zero value means the totals may UNDERSTATE the account, by up to this many campaigns'' delivery. An upper bound rather than an exact count of rows missing from the sum: fetch_failed also marks a row whose budget or flight alone was unreadable while its metrics were read and summed. pacing_unknown=true alone does not count a row (every fetch_failed row also has it, but most pacing_unknown rows were read in full). 0 means every campaign in the sum was fully read.'
+                    description: 'How many of the campaign_count campaigns have fetch_failed=true. The totals include those rows at what they carry — zero for a row whose metrics could not be read — so a non-zero value means the totals may UNDERSTATE the returned campaigns, by up to this many campaigns'' delivery. An upper bound rather than an exact count of rows missing from the sum: fetch_failed also marks a row whose budget or flight alone was unreadable while its metrics were read and summed. pacing_unknown=true alone does not count a row (every fetch_failed row also has it, but most pacing_unknown rows were read in full). 0 means every campaign in the sum was fully read.'
                     example: 0
                     format: int64
                     minimum: 0
@@ -20001,6 +20661,10 @@ components:
                         - audience_provenance_immutable
                         - ab_test_unsupported_send_type
                         - campaign_adopted
+                        - campaign_dispatch_in_flight
+                        - creative_asset_quota_exceeded
+                        - creative_asset_in_use
+                        - creative_asset_reference_missing
             example:
                 code: "409"
                 message: A connection for this provider already exists on the project.
@@ -20301,6 +20965,12 @@ components:
                     enum:
                         - "true"
                         - "false"
+                height:
+                    type: integer
+                    description: Pixel height, as read from the image header at upload. Absent for an asset stored before the service recorded dimensions.
+                    example: 6089835885683914289
+                    format: int64
+                    minimum: 1
                 id:
                     type: string
                     description: Creative asset UUID
@@ -20317,14 +20987,22 @@ components:
                     type: string
                     description: Owning project
                     example: Qui aliquam ea quam dolore est.
+                width:
+                    type: integer
+                    description: Pixel width, as read from the image header at upload. Absent for an asset stored before the service recorded dimensions.
+                    example: 1297412450570756896
+                    format: int64
+                    minimum: 1
             example:
                 brief_id: Praesentium dolore aut labore qui debitis.
                 byte_size: 4945546068272182131
                 checksum: Id hic rerum iure odio.
                 created: "true"
+                height: 6089835885683914289
                 id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
                 mime_type: image/jpeg
                 project_id: Qui aliquam ea quam dolore est.
+                width: 1297412450570756896
             required:
                 - id
                 - project_id
@@ -20332,6 +21010,440 @@ components:
                 - mime_type
                 - byte_size
                 - checksum
+        CreativeAssetList:
+            type: object
+            properties:
+                assets:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/CreativeAsset'
+                    description: Every asset stored for this brief, oldest first. Each carries metadata only — the image bytes are served by the signed creative-asset URL, never inline here.
+                    example:
+                        - brief_id: Praesentium dolore aut labore qui debitis.
+                          byte_size: 4945546068272182131
+                          checksum: Id hic rerum iure odio.
+                          created: "true"
+                          height: 6089835885683914289
+                          id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                          mime_type: image/jpeg
+                          project_id: Qui aliquam ea quam dolore est.
+                          width: 1297412450570756896
+                        - brief_id: Praesentium dolore aut labore qui debitis.
+                          byte_size: 4945546068272182131
+                          checksum: Id hic rerum iure odio.
+                          created: "true"
+                          height: 6089835885683914289
+                          id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                          mime_type: image/jpeg
+                          project_id: Qui aliquam ea quam dolore est.
+                          width: 1297412450570756896
+                        - brief_id: Praesentium dolore aut labore qui debitis.
+                          byte_size: 4945546068272182131
+                          checksum: Id hic rerum iure odio.
+                          created: "true"
+                          height: 6089835885683914289
+                          id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                          mime_type: image/jpeg
+                          project_id: Qui aliquam ea quam dolore est.
+                          width: 1297412450570756896
+                        - brief_id: Praesentium dolore aut labore qui debitis.
+                          byte_size: 4945546068272182131
+                          checksum: Id hic rerum iure odio.
+                          created: "true"
+                          height: 6089835885683914289
+                          id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                          mime_type: image/jpeg
+                          project_id: Qui aliquam ea quam dolore est.
+                          width: 1297412450570756896
+                bytes_limit:
+                    type: integer
+                    description: Maximum total stored bytes one brief may hold. Enforced alongside count_limit; either one alone bounds the wrong thing — a count cap still admits that many maximum-sized images, and a byte cap alone still admits unboundedly many tiny ones.
+                    example: 7549547776033087914
+                    format: int64
+                bytes_used:
+                    type: integer
+                    description: Total stored bytes across those assets.
+                    example: 4713769312342199349
+                    format: int64
+                count:
+                    type: integer
+                    description: Number of assets stored for this brief.
+                    example: 6440019522820428019
+                    format: int64
+                count_limit:
+                    type: integer
+                    description: Maximum assets one brief may hold. An upload that would exceed it is refused with 409 reason=creative_asset_quota_exceeded.
+                    example: 8153159168725148156
+                    format: int64
+            example:
+                assets:
+                    - brief_id: Praesentium dolore aut labore qui debitis.
+                      byte_size: 4945546068272182131
+                      checksum: Id hic rerum iure odio.
+                      created: "true"
+                      height: 6089835885683914289
+                      id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                      mime_type: image/jpeg
+                      project_id: Qui aliquam ea quam dolore est.
+                      width: 1297412450570756896
+                    - brief_id: Praesentium dolore aut labore qui debitis.
+                      byte_size: 4945546068272182131
+                      checksum: Id hic rerum iure odio.
+                      created: "true"
+                      height: 6089835885683914289
+                      id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                      mime_type: image/jpeg
+                      project_id: Qui aliquam ea quam dolore est.
+                      width: 1297412450570756896
+                    - brief_id: Praesentium dolore aut labore qui debitis.
+                      byte_size: 4945546068272182131
+                      checksum: Id hic rerum iure odio.
+                      created: "true"
+                      height: 6089835885683914289
+                      id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                      mime_type: image/jpeg
+                      project_id: Qui aliquam ea quam dolore est.
+                      width: 1297412450570756896
+                    - brief_id: Praesentium dolore aut labore qui debitis.
+                      byte_size: 4945546068272182131
+                      checksum: Id hic rerum iure odio.
+                      created: "true"
+                      height: 6089835885683914289
+                      id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
+                      mime_type: image/jpeg
+                      project_id: Qui aliquam ea quam dolore est.
+                      width: 1297412450570756896
+                bytes_limit: 7549547776033087914
+                bytes_used: 4713769312342199349
+                count: 6440019522820428019
+                count_limit: 8153159168725148156
+            required:
+                - assets
+                - count
+                - count_limit
+                - bytes_used
+                - bytes_limit
+        CreativeAssetPlan:
+            type: object
+            properties:
+                assignments:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/CreativeSlotAssignment'
+                    description: Every slot that received at least one asset, in platform catalog order.
+                    example:
+                        - asset_ids:
+                            - aed9c90f-ae79-4fa2-9a92-6a10a6bf2bb0
+                            - e2bbe5d3-528c-4a78-8636-57d6ed53ce84
+                            - 095713a6-ec2f-4bac-beea-60cad09f5084
+                          channel: Porro sit sit ut.
+                          label: Corrupti aut.
+                          max_count: 419834829544664313
+                          min_count: 2659807505005904171
+                          platform: Est omnis molestiae rerum sunt.
+                          requirement: Voluptas omnis dolores et laborum.
+                          slot: Pariatur repudiandae amet beatae.
+                          slot_key: Vel fugiat.
+                        - asset_ids:
+                            - aed9c90f-ae79-4fa2-9a92-6a10a6bf2bb0
+                            - e2bbe5d3-528c-4a78-8636-57d6ed53ce84
+                            - 095713a6-ec2f-4bac-beea-60cad09f5084
+                          channel: Porro sit sit ut.
+                          label: Corrupti aut.
+                          max_count: 419834829544664313
+                          min_count: 2659807505005904171
+                          platform: Est omnis molestiae rerum sunt.
+                          requirement: Voluptas omnis dolores et laborum.
+                          slot: Pariatur repudiandae amet beatae.
+                          slot_key: Vel fugiat.
+                        - asset_ids:
+                            - aed9c90f-ae79-4fa2-9a92-6a10a6bf2bb0
+                            - e2bbe5d3-528c-4a78-8636-57d6ed53ce84
+                            - 095713a6-ec2f-4bac-beea-60cad09f5084
+                          channel: Porro sit sit ut.
+                          label: Corrupti aut.
+                          max_count: 419834829544664313
+                          min_count: 2659807505005904171
+                          platform: Est omnis molestiae rerum sunt.
+                          requirement: Voluptas omnis dolores et laborum.
+                          slot: Pariatur repudiandae amet beatae.
+                          slot_key: Vel fugiat.
+                        - asset_ids:
+                            - aed9c90f-ae79-4fa2-9a92-6a10a6bf2bb0
+                            - e2bbe5d3-528c-4a78-8636-57d6ed53ce84
+                            - 095713a6-ec2f-4bac-beea-60cad09f5084
+                          channel: Porro sit sit ut.
+                          label: Corrupti aut.
+                          max_count: 419834829544664313
+                          min_count: 2659807505005904171
+                          platform: Est omnis molestiae rerum sunt.
+                          requirement: Voluptas omnis dolores et laborum.
+                          slot: Pariatur repudiandae amet beatae.
+                          slot_key: Vel fugiat.
+                gaps:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/CreativeSlotGap'
+                    description: Every required slot or cross-slot rule the library leaves short. Empty means this library can fill every requested platform.
+                    example:
+                        - channel: Et dolor.
+                          label: Necessitatibus voluptatibus.
+                          need: 2064978707748286749
+                          platform: Non enim.
+                          reason: Voluptatem voluptatum.
+                          slot_key: Earum consequatur doloremque est distinctio.
+                        - channel: Et dolor.
+                          label: Necessitatibus voluptatibus.
+                          need: 2064978707748286749
+                          platform: Non enim.
+                          reason: Voluptatem voluptatum.
+                          slot_key: Earum consequatur doloremque est distinctio.
+                        - channel: Et dolor.
+                          label: Necessitatibus voluptatibus.
+                          need: 2064978707748286749
+                          platform: Non enim.
+                          reason: Voluptatem voluptatum.
+                          slot_key: Earum consequatur doloremque est distinctio.
+                        - channel: Et dolor.
+                          label: Necessitatibus voluptatibus.
+                          need: 2064978707748286749
+                          platform: Non enim.
+                          reason: Voluptatem voluptatum.
+                          slot_key: Earum consequatur doloremque est distinctio.
+                platforms:
+                    type: array
+                    items:
+                        type: string
+                        example: Quae id qui omnis.
+                    description: The platforms this plan covers, after defaulting — echoed so a caller who sent no filter knows what was actually evaluated.
+                    example:
+                        - Quae id qui omnis.
+                        - Qui omnis et molestiae hic ut voluptate.
+                unclassified:
+                    type: array
+                    items:
+                        type: string
+                        example: aa808f9f-1f7a-4eed-92d5-89466ffaea91
+                        format: uuid
+                    description: 'Assets whose dimensions were never recorded, so their shape is unknown. They are NOT counted against any slot and NOT reported as failing one: unknown is a different answer from wrong, and a dimension backfill makes them classifiable without the operator doing anything.'
+                    example:
+                        - aa808f9f-1f7a-4eed-92d5-89466ffaea91
+                        - 0cc502f3-4913-45cc-bccc-822e3db8c674
+                unused:
+                    type: array
+                    items:
+                        type: string
+                        example: 5a77fdfe-3618-4678-87e2-3a5ab7ff64fc
+                        format: uuid
+                    description: 'Assets whose dimensions are known and which this plan did not place in any slot. Wider than "nothing would accept them": an asset also appears here when every slot that would take it was already filled to its minimum, or when a sibling slot had already spent a shared group ceiling. The mirror of gaps: not only "what am I missing" but "which of the files I just dropped is this plan not using" — with no gaps reported, what is listed here is surplus rather than unusable.'
+                    example:
+                        - 5a77fdfe-3618-4678-87e2-3a5ab7ff64fc
+                        - b7bd4089-d7f5-4d42-bc88-862b53f53b55
+                        - c1614e33-cabe-4f16-99aa-915728a273c1
+                        - 95cef728-d55d-41d5-8e1d-72db47ff76c1
+            example:
+                assignments:
+                    - asset_ids:
+                        - aed9c90f-ae79-4fa2-9a92-6a10a6bf2bb0
+                        - e2bbe5d3-528c-4a78-8636-57d6ed53ce84
+                        - 095713a6-ec2f-4bac-beea-60cad09f5084
+                      channel: Porro sit sit ut.
+                      label: Corrupti aut.
+                      max_count: 419834829544664313
+                      min_count: 2659807505005904171
+                      platform: Est omnis molestiae rerum sunt.
+                      requirement: Voluptas omnis dolores et laborum.
+                      slot: Pariatur repudiandae amet beatae.
+                      slot_key: Vel fugiat.
+                    - asset_ids:
+                        - aed9c90f-ae79-4fa2-9a92-6a10a6bf2bb0
+                        - e2bbe5d3-528c-4a78-8636-57d6ed53ce84
+                        - 095713a6-ec2f-4bac-beea-60cad09f5084
+                      channel: Porro sit sit ut.
+                      label: Corrupti aut.
+                      max_count: 419834829544664313
+                      min_count: 2659807505005904171
+                      platform: Est omnis molestiae rerum sunt.
+                      requirement: Voluptas omnis dolores et laborum.
+                      slot: Pariatur repudiandae amet beatae.
+                      slot_key: Vel fugiat.
+                    - asset_ids:
+                        - aed9c90f-ae79-4fa2-9a92-6a10a6bf2bb0
+                        - e2bbe5d3-528c-4a78-8636-57d6ed53ce84
+                        - 095713a6-ec2f-4bac-beea-60cad09f5084
+                      channel: Porro sit sit ut.
+                      label: Corrupti aut.
+                      max_count: 419834829544664313
+                      min_count: 2659807505005904171
+                      platform: Est omnis molestiae rerum sunt.
+                      requirement: Voluptas omnis dolores et laborum.
+                      slot: Pariatur repudiandae amet beatae.
+                      slot_key: Vel fugiat.
+                    - asset_ids:
+                        - aed9c90f-ae79-4fa2-9a92-6a10a6bf2bb0
+                        - e2bbe5d3-528c-4a78-8636-57d6ed53ce84
+                        - 095713a6-ec2f-4bac-beea-60cad09f5084
+                      channel: Porro sit sit ut.
+                      label: Corrupti aut.
+                      max_count: 419834829544664313
+                      min_count: 2659807505005904171
+                      platform: Est omnis molestiae rerum sunt.
+                      requirement: Voluptas omnis dolores et laborum.
+                      slot: Pariatur repudiandae amet beatae.
+                      slot_key: Vel fugiat.
+                gaps:
+                    - channel: Et dolor.
+                      label: Necessitatibus voluptatibus.
+                      need: 2064978707748286749
+                      platform: Non enim.
+                      reason: Voluptatem voluptatum.
+                      slot_key: Earum consequatur doloremque est distinctio.
+                    - channel: Et dolor.
+                      label: Necessitatibus voluptatibus.
+                      need: 2064978707748286749
+                      platform: Non enim.
+                      reason: Voluptatem voluptatum.
+                      slot_key: Earum consequatur doloremque est distinctio.
+                    - channel: Et dolor.
+                      label: Necessitatibus voluptatibus.
+                      need: 2064978707748286749
+                      platform: Non enim.
+                      reason: Voluptatem voluptatum.
+                      slot_key: Earum consequatur doloremque est distinctio.
+                    - channel: Et dolor.
+                      label: Necessitatibus voluptatibus.
+                      need: 2064978707748286749
+                      platform: Non enim.
+                      reason: Voluptatem voluptatum.
+                      slot_key: Earum consequatur doloremque est distinctio.
+                platforms:
+                    - Quae id qui omnis.
+                    - Qui omnis et molestiae hic ut voluptate.
+                unclassified:
+                    - aa808f9f-1f7a-4eed-92d5-89466ffaea91
+                    - 0cc502f3-4913-45cc-bccc-822e3db8c674
+                unused:
+                    - 5a77fdfe-3618-4678-87e2-3a5ab7ff64fc
+                    - b7bd4089-d7f5-4d42-bc88-862b53f53b55
+                    - c1614e33-cabe-4f16-99aa-915728a273c1
+                    - 95cef728-d55d-41d5-8e1d-72db47ff76c1
+            required:
+                - platforms
+                - assignments
+                - gaps
+                - unclassified
+                - unused
+        CreativeSlotAssignment:
+            type: object
+            properties:
+                asset_ids:
+                    type: array
+                    items:
+                        type: string
+                        example: aed9c90f-ae79-4fa2-9a92-6a10a6bf2bb0
+                        format: uuid
+                    description: 'Assets assigned to this slot, best fit first. An asset may appear in several slots: one library feeds every platform, and the same square image legitimately serves a 1:1 slot on each. It never appears twice within one slot.'
+                    example:
+                        - aed9c90f-ae79-4fa2-9a92-6a10a6bf2bb0
+                        - e2bbe5d3-528c-4a78-8636-57d6ed53ce84
+                        - 095713a6-ec2f-4bac-beea-60cad09f5084
+                channel:
+                    type: string
+                    description: Ad channel within the platform whose rules differ from its siblings ("PERFORMANCE_MAX", "DEMAND_GEN", "DISPLAY"). Absent where the platform has a single ad shape.
+                    example: Porro sit sit ut.
+                label:
+                    type: string
+                    description: Operator-facing name of the slot. It NAMES ITS CHANNEL, because three Google channels each have a slot called "logo image" under different rules and a bare "logo image" would not say which creative is meant.
+                    example: Corrupti aut.
+                max_count:
+                    type: integer
+                    description: Images the platform will accept in this slot. 0 means the platform states no per-slot ceiling; a shared ceiling across sibling slots may still apply.
+                    example: 419834829544664313
+                    format: int64
+                min_count:
+                    type: integer
+                    description: Images the platform requires in this slot. 0 marks the slot optional.
+                    example: 2659807505005904171
+                    format: int64
+                platform:
+                    type: string
+                    description: Campaign platform this slot belongs to, using the same identifier a campaign config carries ("google-ads").
+                    example: Est omnis molestiae rerum sunt.
+                requirement:
+                    type: string
+                    description: The slot's rule as a sentence an operator can act on — ratio, tolerance and pixel floor, plus the byte cap where one applies.
+                    example: Voluptas omnis dolores et laborum.
+                slot:
+                    type: string
+                    description: Wire name of the slot within its channel — the asset field type or payload array key a campaign config puts this image under.
+                    example: Pariatur repudiandae amet beatae.
+                slot_key:
+                    type: string
+                    description: 'Stable identifier for this slot: platform/channel/slot, or platform/slot where the platform has a single ad shape. It is the join key between a plan row and an operator override, so it survives a round trip through a client unchanged.'
+                    example: Vel fugiat.
+            example:
+                asset_ids:
+                    - aed9c90f-ae79-4fa2-9a92-6a10a6bf2bb0
+                    - e2bbe5d3-528c-4a78-8636-57d6ed53ce84
+                    - 095713a6-ec2f-4bac-beea-60cad09f5084
+                channel: Porro sit sit ut.
+                label: Corrupti aut.
+                max_count: 419834829544664313
+                min_count: 2659807505005904171
+                platform: Est omnis molestiae rerum sunt.
+                requirement: Voluptas omnis dolores et laborum.
+                slot: Pariatur repudiandae amet beatae.
+                slot_key: Vel fugiat.
+            required:
+                - slot_key
+                - platform
+                - slot
+                - label
+                - requirement
+                - asset_ids
+                - min_count
+                - max_count
+        CreativeSlotGap:
+            type: object
+            properties:
+                channel:
+                    type: string
+                    description: Ad channel whose rule is unmet. Absent where the platform has a single ad shape.
+                    example: Et dolor.
+                label:
+                    type: string
+                    description: Operator-facing name of the unmet requirement.
+                    example: Necessitatibus voluptatibus.
+                need:
+                    type: integer
+                    description: How many more images the requirement needs beyond what the plan could assign. Always at least 1.
+                    example: 2064978707748286749
+                    format: int64
+                    minimum: 1
+                platform:
+                    type: string
+                    description: Campaign platform whose rule is unmet.
+                    example: Non enim.
+                reason:
+                    type: string
+                    description: What is missing and what would satisfy it, as the sentence an operator takes back to their designer. It names every shape that would close the gap, not just one, so an either-or requirement does not send someone to produce an image they did not need.
+                    example: Voluptatem voluptatum.
+                slot_key:
+                    type: string
+                    description: The slot this shortfall belongs to. ABSENT when the requirement spans several slots and no single one of them is required on its own.
+                    example: Earum consequatur doloremque est distinctio.
+            example:
+                channel: Et dolor.
+                label: Necessitatibus voluptatibus.
+                need: 2064978707748286749
+                platform: Non enim.
+                reason: Voluptatem voluptatum.
+                slot_key: Earum consequatur doloremque est distinctio.
+            required:
+                - platform
+                - label
+                - need
+                - reason
         DiscoverAudienceListsRequestBody:
             type: object
             properties:
@@ -20749,12 +21861,12 @@ components:
                     type: array
                     items:
                         $ref: '#/components/schemas/AccountMonitorActionItem'
-                    description: The rule engine's findings across the account's campaigns.
+                    description: The rule engine's findings across the returned campaigns.
                 campaigns:
                     type: array
                     items:
                         $ref: '#/components/schemas/AccountMonitorCampaign'
-                    description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+                    description: The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only those this service recorded for the project, on LinkedIn and Microsoft Ads every campaign visible on the account — with the rule engine's per-row pacing output attached.
                 currency:
                     type: string
                     description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor-unit scale this service does not know (its budgets are left unconverted), or when the insights rows' currency is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
@@ -22485,12 +23597,12 @@ components:
                     type: array
                     items:
                         $ref: '#/components/schemas/AccountMonitorActionItem'
-                    description: The rule engine's findings across the account's campaigns.
+                    description: The rule engine's findings across the returned campaigns.
                 campaigns:
                     type: array
                     items:
                         $ref: '#/components/schemas/AccountMonitorCampaign'
-                    description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+                    description: The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only those this service recorded for the project, on LinkedIn and Microsoft Ads every campaign visible on the account — with the rule engine's per-row pacing output attached.
                 currency:
                     type: string
                     description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor-unit scale this service does not know (its budgets are left unconverted), or when the insights rows' currency is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
@@ -23351,12 +24463,12 @@ components:
                     type: array
                     items:
                         $ref: '#/components/schemas/AccountMonitorActionItem'
-                    description: The rule engine's findings across the account's campaigns.
+                    description: The rule engine's findings across the returned campaigns.
                 campaigns:
                     type: array
                     items:
                         $ref: '#/components/schemas/AccountMonitorCampaign'
-                    description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+                    description: The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only those this service recorded for the project, on LinkedIn and Microsoft Ads every campaign visible on the account — with the rule engine's per-row pacing output attached.
                 currency:
                     type: string
                     description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor-unit scale this service does not know (its budgets are left unconverted), or when the insights rows' currency is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
@@ -23642,12 +24754,12 @@ components:
                     type: array
                     items:
                         $ref: '#/components/schemas/AccountMonitorActionItem'
-                    description: The rule engine's findings across the account's campaigns.
+                    description: The rule engine's findings across the returned campaigns.
                 campaigns:
                     type: array
                     items:
                         $ref: '#/components/schemas/AccountMonitorCampaign'
-                    description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+                    description: The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only those this service recorded for the project, on LinkedIn and Microsoft Ads every campaign visible on the account — with the rule engine's per-row pacing output attached.
                 currency:
                     type: string
                     description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor-unit scale this service does not know (its budgets are left unconverted), or when the insights rows' currency is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
@@ -24552,12 +25664,12 @@ components:
                     type: array
                     items:
                         $ref: '#/components/schemas/AccountMonitorActionItem'
-                    description: The rule engine's findings across the account's campaigns.
+                    description: The rule engine's findings across the returned campaigns.
                 campaigns:
                     type: array
                     items:
                         $ref: '#/components/schemas/AccountMonitorCampaign'
-                    description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+                    description: The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only those this service recorded for the project, on LinkedIn and Microsoft Ads every campaign visible on the account — with the rule engine's per-row pacing output attached.
                 currency:
                     type: string
                     description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor-unit scale this service does not know (its budgets are left unconverted), or when the insights rows' currency is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
@@ -25255,12 +26367,12 @@ components:
                     type: array
                     items:
                         $ref: '#/components/schemas/AccountMonitorActionItem'
-                    description: The rule engine's findings across the account's campaigns.
+                    description: The rule engine's findings across the returned campaigns.
                 campaigns:
                     type: array
                     items:
                         $ref: '#/components/schemas/AccountMonitorCampaign'
-                    description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+                    description: The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only those this service recorded for the project, on LinkedIn and Microsoft Ads every campaign visible on the account — with the rule engine's per-row pacing output attached.
                 currency:
                     type: string
                     description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor-unit scale this service does not know (its budgets are left unconverted), or when the insights rows' currency is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.

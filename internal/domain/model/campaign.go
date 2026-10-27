@@ -55,7 +55,7 @@ const (
 	BidTypeCPC BidType = "cpc"
 )
 
-// BiddingStrategy is how a campaign was CREATED to bid (migration 000047): the per-campaign
+// BiddingStrategy is how a campaign was CREATED to bid (migration 000050): the per-campaign
 // choice a dispatch config makes with its optional `bidding` object (LFXV2-2665). It is a REQUEST
 // the create path sent, never an observation — an operator can switch the strategy in the ad
 // platform afterwards, and the platform is what the bid lever reads before it writes.
@@ -255,7 +255,7 @@ type Campaign struct {
 	// (ConfigSnapshot) on rows created before LFXV2-2665, and a bid changed in the platform's own
 	// UI is not recorded anywhere here.
 	MaxCPCBid *float64
-	// BiddingStrategy is the strategy the create path asked for (migration 000047). nil means the
+	// BiddingStrategy is the strategy the create path asked for (migration 000050). nil means the
 	// row predates the column or was ADOPTED — not recorded, NOT "automatic".
 	BiddingStrategy *BiddingStrategy
 	StartDate       *time.Time
