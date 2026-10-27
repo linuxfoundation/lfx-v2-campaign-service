@@ -480,7 +480,9 @@ the orchestration that calls HubSpot lives in [internal/dispatch](internal-dispa
   master create is unconfirmed (compose creates no suppression list of its own any more), which is
   a state an operator must be shown rather than a failure to retry blindly.
 - **`builder_standard.go`** — the standing suppression lists: `StandardSuppressionName` (one per
-  project, no date or fingerprint, so every audience reuses it), `CurrentRegistrantsName` and
+  project, no date or fingerprint, so every audience reuses it; a project id too long for the name
+  is cut and tagged with a short hash via `fitTagged`, as the registrants name is, so two long ids
+  sharing a prefix never share a list), `CurrentRegistrantsName` and
   `CurrentRegistrantsFilter` (the edition's registrants via the registration custom event; an
   edition too long for the name is cut and tagged with a short hash of the whole edition),
   `RegistrantsListMatches` (the whole edition and nobody else: `RegistrationEvidence` exclusive AND
@@ -489,7 +491,7 @@ the orchestration that calls HubSpot lives in [internal/dispatch](internal-dispa
   case-insensitively, which reuse must not), and no
   filter setting `includeObjectsWithNoValueSet`) and `StandingFilterIsUnion` (whether a list found under a
   standing name is safe to reuse, or to grow; a missing or null filter is not a union,
-  `HasFilterTree`), `SplitStandardSuppressions` (substitute the standing list only for
+  `HasFilterTree`, and every node must carry an explicit AND/OR `filterBranchType`), `SplitStandardSuppressions` (substitute the standing list only for
   a COMPLETE standard selection), `SameIDSet`, and `MasterListWithSuppressionsFilter` (one
   `NOT_IN_LIST` per excluded list on every inclusion path). A list holding a standing name that
   cannot be reused is `StandingListConflictError` (unwraps to `ErrStandingListConflict`, a 409

@@ -116,6 +116,16 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 			// required as well. The regional audience keeps its existing rule (unset applies).
 			eventDefault := draft.IncludePastEditions && !hasLocation && !rolesOnly && draft.Criteria.EducationEnrolled &&
 				selectsPage(draft.Criteria.PageViewURLs, event.URL)
+			// An event page identified by a non-tracking query ("/event?id=123") cannot be
+			// isolated: HubSpot's page-view filter is a CONTAINS match, so "?id=123" also matches
+			// "?id=1234" and misses "?utm_source=x&id=123". Its visitors are not a reliable
+			// default audience, so none is built; the URL stays in page_view_urls as the most
+			// precise visitor filter there is, and the operator picks editions and pages.
+			if eventDefault && strings.ContainsRune(withoutTracking(event.URL), '?') {
+				eventDefault = false
+				draft.Notes = append(draft.Notes, "No past editions were added: this event's page is identified by a query (\""+
+					withoutTracking(event.URL)+"\") that page-view filters cannot isolate, so it is not treated as the event's default audience. Pick the editions and pages explicitly.")
+			}
 			switch {
 			case len(named) > 0:
 				defaults = named

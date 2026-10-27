@@ -265,3 +265,32 @@ func TestMatchesEventSuppression_OnlyExactManagedNamesAreExcluded(t *testing.T) 
 	_, hidden := DiscoveryHidden("KubeCon - LF Events Suppression List", false)
 	assert.True(t, hidden)
 }
+
+// Two long project ids sharing a prefix must not share one standing list, which each would grow
+// with the other's suppressions; the shortened name carries a hash of the whole name.
+func TestStandardSuppressionName_LongIDsSharingAPrefixDiffer(t *testing.T) {
+	prefix := strings.Repeat("p", 190)
+	a, b := StandardSuppressionName(prefix+"-one"), StandardSuppressionName(prefix+"-two")
+	assert.NotEqual(t, a, b)
+	assert.Equal(t, a, StandardSuppressionName(" "+prefix+"-one "), "stable for the same id")
+	assert.LessOrEqual(t, utf8.RuneCountInString(a), MaxListNameLength)
+	assert.Regexp(t, ` #[0-9a-f]{8}$`, a)
+	assert.Equal(t, "LFX Standard Suppressions - tlf", StandardSuppressionName("tlf"), "a name that fits is unchanged")
+
+	// Still recognised as a managed suppression everywhere.
+	reason, hidden := DiscoveryHidden(a, false)
+	assert.True(t, hidden)
+	assert.Equal(t, "suppression", reason)
+	assert.True(t, isStandingOrStandardName(a))
+	assert.False(t, MatchesEventSuppression(a, EventKeywords(a)))
+}
+
+// Every node of a standing filter must be explicitly typed: "{}" read back from HubSpot, or a
+// nested untyped node, is not a union a rewrite can reproduce.
+func TestStandingFilterIsUnion_RequiresATypeAtEveryNode(t *testing.T) {
+	assert.False(t, StandingFilterIsUnion(json.RawMessage(`{}`)))
+	assert.False(t, StandingFilterIsUnion(json.RawMessage(`{"filterBranchType":"OR","filters":[],"filterBranches":[`+
+		`{"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":"1"}],"filterBranches":[]}]}`)), "a nested node with no type")
+	assert.True(t, StandingFilterIsUnion(json.RawMessage(`{"filterBranchType":"OR","filterBranches":[],"filters":[]}`)),
+		"an explicitly typed empty OR tree is still a union of nothing")
+}

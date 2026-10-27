@@ -1728,9 +1728,11 @@ func TestWithoutTracking(t *testing.T) {
 	assert.Equal(t, "https://e.org/event?id=a%20b", withoutTracking("https://e.org/event?id=a%20b"), "kept byte for byte, never re-encoded")
 }
 
-// An event URL whose query names the page keeps it in the EVENT block, so the model copies the
-// page itself, and that page is the event's default audience.
-func TestInterpretCustom_AnIdentifyingEventQueryIsKept(t *testing.T) {
+// An event URL whose query names the page keeps it in the EVENT block (the most precise visitor
+// filter there is), but HubSpot's CONTAINS page-view filter cannot isolate that page ("?id=123"
+// also matches "?id=1234"), so it is not treated as the default audience: no past editions,
+// and a note asks the operator to choose editions and pages.
+func TestInterpretCustom_AnIdentifyingEventQueryIsKeptButGetsNoDefault(t *testing.T) {
 	portal := seoulPortal()
 	srv := portal.serve(t)
 	defer srv.Close()
@@ -1747,7 +1749,9 @@ func TestInterpretCustom_AnIdentifyingEventQueryIsKept(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, llm.prompts, 2)
 	assert.Contains(t, llm.prompts[1], "url: https://events.example.org/event?id=123\n", "the identifying query stays, the tracking one goes")
-	assert.Equal(t, []string{"Synthetic Summit 2025"}, out.Draft.Criteria.RegisteredFor)
+	assert.Empty(t, out.Draft.Criteria.RegisteredFor, "a query-identified page is not a reliable default audience")
+	assert.Equal(t, []string{"https://events.example.org/event?id=123"}, out.Draft.Criteria.PageViewURLs)
+	assert.Contains(t, strings.Join(out.Draft.Notes, "\n"), "identified by a query (\"https://events.example.org/event?id=123\") that page-view filters cannot isolate")
 }
 
 // The warehouse returns distinct (name, id) pairs, so one name can repeat. Repeats must not use

@@ -19,8 +19,23 @@ import (
 // It carries no master name, quarter or selection fingerprint, so every attach and compose
 // in the project finds the SAME list by name and reuses it, instead of wrapping the same
 // hygiene lists in a new per-audience list each time.
+//
+// A name too long to fit is cut AND tagged with a short hash of the whole name (fitTagged), as
+// CurrentRegistrantsName is: two long project ids sharing a prefix would otherwise share one
+// standing list and grow each other's suppressions. A name that fits is unchanged.
 func StandardSuppressionName(projectID string) string {
-	return cutName(standardSuppressionPrefix+strings.TrimSpace(projectID), MaxListNameLength)
+	return fitTagged(standardSuppressionPrefix+strings.TrimSpace(projectID), MaxListNameLength)
+}
+
+// fitTagged is s when it fits in room runes; otherwise s cut short enough to append
+// " #<8 hex of sha256(s)>", so two long strings sharing a prefix never fit to the same name.
+func fitTagged(s string, room int) string {
+	if utf8.RuneCountInString(s) <= room {
+		return s
+	}
+	sum := sha256.Sum256([]byte(s))
+	tag := " #" + hex.EncodeToString(sum[:])[:8]
+	return cutName(s, room-utf8.RuneCountInString(tag)) + tag
 }
 
 // standardSuppressionPrefix and currentRegistrantsSuffix are the fixed parts of the two standing
@@ -70,13 +85,7 @@ func isDigits(s string) bool {
 func CurrentRegistrantsName(editionName string) string {
 	const suffix = currentRegistrantsSuffix
 	edition := strings.TrimSpace(editionName)
-	room := MaxListNameLength - utf8.RuneCountInString(suffix)
-	if utf8.RuneCountInString(edition) <= room {
-		return edition + suffix
-	}
-	sum := sha256.Sum256([]byte(edition))
-	tag := " #" + hex.EncodeToString(sum[:])[:8]
-	return cutName(edition, room-utf8.RuneCountInString(tag)) + tag + suffix
+	return fitTagged(edition, MaxListNameLength-utf8.RuneCountInString(suffix)) + suffix
 }
 
 // RegistrantsListMatches reports whether a list found under an edition's
@@ -180,8 +189,8 @@ func includesNoValueSet(filter json.RawMessage) bool {
 // memberships -- every condition an IN_LIST filter, each one a whole OR alternative -- which
 // is the shape MasterListFilter writes. Only then can the list be rewritten from its
 // CoveredListIDs without losing anything; any other condition (an AND of lists, a property
-// filter added by hand) would be dropped by the rewrite. An explicit empty tree is a union of
-// nothing; a MISSING or null filter is not a union at all -- the list's real filter is unknown,
+// filter added by hand) would be dropped by the rewrite. An explicitly typed empty tree
+// ({"filterBranchType":"OR",...}) is a union of nothing; an untyped node anywhere ("{}") is not; a MISSING or null filter is not a union at all -- the list's real filter is unknown,
 // and rewriting it would replace whatever it holds (see HasFilterTree).
 func StandingFilterIsUnion(filter json.RawMessage) bool {
 	var root qaBranch
@@ -194,8 +203,10 @@ func StandingFilterIsUnion(filter json.RawMessage) bool {
 	union := true
 	referenced := map[string]struct{}{}
 	root.walk(func(b qaBranch) {
+		// Every node must say what it is. An untyped node -- "{}" read back from HubSpot, or a
+		// nested one -- is not a tree the rewrite can be shown to reproduce.
 		switch strings.ToUpper(strings.TrimSpace(b.FilterBranchType)) {
-		case "", "AND", "OR":
+		case "AND", "OR":
 		default:
 			union = false
 		}

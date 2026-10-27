@@ -4525,7 +4525,8 @@ The suppressions then go through `resolveSuppressions`, shared with `ComposeMast
   list found under the name is reused only when it is a `DYNAMIC` contact list (`reusableStanding`),
   and is grown only when its filter is a pure union of lists (`audience.StandingFilterIsUnion`)
   that the rewrite reproduces; otherwise it is an `audience.StandingListConflictError` naming the
-  list (409). A list read back with no `filterBranch` (missing or null) is never grown: its real
+  list (409). A list read back with no `filterBranch` (missing or null), or with any node lacking
+an explicit `filterBranchType` (`{}` included), is never grown: its real
   filter is unknown, and rewriting it from the resolved ids would drop everything else it
   suppresses (`audience.HasFilterTree`). It is
   the outcome's `Suppression`. A PARTIAL standard selection is attached list by list instead,
@@ -4783,7 +4784,11 @@ page (one of `page_view_urls` is the event URL, compared by `selectsPage` ignori
 trailing slash and the path's case. The event URL loses only its fragment and its TRACKING
 parameters (`withoutTracking`: `utm_*`, `hsa_*`, `gclid`, `fbclid`, `msclkid`, `mc_cid`, `mc_eid`,
 `_hsenc`, `_hsmi`), both here and in the EVENT block's `url` the model copies from, so a tracking
-link still yields the plain page while "/event?id=123" keeps the query that names it. A page-view
+link still yields the plain page while "/event?id=123" keeps the query that names it. Such a
+query-identified page is never the event's DEFAULT audience, though: HubSpot's page-view filter is
+a CONTAINS match, so "?id=123" also matches "?id=1234" and misses "?utm_source=x&id=123", and the
+page cannot be isolated. No past editions are added for it, a note asks the operator to choose
+editions and pages, and the prompt tells the model not to treat it as the default. A page-view
 URL is the event page only when its query is exactly that remainder: another id, a bare route
 (every event on it), any added parameter including a tracking tag (a narrower segment), or a
 fragment is not) together with

@@ -957,3 +957,26 @@ func TestAttachExisting_IncludeCoveredAfterGrowth_IsRefused(t *testing.T) {
 	require.ErrorAs(t, err, &overlap)
 	assert.Equal(t, "31027", overlap.ListID)
 }
+
+// A standing list whose filter is untyped -- "{}", or a nested node with no type -- is never
+// rewritten from the resolved ids: it is the named 409, with zero writes.
+func TestAttachExisting_UntypedStandingFilter_IsNeverRewritten(t *testing.T) {
+	for name, raw := range map[string]string{
+		"empty object": `{}`,
+		"nested untyped node": `{"filterBranchType":"OR","filters":[],"filterBranches":[` +
+			`{"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":"7001"}],"filterBranches":[]}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			portal, std := standardPortal()
+			portal.byName[audience.StandardSuppressionName("proj-1")] = "77"
+			portal.filters["77"] = json.RawMessage(raw)
+			x := composeExplorer(portal.serve(t).URL)
+
+			_, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, std, "")
+			require.ErrorIs(t, err, audience.ErrStandingListConflict)
+			created, updated := portal.writes()
+			assert.Empty(t, created)
+			assert.Empty(t, updated, "an untyped filter is not overwritten")
+		})
+	}
+}
