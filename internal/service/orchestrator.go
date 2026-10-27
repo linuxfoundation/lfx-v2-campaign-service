@@ -1832,6 +1832,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// (pending status WITH an upstream id, recorded for reconciliation after a
 		// mid-flow failure). In both cases fall through to the claim path, which
 		// reconciles it rather than falsely reporting the pending orphan as a success.
+	case errors.Is(lerr, domain.ErrNotFound) && opts.NewVersion && maxUsed > 0:
+		// No LIVE campaign, but the slot has used versions before and every one was deleted.
+		// Number past them for the same reason as above: version 1 would compose the deleted
+		// campaign's upstream name again and a name-based lookup would return it.
+		slotVersion = maxUsed + 1
 	case errors.Is(lerr, domain.ErrNotFound):
 		// No campaign for this pair yet — fall through to claim/dispatch.
 	default:

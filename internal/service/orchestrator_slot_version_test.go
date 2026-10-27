@@ -111,6 +111,30 @@ func TestOrchestrator_NewVersionSkipsADeletedCampaignsSlotVersion(t *testing.T) 
 	}
 }
 
+// Create 1 → create 2 → delete both → new_version must make slot 3. With no live campaign left
+// the read used to return nothing, the maximum was dropped with it, and the request restarted
+// at slot 1, composing the first deleted campaign's upstream name again.
+func TestOrchestrator_NewVersionAfterEveryVersionWasDeletedSkipsThemAll(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	camps.deletedSlotVersions = map[string]int{slotKey("b1", model.ProviderGoogleAds, model.VariantDefault): 2}
+	disp := &slotRecordingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+
+	j := startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+
+	if j.Status != model.JobSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", j.Status, j.Result)
+	}
+	if got := disp.seen(); len(got) != 1 || got[0] != 3 {
+		t.Fatalf("dispatcher saw slot versions %v, want [3]: slots 1 and 2 belonged to deleted "+
+			"campaigns whose upstream names a new slot 1 or 2 would reuse", got)
+	}
+	if len(camps.upserted) != 1 || camps.upserted[0].SlotVersion != 3 {
+		t.Fatalf("persisted %+v, want one row at slot version 3", camps.upserted)
+	}
+}
+
 // A double-submitted new_version: request A has read the completed slot 1 and claimed slot 2,
 // and request B's read sees slot 1 completed too. B must aim at the SAME slot 2, so the claim
 // dedupes them. Reading the latest and the maximum separately let A's claim land between B's

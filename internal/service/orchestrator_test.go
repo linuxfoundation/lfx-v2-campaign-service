@@ -465,20 +465,23 @@ func (r *fakeCampaignRepo) slotRead(briefID string, platform model.Provider, var
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c, err := r.latestLiveLocked(briefID, platform, variant)
-	if err != nil {
+	if err != nil && !errors.Is(err, domain.ErrNotFound) {
 		return nil, 0, err
 	}
 	key := slotKey(briefID, platform, variant)
 	n := r.deletedSlotVersions[key]
-	if v := model.NormalizeSlotVersion(c.SlotVersion); v > n {
-		n = v
+	if c != nil {
+		if v := model.NormalizeSlotVersion(c.SlotVersion); v > n {
+			n = v
+		}
 	}
 	for _, u := range r.upserted {
 		if u != nil && slotKey(u.BriefID, u.Platform, u.Variant) == key && u.SlotVersion > n {
 			n = u.SlotVersion
 		}
 	}
-	return c, n, nil
+	// Like the real read, no live row is ErrNotFound that still carries the maximum.
+	return c, n, err
 }
 
 func (r *fakeCampaignRepo) storeRow(c *model.Campaign) {

@@ -132,6 +132,8 @@ type CampaignReader interface {
 	// because two reads let a concurrent request's claim land between them: both requests would
 	// see the same completed latest, but the second would count the first's pending claim in
 	// its maximum and pick a DIFFERENT next version, so the claim could no longer dedupe them.
+	// With no live campaign it returns ErrNotFound and STILL reports the maximum, so a slot
+	// whose campaigns were all deleted is numbered past them too.
 	GetCampaignByPlatformWithMaxSlotVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string) (*model.Campaign, int, error)
 	// ListCampaignsForBrief returns every live campaign under a brief, ordered so a
 	// consumer's rows are stable across reads. Soft-deleted rows are excluded, matching

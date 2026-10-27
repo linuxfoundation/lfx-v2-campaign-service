@@ -165,7 +165,13 @@ func TestMaxSlotVersion_CountsSoftDeletedRows(t *testing.T) {
 	require.NotContains(t, sub, livePredicate,
 		"the max subquery must count soft-deleted rows, or a new_version can reuse a deleted campaign's slot version and name")
 	require.Contains(t, sub, "h.project_id=$3", "the max subquery must stay scoped by project like GetCampaignByPlatform")
-	require.Contains(t, q[strings.Index(q, "AS max_slot_version"):], livePredicate, "the campaign it returns must still be the latest LIVE one")
+	outer := q[strings.Index(q, "AS max_slot_version"):]
+	require.Contains(t, outer, "ORDER BY ("+livePredicate+") DESC, slot_version DESC",
+		"the campaign it returns must still be the latest LIVE one when the slot has one")
+	require.Contains(t, outer, livePredicate+" AS is_live", "a deleted fallback row must be flagged, or it would be reused as live")
+	require.NotContains(t, outer[strings.Index(outer, "WHERE"):strings.Index(outer, "ORDER BY")], livePredicate,
+		"the outer WHERE must not drop deleted rows: with every version deleted it would return no row, "+
+			"lose the maximum, and a new_version would restart at slot 1")
 }
 
 // TestListProjectPlatformCampaignIDs_IsScopedInSQL pins the authorization boundary for the
