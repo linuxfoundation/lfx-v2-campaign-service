@@ -903,9 +903,10 @@ func composeErr(ctx context.Context, projectID string, err error) error {
 //
 // Compose creates no suppression list of its own any more: it excludes the project's standing
 // lists, which are found by name and reused on any repeat, so the shapes a current deployment
-// produces are the record-failed one (Master) and an unconfirmed master (MasterName). The
-// suppression shapes stay in the contract and keep a message, without the "combined" list they
-// used to name.
+// produces are the record-failed one (Master, with Suppression set to the standing standard list
+// when the full standard set was selected) and an unconfirmed master (MasterName alone). The
+// shapes WITHOUT Master that carry a suppression are legacy: they stay in the contract and keep a
+// message, without the "combined" list they used to name.
 //
 // A repeat compose is NOT a safe remedy for a confirmed master: a master created under its
 // derived name is not found again by a repeat, which takes the fingerprinted name and creates a

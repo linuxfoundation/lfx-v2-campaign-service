@@ -186,14 +186,21 @@ Unlike the discovery flow in the LFX One UI, `POST .../discover` is **synchronou
 
 **`compose-master` has TWO distinct `500`s and the status code cannot tell them apart.** Goa maps both the declared `ComposePartial` error and an ordinary internal error to `500`, discriminating with a `goa-error` response header — which a proxying BFF does not see. **The body is therefore the discriminator:** a `ComposePartial` body carries `code` and `message` plus whichever of `suppression` / `suppression_name` / `master_name` apply, while an internal error carries `code` and `message` only.
 
-Since 2026-10-19 compose creates no suppression list of its own, so a current deployment only returns the `master_name` shape; the suppression shapes below stay in the contract. The distinction is the whole point of declaring the error, and it is never a bare retry: whichever list(s) the message names may already exist in the portal, and retrying either collides on a duplicate name or leaves a second list behind. Five shapes are reachable, and the field that is set tells the caller which:
+Since 2026-10-19 compose creates no suppression list of its own, so a current deployment returns exactly two shapes:
 
-- **`suppression` set, `master_name` unset** — the suppression list was definitely created (it has a real `list_id`) and the master create definitely failed. Surface the suppression list, with a link into the portal, and let the operator decide.
-- **`suppression_name` set (no `suppression`, no `master_name`)** — the suppression *create itself* is unconfirmed: HubSpot may have created it under this deterministic name, but no id came back to confirm it. Search HubSpot by name before composing again; do not assume nothing happened.
-- **`master_name` set, `suppression` and `suppression_name` unset** — no exclusions were requested (or the suppression create itself failed outright), and the master create is unconfirmed. Search HubSpot for the master by name.
-- **`suppression` and `master_name` both set** — the suppression list was definitely created and the master create is unconfirmed. Verify both before retrying.
+- **`master_name` set (nothing else)** — the master create is unconfirmed. Search HubSpot for the master by name before anything else.
+- **`master` set, with `suppression` too when the full standard set was selected** — the RECORDING shape (a compose carrying `brief_id`): the master was definitely created and only recording it as the brief's audience failed. `suppression` here is the project's STANDING standard suppression list the master excludes — a confirmed, reused list, not one this compose created and not something to reconcile. Attach the master to the campaign's audience by hand; do NOT compose again, since a repeat can create a second master.
 
-- **`master` set** — the RECORDING shape, reachable only on a compose that carried a `brief_id`. Both lists were definitely created and only the attachment to the brief failed, so this is the one shape carrying a CONFIRMED master object rather than a `master_name`. The lists are usable: attach the master to the campaign's audience by hand. Do not compose again — composing again mints a second master list for the same send.
+A client must branch on `master` FIRST: a body carrying `suppression` and `master` is the recording shape, never the legacy "suppression created, master failed" one below.
+
+The other shapes are LEGACY: they describe the combined suppression list compose used to create and no current path returns them, but they stay in the contract. The distinction is the whole point of declaring the error, and it is never a bare retry: whichever list(s) the message names may already exist in the portal, and retrying either collides on a duplicate name or leaves a second list behind. All shapes the contract allows, and the field that is set tells the caller which:
+
+- **`suppression` set, `master` and `master_name` unset** (legacy) — the suppression list was definitely created (it has a real `list_id`) and the master create definitely failed. Surface the suppression list, with a link into the portal, and let the operator decide.
+- **`suppression_name` set (no `suppression`, no `master_name`)** (legacy) — the suppression *create itself* is unconfirmed: HubSpot may have created it under this deterministic name, but no id came back to confirm it. Search HubSpot by name before composing again; do not assume nothing happened.
+- **`master_name` set, `suppression` and `suppression_name` unset** (current) — the master create is unconfirmed. Search HubSpot for the master by name.
+- **`suppression` and `master_name` both set** (legacy) — the suppression list was definitely created and the master create is unconfirmed. Verify both before retrying.
+
+- **`master` set, `suppression` set when the standing standard list was used** (current) — the RECORDING shape, reachable only on a compose that carried a `brief_id`. The master was definitely created (and `suppression`, when present, is the standing list it excludes) and only the attachment to the brief failed, so this is the one shape carrying a CONFIRMED master object rather than a `master_name`. The lists are usable: attach the master to the campaign's audience by hand. Do not compose again — composing again can mint a second master list for the same send.
 
 `suppression` and `suppression_name` are never both set — an id is only ever reported once a create is confirmed, at which point there is no "unconfirmed name" left to report.
 

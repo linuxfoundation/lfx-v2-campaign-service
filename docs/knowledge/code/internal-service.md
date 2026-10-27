@@ -2090,16 +2090,22 @@ of its own (it excludes the project's standing lists, found by name and reused),
 that can be left unfinished is the master's:
 
 - `master_name` set — the master create is UNCONFIRMED (no id came back); search for it by name.
-- `master` set — a RECORDING compose (one carrying `brief_id`) whose master was created and whose
-  attachment to the brief failed. The only shape with a CONFIRMED master object rather than a
-  name: the operator attaches it by hand. Composing again is not the remedy, because a master
-  created under its derived name is not found by a repeat, which creates a second master under the
-  fingerprinted name.
+- `master` set, plus `suppression` when the full standard set was selected — a RECORDING compose
+  (one carrying `brief_id`) whose master was created and whose attachment to the brief failed.
+  `ComposeAudienceMaster` builds it as `ComposePartialError{Master, Suppression:
+  suppressionOrZero(outcome.Suppression)}`, and `composeErr` sends `suppression` whenever that has a
+  list id — here the project's STANDING standard list, confirmed and reused, not a list to
+  reconcile. The only shape with a CONFIRMED master object rather than a name: the operator
+  attaches it by hand. Composing again is not the remedy, because a master created under its
+  derived name is not found by a repeat, which creates a second master under the fingerprinted
+  name.
 
-`suppression` and `suppression_name` stay in the contract as LEGACY fields from the combined
-suppression list compose used to create; `composePartialMessage` still words them (without
-"combined") but no current path sets them. A caller must still key on the presence of ANY of the
-fields, never on `suppression.list_id` alone. See `docs/api-catalog.md` for the authoritative list.
+A caller must branch on `master` FIRST: `suppression` + `master` is the recording shape. The
+shapes WITHOUT `master` that carry `suppression` or `suppression_name` are LEGACY, from the
+combined suppression list compose used to create: they stay in the contract and
+`composePartialMessage` still words them (without "combined"), but no current path produces them.
+A caller must still key on the presence of ANY of the fields, never on `suppression.list_id`
+alone. See `docs/api-catalog.md` for the authoritative list.
 This is what lets a caller show the operator what WAS or MAY HAVE BEEN created rather than offering
 a retry that would duplicate it — compose is not idempotent.
 
