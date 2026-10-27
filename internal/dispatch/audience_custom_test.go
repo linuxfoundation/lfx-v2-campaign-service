@@ -1754,6 +1754,27 @@ func TestInterpretCustom_AnIdentifyingEventQueryIsKeptButGetsNoDefault(t *testin
 	assert.Contains(t, strings.Join(out.Draft.Notes, "\n"), "identified by a query (\"https://events.example.org/event?id=123\") that page-view filters cannot isolate")
 }
 
+// A named edition on a query-identified page is kept, and the note about withheld defaults is
+// not added: nothing was withheld, so it would contradict the draft the operator reviews.
+func TestInterpretCustom_AQueryIdentifiedPageKeepsANamedEditionWithoutTheNote(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["https://events.example.org/event?id=123"],"registered_for":["Synthetic Summit 2025"],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}, {EventName: "Synthetic Summit 2024"}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/event?id=123", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Synthetic Summit 2025"}, out.Draft.Criteria.RegisteredFor)
+	assert.NotContains(t, strings.Join(out.Draft.Notes, "\n"), "No past editions were added")
+}
+
 // The warehouse returns distinct (name, id) pairs, so one name can repeat. Repeats must not use
 // up cap slots: the cap keeps the most recent DISTINCT editions and counts only distinct ones out.
 func TestCapPastEditions_DropsRepeatedNamesBeforeTheCap(t *testing.T) {

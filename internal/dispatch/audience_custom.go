@@ -123,8 +123,11 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 			// precise visitor filter there is, and the operator picks editions and pages.
 			if eventDefault && strings.ContainsRune(withoutTracking(event.URL), '?') {
 				eventDefault = false
-				draft.Notes = append(draft.Notes, "No past editions were added: this event's page is identified by a query (\""+
-					withoutTracking(event.URL)+"\") that page-view filters cannot isolate, so it is not treated as the event's default audience. Pick the editions and pages explicitly.")
+				// Only when that withholds the defaults: editions the operator named are kept below.
+				if len(named) == 0 {
+					draft.Notes = append(draft.Notes, "No past editions were added automatically: this event's page is identified by a query (\""+
+						withoutTracking(event.URL)+"\") that page-view filters cannot isolate, so it is not treated as the event's default audience. Pick the editions and pages explicitly.")
+				}
 			}
 			switch {
 			case len(named) > 0:
