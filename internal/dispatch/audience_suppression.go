@@ -179,16 +179,18 @@ func (x *AudienceExplorer) resolveSuppressions(ctx context.Context, client *hubs
 		}
 	}
 
-	// Only now verify and, for the standing list, grow.
-	if standingFound != nil {
-		var err error
-		if standard, err = x.growStandardList(ctx, client, standingFound, standardIDs, include); err != nil {
-			return nil, nil, err
-		}
-	}
+	// Only now verify and, for the standing list, grow. The registrants list is verified
+	// first: growing changes a list existing audiences use, so it must be the last step a
+	// request can still be refused before.
 	if registrantsFound != nil {
 		var err error
 		if registrants, err = x.verifyRegistrantsList(ctx, client, registrantsFound, edition); err != nil {
+			return nil, nil, err
+		}
+	}
+	if standingFound != nil {
+		var err error
+		if standard, err = x.growStandardList(ctx, client, standingFound, standardIDs, include); err != nil {
 			return nil, nil, err
 		}
 	}

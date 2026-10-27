@@ -4532,7 +4532,7 @@ The suppressions then go through `resolveSuppressions`, shared with `ComposeMast
   because the union would exclude a list the operator unticked.
 - **Everything else stays its own entry** in `AttachedSuppressionIDs`: brand, event-specific and
   Exclude-marked lists.
-- **Current registrants.** With a registrants edition (event name with year), `findOrCreateStanding` (then `verifyRegistrantsList` for a list that already existed)
+- **Current registrants.** With a registrants edition (event name with year), `findOrCreateStanding` (then `verifyRegistrantsList` for a list that already existed, BEFORE `growStandardList`, so an incompatible registrants list (409) never leaves the shared standing list grown)
   finds or creates `audience.CurrentRegistrantsName(edition)` from
   `audience.CurrentRegistrantsFilter` (the registration custom event, `event_name` IS_EQUAL_TO the
   edition) and appends it as its own entry. A list found under that name is reused only when it is

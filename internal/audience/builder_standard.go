@@ -33,8 +33,30 @@ const (
 // RegistrantsEditionOK reports whether editionName can select an edition's registrants: the
 // registration event records the edition WITH its year ("AGNTCon + MCPCon Japan 2026"), so a
 // name without one matches nobody -- an empty suppression that reads as applied.
+//
+// A year counts when it is a 19xx/20xx run of exactly four digits bounded by non-digits, the
+// warehouse resolver's rule, so "Synthetic Summit2026" carries one (a word-boundary regexp
+// would not see it) while a six-digit id does not.
 func RegistrantsEditionOK(editionName string) bool {
-	return eventYearFromName(editionName) != ""
+	for i := 0; i+4 <= len(editionName); i++ {
+		c := editionName[i : i+4]
+		if (strings.HasPrefix(c, "19") || strings.HasPrefix(c, "20")) && isDigits(c) &&
+			(i == 0 || !isDigit(editionName[i-1])) && (i+4 == len(editionName) || !isDigit(editionName[i+4])) {
+			return true
+		}
+	}
+	return false
+}
+
+func isDigit(b byte) bool { return b >= '0' && b <= '9' }
+
+func isDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if !isDigit(s[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // CurrentRegistrantsName is the name of the list holding the current edition's registrants.

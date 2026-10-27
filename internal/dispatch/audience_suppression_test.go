@@ -871,6 +871,36 @@ func TestAttachExisting_RecoveredRegistrantsListAlsoIncluded_IsRefusedBeforeGrow
 	assert.Empty(t, updated, "the standing list is not grown for a request that is then refused")
 }
 
+// An existing registrants list that does not select the edition is a 409, and the standing
+// list, which needs growth, is not grown first: growing changes a list existing audiences use.
+func TestAttachExisting_IncompatibleRegistrantsList_IsRefusedBeforeGrowing(t *testing.T) {
+	for _, compose := range []bool{false, true} {
+		portal, std := standardPortal()
+		standingWith(t, portal, std[:len(std)-1])
+		const edition = "KubeCon + CloudNativeCon Europe 2026"
+		other, err := audience.CurrentRegistrantsFilter("KubeCon + CloudNativeCon Europe 2025")
+		require.NoError(t, err)
+		portal.byName[audience.CurrentRegistrantsName(edition)] = "88"
+		portal.filters["88"] = other
+		x := composeExplorer(portal.serve(t).URL)
+
+		if compose {
+			_, err = x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+				ListIDs:                 []string{"31027"},
+				ExcludeListIDs:          std,
+				Name:                    "KubeCon Europe - Master",
+				CurrentRegistrantsEvent: edition,
+			})
+		} else {
+			_, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, std, edition)
+		}
+		var conflict *audience.StandingListConflictError
+		require.ErrorAs(t, err, &conflict, "compose=%v", compose)
+		_, updated := portal.writes()
+		assert.Empty(t, updated, "compose=%v: the standing list is not grown for a request that is then refused", compose)
+	}
+}
+
 // GetList returns the standing list without a filterBranch. Its real filter is unknown, so it is
 // never rewritten from the resolved ids alone, which would drop every suppression it carries.
 func TestAttachExisting_StandingListReadWithoutAFilter_IsNeverRewritten(t *testing.T) {

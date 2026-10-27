@@ -62,6 +62,9 @@ func TestCurrentRegistrantsFilter(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidRequest, "the registration event records the edition with its year")
 	assert.False(t, RegistrantsEditionOK("AGNTCon + MCPCon Japan"))
 	assert.True(t, RegistrantsEditionOK("AGNTCon + MCPCon Japan 2026"))
+	assert.True(t, RegistrantsEditionOK("Synthetic Summit2026"), "a year next to letters is still a year")
+	assert.False(t, RegistrantsEditionOK("Synthetic Summit 202612"), "a longer digit run is not a year")
+	assert.False(t, RegistrantsEditionOK("Synthetic Summit 2126"), "only 19xx/20xx")
 }
 
 func TestSplitStandardSuppressions(t *testing.T) {
