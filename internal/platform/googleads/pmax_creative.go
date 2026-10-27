@@ -574,9 +574,10 @@ func (c *Client) UpdateAssetGroupStatus(ctx context.Context, assetGroupID, statu
 		Update:     assetGroupStatusUpdate{ResourceName: groupResource, Status: status},
 		UpdateMask: "status",
 	}}}
-	resp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("assetGroups:mutate"), req, true)
+	resp, retries, err := c.doRequestCounted(ctx, http.MethodPost, c.customerPath("assetGroups:mutate"), req, true)
 	if err != nil {
-		return fmt.Errorf("google-ads asset group %s status update to %s failed: %w", id, status, err)
+		return retriedUnconfirmed("asset group status update", retries,
+			fmt.Errorf("google-ads asset group %s status update to %s failed: %w", id, status, err))
 	}
 	if cErr := c.checkStatusMutateResults(resp, "assetGroups", "asset group", []string{groupResource}, true); cErr != nil {
 		return &unconfirmedAssetGroupStatusError{err: fmt.Errorf("google-ads asset group %s status update to %s: %w", id, status, cErr)}
