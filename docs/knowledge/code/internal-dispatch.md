@@ -1998,19 +1998,23 @@ reports false numbers:
 
   Send-time standing-list check (LFXV2-2770): the project's standing standard suppression list is
   shared and only grows, so after an audience is recorded a later compose or attach can make it
-  cover a list that audience SENDS to, and excluding it would exclude the whole inclusion while the
-  id check above passes. After the portal guard and before the clone, `standingCoversSendList`
-  searches for `audience.StandardSuppressionName(projectID)` and, only when that list is among the
-  suppressions, reads it and refuses (`audience.StandingCoversSend`, a pre-create
-  `PreflightRefusalf` naming the lists) if it covers a send list or an INCLUSION source of one.
-  Every send list is checked directly with no read, which covers an attach (it sends to its source
-  lists). A composed audience records its MASTER as its one send list, and the row has no
-  compose-or-attach marker, so the filter is read exactly when the send has ONE list (every
-  composed audience, harmlessly a one-list attach) and its IN_LIST sources are checked;
-  NOT_IN_LIST lists are exclusions, not sources. Any covered inclusion path refuses, matching the
-  compose-time overlap 400. No send is refused for its size. Read-only; a failed read refuses
-  too, with nothing created. The email wizard applies the same check
-  (`wizardStandingCoversSendList`, a 409).
+  cover a list that audience sends to -- or a SOURCE of one: a composed audience's one send list is
+  its master, and attach-existing accepts existing masters in `include_list_ids` -- and excluding it
+  would then exclude that whole inclusion while the id check above passes. After the portal guard
+  and before the clone, `standingCoversSendList` runs `audience.StandingSendCheck`:
+  - the filter of every send list is read, up to `audience.MaxSendListFilterReads` (50); the rest
+    keep the direct id check only, logged, and no send is refused for its size;
+  - the send's exclusions are its recorded suppressions plus every NOT_IN_LIST list a read send
+    list excludes itself (a master excludes the standing list whatever the email's suppressions);
+  - the standing list among them is the name-search hit when that is one of them; otherwise, since
+    search lags a fresh list and misses a renamed one, the exclusions are read (at most
+    `audience.MaxStandingCandidateReads`, 50; over that only the search hit counts, logged) and one
+    named `LFX Standard Suppressions - …` is it;
+  - every send list is checked by id, and every IN_LIST source of a read send list too.
+  Any covered inclusion path is a pre-create `PreflightRefusalf` naming the lists. A failed read,
+  or a send list or the standing list read back without a filter tree
+  (`audience.ErrListFilterUnreadable`), refuses too, with nothing created. The email wizard applies
+  the same check (`wizardStandingCoversSendList`: a 409, or a 503 for an unreadable list).
 
 - **The window does not scope the counters.** HubSpot's statistics span selects WHICH EMAILS
   are in scope by SEND date; the counters returned are that email's totals to date. `today`

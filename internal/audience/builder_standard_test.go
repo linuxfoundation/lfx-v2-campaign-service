@@ -340,54 +340,132 @@ func TestCustomInterpretPrompt_KeepsEditionSpelling(t *testing.T) {
 	assert.NotContains(t, prompt, "bbb", "a name that does not fit whole is left out, never cut")
 }
 
-func TestStandingCoversSend(t *testing.T) {
+func TestStandingSendCheck(t *testing.T) {
 	standing, _ := MasterListFilter([]string{"7001", "500"})
 	master, _ := MasterListWithSuppressionsFilter([]string{"500", "501"}, []string{"9002"})
-	filters := map[string]json.RawMessage{"26724": master}
-	reads := 0
-	read := func(id string) (json.RawMessage, error) {
-		reads++
-		f, ok := filters[id]
-		if !ok {
-			return nil, errors.New("no such list")
+	masterExcludingStanding, _ := MasterListWithSuppressionsFilter([]string{"500"}, []string{"77"})
+	empty := json.RawMessage(`{"filterBranchType":"OR","filterBranches":[],"filters":[]}`)
+	standingName := StandardSuppressionName("cncf")
+	lists := map[string]struct {
+		name   string
+		filter json.RawMessage
+	}{
+		"77":    {standingName, standing},
+		"78":    {StandardSuppressionName(strings.Repeat("p", 200)), standing}, // a hash-tagged standing name
+		"26724": {"master", master},
+		"26725": {"master excluding the standing list", masterExcludingStanding},
+	}
+	var reads []string
+	read := func(id string) (string, json.RawMessage, error) {
+		reads = append(reads, id)
+		if id == "404" {
+			return "", nil, errors.New("no such list")
 		}
-		return f, nil
+		if l, ok := lists[id]; ok {
+			return l.name, l.filter, nil
+		}
+		return "list " + id, empty, nil
 	}
 
-	send, covered, err := StandingCoversSend(standing, []string{"500"}, read)
+	// A directly covered send list, the standing list found by search.
+	res, err := StandingSendCheck("77", []string{"500"}, []string{"77"}, read)
 	require.NoError(t, err)
-	assert.Equal(t, "500", send)
-	assert.Equal(t, "500", covered, "a directly covered send list needs no read")
-	assert.Zero(t, reads)
+	assert.Equal(t, StandingSendResult{SendID: "500", CoveredID: "500", StandingID: "77"}, res)
 
-	send, covered, err = StandingCoversSend(standing, []string{"26724"}, read)
+	// A composed master whose source the standing list covers; 501 uncovered does not save it.
+	res, err = StandingSendCheck("77", []string{"26724"}, []string{"77", "9002"}, read)
 	require.NoError(t, err)
-	assert.Equal(t, "26724", send)
-	assert.Equal(t, "500", covered, "ANY covered inclusion path refuses, though 501 is not covered")
+	assert.Equal(t, "500", res.CoveredID)
 
+	// The search MISSED (lag, rename): the recorded id is still found by reading the candidates.
+	reads = nil
+	res, err = StandingSendCheck("", []string{"26724"}, []string{"9002", "77"}, read)
+	require.NoError(t, err)
+	assert.Equal(t, "77", res.StandingID)
+	assert.Equal(t, "500", res.CoveredID)
+	res, err = StandingSendCheck("", []string{"26724"}, []string{"78"}, read)
+	require.NoError(t, err)
+	assert.Equal(t, "78", res.StandingID, "a hash-tagged standing name is recognised by its prefix")
+
+	// No suppressions at all, but the master excludes the standing list in its own filter.
+	res, err = StandingSendCheck("77", []string{"26725"}, nil, read)
+	require.NoError(t, err)
+	assert.Equal(t, StandingSendResult{SendID: "26725", CoveredID: "500", StandingID: "77"}, res)
+
+	// Covering only the master's exclusion is not a covered source.
 	excludesOnly, _ := MasterListFilter([]string{"9002"})
-	send, covered, err = StandingCoversSend(excludesOnly, []string{"26724"}, read)
+	lists["79"] = struct {
+		name   string
+		filter json.RawMessage
+	}{standingName, excludesOnly}
+	res, err = StandingSendCheck("79", []string{"26724"}, []string{"79"}, read)
 	require.NoError(t, err)
-	assert.Empty(t, send+covered, "a NOT_IN_LIST exclusion of the master is not a source")
+	assert.Empty(t, res.CoveredID)
 
-	_, _, err = StandingCoversSend(standing, []string{"404"}, read)
-	require.Error(t, err, "a failed read is not a pass")
+	// A failed read is not a pass.
+	_, err = StandingSendCheck("", []string{"26724"}, []string{"404"}, read)
+	require.Error(t, err)
 
-	// A 200-list attach sends to its source lists themselves: checked directly, never read, and
-	// never refused for its size.
+	// A 200-list attach: every list is checked by id, the first MaxSendListFilterReads are read
+	// for their sources, the rest skipped with SourcesSkipped -- never refused for size.
 	many := make([]string, 200)
 	for i := range many {
 		many[i] = fmt.Sprintf("%d", 100000+i)
 	}
-	reads = 0
-	send, covered, err = StandingCoversSend(standing, many, read)
+	reads = nil
+	res, err = StandingSendCheck("77", many, []string{"77"}, read)
 	require.NoError(t, err)
-	assert.Empty(t, send+covered)
-	assert.Zero(t, reads, "a multi-list send needs no filter reads")
+	assert.Empty(t, res.CoveredID)
+	assert.True(t, res.SourcesSkipped)
+	assert.Len(t, reads, MaxSendListFilterReads+1, "the bounded send lists, then the standing list")
 	many[150] = "500"
-	send, covered, err = StandingCoversSend(standing, many, read)
+	res, err = StandingSendCheck("77", many, []string{"77"}, read)
 	require.NoError(t, err)
-	assert.Equal(t, "500", send+"", "a covered list among them is still caught directly")
-	assert.Equal(t, "500", covered)
-	assert.Zero(t, reads)
+	assert.Equal(t, "500", res.CoveredID, "a covered list beyond the bound is still caught directly")
+
+	// Two attached MASTERS sharing a source the standing list now covers: refused, though neither
+	// master's own id is covered.
+	lists["26726"] = struct {
+		name   string
+		filter json.RawMessage
+	}{"another master", master}
+	res, err = StandingSendCheck("77", []string{"26724", "26726"}, []string{"77"}, read)
+	require.NoError(t, err)
+	assert.Equal(t, "500", res.CoveredID)
+	// Only the SECOND attached master's source is covered: every read send list is checked.
+	only501, _ := MasterListFilter([]string{"501"})
+	lists["26728"] = struct {
+		name   string
+		filter json.RawMessage
+	}{"master of 501", only501}
+	res, err = StandingSendCheck("77", []string{"26728", "26726"}, []string{"77"}, read)
+	require.NoError(t, err)
+	assert.Equal(t, StandingSendResult{SendID: "26726", CoveredID: "500", StandingID: "77"}, res)
+
+	// A send list or the standing list read back with no filter tree is unknown, not "nothing".
+	lists["80"] = struct {
+		name   string
+		filter json.RawMessage
+	}{standingName, nil}
+	_, err = StandingSendCheck("80", []string{"26724"}, []string{"80"}, read)
+	require.ErrorIs(t, err, ErrListFilterUnreadable)
+	lists["26727"] = struct {
+		name   string
+		filter json.RawMessage
+	}{"master", json.RawMessage(`null`)}
+	_, err = StandingSendCheck("77", []string{"26727"}, []string{"77"}, read)
+	require.ErrorIs(t, err, ErrListFilterUnreadable)
+
+	// More exclusions than MaxStandingCandidateReads with the search missing: fall back, never refuse.
+	exclusions := make([]string, MaxStandingCandidateReads+1)
+	for i := range exclusions {
+		exclusions[i] = fmt.Sprintf("%d", 200000+i)
+	}
+	exclusions[0] = "77"
+	reads = nil
+	res, err = StandingSendCheck("", many[:2], exclusions, read)
+	require.NoError(t, err)
+	assert.True(t, res.Fallback)
+	assert.Empty(t, res.CoveredID)
+	assert.Equal(t, many[:2], reads, "the send lists are read; no exclusion past the bound is")
 }

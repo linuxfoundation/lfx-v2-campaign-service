@@ -99,11 +99,16 @@ type hubspotRec struct {
 	standingName   string
 	standingFilter json.RawMessage
 	listSearches   int
+	// searchMisses makes the list search never find the standing list (index lag, a rename).
+	searchMisses bool
 	// sendListFilters are the filters GetList returns for other lists (the send lists).
 	sendListFilters map[string]json.RawMessage
-	sendListBody    map[string]any
-	sawClone        bool
-	sawSendList     bool
+	// listReads counts GetList calls per list id; missingLists answer 404.
+	listReads    map[string]int
+	missingLists map[string]bool
+	sendListBody map[string]any
+	sawClone     bool
+	sawSendList  bool
 	// tokenInfoCalls counts hits on the token-info endpoint. Dispatch must make exactly ONE:
 	// the cross-portal guard verifies the portal and RETURNS it for the provenance stamp, so a
 	// second call would be the duplicate that regression removed.
@@ -461,7 +466,7 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 			rec.mu.Lock()
 			rec.listSearches++
 			lists := []map[string]any{}
-			if rec.standingID != "" && body.Query == rec.standingName {
+			if rec.standingID != "" && body.Query == rec.standingName && !rec.searchMisses {
 				lists = append(lists, map[string]any{"listId": rec.standingID, "name": rec.standingName, "objectTypeId": "0-1"})
 			}
 			rec.mu.Unlock()
@@ -472,12 +477,23 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 			asked := strings.TrimPrefix(r.URL.Path, "/crm/v3/lists/")
 			sendFilter, isSend := rec.sendListFilters[asked]
 			rec.mu.Unlock()
-			if isSend {
-				id, name, filter = asked, "send list "+asked, sendFilter
+			rec.mu.Lock()
+			if rec.listReads == nil {
+				rec.listReads = map[string]int{}
 			}
-			if asked != id || id == "" {
+			rec.listReads[asked]++
+			missing := rec.missingLists[asked]
+			rec.mu.Unlock()
+			if missing {
 				w.WriteHeader(http.StatusNotFound)
 				return
+			}
+			switch {
+			case isSend:
+				id, name, filter = asked, "send list "+asked, sendFilter
+			case asked != id || id == "":
+				// Any other list exists, named for its id, with an empty union filter.
+				id, name, filter = asked, "list "+asked, json.RawMessage(`{"filterBranchType":"OR","filterBranches":[],"filters":[]}`)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"list": map[string]any{
 				"listId": id, "name": name, "objectTypeId": "0-1", "processingType": "DYNAMIC", "filterBranch": filter}})
@@ -799,6 +815,9 @@ func TestHubSpot_StagesWithoutEventName(t *testing.T) {
 // HubSpot call — otherwise the clone would be created and then orphaned when SetSendList rejects.
 func TestHubSpot_MasterInSuppressionRefusedBeforeClone(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		t.Errorf("no HubSpot call should happen when master is in the suppression set: %s %s", r.Method, r.URL.Path)
 	}))
 	defer srv.Close()
@@ -852,6 +871,9 @@ func TestHubSpot_DispatchSendsToEveryIncludeList(t *testing.T) {
 // whole list from the send, and finding it after CloneEmail would orphan a draft.
 func TestHubSpot_IncludeListInSuppressionRefusedBeforeClone(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		t.Errorf("no HubSpot call should happen when an include list is suppressed: %s %s", r.Method, r.URL.Path)
 	}))
 	defer srv.Close()
@@ -878,6 +900,9 @@ func TestHubSpot_IncludeListInSuppressionRefusedBeforeClone(t *testing.T) {
 // a draft may exist) must retain the claim (non-nil name-only partial) with an UNCONFIRMED error.
 func TestHubSpot_CloneUnconfirmedRetainsClaim(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		// Answer token-info with the audience's portal, so the cross-portal guard passes and
 		// this test reaches the clone it is about of. A canned body for every path would fail
@@ -924,6 +949,9 @@ func TestHubSpot_CloneUnconfirmedRetainsClaim(t *testing.T) {
 // caller reconciles rather than reporting a clean success.
 func TestHubSpot_SendListFailureIsPartial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		// token-info must answer, or the cross-portal guard refuses before the clone and this
 		// never reaches the set-send-list failure it is written for.
@@ -1247,6 +1275,9 @@ func TestHubSpot_UTMCampaignOverrideReachesTheLinks(t *testing.T) {
 // configured draft behind.
 func TestHubSpot_TaggingFailureDoesNotFailTheDispatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == hubSpotTokenInfoPath:
@@ -1288,6 +1319,9 @@ func TestHubSpot_TaggingFailureDoesNotFailTheDispatch(t *testing.T) {
 // deadline the token-info REQUEST actually carried, not by waiting one out.
 func TestHubSpot_DispatchBoundsThePortalLookupBelowProviderCallTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == hubSpotTokenInfoPath:
@@ -1512,6 +1546,9 @@ func TestHubSpot_CreateCampaignTagsANeverSentFailure(t *testing.T) {
 func TestHubSpot_SearchCampaignsCrossesTheSeam(t *testing.T) {
 	const searchPath = "/crm/v3/objects/0-35/search"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPost && r.URL.Path == searchPath {
 			// total (7) deliberately exceeds the returned rows (1): that is what makes the page
@@ -1752,6 +1789,9 @@ func assertRefusedBeforeCreate(t *testing.T, camp *model.Campaign, err error, re
 func TestHubSpot_DispatchRefusesWhenPortalIdentityIsUnreadable(t *testing.T) {
 	rec := &hubspotRec{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		// Everything works EXCEPT portal identity.
 		if r.URL.Path == hubSpotTokenInfoPath {
@@ -1899,6 +1939,9 @@ func TestHubSpot_AContentRevertIsLoggedAsAnErrorNotAWarning(t *testing.T) {
 	// 2xx on the content PATCH, but a re-read that never shows the widgets — HubSpot's silent
 	// revert. verifyContentSaved catches it and RebuildEmailContent wraps it.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == hubSpotTokenInfoPath:
@@ -2183,10 +2226,9 @@ func TestHubSpot_DispatchRefusesAMasterWhoseSourceTheStandingListNowCovers(t *te
 	}
 }
 
-// An attach of several lists sends to the lists themselves, so they are checked directly and no
-// send-list filter is read (the fake answers 404 for one, which would refuse): a large attach
-// that excludes the standing list is never refused for its size.
-func TestHubSpot_DispatchMultiListAttachExcludingTheStandingListNeedsNoReads(t *testing.T) {
+// A 200-list attach that excludes the standing list is never refused for its size: every list
+// is checked by id and only the first audience.MaxSendListFilterReads have their filters read.
+func TestHubSpot_DispatchLargeAttachExcludingTheStandingListIsNotRefusedForSize(t *testing.T) {
 	standing, _ := audience.MasterListFilter([]string{"7001"})
 	srv, rec := hubspotServer(t)
 	rec.standingID, rec.standingName, rec.standingFilter = "77", audience.StandardSuppressionName("cncf"), standing
@@ -2204,4 +2246,100 @@ func TestHubSpot_DispatchMultiListAttachExcludingTheStandingListNeedsNoReads(t *
 	if !rec.SawSendList() {
 		t.Error("expected the 200-list send to be applied")
 	}
+	read := 0
+	for _, id := range includes {
+		read += rec.listReadsOf(id)
+	}
+	if read > audience.MaxSendListFilterReads {
+		t.Fatalf("read %d send lists, want at most %d", read, audience.MaxSendListFilterReads)
+	}
+}
+
+// Two existing MASTERS attached together, both including list 500, which the standing list now
+// covers: the multi-list send is refused, though neither master's own id is covered.
+func TestHubSpot_DispatchRefusesAttachedMastersSharingACoveredSource(t *testing.T) {
+	standing, _ := audience.MasterListFilter([]string{"7001", "500"})
+	master, _ := audience.MasterListFilter([]string{"500"})
+	srv, rec := hubspotServer(t)
+	rec.standingID, rec.standingName, rec.standingFilter = "77", audience.StandardSuppressionName("cncf"), standing
+	rec.sendListFilters = map[string]json.RawMessage{"26724": master, "26725": master}
+	auds := builtHubSpotAudience("26724", []string{"77"})
+	auds[0].IncludeListIDs, _ = json.Marshal([]string{"26724", "26725"})
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, fakeAudienceReader{auds: auds}, hubspot.WithBaseURL(srv.URL))
+
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err == nil || !strings.Contains(err.Error(), `includes list "500"`) {
+		t.Fatalf("want a refusal naming the covered source, got %v", err)
+	}
+	if rec.SawClone() {
+		t.Error("nothing may be created")
+	}
+}
+
+// The standing list read back with a null filterBranch is unknown, not "covers nothing": refused
+// before anything is created.
+func TestHubSpot_DispatchRefusesAStandingListReadWithoutAFilter(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.standingID, rec.standingName, rec.standingFilter = "77", audience.StandardSuppressionName("cncf"), json.RawMessage(`null`)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", []string{"77"})}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if !errors.Is(err, audience.ErrListFilterUnreadable) {
+		t.Fatalf("want ErrListFilterUnreadable, got %v", err)
+	}
+	if rec.SawClone() {
+		t.Error("nothing may be created")
+	}
+}
+
+// The name search MISSES the standing list (index lag right after it was created, or a rename),
+// but the audience still records it as a suppression: it is found among the recorded exclusions
+// by reading them, and the master whose only source it covers is refused.
+func TestHubSpot_DispatchFindsTheStandingListWhenTheSearchMisses(t *testing.T) {
+	standing, _ := audience.MasterListFilter([]string{"7001", "500"})
+	master, _ := audience.MasterListFilter([]string{"500"})
+	srv, rec := hubspotServer(t)
+	// The fake's search answers only for this name, so the real standing name is a miss; its
+	// GetList still reports the standing name.
+	rec.standingID, rec.standingName, rec.standingFilter = "77", audience.StandardSuppressionName("cncf"), standing
+	rec.searchMisses = true
+	rec.sendListFilters = map[string]json.RawMessage{"26724": master}
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", []string{"9002", "77"})}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err == nil || !strings.Contains(err.Error(), `includes list "500"`) {
+		t.Fatalf("want a refusal naming the covered source, got %v", err)
+	}
+	if rec.SawClone() {
+		t.Error("nothing may be created")
+	}
+}
+
+// listReadsOf is how many times the fake portal answered GetList for id.
+func (r *hubspotRec) listReadsOf(id string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.listReads[id]
+}
+
+// answerStandingListReads answers the send-time standing-list check's reads for a fake portal
+// that holds no standing list: an empty list search, and any list read as an ordinary list with
+// an empty union filter. It reports whether it answered.
+func answerStandingListReads(w http.ResponseWriter, r *http.Request) bool {
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == "/crm/v3/lists/search":
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"lists":[],"hasMore":false}`)
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/crm/v3/lists/"):
+		id := strings.TrimPrefix(r.URL.Path, "/crm/v3/lists/")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"list": map[string]any{
+			"listId": id, "name": "list " + id, "objectTypeId": "0-1", "processingType": "DYNAMIC",
+			"filterBranch": map[string]any{"filterBranchType": "OR", "filterBranches": []any{}, "filters": []any{}}}})
+		return true
+	}
+	return false
 }

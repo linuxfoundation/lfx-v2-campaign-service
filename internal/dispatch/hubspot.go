@@ -1413,43 +1413,46 @@ func assertAudiencePortal(ctx context.Context, client *hubspot.Client, res *reso
 	return strings.TrimSpace(current), nil
 }
 
-// standingCoversSendList refuses a send whose suppressions include the project's standing
-// standard list while that list now covers one of the send lists, or one of the INCLUSION
-// sources of a send list (a composed master's IN_LIST lists; audience.StandingCoversSend).
-// Read-only: one name search, then -- only when the standing list is among the suppressions --
-// one GetList for it and, for a one-list send (a composed master), one for that list. A failed read refuses too -- the send cannot be shown to be safe -- and nothing
-// is created, so a retry is clean.
+// standingCoversSendList refuses a send that excludes a standing standard suppression list --
+// through its recorded suppressions, or through a composed master's own NOT_IN_LIST filter --
+// while that list now covers one of the send lists or one of a master's inclusion sources
+// (audience.StandingSendCheck). Read-only: one name search, then GetLists (the one-list send's
+// master, the standing list, and -- only when the search missed -- the exclusions, bounded). A
+// failed read refuses too -- the send cannot be shown to be safe -- and nothing is created, so a
+// retry is clean.
 func standingCoversSendList(ctx context.Context, client *hubspot.Client, projectID string, sendIDs, suppressionIDs []string) error {
-	if len(suppressionIDs) == 0 {
-		return nil
-	}
 	standing, err := exactList(ctx, client, audience.StandardSuppressionName(projectID))
 	if err != nil {
 		return fmt.Errorf("hubspot: could not check the standing suppression list before the send: %w", err)
 	}
-	if standing == nil || !slices.Contains(suppressionIDs, standing.ListID) {
-		return nil
+	hit := ""
+	if standing != nil {
+		hit = standing.ListID
 	}
-	list, err := client.GetList(ctx, standing.ListID)
-	if err != nil {
-		return fmt.Errorf("hubspot: could not read the standing suppression list %s before the send: %w", standing.ListID, err)
-	}
-	sendID, coveredID, cerr := audience.StandingCoversSend(list.FilterBranch, sendIDs, func(id string) (json.RawMessage, error) {
+	res, cerr := audience.StandingSendCheck(hit, sendIDs, suppressionIDs, func(id string) (string, json.RawMessage, error) {
 		l, gerr := client.GetList(ctx, id)
 		if gerr != nil {
-			return nil, gerr
+			return "", nil, gerr
 		}
-		return l.FilterBranch, nil
+		return l.Name, l.FilterBranch, nil
 	})
+	if res.Fallback {
+		slog.WarnContext(ctx, "standing suppression check read only the name-search hit: too many exclusions to read",
+			"project_id", projectID, "limit", audience.MaxStandingCandidateReads)
+	}
+	if res.SourcesSkipped {
+		slog.WarnContext(ctx, "standing suppression check read the sources of only the first send lists; the rest were checked by id",
+			"project_id", projectID, "limit", audience.MaxSendListFilterReads)
+	}
 	switch {
 	case cerr != nil:
-		return fmt.Errorf("hubspot: could not read a send list before the send: %w", cerr)
-	case coveredID == sendID && sendID != "":
-		return domain.PreflightRefusalf("hubspot: the audience sends to list %s, which the project's standing standard suppression list %s now covers — the send would exclude that entire list; remove it from the standing list in HubSpot or rebuild the audience",
-			domain.CallerValue(sendID), domain.CallerValue(standing.ListID))
-	case coveredID != "":
-		return domain.PreflightRefusalf("hubspot: the audience's send list %s includes list %s, which the project's standing standard suppression list %s now covers — the send would exclude that whole inclusion; remove it from the standing list in HubSpot or rebuild the audience",
-			domain.CallerValue(sendID), domain.CallerValue(coveredID), domain.CallerValue(standing.ListID))
+		return fmt.Errorf("hubspot: could not read a list before the send: %w", cerr)
+	case res.CoveredID != "" && res.CoveredID == res.SendID:
+		return domain.PreflightRefusalf("hubspot: the audience sends to list %s, which the standing standard suppression list %s it excludes now covers — the send would exclude that entire list; remove it from the standing list in HubSpot or rebuild the audience",
+			domain.CallerValue(res.SendID), domain.CallerValue(res.StandingID))
+	case res.CoveredID != "":
+		return domain.PreflightRefusalf("hubspot: the audience's send list %s includes list %s, which the standing standard suppression list %s it excludes now covers — the send would exclude that whole inclusion; remove it from the standing list in HubSpot or rebuild the audience",
+			domain.CallerValue(res.SendID), domain.CallerValue(res.CoveredID), domain.CallerValue(res.StandingID))
 	}
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -347,47 +348,151 @@ func HasFilterTree(raw json.RawMessage) bool {
 	return strings.HasPrefix(t, "{")
 }
 
-// StandingCoversSend reports the first send list the project's standing standard list now
-// covers, directly or through one of its INCLUSION sources, as (sendID, coveredID); both empty
-// when none is covered.
+// MaxStandingCandidateReads bounds how many of a send's exclusions StandingSendCheck reads to
+// find the standing list when the name search did not. Over it the check falls back to the
+// search hit alone (Fallback set, for the caller to log); a send is never refused for its size.
+const MaxStandingCandidateReads = 50
+
+// MaxSendListFilterReads bounds how many send lists' filters StandingSendCheck reads to see
+// through them to their sources. The rest keep the direct id check only (SourcesSkipped set, for
+// the caller to log); a send is never refused for its size.
+const MaxSendListFilterReads = 50
+
+// ErrListFilterUnreadable is StandingSendCheck's refusal for a send list or standing list read
+// back without an explicit filter tree (missing or null filterBranch, see HasFilterTree): what
+// it covers or includes is unknown, which is not the same as nothing.
+var ErrListFilterUnreadable = errors.New("audience: a list was read back without its filter")
+
+// ListReader reads one list: its name and its filter. A failed read is an error.
+type ListReader func(listID string) (name string, filter json.RawMessage, err error)
+
+// StandingSendResult is StandingSendCheck's finding. SendID and CoveredID are set when the
+// standing list (StandingID) covers a send list (CoveredID == SendID) or an inclusion source of
+// one; all empty when the send is safe or excludes no standing list.
+type StandingSendResult struct {
+	SendID, CoveredID, StandingID string
+	// Fallback reports that the exclusions were too many to read and only the name-search hit
+	// was considered.
+	Fallback bool
+	// SourcesSkipped reports that only the first MaxSendListFilterReads send lists had their
+	// sources checked; the rest were checked by id only.
+	SourcesSkipped bool
+}
+
+// StandingSendCheck decides, at send time, whether a send excludes a standing standard
+// suppression list that now covers what it sends to.
 //
-// The standing list is shared and only grows, so a list an earlier audience recorded as an
-// inclusion can be added to it later. Every send list is checked directly, with no reads: that
-// covers an attach, which sends to its source lists themselves.
+// The standing list is shared and only grows, so it can come to cover a list an
+// already-recorded audience sends to; excluding it then removes that whole inclusion. A send
+// list can itself be a master -- a composed audience's one send list, or an existing master
+// attached through include_list_ids -- whose own filter includes source lists (IN_LIST) and
+// excludes others (NOT_IN_LIST). So the filter of every send list is read, up to
+// MaxSendListFilterReads, and:
 //
-// A composed audience records its MASTER as its one send list, and the master includes its
-// source lists (IN_LIST); if the standing list covers one of those, excluding it removes that
-// whole inclusion path -- possibly every recipient -- while the master's own id is not covered.
-// The recorded audience carries no compose-or-attach marker, so the master's filter is read
-// (readFilter, one GetList) exactly when the send has ONE list: every composed audience, and
-// harmlessly a one-list attach. Its IN_LIST sources are checked too; NOT_IN_LIST lists are
-// exclusions, not sources. Any covered inclusion path refuses, the send-time match for the
-// compose-time rule that a covered inclusion is a 400. A send to several lists is an attach and
-// needs no read, however many lists it has. A failed read is returned as an error.
-func StandingCoversSend(standingFilter json.RawMessage, sendIDs []string, readFilter func(listID string) (json.RawMessage, error)) (sendID, coveredID string, err error) {
-	covered := CoveredListIDs(standingFilter)
-	if len(covered) == 0 {
-		return "", "", nil
-	}
+//   - the send's exclusions are its recorded suppression ids plus every NOT_IN_LIST list a read
+//     send list excludes itself, whatever suppressions the email carries;
+//   - the standing list among them is the name-search hit (searchHit) when that is one of them;
+//     otherwise, since search lags a fresh list and misses a renamed one, every candidate is read
+//     and one whose name starts with "LFX Standard Suppressions - " (any project's, hash-tagged
+//     forms included) is it. At most MaxStandingCandidateReads candidates are read; over that,
+//     only the search hit counts;
+//   - every send list is checked directly, and every IN_LIST source of a read send list too.
+//     Any covered inclusion path refuses, the send-time match for the compose-time overlap 400.
+//
+// Nothing is refused for its size. Any failed read is an error, and so is a send list or the
+// standing list read back without a filter tree (ErrListFilterUnreadable): the send cannot be
+// shown safe.
+func StandingSendCheck(searchHit string, sendIDs, suppressionIDs []string, read ListReader) (StandingSendResult, error) {
+	var res StandingSendResult
 	sends := UniqueIDs(sendIDs)
+	toRead := sends
+	if len(toRead) > MaxSendListFilterReads {
+		toRead, res.SourcesSkipped = toRead[:MaxSendListFilterReads], true
+	}
+	filters := make(map[string]json.RawMessage, len(toRead))
+	candidates := append([]string(nil), suppressionIDs...)
+	for _, id := range toRead {
+		_, f, err := read(id)
+		if err != nil {
+			return res, err
+		}
+		if !HasFilterTree(f) {
+			return res, fmt.Errorf("%w: send list %s", ErrListFilterUnreadable, id)
+		}
+		filters[id] = f
+		candidates = append(candidates, ExcludedListIDs(f)...)
+	}
+	candidates = UniqueIDs(candidates)
+	if len(candidates) == 0 {
+		return res, nil
+	}
+
+	var standingFilter json.RawMessage
+	switch {
+	case searchHit != "" && slices.Contains(candidates, searchHit):
+		_, f, err := read(searchHit)
+		if err != nil {
+			return res, err
+		}
+		res.StandingID, standingFilter = searchHit, f
+	case len(candidates) > MaxStandingCandidateReads:
+		res.Fallback = true
+		return res, nil
+	default:
+		prefix := strings.ToLower(standardSuppressionPrefix)
+		for _, id := range candidates {
+			name, f, err := read(id)
+			if err != nil {
+				return res, err
+			}
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), prefix) {
+				res.StandingID, standingFilter = id, f
+				break
+			}
+		}
+	}
+	if res.StandingID == "" {
+		return res, nil
+	}
+	if !HasFilterTree(standingFilter) {
+		return res, fmt.Errorf("%w: standing list %s", ErrListFilterUnreadable, res.StandingID)
+	}
+
+	covered := CoveredListIDs(standingFilter)
 	for _, id := range sends {
 		if slices.Contains(covered, id) {
-			return id, id, nil
+			res.SendID, res.CoveredID = id, id
+			return res, nil
 		}
 	}
-	if len(sends) != 1 {
-		return "", "", nil
-	}
-	filter, rerr := readFilter(sends[0])
-	if rerr != nil {
-		return "", "", rerr
-	}
-	for _, source := range InclusionListIDs(filter) {
-		if slices.Contains(covered, source) {
-			return sends[0], source, nil
+	for _, id := range toRead {
+		for _, source := range InclusionListIDs(filters[id]) {
+			if slices.Contains(covered, source) {
+				res.SendID, res.CoveredID = id, source
+				return res, nil
+			}
 		}
 	}
-	return "", "", nil
+	return res, nil
+}
+
+// ExcludedListIDs are the lists a filter tree EXCLUDES by membership: every NOT_IN_LIST filter,
+// wherever it sits. An unreadable tree excludes nothing.
+func ExcludedListIDs(filter json.RawMessage) []string {
+	var root qaBranch
+	if len(filter) == 0 || json.Unmarshal(filter, &root) != nil {
+		return nil
+	}
+	var out []string
+	root.walk(func(b qaBranch) {
+		for _, f := range b.Filters {
+			id := strings.TrimSpace(f.ListID.String())
+			if f.FilterType == "IN_LIST" && f.Operator == "NOT_IN_LIST" && id != "" {
+				out = append(out, id)
+			}
+		}
+	})
+	return UniqueIDs(out)
 }
 
 // InclusionListIDs are the lists a filter tree INCLUDES by membership: every IN_LIST filter,

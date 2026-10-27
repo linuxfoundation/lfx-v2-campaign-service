@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -1737,14 +1736,12 @@ func (s *BriefService) GetWizardSession(ctx context.Context, p *briefs.GetWizard
 }
 
 // wizardStandingCoversSendList is the wizard's copy of dispatch's standingCoversSendList (this
-// package cannot import internal/dispatch): refuse, before the draft is touched, a send list the
-// project's standing standard suppression list now covers while the send also excludes that
-// list. The standing list is shared and grows after an audience is recorded, so an inclusion
-// recorded earlier can be covered later. Read-only: one search, at most one GetList.
+// package cannot import internal/dispatch): refuse, before the draft is touched, a send that
+// excludes a standing standard suppression list -- through the suppressions it applies, or
+// through a composed master's own NOT_IN_LIST filter, whatever suppressions an override supplies
+// -- while that list now covers a send list or a master's inclusion source
+// (audience.StandingSendCheck). Read-only: one search, then bounded GetLists.
 func wizardStandingCoversSendList(ctx context.Context, client HubSpotWizardClient, projectID string, sendIDs, suppression []string) error {
-	if len(suppression) == 0 {
-		return nil
-	}
 	name := audience.StandardSuppressionName(projectID)
 	lists, err := client.SearchLists(ctx, name)
 	if err != nil {
@@ -1752,42 +1749,41 @@ func wizardStandingCoversSendList(ctx context.Context, client HubSpotWizardClien
 		return &briefs.ConnServiceUnavailableError{Code: "503",
 			Message: "the project's standing suppression list could not be checked before applying the recipients; retry"}
 	}
-	var standingID string
+	hit := ""
 	for _, l := range lists {
 		if strings.EqualFold(strings.TrimSpace(l.Name), name) {
-			standingID = l.ListID
+			hit = l.ListID
 			break
 		}
 	}
-	if standingID == "" || !slices.Contains(suppression, standingID) {
-		return nil
-	}
-	list, err := client.GetList(ctx, standingID)
-	if err != nil {
-		slog.WarnContext(ctx, "wizard could not read the standing suppression list", "list_id", standingID, "error", safeErrSummary(err))
-		return &briefs.ConnServiceUnavailableError{Code: "503",
-			Message: "the project's standing suppression list could not be read before applying the recipients; retry"}
-	}
-	sendID, coveredID, cerr := audience.StandingCoversSend(list.FilterBranch, sendIDs, func(id string) (json.RawMessage, error) {
+	res, cerr := audience.StandingSendCheck(hit, sendIDs, suppression, func(id string) (string, json.RawMessage, error) {
 		l, gerr := client.GetList(ctx, id)
 		if gerr != nil {
-			return nil, gerr
+			return "", nil, gerr
 		}
-		return l.FilterBranch, nil
+		return l.Name, l.FilterBranch, nil
 	})
+	if res.Fallback {
+		slog.WarnContext(ctx, "wizard standing suppression check read only the name-search hit: too many exclusions to read",
+			"limit", audience.MaxStandingCandidateReads)
+	}
+	if res.SourcesSkipped {
+		slog.WarnContext(ctx, "wizard standing suppression check read the sources of only the first send lists; the rest were checked by id",
+			"limit", audience.MaxSendListFilterReads)
+	}
 	switch {
 	case cerr != nil:
-		slog.WarnContext(ctx, "wizard could not read a send list", "error", safeErrSummary(cerr))
+		slog.WarnContext(ctx, "wizard could not read a list for the standing suppression check", "error", safeErrSummary(cerr))
 		return &briefs.ConnServiceUnavailableError{Code: "503",
-			Message: "a recipient list could not be read to check it against the project's standing suppression list; retry"}
-	case coveredID == sendID && sendID != "":
+			Message: "a list could not be read to check the recipients against the project's standing suppression list; retry"}
+	case res.CoveredID != "" && res.CoveredID == res.SendID:
 		return &briefs.ConflictError{Code: "409", Message: fmt.Sprintf(
-			"list %s is a recipient list of this send, but the project's standing standard suppression list %s now covers it, so the send would exclude it entirely; remove it from the standing list in HubSpot or rebuild the audience",
-			sendID, standingID)}
-	case coveredID != "":
+			"list %s is a recipient list of this send, but the standing standard suppression list %s it excludes now covers it, so the send would exclude it entirely; remove it from the standing list in HubSpot or rebuild the audience",
+			res.SendID, res.StandingID)}
+	case res.CoveredID != "":
 		return &briefs.ConflictError{Code: "409", Message: fmt.Sprintf(
-			"recipient list %s includes list %s, which the project's standing standard suppression list %s now covers, so the send would exclude that whole inclusion; remove it from the standing list in HubSpot or rebuild the audience",
-			sendID, coveredID, standingID)}
+			"recipient list %s includes list %s, which the standing standard suppression list %s it excludes now covers, so the send would exclude that whole inclusion; remove it from the standing list in HubSpot or rebuild the audience",
+			res.SendID, res.CoveredID, res.StandingID)}
 	}
 	return nil
 }
