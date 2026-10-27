@@ -369,8 +369,8 @@ func TestComposeAudienceMasterReportsARecordFailureAsAPartialCarryingTheMaster(t
 	assert.Equal(t, "500", partial.Code)
 	require.NotNil(t, partial.Master, "the operator can only attach the master by hand if they are told its id")
 	assert.Equal(t, "master-1", partial.Master.ListID)
-	require.NotNil(t, partial.Suppression)
-	assert.Equal(t, "supp-1", partial.Suppression.ListID)
+	assert.Nil(t, partial.Suppression,
+		"the standing list is shared and reused: a client built for the legacy field would tell the operator to delete it")
 	assert.Nil(t, partial.MasterName, "MasterName is for an UNCONFIRMED master; this one is confirmed")
 	assert.Contains(t, partial.Message, "attach the master list to the campaign's audience manually")
 	assert.Contains(t, partial.Message, "composing again can create a second master list")

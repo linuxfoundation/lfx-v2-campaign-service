@@ -64,10 +64,16 @@ func CurrentRegistrantsName(editionName string) string {
 // whole edition is in it: an edition counts only from a registration branch whose every filter
 // is the event_name equality, standing alone as an OR alternative -- an AND that adds a
 // condition, or an extra filter inside the event branch, covers nothing.
+//
+// The edition is compared EXACTLY, only its ends trimmed (as CurrentRegistrantsFilter trims
+// it): the filter is an exact event_name equality, so "KubeCon  NA 2026" (two spaces) or a
+// different case is a different value, and this service cannot establish that HubSpot's
+// equality ignores either. A list differing only that way is a conflict an operator resolves,
+// never a silent reuse.
 func RegistrantsListMatches(filter json.RawMessage, editionName string) bool {
-	norm := func(s string) string { return strings.ToLower(strings.Join(strings.Fields(s), " ")) }
+	want := strings.TrimSpace(editionName)
 	only := func(editions []string) bool {
-		return len(editions) == 1 && norm(editions[0]) == norm(editionName)
+		return len(editions) == 1 && strings.TrimSpace(editions[0]) == want
 	}
 	if includesNoValueSet(filter) {
 		return false
@@ -117,12 +123,13 @@ func includesNoValueSet(filter json.RawMessage) bool {
 // memberships -- every condition an IN_LIST filter, each one a whole OR alternative -- which
 // is the shape MasterListFilter writes. Only then can the list be rewritten from its
 // CoveredListIDs without losing anything; any other condition (an AND of lists, a property
-// filter added by hand) would be dropped by the rewrite. An empty filter is a union of
-// nothing.
+// filter added by hand) would be dropped by the rewrite. An explicit empty tree is a union of
+// nothing; a MISSING or null filter is not a union at all -- the list's real filter is unknown,
+// and rewriting it would replace whatever it holds (see HasFilterTree).
 func StandingFilterIsUnion(filter json.RawMessage) bool {
 	var root qaBranch
-	if len(filter) == 0 {
-		return true
+	if !HasFilterTree(filter) {
+		return false
 	}
 	if json.Unmarshal(filter, &root) != nil {
 		return false
@@ -237,4 +244,13 @@ func MasterListWithSuppressionsFilter(includeIDs, suppressionIDs []string) (json
 		FilterBranches:   branches,
 		Filters:          []filter{},
 	})
+}
+
+// HasFilterTree reports whether raw is an explicit filter tree (a JSON object), as opposed to
+// a missing or null filterBranch. GetList asks for the filters, so a list read back without one
+// says nothing about what the list holds: reading it as "covers nothing" and rewriting it from
+// the currently resolved ids would drop every suppression it carried.
+func HasFilterTree(raw json.RawMessage) bool {
+	t := strings.TrimSpace(string(raw))
+	return strings.HasPrefix(t, "{")
 }

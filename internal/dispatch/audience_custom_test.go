@@ -1566,11 +1566,71 @@ func TestInterpretCustom_VisitorsOfAnotherPageGetNoPastEditions(t *testing.T) {
 	assert.Empty(t, out.Draft.Criteria.RegisteredFor, "another page's visitors are not the event's default audience")
 }
 
+func TestInterpretCustom_VisitorsOnlyOfTheEventPageGetNoPastEditions(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":[],"label":""},"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "visitors of this event page only", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"events.example.org/synthetic-summit"}, out.Draft.Criteria.PageViewURLs)
+	assert.Empty(t, out.Draft.Criteria.RegisteredFor, "a visitors-only draft is not the event's default audience")
+}
+
 func TestSelectsPage(t *testing.T) {
 	const event = "https://events.example.org/synthetic-summit/"
 	assert.True(t, selectsPage([]string{"events.example.org/synthetic-summit"}, event))
-	assert.True(t, selectsPage([]string{"https://www.Events.example.org/synthetic-summit?utm_source=x"}, event))
+	assert.True(t, selectsPage([]string{"https://www.Events.example.org/synthetic-summit"}, event))
+	assert.True(t, selectsPage([]string{"events.example.org/synthetic-summit"}, event+"?utm_source=newsletter"),
+		"the event URL's own query only says how the operator reached the page")
+	// HubSpot's page-view filter keeps the whole string, so a query narrows it to the visits
+	// made with that query: not the page's visitors. utm_* tags included -- "?utm_source=x"
+	// matches only the visits that arrived with that tag.
+	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit?ticket=vip"}, event))
+	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit?utm_source=x"}, event))
+	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit#agenda"}, event))
 	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit/cfp"}, event))
 	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit"}, ""))
 	assert.False(t, selectsPage(nil, event))
+}
+
+func TestSameEventEditions(t *testing.T) {
+	same, others := sameEventEditions([]string{
+		"Synthetic Summit 2025", "Synthetic Summit Workshop 2025", "synthetic  summit 2024", "Synthetic Summit Tokyo 2025",
+	}, "Synthetic Summit 2026")
+	assert.Equal(t, []string{"Synthetic Summit 2025", "synthetic  summit 2024"}, same, "kept verbatim, in order")
+	assert.Equal(t, []string{"Synthetic Summit Workshop 2025", "Synthetic Summit Tokyo 2025"}, others)
+
+	same, others = sameEventEditions([]string{"2025"}, "2026")
+	assert.Empty(t, same, "a name that is only a year has no family to match")
+	assert.Equal(t, []string{"2025"}, others)
+}
+
+// The warehouse matches the event name as a substring, so it returns other events sharing it.
+// The default adds only this event's own editions and names the rest in a note.
+func TestInterpretCustom_DefaultLeavesOutOtherEventsTheWarehouseMatched(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":[],"label":""},"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}, {EventName: "Synthetic Summit Workshop 2025"}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Synthetic Summit 2025"}, out.Draft.Criteria.RegisteredFor)
+	assert.Contains(t, strings.Join(out.Draft.Notes, "\n"), "Synthetic Summit Workshop 2025")
 }

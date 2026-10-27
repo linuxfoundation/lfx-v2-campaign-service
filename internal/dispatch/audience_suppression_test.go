@@ -870,3 +870,18 @@ func TestAttachExisting_RecoveredRegistrantsListAlsoIncluded_IsRefusedBeforeGrow
 	_, updated := portal.writes()
 	assert.Empty(t, updated, "the standing list is not grown for a request that is then refused")
 }
+
+// GetList returns the standing list without a filterBranch. Its real filter is unknown, so it is
+// never rewritten from the resolved ids alone, which would drop every suppression it carries.
+func TestAttachExisting_StandingListReadWithoutAFilter_IsNeverRewritten(t *testing.T) {
+	portal, std := standardPortal()
+	portal.byName[audience.StandardSuppressionName("proj-1")] = "77" // no filters["77"]: GET omits filterBranch
+	x := composeExplorer(portal.serve(t).URL)
+
+	_, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, std, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "without its filter")
+	created, updated := portal.writes()
+	assert.Empty(t, created)
+	assert.Empty(t, updated, "an unknown filter is not overwritten")
+}

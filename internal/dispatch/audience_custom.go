@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -107,10 +108,12 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 			hasLocation := len(draft.Criteria.Cities) > 0 || len(draft.Criteria.Countries) > 0
 			regional := hasLocation && (draft.Criteria.ContactLocation || draft.Criteria.EventRegistered || draft.Criteria.EducationEnrolled)
 			rolesOnly := draft.Criteria.Speakers != nil || draft.Criteria.Ambassadors
-			// The event's default audience is the visitors of THIS event's page. A page-view URL
-			// of some other page is a different segment, and ORing past registrants into it
-			// would reach people outside what was asked for.
-			eventDefault := !hasLocation && !rolesOnly && selectsPage(draft.Criteria.PageViewURLs, event.URL)
+			// The event's default audience pairs the visitors of THIS event's page with the
+			// brand's education enrollees. A page-view URL of some other page is a different
+			// segment, and a visitors-only draft (no education) asked for visitors alone:
+			// ORing past registrants into either would reach people outside what was asked for.
+			eventDefault := !hasLocation && !rolesOnly && draft.Criteria.EducationEnrolled &&
+				selectsPage(draft.Criteria.PageViewURLs, event.URL)
 			switch {
 			case len(named) > 0:
 				defaults = named
@@ -118,6 +121,18 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 				// Every named edition was unknown, or past registrants were ruled out:
 				// adding the warehouse's editions would reach people the operator excluded.
 				defaults = nil
+			default:
+				// The warehouse matches the event's name as a SUBSTRING, so "Synthetic Summit"
+				// also returns "Synthetic Summit Workshop 2025" -- another event. Only editions
+				// that are this event's name with another year are added unasked; the rest are
+				// named in a note, for the operator to add by name if they belong.
+				var others []string
+				defaults, others = sameEventEditions(defaults, event.Name)
+				if len(others) > 0 {
+					draft.Notes = append(draft.Notes, fmt.Sprintf(
+						"Left out %d past events the warehouse matched whose names are not this event's name with another year; name any that are this event's editions to include them: %s.",
+						len(others), strings.Join(others, "; ")))
+				}
 			}
 			kept, omitted := capPastEditions(defaults)
 			draft.Criteria.RegisteredFor = kept
@@ -608,28 +623,56 @@ func capPastEditions(past []string) ([]string, int) {
 	return kept[:audience.CustomMaxRegisteredFor], len(past) - audience.CustomMaxRegisteredFor
 }
 
-// selectsPage reports whether urls includes pageURL, compared as pages rather than strings:
-// scheme, a leading "www.", a query, a fragment, a trailing slash and case are ignored, because
-// page_view_urls is a CONTAINS match with the scheme optional and the model may copy the event
-// URL with or without them. An empty pageURL matches nothing.
+// selectsPage reports whether urls includes the event page pageURL itself. Scheme, a leading
+// "www.", a trailing slash and case are ignored: page_view_urls is a CONTAINS match with the
+// scheme optional, and the model may copy the event URL with or without them. A page-view URL
+// carrying a query or a fragment is NOT the event page, utm_* tags included: HubSpot keeps the
+// whole string, so "summit?ticket=vip" (or "summit?utm_source=x") matches only the visits made
+// with it, a narrower segment than the page's visitors. The event URL's own query or fragment
+// is dropped, since it only says how the operator reached the page. An empty pageURL matches
+// nothing.
 func selectsPage(urls []string, pageURL string) bool {
 	norm := func(u string) string {
 		u = strings.ToLower(strings.TrimSpace(u))
 		u = strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
 		u = strings.TrimPrefix(u, "www.")
-		if i := strings.IndexAny(u, "?#"); i >= 0 {
-			u = u[:i]
-		}
 		return strings.TrimRight(u, "/")
 	}
-	want := norm(pageURL)
-	if want == "" {
+	want := pageURL
+	if i := strings.IndexAny(want, "?#"); i >= 0 {
+		want = want[:i]
+	}
+	if want = norm(want); want == "" {
 		return false
 	}
 	for _, u := range urls {
-		if norm(u) == want {
+		if !strings.ContainsAny(u, "?#") && norm(u) == want {
 			return true
 		}
 	}
 	return false
+}
+
+// editionYearRE is a four-digit 19xx/20xx year standing alone, as in an edition's name.
+var editionYearRE = regexp.MustCompile(`\b(19|20)\d{2}\b`)
+
+// editionFamily is an edition name without its year, lowercased and with whitespace collapsed:
+// "Synthetic Summit 2026" and "Synthetic  Summit 2025" are one family.
+func editionFamily(name string) string {
+	return strings.ToLower(strings.Join(strings.Fields(editionYearRE.ReplaceAllString(name, " ")), " "))
+}
+
+// sameEventEditions splits the warehouse's past editions into those that are eventName's own
+// family (the same name with another year) and the rest, both verbatim and in order. An event
+// name with no family left (empty) keeps nothing.
+func sameEventEditions(past []string, eventName string) (same, others []string) {
+	family := editionFamily(eventName)
+	for _, p := range past {
+		if family != "" && editionFamily(p) == family {
+			same = append(same, p)
+		} else {
+			others = append(others, p)
+		}
+	}
+	return same, others
 }

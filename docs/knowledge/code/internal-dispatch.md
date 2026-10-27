@@ -4525,7 +4525,9 @@ The suppressions then go through `resolveSuppressions`, shared with `ComposeMast
   list found under the name is reused only when it is a `DYNAMIC` contact list (`reusableStanding`),
   and is grown only when its filter is a pure union of lists (`audience.StandingFilterIsUnion`)
   that the rewrite reproduces; otherwise it is an `audience.StandingListConflictError` naming the
-  list (409). It is
+  list (409). A list read back with no `filterBranch` (missing or null) is never grown: its real
+  filter is unknown, and rewriting it from the resolved ids would drop everything else it
+  suppresses (`audience.HasFilterTree`). It is
   the outcome's `Suppression`. A PARTIAL standard selection is attached list by list instead,
   because the union would exclude a list the operator unticked.
 - **Everything else stays its own entry** in `AttachedSuppressionIDs`: brand, event-specific and
@@ -4538,7 +4540,8 @@ The suppressions then go through `resolveSuppressions`, shared with `ComposeMast
   (`audience.RegistrantsListMatches`: `RegistrationEvidence`'s exclusive case for "nobody else",
   `CoveredEditions` for "all of it", which rejects an AND adding a condition beside the
   registration or an extra filter inside the event branch, and no filter setting
-  `includeObjectsWithNoValueSet`, which would also admit events with no `event_name`); the name match is case-insensitive and anyone can create a
+  `includeObjectsWithNoValueSet`, which would also admit events with no `event_name`; the
+  edition is compared exactly, only its ends trimmed); the name match is case-insensitive and anyone can create a
   list under any name, so anything else is a `StandingListConflictError` naming it (409). The name
   of an edition too long to fit is cut and tagged with a short hash of the full edition, so two
   long editions sharing a prefix never share a list.
@@ -4771,8 +4774,15 @@ the page declares it, as `discover` does. The past editions are the default of t
 AND a location branch: `contact_location`, `event_registered` or `education_enrolled`), and the
 event's default audience, which is not location-scoped and selects the visitors of THIS event's
 page (one of `page_view_urls` is the event URL, compared by `selectsPage` ignoring scheme, `www.`,
-query, fragment, trailing slash and case) with no speaker or ambassador restriction. Visitors of
-any other page are a different segment and get none. Anything else gets none. Otherwise
+trailing slash and case; a page-view URL with a query or fragment, `utm_*` included, is a narrower
+segment and not the event page, while the event URL's own query is dropped) together with
+`education_enrolled`, with no speaker or
+ambassador restriction. Visitors of any other page, or of the event page alone (no education
+branch, a visitors-only request), are a different segment and get none. Anything else gets none. Even then only the warehouse
+editions of THIS event are added (`sameEventEditions`: the name with its year removed equals the
+event's, case and spacing aside), because `ResolvePastEventNames` matches the name as a substring
+and also returns other events sharing it ("Synthetic Summit Workshop 2025"); those are left out
+and named in a note. Otherwise
 a registration branch would AND a role with a past registration (dropping first-time speakers) or
 add registrants beside a topic-only education audience. The service adds the defaults itself and
 the system prompt tells the model to leave `registered_for` empty for them, so they are always

@@ -443,10 +443,15 @@ func (s *AudienceExploreService) ComposeAudienceMaster(ctx context.Context, p *e
 		// The lists exist and are usable; only the attachment failed. That is a partial,
 		// not a 500: a 500 invites the retry that would create a second master, and the
 		// UI branches on the partial type to suppress exactly that affordance.
+		//
+		// No Suppression: the master excludes the project's STANDING standard list, shared by
+		// every audience in the project and reused by any repeat, so there is nothing of it to
+		// reconcile. The field's legacy meaning is an orphaned per-compose list, and a client
+		// built for that tells the operator to delete it -- which here would strip suppressions
+		// from every other audience.
 		return nil, composeErr(ctx, p.ProjectID, &audience.ComposePartialError{
-			Master:      &outcome.Master,
-			Suppression: suppressionOrZero(outcome.Suppression),
-			Err:         rerr,
+			Master: &outcome.Master,
+			Err:    rerr,
 		})
 	}
 	res.Recorded = true
@@ -628,15 +633,6 @@ func composeBriefErr(ctx context.Context, projectID, briefID string, err error) 
 		Code:    "503",
 		Message: "the brief could not be read, so a composed master cannot be attached to it; please retry",
 	}
-}
-
-// suppressionOrZero flattens the optional suppression for ComposePartialError, whose
-// Suppression field is a value rather than a pointer.
-func suppressionOrZero(s *audience.ComposedList) audience.ComposedList {
-	if s == nil {
-		return audience.ComposedList{}
-	}
-	return *s
 }
 
 // recordComposedAudience writes the composed master as the brief's built audience.
@@ -909,10 +905,10 @@ func composeErr(ctx context.Context, projectID string, err error) error {
 //
 // Compose creates no suppression list of its own any more: it excludes the project's standing
 // lists, which are found by name and reused on any repeat, so the shapes a current deployment
-// produces are the record-failed one (Master, with Suppression set to the standing standard list
-// when the full standard set was selected) and an unconfirmed master (MasterName alone). The
-// shapes WITHOUT Master that carry a suppression are legacy: they stay in the contract and keep a
-// message, without the "combined" list they used to name.
+// produces are the record-failed one (Master alone: the shared standing list is deliberately not
+// reported, see ComposeAudienceMaster) and an unconfirmed master (MasterName alone). The shapes
+// that carry a suppression are legacy: they stay in the contract and keep a message, without the
+// "combined" list they used to name.
 //
 // A repeat compose is NOT a safe remedy for a confirmed master: a master created under its
 // derived name is not found again by a repeat, which takes the fingerprinted name and creates a

@@ -113,7 +113,9 @@ func TestRegistrantsListMatches(t *testing.T) {
 	own, err := CurrentRegistrantsFilter("KubeCon NA 2026")
 	require.NoError(t, err)
 	assert.True(t, RegistrantsListMatches(own, "KubeCon NA 2026"))
-	assert.True(t, RegistrantsListMatches(own, " kubecon  na 2026"), "case and spacing are not a different edition")
+	assert.True(t, RegistrantsListMatches(own, " KubeCon NA 2026 "), "only the ends are trimmed, as the filter's value is")
+	assert.False(t, RegistrantsListMatches(own, "KubeCon  NA 2026"), "an internal double space is a different exact event_name")
+	assert.False(t, RegistrantsListMatches(own, "kubecon na 2026"), "a different case is not proven to be the same event_name")
 	assert.False(t, RegistrantsListMatches(own, "KubeCon NA 2025"))
 
 	wider, err := MasterListFilter([]string{"123"})
@@ -145,7 +147,10 @@ func TestStandingFilterIsUnion(t *testing.T) {
 	union, err := MasterListFilter([]string{"1", "2"})
 	require.NoError(t, err)
 	assert.True(t, StandingFilterIsUnion(union))
-	assert.True(t, StandingFilterIsUnion(nil))
+	assert.False(t, StandingFilterIsUnion(nil), "a missing filter is unknown, not a union of nothing")
+	assert.False(t, StandingFilterIsUnion(json.RawMessage(`null`)), "nor is a null one")
+	assert.True(t, StandingFilterIsUnion(json.RawMessage(`{"filterBranchType":"OR","filterBranches":[],"filters":[]}`)),
+		"an explicit empty tree is a union of nothing")
 
 	narrowed, err := MasterListWithSuppressionFilter([]string{"1"}, "2")
 	require.NoError(t, err)

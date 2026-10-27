@@ -337,6 +337,12 @@ func (x *AudienceExplorer) growStandardList(ctx context.Context, client *hubspot
 		if rerr := reusableStanding(current, what); rerr != nil {
 			return nil, rerr
 		}
+		// A missing or null filterBranch says nothing about what the list holds. Reading it as
+		// "covers nothing" would rewrite the shared list from the resolved ids alone and drop
+		// every other suppression it carries, so nothing is written.
+		if !audience.HasFilterTree(current.FilterBranch) {
+			return nil, fmt.Errorf("standard suppression list %s was read back without its filter, so it cannot be grown safely; nothing was changed, retry", current.ListID)
+		}
 		covered := audience.CoveredListIDs(current.FilterBranch)
 		want = audience.UniqueIDs(append(append([]string(nil), covered...), want...))
 		if len(want) == len(covered) {
