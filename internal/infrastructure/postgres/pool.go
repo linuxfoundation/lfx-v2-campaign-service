@@ -446,7 +446,7 @@ var requiredIndexes = []requiredIndex{{
 	predicate: "(status = 'building'::text)",
 }, {
 	// at most one live campaign per (brief, platform, variant, slot_version) — 000037. The
-	// arbiter of ClaimCampaignDispatch, UpsertCampaign and AdoptCampaign, and since 000050
+	// arbiter of ClaimCampaignDispatch, UpsertCampaign and AdoptCampaign, and since 000051
 	// dropped 000022's three-column uq_campaigns_brief_platform_variant_live, the ONLY index
 	// standing between two concurrent claims of one slot version and two paid campaigns.
 	// Membership here is what re-checks it at every boot. A migration-time guard (000014's,
@@ -907,7 +907,7 @@ func indexRecovery(name string) string {
 	if v, ok := migrationIndexOwners()[name]; ok {
 		// An index a LATER migration drops is no recovery target either: forcing back to its
 		// creator replays every migration up to the one that removes it again (000022's slot
-		// index, dropped by 000050 — an invalid copy is what a failed 000050 down leaves), and
+		// index, dropped by 000051 — an invalid copy is what a failed 000051 down leaves), and
 		// the distance makes the replay unsafe as described above.
 		if d := migrationIndexDrops()[name]; d > v {
 			return fmt.Sprintf("migration %06d drops this; drop it, leave the schema version alone", d)

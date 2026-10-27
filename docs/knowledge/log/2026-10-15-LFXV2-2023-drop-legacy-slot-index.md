@@ -1,7 +1,7 @@
 # 2026-10-15 — Slot versions, contract step: drop the legacy slot index
 
 **Update** — Step 3 of the LFXV2-2023 rollout, stacked on #260 and to be merged only one release
-after #260 is deployed. Migration `000050` drops `000022`'s three-column
+after #260 is deployed. Migration `000051` drops `000022`'s three-column
 `uq_campaigns_brief_platform_variant_live` with `DROP INDEX CONCURRENTLY IF EXISTS` (alone in its
 file); its down re-creates the index with `000022`'s name, keys and predicate (no `IF NOT EXISTS`,
 for `000024`'s down reason) and fails, correctly, once a slot holds two live campaigns. The
@@ -27,8 +27,8 @@ api-catalog no longer mention the expand-phase refusal. Google stays outside
 `model.ProviderSupportsSlotVersions`.
 
 **Review fix.** Without its `requiredIndexes` entry, an INVALID copy of the legacy index (what a
-failed `000050` down leaves) fell through to `migrationIndexOwners` and was advised "force 21",
-replaying 000022–000050. New `migrationIndexDrops` makes `indexRecovery` answer "migration 000050
+failed `000051` down leaves) fell through to `migrationIndexOwners` and was advised "force 21",
+replaying 000022–000051. New `migrationIndexDrops` makes `indexRecovery` answer "migration 000051
 drops this; drop it, leave the schema version alone" for any index dropped after its last create
 (`TestIndexRecovery_ADroppedIndexIsNotForcedBack`). See
 [internal/infrastructure/postgres](../code/internal-infrastructure-postgres.md),

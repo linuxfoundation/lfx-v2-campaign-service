@@ -2796,6 +2796,16 @@ type CampaignInput struct {
 	DSAPayor       string
 	HSToken        string
 	Variants       []AdVariant
+	// BidCap is the manual starting bid (LFXV2-2665), in whole units of the ad ACCOUNT's currency
+	// like Budget. ZERO means AUTOMATIC bidding: the ad set is created exactly as before, with
+	// bid_strategy LOWEST_COST_WITHOUT_CAP and billing_event IMPRESSIONS. A positive value creates
+	// the ad set as a LINK-CLICK BID CAP — bid_strategy LOWEST_COST_WITH_BID_CAP, billing_event
+	// LINK_CLICKS, bid_amount in minor units — the one shape the bid lever reads as a max cost per
+	// click (AdSetBid.CPCBidCap; see bid_update.go for the cited reasoning). Only an objective that
+	// optimizes for LINK_CLICKS can take it (ManualBidSupported); the amount must be a whole number
+	// of the currency's minor units, refused rather than rounded. Both are checked before the first
+	// mutating call.
+	BidCap float64
 	// ReconcileByName opts THIS call in to looking the campaign (and its ad set) up by
 	// name before creating, and reusing a PAUSED match instead of creating a second one.
 	//
@@ -2842,6 +2852,11 @@ type CampaignResult struct {
 	AdCount   int
 	MetaURL   string
 	Steps     []string
+	// BidApplied reports that THIS run created the ad set, which carries the bid strategy,
+	// billing event and bid cap (LFXV2-2665). A reused ad set keeps its existing bidding, so the
+	// dispatcher records the strategy and starting bid only when this is true. Set only on the
+	// successful result.
+	BidApplied bool
 	// Ads carries one entry per SUCCESSFULLY-created ad (so len(Ads) == AdCount), in
 	// variant order, each with its ad/creative ids and the image_hash attached to its
 	// creative. A per-variant failure contributes a Steps line, not an Ads entry.
@@ -3279,6 +3294,29 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, err
 	}
+	// The manual bid cap, encoded against the same offset and refused — never rounded — when it is
+	// not a whole number of minor units. Still before any mutating call.
+	var bidCapMinor int64
+	if in.BidCap != 0 {
+		if objParams.OptimizationGoal != OptimizationLinkClicks {
+			return nil, &bidAmountError{msg: fmt.Sprintf("manual bidding needs an objective that optimizes for link clicks (traffic or leads); %q optimizes for %s", objective, objParams.OptimizationGoal)}
+		}
+		if bidCapMinor, err = CreateBidMinorUnits(in.BidCap, offset); err != nil {
+			return nil, err
+		}
+		// A daily budget under BidCapDailyBudgetMultiple x the bid is refused by Meta at the
+		// ad-set POST, after the campaign exists — so refuse it here, in exact minor units. The
+		// product is checked BEFORE it is formed (PR #332 review): with a large fallback offset a
+		// legal bid could encode near int64's limit, and an overflowing 5x would wrap negative and
+		// pass every budget. CreateBidMinorUnits' exact bound (MaxExactMinorUnits) now keeps every
+		// encoded bid far below that; this stays as the backstop if that bound ever changes.
+		if !in.LifetimeBudget && bidCapMinor > math.MaxInt64/BidCapDailyBudgetMultiple {
+			return nil, &bidAmountError{msg: fmt.Sprintf("the bid is too large: the daily budget Meta requires for it (%d times the bid) cannot be represented at the ad account currency's minor-unit scale", BidCapDailyBudgetMultiple)}
+		}
+		if !in.LifetimeBudget && budgetMinor < BidCapDailyBudgetMultiple*bidCapMinor {
+			return nil, &bidAmountError{msg: fmt.Sprintf("a link-click bid cap needs a daily budget of at least %d times the bid (Meta's minimum)", BidCapDailyBudgetMultiple)}
+		}
+	}
 
 	// Step 2: geo filtering (done above, before Step 1) + campaign creation.
 	// Both lists render through callerValueList, as the geo refusals do: droppedGeos is
@@ -3524,6 +3562,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	} else {
 		adSetBody["daily_budget"] = budgetMinor
 	}
+	// MANUAL bidding: a bid cap charged per link click, the shape the bid lever accepts. The
+	// optimization goal is already LINK_CLICKS (checked above), so all three fields name the same
+	// click and bid_amount is a max cost per link click in minor units. Meta: "If you select this
+	// [LOWEST_COST_WITH_BID_CAP], you must provide a bid cap with the bid_amount field", and a
+	// non-impression billing event's bid is "for each occurrence, and has a minimum value 1 US
+	// cents" (Ad Set reference, https://developers.facebook.com/docs/marketing-api/reference/ad-campaign).
+	if bidCapMinor > 0 {
+		adSetBody["bid_strategy"] = BidStrategyBidCap
+		adSetBody["billing_event"] = BillingEventLinkClicks
+		adSetBody["bid_amount"] = bidCapMinor
+	}
 
 	// Reconcile the ad set by name too, same rationale as the campaign lookup above:
 	// adSetName is deterministic ("<EventName> - <objective label>", disambiguated by
@@ -3582,10 +3631,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return partialResult(), fmt.Errorf("meta ad set lookup UNCONFIRMED (reused campaign %s, PAUSED; cannot confirm ad set %q is absent; verify in Meta Ads Manager before retrying): %w", campaignID, adSetName, errors.Join(errLookupAmbiguous, adSetLookupErr))
 		}
 	}
+	adSetCreated := false
 	if existingAdSetID != "" {
 		adSetID = existingAdSetID
 		steps = append(steps, fmt.Sprintf("Ad set already exists by name: %s (not re-created)", adSetID))
+		steps = append(steps, fmt.Sprintf("Warning: bid NOT applied to reused ad set %s; its existing bidding is unchanged — verify its bid strategy in Meta Ads Manager", adSetID))
 	} else {
+		adSetCreated = true
 		var adSetResp createResponse
 		if err := c.doCreate(ctx, "/"+accountID+"/adsets", adSetBody, &adSetResp); err != nil {
 			// The campaign was already created (PAUSED). Return a partial result carrying
@@ -3729,7 +3781,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Success: partialResult() now carries the fully-created campaign, ad set, and
 	// ad count (same fields as a bespoke literal); reuse it so success and partial
 	// failure return an identically-shaped result.
-	return partialResult(), nil
+	r := partialResult()
+	r.BidApplied = adSetCreated
+	return r, nil
 }
 
 // objectStorySpec builds a creative's object_story_spec for a single-image (or,

@@ -135,7 +135,7 @@ threaded as `StartOptions.NewVersion` (`Start` is `StartWithOptions` with the ze
 is complete, and `1` on an empty slot. An UNFINISHED latest campaign is never built on — the
 claim targets its own slot version and gets the skip / reconciliation-required answer a retry
 gets, because a second campaign beside an unresolved one would spend twice. The slot version
-reaches the dispatcher on the context (`model.WithDispatchSlotVersion`). Since `000050` dropped
+reaches the dispatcher on the context (`model.WithDispatchSlotVersion`). Since `000051` dropped
 `000022`'s three-column index (one release after the per-slot adopt/claim lock shipped, so an
 image-only rollback never returns to a lock-free binary on a schema without it — see the postgres
 concept), the claim for `latest+1` simply succeeds and the second campaign is created beside the
@@ -2418,6 +2418,17 @@ LinkedIn not contacted). No `AudienceEnabled` gate — LinkedIn has no metrics f
 (the scope 409s, account mismatch and connection-state arms already exist). `approximate` is always
 `true` on the wire. Tests: `linkedin_audience_test.go`. See
 [LinkedIn Audience Insights](../architecture/linkedin-audience-insights.md).
+
+## Create-time bidding at the service (LFXV2-2665)
+
+`CreateCampaigns` runs `refuseUnsupportedBidding` (`create_bidding.go`) before the preflight: a
+`bidding` object under the config of a selected platform that does not implement it —
+`googleAdsConfig` only — is a 400 naming `googleAdsConfig.biddingStrategy`, rather than being
+silently dropped by the Google decoder (no Google code changed). The lane platforms' own
+`bidding` refusals arrive through `Orchestrator.PreflightCreate` as `ErrCreateConfigInvalid` (400).
+`campaignResult` returns the row's `bidding_strategy` and `max_cpc_bid` (absent when not
+recorded). `UpdateCampaignBid` is unchanged: it still decides on what the platform reports, so a
+campaign created manual passes its adapter's guard and one created automatic is refused 409.
 
 ## Omitting a stored config field is refused (issue #300)
 

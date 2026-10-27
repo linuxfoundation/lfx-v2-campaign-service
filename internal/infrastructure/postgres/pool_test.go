@@ -233,7 +233,7 @@ func TestMigrationIndexOwners_FindsEveryCreatedIndex(t *testing.T) {
 // TestRequiredIndexes_CoversTheDispatchUniqueIndex pins the membership, not the message.
 //
 // uq_campaigns_brief_platform_variant_slot_version_live is the sole arbiter of
-// (brief_id, platform, variant, slot_version) uniqueness since 000050 dropped 000022's
+// (brief_id, platform, variant, slot_version) uniqueness since 000051 dropped 000022's
 // three-column index (and 000014 / 000024 the constraint and index before that), and a
 // migration-time guard checks an index exactly once — while that migration runs. An index lost any time afterwards left a schema that booted
 // clean with concurrent claims free to double-create paid campaigns. Membership in
@@ -252,13 +252,13 @@ func TestRequiredIndexes_CoversTheDispatchUniqueIndex(t *testing.T) {
 		}
 	}
 	require.NotNilf(t, got, "%s is not in requiredIndexes: nothing re-checks the only "+
-		"index enforcing dispatch uniqueness after 000050 drops the three-column one", dispatchUnique)
-	// And the index 000050 drops must be GONE from the list: requiredIndexes fails boot when a
+		"index enforcing dispatch uniqueness after 000051 drops the three-column one", dispatchUnique)
+	// And the index 000051 drops must be GONE from the list: requiredIndexes fails boot when a
 	// member is missing, so leaving it here would turn the contract migration into a
 	// service that cannot start.
 	for _, ri := range requiredIndexes {
 		assert.NotEqualf(t, "uq_campaigns_brief_platform_variant_live", ri.name,
-			"000050 drops %s, so requiring it would fail every boot after that migration", ri.name)
+			"000051 drops %s, so requiring it would fail every boot after that migration", ri.name)
 	}
 
 	assert.Equal(t, "campaigns", got.table)
@@ -371,15 +371,15 @@ func TestRequiredIndexes_AreAllCreatedByAMigration(t *testing.T) {
 }
 
 // TestIndexRecovery_ADroppedIndexIsNotForcedBack pins the remedy for an INVALID copy of an index
-// a later migration drops. 000022 creates uq_campaigns_brief_platform_variant_live and 000050
-// drops it, so the copy a failed 000050 down leaves behind must be dropped with the version left
-// alone — never "force 21", which would replay 000022..000050 only to drop the index again.
+// a later migration drops. 000022 creates uq_campaigns_brief_platform_variant_live and 000051
+// drops it, so the copy a failed 000051 down leaves behind must be dropped with the version left
+// alone — never "force 21", which would replay 000022..000051 only to drop the index again.
 func TestIndexRecovery_ADroppedIndexIsNotForcedBack(t *testing.T) {
 	const legacy = "uq_campaigns_brief_platform_variant_live"
 	require.Equal(t, 22, migrationIndexOwners()[legacy])
-	require.Equal(t, 50, migrationIndexDrops()[legacy])
+	require.Equal(t, 51, migrationIndexDrops()[legacy])
 	got := indexRecovery(legacy)
-	assert.Equal(t, "migration 000050 drops this; drop it, leave the schema version alone", got)
+	assert.Equal(t, "migration 000051 drops this; drop it, leave the schema version alone", got)
 	assert.NotContains(t, got, "force ")
 	// 000024 drops 000013's two-column index the same way.
 	assert.Contains(t, indexRecovery("uq_campaigns_brief_platform_live"), "migration 000024 drops this")
@@ -443,7 +443,7 @@ func TestExecutableSQL(t *testing.T) {
 
 // TestRequiredIndexes_CoversTheSlotVersionUniqueIndex pins 000037's index into the boot check.
 // Since this release, claim, upsert and adopt all name it as their ON CONFLICT arbiter, so its
-// absence would fail every dispatch at runtime; and since 000050 dropped the three-column index
+// absence would fail every dispatch at runtime; and since 000051 dropped the three-column index
 // it is the only thing keeping a retry from creating a duplicate paid campaign.
 func TestRequiredIndexes_CoversTheSlotVersionUniqueIndex(t *testing.T) {
 	const slotUnique = "uq_campaigns_brief_platform_variant_slot_version_live"

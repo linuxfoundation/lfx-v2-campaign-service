@@ -180,7 +180,7 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   and every upsert/replace bumps it. Claim, upsert and adopt all name the four-column
   `uq_campaigns_brief_platform_variant_slot_version_live` as their `ON CONFLICT` arbiter;
   `GetCampaignByPlatform` returns the slot's LATEST live row (`ORDER BY slot_version DESC
-  LIMIT 1`), and the claim reads back its own slot version. Since `000050` dropped `000022`'s
+  LIMIT 1`), and the claim reads back its own slot version. Since `000051` dropped `000022`'s
   three-column `uq_campaigns_brief_platform_variant_live` (the contract step, LFXV2-2023), the
   four-column index is the ONLY unique index on the slot: a claim for the next slot version
   simply inserts beside the earlier ones, and a retry of an existing slot version conflicts on
@@ -195,11 +195,11 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   (scratch database: after `Migrate` the legacy index is absent and a re-run boots; drop the
   slot-version index and `Migrate` is `ErrMissingRequiredIndex` naming only it, with its rebuild
   statement).
-  Rolling the image back past `000050` still boots, provided the image rolled back to embeds
-  migrations through `000049` — the release immediately before this one, which already carries
+  Rolling the image back past `000051` still boots, provided the image rolled back to embeds
+  migrations through `000050` — the release immediately before this one, which already carries
   #260's lock and the newer-schema tolerance below. An older image (#260's own release embeds
-  only through `000046`) is two or more versions behind schema `50` and refuses to boot, so it is
-  not a valid rollback target. The image before this release records no version above `000049`, and `golang-migrate` v4.19.1's `Up()` refuses a recorded version its source does
+  only through `000046`) is two or more versions behind schema `51` and refuses to boot, so it is
+  not a valid rollback target. The image before this release records no version above `000050`, and `golang-migrate` v4.19.1's `Up()` refuses a recorded version its source does
   not contain ("no migration found for version N") before any index check runs. So `Migrate` first
   reads the recorded version (`schemaIsNewerThanImage`, from #260): when it is CLEAN and exactly
   one above the highest embedded version (read from the migration source, exported as `LatestMigrationVersion`,
@@ -255,7 +255,7 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   (other live versions are expected — a `new_version` claim of slot N is made only while slot
   N-1 is live and complete); otherwise pass only when the slot has NO live row at any version
   (the INSERT arm into an empty slot); anything else is `ErrDispatchClaimLost`. It restates
-  000022's one-live-row-per-slot rule for the INSERT arm, and since `000050` it is the ONLY thing
+  000022's one-live-row-per-slot rule for the INSERT arm, and since `000051` it is the ONLY thing
   enforcing it: without it the advisory lock would only ORDER a stale slot-2 INSERT after an
   adopted slot 1, not refuse it. Pinned by `TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim`
   and `TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex`, which also checks a
@@ -272,19 +272,19 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   The comments inside migrations `000036` and `000037` still say the old index is dropped "a
   release later" and describe the expand-phase `ErrSlotVersionUnavailable` refusal. Both are
   superseded by the staging below; the files are applied (shipped in v1.0.17) and the migrations
-  README forbids editing an applied migration, so they are left as written and `000050`'s header
+  README forbids editing an applied migration, so they are left as written and `000051`'s header
   and this concept are the authority.
 
   Staging (expand → lock → contract, each one release apart): `000036`/`000037` (#247) added the
   four-column index beside the old one; the per-slot lock and the upsert's ownership check (#260)
-  shipped next, with the legacy index made `optional` at boot; `000050` drops it **one release
+  shipped next, with the legacy index made `optional` at boot; `000051` drops it **one release
   after that lock is deployed** and must not merge before then. That ordering is what makes an
   image-only rollback safe: reverting the image does not revert the schema (see the deployment
   concept), and the binary before the lock release takes no slot lock — had the drop shipped
   alongside the lock, a rollback would have left that lock-free binary's adopt preflight free to
   race a slot-2 claim and bind slot 1 beside it. With the drop a release later, every binary that
   can run against the contracted schema, including the one a rollback returns to, already takes
-  the lock and boots without the index. `000050`'s down re-creates the index with `000022`'s name,
+  the lock and boots without the index. `000051`'s down re-creates the index with `000022`'s name,
   keys and predicate (no `IF NOT EXISTS`, for `000024`'s down reason) and FAILS, correctly, once a
   slot holds two live campaigns — which campaign stays live is a data decision. Residual, by
   design: an adopt that commits FIRST on a slot whose only campaign was just deleted, followed by
@@ -302,7 +302,17 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   max CPC bid most recently set through `update-campaign-bid` — a confirmed REQUEST, like
   `budget_amount`, never an observation. It is in `campaignCols`/`scanCampaign` (cast
   `::float8`) and in `replaceCampaignQuery`'s SET list (every other caller writes back the value
-  it loaded); the dispatch upsert never writes it, so a re-dispatch cannot erase the record.
+  it loaded). Since LFXV2-2665 the dispatch upsert writes the create's starting manual bid, but
+  FILLS ONLY WHILE EMPTY (`COALESCE(campaigns.max_cpc_bid, EXCLUDED.max_cpc_bid)`), so a bid the
+  lever set is never overwritten and a NULL never erases one.
+
+  `bidding_strategy` (added by `000050`, `TEXT`, nullable, `CHECK IN ('automatic','manual')`)
+  records the create path's bidding choice (LFXV2-2665); NULL means not recorded (legacy or
+  adopted). Same treatment: in `campaignCols`/`scanCampaign`, round-tripped by
+  `replaceCampaignQuery`, and filled-only-while-empty by the upsert. Pinned by
+  `TestUpsertCampaignFillsBiddingOnlyWhileEmpty` and live by
+  `TestLiveCampaignBiddingStrategyRoundTrips`. It was first numbered `000047`; main claimed
+  `000047`–`000049` while the PR was open, so it moved to `000050`, above them all.
 
   **Authoring rule — expand/contract, one release apart.** The general form of the
   constraint `000013`/`000014` had to break: *a migration that removes or narrows something
@@ -590,10 +600,10 @@ it does not list, both today's and the ones added after this code was written.
 An index a LATER migration drops is not a recovery target either. `migrationIndexDrops` reads
 the same files for `DROP INDEX` statements, and when a name's highest drop is above its highest
 create (`uq_campaigns_brief_platform_live`: 000013 → 000024; `uq_campaigns_brief_platform_variant_live`:
-000022 → 000050) `indexRecovery` answers "migration N drops this; drop it, leave the schema
+000022 → 000051) `indexRecovery` answers "migration N drops this; drop it, leave the schema
 version alone" instead of forcing back to the creator — which would replay every migration up to
-the one that removes the index again. The case that reaches it: a `000050` down that fails on two
-live slot versions leaves an INVALID copy, and an operator who abandons the rollback and forces 50
+the one that removes the index again. The case that reaches it: a `000051` down that fails on two
+live slot versions leaves an INVALID copy, and an operator who abandons the rollback and forces 51
 then boots into the invalid-index scan. Pinned by `TestIndexRecovery_ADroppedIndexIsNotForcedBack`.
 
 **Narrow is not the same as short, and the first draft of the list confused the two.** It
