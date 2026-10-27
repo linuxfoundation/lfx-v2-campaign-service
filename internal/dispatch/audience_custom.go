@@ -572,10 +572,12 @@ func (x *AudienceExplorer) customEventContext(ctx context.Context, eventURL stri
 	}
 	return &audience.CustomEventContext{
 		PastEditions: past,
-		// The page itself, without the query or fragment the operator reached it by
-		// (utm_* tags): the model copies this URL into page_view_urls, where HubSpot keeps
-		// the whole string and a tracking query would narrow the visitors to that link.
-		URL: pageOnly(eventURL),
+		// The page without the TRACKING parameters and fragment the operator reached it by
+		// (utm_*, click ids): the model copies this URL into page_view_urls, where HubSpot keeps
+		// the whole string and a tracking query would narrow the visitors to that link. Any
+		// other query stays: "/event?id=123" names the page, and "/event" would match every
+		// event on that route.
+		URL: withoutTracking(eventURL),
 		// The edition's own name carries its year ("Synthetic Summit 2026"), as its
 		// registrations are stored: a yearless page title would be copied into an
 		// exact registered_for filter and match none of them.
@@ -624,23 +626,37 @@ func knownEditions(requested, known []string) (kept, unknown []string) {
 // far above the contract's, so the most recent are kept: ordered newest year
 // first (an edition with no year in its name sorts last), the input order
 // breaking ties. It returns the kept names, verbatim, and how many were left out.
+//
+// The warehouse returns DISTINCT (EVENT_NAME, EVENT_ID) pairs, so one name can arrive several
+// times; repeats are dropped first (exact match, first spelling kept), or they would use up cap
+// slots and push real editions out.
 func capPastEditions(past []string) ([]string, int) {
-	kept := append([]string(nil), past...)
-	if len(kept) <= audience.CustomMaxRegisteredFor {
+	seen := make(map[string]bool, len(past))
+	var kept []string // nil for no editions, as before: an empty registered_for stays absent
+	for _, p := range past {
+		if !seen[p] {
+			seen[p] = true
+			kept = append(kept, p)
+		}
+	}
+	unique := len(kept)
+	if unique <= audience.CustomMaxRegisteredFor {
 		return kept, 0
 	}
 	slices.SortStableFunc(kept, func(a, b string) int { return strings.Compare(yearIn(b), yearIn(a)) })
-	return kept[:audience.CustomMaxRegisteredFor], len(past) - audience.CustomMaxRegisteredFor
+	return kept[:audience.CustomMaxRegisteredFor], unique - audience.CustomMaxRegisteredFor
 }
 
 // selectsPage reports whether urls includes the event page pageURL itself. Scheme, a leading
-// "www.", a trailing slash and case are ignored: page_view_urls is a CONTAINS match with the
-// scheme optional, and the model may copy the event URL with or without them. A page-view URL
-// carrying a query or a fragment is NOT the event page, utm_* tags included: HubSpot keeps the
-// whole string, so "summit?ticket=vip" (or "summit?utm_source=x") matches only the visits made
-// with it, a narrower segment than the page's visitors. The event URL's own query or fragment
-// is dropped, since it only says how the operator reached the page. An empty pageURL matches
-// nothing.
+// "www.", a trailing slash and the path's case are ignored: page_view_urls is a CONTAINS match
+// with the scheme optional, and the model may copy the event URL with or without them.
+//
+// The query is the page's identity when it is not tracking: pageURL keeps every non-tracking
+// parameter (withoutTracking), and a page-view URL is the event page only when its query is
+// exactly that remainder. So "/event?id=123" selects the page "/event?id=123"; "?id=456", a bare
+// "/event" (every event on the route), or any added parameter such as "?ticket=vip" or
+// "?utm_source=x" (only the visits made with it) does not. A page-view URL with a fragment is
+// never the page. An empty pageURL matches nothing.
 func selectsPage(urls []string, pageURL string) bool {
 	norm := func(u string) string {
 		u = strings.ToLower(strings.TrimSpace(u))
@@ -648,12 +664,22 @@ func selectsPage(urls []string, pageURL string) bool {
 		u = strings.TrimPrefix(u, "www.")
 		return strings.TrimRight(u, "/")
 	}
-	want := norm(pageOnly(pageURL))
-	if want == "" {
+	split := func(u string) (page, query string) {
+		u = strings.TrimSpace(u)
+		if i := strings.IndexByte(u, '?'); i >= 0 {
+			return norm(u[:i]), u[i+1:]
+		}
+		return norm(u), ""
+	}
+	wantPage, wantQuery := split(withoutTracking(pageURL))
+	if wantPage == "" {
 		return false
 	}
 	for _, u := range urls {
-		if !strings.ContainsAny(u, "?#") && norm(u) == want {
+		if strings.ContainsRune(u, '#') {
+			continue
+		}
+		if page, query := split(u); page == wantPage && query == wantQuery {
 			return true
 		}
 	}
@@ -698,10 +724,41 @@ func sameEventEditions(past []string, eventName string) (same, others []string) 
 	return same, others
 }
 
-// pageOnly is u without its query or fragment.
-func pageOnly(u string) string {
-	if i := strings.IndexAny(u, "?#"); i >= 0 {
+// trackingParams are query parameters that say how a visitor ARRIVED, never which page it is:
+// campaign tags and ad or email click ids. utm_* and hsa_* are matched as prefixes.
+var trackingParams = map[string]bool{
+	"gclid": true, "fbclid": true, "msclkid": true, "mc_cid": true, "mc_eid": true, "_hsenc": true, "_hsmi": true,
+}
+
+// isTrackingParam reports whether a query parameter name is a tracking parameter.
+func isTrackingParam(name string) bool {
+	name = strings.ToLower(name)
+	return trackingParams[name] || strings.HasPrefix(name, "utm_") || strings.HasPrefix(name, "hsa_")
+}
+
+// withoutTracking is u without its fragment and without its tracking query parameters, every
+// other parameter kept in order and byte for byte (no re-encoding). "?utm_source=x&id=123"
+// becomes "?id=123"; a query left empty is dropped with its "?".
+func withoutTracking(u string) string {
+	if i := strings.IndexByte(u, '#'); i >= 0 {
+		u = u[:i]
+	}
+	i := strings.IndexByte(u, '?')
+	if i < 0 {
+		return u
+	}
+	kept := make([]string, 0, 4)
+	for _, param := range strings.Split(u[i+1:], "&") {
+		if param == "" {
+			continue
+		}
+		name, _, _ := strings.Cut(param, "=")
+		if !isTrackingParam(name) {
+			kept = append(kept, param)
+		}
+	}
+	if len(kept) == 0 {
 		return u[:i]
 	}
-	return u
+	return u[:i] + "?" + strings.Join(kept, "&")
 }

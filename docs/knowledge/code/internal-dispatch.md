@@ -4776,8 +4776,13 @@ the page declares it, as `discover` does. The past editions are the default of t
 AND a location branch: `contact_location`, `event_registered` or `education_enrolled`), and the
 event's default audience, which is not location-scoped and selects the visitors of THIS event's
 page (one of `page_view_urls` is the event URL, compared by `selectsPage` ignoring scheme, `www.`,
-trailing slash and case; a page-view URL with a query or fragment, `utm_*` included, is a narrower
-segment and not the event page, while the event URL's own query and fragment are dropped, both here and in the EVENT block's `url` the model copies from, so a tracking link still yields the plain page) together with
+trailing slash and the path's case. The event URL loses only its fragment and its TRACKING
+parameters (`withoutTracking`: `utm_*`, `hsa_*`, `gclid`, `fbclid`, `msclkid`, `mc_cid`, `mc_eid`,
+`_hsenc`, `_hsmi`), both here and in the EVENT block's `url` the model copies from, so a tracking
+link still yields the plain page while "/event?id=123" keeps the query that names it. A page-view
+URL is the event page only when its query is exactly that remainder: another id, a bare route
+(every event on it), any added parameter including a tracking tag (a narrower segment), or a
+fragment is not) together with
 `education_enrolled`, with no speaker or
 ambassador restriction, AND only when interpretation explicitly set `include_past_editions: true`
 (`CustomDraft.IncludePastEditions`): the two signals alone also match "this page's visitors plus
@@ -4792,7 +4797,8 @@ and named in a note. Otherwise
 a registration branch would AND a role with a past registration (dropping first-time speakers) or
 add registrants beside a topic-only education audience. The service adds the defaults itself and
 the system prompt tells the model to leave `registered_for` empty for them, so they are always
-capped newest first; the model copies editions from the EVENT block only when specific ones are
+capped newest first (after dropping exact repeats: the warehouse returns distinct name and event-id
+pairs, so a name can repeat and would otherwise use up cap slots); the model copies editions from the EVENT block only when specific ones are
 asked for, and `knownEditions` checks them.
 
 Interpretation keeps every draft inside the contract preview enforces: an event audience's

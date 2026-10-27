@@ -1620,6 +1620,15 @@ func TestSelectsPage(t *testing.T) {
 	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit?ticket=vip"}, event))
 	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit?utm_source=x"}, event))
 	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit#agenda"}, event))
+
+	// A non-tracking query is the page's identity: it must match exactly.
+	const byID = "https://events.example.org/event?id=123"
+	assert.True(t, selectsPage([]string{"events.example.org/event?id=123"}, byID))
+	assert.True(t, selectsPage([]string{"events.example.org/event?id=123"}, "https://events.example.org/event?utm_source=x&id=123"),
+		"tracking parameters on the event URL are not part of the page")
+	assert.False(t, selectsPage([]string{"events.example.org/event?id=456"}, byID), "another event on the same route")
+	assert.False(t, selectsPage([]string{"events.example.org/event"}, byID), "the bare route is every event on it")
+	assert.False(t, selectsPage([]string{"events.example.org/event?id=123&ticket=vip"}, byID), "an added parameter narrows it")
 	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit/cfp"}, event))
 	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit"}, ""))
 	assert.False(t, selectsPage(nil, event))
@@ -1709,4 +1718,58 @@ func TestInterpretCustom_DoubleSpacedWarehouseEditionIsKeptVerbatim(t *testing.T
 	raw, err := audience.CustomListFilter(criteria)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"Synthetic  Summit 2024"`, "and reaches the filter verbatim")
+}
+
+func TestWithoutTracking(t *testing.T) {
+	assert.Equal(t, "https://e.org/event?id=123", withoutTracking("https://e.org/event?utm_source=x&id=123"))
+	assert.Equal(t, "https://e.org/event?id=123&lang=en", withoutTracking("https://e.org/event?id=123&gclid=g&lang=en&hsa_acc=1#agenda"))
+	assert.Equal(t, "https://e.org/summit", withoutTracking("https://e.org/summit?utm_source=x&UTM_MEDIUM=y&fbclid=f&msclkid=m&mc_cid=c&mc_eid=e&_hsenc=h&_hsmi=i"))
+	assert.Equal(t, "https://e.org/summit", withoutTracking("https://e.org/summit#agenda"))
+	assert.Equal(t, "https://e.org/event?id=a%20b", withoutTracking("https://e.org/event?id=a%20b"), "kept byte for byte, never re-encoded")
+}
+
+// An event URL whose query names the page keeps it in the EVENT block, so the model copies the
+// page itself, and that page is the event's default audience.
+func TestInterpretCustom_AnIdentifyingEventQueryIsKept(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["https://events.example.org/event?id=123"],"registered_for":[],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/event?utm_source=x&id=123", nil)
+	require.NoError(t, err)
+	require.Len(t, llm.prompts, 2)
+	assert.Contains(t, llm.prompts[1], "url: https://events.example.org/event?id=123\n", "the identifying query stays, the tracking one goes")
+	assert.Equal(t, []string{"Synthetic Summit 2025"}, out.Draft.Criteria.RegisteredFor)
+}
+
+// The warehouse returns distinct (name, id) pairs, so one name can repeat. Repeats must not use
+// up cap slots: the cap keeps the most recent DISTINCT editions and counts only distinct ones out.
+func TestCapPastEditions_DropsRepeatedNamesBeforeTheCap(t *testing.T) {
+	past := make([]string, 0, 60)
+	for year := 2025; year > 2025-audience.CustomMaxRegisteredFor-1; year-- {
+		name := fmt.Sprintf("Synthetic Summit %d", year)
+		past = append(past, name, name) // every edition twice, as two event ids
+	}
+	kept, omitted := capPastEditions(past)
+	require.Len(t, kept, audience.CustomMaxRegisteredFor)
+	assert.Equal(t, 1, omitted, "26 distinct editions, one over the cap")
+	seen := map[string]bool{}
+	for _, k := range kept {
+		assert.False(t, seen[k], "no repeated edition fills a slot: %s", k)
+		seen[k] = true
+	}
+	assert.Equal(t, "Synthetic Summit 2025", kept[0])
+	assert.Equal(t, fmt.Sprintf("Synthetic Summit %d", 2025-audience.CustomMaxRegisteredFor+1), kept[len(kept)-1])
+
+	exact, omitted := capPastEditions([]string{"A 2025", "A 2025", "A  2025"})
+	assert.Equal(t, []string{"A 2025", "A  2025"}, exact, "an exact repeat is dropped; a different spelling is not")
+	assert.Zero(t, omitted)
 }
