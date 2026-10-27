@@ -1,6 +1,6 @@
 # 2026-10-10 — Custom audiences: every missing signal, and reuse before create
 
-**Feature** — the custom-audience criteria gain `education_topics` (brand-fit course filter,
+**Update** — the custom-audience criteria gain `education_topics` (brand-fit course filter,
 property resolved from the portal's education event definition) and `page_view_urls` (ungated
 `PAGE_VIEW` branches), so the Audience tab can offer "Create list" for all five legacy missing
 signals. Interpretation now also returns `similar`: existing lists found by name search and ranked
