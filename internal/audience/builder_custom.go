@@ -704,16 +704,18 @@ func cleanValues(values []string) []string {
 	return out
 }
 
-// exactValues is cleanValues for EXACT filter values (registered_for's event_name equality): ends
-// trimmed, blanks and exact repeats dropped, and nothing else changed. cleanValues collapses
+// exactValues is cleanValues for EXACT filter values (registered_for's event_name equality):
+// blanks and exact repeats dropped, every other value kept verbatim (not even its ends trimmed). cleanValues collapses
 // internal whitespace and de-duplicates case-insensitively, which is right for CONTAINS values
 // but would rewrite a warehouse edition spelled with a double space into one that matches nobody.
 func exactValues(values []string) []string {
 	seen := make(map[string]struct{}, len(values))
 	out := make([]string, 0, len(values))
 	for _, v := range values {
-		v = strings.TrimSpace(v)
-		if v == "" {
+		// Trimmed only to recognise a blank: a non-blank value is kept VERBATIM, padding
+		// included, because the warehouse's past editions are exact event_name values and a
+		// padded one ("  KubeCon Korea 2025  ") matches only as spelled.
+		if strings.TrimSpace(v) == "" {
 			continue
 		}
 		if _, dup := seen[v]; dup {

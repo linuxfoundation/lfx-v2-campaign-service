@@ -612,10 +612,11 @@ func TestCustomListFilter_GatedHistoryGatesASpeakersOnlyAudience(t *testing.T) {
 // space reaches the filter verbatim: collapsing it, as the CONTAINS values are, would match nobody.
 func TestCustomListFilter_RegisteredForIsKeptVerbatim(t *testing.T) {
 	c := seoul()
-	c.RegisteredFor = []string{" Synthetic  Summit 2024 ", "Synthetic  Summit 2024", "Synthetic Summit 2025"}
+	c.RegisteredFor = []string{"  Synthetic  Summit 2024  ", "Synthetic  Summit 2024", "Synthetic  Summit 2024", "   ", "Synthetic Summit 2025"}
 	raw, err := CustomListFilter(c)
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"Synthetic  Summit 2024"`, "internal spacing preserved, ends trimmed")
-	assert.Equal(t, 1, strings.Count(string(raw), `"Synthetic  Summit 2024"`), "an exact repeat is dropped")
+	assert.Contains(t, string(raw), `"  Synthetic  Summit 2024  "`, "padding kept: the warehouse value matches only as spelled")
+	assert.Equal(t, 1, strings.Count(string(raw), `"Synthetic  Summit 2024"`), "internal spacing kept, an exact repeat dropped")
 	assert.Contains(t, string(raw), `"Synthetic Summit 2025"`)
+	assert.NotContains(t, string(raw), `"   "`, "a blank value is dropped")
 }

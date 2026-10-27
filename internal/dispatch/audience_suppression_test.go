@@ -885,3 +885,45 @@ func TestAttachExisting_StandingListReadWithoutAFilter_IsNeverRewritten(t *testi
 	assert.Empty(t, created)
 	assert.Empty(t, updated, "an unknown filter is not overwritten")
 }
+
+// The standing list covers more than the selected standard lists: here a hand-added list 5555.
+// Selecting that list as an INCLUSION while the standing list replaces the standard set would
+// exclude the whole inclusion, so it is the overlap 400, before any write, on attach and compose.
+func TestResolveSuppressions_ListCoveredByTheStandingListAlsoIncluded_IsRefused(t *testing.T) {
+	portal, std := standardPortal()
+	standingWith(t, portal, append(append([]string{}, std[:len(std)-1]...), "5555")) // also needs growth
+	x := composeExplorer(portal.serve(t).URL)
+
+	_, err := x.AttachExisting(context.Background(), "proj-1", []string{"5555"}, std, "")
+	var overlap *audience.ExclusionOverlapError
+	require.ErrorAs(t, err, &overlap)
+	assert.Equal(t, "5555", overlap.ListID)
+	assert.Contains(t, err.Error(), `covered by the project's standing standard suppression list`)
+	_, updated := portal.writes()
+	assert.Empty(t, updated, "refused before the standing list is grown")
+
+	_, err = x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+		ListIDs: []string{"5555", "111"}, ExcludeListIDs: std, Name: "KubeCon EU - Master",
+	})
+	require.ErrorAs(t, err, &overlap)
+	assert.Equal(t, "5555", overlap.ListID)
+	created, updated := portal.writes()
+	assert.Empty(t, created, "no master that excludes its own inclusion")
+	assert.Empty(t, updated)
+}
+
+// An inclusion that only becomes covered by the growth's confirming read (a concurrent writer
+// added it) is refused too, before the master is composed or the audience recorded.
+func TestAttachExisting_IncludeCoveredAfterGrowth_IsRefused(t *testing.T) {
+	portal, std := standardPortal()
+	standingWith(t, portal, std[:len(std)-1])
+	withInclude, err := audience.MasterListFilter(append(append([]string{}, std...), "31027"))
+	require.NoError(t, err)
+	portal.afterUpdate = func(p *suppressionPortal, id string) { p.filters[id] = withInclude }
+	x := composeExplorer(portal.serve(t).URL)
+
+	_, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, std, "")
+	var overlap *audience.ExclusionOverlapError
+	require.ErrorAs(t, err, &overlap)
+	assert.Equal(t, "31027", overlap.ListID)
+}

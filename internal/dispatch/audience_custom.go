@@ -595,12 +595,12 @@ func (x *AudienceExplorer) customEventContext(ctx context.Context, eventURL stri
 func knownEditions(requested, known []string) (kept, unknown []string) {
 	canonical := make(map[string]string, len(known))
 	for _, k := range known {
-		// Matched with spacing and case normalised, but RETURNED as the warehouse spells it,
-		// ends trimmed only: it becomes an exact event_name equality, and collapsing a double
-		// space would match nobody.
+		// Matched with spacing and case normalised, but RETURNED exactly as the warehouse spells
+		// it, padding included (ResolvePastEditions keeps it too): it becomes an exact
+		// event_name equality, and trimming or collapsing it would match nobody.
 		if n := strings.Join(strings.Fields(k), " "); n != "" {
 			if _, dup := canonical[strings.ToLower(n)]; !dup {
-				canonical[strings.ToLower(n)] = strings.TrimSpace(k)
+				canonical[strings.ToLower(n)] = k
 			}
 		}
 	}

@@ -371,7 +371,8 @@ so "26Q2-Kernel-Domain-Contacts" counts), `LFX Standard Suppressions - <project>
 only a name that IS a standard list or one of the two standing lists (`isStandingOrStandardName`,
 exact normalised equality, not containment), since each has its own picker row; an event's own
 "KubeCon - LF Events Suppression List" stays eligible. `CustomListFilter` writes `registered_for`
-through `exactValues` (ends trimmed, exact repeats dropped) rather than `cleanValues`, because it
+through `exactValues` (blanks and exact repeats dropped, every other value verbatim, padding
+included) rather than `cleanValues`, because it
 is an exact `event_name` equality and collapsing a double space would match nobody. `DiscoveryHidden` classifies test and
 staff before master, so a test or staff master rollup ("… Master [test]") is hidden rather than
 expanded as a master. `TestOrStaffList` applies the same test and staff hints to every

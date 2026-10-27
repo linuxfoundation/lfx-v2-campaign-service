@@ -182,7 +182,7 @@ func (x *AudienceExplorer) resolveSuppressions(ctx context.Context, client *hubs
 	// Only now verify and, for the standing list, grow.
 	if standingFound != nil {
 		var err error
-		if standard, err = x.growStandardList(ctx, client, standingFound, standardIDs); err != nil {
+		if standard, err = x.growStandardList(ctx, client, standingFound, standardIDs, include); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -326,7 +326,14 @@ func reusableStanding(l *hubspot.List, what string) error {
 //
 // existing is the list resolveSuppressions found (or recovered) under the standing name, already
 // checked against the send's inclusions; a list it had to create needs none of this.
-func (x *AudienceExplorer) growStandardList(ctx context.Context, client *hubspot.Client, existing *hubspot.List, ids []string) (*audience.ComposedList, error) {
+//
+// include are the lists the send goes to. The standing list stands in for the selected standard
+// lists, but it covers MORE than they do -- a prior quarter's list, a hand-added one -- and
+// excluding it excludes all of those. So every list it covers is checked against include on
+// every read: the first one, before any write, and each confirming read after a growth. A
+// covered inclusion is an audience.ExclusionOverlapError naming that list, never a send that
+// silently excludes a whole inclusion.
+func (x *AudienceExplorer) growStandardList(ctx context.Context, client *hubspot.Client, existing *hubspot.List, ids, include []string) (*audience.ComposedList, error) {
 	current, err := client.GetList(ctx, existing.ListID)
 	if err != nil {
 		return nil, fmt.Errorf("read standard suppression list %s: %w", existing.ListID, err)
@@ -344,6 +351,12 @@ func (x *AudienceExplorer) growStandardList(ctx context.Context, client *hubspot
 			return nil, fmt.Errorf("standard suppression list %s was read back without its filter, so it cannot be grown safely; nothing was changed, retry", current.ListID)
 		}
 		covered := audience.CoveredListIDs(current.FilterBranch)
+		for _, id := range covered {
+			if slices.Contains(include, id) {
+				return nil, &audience.ExclusionOverlapError{ListID: id, Role: fmt.Sprintf(
+					"covered by the project's standing standard suppression list %q (id %s), which replaces the selected standard suppressions", current.Name, current.ListID)}
+			}
+		}
 		want = audience.UniqueIDs(append(append([]string(nil), covered...), want...))
 		if len(want) == len(covered) {
 			return &audience.ComposedList{ListRow: listRow(current)}, nil

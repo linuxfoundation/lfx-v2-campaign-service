@@ -1773,3 +1773,29 @@ func TestCapPastEditions_DropsRepeatedNamesBeforeTheCap(t *testing.T) {
 	assert.Equal(t, []string{"A 2025", "A  2025"}, exact, "an exact repeat is dropped; a different spelling is not")
 	assert.Zero(t, omitted)
 }
+
+// The warehouse keeps an edition's padding (ResolvePastEditions does not trim it), and the
+// event_name equality matches only as spelled: a model-typed name maps to that exact spelling,
+// which reaches the filter verbatim.
+func TestInterpretCustom_PaddedWarehouseEditionIsKeptVerbatim(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":["Synthetic Summit 2024"],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "  Synthetic Summit 2024  "}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"  Synthetic Summit 2024  "}, out.Draft.Criteria.RegisteredFor)
+	criteria := out.Draft.Criteria
+	criteria.EducationTopicProperty = "course_name"
+	raw, err := audience.CustomListFilter(criteria)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"  Synthetic Summit 2024  "`)
+}

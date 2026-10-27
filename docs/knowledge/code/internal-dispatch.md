@@ -4566,7 +4566,10 @@ resolution substitutes or adds: the standing list stands in for the standard ids
 to. It runs in three steps: read both standing lists by name; obtain each (the read's hit, a
 create, or what the re-lookups RECOVER after a refused or unconfirmed create); and only then verify
 the registrants list and grow the standing list. Every list found or recovered is checked against
-the includes before that last step, so a rejected request never grows the standing list (search
+the includes before that last step, and so is every list the standing list COVERS, on its first
+read and on each confirming read after a growth (`growStandardList`): it stands in for the
+selected standard lists but also covers prior-quarter and hand-added lists, and excluding it
+excludes all of them, so a rejected request never grows the standing list (search
 lag can hide an included standing list from the read, and a late registrants hit used to surface
 after the standing list had grown). The final resolved ids are checked once more before returning, so compose creates no master and attach records
 nothing. Either is an `audience.ExclusionOverlapError` (wraps `ErrInvalidRequest`; a 400 naming the
@@ -4763,8 +4766,9 @@ never used.
 For an event audience the warehouse's past editions are `registered_for`'s DEFAULT, not an
 override (2026-10-15): editions the request or the answers named (the model copies them into
 `registered_for`) are used instead, kept by `knownEditions` (matched ignoring case and spacing,
-returned as the warehouse spells it with only the ends trimmed, since `CustomListFilter` writes
-`registered_for` through `exactValues` as an exact `event_name` equality) only as exact names of this event or one
+returned exactly as the warehouse spells it, padding included, since `CustomListFilter` writes
+`registered_for` through `exactValues`, blanks dropped and every other value verbatim, padding
+included, as an exact `event_name` equality) only as exact names of this event or one
 of its editions (in the warehouse's spelling, any other name dropped with a note), and a draft whose
 model set `include_past_editions: false`, or whose every named edition was unknown, gets none. So
 an operator who asked for one edition, or ruled out past registrants, is never sent the whole
