@@ -258,7 +258,9 @@ and its absence still fails startup with `ErrMissingRequiredIndex`. Pinned live 
 `TestMigrateRefusesADroppedDispatchIndex`. Rolling back `000050` itself (its down re-creates the
 index) fails once any slot holds two live campaigns; resolve the extra versions by hand first.
 The lock release reaches that check at all only because `postgres.Migrate` starts on a CLEAN
-schema recorded exactly one version newer than the image (here `000050`) without migrating it or
+schema recorded exactly one version newer than the image (here `000050`, so the image rolled
+back to must embed migrations through `000049`; #260's own release, which stops at `000046`, is
+too far behind and refuses to boot) without migrating it or
 rewriting its version — golang-migrate's `Up()` would otherwise refuse the unknown version first —
 while still running the invalid- and required-index checks; a DIRTY newer schema, or a clean one
 two or more versions ahead, is still refused. That leans on expand/contract — every release must

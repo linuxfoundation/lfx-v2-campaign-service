@@ -11,6 +11,12 @@
 -- the image does not revert the schema), already takes the lock and boots without this index
 -- (#260 made it optional in requiredIndexes).
 --
+-- The N-1 binary is the release that embeds migrations through 000049. Numbered 000047 when
+-- written, this moved to 000050 when main claimed 000047-000049 first. schemaIsNewerThanImage
+-- (#260) lets a binary boot on a schema exactly ONE version ahead, so an image-only rollback must
+-- return to an image embedding 000049; #260's own release embeds only through 000046 and
+-- refuses schema 50 ("no migration found"). That image is already deployed ahead of this one.
+--
 -- Safe for that N-1 binary: none of its statements names the three-column index as an arbiter.
 -- It only CLASSIFIED a 23505 raised on this index — as ErrSlotVersionUnavailable above slot 1,
 -- as a lost race at slot 1, and as a lost claim on UpsertCampaign's INSERT arm — and once the

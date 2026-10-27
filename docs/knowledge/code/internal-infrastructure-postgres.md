@@ -195,8 +195,11 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   (scratch database: after `Migrate` the legacy index is absent and a re-run boots; drop the
   slot-version index and `Migrate` is `ErrMissingRequiredIndex` naming only it, with its rebuild
   statement).
-  Rolling the image back past `000050` still boots: the release before it recorded no version
-  above `000046`, and `golang-migrate` v4.19.1's `Up()` refuses a recorded version its source does
+  Rolling the image back past `000050` still boots, provided the image rolled back to embeds
+  migrations through `000049` — the release immediately before this one, which already carries
+  #260's lock and the newer-schema tolerance below. An older image (#260's own release embeds
+  only through `000046`) is two or more versions behind schema `50` and refuses to boot, so it is
+  not a valid rollback target. The image before this release records no version above `000049`, and `golang-migrate` v4.19.1's `Up()` refuses a recorded version its source does
   not contain ("no migration found for version N") before any index check runs. So `Migrate` first
   reads the recorded version (`schemaIsNewerThanImage`, from #260): when it is CLEAN and exactly
   one above the highest embedded version (read from the migration source, exported as `LatestMigrationVersion`,
