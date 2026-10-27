@@ -857,3 +857,19 @@ next eligible `tryTake`, so while reporting traffic continues the map holds only
 the last two windows; if report requests stop, expired ledgers stay until the next request sweeps
 them (`TestReportBudgets_InactiveLedgersAreDropped`: after the window an inactive account's
 ledger is gone, and releasing the last slot returns the map to 0).
+
+## Create-time bidding (`CampaignInput.ManualCPCBid`, LFXV2-2665)
+
+`ManualCPCBid` zero is AUTOMATIC: campaign and ad group are created `BIDLESS` exactly as before. A
+positive value is MANUAL: campaign AND ad group `bid_strategy` `MANUAL_BIDDING` (under Campaign
+Budget Optimization the ad group's strategy and `bid_type` must match the campaign's) and the ad
+group's `bid_value` in micro-units — what `RedditDispatcher.WriteBid` checks before it re-bids.
+Only an objective whose `bid_type` is `CPC` can take it (`ManualCPCBidSupported`: `traffic`; the
+default objective, `conversions`, bids CPM), and `manualBidMicros` refuses an amount that is not a
+whole number of micro-units; both run before the first mutating call. The Reddit reference could
+not be re-fetched from the authoring environment (the host refuses automated fetches); the field
+names match the create body and the bid lever's, and a secondary reference states the CBO
+matching rule.
+
+`CampaignResult.BidApplied` is always true on success: this client never reuses a campaign or ad
+group by name.

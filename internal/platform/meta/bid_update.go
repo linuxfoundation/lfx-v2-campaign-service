@@ -124,6 +124,51 @@ func bidToMinorUnits(amount float64, offset int64) (int64, error) {
 	}
 }
 
+// CreateBidMinorUnits encodes a CREATE-time bid cap (CampaignInput.BidCap) in minor units at the
+// account currency's offset. It uses the same exact encoder as bidToMinorUnits (minorUnitsExact,
+// PR #316) and, like it, REFUSES an amount that is not a whole number of minor units
+// (LFXV2-2665): rounding would send one bid to Meta and record another on the campaign row. Only
+// the wording of that refusal differs, naming the create's minor-unit scale.
+func CreateBidMinorUnits(amount float64, offset int64) (int64, error) {
+	switch {
+	case math.IsNaN(amount) || math.IsInf(amount, 0) || amount <= 0:
+		return 0, &bidAmountError{msg: "the bid must be a finite number greater than zero"}
+	case amount > metaMaxBid:
+		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s exceeds the largest bid this service sets on Meta (%s)",
+			strconv.FormatFloat(amount, 'f', -1, 64), strconv.FormatFloat(metaMaxBid, 'f', -1, 64))}
+	case offset < 1:
+		return 0, fmt.Errorf("meta: currency offset %d is not a usable minor-unit scale", offset)
+	}
+	switch minor, verdict := minorUnitsExact(amount, offset); verdict {
+	case minorTooLarge:
+		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s is too large to represent exactly: at most %d minor units of the ad account's currency",
+			strconv.FormatFloat(amount, 'f', -1, 64), MaxExactMinorUnits)}
+	case minorTooSmall:
+		return 0, &bidAmountError{msg: "the bid is smaller than one minor unit of the ad account's currency, the smallest bid Meta accepts"}
+	case minorFractional:
+		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s is not a whole number of the ad account currency's minor units (1/%d); it is refused rather than rounded",
+			strconv.FormatFloat(amount, 'f', -1, 64), offset)}
+	default:
+		return minor, nil
+	}
+}
+
+// BidCapDailyBudgetMultiple is Meta's minimum DAILY budget for a click-billed bid cap, as a
+// multiple of bid_amount. Ad Set reference (Graph API v25.0), daily_budget minimums under
+// LOWEST_COST_WITH_BID_CAP: "Clicks/Actions: 5x the bid_amount for a Click or Action. For example,
+// if the bid amount is $5 per click/action, then $25 will be the minimum budget required."
+const BidCapDailyBudgetMultiple = 5
+
+// ManualBidSupported reports whether a campaign with this objective can be created with manual
+// bidding: only an objective whose ad set optimizes for LINK_CLICKS (traffic, and leads, which runs
+// as traffic here) can carry the link-click bid cap the bid lever reads as a max CPC. objective is
+// normalized the way CreateCampaign normalizes it (trimmed, lower-cased, empty = traffic); an
+// unknown objective reports false.
+func ManualBidSupported(objective string) bool {
+	p, ok := objectiveParams[defaultObjective(strings.ToLower(strings.TrimSpace(objective)))]
+	return ok && p.OptimizationGoal == OptimizationLinkClicks
+}
+
 // ResolveBidMinorUnits runs the account preflight and encodes a bid in the minor units of the
 // ad account's OWN currency — the scale resolveCurrencyOffset derives for the create and the
 // budget paths, so a bid can never be encoded at a guessed scale. A PURE READ plus arithmetic:
