@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -16,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
@@ -53,6 +55,10 @@ type HubSpotWizardClient interface {
 	GetEmailHTMLWidgets(ctx context.Context, id string) ([]hubspot.EmailHTMLBlock, error)
 	SetEmailHTMLWidgets(ctx context.Context, id string, widgets map[string]string) (*hubspot.Email, error)
 	AuthenticatedPortalID(ctx context.Context) (string, error)
+	// SearchLists and GetList read the project's standing standard suppression list before a
+	// send list is applied (wizardStandingCoversSendList).
+	SearchLists(ctx context.Context, query string) ([]hubspot.List, error)
+	GetList(ctx context.Context, listID string) (*hubspot.List, error)
 }
 
 // HubSpotClientResolver hands the wizard a HubSpot client for one project.
@@ -1379,6 +1385,9 @@ func (s *BriefService) SetWizardSendList(ctx context.Context, p *briefs.SetWizar
 	if rerr != nil {
 		return nil, rerr
 	}
+	if cerr := wizardStandingCoversSendList(ctx, client, p.ProjectID, sendIDs, suppression); cerr != nil {
+		return nil, cerr
+	}
 	// resolveWizardSendList never returns an empty set without an error; sendIDs[0] is the
 	// list the response has always named, kept for callers that read only send_list_id.
 	primary := sendIDs[0]
@@ -1725,4 +1734,44 @@ func (s *BriefService) GetWizardSession(ctx context.Context, p *briefs.GetWizard
 		out.DraftURL = &sess.DraftURL
 	}
 	return out, nil
+}
+
+// wizardStandingCoversSendList is the wizard's copy of dispatch's standingCoversSendList (this
+// package cannot import internal/dispatch): refuse, before the draft is touched, a send list the
+// project's standing standard suppression list now covers while the send also excludes that
+// list. The standing list is shared and grows after an audience is recorded, so an inclusion
+// recorded earlier can be covered later. Read-only: one search, at most one GetList.
+func wizardStandingCoversSendList(ctx context.Context, client HubSpotWizardClient, projectID string, sendIDs, suppression []string) error {
+	if len(suppression) == 0 {
+		return nil
+	}
+	name := audience.StandardSuppressionName(projectID)
+	lists, err := client.SearchLists(ctx, name)
+	if err != nil {
+		slog.WarnContext(ctx, "wizard could not check the standing suppression list", "error", safeErrSummary(err))
+		return &briefs.ConnServiceUnavailableError{Code: "503",
+			Message: "the project's standing suppression list could not be checked before applying the recipients; retry"}
+	}
+	var standingID string
+	for _, l := range lists {
+		if strings.EqualFold(strings.TrimSpace(l.Name), name) {
+			standingID = l.ListID
+			break
+		}
+	}
+	if standingID == "" || !slices.Contains(suppression, standingID) {
+		return nil
+	}
+	list, err := client.GetList(ctx, standingID)
+	if err != nil {
+		slog.WarnContext(ctx, "wizard could not read the standing suppression list", "list_id", standingID, "error", safeErrSummary(err))
+		return &briefs.ConnServiceUnavailableError{Code: "503",
+			Message: "the project's standing suppression list could not be read before applying the recipients; retry"}
+	}
+	if id := audience.CoveredSendList(list.FilterBranch, sendIDs); id != "" {
+		return &briefs.ConflictError{Code: "409", Message: fmt.Sprintf(
+			"list %s is a recipient list of this send, but the project's standing standard suppression list %s now covers it, so the send would exclude it entirely; remove it from the standing list in HubSpot or rebuild the audience",
+			id, standingID)}
+	}
+	return nil
 }

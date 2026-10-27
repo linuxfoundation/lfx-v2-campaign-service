@@ -1996,6 +1996,16 @@ reports false numbers:
   applies exclusions after inclusions and the send would exclude that entire list while reporting
   success. Unreadable include ids fail the dispatch rather than falling back to the master.
 
+  Send-time standing-list check (LFXV2-2770): the project's standing standard suppression list is
+  shared and only grows, so after an audience is recorded a later compose or attach can make it
+  cover a list that audience SENDS to, and excluding it would exclude the whole inclusion while the
+  id check above passes. After the portal guard and before the clone, `standingCoversSendList`
+  searches for `audience.StandardSuppressionName(projectID)` and, only when that list is among the
+  suppressions, reads it once and refuses (`audience.CoveredSendList`, a pre-create
+  `PreflightRefusalf` naming both lists) if it covers a send list. Read-only; a failed read refuses
+  too, with nothing created. The email wizard applies the same check
+  (`wizardStandingCoversSendList`, a 409).
+
 - **The window does not scope the counters.** HubSpot's statistics span selects WHICH EMAILS
   are in scope by SEND date; the counters returned are that email's totals to date. `today`
   and `last_30_days` on an email sent this morning return the same numbers. `Window` records

@@ -2073,7 +2073,12 @@ desynchronise the column from the send set the dispatcher actually uses. `includ
 is response-only — no PATCH can set it. The email wizard's `SetWizardSendList` resolves the
 audience through `SendListIDs()` too, passes every list to `SetSendList`, and reports them as
 `to.ils_list_ids` beside the existing `ils_list_id` (the first). Its explicit `send_list_ids`
-override still refuses more than one id; that refusal predates multi-include and is unchanged.
+override still refuses more than one id; that refusal predates multi-include and is unchanged. Before
+`SetSendList`, `wizardStandingCoversSendList` refuses with a 409 naming both lists when the
+project's standing standard suppression list is among the send's suppressions and now covers one
+of its send lists (it is shared and grows after the audience is recorded); one search and at most
+one `GetList`, read-only, and a failed read is a 503 with the draft untouched. Dispatch runs the
+same check (`standingCoversSendList`).
 
 `GetAudienceBuilderCapabilities` returns no error on purpose — an unusable connection is this
 endpoint's ANSWER, not its failure, and it is what lets the UI render one explanatory banner
@@ -2110,7 +2115,9 @@ a retry that would duplicate it — compose is not idempotent.
 
 A successful compose returns `suppression_list_ids`: every list the master excludes, in the order
 `composedSuppressionIDs` gives both compose and attach-existing (the standing standard list first
-when used, then each other excluded list, the current-registrants list last), and the order the
+when used, then each other excluded list, the current-registrants list last, each list once in
+first-seen order: the standing list's own id selected beside the full standard set is recorded
+once, and `suppressionSummary` counts distinct lists), and the order the
 recorded row holds. `suppression` alone is set only for a full standard set, so without the ids a
 caller could not learn what else was excluded, including a current-registrants list compose just
 created. attach-existing returns the same ids from the recorded row, which are therefore NOT the ids

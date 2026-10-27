@@ -379,12 +379,16 @@ func audienceFromInput(projectID, briefID string, in *audiences.AudienceInput) *
 // composedSuppressionIDs are the lists a compose or attach outcome excludes, in the one order
 // both record and return them: the standing standard list first (when used), then every other
 // excluded list, the current-registrants list last. Never nil.
+//
+// De-duplicated in first-seen order: an operator can select the standing list's own id beside
+// the full standard set, which leaves it both as the outcome's Suppression and among the
+// attached ids, and recording it twice would forward it to HubSpot twice.
 func composedSuppressionIDs(outcome *audience.ComposeOutcome) []string {
 	ids := make([]string, 0, 1+len(outcome.AttachedSuppressionIDs))
 	if outcome.Suppression != nil {
 		ids = append(ids, outcome.Suppression.ListID)
 	}
-	return append(ids, outcome.AttachedSuppressionIDs...)
+	return audience.UniqueIDs(append(ids, outcome.AttachedSuppressionIDs...))
 }
 
 func audienceFromCompose(projectID, briefID string, outcome *audience.ComposeOutcome, inclusionSummary string) *model.CampaignAudience {
@@ -424,7 +428,12 @@ func composedInclusionSummary(outcome *audience.ComposeOutcome) string {
 
 // suppressionSummary describes the suppressions an outcome records, or "" when none.
 func suppressionSummary(outcome *audience.ComposeOutcome) string {
-	n := len(outcome.AttachedSuppressionIDs)
+	// Distinct exclusions only, the standing list counted once (composedSuppressionIDs puts it
+	// first when used).
+	n := len(composedSuppressionIDs(outcome))
+	if outcome.Suppression != nil {
+		n--
+	}
 	switch {
 	case outcome.Suppression != nil && n > 0:
 		return fmt.Sprintf(" with the standard suppression list and %d more suppression list(s)", n)

@@ -346,3 +346,19 @@ func HasFilterTree(raw json.RawMessage) bool {
 	t := strings.TrimSpace(string(raw))
 	return strings.HasPrefix(t, "{")
 }
+
+// CoveredSendList is the first of sendIDs that standingFilter -- the project's standing standard
+// list's filter, as read back -- covers whole, or "". The standing list is shared and only grows,
+// so a list an earlier audience recorded as an INCLUSION can be added to it later by another
+// compose or attach; a send that both targets that list and excludes the standing list would
+// then exclude the whole inclusion. The send paths call this on the recorded ids right before
+// they apply them.
+func CoveredSendList(standingFilter json.RawMessage, sendIDs []string) string {
+	covered := CoveredListIDs(standingFilter)
+	for _, id := range sendIDs {
+		if slices.Contains(covered, strings.TrimSpace(id)) {
+			return strings.TrimSpace(id)
+		}
+	}
+	return ""
+}

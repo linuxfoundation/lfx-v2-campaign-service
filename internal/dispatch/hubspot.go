@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
@@ -563,6 +564,12 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	portalID, perr := assertAudiencePortal(ctx, client, res, audiencePortal)
 	if perr != nil {
 		return nil, notCreated(perr)
+	}
+	// The standing standard list grows after an audience is recorded, so it can come to cover a
+	// list this audience SENDS to; excluding it would then exclude that whole inclusion. Read
+	// back now, before anything is created (one search and at most one read).
+	if cerr := standingCoversSendList(ctx, client, brief.ProjectID, sendListIDs, suppressionIDs); cerr != nil {
+		return nil, notCreated(cerr)
 	}
 	// The campaign carries the cloned email's edit link. A row with no portal_id would build it
 	// blank; the guard has just verified the token's portal, so links reuse that value rather than
@@ -1404,4 +1411,31 @@ func assertAudiencePortal(ctx context.Context, client *hubspot.Client, res *reso
 			"current connection: %w", audiencePortal, current, domain.ErrCampaignAccountMismatch)
 	}
 	return strings.TrimSpace(current), nil
+}
+
+// standingCoversSendList refuses a send whose suppressions include the project's standing
+// standard list while that list now covers one of the send lists (audience.CoveredSendList).
+// Read-only: one name search, and one GetList only when the standing list is among the
+// suppressions. A failed read refuses too -- the send cannot be shown to be safe -- and nothing
+// is created, so a retry is clean.
+func standingCoversSendList(ctx context.Context, client *hubspot.Client, projectID string, sendIDs, suppressionIDs []string) error {
+	if len(suppressionIDs) == 0 {
+		return nil
+	}
+	standing, err := exactList(ctx, client, audience.StandardSuppressionName(projectID))
+	if err != nil {
+		return fmt.Errorf("hubspot: could not check the standing suppression list before the send: %w", err)
+	}
+	if standing == nil || !slices.Contains(suppressionIDs, standing.ListID) {
+		return nil
+	}
+	list, err := client.GetList(ctx, standing.ListID)
+	if err != nil {
+		return fmt.Errorf("hubspot: could not read the standing suppression list %s before the send: %w", standing.ListID, err)
+	}
+	if id := audience.CoveredSendList(list.FilterBranch, sendIDs); id != "" {
+		return domain.PreflightRefusalf("hubspot: the audience sends to list %s, which the project's standing standard suppression list %s now covers — the send would exclude that entire list; remove it from the standing list in HubSpot or rebuild the audience",
+			domain.CallerValue(id), domain.CallerValue(standing.ListID))
+	}
+	return nil
 }

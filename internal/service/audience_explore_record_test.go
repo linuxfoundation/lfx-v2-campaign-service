@@ -413,3 +413,20 @@ func TestComposeAudienceMasterReturnsEveryExcludedListID(t *testing.T) {
 	assert.Nil(t, res.Suppression)
 	assert.Equal(t, []string{"registrants-1"}, res.SuppressionListIds, "a partial standard selection still names what is excluded")
 }
+
+// The standing list's own id selected beside the full standard set lands both as the outcome's
+// Suppression and among its attached ids. It is recorded, returned and summarised ONCE.
+func TestComposedSuppressionIDs_StandingListSelectedTwiceIsRecordedOnce(t *testing.T) {
+	outcome := composedOutcome()
+	outcome.Attached = true
+	outcome.AttachedSuppressionIDs = []string{"brand-1", "supp-1", "brand-1", "registrants-1"}
+
+	assert.Equal(t, []string{"supp-1", "brand-1", "registrants-1"}, composedSuppressionIDs(outcome),
+		"first-seen order, each list once")
+	row := audienceFromCompose("proj-1", "brief-1", outcome, "")
+	var recorded []string
+	require.NoError(t, json.Unmarshal(row.SuppressionListIDs, &recorded))
+	assert.Equal(t, []string{"supp-1", "brand-1", "registrants-1"}, recorded)
+	assert.Contains(t, row.InclusionSummary, "with the standard suppression list and 2 more suppression list(s)",
+		"the standing list is counted once, the repeated brand list once")
+}

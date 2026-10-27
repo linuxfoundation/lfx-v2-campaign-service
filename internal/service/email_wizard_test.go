@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
@@ -184,6 +185,30 @@ type fakeWizardHubSpot struct {
 	// A COUNT, not a flag: a guard that skipped one read and made another would still
 	// satisfy a boolean.
 	getEmailCalls int
+
+	// lists are the contact lists SearchLists and GetList answer from, by id.
+	lists       map[string]*hubspot.List
+	listReadErr error
+}
+
+func (f *fakeWizardHubSpot) SearchLists(_ context.Context, query string) ([]hubspot.List, error) {
+	if f.listReadErr != nil {
+		return nil, f.listReadErr
+	}
+	var out []hubspot.List
+	for _, l := range f.lists {
+		if strings.EqualFold(l.Name, query) {
+			out = append(out, *l)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeWizardHubSpot) GetList(_ context.Context, id string) (*hubspot.List, error) {
+	if l, ok := f.lists[id]; ok {
+		return l, nil
+	}
+	return nil, errors.New("no such list")
 }
 
 func newFakeWizardHubSpot() *fakeWizardHubSpot {
@@ -1961,5 +1986,65 @@ func TestWizardSendListUsesEveryIncludeListOfTheAudience(t *testing.T) {
 	to, _ := out.To.(map[string]any)
 	if got, _ := to["ils_list_ids"].([]string); !slices.Equal(got, []string{"ils-77", "ils-78"}) {
 		t.Errorf("to.ils_list_ids = %v, want [ils-77 ils-78]", to["ils_list_ids"])
+	}
+}
+
+// The project's standing standard list grew, after the audience was recorded, to cover the list
+// the audience sends to (HubSpot list ids are numeric, as the filter reader requires). The wizard reads it back before touching the draft and refuses with a
+// 409 naming both lists; the draft's recipients are not changed.
+func TestSetWizardSendList_RefusesASendListTheStandingListNowCovers(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "KubeCon EU 2025 - Registration Open"}}
+	covering, err := audience.MasterListFilter([]string{"7001", "4477"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	standingName := audience.StandardSuppressionName(wizardTestProject)
+	h.hubspot.lists = map[string]*hubspot.List{"77": {ListID: "77", Name: standingName, FilterBranch: covering}}
+	suppression, _ := json.Marshal([]string{"77", "9002"})
+	h.audiences.newestFirst = []*model.CampaignAudience{{
+		ID: "aud-1", ProjectID: wizardTestProject, BriefID: wizardTestBrief,
+		Platform: model.ProviderHubSpot, Status: model.AudienceBuilt,
+		PlatformMasterListID: "4477", BuiltInPortalID: "portal-1", SuppressionListIDs: suppression,
+	}}
+	started := h.start(t)
+	if _, err := h.svc.PlanEmailWizard(context.Background(), &briefs.PlanEmailWizardPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("PlanEmailWizard: %v", err)
+	}
+	if _, err := h.svc.GenerateWizardContent(context.Background(), &briefs.GenerateWizardContentPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("GenerateWizardContent: %v", err)
+	}
+	if _, err := h.svc.CloneWizardEmail(context.Background(), &briefs.CloneWizardEmailPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID, Approved: true,
+	}); err != nil {
+		t.Fatalf("CloneWizardEmail: %v", err)
+	}
+	h.hubspot.sendListID, h.hubspot.sendListIDs = "", nil
+
+	_, err = h.svc.SetWizardSendList(context.Background(), &briefs.SetWizardSendListPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want a 409 naming the covered list, got %T: %v", err, err)
+	}
+	if !strings.Contains(conflict.Message, "4477") || !strings.Contains(conflict.Message, "standing standard suppression list 77") {
+		t.Errorf("the refusal must name both lists; got %q", conflict.Message)
+	}
+	if len(h.hubspot.sendListIDs) > 0 || h.hubspot.sendListID != "" {
+		t.Error("the draft's recipients must not change when the send would exclude its own inclusion")
+	}
+
+	// Covering only other lists is no obstacle.
+	fine, _ := audience.MasterListFilter([]string{"7001"})
+	h.hubspot.lists["77"].FilterBranch = fine
+	if _, err := h.svc.SetWizardSendList(context.Background(), &briefs.SetWizardSendListPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("SetWizardSendList: %v", err)
 	}
 }

@@ -512,7 +512,11 @@ AND wrote the HubSpot filter JSON AND called the create. Here the model does onl
   silently ignored — while one unusable filter row is dropped with a note rather than costing the
   whole draft. The model never supplies list ids (the gate and any speakers list are resolved
   against the portal) or property types (read from the portal's definitions). Operator text is
-  quoted inside `BEGIN/END` blocks with the markers neutralised, exactly as the event-page prompt is.
+  quoted inside `BEGIN/END` blocks with the markers neutralised, exactly as the event-page prompt is. The
+  request, the answers and the event name keep their internal spacing (`lineSafe`: line breaks
+  become spaces, markers neutralised, length cut), and the past editions are Go-quoted whole
+  (`quotedEditions`), so an edition spelled "Synthetic  Summit 2025" reaches the model as spelled
+  and `knownEditions`' exact-first match can find it.
 - **`CustomListFilter`** is the only thing that builds the filter, and it is pure and table-tested.
   The shape is the reference list's (`26Q3 - Seoul - Mailable Contacts - …`): an OR root of AND
   branches — `city`/`ip_city` (+ `country_dropdown`/`ip_country` when broadened), each gated by
