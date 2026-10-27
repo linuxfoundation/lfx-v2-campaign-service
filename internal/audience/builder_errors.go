@@ -147,3 +147,15 @@ func (e *ExclusionOverlapError) Error() string {
 }
 
 func (e *ExclusionOverlapError) Unwrap() error { return ErrInvalidRequest }
+
+// FieldError is a request field whose value can never work, with the reason in the caller's
+// terms. Wraps ErrInvalidRequest; the handler answers 400 with Error(), which names the field,
+// instead of the generic invalid-request text that names neither.
+type FieldError struct {
+	Field  string
+	Reason string
+}
+
+func (e *FieldError) Error() string { return e.Field + ": " + e.Reason }
+
+func (e *FieldError) Unwrap() error { return ErrInvalidRequest }

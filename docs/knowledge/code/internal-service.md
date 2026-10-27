@@ -2118,6 +2118,9 @@ created. attach-existing returns the same ids from the recorded row, which are t
 it was sent, and it may itself CREATE up to two lists — the standing standard list and the
 edition's current-registrants list, each on first use.
 
+`audience.FieldError` (a request field that can never work, e.g. a yearless
+`current_registrants_event`) and `audience.ExclusionOverlapError` map to `400` with their own
+message, above the generic `ErrInvalidRequest` arm whose text names the event URL instead.
 `audience.ErrStandingListConflict` (a `StandingListConflictError` naming the list) maps to `409`
 `ConflictError` with that message in `audienceExploreErr`: a list already holds one of the standing
 names but cannot be reused (not a DYNAMIC contact list, a standing list that must grow but is not a

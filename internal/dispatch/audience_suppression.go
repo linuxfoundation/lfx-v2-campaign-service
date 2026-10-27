@@ -72,9 +72,10 @@ func resolvedIDs(rows []audience.SuppressionRow) []string {
 // registrants list, and either can be a list the send also goes to (an operator including
 // the edition's registrants list, say). A list both sent to and suppressed is a master that
 // excludes a whole inclusion branch, or a recorded audience dispatch refuses, so every
-// resolved exclusion is checked against include: the lists found by name are checked BEFORE
-// anything is created or rewritten, and the final set once more before returning, so the
-// caller composes or records nothing on a contradiction. Either is an
+// resolved exclusion is checked against include: the lists found by name before anything is
+// created, every list found or recovered after a refused or unconfirmed create before either
+// existing filter is grown, and the final set once more before returning. So on a
+// contradiction the caller composes or records nothing and the standing list is not grown. Either is an
 // audience.ExclusionOverlapError (400) naming the list.
 func (x *AudienceExplorer) resolveSuppressions(ctx context.Context, client *hubspot.Client, projectID string, include, suppress []string, registrantsEvent string) (*audience.ComposedList, []string, error) {
 	// The registrants filter depends only on the input, so it is built BEFORE the first write: a
@@ -143,22 +144,60 @@ func (x *AudienceExplorer) resolveSuppressions(ctx context.Context, client *hubs
 		registrantsHit = hit
 	}
 
-	// Writes: create or grow what the reads found, or did not.
-	var standard *audience.ComposedList
+	// Obtain both lists: what the reads found, or a create -- and, when a create is refused or
+	// unconfirmed, what the re-lookups recover. A created list is new and cannot be an
+	// inclusion, but a RECOVERED one can (search lag hid it from the read above), so every list
+	// obtained here is checked against include before either existing filter is touched: a
+	// rejected request must not grow the standing list every audience in the project excludes.
+	var standingFound, registrantsFound *hubspot.List
+	var standard, registrants *audience.ComposedList
 	if useStandard {
-		var err error
-		if standard, err = x.ensureStandardList(ctx, client, projectID, standardIDs, standingHit); err != nil {
+		name := audience.StandardSuppressionName(projectID)
+		filter, err := audience.MasterListFilter(standardIDs)
+		if err != nil {
 			return nil, nil, err
 		}
+		if standingFound, standard, err = x.findOrCreateStanding(ctx, client, projectID, name, filter, standingHit); err != nil {
+			return nil, nil, fmt.Errorf("find or create standard suppression list %q: %w", name, err)
+		}
+		if standingFound != nil {
+			if oerr := overlap(standingFound, standingFound.ListID, standingRole); oerr != nil {
+				return nil, nil, oerr
+			}
+		}
+	}
+	if edition != "" {
+		name := audience.CurrentRegistrantsName(edition)
+		var err error
+		if registrantsFound, registrants, err = x.findOrCreateStanding(ctx, client, projectID, name, registrantsFilter, registrantsHit); err != nil {
+			return nil, nil, fmt.Errorf("find or create current registrants list %q: %w", name, err)
+		}
+		if registrantsFound != nil {
+			if oerr := overlap(registrantsFound, registrantsFound.ListID, registrantsRole); oerr != nil {
+				return nil, nil, oerr
+			}
+		}
+	}
+
+	// Only now verify and, for the standing list, grow.
+	if standingFound != nil {
+		var err error
+		if standard, err = x.growStandardList(ctx, client, standingFound, standardIDs); err != nil {
+			return nil, nil, err
+		}
+	}
+	if registrantsFound != nil {
+		var err error
+		if registrants, err = x.verifyRegistrantsList(ctx, client, registrantsFound, edition); err != nil {
+			return nil, nil, err
+		}
+	}
+	if standard != nil {
 		if oerr := overlap(nil, standard.ListID, standingRole); oerr != nil {
 			return nil, nil, oerr
 		}
 	}
-	if edition != "" {
-		registrants, err := x.ensureRegistrantsList(ctx, client, projectID, edition, registrantsFilter, registrantsHit)
-		if err != nil {
-			return nil, nil, err
-		}
+	if registrants != nil {
 		if oerr := overlap(nil, registrants.ListID, registrantsRole); oerr != nil {
 			return nil, nil, oerr
 		}
@@ -241,7 +280,7 @@ func otherTypeList(ctx context.Context, client *hubspot.Client, name string) *hu
 	return nil
 }
 
-// standingGrowAttempts bounds how many times ensureStandardList writes the standing list's
+// standingGrowAttempts bounds how many times growStandardList writes the standing list's
 // filter before giving up on a list that keeps being replaced under it.
 const standingGrowAttempts = 3
 
@@ -260,8 +299,8 @@ func reusableStanding(l *hubspot.List, what string) error {
 	return nil
 }
 
-// ensureStandardList finds the project's standing standard suppression list by name, creating
-// it on first use, and keeps it covering every id in ids. It only ever GROWS: the new filter
+// growStandardList keeps the project's existing standing standard suppression list covering
+// every id in ids. It only ever GROWS: the new filter
 // is the union of the lists it already covers and ids, written only when that union adds an
 // id.
 //
@@ -284,19 +323,10 @@ func reusableStanding(l *hubspot.List, what string) error {
 // A list found by name is reused only when it is a DYNAMIC contact list, and is grown only
 // when its filter is a pure union of lists that the rewrite reproduces. Anything else is a
 // StandingListConflictError naming the list.
-func (x *AudienceExplorer) ensureStandardList(ctx context.Context, client *hubspot.Client, projectID string, ids []string, hit *hubspot.List) (*audience.ComposedList, error) {
-	name := audience.StandardSuppressionName(projectID)
-	filter, err := audience.MasterListFilter(ids)
-	if err != nil {
-		return nil, err
-	}
-	existing, created, err := x.findOrCreateStanding(ctx, client, projectID, name, filter, hit)
-	if err != nil {
-		return nil, fmt.Errorf("find or create standard suppression list %q: %w", name, err)
-	}
-	if created != nil {
-		return created, nil
-	}
+//
+// existing is the list resolveSuppressions found (or recovered) under the standing name, already
+// checked against the send's inclusions; a list it had to create needs none of this.
+func (x *AudienceExplorer) growStandardList(ctx context.Context, client *hubspot.Client, existing *hubspot.List, ids []string) (*audience.ComposedList, error) {
 	current, err := client.GetList(ctx, existing.ListID)
 	if err != nil {
 		return nil, fmt.Errorf("read standard suppression list %s: %w", existing.ListID, err)
@@ -332,23 +362,15 @@ func (x *AudienceExplorer) ensureStandardList(ctx context.Context, client *hubsp
 	}
 }
 
-// ensureRegistrantsList finds or creates the list of the edition's current registrants, from
-// the filter resolveSuppressions already built and validated.
+// verifyRegistrantsList checks the existing list resolveSuppressions found (or recovered) under
+// the edition's current-registrants name.
 //
 // A list found by name is reused only when it is a DYNAMIC contact list whose filter selects
 // all of this edition's registrations and nobody else (audience.RegistrantsListMatches). The
 // name match is case-insensitive and anyone can create a list under any name, so reusing on the
 // name alone could suppress a different edition's registrants, only some of them, or nobody;
 // such a list is a StandingListConflictError naming it instead.
-func (x *AudienceExplorer) ensureRegistrantsList(ctx context.Context, client *hubspot.Client, projectID, edition string, filter json.RawMessage, hit *hubspot.List) (*audience.ComposedList, error) {
-	name := audience.CurrentRegistrantsName(edition)
-	existing, created, err := x.findOrCreateStanding(ctx, client, projectID, name, filter, hit)
-	if err != nil {
-		return nil, fmt.Errorf("find or create current registrants list %q: %w", name, err)
-	}
-	if created != nil {
-		return created, nil
-	}
+func (x *AudienceExplorer) verifyRegistrantsList(ctx context.Context, client *hubspot.Client, existing *hubspot.List, edition string) (*audience.ComposedList, error) {
 	current, err := client.GetList(ctx, existing.ListID)
 	if err != nil {
 		return nil, fmt.Errorf("read current registrants list %s: %w", existing.ListID, err)

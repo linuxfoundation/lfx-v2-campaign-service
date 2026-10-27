@@ -107,7 +107,10 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 			hasLocation := len(draft.Criteria.Cities) > 0 || len(draft.Criteria.Countries) > 0
 			regional := hasLocation && (draft.Criteria.ContactLocation || draft.Criteria.EventRegistered || draft.Criteria.EducationEnrolled)
 			rolesOnly := draft.Criteria.Speakers != nil || draft.Criteria.Ambassadors
-			eventDefault := !hasLocation && !rolesOnly && len(draft.Criteria.PageViewURLs) > 0
+			// The event's default audience is the visitors of THIS event's page. A page-view URL
+			// of some other page is a different segment, and ORing past registrants into it
+			// would reach people outside what was asked for.
+			eventDefault := !hasLocation && !rolesOnly && selectsPage(draft.Criteria.PageViewURLs, event.URL)
 			switch {
 			case len(named) > 0:
 				defaults = named
@@ -603,4 +606,30 @@ func capPastEditions(past []string) ([]string, int) {
 	}
 	slices.SortStableFunc(kept, func(a, b string) int { return strings.Compare(yearIn(b), yearIn(a)) })
 	return kept[:audience.CustomMaxRegisteredFor], len(past) - audience.CustomMaxRegisteredFor
+}
+
+// selectsPage reports whether urls includes pageURL, compared as pages rather than strings:
+// scheme, a leading "www.", a query, a fragment, a trailing slash and case are ignored, because
+// page_view_urls is a CONTAINS match with the scheme optional and the model may copy the event
+// URL with or without them. An empty pageURL matches nothing.
+func selectsPage(urls []string, pageURL string) bool {
+	norm := func(u string) string {
+		u = strings.ToLower(strings.TrimSpace(u))
+		u = strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
+		u = strings.TrimPrefix(u, "www.")
+		if i := strings.IndexAny(u, "?#"); i >= 0 {
+			u = u[:i]
+		}
+		return strings.TrimRight(u, "/")
+	}
+	want := norm(pageURL)
+	if want == "" {
+		return false
+	}
+	for _, u := range urls {
+		if norm(u) == want {
+			return true
+		}
+	}
+	return false
 }

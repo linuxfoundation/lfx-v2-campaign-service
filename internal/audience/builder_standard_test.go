@@ -160,3 +160,23 @@ func TestStandingFilterIsUnion(t *testing.T) {
 	assert.False(t, StandingFilterIsUnion(both), "an AND of two lists covers neither")
 	assert.False(t, StandingFilterIsUnion(json.RawMessage(`{`)))
 }
+
+// "event_name IS_EQUAL_TO X" that also admits events with no event_name is not an exact
+// edition: it would suppress registrants of events that never recorded one.
+func TestRegistrantsListMatches_RejectsIncludeObjectsWithNoValueSet(t *testing.T) {
+	own, err := CurrentRegistrantsFilter("KubeCon NA 2026")
+	require.NoError(t, err)
+	require.True(t, RegistrantsListMatches(own, "KubeCon NA 2026"))
+	loose := json.RawMessage(strings.Replace(string(own), `"includeObjectsWithNoValueSet":false`, `"includeObjectsWithNoValueSet":true`, 1))
+	require.NotEqual(t, string(own), string(loose), "precondition: the flag is present to flip")
+	assert.False(t, RegistrantsListMatches(loose, "KubeCon NA 2026"))
+}
+
+func TestCurrentRegistrantsFilter_YearlessEditionNamesTheField(t *testing.T) {
+	_, err := CurrentRegistrantsFilter("AGNTCon + MCPCon Japan")
+	var field *FieldError
+	require.ErrorAs(t, err, &field)
+	assert.Equal(t, "current_registrants_event", field.Field)
+	assert.ErrorIs(t, err, ErrInvalidRequest)
+	assert.Contains(t, err.Error(), "year")
+}

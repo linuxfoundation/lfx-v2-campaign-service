@@ -348,7 +348,10 @@ var AudienceComposeRecordedAudience = Type("audience-compose-recorded-audience",
 // AudienceComposeMasterResult reports what was created.
 var AudienceComposeMasterResult = Type("audience-compose-master-result", func() {
 	Attribute("master", AudienceComposedList, "The created master list")
-	Attribute("suppression", AudienceComposedList, "The project's standing standard suppression list the master excludes, reused across composes; absent unless every resolved standard list was selected")
+	// CHANGED MEANING (LFXV2-2770), not additive: this was the per-compose combined suppression
+	// list wrapping EVERY exclusion. Its only client, lfx-self-serve, moves to
+	// suppression_list_ids in the same change.
+	Attribute("suppression", AudienceComposedList, "The project's standing standard suppression list the master excludes, reused across composes; absent unless every resolved standard list was selected. Changed meaning in LFXV2-2770: it used to be a per-compose combined list covering every exclusion and now covers the standard lists only, so read suppression_list_ids for the full set of excluded lists")
 	Attribute("source_list_ids", ArrayOf(String), "The inclusion lists the master unions")
 	// Without it a caller sees only `suppression`, which is set for a full standard set alone,
 	// and never learns the id of anything else the master excludes -- including a
@@ -408,7 +411,7 @@ var AudienceAttachExistingInput = Type("audience-attach-existing-input", func() 
 var AudienceAttachExistingResult = Type("audience-attach-existing-result", func() {
 	Attribute("master", AudienceComposedList, "The existing master list, as read back from the portal")
 	Attribute("suppression_list_ids", ArrayOf(String), "The suppression list ids recorded beside it. Not the input ids: a full standard set is recorded as the standing list's id, and the current-registrants list's id is appended")
-	Attribute("suppression", AudienceComposedList, "The project's standing standard suppression list, reused across audiences, recorded in place of the standard lists; absent unless every resolved standard list was selected")
+	Attribute("suppression", AudienceComposedList, "The project's standing standard suppression list, reused across audiences, recorded in place of the standard lists; absent unless every resolved standard list was selected. It covers the standard lists only; suppression_list_ids holds every excluded list")
 	Attribute("include_list_ids", ArrayOf(String), "Every include list the send goes to, when include_list_ids was supplied; absent for a single master_list_id")
 	Attribute("audience", AudienceComposeRecordedAudience, "The audience row recorded for brief_id")
 	Required("master", "suppression_list_ids", "audience")

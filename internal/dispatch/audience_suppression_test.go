@@ -5,6 +5,8 @@ package dispatch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -805,4 +807,66 @@ func TestAttachExisting_NonContactListHoldsTheStandingName_IsANamedConflict(t *t
 	require.ErrorIs(t, err, audience.ErrStandingListConflict)
 	assert.Contains(t, err.Error(), "(id 5050)")
 	assert.Contains(t, err.Error(), "not a contact list")
+}
+
+// A master named under the pre-LFXV2-2770 fingerprint excluded one combined wrapper list, which
+// may since have been edited or deleted. A selection whose resolved exclusions equal the
+// requested ones (no full standard set, no registrants edition) must not reuse it.
+func TestComposeMaster_PreChangeFingerprintedMaster_IsNotReused(t *testing.T) {
+	portal, _ := standardPortal()
+	const base = "AGNTCon Japan - Master"
+	include, exclude := []string{"111"}, []string{"6001"}
+	sum := sha256.Sum256([]byte(strings.Join(include, ",") + "|" + strings.Join(exclude, ",")))
+	legacy := hex.EncodeToString(sum[:])[:8] // the fingerprint before the scheme was versioned
+	portal.byName[base] = "31349"
+	portal.byName[audience.WithFingerprint(base, legacy)] = "31350"
+	x := composeExplorer(portal.serve(t).URL)
+
+	outcome, err := x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{ListIDs: include, ExcludeListIDs: exclude, Name: base})
+	require.NoError(t, err)
+	assert.NotEqual(t, legacy, audience.SelectionFingerprint(include, exclude))
+	assert.NotEqual(t, "31350", outcome.Master.ListID, "the pre-change master is never reused")
+	created, _ := portal.writes()
+	require.Len(t, created, 1)
+	assert.Equal(t, audience.WithFingerprint(base, audience.SelectionFingerprint(include, exclude)), created[0]["name"])
+}
+
+// Search lag hides an included standing list from the first read; the refused create's
+// re-lookup recovers it. The overlap is refused BEFORE the list is grown.
+func TestAttachExisting_RecoveredStandingListAlsoIncluded_IsRefusedBeforeGrowing(t *testing.T) {
+	portal, std := standardPortal()
+	standingWith(t, portal, std[:len(std)-1]) // would need growth
+	name := audience.StandardSuppressionName("proj-1")
+	portal.lagSearches = map[string]int{name: 1}
+	portal.refuseCreate = http.StatusBadRequest
+	x := composeExplorer(portal.serve(t).URL)
+
+	_, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027", "77"}, std, "")
+	var overlap *audience.ExclusionOverlapError
+	require.ErrorAs(t, err, &overlap)
+	assert.Equal(t, "77", overlap.ListID)
+	_, updated := portal.writes()
+	assert.Empty(t, updated, "a rejected request must not grow the standing list")
+}
+
+// A late (recovered) registrants hit that is an inclusion is refused before the standing list,
+// found normally and needing growth, is grown.
+func TestAttachExisting_RecoveredRegistrantsListAlsoIncluded_IsRefusedBeforeGrowing(t *testing.T) {
+	portal, std := standardPortal()
+	standingWith(t, portal, std[:len(std)-1])
+	const edition = "KubeCon + CloudNativeCon Europe 2026"
+	filter, err := audience.CurrentRegistrantsFilter(edition)
+	require.NoError(t, err)
+	portal.byName[audience.CurrentRegistrantsName(edition)] = "88"
+	portal.filters["88"] = filter
+	portal.lagSearches = map[string]int{audience.CurrentRegistrantsName(edition): 1}
+	portal.refuseCreate = http.StatusBadRequest
+	x := composeExplorer(portal.serve(t).URL)
+
+	_, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027", "88"}, std, edition)
+	var overlap *audience.ExclusionOverlapError
+	require.ErrorAs(t, err, &overlap)
+	assert.Equal(t, "88", overlap.ListID)
+	_, updated := portal.writes()
+	assert.Empty(t, updated, "the standing list is not grown for a request that is then refused")
 }

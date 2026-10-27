@@ -774,6 +774,12 @@ func audienceExploreErr(ctx context.Context, op, projectID string, err error) er
 			msg = conflict.Error()
 		}
 		return &explore.ConflictError{Code: "409", Message: msg}
+	case errors.As(err, new(*audience.FieldError)):
+		// Above the generic ErrInvalidRequest arm for the same reason as the overlap arm: the
+		// fix is one named field, and the generic text names the event URL instead.
+		var field *audience.FieldError
+		errors.As(err, &field)
+		return &explore.BadRequestError{Code: "400", Message: field.Error()}
 	case errors.As(err, new(*audience.ExclusionOverlapError)):
 		// Above the generic ErrInvalidRequest arm it also matches: that arm's message points at
 		// the event URL or list reference, and the fix here is a specific list, which only this

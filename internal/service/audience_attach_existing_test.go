@@ -281,3 +281,24 @@ func TestAttachExistingAudienceMapsAResolvedOverlapTo400NamingTheList(t *testing
 	assert.Contains(t, br.Message, "cannot be both sent to and suppressed")
 	assert.Zero(t, repo.calls, "nothing is recorded")
 }
+
+// A yearless current_registrants_event is a 400 that names the field and the year it needs, not
+// the generic "check the event URL" text the ErrInvalidRequest arm gives.
+func TestAttachExistingAudienceMapsAYearlessEditionTo400NamingTheField(t *testing.T) {
+	_, ferr := audience.CurrentRegistrantsFilter("AGNTCon + MCPCon Japan")
+	require.Error(t, ferr)
+	svc, repo := attachService(t, &attachExplorer{err: fmt.Errorf("audience attach: %w", ferr)})
+
+	_, err := svc.AttachExistingAudience(context.Background(), attachPayload("brief-1"))
+	var br *explore.BadRequestError
+	require.ErrorAs(t, err, &br)
+	assert.Equal(t, "400", br.Code)
+	assert.True(t, strings.HasPrefix(br.Message, "current_registrants_event: "), br.Message)
+	assert.Contains(t, br.Message, "WITH its year")
+	assert.Zero(t, repo.calls)
+
+	// compose maps through the same function.
+	cerr := composeErr(context.Background(), "proj-1", fmt.Errorf("audience compose: %w", ferr))
+	require.ErrorAs(t, cerr, &br)
+	assert.Contains(t, br.Message, "current_registrants_event")
+}

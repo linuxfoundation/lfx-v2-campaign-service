@@ -178,7 +178,10 @@ type ComposeAudienceMasterResponseBody struct {
 	// The created master list
 	Master *AudienceComposedListResponseBody `form:"master,omitempty" json:"master,omitempty" xml:"master,omitempty"`
 	// The project's standing standard suppression list the master excludes, reused
-	// across composes; absent unless every resolved standard list was selected
+	// across composes; absent unless every resolved standard list was selected.
+	// Changed meaning in LFXV2-2770: it used to be a per-compose combined list
+	// covering every exclusion and now covers the standard lists only, so read
+	// suppression_list_ids for the full set of excluded lists
 	Suppression *AudienceComposedListResponseBody `form:"suppression,omitempty" json:"suppression,omitempty" xml:"suppression,omitempty"`
 	// The inclusion lists the master unions
 	SourceListIds []string `form:"source_list_ids,omitempty" json:"source_list_ids,omitempty" xml:"source_list_ids,omitempty"`
@@ -205,7 +208,8 @@ type AttachExistingAudienceResponseBody struct {
 	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
 	// The project's standing standard suppression list, reused across audiences,
 	// recorded in place of the standard lists; absent unless every resolved
-	// standard list was selected
+	// standard list was selected. It covers the standard lists only;
+	// suppression_list_ids holds every excluded list
 	Suppression *AudienceComposedListResponseBody `form:"suppression,omitempty" json:"suppression,omitempty" xml:"suppression,omitempty"`
 	// Every include list the send goes to, when include_list_ids was supplied;
 	// absent for a single master_list_id

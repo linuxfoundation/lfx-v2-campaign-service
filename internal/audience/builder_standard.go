@@ -69,8 +69,48 @@ func RegistrantsListMatches(filter json.RawMessage, editionName string) bool {
 	only := func(editions []string) bool {
 		return len(editions) == 1 && norm(editions[0]) == norm(editionName)
 	}
+	if includesNoValueSet(filter) {
+		return false
+	}
 	editions, exclusive := RegistrationEvidence(filter)
 	return exclusive && only(editions) && only(CoveredEditions(filter))
+}
+
+// includesNoValueSet reports whether any filter in the tree sets
+// operation.includeObjectsWithNoValueSet: an "event_name IS_EQUAL_TO X" that also admits
+// events with NO event_name is not an exact edition, and neither RegistrationEvidence nor
+// CoveredEditions reads the flag. An unreadable tree counts as setting it.
+func includesNoValueSet(filter json.RawMessage) bool {
+	type node struct {
+		FilterBranches []node `json:"filterBranches"`
+		Filters        []struct {
+			Operation struct {
+				IncludeObjectsWithNoValueSet bool `json:"includeObjectsWithNoValueSet"`
+			} `json:"operation"`
+		} `json:"filters"`
+	}
+	var root node
+	if len(filter) == 0 {
+		return false
+	}
+	if json.Unmarshal(filter, &root) != nil {
+		return true
+	}
+	var walk func(n node) bool
+	walk = func(n node) bool {
+		for _, f := range n.Filters {
+			if f.Operation.IncludeObjectsWithNoValueSet {
+				return true
+			}
+		}
+		for _, c := range n.FilterBranches {
+			if walk(c) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(root)
 }
 
 // StandingFilterIsUnion reports whether a standing list's filter is only a union of list
@@ -120,7 +160,8 @@ func CurrentRegistrantsFilter(editionName string) (json.RawMessage, error) {
 	if !RegistrantsEditionOK(editionName) {
 		// Fail closed: a name without the edition's year matches nobody, and a suppression
 		// that excludes nobody reads as applied.
-		return nil, fmt.Errorf("%w: a current-registrants list needs the edition's event name with its year, e.g. \"AGNTCon + MCPCon Japan 2026\"", ErrInvalidRequest)
+		return nil, &FieldError{Field: "current_registrants_event",
+			Reason: "must be the edition's event name WITH its year, exactly as registrations record it (e.g. \"AGNTCon + MCPCon Japan 2026\"); without the year the list would match nobody"}
 	}
 	return json.Marshal(filterBranch{
 		FilterBranchType: "OR",

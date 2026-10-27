@@ -1544,3 +1544,33 @@ func TestRunQA_AnIncludedListsOwnExclusionClearsItsEvidence(t *testing.T) {
 		})
 	}
 }
+
+// Visitors of a page that is NOT the event's page are a different segment: they get no past
+// editions ORed in, which would reach people outside the requested visitors.
+func TestInterpretCustom_VisitorsOfAnotherPageGetNoPastEditions(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":["events.example.org/synthetic-summit/cfp"],"registered_for":[],"label":""},"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"events.example.org/synthetic-summit/cfp"}, out.Draft.Criteria.PageViewURLs)
+	assert.Empty(t, out.Draft.Criteria.RegisteredFor, "another page's visitors are not the event's default audience")
+}
+
+func TestSelectsPage(t *testing.T) {
+	const event = "https://events.example.org/synthetic-summit/"
+	assert.True(t, selectsPage([]string{"events.example.org/synthetic-summit"}, event))
+	assert.True(t, selectsPage([]string{"https://www.Events.example.org/synthetic-summit?utm_source=x"}, event))
+	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit/cfp"}, event))
+	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit"}, ""))
+	assert.False(t, selectsPage(nil, event))
+}

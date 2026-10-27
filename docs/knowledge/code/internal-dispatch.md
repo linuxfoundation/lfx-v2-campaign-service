@@ -4478,7 +4478,11 @@ excluded list, the registrants list's id), not the requested ones. A reused mast
 the ids it was built with, so its identity must be those ids: the same request resolves to a
 different standing list in another project on the same portal, or after a standing or registrants
 list is recreated, and either way gets a new master rather than one excluding lists it no longer
-reports.
+reports. The hash also covers a scheme marker (`fingerprintScheme`, `direct-exclusions-v2`): a
+master from before LFXV2-2770 excluded one combined wrapper list, and for a selection whose
+resolved ids equal the requested ones (no full standard set, no registrants edition) the ids alone
+would tag it the same, so a repeat would reuse a master whose wrapper may have been edited or
+deleted. The first such compose after deploy creates a new master once.
 
 When `ComposeInput.RecordUnderBriefID` is set, `ComposeMaster` resolves the portal right after
 `cachedClient` and BEFORE that first create, returning it on `ComposeOutcome.PortalID`. Both halves
@@ -4504,7 +4508,7 @@ The suppressions then go through `resolveSuppressions`, shared with `ComposeMast
 
 - **Standard suppressions reuse ONE standing list per project.** `standardRows` resolves every
   `StandardSuppressionTerms` entry (the same lookup `SuppressionLists` serves). When the selection
-  holds EVERY resolved standard list, they are replaced by `ensureStandardList`: the list named
+  holds EVERY resolved standard list, they are replaced by the standing list (`findOrCreateStanding`, then `growStandardList`): the list named
   `audience.StandardSuppressionName(projectID)` (`LFX Standard Suppressions - <project>`, no date or
   fingerprint), found with `exactList`, created on first use as their union, and otherwise only
   ever GROWN: the new filter is the union of the lists it already covers (`CoveredListIDs`) and the
@@ -4526,14 +4530,15 @@ The suppressions then go through `resolveSuppressions`, shared with `ComposeMast
   because the union would exclude a list the operator unticked.
 - **Everything else stays its own entry** in `AttachedSuppressionIDs`: brand, event-specific and
   Exclude-marked lists.
-- **Current registrants.** With a registrants edition (event name with year), `ensureRegistrantsList`
+- **Current registrants.** With a registrants edition (event name with year), `findOrCreateStanding` (then `verifyRegistrantsList` for a list that already existed)
   finds or creates `audience.CurrentRegistrantsName(edition)` from
   `audience.CurrentRegistrantsFilter` (the registration custom event, `event_name` IS_EQUAL_TO the
   edition) and appends it as its own entry. A list found under that name is reused only when it is
   a `DYNAMIC` contact list whose filter selects ALL of this edition's registrations and nobody else
-  (`audience.RegistrantsListMatches`: `RegistrationEvidence`'s exclusive case for "nobody else", and
+  (`audience.RegistrantsListMatches`: `RegistrationEvidence`'s exclusive case for "nobody else",
   `CoveredEditions` for "all of it", which rejects an AND adding a condition beside the
-  registration or an extra filter inside the event branch); the name match is case-insensitive and anyone can create a
+  registration or an extra filter inside the event branch, and no filter setting
+  `includeObjectsWithNoValueSet`, which would also admit events with no `event_name`); the name match is case-insensitive and anyone can create a
   list under any name, so anything else is a `StandingListConflictError` naming it (409). The name
   of an edition too long to fit is cut and tagged with a short hash of the full edition, so two
   long editions sharing a prefix never share a list.
@@ -4555,8 +4560,12 @@ and only then creates or grows anything. It also takes the send's inclusion ids 
 attach's read-back include ids), because the caller's input overlap check cannot see what
 resolution substitutes or adds: the standing list stands in for the standard ids and
 `current_registrants_event` adds the registrants list, and either can be a list the send also goes
-to. A standing list FOUND among the includes is refused before any write, and the final resolved
-ids are checked once more before returning, so compose creates no master and attach records
+to. It runs in three steps: read both standing lists by name; obtain each (the read's hit, a
+create, or what the re-lookups RECOVER after a refused or unconfirmed create); and only then verify
+the registrants list and grow the standing list. Every list found or recovered is checked against
+the includes before that last step, so a rejected request never grows the standing list (search
+lag can hide an included standing list from the read, and a late registrants hit used to surface
+after the standing list had grown). The final resolved ids are checked once more before returning, so compose creates no master and attach records
 nothing. Either is an `audience.ExclusionOverlapError` (wraps `ErrInvalidRequest`; a 400 naming the
 list).
 
@@ -4760,8 +4769,10 @@ saying it could not be verified. This edition's name is year-qualified (`WithEve
 prompt and the check, as registrations are stored, while the response's `event` reports the name as
 the page declares it, as `discover` does. The past editions are the default of two audiences only: a REGIONAL one (cities or countries
 AND a location branch: `contact_location`, `event_registered` or `education_enrolled`), and the
-event's default audience, which is not location-scoped and selects the event page's visitors
-(`page_view_urls`) with no speaker or ambassador restriction. Anything else gets none. Otherwise
+event's default audience, which is not location-scoped and selects the visitors of THIS event's
+page (one of `page_view_urls` is the event URL, compared by `selectsPage` ignoring scheme, `www.`,
+query, fragment, trailing slash and case) with no speaker or ambassador restriction. Visitors of
+any other page are a different segment and get none. Anything else gets none. Otherwise
 a registration branch would AND a role with a past registration (dropping first-time speakers) or
 add registrants beside a topic-only education audience. The service adds the defaults itself and
 the system prompt tells the model to leave `registered_for` empty for them, so they are always

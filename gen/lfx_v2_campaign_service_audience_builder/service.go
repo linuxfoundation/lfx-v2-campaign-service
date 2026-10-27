@@ -136,7 +136,8 @@ type AudienceAttachExistingResult struct {
 	SuppressionListIds []string
 	// The project's standing standard suppression list, reused across audiences,
 	// recorded in place of the standard lists; absent unless every resolved
-	// standard list was selected
+	// standard list was selected. It covers the standard lists only;
+	// suppression_list_ids holds every excluded list
 	Suppression *AudienceComposedList
 	// Every include list the send goes to, when include_list_ids was supplied;
 	// absent for a single master_list_id
@@ -186,7 +187,10 @@ type AudienceComposeMasterResult struct {
 	// The created master list
 	Master *AudienceComposedList
 	// The project's standing standard suppression list the master excludes, reused
-	// across composes; absent unless every resolved standard list was selected
+	// across composes; absent unless every resolved standard list was selected.
+	// Changed meaning in LFXV2-2770: it used to be a per-compose combined list
+	// covering every exclusion and now covers the standard lists only, so read
+	// suppression_list_ids for the full set of excluded lists
 	Suppression *AudienceComposedList
 	// The inclusion lists the master unions
 	SourceListIds []string
