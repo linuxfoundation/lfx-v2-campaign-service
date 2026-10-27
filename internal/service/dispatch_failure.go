@@ -47,6 +47,39 @@ const genericDispatchFailure = "platform campaign creation failed"
 // precedes the broad not-usable arm because systemScoped wraps rather than replaces.
 func DispatchFailureMessage(p model.Provider, derr error, preCreate bool) string {
 	if !preCreate {
+		// A retained failure is still UNCONFIRMED by default, but "something may have been
+		// created" is the least that can be said and is wrong for most of the outcomes that
+		// reach here: a budget-name collision created nothing at all, and a refused campaign
+		// after a created budget is not an unknown state but a known, specific one. Where
+		// the dispatcher classified the outcome, say which it was.
+		//
+		// Each arm is a FIXED sentence chosen by the token, never built from it, so the
+		// message still cannot carry upstream text (#208) whatever the carrier holds. An
+		// unrecognised token falls through to the status/unconfirmed wording below.
+		if outcome, ok := domain.UpstreamCreateOutcome(derr); ok {
+			switch outcome {
+			case domain.CreateOutcomeBudgetNameTaken:
+				return fmt.Sprintf("%s campaign creation was refused because a budget of the name this service composes for this event already exists; nothing new was created. This service tried to reuse that budget and could not establish that it is safe to — the read of it may simply have failed, in which case a retry may well succeed, or what came back may not match the budget this service creates: shared, already carrying a campaign, a different period or delivery shape, or an amount it could not bring into line with the brief. If retrying does not clear it, an unattached non-shared budget is not listed in the shared budget library, so find it through the campaign it carries or the platform's change history", p)
+			case domain.CreateOutcomeCampaignNameTaken:
+				return fmt.Sprintf("%s campaign creation was refused because a campaign of the name this service composes for this event already exists; a budget for this attempt EXISTS, either created by it or reused from an earlier attempt — verify both on the platform before retrying", p)
+			case domain.CreateOutcomeBudgetCreatedCampaignRefused:
+				return fmt.Sprintf("%s created or reused the campaign budget and then refused the campaign itself; no campaign exists and the budget is unattached, so it accrues no spend — a retry of this same brief will reuse that budget rather than be blocked by its name, provided it is still unattached, non-shared and otherwise unchanged", p)
+			case domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed:
+				return fmt.Sprintf("%s created or reused the campaign budget; whether the campaign was created could not be confirmed — verify on the platform before retrying", p)
+			case domain.CreateOutcomeCampaignCreatedSetupIncomplete:
+				// "could not be confirmed", not "did not finish": the last mutate of the
+				// cascade can answer 2xx with a response this client cannot read
+				// (pmax_creative.go's assetGroupAssets:mutate, demandgen_creative.go's
+				// adGroupAds:mutate), and those arms return a campaign partial whose own
+				// text says the resources MAY exist. The campaign's existence is proven by
+				// the returned id; the state of its setup is not.
+				return fmt.Sprintf("%s created the campaign but could not confirm its setup finished; it may be partly configured and not ready to run — verify on the platform before retrying", p)
+			case domain.CreateOutcomeUnconfirmed:
+				// Deliberately no sentence of its own: this token means exactly what the
+				// status/unconfirmed wording below already says, and a second copy here
+				// would be one more sentence to keep in step with it.
+			}
+		}
 		// Status only, never the body, method or path.
 		if status, ok := domain.UpstreamStatus(derr); ok {
 			return fmt.Sprintf("%s campaign creation could not be confirmed (the platform answered HTTP %d); something may have been created — verify on the platform before retrying", p, status)

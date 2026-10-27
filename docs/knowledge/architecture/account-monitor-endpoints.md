@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Account-Monitor Endpoints"
-description: "Seven monitor endpoints: six account-scoped ones, one per ad platform (four ported from the LFX One BFF's rule engines and read live, Microsoft Ads and X served from saved asynchronous reports because their metrics cannot be read inside one request), and a project-scoped HubSpot email monitor that reads only the marketing emails this service recorded for the project."
+description: "Seven monitor endpoints: six ad-platform ones, one per ad platform (four ported from the LFX One BFF's rule engines and read live, Microsoft Ads and X served from saved asynchronous reports because their metrics cannot be read inside one request), of which Google Ads, Meta, Reddit and X return only the campaigns this service recorded for the project because their ad account is shared across foundations while LinkedIn and Microsoft stay account-scoped, and a project-scoped HubSpot email monitor that reads only the marketing emails this service recorded for the project."
 resource: "internal/service/connection_monitor.go"
 ---
 
@@ -12,8 +12,8 @@ resource: "internal/service/connection_monitor.go"
 Microsoft Ads and X joined later and are the two REPORT-BACKED monitors — see
 [Microsoft: a report-backed monitor](#microsoft-a-report-backed-monitor) and
 [X: a second report-backed monitor](#x-a-second-report-backed-monitor). HubSpot's
-`GET /projects/{project_id}/connection-hubspot/account-monitor?days=` is the seventh and the
-only PROJECT-scoped one — see
+`GET /projects/{project_id}/connection-hubspot/account-monitor?days=` is the seventh, the only
+one with no `account_id`, and project-scoped — see
 [HubSpot: a project-scoped email monitor](#hubspot-a-project-scoped-email-monitor). Everything
 below that is not in those sections describes the four live reads.
 
@@ -21,8 +21,11 @@ Ports the LFX One BFF's `/api/campaigns/monitor` family (Google, LinkedIn,
 Meta, Reddit — Meta ships with a pagination fix, not a verbatim port; see
 below). `{project_id}` means "whose credential do I resolve," the same way
 it already does for the existing `connection-*-ads/accounts` discovery
-endpoints — these are *account*-scoped reads (every campaign the credential
-reaches), not project-scoped ones.
+endpoints. On LinkedIn and Microsoft these are *account*-scoped reads (every
+campaign the credential reaches). On Google Ads, Meta, Reddit and X, whose
+one ad account every foundation shares, `{project_id}` also limits the
+response to the campaigns this service recorded for the project — see
+[Project scoping on shared accounts](#project-scoping-on-shared-accounts-lfx-self-serve-ops897).
 
 ## Shape
 
@@ -535,9 +538,115 @@ shared credential has no "own" account to monitor, the same way it has no
 residual even for a project WITH its own connection — see
 `resolveOwnedGoogleAdsDiscoveryClient`'s doc comment
 (`internal/dispatch/googleads.go`): Google Ads is one shared customer across
-every foundation, so the fix closes the system-fallback gap but cannot make
-the endpoint project-scoped in the way LinkedIn/Meta/Reddit's per-project ad
-accounts are.
+every foundation, so the fix closes the system-fallback gap but cannot by
+itself make the endpoint project-scoped. Project scoping, below, is what
+closes that residual.
+
+### Project scoping on shared accounts (lfx-self-serve-ops#897)
+
+Resolving the project's own credential decides whose credential reads the
+account; it does not decide which campaigns come back. On Google Ads, Meta,
+Reddit and X every foundation's connection points at the same upstream
+account, so an account-wide read handed a `campaign_manager` of one project
+every other foundation's campaigns, budgets and spend. That was true through
+the BFF and on a direct call alike: the gateway check is `campaign_manager`
+on `project:{project_id}` and nothing else, and this service only verified
+identity.
+
+The four monitors are now project-scoped inside the service, for every
+caller (ROOT included), at one choke point mirroring
+`Orchestrator.ReadKeywordPerformance`:
+
+1. `scopeAccountMonitor` first runs the dispatcher's `MonitorScopePrecheck`:
+   the credential-free refusals its own read would answer with 400 — every
+   platform's `account_id` shape check, and on X the `TWITTER_METRICS_ENABLED`
+   gate (`twitterMonitorPrecheck`, shared with `resolveTwitterMonitorClient`).
+   Without it a disabled X monitor answered 200 empty or 409 depending on what
+   the project had recorded. Then it reads the project's campaign scope from
+   SQL (`projectCampaignScope` → `ListProjectPlatformCampaignIDs`, filtered on
+   `project_id`). The requested-account guards on Meta, Reddit and X need the
+   stored connection, so they still run after the scope: a wrong `account_id`
+   there gets 200 empty or 409 before it can reach their 400.
+2. An empty scope answers 200 with an empty monitor before any upstream call
+   and before the connection is resolved — so a project with no campaigns and
+   no connection gets 200, not 404, as the insight reads already do. On X it
+   also skips the saved-report read, the campaign list and any submission.
+3. The dispatcher's `MonitorScopeForAccount` checks each entry's recorded
+   creation account against `account_id` with the same provenance helpers the
+   insight reads use (`googleAdsScopeForCustomer`, `metaScopeForAccount`,
+   `redditScopeForAccount`, `twitterScopeForAccount`). On Google Ads and X the
+   monitor is stricter than those reads: `requireRecordedMonitorProvenance`
+   also refuses a row that records no creating account, as Reddit's helper
+   does, because their ids are unique only within an account and the monitor
+   may read an account the row was never created under. ANY mismatch fails the
+   read closed — a partly matching scope is never reduced to the matching ids,
+   because the response has no field that could disclose the omission.
+   The project's SOFT-DELETED campaigns (`ListProjectPlatformDeletedCampaignIDs`)
+   join the set too, because a local delete does not stop the upstream campaign
+   and the monitor is where one still spending shows up. Each is checked on its
+   own, by the same helper and the same rule as the live rows: it is kept
+   unless it does not fit `account_id` — a recorded account that differs (on
+   Google Ads, Reddit and X, also none recorded; Meta treats an unrecorded
+   account as unknown and proceeds), or an id the platform cannot read — and
+   then it is dropped and logged, never a 409: a deleted row cannot be
+   re-dispatched or reconciled, so that refusal would have no remedy. A
+   deleted campaign another project has taken over is left out in SQL (the
+   query's `NOT EXISTS`): the per-platform binding indexes cover live rows only,
+   so another project can adopt a campaign after this one deleted it, and from
+   then on it is that project's. Another project's row takes it over when it is
+   live OR bound the id later whatever its status, so the adopter deleting its
+   own row too does not hand the campaign back. "Bound later" compares
+   `platform_bound_at` (migration `000048`), falling back to `created_at` for
+   rows with no stamp; `created_at` alone is the dispatch CLAIM time, and a
+   dispatch that binds an existing upstream campaign can claim before another
+   project's adopt-then-delete and bind after it. The empty-scope answer in step 2 therefore needs both lists empty.
+4. The unchanged account read runs. After ALL upstream work (including the
+   report-backed monitor's best-effort currency read), `revalidateAccountMonitorScope`
+   reads live and eligible deleted bindings together with
+   `ListProjectPlatformMonitorCampaignIDs`: one SQL statement, hence one database
+   snapshot, with the same latest-owner predicate as the deleted precheck. Repeating
+   the two precheck queries would keep an originally live id if a delete/adopt
+   committed between them. A lookup error fails closed, without returning rows.
+   Revalidation also returns an error, rather than panicking, if the dispatcher is
+   missing or does not implement `AccountMonitorScoper`; it never authorizes ids
+   without a scoper, even if a caller bypasses the normal `scoped` guard.
+   The dispatcher rechecks each candidate's account provenance; an entry it now
+   refuses is omitted. The final set is intersected with the initial authorization,
+   never widened to campaigns acquired during the read. Only rows in that
+   intersection are kept, BEFORE the rule engine and `monitorTotals`, so action
+   items and totals describe the same rows. Regression coverage blocks both monitor
+   paths during the upstream read, transfers ownership, then completes the read;
+   it also covers a transfer between precheck queries and during X's currency read.
+   This catches transfers committed before the final snapshot; it does not lock
+   ownership until response delivery or claim to serialize reads with transfers.
+5. Migration `000049` adds the non-unique, all-status
+   `idx_campaigns_platform_campaign_history (platform, platform_campaign_id)`
+   concurrently. The existing live-only binding indexes cannot support the
+   historical takeover lookup. Binding uniqueness and soft-delete semantics stay
+   unchanged.
+
+The 409s are mapped by `classifyMonitorError` (`connection_monitor.go`), with
+`classifyInsightsErrorFor`'s arm order and remedies: provenance mixed, then
+unknown (Google Ads, Reddit and X — they refuse a row that records no creating
+account), then mismatch, then an unreadable stored id. Google, Meta and Reddit
+answer `AccountMonitorScopeConflictError` and X its own
+`AccountMonitorConflictError`, each with a required `reason`
+`campaign_account_mismatch` or `campaign_scope_invalid`. Neither is the shared
+`ConflictError`, whose published example (`already_exists`, a connection
+collision) is a response no monitor returns. The arms apply only
+to those four platforms, so LinkedIn and Microsoft can never produce a 409
+their designs do not declare.
+
+The shared-tenancy marker is the OPTIONAL capability
+`service.AccountMonitorScoper`, implemented in
+`internal/dispatch/account_monitor_scope.go` by the four shared-tenancy
+dispatchers and by no others. LinkedIn runs an account per foundation and
+Microsoft's tenancy is not yet recorded
+([architecture.md § Account Tenancy](../../architecture.md#account-tenancy)),
+so both keep the account-wide read. X's saved report
+(`account_monitor_reports`) still stores the account-wide rows; only the
+response is filtered, and the report's `metrics_as_of`, window and
+`metrics_pending` are returned unchanged.
 
 ### Expected interaction with `LFX_FORCE_SYSTEM_ADS_ACCOUNT`
 
@@ -723,7 +832,7 @@ differential diff, since fixed:
 `campaign_count` rows carry `fetch_failed=true`, counted in `monitorTotals` over the same
 post-`evaluate` rows the sums cover. The sums still include those rows at whatever they carry —
 zero for a row whose metrics could not be read — so a non-zero count means the totals may
-UNDERSTATE the account by up to that many campaigns' delivery. Decisions:
+UNDERSTATE the returned campaigns by up to that many campaigns' delivery. Decisions:
 
 - **An upper bound, not an exact count.** `fetch_failed` also marks a row whose budget or flight
   alone was unreadable while its metrics were read and summed (Google, LinkedIn, Meta, Microsoft,
@@ -878,7 +987,8 @@ with `TwitterDispatcher` as a second implementation. Nothing was forked.
   comma-joined (≤10 jobs, ~210 bytes in a TEXT column). No active campaign gives the sentinel
   `none`, which Check answers as a finished empty report without calling X. An account with
   more than 200 campaigns active in the window (`twitter.MaxMonitorActiveCampaigns`, ten jobs
-  of 20) is refused before any job is created rather than half-reported
+  of 20) — counted on the whole shared account, every project's campaigns included, because the
+  report is read account-wide and only the response is scoped — is refused before any job is created rather than half-reported
   (`twitter.ErrTooManyActiveCampaigns` → `domain.ErrAccountTooManyActiveCampaigns` → **409**,
   reason `account_too_many_active_campaigns`).
 - **Permanent refusals fail the read.** Unlike a transient submit failure (logged, retried on

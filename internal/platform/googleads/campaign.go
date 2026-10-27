@@ -331,6 +331,25 @@ type CampaignInput struct {
 	// carries image URLs, so its bytes ARE fetched before the budget mutate. See
 	// display_creative.go.
 	DisplayCreative DisplayCreative
+
+	// ResolvedImages supplies the bytes for creative image entries the caller has ALREADY
+	// resolved, keyed by the exact slot entry string it put in the creative above.
+	//
+	// It exists because an image may come from the caller's own asset library rather than
+	// from a URL (LFXV2-2665): the dispatcher loads those bytes under its own memory budget
+	// and hands them over here, and the entry string for one of them is not a URL at all but
+	// `lfx-asset:<uuid>`. A slot entry present in this map is NOT fetched; a slot entry
+	// absent from it is a URL and is fetched exactly as before.
+	//
+	// What it does NOT do is skip validation. A pre-resolved image runs through the same
+	// per-image size cap, the same image.DecodeConfig (decode, never a Content-Type sniff)
+	// and the same slot minimum-size and aspect-ratio check as a downloaded one, in the same
+	// phase, before the budget mutate. None of those checks is a property of HTTP, and an
+	// image that skipped them would be the one way to get a wrong-ratio asset past the
+	// preflight and into the ad mutate, which runs after the campaign exists.
+	//
+	// Nil is the ordinary case: a creative made entirely of URLs supplies no map.
+	ResolvedImages map[string][]byte
 }
 
 // AdGroupResult is one ad group the cascade attempted, and everything created
@@ -1392,7 +1411,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// the meta/twitter name-only partials.
 	campaignNamePartial := func() *CampaignResult {
 		return &CampaignResult{
-			Platform:     "google-ads",
+			Platform:     platformGoogleAds,
 			AccountLabel: c.account.Label,
 			// Stamped on the PARTIAL, not just the success result: every returned result —
 			// including every ambiguous/duplicate partial — descends from this closure, so a
@@ -1426,30 +1445,51 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}}}}
 	budgetPath := c.customerPath("campaignBudgets:mutate")
 	budgetResp, err := c.doRequest(ctx, http.MethodPost, budgetPath, budgetReq, false)
-	if err != nil {
-		switch {
-		case isDuplicateBudgetNameErr(err):
-			// A retry with a stable NameSuffix hit a name that already exists: the
-			// budget was (almost certainly) created by a prior attempt. Not created
-			// here, but NOT a clean failure either — reconcile by name.
-			return campaignNamePartial(), fmt.Errorf("google-ads campaign budget %q already exists (DUPLICATE_NAME) — a prior attempt likely created it; verify in Google Ads before retrying: %w", budgetName, err)
-		case createOutcomeAmbiguous(err):
+	// The arms are a single switch rather than `if err != nil { switch }` so the
+	// DUPLICATE_NAME arm can resolve to a usable budget instead of only to an error; see
+	// reuseBudgetAfterDuplicateName.
+	var budgetResource, budgetID string
+	switch {
+	case err == nil:
+		budgetResource, budgetID, err = firstResourceName(budgetResp)
+		if err != nil {
+			// A 2xx with no/malformed resourceName is a malformed success: the budget MAY
+			// have been created. UNCONFIRMED, not a clean failure.
 			return campaignNamePartial(), fmt.Errorf("google-ads campaign budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
-		default:
-			return nil, fmt.Errorf("google-ads campaign budget creation failed: %w", err)
 		}
+		steps = append(steps, fmt.Sprintf("Campaign budget created: %s (%.2f/day in account currency, STANDARD delivery, non-shared)", budgetID, in.Budget))
+	case isDuplicateBudgetNameErr(err):
+		// A retry with a stable NameSuffix hit a name that already exists: the budget was
+		// (almost certainly) created by a prior attempt whose campaign step failed. If it
+		// can be PROVED to be that orphan — ours, non-shared, unattached, same shape — the
+		// campaign attaches to it, which is the only way a brief in this state can ever be
+		// dispatched again: a non-shared budget with no campaign on it has no Google Ads UI
+		// surface the operator could delete it from. Anything short of proof keeps the
+		// original refusal, with the reason the reuse was declined carried in it.
+		resource, id, reuseSteps, reuseErr := c.reuseBudgetAfterDuplicateName(ctx, budgetName, amountMicros, in.Budget)
+		if reuseErr != nil {
+			// BOTH errors are wrapped, and the DUPLICATE_NAME refusal goes FIRST
+			// because that order is load-bearing: isDuplicateBudgetNameErr (and every
+			// other errors.As predicate) stops at the FIRST *apiError in the chain, so
+			// wrapping the reuse failure ahead of it would let an apiError from the
+			// lookup READ shadow the duplicate code and cost this failure its precise
+			// create-outcome token. carriesUnconfirmedWrite searches the whole chain,
+			// so the reuse side is still read for a write that may have landed.
+			return campaignNamePartial(), fmt.Errorf("google-ads campaign budget %q already exists (DUPLICATE_NAME): %w — and could not be safely reused: %w — a prior attempt likely created it; verify in Google Ads before retrying", budgetName, err, reuseErr)
+		}
+		budgetResource, budgetID = resource, id
+		steps = append(steps, reuseSteps...)
+	case createOutcomeAmbiguous(err):
+		// Resolved against the account rather than reported as unknown — see
+		// ambiguousBudgetCreateOutcome; every channel takes this arm identically.
+		return c.ambiguousBudgetCreateOutcome(ctx, "campaign", budgetName, campaignNamePartial, err)
+	default:
+		return nil, fmt.Errorf("google-ads campaign budget creation failed: %w", err)
 	}
-	budgetResource, budgetID, err := firstResourceName(budgetResp)
-	if err != nil {
-		// A 2xx with no/malformed resourceName is a malformed success: the budget MAY
-		// have been created. UNCONFIRMED, not a clean failure.
-		return campaignNamePartial(), fmt.Errorf("google-ads campaign budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
-	}
-	steps = append(steps, fmt.Sprintf("Campaign budget created: %s (%.2f/day in account currency, STANDARD delivery, non-shared)", budgetID, in.Budget))
 
-	// budgetPartial carries the created budget id (plus the campaign name) so an
-	// ambiguous/failed CAMPAIGN create leaves the budget reconcilable, not orphaned
-	// anonymously.
+	// budgetPartial carries this brief's budget id — created by this attempt, or adopted
+	// after a DUPLICATE_NAME — plus the campaign name, so an ambiguous/failed CAMPAIGN
+	// create leaves the budget reconcilable, not orphaned anonymously.
 	budgetPartial := func() *CampaignResult {
 		r := campaignNamePartial()
 		r.CampaignBudgetID = budgetID
@@ -1461,7 +1501,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// budget as a reconcilable partial + UNCONFIRMED, so a retry reconciles the
 	// orphan budget by name rather than blind-proceeding on a dead context.
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return budgetPartial(), fmt.Errorf("google-ads campaign creation aborted after budget %s created (context done before campaign create; the budget may need reconciling): %w", budgetID, ctxErr)
+		return budgetPartial(), fmt.Errorf("google-ads campaign creation aborted after budget %s was created or reused (context done before campaign create; the budget may need reconciling): %w", budgetID, ctxErr)
 	}
 
 	// Step 2: create the campaign referencing the budget.
@@ -1492,23 +1532,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		switch {
 		case isDuplicateCampaignNameErr(err):
-			return budgetPartial(), fmt.Errorf("google-ads campaign %q already exists (DUPLICATE_CAMPAIGN_NAME; budget %s created) — a prior attempt likely created it; verify in Google Ads before retrying: %w", campaignName, budgetID, err)
+			return budgetPartial(), fmt.Errorf("google-ads campaign %q already exists (DUPLICATE_CAMPAIGN_NAME; budget %s in place) — a prior attempt likely created it; verify in Google Ads before retrying: %w", campaignName, budgetID, err)
 		case createOutcomeAmbiguous(err):
-			return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; campaign %q may exist — verify in Google Ads before retrying): %w", budgetID, campaignName, err)
+			return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s in place; campaign %q may exist — verify in Google Ads before retrying): %w", budgetID, campaignName, err)
 		default:
-			return budgetPartial(), fmt.Errorf("google-ads campaign creation failed (budget %s created): %w", budgetID, err)
+			return budgetPartial(), fmt.Errorf("google-ads campaign creation failed (budget %s in place): %w", budgetID, err)
 		}
 	}
 	campaignResource, campaignID, err := firstResourceName(campaignResp)
 	if err != nil {
-		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; 2xx with no/malformed resource name — a campaign may exist; verify in Google Ads before retrying): %w", budgetID, err)
+		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s in place; 2xx with no/malformed resource name — a campaign may exist; verify in Google Ads before retrying): %w", budgetID, err)
 	}
 	// Validate that the campaign resource is in the exact current-account campaign shape
 	// before forwarding it to createAdGroupAndAd. A malformed 2xx such as
 	// customers/1234567890/adGroups/222 would be treated as a confirmed campaign and
 	// only fail after the real campaign has been created, persisting an untrustworthy ID.
 	if err := c.validateCampaignResource(campaignResource); err != nil {
-		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, err)
+		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s in place; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, err)
 	}
 	// The strategy is named from the PLAN, not from a literal: a step line that said
 	// "manual CPC" on a campaign created with maximize-conversions would be the only

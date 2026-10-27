@@ -24,6 +24,10 @@ type Endpoints struct {
 	DeleteBrief            goa.Endpoint
 	FetchEventURL          goa.Endpoint
 	UploadCreativeAsset    goa.Endpoint
+	ListCreativeAssets     goa.Endpoint
+	GetCreativeAsset       goa.Endpoint
+	GetAssetPlan           goa.Endpoint
+	DeleteCreativeAsset    goa.Endpoint
 	CreateCampaigns        goa.Endpoint
 	AdoptCampaign          goa.Endpoint
 	GetCampaign            goa.Endpoint
@@ -68,6 +72,10 @@ func NewEndpoints(s Service) *Endpoints {
 		DeleteBrief:            NewDeleteBriefEndpoint(s, a.JWTAuth),
 		FetchEventURL:          NewFetchEventURLEndpoint(s, a.JWTAuth),
 		UploadCreativeAsset:    NewUploadCreativeAssetEndpoint(s, a.JWTAuth),
+		ListCreativeAssets:     NewListCreativeAssetsEndpoint(s, a.JWTAuth),
+		GetCreativeAsset:       NewGetCreativeAssetEndpoint(s, a.JWTAuth),
+		GetAssetPlan:           NewGetAssetPlanEndpoint(s, a.JWTAuth),
+		DeleteCreativeAsset:    NewDeleteCreativeAssetEndpoint(s, a.JWTAuth),
 		CreateCampaigns:        NewCreateCampaignsEndpoint(s, a.JWTAuth),
 		AdoptCampaign:          NewAdoptCampaignEndpoint(s, a.JWTAuth),
 		GetCampaign:            NewGetCampaignEndpoint(s, a.JWTAuth),
@@ -110,6 +118,10 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.DeleteBrief = m(e.DeleteBrief)
 	e.FetchEventURL = m(e.FetchEventURL)
 	e.UploadCreativeAsset = m(e.UploadCreativeAsset)
+	e.ListCreativeAssets = m(e.ListCreativeAssets)
+	e.GetCreativeAsset = m(e.GetCreativeAsset)
+	e.GetAssetPlan = m(e.GetAssetPlan)
+	e.DeleteCreativeAsset = m(e.DeleteCreativeAsset)
 	e.CreateCampaigns = m(e.CreateCampaigns)
 	e.AdoptCampaign = m(e.AdoptCampaign)
 	e.GetCampaign = m(e.GetCampaign)
@@ -321,6 +333,98 @@ func NewUploadCreativeAssetEndpoint(s Service, authJWTFn security.AuthJWTFunc) g
 			return nil, err
 		}
 		return s.UploadCreativeAsset(ctx, p)
+	}
+}
+
+// NewListCreativeAssetsEndpoint returns an endpoint function that calls the
+// method "list-creative-assets" of service "lfx-v2-campaign-service-briefs".
+func NewListCreativeAssetsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListCreativeAssetsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListCreativeAssets(ctx, p)
+	}
+}
+
+// NewGetCreativeAssetEndpoint returns an endpoint function that calls the
+// method "get-creative-asset" of service "lfx-v2-campaign-service-briefs".
+func NewGetCreativeAssetEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GetCreativeAssetPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetCreativeAsset(ctx, p)
+	}
+}
+
+// NewGetAssetPlanEndpoint returns an endpoint function that calls the method
+// "get-asset-plan" of service "lfx-v2-campaign-service-briefs".
+func NewGetAssetPlanEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GetAssetPlanPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetAssetPlan(ctx, p)
+	}
+}
+
+// NewDeleteCreativeAssetEndpoint returns an endpoint function that calls the
+// method "delete-creative-asset" of service "lfx-v2-campaign-service-briefs".
+func NewDeleteCreativeAssetEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*DeleteCreativeAssetPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return nil, s.DeleteCreativeAsset(ctx, p)
 	}
 }
 

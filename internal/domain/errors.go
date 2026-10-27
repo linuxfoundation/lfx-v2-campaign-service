@@ -88,6 +88,61 @@ var (
 	// this service, not the answer an API client should get. Maps to 400.
 	ErrBriefIdentityPairInvalid = errors.New("this delivery type and stage cannot be combined")
 
+	// ErrCreativeAssetQuotaExceeded indicates an upload refused because the brief already holds
+	// model.MaxCreativeAssetsPerBrief assets, or because this upload's bytes would take it past
+	// model.MaxCreativeAssetBytesPerBrief. Decided inside the insert's transaction, after the
+	// brief row lock, so the count it is judged against cannot be stale.
+	//
+	// 409 rather than 400, and a distinct sentinel rather than ErrConflict, for the usual reason
+	// in this file: the request is perfectly well formed, nothing about it conflicts with another
+	// resource, and "resource already exists" is actively wrong — nothing the caller asked for
+	// exists. The remedy is to delete an asset and retry, which delete-creative-asset makes
+	// actionable. It surfaces with reason "creative_asset_quota_exceeded".
+	//
+	// A DEDUPE hit never raises it: identical bytes re-sent to the same brief resolve to the
+	// existing row and store nothing, so counting that against the quota would make a plain retry
+	// fail — the exact opposite of what the (brief_id, checksum) uniqueness is for.
+	ErrCreativeAssetQuotaExceeded = errors.New("the brief has reached its creative-asset limit")
+
+	// ErrCreativeAssetInUse indicates a delete refused because a live campaign on the brief could
+	// still need the asset. Three independent arms: one still 'pending', whatever its snapshot
+	// says; one whose stored config_snapshot names the asset id; or one whose config_snapshot is
+	// NULL. The 'pending' arm leads because it needs no timing argument — a dispatch that has not
+	// resolved may read any of the brief's assets, and a delete in that window would remove bytes
+	// it is about to read. The NULL arm covers the narrower case the claim creates:
+	// claimCampaignDispatchQuery inserts the row BEFORE the dispatcher resolves any asset, so a
+	// snapshot naming it does not exist yet. That is not a hedge, but it is not sufficient on its
+	// own either — the claim is not the only writer of config_snapshot.
+	//
+	// Maps to 409 with reason "creative_asset_in_use". Distinct from ErrConflict because the
+	// remedy is specific: delete the campaign, or reconcile a claim stuck in 'pending', then
+	// retry — not change the request.
+	//
+	// The wording is "could still need" rather than "references" on purpose: the 'pending' arm
+	// refuses a campaign whose snapshot provably does NOT name the asset, because a dispatcher may
+	// still be about to resolve it. A message promising a reference would be false in exactly that
+	// case, and it is the one a caller is most likely to be surprised by.
+	ErrCreativeAssetInUse = errors.New("a live campaign on this brief could still need the creative asset")
+
+	// ErrCreativeAssetReferenceMissing indicates a campaign replace refused because the config
+	// it would store NEWLY names a creative asset that does not exist for the campaign's
+	// (project, brief) — an id present in the incoming snapshot and absent from the stored one.
+	// A caller that carries an already-dangling reference through unchanged is NOT refused.
+	//
+	// It is the inverse of ErrCreativeAssetInUse, and the two close the same window from
+	// opposite sides: the delete guard stops an asset going away while a campaign names it,
+	// this stops a campaign starting to name an asset that is already gone.
+	//
+	// Maps to 409 with reason "creative_asset_reference_missing", not 400: the request was well
+	// formed and named an id that existed when the caller read the brief. The remedy is to
+	// upload the asset again or drop the reference, then retry.
+	//
+	// How the decision is reached — why it must run inside the replace's transaction under the
+	// brief lock, and why the scope is newly introduced ids — is argued once, on
+	// (*CampaignRepo).checkNewSnapshotAssetRefs in internal/infrastructure/postgres. Service
+	// callers of this sentinel do not need those mechanics; do not restate them here.
+	ErrCreativeAssetReferenceMissing = errors.New("the campaign configuration references a creative asset that no longer exists for this brief")
+
 	// ErrPreconditionFailed indicates an optimistic-concurrency version
 	// mismatch on a conditional update (stale If-Match). Maps to 412.
 	ErrPreconditionFailed = errors.New("version precondition failed")

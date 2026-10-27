@@ -193,7 +193,7 @@ func TestLiveStaleClaimReleaseNeverDeletesASuccessorsClaim(t *testing.T) {
 
 // TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim pins PR #260's slot-2 thread. An adopt
 // always writes slot_version 1, so after a cleared slot-2 claim it does not take the stale
-// upsert's four-column arbiter, and with 000022's three-column index dropped (000047) no index
+// upsert's four-column arbiter, and with 000022's three-column index dropped (000050) no index
 // stops the upsert's INSERT arm either. UpsertCampaign's ownership check must report the same
 // lost claim the conflict arm reports — the upstream id named, nothing written, the adoption
 // untouched — not an ordinary persist failure that says the (cleared) claim was retained.
@@ -249,7 +249,7 @@ func TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim(t *testing.T) {
 }
 
 // TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex pins PR #260's contract-phase
-// thread against the contracted schema 000047 leaves. With 000022's index gone, nothing in the
+// thread against the contracted schema 000050 leaves. With 000022's index gone, nothing in the
 // schema stops a stale slot-2 INSERT from landing beside an adopted slot-1 row, and the
 // advisory lock only orders the two writes. UpsertCampaign's ownership check must refuse it: this job's claim is
 // gone and the slot is occupied, so it is ErrDispatchClaimLost and only the adoption is live.

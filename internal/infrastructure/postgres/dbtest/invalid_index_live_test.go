@@ -134,7 +134,7 @@ func TestMigrateRefusesADroppedRequiredIndex(t *testing.T) {
 
 // TestMigrateRefusesADroppedDispatchIndex pins the boot check on the slot index that is now
 // the ONLY one: migration 000014 dropped campaigns_brief_id_platform_key, 000024 the two-column
-// index that replaced it, and 000047 dropped 000022's three-column
+// index that replaced it, and 000050 dropped 000022's three-column
 // uq_campaigns_brief_platform_variant_live, so
 // uq_campaigns_brief_platform_variant_slot_version_live is the sole arbiter of slot uniqueness
 // and the thing ClaimCampaignDispatch rests on. A migration-time guard checks an index's
@@ -163,17 +163,17 @@ func TestMigrateRefusesADroppedDispatchIndex(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = conn.Close(context.Background()) }) // before freshDatabase's drop
 
-	t.Run("000047 leaves no legacy index and startup succeeds", func(t *testing.T) {
+	t.Run("000050 leaves no legacy index and startup succeeds", func(t *testing.T) {
 		var present bool
 		if err := conn.QueryRow(ctx, "SELECT to_regclass('public."+legacy+"') IS NOT NULL").Scan(&present); err != nil {
 			t.Fatalf("look up %s: %v", legacy, err)
 		}
 		if present {
-			t.Fatalf("%s still exists after Migrate: 000047 did not drop it", legacy)
+			t.Fatalf("%s still exists after Migrate: 000050 did not drop it", legacy)
 		}
 		if err := postgres.Migrate(dsn); err != nil {
 			t.Fatalf("re-run Migrate on the contracted schema: %s — requiredIndexes still "+
-				"demands an index 000047 drops", dbtest.SafeDSNErrFor(dsn, err))
+				"demands an index 000050 drops", dbtest.SafeDSNErrFor(dsn, err))
 		}
 	})
 
@@ -220,7 +220,7 @@ func TestMigrateRefusesADroppedDispatchIndex(t *testing.T) {
 // Up() refuses a recorded version its source does not contain ("no migration found for version
 // N") before any index check runs. So the rollback is modelled here the way it happens: the
 // recorded version set one past LatestMigrationVersion — not a literal, so the next migration
-// cannot quietly turn the "future" version into an embedded one. (Since 000047 the legacy
+// cannot quietly turn the "future" version into an embedded one. (Since 000050 the legacy
 // three-column slot index is already absent after Migrate; the DROP ... IF EXISTS below keeps
 // the scenario identical to the lock release's.)
 //

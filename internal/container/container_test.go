@@ -181,6 +181,14 @@ func (stubCampaignRepo) ListProjectPlatformCampaignIDs(context.Context, string, 
 	return nil, nil
 }
 
+func (stubCampaignRepo) ListProjectPlatformDeletedCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
+	return nil, nil
+}
+
+func (stubCampaignRepo) ListProjectPlatformMonitorCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
+	return nil, nil
+}
+
 func (stubCampaignRepo) ListRecentProjectPlatformCampaigns(context.Context, string, model.Provider, int) ([]*model.Campaign, error) {
 	return nil, nil
 }
@@ -1646,6 +1654,18 @@ func (fakeCreativeAssetRepo) GetAsset(_ context.Context, _, _, _ string) (*model
 
 func (fakeCreativeAssetRepo) GetAssetSize(_ context.Context, _, _, _ string) (int64, error) {
 	return 0, domain.ErrNotFound
+}
+
+func (fakeCreativeAssetRepo) GetAssetMetadata(_ context.Context, _, _, _ string) (*model.CreativeAsset, error) {
+	return nil, domain.ErrNotFound
+}
+
+func (fakeCreativeAssetRepo) ListAssets(_ context.Context, _, _ string) ([]*model.CreativeAsset, int, int64, error) {
+	return nil, 0, 0, domain.ErrNotFound
+}
+
+func (fakeCreativeAssetRepo) DeleteAsset(_ context.Context, _, _, _ string) error {
+	return domain.ErrNotFound
 }
 
 // TestRegisterDispatchers_BindsMetaCreativeAssetRepo pins the PRODUCTION wiring for the

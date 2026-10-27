@@ -90,4 +90,74 @@ type CreativeAssetRepository interface {
 	//
 	// Same malformed-id obligation as GetAsset: the CALLER validates assetID and briefID.
 	GetAssetSize(ctx context.Context, projectID, briefID, assetID string) (int64, error)
+
+	// GetAssetMetadata loads one stored asset WITHOUT its Bytes, under the same (project, brief)
+	// and active-parent scope as GetAsset — the same four cases collapse to ErrNotFound.
+	//
+	// It is a fourth method rather than a GetAsset call whose Bytes the caller ignores, for
+	// GetAssetSize's reason one step further: an asset row holds up to 30 MiB of BYTEA, and the
+	// read that serves the metadata endpoint has no use for any of it. Shipping it from the
+	// database and then discarding it is precisely what creativeAssetCols exists to prevent.
+	// GetAssetSize is the same arrangement with a narrower projection still; this one returns the
+	// whole row minus the blob because the endpoint publishes mime type, size, checksum and
+	// dimensions together.
+	//
+	// Same malformed-id obligation as GetAsset: the CALLER validates assetID and briefID.
+	GetAssetMetadata(ctx context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error)
+
+	// ListAssets returns every asset stored for an ACTIVE brief, WITHOUT Bytes, oldest first,
+	// alongside the brief's current totals — the count and the summed byte_size of exactly those
+	// rows. A missing, archived or cross-project brief is ErrNotFound, as it is for every other
+	// operation here.
+	//
+	// It takes NO limit and returns no cursor, deliberately. Rows written once the quota exists
+	// are bounded by model.MaxCreativeAssetsPerBrief; a brief that predates it may hold more, and
+	// that full set is exactly what an operator must see in order to delete down to the cap — so
+	// truncating would hide the very rows the quota's 409 is pointing at.
+	//
+	// The totals are returned here rather than left for the caller to compute from the slice
+	// because they are what the upload path's quota check compares against. Deriving them in the
+	// caller would reimplement that check in a second place, free to drift from it.
+	ListAssets(ctx context.Context, projectID, briefID string) (assets []*model.CreativeAsset, count int, bytesUsed int64, err error)
+
+	// DeleteAsset permanently removes one stored asset, under the same (project, brief) and
+	// active-parent scope as GetAsset.
+	//
+	// A HARD delete, unlike a brief or a campaign, which are retired by a status flip: there is no
+	// soft-delete column on creative_assets, and reclaiming the BYTEA is the entire reason the
+	// operation exists — a tombstoned row would still hold its blob and still count against the
+	// brief's quota.
+	//
+	// It is REFUSED with ErrCreativeAssetInUse when any campaign on the brief with status other
+	// than 'deleted' could still need the asset. Three independent arms: one still 'pending',
+	// whatever its snapshot says; one whose config_snapshot names the asset id; or one whose
+	// config_snapshot is NULL.
+	//
+	// The 'pending' arm leads and is the timing-independent one — status is read under the same
+	// brief lock the delete already holds, so it needs no ordering argument. It also covers what
+	// the NULL arm alone does not: a claim's row starts with a NULL snapshot, but it is not the
+	// only writer of that column, so a committed non-NULL snapshot on a still-unresolved campaign
+	// must block the delete too. The NULL arm remains for a row a writer has not reached yet.
+	//
+	// The found-but-refused and not-found outcomes are decided against ONE snapshot: checking
+	// references in a separate round trip would leave a window in which a dispatch claims a
+	// campaign between the check and the delete. That is necessary and not sufficient, and the
+	// rest is an obligation on the IMPLEMENTATION rather than a detail of one: a snapshot taken
+	// before an in-flight claim commits cannot see it either, so an implementation must also
+	// ORDER itself against such a claim — the postgres repo does it by locking the parent brief
+	// first, since the claim's insert holds a conflicting row lock on that brief until it
+	// commits. Without that, a delete can win the race and leave a dispatch resolving a campaign
+	// whose asset is gone, instead of returning the ErrCreativeAssetInUse the caller should have
+	// had.
+	//
+	// The same obligation runs in the other direction, against a writer that ADDS a reference:
+	// a campaign that is already resolved can store a snapshot naming an asset this delete just
+	// decided was unreferenced. An implementation must account for every writer of the column it
+	// reads, not only the claim that creates the row — which does not always mean adding a lock.
+	// A writer already ordered against this delete by some other mechanism, or one whose rows this
+	// delete refuses on the 'pending' arm for the whole window it is exposed, needs nothing further;
+	// the postgres repo records which of its two writers falls into which case.
+	//
+	// Same malformed-id obligation as GetAsset: the CALLER validates assetID and briefID.
+	DeleteAsset(ctx context.Context, projectID, briefID, assetID string) error
 }

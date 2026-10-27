@@ -136,7 +136,12 @@ spec:
           # meta-ads and reddit-ads implement AccountMetricsReader, and microsoft-ads
           # and twitter-ads implement AccountReportReader (their metrics come from
           # asynchronous platform reports — Microsoft's Reporting service, X's stats
-          # jobs — served from a saved copy).
+          # jobs — served from a saved copy). This check only admits a
+          # campaign_manager of the project in the path; it does not isolate data.
+          # On google-ads, meta-ads, reddit-ads and twitter-ads, whose single ad
+          # account every foundation shares, the service itself returns only the
+          # campaigns it recorded for that project (lfx-self-serve-ops#897), so a
+          # direct call sees no other foundation's campaigns either.
           - path: /projects/:projectId/connection-google-ads/account-monitor
           - path: /projects/:projectId/connection-linkedin-ads
           - path: /projects/:projectId/connection-linkedin-ads/test

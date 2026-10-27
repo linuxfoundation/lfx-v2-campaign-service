@@ -52,6 +52,22 @@ func twitterMonitorEnabled() error {
 	return nil
 }
 
+// twitterMonitorPrecheck is the credential-free start of every X monitor read: the
+// TWITTER_METRICS_ENABLED gate, then the account id shape. Shared by resolveTwitterMonitorClient
+// and MonitorScopePrecheck, which the orchestrator runs before the project's scope, so both
+// answer the same 400.
+func twitterMonitorPrecheck(accountID string) error {
+	if err := twitterMonitorEnabled(); err != nil {
+		return err
+	}
+	// STRICT shape check, mirroring the design layer's Pattern + MaxLength exactly (no trim) —
+	// the defense-in-depth every monitor dispatcher re-runs for a caller that bypasses Goa.
+	if err := twitter.ValidateMonitorAccountID(accountID); err != nil {
+		return fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
+	}
+	return nil
+}
+
 // resolveTwitterMonitorClient validates the requested account id, resolves the project's own
 // connection, refuses any account it is not bound to, and returns the CACHED client for that
 // connection. Every AccountReportReader method starts here, so all three enforce the same
@@ -61,13 +77,8 @@ func twitterMonitorEnabled() error {
 // client's write pacer, and that pacer only bounds the account's write rate if every caller for
 // the connection shares it (see TwitterDispatcher.clients).
 func (d *TwitterDispatcher) resolveTwitterMonitorClient(ctx context.Context, projectID string, platform model.Provider, accountID string) (*twitter.Client, error) {
-	if err := twitterMonitorEnabled(); err != nil {
+	if err := twitterMonitorPrecheck(accountID); err != nil {
 		return nil, err
-	}
-	// STRICT shape check, mirroring the design layer's Pattern + MaxLength exactly (no trim) —
-	// the defense-in-depth every monitor dispatcher re-runs for a caller that bypasses Goa.
-	if err := twitter.ValidateMonitorAccountID(accountID); err != nil {
-		return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
 	}
 	res, err := d.creds.resolveOwned(ctx, projectID, platform)
 	if err != nil {

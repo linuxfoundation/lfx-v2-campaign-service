@@ -149,8 +149,12 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `RollingUpdate` — which surges the new pod BEFORE terminating the old one — would put the
   migrated schema under the old code. The chart therefore pins `strategy.type: Recreate`, so
   the old pod is gone before the new one migrates. Pinned by
-  `TestDeploymentUsesRecreateStrategy`; `replicaCount` is 1, so nothing is lost by dropping
-  the surge.
+  `TestDeploymentUsesRecreateStrategy`. `Recreate` carries that guarantee at ANY replica count —
+  the controller scales the old ReplicaSet to zero and waits for termination before scaling up
+  the new one — so this does not rest on a single replica, and deployments do set more
+  (production sets three). What the surge costs at three replicas is stated in
+  [Deployment](../kubernetes/deployment.md): the rollout is a full restart, and the
+  `podDisruptionBudget` does not soften it.
 
   **Consequence for every `ON CONFLICT (brief_id, platform)`**: PostgreSQL infers the
   arbiter index by matching the conflict target AND its predicate, so once the full
@@ -176,7 +180,7 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   and every upsert/replace bumps it. Claim, upsert and adopt all name the four-column
   `uq_campaigns_brief_platform_variant_slot_version_live` as their `ON CONFLICT` arbiter;
   `GetCampaignByPlatform` returns the slot's LATEST live row (`ORDER BY slot_version DESC
-  LIMIT 1`), and the claim reads back its own slot version. Since `000047` dropped `000022`'s
+  LIMIT 1`), and the claim reads back its own slot version. Since `000050` dropped `000022`'s
   three-column `uq_campaigns_brief_platform_variant_live` (the contract step, LFXV2-2023), the
   four-column index is the ONLY unique index on the slot: a claim for the next slot version
   simply inserts beside the earlier ones, and a retry of an existing slot version conflicts on
@@ -191,7 +195,7 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   (scratch database: after `Migrate` the legacy index is absent and a re-run boots; drop the
   slot-version index and `Migrate` is `ErrMissingRequiredIndex` naming only it, with its rebuild
   statement).
-  Rolling the image back past `000047` still boots: the release before it recorded no version
+  Rolling the image back past `000050` still boots: the release before it recorded no version
   above `000046`, and `golang-migrate` v4.19.1's `Up()` refuses a recorded version its source does
   not contain ("no migration found for version N") before any index check runs. So `Migrate` first
   reads the recorded version (`schemaIsNewerThanImage`, from #260): when it is CLEAN and exactly
@@ -248,7 +252,7 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   (other live versions are expected — a `new_version` claim of slot N is made only while slot
   N-1 is live and complete); otherwise pass only when the slot has NO live row at any version
   (the INSERT arm into an empty slot); anything else is `ErrDispatchClaimLost`. It restates
-  000022's one-live-row-per-slot rule for the INSERT arm, and since `000047` it is the ONLY thing
+  000022's one-live-row-per-slot rule for the INSERT arm, and since `000050` it is the ONLY thing
   enforcing it: without it the advisory lock would only ORDER a stale slot-2 INSERT after an
   adopted slot 1, not refuse it. Pinned by `TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim`
   and `TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex`, which also checks a
@@ -265,19 +269,19 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   The comments inside migrations `000036` and `000037` still say the old index is dropped "a
   release later" and describe the expand-phase `ErrSlotVersionUnavailable` refusal. Both are
   superseded by the staging below; the files are applied (shipped in v1.0.17) and the migrations
-  README forbids editing an applied migration, so they are left as written and `000047`'s header
+  README forbids editing an applied migration, so they are left as written and `000050`'s header
   and this concept are the authority.
 
   Staging (expand → lock → contract, each one release apart): `000036`/`000037` (#247) added the
   four-column index beside the old one; the per-slot lock and the upsert's ownership check (#260)
-  shipped next, with the legacy index made `optional` at boot; `000047` drops it **one release
+  shipped next, with the legacy index made `optional` at boot; `000050` drops it **one release
   after that lock is deployed** and must not merge before then. That ordering is what makes an
   image-only rollback safe: reverting the image does not revert the schema (see the deployment
   concept), and the binary before the lock release takes no slot lock — had the drop shipped
   alongside the lock, a rollback would have left that lock-free binary's adopt preflight free to
   race a slot-2 claim and bind slot 1 beside it. With the drop a release later, every binary that
   can run against the contracted schema, including the one a rollback returns to, already takes
-  the lock and boots without the index. `000047`'s down re-creates the index with `000022`'s name,
+  the lock and boots without the index. `000050`'s down re-creates the index with `000022`'s name,
   keys and predicate (no `IF NOT EXISTS`, for `000024`'s down reason) and FAILS, correctly, once a
   slot holds two live campaigns — which campaign stays live is a data decision. Residual, by
   design: an adopt that commits FIRST on a slot whose only campaign was just deleted, followed by
@@ -397,7 +401,8 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   for tenant scoping, a `mime_type` CHECK constrained to `image/png`/`image/jpeg`, `byte_size`
   (bounded above at 30 MiB by `000029`, see below),
   a `checksum` (lowercase-hex SHA-256 of the bytes), the `bytes` themselves as `BYTEA`, and
-  `created_by` JSONB. `UNIQUE (brief_id, checksum)` is the content-addressed dedupe key. The
+  `created_by` JSONB. `000047` later added nullable `width`/`height` to this same table (see
+  below). `UNIQUE (brief_id, checksum)` is the content-addressed dedupe key. The
   table is INSERT-ONLY: no `updated_at`, no `version` — an asset is created once and read back,
   never edited, so there is no optimistic-concurrency handle. The bytes are stored plaintext,
   NOT encrypted: an ad image is not a secret, unlike the credential blobs. It stores the SOURCE
@@ -416,6 +421,88 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   when the project has none. `NULL` means provenance was not recorded, which is a
   statement about knowledge rather than about the row's age. See *System-account
   provenance* below for why the column is three-state and never recomputed.
+
+- `000047` — `width`/`height` INTEGER on `creative_assets`, both NULLABLE with NO default
+  (LFXV2-2665). They persist the pixel dimensions the upload handler ALREADY computes via
+  `image.DecodeConfig` — for the decompression-bomb gate and the decode budget — and then
+  discarded, so that the per-platform slot classifier can ask an image's shape without
+  detoasting and re-decoding a blob of up to 30 MiB. Nullable is what makes this an EXPAND
+  step: an N-1 binary's `createCreativeAssetQuery` names neither column, and `NOT NULL` with
+  no correct default would make that insert fail. So `NULL` MEANS "stored before the service
+  recorded dimensions" and readers must treat it as UNKNOWN, not as zero — a classifier that
+  coerced `NULL` to `0` would report every pre-existing asset as failing every slot's minimum.
+  `CHECK ((width IS NULL AND height IS NULL) OR (width IS NOT NULL AND height IS NOT NULL AND
+  width > 0 AND height > 0))` enforces the pair at the table, the way `byte_size`'s equality
+  CHECK does. **The second arm's `IS NOT NULL`s are load-bearing, not redundant with `> 0`.** A
+  CHECK admits anything that is not false, and an unknown operand poisons the comparison: for
+  `(1200, NULL)` the arm `width > 0 AND height > 0` evaluates to `NULL`, so the constraint's
+  result is `false OR NULL` = `NULL` and Postgres ACCEPTS the row — the half-known shape the
+  constraint exists to refuse would be the one case that slips through. With the `IS NOT NULL`s
+  in front, that row evaluates the second arm to false and is rejected, while `(NULL, NULL)`
+  still satisfies the first arm, which is what keeps the columns nullable for the pre-release
+  rows they are nullable FOR. The CHECK is a NARROWING and owes `000029`'s N-1 argument, which is
+  trivial here — an N-1 INSERT lands `(NULL, NULL)` and every existing row is already
+  `(NULL, NULL)` — so it is a plain CHECK rather than `NOT VALID` + `VALIDATE`. Be precise about
+  what that does and does not buy. Postgres DOES scan on `ADD CONSTRAINT`: the validation pass
+  runs because the constraint is added without `NOT VALID`, not because a row could fail it, and
+  what is true is that the scan is over rows that are all `(NULL, NULL)`, so it finds nothing and
+  the ACCESS EXCLUSIVE lock is held only as long as that pass. `NOT VALID` does NOT leave a
+  declared-but-unenforced window either — it enforces new writes immediately and defers only the
+  check of pre-existing rows. Splitting the two would also not shorten the lock as written:
+  golang-migrate ships a migration file to a SINGLE `ExecContext` unless `x-multi-statement` is
+  set (`Run()` in `database/pgx/v5/pgx.go` splits only when `p.config.MultiStatementEnabled`, and
+  this repo's `pool.go` never ADDS that parameter). That is a claim about what this repo
+  configures, not about what the deployment can reach: `pgxURL` swaps only the scheme prefix and
+  preserves the query string verbatim, so a `DATABASE_URL` already carrying
+  `x-multi-statement=true` would enable splitting. Absent that, both statements land in one
+  implicit transaction and the ADD's lock is held through the VALIDATE anyway. Getting the weaker
+  `ShareUpdateExclusive` lock for the validate pass needs the statements in SEPARATE migrations.
+
+  **The backfill is deliberately a SEPARATE step**: the values must come from the same
+  `image/png` and `image/jpeg` decoders the upload path uses, and Postgres has no image
+  decoder, so there is nothing a SQL-side migration could run. NO INDEX is added — `000028`'s
+  indexing note already covers list-by-brief via `UNIQUE (brief_id, checksum)`, and neither
+  dimension is ever a search predicate: a slot rule is a ratio with a tolerance plus two
+  minimums, decided in Go over assets already loaded. Pinned by
+  `TestMigration000047_IsExpandOnly` for the expand-only DDL,
+  `TestDimensionsCheckRejectsAHalfKnownPair` for the `IS NOT NULL`s in the migration text, and
+  `TestLiveDimensionsCheckRefusesAHalfKnownPair` (under `dbtest/`) for the behaviour itself —
+  `(1200, NULL)`, `(NULL, 628)`, `(1200, 0)` and `(1200, -628)` each raising SQLSTATE `23514` on
+  `creative_assets_dimensions_positive`, with `(NULL, NULL)` and `(1200, 628)` accepted.
+
+- `000048` — `platform_bound_at` TIMESTAMPTZ on `campaigns`, NULLABLE with NO default
+  (lfx-self-serve-ops#897). It records WHEN a row took its upstream id, which `created_at`
+  does not: a dispatch's `created_at` is its `ClaimCampaignDispatch` placeholder, inserted
+  before the platform call, and `upsertCampaignQuery` binds the id later. The account
+  monitor's deleted-campaign scope (`listProjectPlatformDeletedCampaignIDsQuery`) hands a
+  campaign every project has deleted to whichever row bound it LAST, so ordering by
+  `created_at` let a dispatch that claimed first but bound after another project's
+  adopt-then-delete (Google `adoptExisting`, Meta same-name reuse) rank as the former owner.
+  Written with `clock_timestamp()` by `upsertCampaignQuery`'s INSERT arm when it carries an id,
+  by its conflict arm only when the id CHANGES (the owning job's re-upsert keeps the first
+  stamp), and unconditionally by `adoptCampaignQuery`. EXPAND only: an N-1 write leaves it
+  `NULL`, which the reader takes as `COALESCE(platform_bound_at, created_at)` — exact for
+  adoptions and for pre-`000048` rows, whose only evidence is `created_at` — so there is no
+  backfill. A `DEFAULT now()` would be wrong, not just imprecise: it would stamp the claim.
+  Pinned by `TestCampaignWritesStampPlatformBoundAt` (statement shapes),
+  `TestListProjectPlatformDeletedCampaignIDs_Live` (claim order and binding order disagreeing,
+  both ways) and `TestLiveClaimThenUpsertStampsPlatformBoundAt` (under `dbtest/`).
+
+- `000049` — a concurrent, non-unique, non-partial index
+  `idx_campaigns_platform_campaign_history` on `(platform, platform_campaign_id)`.
+  The account monitor's latest-owner lookup examines deleted bindings as well as
+  live ones, so the per-provider live-only unique indexes cannot cover it.
+  `ListProjectPlatformMonitorCampaignIDs` evaluates live and eligible deleted rows
+  in one statement snapshot for the post-upstream ownership recheck, sharing the
+  deleted-scope `NOT EXISTS` predicate. The response intersects that snapshot with
+  its initial scope and fails closed on lookup errors. No ownership lock is held
+  across provider calls or response delivery. Both migration directions have one
+  concurrent statement; the up migration deliberately omits `IF NOT EXISTS` so
+  an INVALID leftover cannot silently pass a retry. Drop that leftover before
+  forcing the migration back to 48 and retrying. Pinned by
+  `TestMigration000049_IndexesAllBindingHistoryConcurrently`,
+  `TestCampaignMonitorHistoryIndex_Live`, and the final snapshot assertions in
+  `TestListProjectPlatformDeletedCampaignIDs_Live`.
 
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
 
@@ -500,10 +587,10 @@ it does not list, both today's and the ones added after this code was written.
 An index a LATER migration drops is not a recovery target either. `migrationIndexDrops` reads
 the same files for `DROP INDEX` statements, and when a name's highest drop is above its highest
 create (`uq_campaigns_brief_platform_live`: 000013 → 000024; `uq_campaigns_brief_platform_variant_live`:
-000022 → 000047) `indexRecovery` answers "migration N drops this; drop it, leave the schema
+000022 → 000050) `indexRecovery` answers "migration N drops this; drop it, leave the schema
 version alone" instead of forcing back to the creator — which would replay every migration up to
-the one that removes the index again. The case that reaches it: a `000047` down that fails on two
-live slot versions leaves an INVALID copy, and an operator who abandons the rollback and forces 47
+the one that removes the index again. The case that reaches it: a `000050` down that fails on two
+live slot versions leaves an INVALID copy, and an operator who abandons the rollback and forces 50
 then boots into the invalid-index scan. Pinned by `TestIndexRecovery_ADroppedIndexIsNotForcedBack`.
 
 **Narrow is not the same as short, and the first draft of the list confused the two.** It
@@ -1360,6 +1447,25 @@ DSN: `*pgconn.ConnectError` formats ``failed to connect to `user=%s database=%s`
 from the `Config`. A `%v` on any connect arm therefore puts the configured credential into
 the build log. The package renders those errors through one of two helpers instead.
 
+The implementation lives in package `postgres` (`dsnredact.go`), not here. It moved when the
+same leak was found on `Migrate`'s own error paths (#178, below): the reasoning was never
+test-only. `dbtest`'s two helpers are now one-line delegations that supply
+`TEST_DATABASE_URL` as the source name. The production boundaries supply no variable name at
+all — they render "the database DSN" (`dsnSourceDescription`), because `Migrate` and `NewPool`
+are each handed a `dsn`
+string and are told nothing about where the caller read it: the service reads `DATABASE_URL`,
+the harness reads `TEST_DATABASE_URL` and then rewrites it for the scratch path. A caller
+that knows the name adds it in its own wrapping (`migrate TEST_DATABASE_URL: …`). Everything
+in this section about WHICH secret a call is compared against is unchanged by that move.
+
+It landed in `internal/infrastructure/postgres` rather than in `pkg/redact`, whose package
+doc states the one-implementation rule it is obeying, because it is not URL redaction: it
+parses the DSN with `pgconn.ParseConfig` to learn what the configured identifiers ARE, and
+`pkg/redact` imports only `net/url` and `strings`. Moving it there would put a driver
+dependency into the package every other redaction site depends on. `redact.URLUserinfo` is
+still the backstop it runs on the surviving text — but the identifier comparison is made
+against the RAW text as well as the backstop's output, for the reason below.
+
 The two differ only in WHICH secret they compare against, and that is the whole of the
 contract:
 
@@ -1367,6 +1473,40 @@ contract:
   failing call used the environment's DSN.
 * `SafeDSNErrFor(dsn, err)` compares against an EXPLICIT DSN. Required wherever the calling
   function was handed one.
+
+### The backstop can destroy the token the comparison is looking for (#178)
+
+`SafeDSNErr` ran `redact.URLUserinfo` first and compared the configured identifiers against
+its OUTPUT. That order is wrong in one direction and the direction matters: the backstop is
+URL-shaped and destructive on prose, so it can erase the very substring the comparison exists
+to find, and the comparison then reports no match on text that still names the identifier.
+
+`redact.URLUserinfo` rewrites everything up to the last pre-query `@` as `***@` and truncates
+at `?`. Any configured identifier containing `@` or `?` is therefore unfindable after it runs.
+This is not hypothetical: **Azure Database for PostgreSQL issues usernames shaped
+`user@servername`**. With `cfg.User = "svc@pgsrv"`, PostgreSQL's 28P01 reads `password
+authentication failed for user "svc@pgsrv"`; the backstop turns that into `***@pgsrv"`, the
+comparison against `svc@pgsrv` misses, and the line is returned — with the SERVER half of the
+credential intact.
+
+The fix compares against both: `dsnIdentifiersPresent(dsn, raw) || dsnIdentifiersPresent(dsn,
+msg)`. Raw first, so a destroyed token is still caught; the redacted text is still compared
+because the backstop can also CREATE a match the raw text does not have. Neither comparison
+subsumes the other, which is why both run rather than one replacing the other.
+`TestSafeDSNErrWithholdsAnAtShapedUsername` pins it, and asserts the fault kind survives too —
+the failing behaviour also omitted the username entirely, so an assertion that only checked
+for absence would have passed on the broken code.
+
+### A SQLSTATE is checked for shape before it is concatenated (#178)
+
+`dsnFaultKind` appends `sqlstate=` + `pgErr.Code` to a message that reaches a log line. The
+code is server-controlled text, and nothing guaranteed it was five alphanumerics: a hostile or
+corrupt value carrying a newline would forge a second log record. `isSQLState` gates it — a
+SHAPE check (length 5, `[0-9A-Z]`), deliberately not a membership check against the published
+class list, because a valid code this service has never heard of must still be reportable. It
+is hand-written rather than a regexp because it runs on an error path.
+`TestDSNFaultKindRejectsAHostileSQLState` carries the injection case plus the near-misses
+(four characters, six, empty, lowercase, embedded space) and a positive control.
 
 **A redactor call is not evidence of redaction.** The leak that opened LFXV2-2643 survived
 five review rounds with a redactor plainly present at the leaking line: `connectAndMigrate`
@@ -1528,6 +1668,187 @@ so a later change does not undo the fix by reviving either:
 The pin costs that one test's parallelism and buys independence from every possible value of
 `TEST_DATABASE_URL`.
 
+### `Migrate` redacts at the boundary, not at the leaking line (#178)
+
+The production path had the same defect the test path was fixed for, and it had it in two
+places at once. `Migrate` returned `fmt.Errorf("init migrator: %w", err)` around
+`migrate.NewWithSourceInstance`, whose `*url.Error` carries the WHOLE DSN including the
+password; and it returned `checkNoInvalidIndexes`'s and `m.Up()`'s connect failures bare,
+each of which carries ``failed to connect to `user=… database=…` ``. `container.go` logs
+that error at startup and again on every background retry.
+
+The fix wraps the one exported entry point — `Migrate` calls `runMigrations` and passes the
+result through `redactMigrateErr` — rather than repairing each site. Three reasons, in order
+of weight: the leak is not one site, so a site-by-site fix leaves the next site added
+unguarded; `dsn` is given only to `Migrate`, so a boundary fix is the only one that keeps it
+from needing to reach a logging caller; and the sites differ in error TYPE but not in what
+must be withheld.
+
+Two parts of the design are load-bearing and easy to undo:
+
+* **The `*url.Error`'s cause is DISCARDED, not unwrapped.** Unwrapping removes the `URL`
+  field and looks like the fix, but `net/url`'s causes QUOTE the fragment they choked on, and
+  that fragment can be part of the password: `…:s3cret%zzpw@…` yields
+  `invalid URL escape "%zz"`. `TestMigrateDoesNotLeakTheDSNOnAnUnparseableURL` chooses its
+  password so that this half-fix fails it, and also asserts the `*url.Error` is no longer
+  reachable through `errors.As` — a caller that fishes a cause out of the chain and logs it
+  is the shape the defect had in the first place.
+* **Every other error keeps `Unwrap()`.** `container.go` classifies with
+  `IsPermanentMigrationErr`, which is `errors.As` on `migrate.ErrDirty` plus `errors.Is` on
+  the three index sentinels. Break the chain and a permanent failure reads as transient and
+  the pod 503-loops on a schema no retry can fix.
+
+The index sentinels — `ErrInvalidIndex`, `ErrMissingRequiredIndex`,
+`ErrRequiredIndexMismatch` — pass through `redactMigrateErr` untouched, with no identifier
+comparison. Their text is this package's own, built from the catalog: the index names and the
+`CREATE INDEX` an operator has to run. Comparing it against the DSN would withhold the
+remediation from any deployment whose database is named after a table it indexes, which is a
+realistic naming. The split is safe only because the connect failures that CAN carry
+identifiers are deliberately not wrapped in those sentinels — `checkNoInvalidIndexes` keeps a
+connect failure retryable and unwrapped — so nothing reaches the passthrough by that route.
+
+**Check this before adding a fourth exemption: the test is `errors.Is`, so an exemption
+covers the WHOLE CHAIN.** Anything wrapped ABOVE an exempt sentinel escapes redaction too,
+including text a future caller adds. For the three index sentinels that is intended — the
+wrapping text is package-composed remediation DDL. For `errDSNNotURLScheme` the argument is
+that it carries no dynamic text, and that is a property of its CALL SITES (`pool.go:1058`
+returns it bare), not of the sentinel itself: wrapping a DSN-bearing message around it at any
+future site would leak through an exemption that still looks correct where it is written.
+`TestDSNNotURLSchemeIsReturnedBare` pins the call site rather than the sentinel, which is the
+half that can actually change.
+
+**`errDSNNotURLScheme` joins them, and missing it was a self-censoring bug.** `pgxURL`'s
+rejection used to be a `fmt.Errorf` literal, so it went through the comparison like driver
+prose. It is package-authored constant text — it names `DATABASE_URL` and the two schemes
+that are accepted — but the DSN that provokes it is a KEYWORD DSN, and a keyword DSN's user
+and database are exactly what `pgconn.ParseConfig` extracts. On the commonest one,
+`user=postgres dbname=postgres`, the literal `postgres://` inside the message is a bounded
+match for `cfg.User`, so the one error that tells an operator their DSN is the wrong SHAPE
+was the one most certain to replace itself with the withhold sentinel. It is now a sentinel
+`var`, exempt on exactly the argument written for the index sentinels, and
+`TestMigrateKeepsItsOwnWrongSchemeRejection` pins both halves: the shape diagnostic survives,
+and the password in that keyword DSN still does not appear. Unreachable from the service —
+`container.go:477` gates on `ValidateMigrationDSN` first — but reachable from every direct
+`postgres.Migrate` caller, and `dbtest` is one today.
+
+**When the comparison DOES withhold, the fault's KIND still goes out.** The wholesale
+replacement is deliberate (see above), but a bare sentinel leaves nothing to act on, and the
+case is not hypothetical: a failing `m.Up()` is wrapped `apply migrations: %w` and its server
+text goes through the same comparison, so on a deployment whose database is named after a
+table it migrates — `relation "campaigns" already exists` on a database named `campaigns` —
+the operator got the sentinel and nothing else. `dsnFaultKind` appends `error_class=` and,
+for a `*pgconn.PgError`, `sqlstate=`. Neither can reproduce an identifier: the class is fixed
+at compile time and a SQLSTATE is five characters from a closed set. This is the split
+`probeErrAttrs` already made for the index probe's warnings.
+
+The classes are named explicitly by `errors.As` against a short allowlist — `*pgconn.PgError`,
+`*pgconn.ConnectError`, `*pgconn.ParseConfigError` — rather than printed with `%T`, and both
+`%T` forms were rendered before that was settled. `%T` on the error itself says
+`*fmt.wrapError`, because everything reaching here has been wrapped for context; `%T` on its
+root cause says `*errors.joinError`, because pgx joins its per-host dial failures. An
+unrecognised error contributes nothing, which is how an allowlist declines.
+
+**The issue's own reachability claim did not survive a probe, and the correction matters.**
+#178 reports the password reaching the pod log through container boot. It does not:
+`ValidateMigrationDSN` runs unconditionally at `container.go:477`, before `initDatabase` ever
+calls `Migrate`, and it rejects every parse-failure shape with `dsnParseError`'s static text.
+A 14-shape probe found no DSN that clears that gate and then hits a `*url.Error` inside
+`Migrate`. The password arm is reachable only for a caller that invokes `postgres.Migrate`
+without the gate — the live tests do exactly that, and so would any future caller. What the
+pod log DOES receive is the second arm: the username and database name, on every connect
+failure, at startup and on every retry. By `pkg/redact`'s own contract those are half a
+credential, so the defect is real; the arm is not the one the issue names.
+
+**Redacting at a boundary creates a double-redaction hazard in callers that were already
+redacting, and here it was destructive rather than merely redundant.** `dbtest`'s
+`connectAndMigrate` wrapped `Migrate`'s error in `SafeDSNErrFor` — correct before the fix,
+wrong after it, and its two regression pins went red and said so. A second pass cannot be a
+no-op, for two reasons that are both consequences of the first pass doing its job: the
+`*url.Error` has been DISCARDED from the chain, so the second pass can no longer tell a parse
+failure from a connect failure and reports the wrong one; and when the DSN does not parse,
+`dsnIdentifiersPresent` has nothing to compare against and withholds unconditionally, so an
+already-safe, specific message is replaced by the generic sentinel. The fix is for the caller
+to stop redacting — `Migrate`'s error is safe by construction. The general rule:
+when redaction moves to a boundary, every caller that was redacting that boundary's error is
+part of the change, and "it is still safe" is not enough — a second pass degrades the
+message even when it cannot leak.
+
+### `NewPool` is held to the same boundary, because it is `Migrate`'s nearest sibling (#178)
+
+Fixing `Migrate` alone would have left the leak open on the arm a pod meets more often.
+`NewPool` is in the same file, takes the same `dsn` string, and `container.go` calls the two
+of them seventeen lines apart on the same startup path — `postgres.NewPool(ctx, dsn)` at
+`initDatabase`, then `migrateDone <- postgres.Migrate(dsn)` — wrapping and propagating both
+to a logging caller. Its connect and ping arms returned `fmt.Errorf("…: %w", err)` bare, and
+a probe against pgx v5.9.2 rendered exactly the template this section is about:
+``ping database: failed to connect to `user=… database=…` ``. Migrations run once; a
+database that is not up yet fails the ping on every restart, so this was the higher-frequency
+half of the same defect.
+
+Both arms now go through `newSafeDSNError`, the wrapper `redactMigrateErr` was factored down
+to so the two boundaries cannot drift about what "redacted" means. The arm labels — `open
+pgx pool:`, `ping database:` — survive, because an operator still has to tell the two apart;
+only the driver's prose is replaced.
+
+**The `ParseConfig` arm is deliberately NOT routed through it.** It already returns
+`dsnParseError`, whose `Error()` is a static `invalid DATABASE_URL (redacted; …)` and which
+names the variable an operator has to go and fix. Redacting it a second time would swap that
+for the generic "does not parse as a URL" sentinel and say less, for no gain — both are
+already DSN-free. This is the double-redaction hazard above, met inside a single function
+rather than across a call, and `TestNewPoolDoesNotDoubleRedactTheParseArm` is the pin,
+because collapsing the three arms into one wrapper is the tidying-up a later reader is most
+likely to attempt.
+
+`dbtest.connectAndMigrate`'s `NewPool` arm therefore stops redacting too, exactly as its
+`Migrate` arm did — the general rule above applied to this change rather than restated. That
+arm is still not reachable from the suite (`Migrate` connects first, so an unreachable DSN
+fails on the arm above), which is why the redaction it depends on is pinned in package
+`postgres` by `TestNewPoolDoesNotLeakIdentifiersWhenThePingFails` rather than here.
+
+### A test that reads a credentials column reports length and digest, never the value (#161)
+
+The redaction rules above are about errors the SERVICE renders. The same discipline binds a
+test's own failure message once the value it is comparing was `SELECT`ed out of a credentials
+column: `t.Errorf("... = %q", blob)` puts that column's bytes into the build log, and a build
+log is not a more private place than a pod log. The standard is `dbtest.BlobDigest(blob)` on
+both sides of the comparison — one exported helper rather than a digest written out at each
+site, so `credential_roundtrip_live_test.go` and `connection_live_test.go` cannot drift apart
+about what "safe to print" means, for the reason `SafeDSNErr` is exported.
+
+**The digest is KEYED, and that is the point of the helper (#178).** `BlobDigest` renders
+`"%d bytes hmac[:8]=%x"` — the length, and the first eight bytes of an HMAC-SHA-256 under
+`blobDigestKey`, a 32-byte key generated once per test process from `crypto/rand` and never
+printed. An unkeyed digest beside an exact byte length is an offline verification oracle:
+anyone holding the log line hashes each candidate of that length and compares. **Truncation
+does not close that**, and the review round that landed this helper first claimed it did — a
+wrong guess collides in eight bytes with probability 2^-64, so a match still confirms the
+secret, and truncation only starts to help once the guess space approaches 2^64, which is not
+the low-entropy case. (The same text called eight bytes 2^64 of collision resistance; the
+birthday bound is 2^32 and 2^64 is the preimage figure.) The HMAC is what closes it: equal
+inputs still render equal inside the run that printed them, which is all any call site needs —
+every one renders both operands into ONE failure message — and the line cannot be recomputed
+offline. Two of the four call sites digest decrypted PLAINTEXT, which is why this is not
+cosmetic. Eight bytes is still what gets printed, because a failure message only has to tell
+two blobs apart. `TestBlobDigestReportsShapeNotValue` (`dbtest_test.go`) pins the properties —
+the bytes never appear, the length survives, the hex is 16 characters, and the printed digest
+is not the plain SHA-256 of the input, so a revert to `sha256.Sum256` fails rather than merely
+renaming a label — because the live tests SKIP without `TEST_DATABASE_URL` and would otherwise
+give the rendering no runtime coverage at all.
+
+Two things this is NOT. It is not a claim that the fixture is sensitive: the stored value is
+the literal `ciphertext-v2`, so printing it today leaks nothing. The rule is written about the
+SHAPE of what reaches a log, as elsewhere in the repo, because the concrete risk is that this
+test is what the next credential test's author copies. And it is not satisfied by length
+alone: the losing rotation's `ciphertext-v3` is the SAME length as `ciphertext-v2` — exactly
+the mismatch the assertion exists to catch — so a lengths-only message would trade the leak
+for a test that fails without saying why. Hence both.
+
+The boundary is a value read back out of Postgres. A test that prints a credential-shaped
+literal it wrote into an in-memory fake (`internal/dispatch/credcache_test.go`,
+`internal/bootstrap/sysacct_test.go`, `cmd/verify-metrics/main_test.go`) is a different
+category and is not covered: the test supplied that string itself, and the log learns nothing
+the source file does not already say.
+
 ## `CreateAudienceForApprovedBrief`'s ambiguous-commit path
 
 A `tx.Commit(ctx)` failure does not prove PostgreSQL rolled back — the server can commit the
@@ -1654,6 +1975,25 @@ second pooled connection beside the claim. Every other caller's handling is unch
 `TestLiveReplaceCampaignCommitErrorClasses` pins both classes with deferred triggers scoped to its
 own rows: a raise for the confirmed rollback, and a slow commit under a short deadline for the
 lost acknowledgement.
+
+That transaction's OPENING statement is `lockBriefRowByIDQuery` on the parent brief,
+unconditionally — the same ROW lock `lockBriefForAssetWriteQuery` takes, keyed on `brief_id` alone
+because `campaigns`' FK is on `id` alone and a `project_id` predicate could match nothing, take no
+lock and report no error; the result is scanned, and a miss is `ErrNotFound`.
+`ReplaceCampaign` writes every mutable column — `config_snapshot` included — so
+every one of its callers rewrites the snapshot whether or not it meant to change it, and the
+statement cannot tell the two apart; the hazard belongs to the method, not to any one caller.
+Without the lock nothing ordered that write against a concurrent
+`CreativeAssetRepo.DeleteAsset`: the UPDATE touches `campaigns` only, and the per-campaign
+advisory lock a caller may already hold is keyed on the CAMPAIGN, not the brief.
+
+The lock is on the BRIEF row, so its cost is wider than the delete it was added to order against:
+every `ReplaceCampaign` on a brief now serializes against every OTHER `ReplaceCampaign` on that
+brief — the budget edit, the bid edit, the name edit and the toggle's status persist, across all
+of that brief's campaigns — each waiter holding a pooled connection while it waits. With no
+pool-level `lock_timeout` or `statement_timeout` configured, the only bound on that wait is the
+caller's context, and on a busy brief this sibling contention, rather than a concurrent asset
+delete, is the realistic way `ToggleCampaignStatus`'s 5 s `persistResultTimeout` gets spent.
 
 ## DeleteCampaign's guards
 
@@ -1930,8 +2270,9 @@ write is — see `enqueueCampaignIndex`.
 
 ## `CreativeAssetRepo` (creative-asset storage, LFXV2-3295)
 
-`CreativeAssetRepo` backs `000028`'s `creative_assets` table with two methods, and both are
-built around the parent-brief gate and the content-addressed dedupe key.
+`CreativeAssetRepo` backs `000028`'s `creative_assets` table with three methods — `CreateAsset`,
+`GetAsset` and `GetAssetSize` — all built around the parent-brief gate and the content-addressed
+dedupe key.
 
 `CreateAsset`'s caller is `BriefService.UploadCreativeAsset`, backing
 `POST .../briefs/{brief_id}/creative-assets` (see [internal/service](internal-service.md)),
@@ -1947,7 +2288,7 @@ non-nil interface.
 campaign_briefs WHERE id = $1 AND project_id = $2 FOR UPDATE`, checks the status, then runs
 `INSERT ... SELECT ... WHERE EXISTS (an active same-project brief) ON CONFLICT (brief_id,
 checksum) DO UPDATE SET byte_size = creative_assets.byte_size RETURNING <cols>` on that same
-transaction. Six things are doing work here and each has a failure mode if changed:
+transaction. Seven things are doing work here and each has a failure mode if changed:
 
 - **The parent brief is LOCKED before the insert, and that lock is what orders this against
   archival.** An earlier revision ran the insert as a single unlocked autocommit statement and
@@ -2041,6 +2382,32 @@ transaction. Six things are doing work here and each has a failure mode if chang
   against 179 ms for `md5()` on the same rows). There is deliberately no UPPER bound: it would have to equal the upload endpoint's
   request limit, and that endpoint lands in a later PR, so guessing it here would mean two
   limits that silently disagree.
+- **`width`/`height` cross the NULL↔zero boundary in BOTH directions, once per direction.** The
+  model's pair is `int`, where zero means UNKNOWN; the column's spelling of unknown is `NULL`
+  (`000047`). So the insert binds each column through the SAME predicate over BOTH parameters —
+  `CASE WHEN $6::int > 0 AND $7::int > 0 THEN $6::int END` and the matching one for `$7` — a
+  bare `$n` would write a literal `0`, which `000047`'s CHECK refuses outright, turning a
+  legitimate dimensionless write into an insert failure. **Two independent `NULLIF(..., 0)`
+  calls are the obvious spelling and are wrong**: they decide each column alone, so a caller
+  holding `(1200, 0)` would attempt `(1200, NULL)` — a half-known shape that classifies against
+  nothing and that `000047`'s CHECK refuses, so the insert fails with SQLSTATE `23514` instead
+  of storing an honest unknown. The pair predicate makes such a row store `(NULL, NULL)`. Its
+  `> 0` also widens what the old `NULLIF` admitted: a NEGATIVE dimension is stored as unknown
+  rather than reaching the CHECK. No reachable caller produces one (`image.DecodeConfig`
+  cannot), so that choice only decides how a repository caller or a backfill misbehaves, and
+  an unclassified row is the recoverable half of `23514` on the write.
+  `creativeAssetCols` reads back
+  `COALESCE(width, 0), COALESCE(height, 0)`, so both scanners can bind plain `int` fields
+  rather than `*int`. The columns sit between `checksum` and `created_by` in `creativeAssetCols`
+  and the scanners bind POSITIONALLY, so a column added anywhere but the matching scanner slot
+  assigns the wrong value to the wrong field. `TestCreativeAssetColumnsCarryDimensions` pins
+  both the pair predicate and the ordering in the source text; `dbtest`'s
+  `TestLiveCreateAssetConvertsAHalfKnownPairToUnknown` pins the conversion itself against a real
+  database, reading the raw columns rather than the `COALESCE`d ones — through the repository a
+  stored `0` and a stored `NULL` are indistinguishable, so only a column-level read can show
+  that `(1200, 0)` landed as two NULLs. The `ON CONFLICT` arm deliberately does NOT backfill
+  dimensions on a re-upload: that would contradict the stated insert-only immutability and
+  would backfill only the arbitrary subset of rows somebody happened to re-send.
 - **The returned column set OMITS `bytes`.** `creativeAssetCols` (used by the write and the
   metadata result) does not select the potentially-multi-megabyte blob; only `GetAsset`'s
   `creativeAssetColsWithBytes` appends it. A create returns metadata, so a `stored.Bytes` read
@@ -2065,13 +2432,201 @@ with the suite still green. `TestCreativeAssets_MimeTypeCheckRejectsUnsupported`
 for the `mime_type` allow-list, asserting both that `image/gif` is refused and that `image/jpeg`
 is accepted — so narrowing the CHECK to PNG alone fails too.
 
-The repository has no source-text SQL assertion (unlike the campaign/connection repos); its
-behaviour — the parent-brief gate's three rejection shapes, the `ON CONFLICT` idempotency, the
-`byte_size` binding, and `GetAsset`'s scoping — is pinned by `creative_asset_repo_live_test.go`.
+The repository has no BEHAVIOURAL source-text SQL assertion (unlike the campaign/connection
+repos); its behaviour — the parent-brief gate's three rejection shapes, the `ON CONFLICT`
+idempotency, the `byte_size` binding, and `GetAsset`'s scoping — is pinned by
+`creative_asset_repo_live_test.go`. The one source-text file that does exist,
+`creative_asset_migration_test.go`, asserts only what a live database cannot show: that `000047`
+is expand-only, and that the `COALESCE`/`NULLIF` pair and the positional column order agree —
+drifts that fail SILENTLY rather than loudly.
 That test is IN-PACKAGE (`package postgres`, alongside `audience_reconcile_live_test.go`)
 rather than under `dbtest/`, because `NewCreativeAssetRepo` needs the instrumented `*Pool`
 wrapper that `dbtest.Pool` does not expose; it follows the same `TEST_DATABASE_URL`-gated
 skip/fail-on-CI convention and the same `UniqueID` discipline as the rest of the live suite.
+
+`dbtest/creative_asset_live_test.go` carries the four properties that need a database AND a
+second connection — concurrency and constraint behaviour the in-package live tests cannot
+reach, because `dbtest` is where a test can hold an uncommitted transaction on one connection
+while a call under test runs on another and `waitForBackendsBlockedBy` proves it is parked:
+`TestLiveDeleteAssetWaitsForAnInFlightDispatchClaim` (the brief lock),
+`TestLiveDeleteAssetSucceedsOnceTheClaimIsDeleted` (the contrast that keeps it honest),
+`TestLiveDimensionsCheckRefusesAHalfKnownPair` and
+`TestLiveCreateAssetConvertsAHalfKnownPairToUnknown`.
+
+### The per-brief quota, and the three read/delete methods (LFXV2-2665)
+
+`CreateAsset` now enforces a per-brief ceiling — `model.MaxCreativeAssetsPerBrief` (100) and
+`model.MaxCreativeAssetBytesPerBrief` (512 MiB) — returning `ErrCreativeAssetQuotaExceeded`,
+which the service maps to a `409`, not a `400`: the request is well-formed, the brief's state is
+what refuses it, and the remedy is to change that state. The figures are a STATED ASSUMPTION
+(issue `#171` owns the real ones) chosen so the endpoint cannot be used to fill the table, not
+derived from a product requirement.
+
+Three properties of where the check sits are load-bearing:
+
+- **Inside `CreateAsset`'s transaction, AFTER the `FOR UPDATE` brief lock.** The lock the parent
+  gate already takes is what makes the aggregate race-free: two concurrent uploads serialize on
+  the same brief row, so neither can read a total the other is about to invalidate. A check in
+  the service layer, or in its own statement, would be a TOCTOU window.
+- **Dedupe hits are exempt.** The aggregate runs only when the insert is NOT a duplicate
+  (`!isDuplicate`). Without that, a plain retry of an already-stored upload — which adds nothing
+  — would start failing once a brief reached the cap, and the upload would stop being idempotent
+  exactly when it matters most. `TestCreativeAssetRepo_CreateAsset_EnforcesPerBriefCount`
+  re-sends a stored checksum at the cap and requires both no error and `created == false`.
+- **A refusal stores nothing**, because the transaction rolls back; the same test counts rows
+  after the 409 to pin it.
+
+`GetAssetMetadata` is `GetAsset`'s scoping (tenant, brief, non-archived parent) with
+`creativeAssetCols` instead of `creativeAssetColsWithBytes`. It is a separate method rather than
+a flag because the difference is whether up to 30 MiB of `BYTEA` is detoasted for a response that
+never carries it. `TestCreativeAssetRepo_GetAssetMetadata_ScopesLikeGetAssetWithoutBytes`
+asserts `Bytes == nil` first — that is the whole point of the method — then walks the same four
+404 shapes.
+
+`ListAssets` is driven FROM `campaign_briefs` with a LEFT JOIN onto `creative_assets`, not from
+the assets table. That is the only shape that separates "this brief is empty" (a row, no assets,
+a non-nil empty slice) from "this brief is not visible to you" (no row at all → `ErrNotFound`) —
+an assets-first query returns zero rows for both, and an archived or foreign brief would then
+look like an empty library. It returns the whole set, oldest first, with the count and byte total
+computed in the same snapshot as the rows; a separate aggregate query would be free under READ
+COMMITTED to disagree with the list printed beside it.
+`TestCreativeAssetRepo_ListAssets_SeparatesAnEmptyLibraryFromAnInvisibleBrief` is the pair that
+justifies the join shape.
+
+`DeleteAsset` is a HARD delete — the row is removed, not status-flipped — and the delete itself
+is one statement of three CTEs (`target`, `referenced`, `removed`) returning `found`/`deleted`:
+`!found` → `ErrNotFound`, `found && !deleted` → `ErrCreativeAssetInUse`, otherwise nil. The
+reference check must live in the same statement as the delete, because the window between a
+separate check and the delete is exactly when a dispatch claim can appear.
+
+**One snapshot is necessary and NOT sufficient**, so that statement runs inside a transaction
+that takes `lockBriefForAssetWriteQuery` on the parent brief FIRST. Under READ COMMITTED a
+statement's snapshot is taken when the STATEMENT begins, so the three-CTE statement closes the
+gap between its own check and its own delete and says nothing about a claim committing a moment
+later: that claim is invisible to `referenced`, the delete proceeds, and the dispatcher then
+resolves a campaign whose asset is gone — a failed dispatch instead of the clean 409 the caller
+should have had. Two halves fix it, and both are load-bearing:
+
+- **The lock.** `claimCampaignDispatchQuery`'s INSERT takes `FOR KEY SHARE` on the same brief row
+  as its foreign-key check and holds it to COMMIT. `FOR UPDATE` conflicts with `FOR KEY SHARE`,
+  so a claim that has already inserted forces the delete to WAIT for it — the ordering the
+  delete cannot get from its own snapshot.
+- **The delete as the NEXT statement.** Running it as the locking statement itself would leave
+  it on the snapshot the transaction already had and reintroduce the very race the lock closes.
+
+Lock ORDER is slot → brief for every transaction taking both (`AdoptCampaign`), because a claim
+holds the slot lock while waiting for the brief's. `CreateAsset` and `DeleteAsset` take the brief
+lock and nothing else; `ReplaceCampaign` takes the brief lock and never a slot lock — the only
+lock its caller may already hold is `ClaimCampaignVersion`'s per-CAMPAIGN advisory lock, which is
+a different lock and is taken with `pg_try_advisory_lock`, so nobody ever BLOCKS on it. The scope
+of that is the LOCK, not the backend holding it: no wait-for cycle can route THROUGH the advisory
+lock, because no edge ever enters it. The replace does go on to wait for the brief lock, and it
+does acquire in-edges once it holds that lock — a waiting `DeleteAsset` is one — so the conclusion
+does not rest on the holder being edge-free. It rests on two named claims: **(1)** the brief lock
+is the opening statement of the replace's transaction, so the replace holds no `campaigns` row
+lock while waiting for it; and **(2)** nothing anywhere acquires a slot or per-campaign lock while
+already holding the brief's. Those two close the cycle, and they are named in these same words in
+`campaign_repo.go` and in the dated log entry rather than pointed at by position, because a
+positional reference drifts the moment either surface is re-flowed.
+`TestLiveDeleteAssetWaitsForAnInFlightDispatchClaim` holds an uncommitted claim insert on a
+second connection, proves `DeleteAsset` is BLOCKED on that backend rather than merely slow, then
+commits the claim and requires `ErrCreativeAssetInUse` with the asset still present;
+`TestLiveDeleteAssetSucceedsOnceTheClaimIsDeleted` is its contrast, so a change that simply made
+`DeleteAsset` always refuse could not pass the pair.
+
+It refuses while the brief holds any campaign with `status <> 'deleted'` that is **`pending`**, or
+whose `config_snapshot` **is NULL**, or whose `config_snapshot` names the asset id. Four details:
+
+- **The `pending` arm does not depend on the snapshot at all.** It is the one that holds once a
+  pending row's snapshot has been WRITTEN: the dispatcher takes no lock across the platform call,
+  so a committed non-NULL snapshot on a `pending` row is still "a create that has not resolved",
+  and the two snapshot arms both answer "not referenced" for it. Without this arm such a delete
+  succeeded and the unresolved dispatch went on to use an asset that was gone.
+- **The NULL arm is exact for the CLAIM, and only for it.** `claimCampaignDispatchQuery` inserts
+  the `pending` claim row with no `config_snapshot` BEFORE the dispatcher reads any asset, so a
+  NULL snapshot on a live row is precisely "a dispatch that may be about to use this asset". What
+  it never covered is a writer REPLACING that NULL — `UpdateCampaign` wrote `config_snapshot` too,
+  gated on version rather than on the brief, and `ReplaceCampaign`'s UPDATE touches `campaigns`
+  only, so the brief lock ordered nothing against it. That is what the `pending` arm closes on the
+  reader's side and `ReplaceCampaign`'s own brief lock closes on the writer's.
+- **Both id spellings.** `config_snapshot` keeps `imageAssetId` verbatim, but a caller may send
+  the UUID hyphenated or dashless, so the predicate matches both forms, case-insensitively.
+- **`strpos(...) > 0`, not `LIKE`.** No character of a UUID is then a wildcard.
+
+An arm that keys on a column's VALUE is only ever as good as the full set of that column's writers,
+which is why the fix spans both directions: `TestLiveDeleteAssetRefusesWhileACampaignIsPending`
+pins the removal direction (a committed pending snapshot that does not name the asset still blocks,
+and the same row at `created` does not), and
+`TestLiveReplaceCampaignTakesTheBriefLockBeforeWritingTheSnapshot` pins the addition direction — a
+replace that adds a reference waits on the brief lock a concurrent `DeleteAsset` holds.
+
+### The losing side of that same race: `checkNewSnapshotAssetRefs`
+
+The brief lock ORDERS the replace against the delete; it does not say which of the two won. When
+the DELETE won, the replace resumes holding a snapshot that names a row which no longer exists,
+and nothing downstream notices — `config_snapshot` is `jsonb` with no foreign key to
+`creative_assets`. `campaign_snapshot_assets.go` closes that side: between the brief lock and the
+guarded UPDATE, `ReplaceCampaign` resolves the asset ids the incoming snapshot NEWLY names and
+refuses with `domain.ErrCreativeAssetReferenceMissing` (409,
+`reason = creative_asset_reference_missing`) when any of them is absent for the campaign's
+`(project_id, brief_id)`. It is the inverse of `ErrCreativeAssetInUse`, and the two close the one
+window from opposite sides. Four properties are load-bearing:
+
+- **Inside the transaction, after the lock.** Any check made outside it can be invalidated by a
+  delete that commits a moment later; under the lock the delete had to take, the answer still
+  holds when the UPDATE runs.
+- **NEWLY introduced ids only** — present in the incoming snapshot, absent from the one stored on
+  the row. `ReplaceCampaign` rewrites `config_snapshot` for every caller, so a whole-snapshot
+  check would make the bid, budget, status-toggle and `persistMetaAdSetRecord` persists start
+  failing over an asset deleted days earlier. Under this scope those four write back exactly what
+  they read and can never newly fail. The stated cost: a reference that is ALREADY dangling stays
+  dangling, which the dispatchers' own pre-create refusals cover.
+- **Extraction is driven by the KEY, case-insensitively, and ids are canonicalized.**
+  `config_snapshot` is the caller's own JSON (`redactedConfigSnapshot` re-marshals a decoded
+  `map[string]any`), and every dispatcher binds it with `encoding/json`, whose field matching is
+  case-insensitive — so `imageAssetId`, `ImageAssetID` and `imageassetid` all name a real asset.
+  Collecting every uuid-SHAPED value instead would sweep in the brief, project and audience ids a
+  snapshot legitimately carries and refuse perfectly good configurations. `uuid.Parse` then
+  canonicalizes, so a re-sent id in another of its four accepted spellings is not read as new.
+- **Scoped to `(project_id, brief_id)` alone**, deliberately NOT borrowing
+  `getCreativeAssetQuery`'s archival `EXISTS` predicate: that would newly refuse every
+  config-bearing edit on an archived brief, which is allowed today.
+
+`upsertCampaignQuery` is the only other statement that writes `config_snapshot`, and it is
+deliberately NOT guarded. The two writes mean opposite things: `ReplaceCampaign` records an intent
+the caller can still revise, so a refusal costs a retry, while `UpsertCampaign` records a campaign
+the dispatcher has already created upstream — refusing there would reject the local record of a
+live, spending ad and manufacture the orphan class this repo treats as its most serious defect.
+The asset is not in question on that path either, because the dispatcher resolved it before its
+first upstream call. The write that can still be taken back is checked; the write reporting an
+accomplished fact is not.
+
+A `pgx.ErrNoRows` on the stored-snapshot read returns nil rather than an error, leaving the
+guarded UPDATE as the sole owner of the 404-vs-412 verdict. The refusal names the ids that did
+not resolve — safe because the caller supplied them in that same request and they were
+canonicalized, so nothing from a platform or another tenant appears in the message.
+
+`TestLiveReplaceCampaignRefusesASnapshotWhoseAssetTheDeleteAlreadyRemoved` is the direction the
+test above cannot reach: the holder transaction takes the brief lock, DELETES the asset and
+commits, and the waiting replace is then refused with the stored snapshot untouched.
+`TestLiveReplaceCampaignCarriesAnAlreadyDanglingReferenceThrough` is its contrast and pins the
+scope — a pass-through caller, and a re-spelled identical id, both still succeed — so a change
+that widened the check to the whole snapshot could not pass the pair. The extractor's own
+spellings are unit-tested in `campaign_snapshot_assets_test.go`, and
+`dispatch.TestPlatformConfigsNameTheirAssetUnderOneKey` is the cross-package drift guard: it
+marshals all five platform configs and fails if any spells the key something the extractor would
+skip.
+
+Only `status = 'deleted'` campaigns are ignored — legal in multiples, since
+`uq_campaigns_brief_platform_variant_slot_version_live` is partial `WHERE status <> 'deleted'`.
+`TestCreativeAssetRepo_DeleteAsset_RefusesWhileALiveCampaignCouldNeedIt` drives every arm
+including the dashless spelling and the NULL snapshot, and
+`TestCreativeAssetRepo_DeleteAsset_FreesTheBriefsQuota` fills a brief to the cap, confirms the
+409, deletes one and confirms the next create succeeds — the 409's stated remedy has to actually
+work.
+
+The BYTE arm of the quota is deliberately NOT exercised live: inserting 512 MiB would dominate
+the suite's runtime to reach the other branch of the same `if` the count arm already covers.
 
 ## `ListRecentProjectPlatformCampaigns` (LFXV2-2665)
 

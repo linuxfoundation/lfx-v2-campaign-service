@@ -10,12 +10,17 @@ image:
   # pullPolicy is the image pull policy
   pullPolicy: IfNotPresent
 
-# replicaCount is the number of replicas for the deployment. It must stay 1:
-# templates/deployment.yaml refuses to render more (or autoscaling past one),
-# because the Reddit reporting budget is a per-process ledger that the
-# always-on Reddit account monitor spends from, so every replica would
-# multiply it against the ad account's 60-requests-a-minute quota. The
-# Recreate rollout's migration ordering also rests on one replica.
+# replicaCount is the number of replicas for the deployment. This chart's
+# default is 1; deployments may and do set more (production runs 3), and
+# nothing here refuses that.
+#
+# One known ceiling comes with multiple replicas: the Reddit reporting budget
+# (internal/platform/reddit/report_budget.go) is a per-process ledger, so each
+# replica carries its own 45 report requests a minute against an ad account's
+# shared 60. Every path that spends it is request-driven, so this is a
+# concurrency ceiling that surfaces as a Reddit 429, not a sustained overdraw —
+# see templates/deployment.yaml for why a render-time guard was the wrong
+# answer and what the real fix is.
 replicaCount: 1
 
 # podAnnotations are additional annotations applied to the pod template.
@@ -264,8 +269,8 @@ app:
     # same reporting operation with breakdowns.
     # Their reporting budget (Reddit's 60 report requests a minute per ad
     # account) is kept per process and is ALSO spent by the ungated Reddit
-    # account monitor, so templates/deployment.yaml refuses replicaCount > 1
-    # (or autoscaling past one) whatever this flag says — see replicaCount.
+    # account monitor, so turning this flag off does not bound that budget —
+    # see replicaCount for the multi-replica ceiling that follows from it.
     REDDIT_METRICS_ENABLED:
       value: "false"
 

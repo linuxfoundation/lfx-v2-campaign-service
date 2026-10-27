@@ -90,3 +90,9 @@ HTTP2, via `goa.design/clue/debug`), `github.com/apache/thrift` → 0.23.0
 `aws-sdk-go-v2/service/s3` → 1.97.3 plus
 `aws-sdk-go-v2/aws/protocol/eventstream` → 1.7.8 (EventStream decoder panic /
 DoS, via `gosnowflake`). None was added to `.grype.yaml`.
+
+Those four versions are the FLOOR each advisory required on that date, not a pin —
+all four are plain indirect requires, and later work raises them. The
+`gosnowflake` v1 → `/v2` move (GHSA-qqj6-54q6-cxv6) carried the two AWS modules to
+`service/s3` 1.106.0 and `eventstream` 1.7.14; `thrift` and `grpc` did not move.
+Check a version against the floor above, not for equality with it.

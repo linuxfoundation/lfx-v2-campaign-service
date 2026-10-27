@@ -5,7 +5,7 @@
 -- predicate (only its IF NOT EXISTS is deliberately left off; see below).
 --
 -- This FAILS if any slot holds more than one live campaign — a second campaign created with
--- new_version after 000047 — and that failure is correct: those rows cannot coexist under the
+-- new_version after 000050 — and that failure is correct: those rows cannot coexist under the
 -- narrower key, and choosing which one stays live is a data decision, not a migration's. Each
 -- carries a platform_campaign_id for a campaign that may still be spending. Soft-delete (or
 -- otherwise resolve) the extra versions by hand, drop the INVALID index the failed build

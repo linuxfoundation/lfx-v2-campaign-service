@@ -69,6 +69,16 @@ func (e *dsnParseError) Unwrap() error { return e.err }
 
 // NewPool opens an instrumented pgx connection pool for the given DSN and
 // verifies connectivity with a ping.
+//
+// Every arm is DSN-free by construction, the same guarantee Migrate makes and for
+// the same reason: NewContainer wraps this error and main logs it. The connect and
+// ping arms go through newSafeDSNError because pgx renders a *pgconn.ConnectError
+// as "failed to connect to `user=%s database=%s`" — verified against pgx v5.9.2 —
+// so the commonest startup failure in k8s, a database that is not up yet, would
+// otherwise put the user and database name in every restart's logs. The ParseConfig
+// arm keeps its pre-existing dsnParseError instead: that wrapper already renders a
+// static message, and routing an already-redacted error through the redaction a
+// second time would replace a precise diagnostic with a generic one.
 func NewPool(ctx context.Context, dsn string) (*Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -78,14 +88,14 @@ func NewPool(ctx context.Context, dsn string) (*Pool, error) {
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("open pgx pool: %w", err)
+		return nil, fmt.Errorf("open pgx pool: %w", newSafeDSNError(dsn, err))
 	}
 	if err := pool.Ping(ctx); err != nil {
 		// Close in the background so a failed ping returns immediately rather
 		// than blocking startup while the pool drains (an unreachable DB in k8s
 		// can otherwise wedge boot until the liveness probe restarts the pod).
 		go pool.Close()
-		return nil, fmt.Errorf("ping database: %w", err)
+		return nil, fmt.Errorf("ping database: %w", newSafeDSNError(dsn, err))
 	}
 	return &Pool{Pool: pool}, nil
 }
@@ -128,7 +138,22 @@ func (p *Pool) checkReady(ctx context.Context, ping func(context.Context) error)
 //
 // On success it verifies the schema carries no INVALID index (checkNoInvalidIndexes) —
 // the one failure a migration can leave behind that a re-run reports as success.
+//
+// Every error it returns has been through redactMigrateErr, so no caller can print the DSN
+// by printing the error. The redaction is HERE, at the boundary, rather than at each of the
+// failing sites inside, because the leak is not one site: a malformed URL leaks the whole DSN
+// out of migrate.NewWithSourceInstance, and every failure to CONNECT — from Up() and from
+// checkNoInvalidIndexes alike — leaks the user and database out of pgx's own message, at
+// startup and again on every retry. A site-by-site fix leaves the next site to be added
+// unguarded; wrapping the one exported entry point makes every path safe by construction and
+// keeps the DSN, which only this function is given, from needing to reach a logging caller.
+// errors.Is/As still see through it — see safeDSNError for why that matters to
+// IsPermanentMigrationErr.
 func Migrate(dsn string) error {
+	return redactMigrateErr(dsn, runMigrations(dsn))
+}
+
+func runMigrations(dsn string) error {
 	src, err := iofs.New(migrations.FS, ".")
 	if err != nil {
 		return fmt.Errorf("open migration source: %w", err)
@@ -421,7 +446,7 @@ var requiredIndexes = []requiredIndex{{
 	predicate: "(status = 'building'::text)",
 }, {
 	// at most one live campaign per (brief, platform, variant, slot_version) — 000037. The
-	// arbiter of ClaimCampaignDispatch, UpsertCampaign and AdoptCampaign, and since 000047
+	// arbiter of ClaimCampaignDispatch, UpsertCampaign and AdoptCampaign, and since 000050
 	// dropped 000022's three-column uq_campaigns_brief_platform_variant_live, the ONLY index
 	// standing between two concurrent claims of one slot version and two paid campaigns.
 	// Membership here is what re-checks it at every boot. A migration-time guard (000014's,
@@ -882,7 +907,7 @@ func indexRecovery(name string) string {
 	if v, ok := migrationIndexOwners()[name]; ok {
 		// An index a LATER migration drops is no recovery target either: forcing back to its
 		// creator replays every migration up to the one that removes it again (000022's slot
-		// index, dropped by 000047 — an invalid copy is what a failed 000047 down leaves), and
+		// index, dropped by 000050 — an invalid copy is what a failed 000050 down leaves), and
 		// the distance makes the replay unsafe as described above.
 		if d := migrationIndexDrops()[name]; d > v {
 			return fmt.Sprintf("migration %06d drops this; drop it, leave the schema version alone", d)
@@ -1027,8 +1052,23 @@ func pgxURL(dsn string) (string, error) {
 			return "pgx5://" + strings.TrimPrefix(dsn, prefix), nil
 		}
 	}
-	return "", fmt.Errorf("DATABASE_URL must be a postgres:// or postgresql:// URL; keyword DSNs and the internal pgx5:// scheme are not supported")
+	return "", errDSNNotURLScheme
 }
+
+// errDSNNotURLScheme is pgxURL's rejection, a sentinel rather than a fmt.Errorf literal so
+// that redactMigrateErr can let it through untouched.
+//
+// It needs that exemption for the same reason the index sentinels have one, and more
+// urgently. The text is a package constant — it names DATABASE_URL and the two schemes that
+// are accepted, and nothing in it comes from the DSN — so the no-echo rule has nothing to
+// say about it. But the DSN that provokes it is a keyword DSN, and a keyword DSN's user and
+// database are exactly what pgconn.ParseConfig extracts: on the commonest one of all,
+// `user=postgres dbname=postgres`, the literal "postgres://" in this message is a bounded
+// match for cfg.User, so the identifier comparison replaced it with the withhold sentinel.
+// The one error that tells an operator their DSN is the wrong SHAPE was the one most
+// certain to censor itself.
+var errDSNNotURLScheme = errors.New("DATABASE_URL must be a postgres:// or postgresql:// URL; " +
+	"keyword DSNs and the internal pgx5:// scheme are not supported")
 
 // ensure the pgx5 migrate driver is linked.
 var _ = pgx.Postgres{}

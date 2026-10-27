@@ -65,9 +65,13 @@ blocks are Reddit's own.
   A pre-send dial failure (DNS, connection refused, no route — `isPreSendDialError`) is proven
   unsent, so the client hands its slot back (`ReportBudgets.reserve`'s release); any other send
   error may have reached Reddit and keeps its slot. The ledger is PER PROCESS: with several
-  replicas the account-wide figure multiplies, and the always-on Reddit account monitor spends it
-  too, so the chart refuses more than one replica whatever `REDDIT_METRICS_ENABLED` says (see
-  [Deployment](../kubernetes/deployment.md)); a shared ledger is what would lift that.
+  replicas the account-wide figure multiplies, and the ungated Reddit account monitor spends it
+  too, so N replicas each carry a separate 45 against an ad account's 60. That is a CEILING
+  reachable by concurrent user traffic, not a sustained rate — every path that spends the budget
+  is driven by an inbound request and nothing polls them — and the chart does NOT refuse multiple
+  replicas over it; production runs three (see [Deployment](../kubernetes/deployment.md), which
+  records why an earlier render-time guard was wrong and must not return). A shared ledger — a
+  token bucket keyed by ad account in Postgres — is what lifts the ceiling itself.
 - **Identical concurrent reads share one upstream read** (`internal/dispatch/reddit_report_guard.go`):
   keyed by account, window, UTC day and the sorted campaign set, single-flight with leader-context
   re-lead (as the X audience guard), and a successful result reused for 60 s. Failures are never

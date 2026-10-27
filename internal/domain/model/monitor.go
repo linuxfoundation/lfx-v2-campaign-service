@@ -224,7 +224,7 @@ type AccountMonitorActionItem struct {
 	Action       string
 }
 
-// AccountMonitorTotals is the account-wide aggregate the monitor response reports next to
+// AccountMonitorTotals is the aggregate the monitor response reports next to
 // the per-campaign rows.
 //
 // Always the sum of exactly those rows, on every platform (service.monitorTotals). Reddit's
