@@ -94,6 +94,46 @@ is an explicit parameter (not the HTTP method) because GAQL `:search` is
 POST-but-read-only — a `:mutate` create must NOT be retried (double-create risk).
 `customer_id`/`login_customer_id` are validated as digits-only before any request.
 
+### A retried mutate's failure is UNCONFIRMED (#347)
+
+`doRequest` returns only `(body, err)`, so its caller cannot tell a first-attempt
+failure from one that followed a retry. That distinction is the whole outcome on a
+mutate: a 429 is Google acknowledging **receipt**, and a `:mutate` carries no
+idempotency key, so the rate-limited attempt may still have been applied. A later
+definite refusal — including the `400` a second attempt can earn *precisely because*
+the first one already took effect — proves only that the **last** attempt changed
+nothing. Reporting it as "the platform was not modified" is then false, and on the
+budget and bid levers it is false about money.
+
+`doRequestCounted` is `doRequest` additionally returning how many attempts were
+**retried** — the loop's `attempt` index at the point of return, so `0` means the
+outcome answers the one and only request that was sent. `doRequest` and
+`doRequestValidated` are thin delegations to the counted forms, so no existing caller
+changed. `retriedUnconfirmed(what, retries, err)` is the single place the rule is
+applied, and it wraps in `retriedUnconfirmedError` (`Unconfirmed() bool` → true,
+`Unwrap()` keeping the final `*apiError` reachable) only when **all three** hold:
+`err != nil` (a success is confirmed however many 429s preceded it), `retries > 0`
+(an unretried `400` stays exactly as definite as it was), and
+`!IsOutcomeUnconfirmed(err)` (an error already ambiguous by shape — 5xx, exhausted
+429, transport timeout — or already carrying one of this package's explicit markers
+needs no second layer).
+
+One consequence of the third clause reads wrong at a glance and is deliberate: an
+`errRequestNotTransmitted` failure on a **later** attempt reports `NotAttempted()`,
+which makes `IsOutcomeUnconfirmed` return false, so it **is** wrapped. "Not attempted"
+is true of the attempt that failed; attempt 0 was transmitted and answered 429. That
+marker is already gated on `attempt == 0` for exactly this reason.
+
+Five of the six idempotent mutating call sites are routed through the counted form —
+`assetGroups:mutate` (`pmax_creative.go`), `adGroups:mutate` in the status cascade
+(`adgroup_ad.go`), `campaignBudgets:mutate` (`budget_update.go`), `adGroups:mutate` for
+the CPC bid (`bid_update.go`) and `campaigns:mutate` (`campaign.go`). The sixth,
+`adGroupAds:mutate`, is deliberately left on `doRequest`: every failure there is already
+wrapped in `partialCascadeError`, which reports `Unconfirmed()`, so the wrap would be a
+guaranteed no-op. Every CREATE passes `idempotent=false` and is never retried, and reads
+have no commit to be ambiguous about. This mirrors the `reddit`, `twitter` and
+`microsoft` clients, which already carry the same type and gate.
+
 ## GAQL search
 
 `gaqlSearch` runs a cursor-paginated GAQL query (POST) with a repeated-token guard,
@@ -460,6 +500,21 @@ attaching a campaign to an amount nobody asked for. Refusing on a mismatch inste
 re-impose the dead end, and the end state after adoption equals a clean first-time create:
 one non-shared daily budget at the brief's amount, one PAUSED campaign on it.
 
+**An AMBIGUOUS alignment failure is marked at this call site, not inside
+`UpdateCampaignBudget`** (#384). The method marks only the three 2xx exits where Google
+ACCEPTED the mutate and answered untrustworthily; its ordinary ambiguous failures — a 5xx,
+an exhausted 429, a mid-flight transport timeout on `campaignBudgets:mutate` — return a
+plain wrapped error, because ambiguity of that SHAPE is what `createOutcomeAmbiguous`
+reads and what the method's other caller, `dispatch/googleads_budget.go`, already asks for
+via `IsOutcomeUnconfirmed`. Marking inside would be redundant there and would change the
+error type that path returns. The create path cannot reach the same answer by shape —
+`carriesUnconfirmedWrite` reads the explicit marker only, for the reason in the bullet
+below — so the write that may have landed has to say so itself. The wrap is therefore
+gated on `createOutcomeAmbiguous(err) && !carriesUnconfirmedWrite(err)`, which leaves the
+DEFINITE failures unmarked: a 4xx Google rejected, and the pre-send unsupported-period
+refusal that never left the process. Those changed nothing, so `budget_name_taken` stays
+true of them and the operator keeps the precise token.
+
 A DECLINED reuse changes nothing: the original already-exists error is returned, the
 partial result still carries the names, and Performance Max still appends
 `expansionActionRequiredIfExists`. That hedge is deliberately absent on the ACCEPTED path —
@@ -482,7 +537,10 @@ it to classify what the account now holds:
   `IsOutcomeUnconfirmed`, which also shape-infers ambiguity from a 5xx or transport error —
   on this path usually the lookup read failing, which wrote nothing, and weakening a clean
   `budget_name_taken` would cost the operator the one token that says exactly what to
-  look for.
+  look for. That narrowness is why an ambiguous alignment failure has to be marked
+  explicitly where it happens (above): until #384 the marker existed only on the three
+  2xx exits, so a 5xx on `campaignBudgets:mutate` reached this arm unmarked and was
+  reported as "nothing new was created" when the existing budget's amount may have moved.
 
 ### Resolving an AMBIGUOUS budget create (`budget_lookup.go`, #385)
 
@@ -540,17 +598,90 @@ Four details are load-bearing:
   account" is a far better starting point than "it may exist".
 - **Only the no-row outcome is retried, on a detached, bounded context.** A budget
   committed moments before is exactly the one a single immediate read misses, and it is
-  the one that most needs reporting, so `resolveBudgetAfterAmbiguousCreate` re-reads on a
-  250ms→1s schedule (4 attempts, 1750ms of sleep) under a 20s ceiling, mirroring
+  the one that most needs reporting, so the re-reads run on a 250ms→1s schedule (4
+  attempts, 1750ms of sleep) under a 20s ceiling, mirroring
   `reconcileAmbiguousAudienceCommit`'s precedent in `audience_repo.go`. A found budget or
-  any gate error settles the question immediately and is never retried. The context is
-  detached (`context.WithoutCancel`) because one of the three shapes that reach this arm
-  is a transport error, which a cancelled caller context produces — reusing `ctx` would
-  make the feature inert in a shape especially likely to leave an orphan.
+  any gate error settles the question immediately and is never retried. The schedule itself
+  lives in `retryFindBudgetByName`, shared with the unreadable-2xx recovery below. The
+  two delays are `Client` fields defaulting to those consts, which tests shrink via the
+  unexported `withBudgetResolveDelays` exactly as they shrink `retryBaseDelay`; the
+  **attempt cap is not overridable**, because tests assert on how many reads the account
+  was given before an absence is reported. Meanwhile,
+  `resolveBudgetAfterAmbiguousCreate` adds only the **detachment**
+  (`context.WithoutCancel`), which belongs to this arm alone, because one of the three
+  shapes that reach it is a transport error — which a cancelled caller context produces —
+  and reusing `ctx` would make the feature inert in exactly the shape most likely to leave
+  an orphan.
 
 The cost is up to four `googleAds:search` calls on the ambiguous path, plus one more when
 a budget IS found (`assertBudgetUnattached` asks the campaign side independently), paid
 only on a failure that was previously unresolvable.
+
+### Recovering a budget from an UNREADABLE 2xx (`budget_lookup.go`, #387)
+
+The third dead end at Step 1, and the only one of the three where Google answered
+**success**. `campaignBudgets:mutate` returns 2xx, but the response carries no
+`results[0].resourceName`, or one with no id segment, so `firstResourceName` can hand back
+nothing to attach a campaign to. Before #387 all five channels failed on the spot with a
+sentence saying the budget was "UNCONFIRMED (may exist)" — leaving the same orphan class the
+DUPLICATE_NAME arm closes, arrived at from the opposite direction: a non-shared, unattached
+budget that appears in no Google Ads UI surface and holds the composed name that blocks
+every later retry of the same brief.
+
+`budgetFromCreateResponse(ctx, channel, budgetName, amountMicros, body)` is now the WHOLE of every
+channel's "read the budget out of a 2xx" step, returning `(resourceName, budgetID,
+recoveryStep, err)`. On the ordinary path it is `firstResourceName` and nothing else — no
+search is issued, which the tests pin. Only when the parse fails does it call
+`recoverBudgetAfterUnreadableCreate`. The `recoveryStep` is returned separately rather than
+appended inside, because the five channels word their own "Campaign budget created" line
+differently and a readback deserves its own sentence in `Steps`.
+
+Three things distinguish this arm from the ambiguous one above:
+
+- **An absence here is a CONTRADICTION, not an answer.** There, Google said nothing, so
+  "no such budget" is evidence that nothing was created and the arm reports it as such.
+  Here Google said 2xx, so a budget of this name provably exists; an account that shows none
+  has returned two answers that cannot both be true, and `recoverBudgetAfterUnreadableCreate`
+  refuses rather than classifying. That is why it is modelled on `findReusableBudget`'s thin
+  wrapper and not on `ambiguousBudgetCreateOutcome`'s three-outcome adapter.
+- **The re-reads matter MORE here, not less.** The commit is confirmed, so a first read that
+  misses can only be replica lag. It shares `retryFindBudgetByName` — the same 4 attempts and
+  20s ceiling — but **not** the detachment: nothing on this path is reached by way of a
+  cancelled caller context, and the caller's own deadline is a legitimate bound on a readback
+  that is holding up a campaign mutate.
+- **The gates are still checked**, even though "Google committed this moments ago" predicts
+  they will pass. The argument is an argument; the row is the evidence. A shared or
+  already-attached budget is refused by `findBudgetByName` exactly as on the DUPLICATE_NAME
+  path, and the resource name handed back is the one `reusableBudget` rebuilds from this
+  client's customer id and the canonical budget id — never the string the unreadable response
+  happened to carry. **The amount is a gate here too**, and this is the one place it refuses
+  instead of aligning: the create that just succeeded set the amount, so a row carrying a
+  different one is not this create's budget. The realistic shape is a same-named budget
+  removed shortly before, still served as ENABLED and unattached by a lagging replica —
+  every other gate passes on it, and `assertBudgetUnattached` reads the campaign side, which
+  lags with it, so the amount is the only field separating the two. On the DUPLICATE_NAME
+  path the budget pre-dates the brief, which is why `reuseBudgetAfterDuplicateName` aligns
+  it there instead.
+
+When recovery fails, both errors are wrapped with the parse failure first — the order they
+happened in, and the order the two arms above read in. Here that order is **not** an
+`errors.As` guard as it is there: `firstResourceName` returns only a `json.Unmarshal` wrap
+or a plain `fmt.Errorf`, never an `*apiError`, so the chain's first `apiError` is the
+lookup's whichever way the two `%w` are written. What this arm does newly admit is the
+lookup READ's `*apiError` into a chain that previously carried none, which makes
+`domain.UpstreamStatus` resolvable and lets `DispatchFailureMessage` say "the platform
+answered HTTP N" about a create that answered 200 — accepted because the read's status is
+the only upstream signal this path has, and the sentence it decorates already names which
+call succeeded and which did not. The partial still carries no `CampaignBudgetID`, so
+`CreateOutcome` is `CreateOutcomeUnconfirmed` and the campaign is never attempted — the
+behaviour before #387, minus the false sentence. The refusal now says
+the budget **WAS** created and only its identity is unsettled: telling an operator it "may
+exist" sends them looking for something that is definitely there.
+
+Out of scope, deliberately: the campaign-side arms where a 2xx **campaign** resource name
+fails to parse (`pmax.go` and siblings, plus `validateCampaignResource`). A billable campaign
+is already running by then, and recovering its identity is a harder problem than recovering a
+budget's.
 
 ## Responsive Search Ad copy + final URL (GA-3a)
 

@@ -1,7 +1,7 @@
 # 2026-08-19 — LFXV2-3282 Reddit reporting review follow-ups
 
-Four review findings against the reporting-contract change, all verified real before
-being acted on.
+**Fix** — four review findings against the reporting-contract change, all verified real
+before being acted on.
 
 ## The window check ran AFTER credential resolution
 

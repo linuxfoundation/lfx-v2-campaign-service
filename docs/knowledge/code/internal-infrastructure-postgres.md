@@ -1989,7 +1989,11 @@ every one of its callers rewrites the snapshot whether or not it meant to change
 statement cannot tell the two apart; the hazard belongs to the method, not to any one caller.
 Without the lock nothing ordered that write against a concurrent
 `CreativeAssetRepo.DeleteAsset`: the UPDATE touches `campaigns` only, and the per-campaign
-advisory lock a caller may already hold is keyed on the CAMPAIGN, not the brief.
+advisory lock a caller may already hold is keyed on the CAMPAIGN, not the brief. The outcome
+that made it worth ordering: a replace committing just AFTER the delete's reference check
+re-publishes a snapshot naming an asset whose bytes are already gone, while one committing
+just BEFORE it is correctly seen. The lock makes which of those happened a decided question
+instead of a race.
 
 The lock is on the BRIEF row, so its cost is wider than the delete it was added to order against:
 every `ReplaceCampaign` on a brief now serializes against every OTHER `ReplaceCampaign` on that
@@ -1997,7 +2001,13 @@ brief — the budget edit, the bid edit, the name edit and the toggle's status p
 of that brief's campaigns — each waiter holding a pooled connection while it waits. With no
 pool-level `lock_timeout` or `statement_timeout` configured, the only bound on that wait is the
 caller's context, and on a busy brief this sibling contention, rather than a concurrent asset
-delete, is the realistic way `ToggleCampaignStatus`'s 5 s `persistResultTimeout` gets spent.
+delete, is the realistic way `ToggleCampaignStatus`'s 5 s `persistResultTimeout` gets spent —
+timing that persist out and leaving the "platform and DB diverged" log the orchestrator writes
+for it.
+
+That is the intended trade, and the direction is deliberate: a diverged status is recoverable
+by reconciliation, an asset whose bytes are gone while a snapshot still names it is not. It is
+a real cost, though, not a free ordering.
 
 ## DeleteCampaign's guards
 

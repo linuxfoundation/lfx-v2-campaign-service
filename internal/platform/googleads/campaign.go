@@ -1451,13 +1451,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var budgetResource, budgetID string
 	switch {
 	case err == nil:
-		budgetResource, budgetID, err = firstResourceName(budgetResp)
+		// A 2xx with no/malformed resourceName is a malformed success: the budget WAS
+		// created and only its id is lost, so budgetFromCreateResponse goes and finds it
+		// rather than dead-ending on an orphan nobody can see.
+		var recovered string
+		budgetResource, budgetID, recovered, err = c.budgetFromCreateResponse(ctx, "campaign", budgetName, amountMicros, budgetResp)
 		if err != nil {
-			// A 2xx with no/malformed resourceName is a malformed success: the budget MAY
-			// have been created. UNCONFIRMED, not a clean failure.
-			return campaignNamePartial(), fmt.Errorf("google-ads campaign budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
+			return campaignNamePartial(), err
 		}
 		steps = append(steps, fmt.Sprintf("Campaign budget created: %s (%.2f/day in account currency, STANDARD delivery, non-shared)", budgetID, in.Budget))
+		if recovered != "" {
+			steps = append(steps, recovered)
+		}
 	case isDuplicateBudgetNameErr(err):
 		// A retry with a stable NameSuffix hit a name that already exists: the budget was
 		// (almost certainly) created by a prior attempt whose campaign step failed. If it
@@ -1650,7 +1655,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 // carries no result/resourceName, OR the resourceName is present but MALFORMED
 // (e.g. "customers/123/campaigns/" or "noslash") such that no id can be extracted —
 // accepting that would let creation continue with an empty, unreconcilable id or
-// report success with a blank id. The caller treats the error as UNCONFIRMED.
+// report success with a blank id.
+//
+// The campaign- and ad-group-side callers treat the error as UNCONFIRMED. The
+// five budget-side callers do NOT: they hand it to budgetFromCreateResponse,
+// which looks the budget up by the name this client composed and, when the
+// account settles which budget it is, continues with a RECOVERED id — because
+// the create that produced this unreadable body answered 2xx, so the budget's
+// existence is settled and only its identity is not.
 func firstResourceName(body []byte) (resourceName, id string, err error) {
 	var mr mutateResponse
 	if uErr := json.Unmarshal(body, &mr); uErr != nil {
@@ -1870,9 +1882,10 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 	// which is correct: by then a mutation HAS been sent. That path is reachable without any
 	// user cancellation, since the orchestrator wraps every toggle in a toggleCallTimeout —
 	// pinned by TestUpdateCampaignStatus_CancelDuringBackoffIsUnconfirmed.
-	resp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), req, true)
+	resp, retries, err := c.doRequestCounted(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), req, true)
 	if err != nil {
-		return fmt.Errorf("google-ads campaign %s status update to %s failed: %w", id, status, err)
+		return retriedUnconfirmed("campaign status update", retries,
+			fmt.Errorf("google-ads campaign %s status update to %s failed: %w", id, status, err))
 	}
 	// A 2xx that does not acknowledge the one operation is UNCONFIRMED, the same standard
 	// the ad group and ad stages hold their own mutates to (checkStatusMutateResults in
