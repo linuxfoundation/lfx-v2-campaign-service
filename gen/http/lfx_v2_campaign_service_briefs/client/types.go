@@ -594,6 +594,26 @@ type AdoptCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
+	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
+	// The manual max cost-per-click bid this service most recently set, in the
+	// currency the provider expects: the ad account's own currency for Microsoft
+	// Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the
+	// starting bid of a campaign created with manual bidding, then whatever
+	// update-campaign-bid set. A request the platform confirmed, never an
+	// observation — a bid changed in the platform's own UI is not reflected.
+	// ABSENT when this service never set one.
+	MaxCpcBid *float64 `form:"max_cpc_bid,omitempty" json:"max_cpc_bid,omitempty" xml:"max_cpc_bid,omitempty"`
 	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
 	// existing campaign on the ad platform by adopt-campaign) rather than created
 	// by this service. An adopted campaign records none of its serving children,
@@ -629,6 +649,26 @@ type GetCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
+	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
+	// The manual max cost-per-click bid this service most recently set, in the
+	// currency the provider expects: the ad account's own currency for Microsoft
+	// Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the
+	// starting bid of a campaign created with manual bidding, then whatever
+	// update-campaign-bid set. A request the platform confirmed, never an
+	// observation — a bid changed in the platform's own UI is not reflected.
+	// ABSENT when this service never set one.
+	MaxCpcBid *float64 `form:"max_cpc_bid,omitempty" json:"max_cpc_bid,omitempty" xml:"max_cpc_bid,omitempty"`
 	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
 	// existing campaign on the ad platform by adopt-campaign) rather than created
 	// by this service. An adopted campaign records none of its serving children,
@@ -786,6 +826,26 @@ type UpdateCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
+	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
+	// The manual max cost-per-click bid this service most recently set, in the
+	// currency the provider expects: the ad account's own currency for Microsoft
+	// Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the
+	// starting bid of a campaign created with manual bidding, then whatever
+	// update-campaign-bid set. A request the platform confirmed, never an
+	// observation — a bid changed in the platform's own UI is not reflected.
+	// ABSENT when this service never set one.
+	MaxCpcBid *float64 `form:"max_cpc_bid,omitempty" json:"max_cpc_bid,omitempty" xml:"max_cpc_bid,omitempty"`
 	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
 	// existing campaign on the ad platform by adopt-campaign) rather than created
 	// by this service. An adopted campaign records none of its serving children,
@@ -822,6 +882,26 @@ type ToggleCampaignStatusResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
+	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
+	// The manual max cost-per-click bid this service most recently set, in the
+	// currency the provider expects: the ad account's own currency for Microsoft
+	// Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the
+	// starting bid of a campaign created with manual bidding, then whatever
+	// update-campaign-bid set. A request the platform confirmed, never an
+	// observation — a bid changed in the platform's own UI is not reflected.
+	// ABSENT when this service never set one.
+	MaxCpcBid *float64 `form:"max_cpc_bid,omitempty" json:"max_cpc_bid,omitempty" xml:"max_cpc_bid,omitempty"`
 	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
 	// existing campaign on the ad platform by adopt-campaign) rather than created
 	// by this service. An adopted campaign records none of its serving children,
@@ -858,6 +938,26 @@ type UpdateCampaignBudgetResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
+	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
+	// The manual max cost-per-click bid this service most recently set, in the
+	// currency the provider expects: the ad account's own currency for Microsoft
+	// Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the
+	// starting bid of a campaign created with manual bidding, then whatever
+	// update-campaign-bid set. A request the platform confirmed, never an
+	// observation — a bid changed in the platform's own UI is not reflected.
+	// ABSENT when this service never set one.
+	MaxCpcBid *float64 `form:"max_cpc_bid,omitempty" json:"max_cpc_bid,omitempty" xml:"max_cpc_bid,omitempty"`
 	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
 	// existing campaign on the ad platform by adopt-campaign) rather than created
 	// by this service. An adopted campaign records none of its serving children,
@@ -894,6 +994,26 @@ type UpdateCampaignBidResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
+	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
+	// The manual max cost-per-click bid this service most recently set, in the
+	// currency the provider expects: the ad account's own currency for Microsoft
+	// Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the
+	// starting bid of a campaign created with manual bidding, then whatever
+	// update-campaign-bid set. A request the platform confirmed, never an
+	// observation — a bid changed in the platform's own UI is not reflected.
+	// ABSENT when this service never set one.
+	MaxCpcBid *float64 `form:"max_cpc_bid,omitempty" json:"max_cpc_bid,omitempty" xml:"max_cpc_bid,omitempty"`
 	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
 	// existing campaign on the ad platform by adopt-campaign) rather than created
 	// by this service. An adopted campaign records none of its serving children,
@@ -4434,26 +4554,32 @@ type CampaignSettingsFieldResponseBody struct {
 	// `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and
 	// `end_date` on Meta, Reddit and X (a Microsoft campaign carries no flight
 	// dates, so they are not reported there); `status` and `bidding_strategy_type`
-	// are upstream-only on all four (none of their create paths records a
-	// strategy); Microsoft also reports `budget_explicitly_shared` upstream-only,
-	// Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the
-	// last two say where the budget lives, and explain a budget that reads
-	// `unknown` because the campaign-level amount is not the one the row recorded
-	// (Reddit with campaign budget optimization off, X under anything but
-	// `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged
-	// forward past UTC midnight (because the requested day had already begun at
-	// dispatch) is shown with both sides and an `unknown` verdict rather than a
-	// false `diverged`. On LinkedIn the COMPARED settings are `budget_amount`,
-	// `budget_type`, `campaign_name`, `start_date` and `end_date` (the start, like
-	// Meta's and Reddit's, may be nudged by the create path); `status`,
+	// are upstream-only on all four (since LFXV2-2665 their create paths record an
+	// `automatic` or `manual` choice — the campaign's `bidding_strategy` — but
+	// that vocabulary is deliberately not mapped onto each platform's strategy
+	// enum, for the reason given for Google above); Microsoft also reports
+	// `budget_explicitly_shared` upstream-only, Reddit
+	// `is_campaign_budget_optimization` and X `budget_optimization` — the last two
+	// say where the budget lives, and explain a budget that reads `unknown`
+	// because the campaign-level amount is not the one the row recorded (Reddit
+	// with campaign budget optimization off, X under anything but `CAMPAIGN`). A
+	// Meta or Reddit start that the create path itself nudged forward past UTC
+	// midnight (because the requested day had already begun at dispatch) is shown
+	// with both sides and an `unknown` verdict rather than a false `diverged`. On
+	// LinkedIn the COMPARED settings are `budget_amount`, `budget_type`,
+	// `campaign_name`, `start_date` and `end_date` (the start, like Meta's and
+	// Reddit's, may be nudged by the create path); `status`,
 	// `bidding_strategy_type` (LinkedIn's optimizationTargetType), `cost_type`,
 	// `unit_cost` (the bid amount), `unit_cost_currency` (its ISO currency, from
 	// LinkedIn's `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the
-	// currency is not reported, never a bare number) and `objective_type` are
-	// upstream-only; a campaign reporting both a daily and a total budget, neither
-	// (as under a campaign group's shared budget), or a non-USD amount reads both
-	// budget fields `unknown`. The vocabulary is per-platform and may grow, so a
-	// consumer must render an unrecognised field name rather than dropping it.
+	// currency is not reported, never a bare number) are upstream-only, and
+	// `objective_type` is compared against the objective the recorded bidding
+	// strategy implies (automatic WEBSITE_VISIT, manual WEBSITE_CONVERSION;
+	// `unknown` when none is recorded); a campaign reporting both a daily and a
+	// total budget, neither (as under a campaign group's shared budget), or a
+	// non-USD amount reads both budget fields `unknown`. The vocabulary is
+	// per-platform and may grow, so a consumer must render an unrecognised field
+	// name rather than dropping it.
 	Field *string `form:"field,omitempty" json:"field,omitempty" xml:"field,omitempty"`
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.
@@ -4871,7 +4997,43 @@ type BriefInputRequestBody struct {
 type CampaignCreateInputRequestBody struct {
 	// Platforms to create campaigns on (binding selection)
 	Platforms []string `form:"platforms" json:"platforms" xml:"platforms"`
-	// Per-platform campaign configuration
+	// Per-platform campaign configuration: an object keyed by platform config name
+	// (microsoftConfig, metaConfig, redditConfig, twitterConfig, linkedInConfig,
+	// googleAdsConfig, hubspotConfig) plus the top-level hsToken. BIDDING
+	// (LFXV2-2665): microsoftConfig, metaConfig, redditConfig, twitterConfig and
+	// linkedInConfig each accept an optional `bidding` object, {"strategy":
+	// "automatic" | "manual", "bidAmount": number}. Omitted means automatic
+	// (Microsoft MaxClicks; Meta LOWEST_COST_WITHOUT_CAP; Reddit BIDLESS; X AUTO).
+	// DEFAULT CHANGES: a Microsoft campaign created with no bidding and no cpcBid
+	// used to get Microsoft's EnhancedCpc default and is now MaxClicks, so
+	// update-campaign-bid answers 409 for it; a LinkedIn campaign created with no
+	// bidding is now WEBSITE_VISIT / MAX_CLICK / CPM with a Traffic name segment.
+	// Manual-created campaigns are immediately eligible for the bid lever;
+	// eligibility follows the platform's current strategy. LinkedIn automatic
+	// creates an objectiveType WEBSITE_VISIT campaign bidding MAX_CLICK with
+	// costType CPM (decision 2026-10-13: automatic LinkedIn campaigns optimise for
+	// clicks because MAX_CONVERSION, the only automated target of
+	// WEBSITE_CONVERSION, needs a conversion association this service doesn't
+	// create); LinkedIn manual keeps objectiveType WEBSITE_CONVERSION. `manual`
+	// requires `bidAmount`, the starting max cost-per-click bid in the ad
+	// account's own currency (LinkedIn: USD), greater than zero, at most 1,000,000
+	// and a whole number of micro-units; it creates the campaign in the shape
+	// update-campaign-bid accepts. Per platform, a manual bid must also be:
+	// Microsoft within 0.01–1,000 (a legacy microsoftConfig.cpcBid without
+	// `bidding` still means a manual bid at that amount; with `bidding` it must be
+	// omitted or equal bidAmount); Meta at most two decimals, a whole minor unit
+	// of the account currency (checked against the currency at dispatch), and only
+	// for the traffic or leads objective; Reddit only for the traffic objective;
+	// LinkedIn whole cents; X at most the campaign's daily budget (X does not
+	// accept a line item bid above it). Keys are exact: `bidding`, `strategy` and
+	// `bidAmount`; a case variant (`Bidding`, `Strategy`) or an unknown key inside
+	// `bidding` is refused. `automatic` with a `bidAmount`, an unknown strategy, a
+	// wrong JSON type, an explicit null or empty value (only an ABSENT field
+	// defaults: `"strategy": null` or `""`, `"bidAmount": null` and `"bidding":
+	// null` are refused), or a bid breaking these rules is refused synchronously
+	// with 400 "invalid campaign config: <configKey>.bidding: ..." before any job
+	// exists. googleAdsConfig.bidding is refused with 400 (use
+	// googleAdsConfig.biddingStrategy).
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
@@ -6609,6 +6771,8 @@ func NewAdoptCampaignCampaignCreated(body *AdoptCampaignResponseBody, etag *stri
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		BiddingStrategy:    body.BiddingStrategy,
+		MaxCpcBid:          body.MaxCpcBid,
 		Adopted:            body.Adopted,
 		Version:            *body.Version,
 	}
@@ -6708,6 +6872,8 @@ func NewGetCampaignCampaignOK(body *GetCampaignResponseBody, etag *string) *lfxv
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		BiddingStrategy:    body.BiddingStrategy,
+		MaxCpcBid:          body.MaxCpcBid,
 		Adopted:            body.Adopted,
 		Version:            *body.Version,
 	}
@@ -7223,6 +7389,8 @@ func NewUpdateCampaignCampaignOK(body *UpdateCampaignResponseBody, etag *string)
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		BiddingStrategy:    body.BiddingStrategy,
+		MaxCpcBid:          body.MaxCpcBid,
 		Adopted:            body.Adopted,
 		Version:            *body.Version,
 	}
@@ -7345,6 +7513,8 @@ func NewToggleCampaignStatusCampaignOK(body *ToggleCampaignStatusResponseBody, e
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		BiddingStrategy:    body.BiddingStrategy,
+		MaxCpcBid:          body.MaxCpcBid,
 		Adopted:            body.Adopted,
 		Version:            *body.Version,
 	}
@@ -7471,6 +7641,8 @@ func NewUpdateCampaignBudgetCampaignOK(body *UpdateCampaignBudgetResponseBody, e
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		BiddingStrategy:    body.BiddingStrategy,
+		MaxCpcBid:          body.MaxCpcBid,
 		Adopted:            body.Adopted,
 		Version:            *body.Version,
 	}
@@ -7597,6 +7769,8 @@ func NewUpdateCampaignBidCampaignOK(body *UpdateCampaignBidResponseBody, etag *s
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		BiddingStrategy:    body.BiddingStrategy,
+		MaxCpcBid:          body.MaxCpcBid,
 		Adopted:            body.Adopted,
 		Version:            *body.Version,
 	}
@@ -9978,6 +10152,11 @@ func ValidateAdoptCampaignResponseBody(body *AdoptCampaignResponseBody) (err err
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
 		}
 	}
+	if body.BiddingStrategy != nil {
+		if !(*body.BiddingStrategy == "automatic" || *body.BiddingStrategy == "manual") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.bidding_strategy", *body.BiddingStrategy, []any{"automatic", "manual"}))
+		}
+	}
 	return
 }
 
@@ -10011,6 +10190,11 @@ func ValidateGetCampaignResponseBody(body *GetCampaignResponseBody) (err error) 
 	if body.SlotVersion != nil {
 		if *body.SlotVersion < 1 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
+		}
+	}
+	if body.BiddingStrategy != nil {
+		if !(*body.BiddingStrategy == "automatic" || *body.BiddingStrategy == "manual") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.bidding_strategy", *body.BiddingStrategy, []any{"automatic", "manual"}))
 		}
 	}
 	return
@@ -10194,6 +10378,11 @@ func ValidateUpdateCampaignResponseBody(body *UpdateCampaignResponseBody) (err e
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
 		}
 	}
+	if body.BiddingStrategy != nil {
+		if !(*body.BiddingStrategy == "automatic" || *body.BiddingStrategy == "manual") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.bidding_strategy", *body.BiddingStrategy, []any{"automatic", "manual"}))
+		}
+	}
 	return
 }
 
@@ -10227,6 +10416,11 @@ func ValidateToggleCampaignStatusResponseBody(body *ToggleCampaignStatusResponse
 	if body.SlotVersion != nil {
 		if *body.SlotVersion < 1 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
+		}
+	}
+	if body.BiddingStrategy != nil {
+		if !(*body.BiddingStrategy == "automatic" || *body.BiddingStrategy == "manual") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.bidding_strategy", *body.BiddingStrategy, []any{"automatic", "manual"}))
 		}
 	}
 	return
@@ -10264,6 +10458,11 @@ func ValidateUpdateCampaignBudgetResponseBody(body *UpdateCampaignBudgetResponse
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
 		}
 	}
+	if body.BiddingStrategy != nil {
+		if !(*body.BiddingStrategy == "automatic" || *body.BiddingStrategy == "manual") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.bidding_strategy", *body.BiddingStrategy, []any{"automatic", "manual"}))
+		}
+	}
 	return
 }
 
@@ -10297,6 +10496,11 @@ func ValidateUpdateCampaignBidResponseBody(body *UpdateCampaignBidResponseBody) 
 	if body.SlotVersion != nil {
 		if *body.SlotVersion < 1 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
+		}
+	}
+	if body.BiddingStrategy != nil {
+		if !(*body.BiddingStrategy == "automatic" || *body.BiddingStrategy == "manual") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.bidding_strategy", *body.BiddingStrategy, []any{"automatic", "manual"}))
 		}
 	}
 	return

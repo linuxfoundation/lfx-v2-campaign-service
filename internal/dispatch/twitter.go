@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -61,6 +62,52 @@ type twitterConfig struct {
 	// to attach to the AUTHORED tweet as its image. Requires tweetText and no tweetId; see
 	// resolveTwitterImage (twitter_creative.go) and twitter/media.go.
 	ImageAssetID string `json:"imageAssetId"`
+	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
+	// (the line item bids AUTO, unchanged); manual creates a MAX bid charged per link click.
+	Bidding *biddingConfig `json:"bidding,omitempty"`
+}
+
+// twitterBidPlan resolves twitterConfig's bidding choice. Every X campaign here is WEBSITE_CLICKS,
+// so manual bidding needs no objective check: the line item bids MAX, pay_by LINK_CLICK, the shape
+// the bid lever accepts. X sets bids in micro-units, so the generic whole-micro rule is its
+// precision rule; X publishes no fixed bid floor this service could check ahead of it.
+func twitterBidPlan(cfg twitterConfig) (bidPlan, error) {
+	const key = "twitterConfig"
+	plan, err := resolveBidding(key, cfg.Bidding)
+	if err != nil || !plan.manual() {
+		return plan, err
+	}
+	// X documents that a line item's bid "should not exceed daily_budget_amount_local_micro ... of
+	// the parent campaign"; the create path sends budgetAmount as that daily budget. Compared in
+	// micro-units, as the client does, so the refusal is the synchronous 400 rather than a failed
+	// line-item POST after the campaign exists (PR #332 review). A budget that is absent or not
+	// positive is left to the client's own budget validation.
+	if budget := math.Round(cfg.BudgetAmount * microsPerMajorUnit); budget > 0 && math.Round(plan.amount*microsPerMajorUnit) > budget {
+		return bidPlan{}, biddingInvalid(key, "bidAmount %s exceeds the daily budget %s; X does not accept a line item bid above its campaign's budget", formatBid(plan.amount), formatBid(cfg.BudgetAmount))
+	}
+	return plan, nil
+}
+
+// PreflightCreate refuses, before the create job exists, a twitterConfig whose bidding cannot be
+// created as asked. It never calls X, so every other outcome is ErrPreflightNotApplicable; a
+// config that does not decode is left to Dispatch — except a wrong-typed `bidding`, refused here
+// by checkBiddingShape.
+func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
+	if err := checkBiddingShape(config, "twitterConfig"); err != nil {
+		return err
+	}
+	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
+	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
+	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
+	// not decode is its zero value, which no plan rule reads as a refusal. The decode error itself
+	// stays "not applicable" — only bidding is promised as a synchronous 400.
+	var cfg twitterConfig
+	_ = unmarshalPlatformConfig(config, "twitterConfig", &cfg)
+	if _, err := twitterBidPlan(cfg); err != nil {
+		return err
+	}
+	return domain.ErrPreflightNotApplicable
 }
 
 // TwitterDispatcher creates X (Twitter) campaigns for the orchestrator.
@@ -203,6 +250,23 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if err := unmarshalPlatformConfig(config, "twitterConfig", &cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The bidding choice, validated before any upstream call; recorded on every returned row.
+	if err := checkBiddingShape(config, "twitterConfig"); err != nil {
+		return nil, notCreated(err)
+	}
+	plan, err := twitterBidPlan(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
+	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
+	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
+	var bidApplied bool
+	defer func() {
+		if err == nil && bidApplied {
+			plan.stamp(camp)
+		}
+	}()
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -293,6 +357,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		TweetText:       cfg.TweetText,
 		AsUserID:        asUserID,
 		Image:           image,
+		MaxBid:          plan.amount,
 	}
 
 	// Built through the client cache, so concurrent dispatches for this account share ONE
@@ -331,6 +396,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// `created`, so we make them VISIBLE for reconciliation. We do NOT return an error:
 	// the campaign IS created, so failing the job would mislead and be unrecoverable by
 	// retry anyway (idempotency short-circuits a re-dispatch). Details are in Result/Steps.
+	bidApplied = result.BidApplied
 	camp = campaignFromTwitter(ctx, result, cfg)
 	if strings.TrimSpace(result.PromotedTweetWarning) != "" || strings.TrimSpace(result.PromotedTweetID) == "" || result.Reused {
 		camp.Status = campaignStatusCreatedDegraded
