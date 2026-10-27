@@ -57,15 +57,15 @@ refused. With `manual`, it must equal `bidAmount`.
 A bad `bidding` is a synchronous `400 invalid campaign config: <configKey>.bidding: ...`. The
 check runs in each lane dispatcher's new `PreflightCreate` (Reddit's existing one gains it) and
 again in `Dispatch`, before any upstream call. `googleAdsConfig.bidding` is refused 400 at the
-service layer; no Google code changed. Migration `000047` adds `campaigns.bidding_strategy`. A
+service layer; no Google code changed. Migration `000050` adds `campaigns.bidding_strategy`. A
 manual create also writes its starting bid to `max_cpc_bid`. The upsert fills both columns only
 while they are empty. The campaign resource now returns `bidding_strategy` and `max_cpc_bid`.
-**Migration order: 000047 must apply after 000043–000046.** Those four belong to #328
-(`fix/LFXV2-2665-adoption-binding-indexes`). golang-migrate never applies a lower version after a
-higher one, so this PR was held until #328 merged and then merged main. The temporary
-`allowedVersionGaps` entry is now removed. `TestMigration000047_RequiresItsPredecessorsEmbedded`
-remains as the guard: it fails if the embedded migrations ever carry 000047 without
-000043–000046.
+**Migration number: 000050.** It was first numbered `000047`, above `000043`–`000046` from #328
+(`fix/LFXV2-2665-adoption-binding-indexes`), because golang-migrate never applies a lower version
+after a higher one; this PR was held until #328 merged. Main then claimed `000047`–`000049` while
+it was open, so it moved to `000050`. The merge-order guard written for #328
+(`TestMigration000047_RequiresItsPredecessorsEmbedded`, `migration_order_test.go`) was removed
+with that move: #328 had merged, and `TestMigrations_NoVersionGaps` covers ordering.
 
 **The bid is recorded only when it was applied.** Each client reports `BidApplied`, which is true
 when the run created the entity carrying the bid:
