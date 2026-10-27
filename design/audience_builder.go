@@ -183,14 +183,24 @@ var AudienceListSearchResult = Type("audience-list-search-result", func() {
 // resolved_from_legacy_id records that the id on the email was a legacy (v1) list id that
 // had to be translated to reach the v3 list. Surfaced because an operator comparing the
 // two ids in HubSpot would otherwise see a mismatch and distrust the whole row.
+//
+// unresolved is REQUIRED alongside missing, and the two are never both true. missing means
+// HubSpot answered "no such list"; unresolved means the read itself failed — a throttle, a
+// 401/403, a 5xx — so the list may well still be there. Reporting the second as the first
+// told an operator a list they still have had been deleted, which is the one conclusion
+// they act on irreversibly.
 var AudienceListBrief = Type("audience-list-brief", func() {
 	Attribute("list_id", String, "HubSpot list id")
-	Attribute("name", String, "HubSpot list name; empty when the list no longer resolves")
+	Attribute("name", String, "HubSpot list name; empty when the list could not be read")
 	Attribute("size", Int64, "Membership size, when HubSpot reported one")
-	Attribute("missing", Boolean, "True when the referenced list could not be resolved")
+	Attribute("missing", Boolean, "True when HubSpot reported no such list")
+	Attribute("unresolved", Boolean,
+		"True when the list could not be read for a reason other than its absence, so whether "+
+			"it still exists is UNKNOWN. Never true together with missing.")
 	Attribute("resolved_from_legacy_id", String, "Legacy list id this row was translated from")
-	Attribute("hubspot_url", String, "Deep link to the list in the HubSpot UI; absent when it no longer resolves")
-	Required("list_id", "name", "missing")
+	Attribute("hubspot_url", String, "Deep link to the list in the HubSpot UI; absent when the list is missing. "+
+		"Present on an unresolved row, where checking the list by hand is the remedy")
+	Required("list_id", "name", "missing", "unresolved")
 	// TYPE-LEVEL so the published example is a possible one: Goa's synthesised example drew
 	// each attribute independently and showed `missing: true` beside a populated name and
 	// hubspot_url, which the descriptions above rule out. A resolved list is the common shape.
@@ -237,13 +247,14 @@ var AudienceLastSentEmail = Type("audience-last-sent-email", func() {
 })
 
 // audienceIncludedListsExample / audienceSuppressionListsExample are resolved list rows (missing
-// false, so name and hubspot_url are present), shared by the attribute and type examples above.
+// and unresolved both false, so name and hubspot_url are present), shared by the attribute and
+// type examples above.
 var audienceIncludedListsExample = []map[string]any{
-	{"list_id": "4821", "name": "KubeCon NA 2025 attendees", "size": 18250, "missing": false, "hubspot_url": "https://app.hubspot.com/contacts/8675309/lists/4821"},
+	{"list_id": "4821", "name": "KubeCon NA 2025 attendees", "size": 18250, "missing": false, "unresolved": false, "hubspot_url": "https://app.hubspot.com/contacts/8675309/lists/4821"},
 }
 
 var audienceSuppressionListsExample = []map[string]any{
-	{"list_id": "1022", "name": "Global unsubscribes", "size": 3120, "missing": false, "hubspot_url": "https://app.hubspot.com/contacts/8675309/lists/1022"},
+	{"list_id": "1022", "name": "Global unsubscribes", "size": 3120, "missing": false, "unresolved": false, "hubspot_url": "https://app.hubspot.com/contacts/8675309/lists/1022"},
 }
 
 // AudienceMasterListBrief is one previously composed master list for this event family.

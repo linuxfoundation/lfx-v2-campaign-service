@@ -104,11 +104,18 @@ const (
 // Missing is carried explicitly because a deleted list still leaves its id in the
 // email's record. Dropping the row would silently understate what the last send
 // targeted; showing the id with Missing set says what actually happened.
+//
+// Unresolved is the THIRD state, and it is not a shade of Missing: the read failed
+// for a reason that is not "no such list" — a throttle, a 401/403, a 5xx — so whether
+// the list exists is unknown. Folding it into Missing told an operator a list they
+// still have was deleted, which is the one conclusion they act on irreversibly.
+// Exactly one of Missing and Unresolved is ever set.
 type ListBrief struct {
 	ListID               string
 	Name                 string
 	Size                 *int64
 	Missing              bool
+	Unresolved           bool
 	ResolvedFromLegacyID string
 	// HubSpotURL links to the list; empty when it no longer resolves.
 	HubSpotURL string

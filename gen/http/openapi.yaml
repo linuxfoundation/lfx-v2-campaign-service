@@ -13247,6 +13247,7 @@ definitions:
                       missing: false
                       name: KubeCon NA 2025 attendees
                       size: 18250
+                      unresolved: false
             lists_unavailable:
                 type: boolean
                 description: True when this email's list selection could not be read. The two list arrays are then empty because they are UNKNOWN, not because the send targeted nothing.
@@ -13279,6 +13280,7 @@ definitions:
                       missing: false
                       name: Global unsubscribes
                       size: 3120
+                      unresolved: false
         example:
             email_id: "184312345678"
             email_name: KubeCon NA 2026 - Early Bird
@@ -13289,6 +13291,7 @@ definitions:
                   missing: false
                   name: KubeCon NA 2025 attendees
                   size: 18250
+                  unresolved: false
             lists_unavailable: false
             sent_at: "2026-09-15T16:00:00Z"
             suppression_lists:
@@ -13297,6 +13300,7 @@ definitions:
                   missing: false
                   name: Global unsubscribes
                   size: 3120
+                  unresolved: false
         required:
             - email_id
             - email_name
@@ -13309,7 +13313,7 @@ definitions:
         properties:
             hubspot_url:
                 type: string
-                description: Deep link to the list in the HubSpot UI; absent when it no longer resolves
+                description: Deep link to the list in the HubSpot UI; absent when the list is missing. Present on an unresolved row, where checking the list by hand is the remedy
                 example: Fuga qui corporis dolorem sequi earum.
             list_id:
                 type: string
@@ -13317,11 +13321,11 @@ definitions:
                 example: Dolorem itaque consectetur.
             missing:
                 type: boolean
-                description: True when the referenced list could not be resolved
+                description: True when HubSpot reported no such list
                 example: true
             name:
                 type: string
-                description: HubSpot list name; empty when the list no longer resolves
+                description: HubSpot list name; empty when the list could not be read
                 example: Nisi ea.
             resolved_from_legacy_id:
                 type: string
@@ -13332,16 +13336,22 @@ definitions:
                 description: Membership size, when HubSpot reported one
                 example: 2376019042319254202
                 format: int64
+            unresolved:
+                type: boolean
+                description: True when the list could not be read for a reason other than its absence, so whether it still exists is UNKNOWN. Never true together with missing.
+                example: false
         example:
             hubspot_url: https://app.hubspot.com/contacts/8675309/lists/4821
             list_id: "4821"
             missing: false
             name: KubeCon NA 2025 attendees
             size: 18250
+            unresolved: false
         required:
             - list_id
             - name
             - missing
+            - unresolved
     AudienceListSearchResult:
         title: AudienceListSearchResult
         type: object
@@ -17413,6 +17423,7 @@ definitions:
                           missing: false
                           name: KubeCon NA 2025 attendees
                           size: 18250
+                          unresolved: false
                       lists_unavailable: false
                       sent_at: "2026-09-15T16:00:00Z"
                       suppression_lists:
@@ -17421,6 +17432,7 @@ definitions:
                           missing: false
                           name: Global unsubscribes
                           size: 3120
+                          unresolved: false
                     - email_id: "184312345678"
                       email_name: KubeCon NA 2026 - Early Bird
                       hubspot_url: https://app.hubspot.com/email/8675309/details/184312345678
@@ -17430,6 +17442,7 @@ definitions:
                           missing: false
                           name: KubeCon NA 2025 attendees
                           size: 18250
+                          unresolved: false
                       lists_unavailable: false
                       sent_at: "2026-09-15T16:00:00Z"
                       suppression_lists:
@@ -17438,6 +17451,7 @@ definitions:
                           missing: false
                           name: Global unsubscribes
                           size: 3120
+                          unresolved: false
                     - email_id: "184312345678"
                       email_name: KubeCon NA 2026 - Early Bird
                       hubspot_url: https://app.hubspot.com/email/8675309/details/184312345678
@@ -17447,6 +17461,7 @@ definitions:
                           missing: false
                           name: KubeCon NA 2025 attendees
                           size: 18250
+                          unresolved: false
                       lists_unavailable: false
                       sent_at: "2026-09-15T16:00:00Z"
                       suppression_lists:
@@ -17455,6 +17470,7 @@ definitions:
                           missing: false
                           name: Global unsubscribes
                           size: 3120
+                          unresolved: false
                     - email_id: "184312345678"
                       email_name: KubeCon NA 2026 - Early Bird
                       hubspot_url: https://app.hubspot.com/email/8675309/details/184312345678
@@ -17464,6 +17480,7 @@ definitions:
                           missing: false
                           name: KubeCon NA 2025 attendees
                           size: 18250
+                          unresolved: false
                       lists_unavailable: false
                       sent_at: "2026-09-15T16:00:00Z"
                       suppression_lists:
@@ -17472,6 +17489,7 @@ definitions:
                           missing: false
                           name: Global unsubscribes
                           size: 3120
+                          unresolved: false
         example:
             emails:
                 - email_id: "184312345678"
@@ -17483,6 +17501,7 @@ definitions:
                       missing: false
                       name: KubeCon NA 2025 attendees
                       size: 18250
+                      unresolved: false
                   lists_unavailable: false
                   sent_at: "2026-09-15T16:00:00Z"
                   suppression_lists:
@@ -17491,6 +17510,7 @@ definitions:
                       missing: false
                       name: Global unsubscribes
                       size: 3120
+                      unresolved: false
                 - email_id: "184312345678"
                   email_name: KubeCon NA 2026 - Early Bird
                   hubspot_url: https://app.hubspot.com/email/8675309/details/184312345678
@@ -17500,6 +17520,7 @@ definitions:
                       missing: false
                       name: KubeCon NA 2025 attendees
                       size: 18250
+                      unresolved: false
                   lists_unavailable: false
                   sent_at: "2026-09-15T16:00:00Z"
                   suppression_lists:
@@ -17508,6 +17529,7 @@ definitions:
                       missing: false
                       name: Global unsubscribes
                       size: 3120
+                      unresolved: false
                 - email_id: "184312345678"
                   email_name: KubeCon NA 2026 - Early Bird
                   hubspot_url: https://app.hubspot.com/email/8675309/details/184312345678
@@ -17517,6 +17539,7 @@ definitions:
                       missing: false
                       name: KubeCon NA 2025 attendees
                       size: 18250
+                      unresolved: false
                   lists_unavailable: false
                   sent_at: "2026-09-15T16:00:00Z"
                   suppression_lists:
@@ -17525,6 +17548,7 @@ definitions:
                       missing: false
                       name: Global unsubscribes
                       size: 3120
+                      unresolved: false
                 - email_id: "184312345678"
                   email_name: KubeCon NA 2026 - Early Bird
                   hubspot_url: https://app.hubspot.com/email/8675309/details/184312345678
@@ -17534,6 +17558,7 @@ definitions:
                       missing: false
                       name: KubeCon NA 2025 attendees
                       size: 18250
+                      unresolved: false
                   lists_unavailable: false
                   sent_at: "2026-09-15T16:00:00Z"
                   suppression_lists:
@@ -17542,6 +17567,7 @@ definitions:
                       missing: false
                       name: Global unsubscribes
                       size: 3120
+                      unresolved: false
         required:
             - emails
     LfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsResponseBody:

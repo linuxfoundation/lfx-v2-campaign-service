@@ -2380,6 +2380,7 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceListBriefToAudienceListBr
 		Name:                 v.Name,
 		Size:                 v.Size,
 		Missing:              v.Missing,
+		Unresolved:           v.Unresolved,
 		ResolvedFromLegacyID: v.ResolvedFromLegacyID,
 		HubspotURL:           v.HubspotURL,
 	}

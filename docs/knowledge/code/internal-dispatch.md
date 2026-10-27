@@ -4546,7 +4546,15 @@ projected date blank. Candidates are ordered by the projected date, trimmed to a
 re-sorted on that date by the SAME comparator and trimmed to `limit`, and only the survivors pay the
 expensive `listBriefs` fan-out (which resolves v3 ids first, then maps each legacy id through
 `ListIDForLegacy` and drops any id or name already listed, so one list selected under both
-selections is one row). Truncating to `limit` before reading any authoritative date — which
+selections is one row). A row that does not resolve carries WHICH of the two things happened
+(#238): `Missing` only where HubSpot said there is no such list — `hubspot.IsNotFound`, a 404 —
+and `Unresolved` for every other read failure, a throttle, a 401/403 or a 5xx, where the list may
+well still be there. The two are never both set. The legacy loop decides the same way on the
+mapped id's read, since a legacy id that MAPPED had a v3 list to read; `LegacyListName` and
+`ListIDForLegacy` stay best-effort and swallow their own errors, so neither is consulted for the
+distinction. An unresolved row keeps its `HubSpotURL` — the remedy is for the operator to open the
+list — where a missing one has none. Collapsing the two told an operator a list they still hold was
+deleted, and rebuilding a suppression list is the costly half of that mistake. Truncating to `limit` before reading any authoritative date — which
 is what this replaced — discarded the newest send on the strength of an edit timestamp, and no later
 sort can bring back a row already cut. The claim is therefore bounded rather than unconditional:
 "most recently sent first" holds for any portal whose most recent send is within the shortlist, and

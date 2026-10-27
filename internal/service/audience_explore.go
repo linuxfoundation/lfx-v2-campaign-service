@@ -934,10 +934,11 @@ func listBriefResults(briefs []audience.ListBrief) []*explore.AudienceListBrief 
 	out := make([]*explore.AudienceListBrief, 0, len(briefs))
 	for _, b := range briefs {
 		row := &explore.AudienceListBrief{
-			ListID:  b.ListID,
-			Name:    b.Name,
-			Size:    b.Size,
-			Missing: b.Missing,
+			ListID:     b.ListID,
+			Name:       b.Name,
+			Size:       b.Size,
+			Missing:    b.Missing,
+			Unresolved: b.Unresolved,
 		}
 		if legacy := strings.TrimSpace(b.ResolvedFromLegacyID); legacy != "" {
 			row.ResolvedFromLegacyID = &legacy

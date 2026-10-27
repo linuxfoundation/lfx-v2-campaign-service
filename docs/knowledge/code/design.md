@@ -404,6 +404,13 @@ estimate, empty reason). `internal/service/audience_builder_examples_spec_test.g
 example in the four generated JSON specs and checks both invariants. Examples only; no behaviour
 change.
 
+`AudienceListBrief` carries a REQUIRED `unresolved` beside `missing` (#238). `missing` is HubSpot
+answering "no such list"; `unresolved` is the read failing for any other reason — a throttle, a
+401/403, a 5xx — so whether the list exists is unknown. They are never both true, and
+`hubspot_url` is absent only on a missing row: an unresolved one keeps the link because checking
+the list by hand is the remedy. The shared resolved-list examples set both flags false, and the
+examples spec test checks the exclusion as a third invariant.
+
 `internal/service/meta_audience_wire_example_test.go` walks EVERY `example` in all four GENERATED
 specs (v2 and v3, `gen/` and the kodata copy), where the defects lived. It checks the following:
 

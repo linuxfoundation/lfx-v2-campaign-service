@@ -1405,15 +1405,19 @@ type AudienceLastSentEmailResponseBody struct {
 type AudienceListBriefResponseBody struct {
 	// HubSpot list id
 	ListID string `form:"list_id" json:"list_id" xml:"list_id"`
-	// HubSpot list name; empty when the list no longer resolves
+	// HubSpot list name; empty when the list could not be read
 	Name string `form:"name" json:"name" xml:"name"`
 	// Membership size, when HubSpot reported one
 	Size *int64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
-	// True when the referenced list could not be resolved
+	// True when HubSpot reported no such list
 	Missing bool `form:"missing" json:"missing" xml:"missing"`
+	// True when the list could not be read for a reason other than its absence, so
+	// whether it still exists is UNKNOWN. Never true together with missing.
+	Unresolved bool `form:"unresolved" json:"unresolved" xml:"unresolved"`
 	// Legacy list id this row was translated from
 	ResolvedFromLegacyID *string `form:"resolved_from_legacy_id,omitempty" json:"resolved_from_legacy_id,omitempty" xml:"resolved_from_legacy_id,omitempty"`
-	// Deep link to the list in the HubSpot UI; absent when it no longer resolves
+	// Deep link to the list in the HubSpot UI; absent when the list is missing.
+	// Present on an unresolved row, where checking the list by hand is the remedy
 	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
 }
 

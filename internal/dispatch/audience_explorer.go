@@ -1152,6 +1152,9 @@ func (x *AudienceExplorer) listBriefs(ctx context.Context, client *hubspot.Clien
 	seenIDs := map[string]struct{}{}
 	seenNames := map[string]struct{}{}
 	add := func(brief audience.ListBrief) {
+		// An UNRESOLVED row keeps its link on purpose: the read failed, so the operator's
+		// next step is to open the list themselves, and only a confirmed deletion makes
+		// the link pointless.
 		if !brief.Missing {
 			brief.HubSpotURL = client.ListURL(brief.ListID)
 		}
@@ -1171,27 +1174,40 @@ func (x *AudienceExplorer) listBriefs(ctx context.Context, client *hubspot.Clien
 	}
 	for _, id := range audience.UniqueIDs(ids) {
 		brief := audience.ListBrief{ListID: id, Missing: true}
-		if list, err := client.GetList(ctx, id); err == nil && list != nil {
+		list, err := client.GetList(ctx, id)
+		if err == nil && list != nil {
 			brief.Name, brief.Size, brief.Missing = list.Name, sizeOf(list), false
 		} else if name := client.LegacyListName(ctx, id); name != "" {
 			// A v3 id that only resolves under the legacy API still names a real list.
 			brief.Name, brief.Missing = name, false
+		} else if err != nil && !hubspot.IsNotFound(err) {
+			// Only a 404 is evidence the list is gone. A throttle, a 401/403 or a 5xx says
+			// the READ failed and the list's existence is still unknown -- reporting that as
+			// deleted sends an operator to rebuild a list they still have. The legacy
+			// fallback swallows its own error, so this is decided on the v3 error.
+			brief.Missing, brief.Unresolved = false, true
 		}
 		add(brief)
 	}
 	for _, id := range audience.UniqueIDs(legacyIDs) {
+		// readFailed carries the same distinction as the v3 loop across the fallback below:
+		// the id MAPPED to a v3 list, so the list was there to read, and a non-404 failure
+		// on it is a failed read rather than a deletion.
+		var readFailed bool
 		if mapped := client.ListIDForLegacy(ctx, id); mapped != "" {
 			if _, dup := seenIDs[mapped]; dup {
 				continue
 			}
-			if list, err := client.GetList(ctx, mapped); err == nil && list != nil {
+			list, err := client.GetList(ctx, mapped)
+			if err == nil && list != nil {
 				add(audience.ListBrief{ListID: mapped, ResolvedFromLegacyID: id, Name: list.Name, Size: sizeOf(list)})
 				continue
 			}
+			readFailed = err != nil && !hubspot.IsNotFound(err)
 		}
-		brief := audience.ListBrief{ListID: id, ResolvedFromLegacyID: id, Missing: true}
+		brief := audience.ListBrief{ListID: id, ResolvedFromLegacyID: id, Missing: !readFailed, Unresolved: readFailed}
 		if name := client.LegacyListName(ctx, id); name != "" {
-			brief.Name, brief.Missing = name, false
+			brief.Name, brief.Missing, brief.Unresolved = name, false, false
 		}
 		add(brief)
 	}

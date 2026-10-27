@@ -1857,6 +1857,60 @@ func TestLastSent_ALegacyIDForAListAlreadyListedIsNotRepeated(t *testing.T) {
 	assert.False(t, rows[0].SuppressionLists[0].Missing)
 }
 
+// TestLastSent_AFailedListReadIsNotReportedAsDeleted pins #238. Both list ids below fail to
+// resolve, and the OLD code reported both identically as `missing` — "this list was deleted".
+// One of them was deleted; the other is a list the portal refused to let this token read, and
+// telling an operator to rebuild that one is the expensive half of the confusion.
+func TestLastSent_AFailedListReadIsNotReportedAsDeleted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case "/marketing/v3/emails":
+			_, _ = io.WriteString(w, `{"results":[{"id":"e1","name":"AGNTCon Japan Invite","state":"PUBLISHED",`+
+				`"updatedAt":"2026-09-01T00:00:00Z","publishDate":"2026-02-01T09:00:00Z"}]}`)
+		case "/marketing/v3/emails/e1":
+			_, _ = io.WriteString(w, `{"id":"e1","publishDate":"2026-02-01T09:00:00Z","to":{`+
+				`"contactIlsLists":{"include":[700,701]}}}`)
+		case "/crm/v3/lists/700", "/contacts/v1/lists/700":
+			// The token cannot see this list. Whether it exists is unknown.
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"message":"permission denied"}`)
+		default:
+			// Everything else, 701 included, is a genuine 404.
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "AGNTCon + MCPCon Japan 2026", "LF", 3)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0].IncludedLists, 2, "both referenced lists must still be listed")
+
+	byID := map[string]audience.ListBrief{}
+	for _, b := range rows[0].IncludedLists {
+		byID[b.ListID] = b
+	}
+
+	refused := byID["700"]
+	assert.False(t, refused.Missing, "a 403 is not evidence the list was deleted")
+	assert.True(t, refused.Unresolved, "a read that failed for any reason but absence is unresolved")
+	assert.NotEmpty(t, refused.HubSpotURL, "the operator's remedy is to open the list themselves")
+
+	gone := byID["701"]
+	assert.True(t, gone.Missing, "a 404 from both APIs is HubSpot saying there is no such list")
+	assert.False(t, gone.Unresolved)
+	assert.Empty(t, gone.HubSpotURL)
+}
+
 // composeNameServer answers the pre-create name check from `existing` (name → id) and
 // records every list create, so a test can assert what compose chose to name — and
 // whether it created anything at all.
