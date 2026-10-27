@@ -570,7 +570,10 @@ func (x *AudienceExplorer) customEventContext(ctx context.Context, eventURL stri
 	}
 	return &audience.CustomEventContext{
 		PastEditions: past,
-		URL:          eventURL,
+		// The page itself, without the query or fragment the operator reached it by
+		// (utm_* tags): the model copies this URL into page_view_urls, where HubSpot keeps
+		// the whole string and a tracking query would narrow the visitors to that link.
+		URL: pageOnly(eventURL),
 		// The edition's own name carries its year ("Synthetic Summit 2026"), as its
 		// registrations are stored: a yearless page title would be copied into an
 		// exact registered_for filter and match none of them.
@@ -638,11 +641,8 @@ func selectsPage(urls []string, pageURL string) bool {
 		u = strings.TrimPrefix(u, "www.")
 		return strings.TrimRight(u, "/")
 	}
-	want := pageURL
-	if i := strings.IndexAny(want, "?#"); i >= 0 {
-		want = want[:i]
-	}
-	if want = norm(want); want == "" {
+	want := norm(pageOnly(pageURL))
+	if want == "" {
 		return false
 	}
 	for _, u := range urls {
@@ -675,4 +675,12 @@ func sameEventEditions(past []string, eventName string) (same, others []string) 
 		}
 	}
 	return same, others
+}
+
+// pageOnly is u without its query or fragment.
+func pageOnly(u string) string {
+	if i := strings.IndexAny(u, "?#"); i >= 0 {
+		return u[:i]
+	}
+	return u
 }

@@ -933,6 +933,29 @@ func TestInterpretCustom_TheDefaultEventAudienceGetsItsPastEditionsNewestFirst(t
 	assert.Contains(t, strings.Join(out.Draft.Notes, "\n"), "11 older ones were left out")
 }
 
+// An event URL reached through a tracking link reaches the prompt as the page alone, so the
+// copied page_view_urls entry is the event page and the default still gets its past editions.
+func TestInterpretCustom_ATrackingLinkEventURLStillGetsTheDefault(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["https://events.example.org/synthetic-summit"],"registered_for":[],"label":""},"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit?utm_source=newsletter#agenda", nil)
+	require.NoError(t, err)
+	require.Len(t, llm.prompts, 2)
+	assert.Contains(t, llm.prompts[1], "url: https://events.example.org/synthetic-summit\n")
+	assert.NotContains(t, llm.prompts[1], "utm_source")
+	assert.Equal(t, []string{"Synthetic Summit 2025"}, out.Draft.Criteria.RegisteredFor)
+}
+
 // A label filled in from a long page title is cut to the contract's 200 runes, so
 // the unedited draft still passes preview.
 func TestInterpretCustom_ALongPageTitleIsCutToTheLabelLimit(t *testing.T) {

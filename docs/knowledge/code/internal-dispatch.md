@@ -4775,7 +4775,7 @@ AND a location branch: `contact_location`, `event_registered` or `education_enro
 event's default audience, which is not location-scoped and selects the visitors of THIS event's
 page (one of `page_view_urls` is the event URL, compared by `selectsPage` ignoring scheme, `www.`,
 trailing slash and case; a page-view URL with a query or fragment, `utm_*` included, is a narrower
-segment and not the event page, while the event URL's own query is dropped) together with
+segment and not the event page, while the event URL's own query and fragment are dropped, both here and in the EVENT block's `url` the model copies from, so a tracking link still yields the plain page) together with
 `education_enrolled`, with no speaker or
 ambassador restriction. Visitors of any other page, or of the event page alone (no education
 branch, a visitors-only request), are a different segment and get none. Anything else gets none. Even then only the warehouse
