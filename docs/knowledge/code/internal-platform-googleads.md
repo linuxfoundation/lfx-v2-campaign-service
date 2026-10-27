@@ -94,6 +94,46 @@ is an explicit parameter (not the HTTP method) because GAQL `:search` is
 POST-but-read-only — a `:mutate` create must NOT be retried (double-create risk).
 `customer_id`/`login_customer_id` are validated as digits-only before any request.
 
+### A retried mutate's failure is UNCONFIRMED (#347)
+
+`doRequest` returns only `(body, err)`, so its caller cannot tell a first-attempt
+failure from one that followed a retry. That distinction is the whole outcome on a
+mutate: a 429 is Google acknowledging **receipt**, and a `:mutate` carries no
+idempotency key, so the rate-limited attempt may still have been applied. A later
+definite refusal — including the `400` a second attempt can earn *precisely because*
+the first one already took effect — proves only that the **last** attempt changed
+nothing. Reporting it as "the platform was not modified" is then false, and on the
+budget and bid levers it is false about money.
+
+`doRequestCounted` is `doRequest` additionally returning how many attempts were
+**retried** — the loop's `attempt` index at the point of return, so `0` means the
+outcome answers the one and only request that was sent. `doRequest` and
+`doRequestValidated` are thin delegations to the counted forms, so no existing caller
+changed. `retriedUnconfirmed(what, retries, err)` is the single place the rule is
+applied, and it wraps in `retriedUnconfirmedError` (`Unconfirmed() bool` → true,
+`Unwrap()` keeping the final `*apiError` reachable) only when **all three** hold:
+`err != nil` (a success is confirmed however many 429s preceded it), `retries > 0`
+(an unretried `400` stays exactly as definite as it was), and
+`!IsOutcomeUnconfirmed(err)` (an error already ambiguous by shape — 5xx, exhausted
+429, transport timeout — or already carrying one of this package's explicit markers
+needs no second layer).
+
+One consequence of the third clause reads wrong at a glance and is deliberate: an
+`errRequestNotTransmitted` failure on a **later** attempt reports `NotAttempted()`,
+which makes `IsOutcomeUnconfirmed` return false, so it **is** wrapped. "Not attempted"
+is true of the attempt that failed; attempt 0 was transmitted and answered 429. That
+marker is already gated on `attempt == 0` for exactly this reason.
+
+Five of the six idempotent mutating call sites are routed through the counted form —
+`assetGroups:mutate` (`pmax_creative.go`), `adGroups:mutate` in the status cascade
+(`adgroup_ad.go`), `campaignBudgets:mutate` (`budget_update.go`), `adGroups:mutate` for
+the CPC bid (`bid_update.go`) and `campaigns:mutate` (`campaign.go`). The sixth,
+`adGroupAds:mutate`, is deliberately left on `doRequest`: every failure there is already
+wrapped in `partialCascadeError`, which reports `Unconfirmed()`, so the wrap would be a
+guaranteed no-op. Every CREATE passes `idempotent=false` and is never retried, and reads
+have no commit to be ambiguous about. This mirrors the `reddit`, `twitter` and
+`microsoft` clients, which already carry the same type and gate.
+
 ## GAQL search
 
 `gaqlSearch` runs a cursor-paginated GAQL query (POST) with a repeated-token guard,

@@ -1882,9 +1882,10 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 	// which is correct: by then a mutation HAS been sent. That path is reachable without any
 	// user cancellation, since the orchestrator wraps every toggle in a toggleCallTimeout —
 	// pinned by TestUpdateCampaignStatus_CancelDuringBackoffIsUnconfirmed.
-	resp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), req, true)
+	resp, retries, err := c.doRequestCounted(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), req, true)
 	if err != nil {
-		return fmt.Errorf("google-ads campaign %s status update to %s failed: %w", id, status, err)
+		return retriedUnconfirmed("campaign status update", retries,
+			fmt.Errorf("google-ads campaign %s status update to %s failed: %w", id, status, err))
 	}
 	// A 2xx that does not acknowledge the one operation is UNCONFIRMED, the same standard
 	// the ad group and ad stages hold their own mutates to (checkStatusMutateResults in
