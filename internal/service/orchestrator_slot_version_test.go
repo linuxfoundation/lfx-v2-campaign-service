@@ -266,3 +266,54 @@ func TestOrchestrator_ReleasingASlot2ClaimLeavesSlot1Live(t *testing.T) {
 		t.Errorf("latest campaign = %+v, want the first campaign back as the latest", latest)
 	}
 }
+
+// new_version on a slot never used targets slot 1. If a concurrent request creates slot 1 and it
+// is deleted before this claim, the claim must not take slot 1 again: it is skipped.
+func TestOrchestrator_NewVersionOnAnEmptySlotDoesNotReclaimAConcurrentlyDeletedSlot1(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	camps.afterSlotRead = func() {
+		camps.afterSlotRead = nil
+		camps.deletedSlotVersions = map[string]int{slotKey("b1", model.ProviderGoogleAds, model.VariantDefault): 1}
+	}
+	disp := &slotRecordingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+
+	j := startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+
+	if got := disp.seen(); len(got) != 0 {
+		t.Fatalf("dispatcher saw slot versions %v, want none: slot 1 was used and deleted since the read", got)
+	}
+	if !strings.Contains(string(j.Result), "already used this version") {
+		t.Errorf("result = %s, want it reported as skipped", j.Result)
+	}
+}
+
+// new_version that finds an UNFINISHED latest campaign targets that campaign's own version. If the
+// campaign completes and is deleted before this claim, the claim must not take its version again.
+func TestOrchestrator_NewVersionOnAnUnfinishedSlotDoesNotReclaimItOnceDeleted(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	key := slotKey("b1", model.ProviderGoogleAds, model.VariantDefault)
+	camps.storeRow(&model.Campaign{
+		ID: "row-1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		Variant: model.VariantDefault, SlotVersion: 1, Status: "pending",
+	})
+	camps.afterSlotRead = func() {
+		camps.afterSlotRead = nil
+		delete(camps.existing, key)
+		delete(camps.existing, legacySlotKey("b1", model.ProviderGoogleAds))
+		camps.deletedSlotVersions = map[string]int{key: 1}
+	}
+	disp := &slotRecordingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+
+	j := startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+
+	if got := disp.seen(); len(got) != 0 {
+		t.Fatalf("dispatcher saw slot versions %v, want none: slot 1 was completed and deleted since the read", got)
+	}
+	if !strings.Contains(string(j.Result), "already used this version") {
+		t.Errorf("result = %s, want it reported as skipped", j.Result)
+	}
+}

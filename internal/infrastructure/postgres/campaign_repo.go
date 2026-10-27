@@ -91,11 +91,16 @@ const claimCampaignDispatchQuery = `INSERT INTO campaigns
 	VALUES ($1, $2, $3, $4, $5, $7, '', 'pending', $6, $6)
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO NOTHING`
 
-// deletedSlotVersionExistsQuery reports whether a SOFT-DELETED row holds one slot version. Only a
-// new_version claim asks: claimCampaignDispatchQuery's arbiter ignores deleted rows, so without
-// this a fresh version a concurrent request used and deleted would be claimed a second time.
-const deletedSlotVersionExistsQuery = `SELECT EXISTS (SELECT 1 FROM campaigns
-	WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4 AND slot_version=$5 AND status = 'deleted')`
+// deletedSlotVersionExistsQuery reports whether one slot version is held by a SOFT-DELETED row and
+// by no live one. Only a new_version claim asks: claimCampaignDispatchQuery's arbiter ignores
+// deleted rows, so without this a version a concurrent request used and deleted would be claimed a
+// second time. A live row at the version is left to that arbiter, which hands it back for the
+// caller's reuse or reconciliation answer.
+const deletedSlotVersionExistsQuery = `SELECT
+	EXISTS (SELECT 1 FROM campaigns
+	  WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4 AND slot_version=$5 AND status = 'deleted')
+	AND NOT EXISTS (SELECT 1 FROM campaigns
+	  WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4 AND slot_version=$5 AND status <> 'deleted')`
 
 // lockCampaignSlotQuery takes the per-slot advisory lock: transaction-scoped, keyed by
 // (brief, platform, variant) — the slot WITHOUT its slot_version.

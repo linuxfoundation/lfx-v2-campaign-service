@@ -160,6 +160,28 @@ func TestLiveNewVersionClaimRefusesAVersionAConcurrentRequestUsedAndDeleted(t *t
 	}
 }
 
+// TestLiveNewVersionClaimHandsBackALiveRowBesideADeletedOne: a version held by a deleted row AND a
+// live one (a plain create re-created it after the delete) is not refused. The arbiter conflicts on
+// the live row and hands it back, so the caller gives its usual reuse or reconciliation answer.
+func TestLiveNewVersionClaimHandsBackALiveRowBesideADeletedOne(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
+	briefID, project := insertApprovedBrief(ctx, t, pool)
+	p := model.ProviderMicrosoftAds
+
+	first := createSlotVersion(ctx, t, repo, project, briefID, p, model.FirstSlotVersion)
+	if _, err := pool.Exec(ctx, `UPDATE campaigns SET status='deleted' WHERE id=$1`, first.ID); err != nil {
+		t.Fatalf("soft-delete slot 1: %v", err)
+	}
+	again := createSlotVersion(ctx, t, repo, project, briefID, p, model.FirstSlotVersion)
+
+	claimed, row, err := repo.ClaimNewCampaignVersion(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, uuid.NewString(), nil)
+	if err != nil || claimed || row == nil || row.ID != again.ID {
+		t.Fatalf("new-version claim of a version with a live row: claimed=%v row=%v err=%v, want the live row %s handed back", claimed, row, err, again.ID)
+	}
+}
+
 // TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError pins the first-create race. A
 // double-submitted first create is a skip or a reuse, never an error: exactly one claim wins
 // and every other one gets the winner's row. With the claims serialized by the slot lock, the
