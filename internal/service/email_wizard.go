@@ -1756,12 +1756,12 @@ func wizardStandingCoversSendList(ctx context.Context, client HubSpotWizardClien
 			break
 		}
 	}
-	res, cerr := audience.StandingSendCheck(hit, sendIDs, suppression, func(id string) (string, json.RawMessage, error) {
+	res, cerr := audience.StandingSendCheck(hit, sendIDs, suppression, func(id string) (audience.ListInfo, error) {
 		l, gerr := client.GetList(ctx, id)
 		if gerr != nil {
-			return "", nil, gerr
+			return audience.ListInfo{}, gerr
 		}
-		return l.Name, l.FilterBranch, nil
+		return audience.ListInfo{Name: l.Name, Filter: l.FilterBranch, ProcessingType: l.ProcessingType}, nil
 	})
 	if res.Fallback {
 		slog.WarnContext(ctx, "wizard standing suppression check read only the name-search hit: too many exclusions to read",

@@ -2075,12 +2075,13 @@ audience through `SendListIDs()` too, passes every list to `SetSendList`, and re
 `to.ils_list_ids` beside the existing `ils_list_id` (the first). Its explicit `send_list_ids`
 override still refuses more than one id; that refusal predates multi-include and is unchanged. Before
 `SetSendList`, `wizardStandingCoversSendList` runs `audience.StandingSendCheck`, as dispatch's
-`standingCoversSendList` does: it reads the send lists' filters (at most 50; the rest by id only),
-counts their own NOT_IN_LIST lists as exclusions beside the supplied suppressions (so an override
-that drops the suppressions still sees a master's embedded standing list), finds the standing list
-by name search or, when that misses, by reading the exclusions (at most 50), and answers 409 naming
-the lists when it covers a send list or an IN_LIST source of one. A failed read, or a list read
-back without a filter tree, is a 503 with the draft untouched. No send is refused for its size.
+`standingCoversSendList` does: it reads the DYNAMIC send lists' filters (at most 50; the rest, and
+static lists, by id only), finds the standing list among the supplied suppressions and the lists'
+own NOT_IN_LIST exclusions (by name search or, when that misses, by reading them, at most 50), and
+answers 409 naming the lists when it covers a send list (with the standing list among the
+suppressions) or an IN_LIST source in an OR alternative where it is in effect: everywhere when the
+email suppresses it, otherwise only in an alternative that excludes it itself. A failed read, or a
+DYNAMIC list read back without a filter tree, is a 503 with the draft untouched. No send is refused for its size.
 
 `GetAudienceBuilderCapabilities` returns no error on purpose — an unusable connection is this
 endpoint's ANSWER, not its failure, and it is what lets the UI render one explanatory banner

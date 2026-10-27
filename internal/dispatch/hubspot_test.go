@@ -103,9 +103,11 @@ type hubspotRec struct {
 	searchMisses bool
 	// sendListFilters are the filters GetList returns for other lists (the send lists).
 	sendListFilters map[string]json.RawMessage
-	// listReads counts GetList calls per list id; missingLists answer 404.
+	// listReads counts GetList calls per list id; missingLists answer 404; staticLists answer as
+	// MANUAL lists with no filterBranch.
 	listReads    map[string]int
 	missingLists map[string]bool
+	staticLists  map[string]bool
 	sendListBody map[string]any
 	sawClone     bool
 	sawSendList  bool
@@ -482,10 +484,15 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 				rec.listReads = map[string]int{}
 			}
 			rec.listReads[asked]++
-			missing := rec.missingLists[asked]
+			missing, static := rec.missingLists[asked], rec.staticLists[asked]
 			rec.mu.Unlock()
 			if missing {
 				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if static {
+				_ = json.NewEncoder(w).Encode(map[string]any{"list": map[string]any{
+					"listId": asked, "name": "static " + asked, "objectTypeId": "0-1", "processingType": "MANUAL"}})
 				return
 			}
 			switch {
@@ -2342,4 +2349,83 @@ func answerStandingListReads(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	return false
+}
+
+// A static (MANUAL) send list has no filterBranch. With no suppressions it dispatches, rather than
+// being refused as unreadable; a DYNAMIC list read back without one still refuses.
+func TestHubSpot_DispatchSendsToAStaticListWithoutAFilter(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.staticLists = map[string]bool{"26724": true}
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if !rec.SawSendList() {
+		t.Error("the static list must be sent to")
+	}
+
+	srv2, rec2 := hubspotServer(t)
+	rec2.sendListFilters = map[string]json.RawMessage{"26724": json.RawMessage(`null`)}
+	d = NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv2.URL))
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if !errors.Is(err, audience.ErrListFilterUnreadable) {
+		t.Fatalf("a DYNAMIC send list without a filter must refuse, got %v", err)
+	}
+	if rec2.SawClone() {
+		t.Error("nothing may be created")
+	}
+}
+
+// Master A excludes the standing list itself, master B does not, and the standing list covers
+// only B's source: the standing list does not apply to B, so the send proceeds.
+func TestHubSpot_DispatchScopesAMastersOwnExclusionsToThatMaster(t *testing.T) {
+	standing, _ := audience.MasterListFilter([]string{"500"})
+	masterA, _ := audience.MasterListWithSuppressionsFilter([]string{"100"}, []string{"77"})
+	masterB, _ := audience.MasterListFilter([]string{"500"})
+	srv, rec := hubspotServer(t)
+	rec.standingID, rec.standingName, rec.standingFilter = "77", audience.StandardSuppressionName("cncf"), standing
+	rec.sendListFilters = map[string]json.RawMessage{"2001": masterA, "2002": masterB}
+	auds := builtHubSpotAudience("2001", nil)
+	auds[0].IncludeListIDs, _ = json.Marshal([]string{"2001", "2002"})
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, fakeAudienceReader{auds: auds}, hubspot.WithBaseURL(srv.URL))
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	// The standing list covering A's own source, which A excludes it from: refused.
+	coversA, _ := audience.MasterListFilter([]string{"100"})
+	srv2, rec2 := hubspotServer(t)
+	rec2.standingID, rec2.standingName, rec2.standingFilter = "77", audience.StandardSuppressionName("cncf"), coversA
+	rec2.sendListFilters = map[string]json.RawMessage{"2001": masterA, "2002": masterB}
+	d = NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, fakeAudienceReader{auds: auds}, hubspot.WithBaseURL(srv2.URL))
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err == nil || !strings.Contains(err.Error(), `includes list "100"`) {
+		t.Fatalf("want a refusal naming A's covered source, got %v", err)
+	}
+}
+
+// An exclusion inside a master constrains only its OR alternative: in (IN 600) OR (IN 601 AND
+// NOT 77), the standing list covering 600 leaves that alternative delivering, so the send
+// proceeds; covering 601, the alternative that excludes it, is refused.
+func TestHubSpot_DispatchScopesEmbeddedExclusionsToTheirOrBranch(t *testing.T) {
+	xy := json.RawMessage(`{"filterBranchType":"OR","filters":[],"filterBranches":[` +
+		`{"filterBranchType":"AND","filterBranches":[],"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":"600"}]},` +
+		`{"filterBranchType":"AND","filterBranches":[],"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":"601"},{"filterType":"IN_LIST","operator":"NOT_IN_LIST","listId":"77"}]}]}`)
+	run := func(covers string) error {
+		standing, _ := audience.MasterListFilter([]string{covers})
+		srv, rec := hubspotServer(t)
+		rec.standingID, rec.standingName, rec.standingFilter = "77", audience.StandardSuppressionName("cncf"), standing
+		rec.sendListFilters = map[string]json.RawMessage{"26724": xy}
+		d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+			fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}, hubspot.WithBaseURL(srv.URL))
+		_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+		return err
+	}
+	if err := run("600"); err != nil {
+		t.Fatalf("X's alternative does not exclude the standing list, so the send must proceed: %v", err)
+	}
+	if err := run("601"); err == nil || !strings.Contains(err.Error(), `includes list "601"`) {
+		t.Fatalf("want a refusal naming 601, got %v", err)
+	}
 }

@@ -223,7 +223,7 @@ func (f *fakeWizardHubSpot) GetList(_ context.Context, id string) (*hubspot.List
 	}
 	// Any other list exists, named for its id, with an empty union filter: what an ordinary
 	// list the wizard did not set up looks like to the standing check.
-	return &hubspot.List{ListID: id, Name: "list " + id, FilterBranch: json.RawMessage(`{"filterBranchType":"OR","filterBranches":[],"filters":[]}`)}, nil
+	return &hubspot.List{ListID: id, Name: "list " + id, ProcessingType: "DYNAMIC", FilterBranch: json.RawMessage(`{"filterBranchType":"OR","filterBranches":[],"filters":[]}`)}, nil
 }
 
 func newFakeWizardHubSpot() *fakeWizardHubSpot {
@@ -2246,5 +2246,21 @@ func TestSetWizardSendList_AStandingListReadWithoutAFilterIs503(t *testing.T) {
 	}
 	if len(h.hubspot.sendListIDs) > 0 || h.hubspot.sendListID != "" {
 		t.Error("the draft's recipients must not change")
+	}
+}
+
+// A static (MANUAL) send list has no filterBranch: the wizard applies it, with no suppressions,
+// rather than refusing it as unreadable.
+func TestSetWizardSendList_AppliesAStaticSendList(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "KubeCon EU 2025 - Registration Open"}}
+	h.hubspot.lists = map[string]*hubspot.List{"4477": {ListID: "4477", Name: "uploaded attendees", ProcessingType: "MANUAL"}}
+	session := wizardToSendList(t, h, nil)
+
+	if _, err := h.svc.SetWizardSendList(context.Background(), &briefs.SetWizardSendListPayload{ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: session}); err != nil {
+		t.Fatalf("SetWizardSendList: %v", err)
+	}
+	if len(h.hubspot.sendListIDs) == 0 && h.hubspot.sendListID == "" {
+		t.Error("the static list must be applied")
 	}
 }

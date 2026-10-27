@@ -363,8 +363,24 @@ const MaxSendListFilterReads = 50
 // it covers or includes is unknown, which is not the same as nothing.
 var ErrListFilterUnreadable = errors.New("audience: a list was read back without its filter")
 
-// ListReader reads one list: its name and its filter. A failed read is an error.
-type ListReader func(listID string) (name string, filter json.RawMessage, err error)
+// ListInfo is what StandingSendCheck needs of one list as read back.
+type ListInfo struct {
+	Name   string
+	Filter json.RawMessage
+	// ProcessingType is HubSpot's DYNAMIC, MANUAL or SNAPSHOT. Only a DYNAMIC list has a filter;
+	// a static list (MANUAL, SNAPSHOT) has none, and no sources to read.
+	ProcessingType string
+}
+
+// static reports whether l is a static list, which carries no filter. An unknown or empty type
+// is treated as dynamic, so a missing filter is still caught.
+func (l ListInfo) static() bool {
+	t := strings.ToUpper(strings.TrimSpace(l.ProcessingType))
+	return t == "MANUAL" || t == "SNAPSHOT"
+}
+
+// ListReader reads one list. A failed read is an error.
+type ListReader func(listID string) (ListInfo, error)
 
 // StandingSendResult is StandingSendCheck's finding. SendID and CoveredID are set when the
 // standing list (StandingID) covers a send list (CoveredID == SendID) or an inclusion source of
@@ -386,41 +402,51 @@ type StandingSendResult struct {
 // already-recorded audience sends to; excluding it then removes that whole inclusion. A send
 // list can itself be a master -- a composed audience's one send list, or an existing master
 // attached through include_list_ids -- whose own filter includes source lists (IN_LIST) and
-// excludes others (NOT_IN_LIST). So the filter of every send list is read, up to
-// MaxSendListFilterReads, and:
+// excludes others (NOT_IN_LIST). So the filter of every DYNAMIC send list is read, up to
+// MaxSendListFilterReads; a static (MANUAL, SNAPSHOT) send list has no filter and no sources and
+// is checked by id only.
 //
-//   - the send's exclusions are its recorded suppression ids plus every NOT_IN_LIST list a read
-//     send list excludes itself, whatever suppressions the email carries;
-//   - the standing list among them is the name-search hit (searchHit) when that is one of them;
-//     otherwise, since search lags a fresh list and misses a renamed one, every candidate is read
-//     and one whose name starts with "LFX Standard Suppressions - " (any project's, hash-tagged
-//     forms included) is it. At most MaxStandingCandidateReads candidates are read; over that,
-//     only the search hit counts;
-//   - every send list is checked directly, and every IN_LIST source of a read send list too.
-//     Any covered inclusion path refuses, the send-time match for the compose-time overlap 400.
+// The standing list is found among ALL the send's exclusions -- the recorded or supplied
+// suppressions plus every NOT_IN_LIST list a read send list excludes itself: the name-search hit
+// (searchHit) when that is one of them, otherwise, since search lags a fresh list and misses a
+// renamed one, the candidate whose name starts with "LFX Standard Suppressions - " (any
+// project's, hash-tagged forms included), reading at most MaxStandingCandidateReads of them;
+// over that only the search hit counts.
 //
-// Nothing is refused for its size. Any failed read is an error, and so is a send list or the
-// standing list read back without a filter tree (ErrListFilterUnreadable): the send cannot be
-// shown safe.
+// Whether it is IN EFFECT is decided per OR alternative of each send list (orBranches): the
+// email's suppressions apply to every send list and every alternative, but an exclusion inside a
+// list's filter constrains only the alternative it sits in -- in (IN X) OR (IN Y AND NOT S), X
+// still delivers whatever S covers. With the standing list among the email's suppressions a send
+// list it covers is refused by id; within an alternative where it is in effect, a covered IN_LIST
+// source refuses. Any covered inclusion path refuses, the send-time match for the compose-time
+// overlap 400.
+//
+// Nothing is refused for its size. Any failed read is an error, and so is a DYNAMIC send list or
+// the standing list read back without a filter tree (ErrListFilterUnreadable): the send cannot
+// be shown safe.
 func StandingSendCheck(searchHit string, sendIDs, suppressionIDs []string, read ListReader) (StandingSendResult, error) {
 	var res StandingSendResult
 	sends := UniqueIDs(sendIDs)
+	global := UniqueIDs(suppressionIDs)
 	toRead := sends
 	if len(toRead) > MaxSendListFilterReads {
 		toRead, res.SourcesSkipped = toRead[:MaxSendListFilterReads], true
 	}
 	filters := make(map[string]json.RawMessage, len(toRead))
-	candidates := append([]string(nil), suppressionIDs...)
+	candidates := append([]string(nil), global...)
 	for _, id := range toRead {
-		_, f, err := read(id)
+		l, err := read(id)
 		if err != nil {
 			return res, err
 		}
-		if !HasFilterTree(f) {
+		if l.static() {
+			continue
+		}
+		if !HasFilterTree(l.Filter) {
 			return res, fmt.Errorf("%w: send list %s", ErrListFilterUnreadable, id)
 		}
-		filters[id] = f
-		candidates = append(candidates, ExcludedListIDs(f)...)
+		filters[id] = l.Filter
+		candidates = append(candidates, ExcludedListIDs(l.Filter)...)
 	}
 	candidates = UniqueIDs(candidates)
 	if len(candidates) == 0 {
@@ -430,23 +456,23 @@ func StandingSendCheck(searchHit string, sendIDs, suppressionIDs []string, read 
 	var standingFilter json.RawMessage
 	switch {
 	case searchHit != "" && slices.Contains(candidates, searchHit):
-		_, f, err := read(searchHit)
+		l, err := read(searchHit)
 		if err != nil {
 			return res, err
 		}
-		res.StandingID, standingFilter = searchHit, f
+		res.StandingID, standingFilter = searchHit, l.Filter
 	case len(candidates) > MaxStandingCandidateReads:
 		res.Fallback = true
 		return res, nil
 	default:
 		prefix := strings.ToLower(standardSuppressionPrefix)
 		for _, id := range candidates {
-			name, f, err := read(id)
+			l, err := read(id)
 			if err != nil {
 				return res, err
 			}
-			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), prefix) {
-				res.StandingID, standingFilter = id, f
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(l.Name)), prefix) {
+				res.StandingID, standingFilter = id, l.Filter
 				break
 			}
 		}
@@ -459,20 +485,29 @@ func StandingSendCheck(searchHit string, sendIDs, suppressionIDs []string, read 
 	}
 
 	covered := CoveredListIDs(standingFilter)
+	inGlobal := slices.Contains(global, res.StandingID)
 	for _, id := range sends {
-		if slices.Contains(covered, id) {
+		// An email-level suppression applies to the whole send list, its own id included.
+		if inGlobal && slices.Contains(covered, id) {
 			res.SendID, res.CoveredID = id, id
 			return res, nil
 		}
-	}
-	for _, id := range toRead {
-		for _, source := range InclusionListIDs(filters[id]) {
-			if slices.Contains(covered, source) {
-				res.SendID, res.CoveredID = id, source
-				return res, nil
+		// Each OR alternative of the list's filter: the standing list is in effect there when the
+		// email excludes it or that alternative excludes it itself, and then a covered source
+		// empties that alternative.
+		for _, b := range orBranches(filters[id]) {
+			if !inGlobal && !slices.Contains(b.exclusions, res.StandingID) {
+				continue
+			}
+			for _, source := range b.sources {
+				if slices.Contains(covered, source) {
+					res.SendID, res.CoveredID = id, source
+					return res, nil
+				}
 			}
 		}
 	}
+	res.StandingID = ""
 	return res, nil
 }
 
@@ -483,16 +518,51 @@ func ExcludedListIDs(filter json.RawMessage) []string {
 	if len(filter) == 0 || json.Unmarshal(filter, &root) != nil {
 		return nil
 	}
+	return membershipIDs(root, "NOT_IN_LIST")
+}
+
+// membershipIDs are the list ids a subtree tests with IN_LIST filters of the given operator
+// (IN_LIST or NOT_IN_LIST), anywhere in it.
+func membershipIDs(root qaBranch, operator string) []string {
 	var out []string
 	root.walk(func(b qaBranch) {
 		for _, f := range b.Filters {
 			id := strings.TrimSpace(f.ListID.String())
-			if f.FilterType == "IN_LIST" && f.Operator == "NOT_IN_LIST" && id != "" {
+			if f.FilterType == "IN_LIST" && f.Operator == operator && id != "" {
 				out = append(out, id)
 			}
 		}
 	})
 	return UniqueIDs(out)
+}
+
+// listBranch is one OR alternative of a list's filter: the lists it includes (IN_LIST) and the
+// lists it excludes (NOT_IN_LIST), anywhere inside it.
+type listBranch struct {
+	sources, exclusions []string
+}
+
+// orBranches splits a filter into its top-level OR alternatives: each child branch, and each
+// filter standing directly in the OR. A filter whose root is not an OR is one alternative. An
+// exclusion constrains only the alternative it sits in -- in (IN X) OR (IN Y AND NOT S), X still
+// delivers whatever S is -- so StandingSendCheck decides per alternative.
+func orBranches(filter json.RawMessage) []listBranch {
+	var root qaBranch
+	if len(filter) == 0 || json.Unmarshal(filter, &root) != nil {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(root.FilterBranchType), "OR") {
+		return []listBranch{{sources: membershipIDs(root, "IN_LIST"), exclusions: membershipIDs(root, "NOT_IN_LIST")}}
+	}
+	out := make([]listBranch, 0, len(root.Filters)+len(root.FilterBranches))
+	for _, f := range root.Filters {
+		one := qaBranch{FilterBranchType: "AND", Filters: append(root.Filters[:0:0], f)}
+		out = append(out, listBranch{sources: membershipIDs(one, "IN_LIST"), exclusions: membershipIDs(one, "NOT_IN_LIST")})
+	}
+	for _, c := range root.FilterBranches {
+		out = append(out, listBranch{sources: membershipIDs(c, "IN_LIST"), exclusions: membershipIDs(c, "NOT_IN_LIST")})
+	}
+	return out
 }
 
 // InclusionListIDs are the lists a filter tree INCLUDES by membership: every IN_LIST filter,
@@ -502,14 +572,5 @@ func InclusionListIDs(filter json.RawMessage) []string {
 	if len(filter) == 0 || json.Unmarshal(filter, &root) != nil {
 		return nil
 	}
-	var out []string
-	root.walk(func(b qaBranch) {
-		for _, f := range b.Filters {
-			id := strings.TrimSpace(f.ListID.String())
-			if f.FilterType == "IN_LIST" && f.Operator == "IN_LIST" && id != "" {
-				out = append(out, id)
-			}
-		}
-	})
-	return UniqueIDs(out)
+	return membershipIDs(root, "IN_LIST")
 }

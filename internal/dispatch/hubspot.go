@@ -1429,12 +1429,12 @@ func standingCoversSendList(ctx context.Context, client *hubspot.Client, project
 	if standing != nil {
 		hit = standing.ListID
 	}
-	res, cerr := audience.StandingSendCheck(hit, sendIDs, suppressionIDs, func(id string) (string, json.RawMessage, error) {
+	res, cerr := audience.StandingSendCheck(hit, sendIDs, suppressionIDs, func(id string) (audience.ListInfo, error) {
 		l, gerr := client.GetList(ctx, id)
 		if gerr != nil {
-			return "", nil, gerr
+			return audience.ListInfo{}, gerr
 		}
-		return l.Name, l.FilterBranch, nil
+		return audience.ListInfo{Name: l.Name, Filter: l.FilterBranch, ProcessingType: l.ProcessingType}, nil
 	})
 	if res.Fallback {
 		slog.WarnContext(ctx, "standing suppression check read only the name-search hit: too many exclusions to read",

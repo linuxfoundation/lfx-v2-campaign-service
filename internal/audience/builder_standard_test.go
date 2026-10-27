@@ -356,15 +356,19 @@ func TestStandingSendCheck(t *testing.T) {
 		"26725": {"master excluding the standing list", masterExcludingStanding},
 	}
 	var reads []string
-	read := func(id string) (string, json.RawMessage, error) {
+	static := map[string]bool{}
+	read := func(id string) (ListInfo, error) {
 		reads = append(reads, id)
 		if id == "404" {
-			return "", nil, errors.New("no such list")
+			return ListInfo{}, errors.New("no such list")
+		}
+		if static[id] {
+			return ListInfo{Name: "static " + id, ProcessingType: "MANUAL"}, nil
 		}
 		if l, ok := lists[id]; ok {
-			return l.name, l.filter, nil
+			return ListInfo{Name: l.name, Filter: l.filter, ProcessingType: "DYNAMIC"}, nil
 		}
-		return "list " + id, empty, nil
+		return ListInfo{Name: "list " + id, Filter: empty, ProcessingType: "DYNAMIC"}, nil
 	}
 
 	// A directly covered send list, the standing list found by search.
@@ -455,6 +459,85 @@ func TestStandingSendCheck(t *testing.T) {
 	}{"master", json.RawMessage(`null`)}
 	_, err = StandingSendCheck("77", []string{"26727"}, []string{"77"}, read)
 	require.ErrorIs(t, err, ErrListFilterUnreadable)
+
+	// A static send list has no filter: checked by id only, never refused for the missing filter.
+	static["3001"] = true
+	res, err = StandingSendCheck("", []string{"3001"}, nil, read)
+	require.NoError(t, err, "a static list carries no filter")
+	assert.Empty(t, res.CoveredID)
+	res, err = StandingSendCheck("77", []string{"3001", "500"}, []string{"77"}, read)
+	require.NoError(t, err)
+	assert.Equal(t, "500", res.CoveredID, "the direct id check still applies beside a static list")
+	lists["3002"] = struct {
+		name   string
+		filter json.RawMessage
+	}{"dynamic without a filter", nil}
+	_, err = StandingSendCheck("", []string{"3002"}, nil, read)
+	require.ErrorIs(t, err, ErrListFilterUnreadable, "a DYNAMIC send list without a filter still refuses")
+
+	// A master's own exclusions apply only to that master. A excludes 77, B does not; 77 covers
+	// B's source 500 only: the send proceeds. 77 covering A's source refuses.
+	masterA, _ := MasterListWithSuppressionsFilter([]string{"100"}, []string{"77"})
+	masterB, _ := MasterListFilter([]string{"500"})
+	lists["2001"] = struct {
+		name   string
+		filter json.RawMessage
+	}{"master A", masterA}
+	lists["2002"] = struct {
+		name   string
+		filter json.RawMessage
+	}{"master B", masterB}
+	res, err = StandingSendCheck("77", []string{"2001", "2002"}, nil, read)
+	require.NoError(t, err)
+	assert.Empty(t, res.CoveredID, "77 is excluded only by A, and covers only B's source")
+	coversA, _ := MasterListFilter([]string{"100"})
+	lists["81"] = struct {
+		name   string
+		filter json.RawMessage
+	}{standingName, coversA}
+	masterA81, _ := MasterListWithSuppressionsFilter([]string{"100"}, []string{"81"})
+	lists["2003"] = struct {
+		name   string
+		filter json.RawMessage
+	}{"master A excluding 81", masterA81}
+	res, err = StandingSendCheck("81", []string{"2003", "2002"}, nil, read)
+	require.NoError(t, err)
+	assert.Equal(t, StandingSendResult{SendID: "2003", CoveredID: "100", StandingID: "81"}, res)
+	// The same standing list as an email-wide suppression applies to B too.
+	res, err = StandingSendCheck("77", []string{"2001", "2002"}, []string{"77"}, read)
+	require.NoError(t, err)
+	assert.Equal(t, "500", res.CoveredID)
+
+	// Exclusions are scoped to their OR alternative: in (IN 600) OR (IN 601 AND NOT 82), 600
+	// still delivers whatever 82 covers; 82 covering 601 empties the alternative that excludes it.
+	xy := json.RawMessage(`{"filterBranchType":"OR","filters":[],"filterBranches":[` +
+		`{"filterBranchType":"AND","filterBranches":[],"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":"600"}]},` +
+		`{"filterBranchType":"AND","filterBranches":[],"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":"601"},{"filterType":"IN_LIST","operator":"NOT_IN_LIST","listId":"82"}]}]}`)
+	lists["2010"] = struct {
+		name   string
+		filter json.RawMessage
+	}{"master X or Y", xy}
+	coversX, _ := MasterListFilter([]string{"600"})
+	coversY, _ := MasterListFilter([]string{"601"})
+	setStanding := func(f json.RawMessage) {
+		lists["82"] = struct {
+			name   string
+			filter json.RawMessage
+		}{standingName, f}
+	}
+	setStanding(coversX)
+	res, err = StandingSendCheck("82", []string{"2010"}, nil, read)
+	require.NoError(t, err)
+	assert.Empty(t, res.CoveredID, "X's alternative does not exclude 82")
+	setStanding(coversY)
+	res, err = StandingSendCheck("82", []string{"2010"}, nil, read)
+	require.NoError(t, err)
+	assert.Equal(t, StandingSendResult{SendID: "2010", CoveredID: "601", StandingID: "82"}, res)
+	// As an email-level suppression, 82 applies to every alternative: covering X refuses.
+	setStanding(coversX)
+	res, err = StandingSendCheck("82", []string{"2010"}, []string{"82"}, read)
+	require.NoError(t, err)
+	assert.Equal(t, "600", res.CoveredID)
 
 	// More exclusions than MaxStandingCandidateReads with the search missing: fall back, never refuse.
 	exclusions := make([]string, MaxStandingCandidateReads+1)
