@@ -1017,3 +1017,47 @@ func TestAttachExisting_UntypedStandingFilter_IsNeverRewritten(t *testing.T) {
 		})
 	}
 }
+
+// A compose whose master would exceed MaxMasterFilterConditions is refused before anything is
+// written; exactly at the limit it is composed.
+func TestComposeMaster_ExpansionBudget_RefusedBeforeAnyWrite(t *testing.T) {
+	ids := func(prefix string, n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprintf("%s%d", prefix, i+1)
+		}
+		return out
+	}
+	// 25 inclusions × (99 + 1) = 2500: at the limit.
+	portal, _ := standardPortal()
+	x := composeExplorer(portal.serve(t).URL)
+	_, err := x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+		ListIDs: ids("1", 25), ExcludeListIDs: ids("2", 99), Name: "At The Limit - Master",
+	})
+	require.NoError(t, err)
+	created, _ := portal.writes()
+	require.Len(t, created, 1)
+
+	// One more exclusion: 25 × 101 = 2525, refused with zero writes.
+	portal, _ = standardPortal()
+	x = composeExplorer(portal.serve(t).URL)
+	_, err = x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+		ListIDs: ids("1", 25), ExcludeListIDs: ids("2", 100), Name: "Over The Limit - Master",
+	})
+	var field *audience.FieldError
+	require.ErrorAs(t, err, &field)
+	created, updated := portal.writes()
+	assert.Empty(t, created)
+	assert.Empty(t, updated)
+
+	// A registrants edition counts as an exclusion too, and is refused before its list is created.
+	portal, _ = standardPortal()
+	x = composeExplorer(portal.serve(t).URL)
+	_, err = x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+		ListIDs: ids("1", 25), ExcludeListIDs: ids("2", 99), Name: "Registrants Tip Over - Master",
+		CurrentRegistrantsEvent: "Synthetic Summit 2026",
+	})
+	require.ErrorAs(t, err, &field)
+	created, _ = portal.writes()
+	assert.Empty(t, created, "the registrants list is not created for a refused compose")
+}

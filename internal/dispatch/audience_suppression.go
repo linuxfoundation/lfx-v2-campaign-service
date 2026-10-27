@@ -77,7 +77,12 @@ func resolvedIDs(rows []audience.SuppressionRow) []string {
 // existing filter is grown, and the final set once more before returning. So on a
 // contradiction the caller composes or records nothing and the standing list is not grown. Either is an
 // audience.ExclusionOverlapError (400) naming the list.
-func (x *AudienceExplorer) resolveSuppressions(ctx context.Context, client *hubspot.Client, projectID string, include, suppress []string, registrantsEvent string) (*audience.ComposedList, []string, error) {
+//
+// budget, when set, is given the number of lists the caller will exclude once the selection is
+// resolved (the standing list counting as one), after the reads and BEFORE the first write, so a
+// selection too large to compose is refused with nothing created or grown. Attach builds no
+// master filter and passes nil.
+func (x *AudienceExplorer) resolveSuppressions(ctx context.Context, client *hubspot.Client, projectID string, include, suppress []string, registrantsEvent string, budget func(exclusions int) error) (*audience.ComposedList, []string, error) {
 	// The registrants filter depends only on the input, so it is built BEFORE the first write: a
 	// year-less edition must be a 400 with nothing created or rewritten in the portal.
 	edition := strings.TrimSpace(registrantsEvent)
@@ -115,6 +120,18 @@ func (x *AudienceExplorer) resolveSuppressions(ctx context.Context, client *hubs
 		}
 		standardIDs = resolvedIDs(rows)
 		useStandard, rest = audience.SplitStandardSuppressions(rest, standardIDs)
+	}
+	if budget != nil {
+		exclusions := len(rest)
+		if useStandard {
+			exclusions++
+		}
+		if edition != "" {
+			exclusions++
+		}
+		if err := budget(exclusions); err != nil {
+			return nil, nil, err
+		}
 	}
 	var standingHit, registrantsHit *hubspot.List
 	if useStandard {

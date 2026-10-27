@@ -1533,7 +1533,10 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 	// standard suppression list (reused, never one per compose) and each other selected list,
 	// plus the edition's current registrants when asked. They are resolved before the master
 	// exists, so a failure here leaves nothing to reconcile -- both are found by name on a retry.
-	standard, others, rerr := x.resolveSuppressions(ctx, client, projectID, include, exclude, in.CurrentRegistrantsEvent)
+	// The master repeats every exclusion on every inclusion branch, so its size is checked
+	// against MaxMasterFilterConditions from the resolved counts before anything is written.
+	standard, others, rerr := x.resolveSuppressions(ctx, client, projectID, include, exclude, in.CurrentRegistrantsEvent,
+		func(exclusions int) error { return audience.CheckMasterExpansion(len(include), exclusions) })
 	if rerr != nil {
 		return nil, fmt.Errorf("audience compose: %w", systemScopedHubSpot(rerr, fromSystem))
 	}
@@ -1677,7 +1680,7 @@ func (x *AudienceExplorer) AttachExisting(ctx context.Context, projectID string,
 		PortalID:      portalID,
 		Attached:      true,
 	}
-	standard, rest, rerr := x.resolveSuppressions(ctx, client, projectID, sourceIDs, suppress, registrantsEvent)
+	standard, rest, rerr := x.resolveSuppressions(ctx, client, projectID, sourceIDs, suppress, registrantsEvent, nil)
 	if rerr != nil {
 		return nil, fmt.Errorf("audience attach: %w", rerr)
 	}

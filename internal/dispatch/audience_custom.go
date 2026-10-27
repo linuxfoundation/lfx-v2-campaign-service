@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -86,7 +87,16 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 		// and an audience that excludes past registrants gets none. The guard runs even
 		// when the warehouse returned nothing: a guessed name matches nobody either way.
 		{
-			named, invented := knownEditions(draft.Criteria.RegisteredFor, append([]string{event.Name}, event.PastEditions...))
+			var ambiguities []string
+			named, invented := knownEditionsWithAmbiguity(draft.Criteria.RegisteredFor, append([]string{event.Name}, event.PastEditions...),
+				func(name string, candidates []string) {
+					ambiguities = append(ambiguities, fmt.Sprintf("%q could be any of %s", name, quoteAll(candidates)))
+				})
+			if len(ambiguities) > 0 {
+				draft.Notes = append(draft.Notes, fmt.Sprintf(
+					"Left out %d registered_for names that match more than one past edition once spacing and case are ignored; name the exact spelling to include one: %s.",
+					len(ambiguities), strings.Join(ambiguities, "; ")))
+			}
 			if len(invented) > 0 {
 				reason := "are not this event's or one of its past editions' exact names"
 				if len(event.PastEditions) == 0 {
@@ -606,31 +616,67 @@ func (x *AudienceExplorer) customEventContext(ctx context.Context, eventURL stri
 // one of the known edition names, returned in the known spelling, and lists the
 // rest. A guessed edition name would match nobody.
 func knownEditions(requested, known []string) (kept, unknown []string) {
-	canonical := make(map[string]string, len(known))
+	return knownEditionsWithAmbiguity(requested, known, nil)
+}
+
+// knownEditionsWithAmbiguity is knownEditions that also reports, through ambiguous, each
+// requested name that matched more than one warehouse spelling only after normalising (with
+// the candidates), so the caller can say why it was left out.
+//
+// A requested name is kept as the warehouse spells it, verbatim: first an EXACT match (the
+// warehouse can hold "Synthetic Summit 2025" and "Synthetic  Summit 2025" as two editions),
+// then -- only when exactly one warehouse spelling normalises to it, ignoring case and spacing
+// -- that spelling. Several candidates are ambiguous and the name is unknown: guessing one
+// would send to the wrong edition's registrants.
+func knownEditionsWithAmbiguity(requested, known []string, ambiguous func(name string, candidates []string)) (kept, unknown []string) {
+	norm := func(v string) string { return strings.ToLower(strings.Join(strings.Fields(v), " ")) }
+	exact := make(map[string]bool, len(known))
+	byNorm := make(map[string][]string, len(known))
 	for _, k := range known {
-		// Matched with spacing and case normalised, but RETURNED exactly as the warehouse spells
-		// it, padding included (ResolvePastEditions keeps it too): it becomes an exact
-		// event_name equality, and trimming or collapsing it would match nobody.
-		if n := strings.Join(strings.Fields(k), " "); n != "" {
-			if _, dup := canonical[strings.ToLower(n)]; !dup {
-				canonical[strings.ToLower(n)] = k
-			}
+		n := norm(k)
+		if n == "" || exact[k] {
+			continue
 		}
+		exact[k] = true
+		byNorm[n] = append(byNorm[n], k)
 	}
 	seen := map[string]bool{}
 	for _, r := range requested {
-		key := strings.ToLower(strings.Join(strings.Fields(r), " "))
-		if key == "" || seen[key] {
+		if strings.TrimSpace(r) == "" || seen[r] {
 			continue
 		}
-		seen[key] = true
-		if name, ok := canonical[key]; ok {
-			kept = append(kept, name)
-		} else {
+		seen[r] = true
+		switch candidates := byNorm[norm(r)]; {
+		case exact[r]:
+			kept = append(kept, r)
+		case len(candidates) == 1:
+			kept = append(kept, candidates[0])
+		case len(candidates) > 1:
+			if ambiguous != nil {
+				ambiguous(r, candidates)
+			}
+			unknown = append(unknown, r)
+		default:
 			unknown = append(unknown, r)
 		}
 	}
-	return kept, unknown
+	return uniqueExact(kept), unknown
+}
+
+// uniqueExact drops exact repeats, first kept.
+func uniqueExact(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	seen := make(map[string]bool, len(values))
+	out := values[:0]
+	for _, v := range values {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // capPastEditions bounds the warehouse's past editions to registered_for's
@@ -774,4 +820,14 @@ func withoutTracking(u string) string {
 		return u[:i]
 	}
 	return u[:i] + "?" + strings.Join(kept, "&")
+}
+
+// quoteAll quotes each value, joined with " or ", so spellings that differ only in spacing stay
+// visibly different in a note.
+func quoteAll(values []string) string {
+	quoted := make([]string, len(values))
+	for i, v := range values {
+		quoted[i] = strconv.Quote(v)
+	}
+	return strings.Join(quoted, " or ")
 }

@@ -265,14 +265,24 @@ func ParseCustomDraft(raw string) (*CustomDraft, error) {
 	values := func(in []string) []string { return capped(in, customMaxValues) }
 	// editions keeps exact edition names whole (up to customEditionMaxLen): they are
 	// compared verbatim with the warehouse's, so the display cut would drop them.
+	//
+	// Kept VERBATIM, spacing included (trimmed only to detect a blank), and de-duplicated
+	// exactly: the warehouse can hold "Synthetic Summit 2025" and "Synthetic  Summit 2025" as
+	// two editions, and collapsing the model's spelling would pick the wrong one. Block
+	// markers are still neutralised and an over-long value cut, which only makes it unknown.
 	editions := func(in []string) []string {
 		out := make([]string, 0, len(in))
 		for _, v := range in {
-			if v = blockSafe(v, customEditionMaxLen); v != "" {
-				out = append(out, v)
+			if strings.TrimSpace(v) == "" {
+				continue
 			}
+			v = blockMarkerRE.ReplaceAllString(v, "[removed]")
+			if r := []rune(v); len(r) > customEditionMaxLen {
+				v = string(r[:customEditionMaxLen])
+			}
+			out = append(out, v)
 		}
-		out = cleanValues(out)
+		out = exactValues(out)
 		if len(out) > customMaxValues {
 			out = out[:customMaxValues]
 		}

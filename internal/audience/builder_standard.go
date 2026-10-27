@@ -283,6 +283,30 @@ func SameIDSet(a, b []string) bool {
 	return slices.Equal(x, y)
 }
 
+// MaxMasterFilterConditions bounds the filter conditions one composed master may carry.
+// MasterListWithSuppressionsFilter repeats every exclusion on every inclusion branch, so a
+// master has inclusions × (exclusions + 1) conditions: 200 × 200 would be over 40,000.
+//
+// HubSpot's real per-list limit is NOT verified (an open live check). 2,500 is chosen to be
+// conservative while covering every selection seen in practice (25 lists × 99 exclusions, or
+// 200 lists × 11), and it keeps the create request near 250 KB at roughly 100 bytes per
+// condition. Raise it only against a measured HubSpot limit.
+const MaxMasterFilterConditions = 2500
+
+// CheckMasterExpansion refuses a master whose filter would exceed MaxMasterFilterConditions:
+// inclusions branches, each one IN_LIST plus one NOT_IN_LIST per exclusion. exclusions counts
+// the RESOLVED excluded lists, the standing standard list as one. The error is a FieldError
+// (400) the operator can act on by selecting less.
+func CheckMasterExpansion(inclusions, exclusions int) error {
+	conditions := inclusions * (exclusions + 1)
+	if conditions <= MaxMasterFilterConditions {
+		return nil
+	}
+	return &FieldError{Field: "list_ids and exclude_list_ids", Reason: fmt.Sprintf(
+		"%d inclusions × %d exclusions need %d filter conditions (one IN_LIST plus one NOT_IN_LIST per exclusion on every inclusion), over the %d-condition limit for one master list; reduce the selection",
+		inclusions, exclusions, conditions, MaxMasterFilterConditions)}
+}
+
 // MasterListWithSuppressionsFilter is MasterListWithSuppressionFilter for several exclusions:
 // every AND branch carries one NOT_IN_LIST filter per suppression id, so each inclusion path
 // excludes all of them.

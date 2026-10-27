@@ -294,3 +294,24 @@ func TestStandingFilterIsUnion_RequiresATypeAtEveryNode(t *testing.T) {
 	assert.True(t, StandingFilterIsUnion(json.RawMessage(`{"filterBranchType":"OR","filterBranches":[],"filters":[]}`)),
 		"an explicitly typed empty OR tree is still a union of nothing")
 }
+
+// A master repeats every exclusion on every inclusion branch. The budget is checked on
+// inclusions × (exclusions + 1) conditions, exactly at the boundary.
+func TestCheckMasterExpansion_Boundary(t *testing.T) {
+	require.NoError(t, CheckMasterExpansion(25, 99), "25 × (99+1) = 2500 conditions is at the limit")
+	require.NoError(t, CheckMasterExpansion(1, MaxMasterFilterConditions-1))
+	err := CheckMasterExpansion(1, MaxMasterFilterConditions)
+	var field *FieldError
+	require.ErrorAs(t, err, &field, "1 × (2500+1) = 2501 conditions is one over")
+	assert.ErrorIs(t, err, ErrInvalidRequest)
+	assert.Contains(t, err.Error(), "1 inclusions × 2500 exclusions need 2501 filter conditions")
+	assert.Contains(t, err.Error(), "2500-condition limit")
+	require.Error(t, CheckMasterExpansion(200, 200), "the 40,000-condition case")
+}
+
+func TestParseCustomDraft_RegisteredForKeepsSpacing(t *testing.T) {
+	draft, err := ParseCustomDraft(`{"criteria":{"cities":["Seoul"],"countries":[],"contact_location":true,"event_registered":true,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":[],"registered_for":["Synthetic  Summit 2025","Synthetic  Summit 2025","Synthetic Summit 2025","  "],"label":""},"questions":[],"notes":[]}`)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Synthetic  Summit 2025", "Synthetic Summit 2025"}, draft.Criteria.RegisteredFor,
+		"spacing kept, an exact repeat and a blank dropped")
+}

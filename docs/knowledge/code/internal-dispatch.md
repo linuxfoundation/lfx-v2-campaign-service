@@ -4559,6 +4559,13 @@ are unique across object types, so a company or deal list can hold the standing 
 then reported as the named `StandingListConflictError` (409) rather than a bare refusal. Nothing is
 recorded on any failure.
 
+Compose passes `resolveSuppressions` a budget check (`audience.CheckMasterExpansion`), called after
+the reads and before the first write with the RESOLVED exclusion count (the standing list as one,
+plus the registrants list): a master needs inclusions × (exclusions + 1) filter conditions, and
+over `audience.MaxMasterFilterConditions` (2,500, conservative; HubSpot's real limit is unverified)
+it is a 400 `FieldError` with nothing created or grown. Attach builds no master filter and passes
+none.
+
 `resolveSuppressions` reads before it writes: the standard terms, then each standing list by name,
 and only then creates or grows anything. It also takes the send's inclusion ids (compose's includes,
 attach's read-back include ids), because the caller's input overlap check cannot see what
@@ -4766,7 +4773,10 @@ never used.
 
 For an event audience the warehouse's past editions are `registered_for`'s DEFAULT, not an
 override (2026-10-15): editions the request or the answers named (the model copies them into
-`registered_for`) are used instead, kept by `knownEditions` (matched ignoring case and spacing,
+`registered_for`, verbatim: parsing trims only to detect a blank) are used instead, kept by
+`knownEditions` (an EXACT warehouse match first; otherwise a match ignoring case and spacing only
+when exactly one warehouse spelling normalises to it, an ambiguous name being left out with a note
+naming the candidates;
 returned exactly as the warehouse spells it, padding included, since `CustomListFilter` writes
 `registered_for` through `exactValues`, blanks dropped and every other value verbatim, padding
 included, as an exact `event_name` equality) only as exact names of this event or one

@@ -1824,3 +1824,55 @@ func TestInterpretCustom_PaddedWarehouseEditionIsKeptVerbatim(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"  Synthetic Summit 2024  "`)
 }
+
+// The warehouse can hold one edition under two spellings that differ only in spacing. A
+// requested name is matched EXACTLY first; a normalised match is used only when it is
+// unambiguous, and an ambiguous one is left out with its candidates named.
+func TestKnownEditions_ExactFirstAndAmbiguityRefused(t *testing.T) {
+	known := []string{"Synthetic Summit 2025", "Synthetic  Summit 2025", "Synthetic Summit 2024"}
+
+	kept, unknown := knownEditions([]string{"Synthetic  Summit 2025"}, known)
+	assert.Equal(t, []string{"Synthetic  Summit 2025"}, kept, "the exact spelling wins over the first normalised match")
+	assert.Empty(t, unknown)
+
+	kept, unknown = knownEditions([]string{"synthetic summit 2024"}, known)
+	assert.Equal(t, []string{"Synthetic Summit 2024"}, kept, "an unambiguous normalised match maps to the warehouse spelling")
+	assert.Empty(t, unknown)
+
+	var got []string
+	kept, unknown = knownEditionsWithAmbiguity([]string{"synthetic summit 2025"}, known, func(name string, candidates []string) {
+		got = append(got, candidates...)
+	})
+	assert.Empty(t, kept, "two spellings normalise to it: guessing one could pick the wrong edition")
+	assert.Equal(t, []string{"synthetic summit 2025"}, unknown)
+	assert.Equal(t, []string{"Synthetic Summit 2025", "Synthetic  Summit 2025"}, got)
+}
+
+// End to end: the model's double-spaced name survives parsing and selects that spelling; an
+// ambiguous one is left out with a note naming both candidates.
+func TestInterpretCustom_EditionSpellingsThatDifferOnlyInSpacing(t *testing.T) {
+	run := func(t *testing.T, requested string) *audience.CustomInterpretOutcome {
+		t.Helper()
+		portal := seoulPortal()
+		srv := portal.serve(t)
+		t.Cleanup(srv.Close)
+		llm := &seqLLM{replies: []string{
+			`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+			`{"criteria":{"cities":["Seoul"],"countries":[],"contact_location":true,"event_registered":true,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":[],"registered_for":["` + requested + `"],"label":""},"questions":[],"notes":[]}`,
+		}}
+		events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}, {EventName: "Synthetic  Summit 2025"}}
+		repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+		builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+		x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+		out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+		require.NoError(t, err)
+		return out
+	}
+
+	out := run(t, "Synthetic  Summit 2025")
+	assert.Equal(t, []string{"Synthetic  Summit 2025"}, out.Draft.Criteria.RegisteredFor, "parsing keeps the double space and the exact match wins")
+
+	out = run(t, "synthetic summit 2025")
+	assert.Empty(t, out.Draft.Criteria.RegisteredFor)
+	assert.Contains(t, strings.Join(out.Draft.Notes, "\n"), `could be any of "Synthetic Summit 2025" or "Synthetic  Summit 2025"`)
+}
