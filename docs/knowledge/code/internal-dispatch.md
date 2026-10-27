@@ -4473,7 +4473,12 @@ the resulting STANDING lists directly (`audience.MasterListWithSuppressionsFilte
 reused, so the only create that can leave state to reconcile is the master's own, and
 `ComposePartialError` now only ever carries `MasterName`. The outcome reports the standard list as
 `Suppression` and every other excluded list as `AttachedSuppressionIDs`; the master name is
-fingerprinted over the includes, the requested excludes and the registrants edition.
+fingerprinted over the includes and the RESOLVED exclusion ids (the standing list's id, each other
+excluded list, the registrants list's id), not the requested ones. A reused master excludes exactly
+the ids it was built with, so its identity must be those ids: the same request resolves to a
+different standing list in another project on the same portal, or after a standing or registrants
+list is recreated, and either way gets a new master rather than one excluding lists it no longer
+reports.
 
 When `ComposeInput.RecordUnderBriefID` is set, `ComposeMaster` resolves the portal right after
 `cachedClient` and BEFORE that first create, returning it on `ComposeOutcome.PortalID`. Both halves
@@ -4539,8 +4544,21 @@ a concurrent attach or compose made the list first, or because an earlier create
 has not indexed it yet; a create can also be unconfirmed. In both cases the name is looked up again
 up to three times with a short backoff (`standingRelookupWaits`, under two seconds in all) and what
 is found is used; only when it is still not found does the create's own error stand, with its
-unconfirmed classification intact. A permission rejection is not retried. Nothing is recorded on
-any failure.
+unconfirmed classification intact. A permission rejection is not retried. A refused create that is
+still not found is checked once more with `SearchListsAnyType` (no contact constraint): list names
+are unique across object types, so a company or deal list can hold the standing name, and it is
+then reported as the named `StandingListConflictError` (409) rather than a bare refusal. Nothing is
+recorded on any failure.
+
+`resolveSuppressions` reads before it writes: the standard terms, then each standing list by name,
+and only then creates or grows anything. It also takes the send's inclusion ids (compose's includes,
+attach's read-back include ids), because the caller's input overlap check cannot see what
+resolution substitutes or adds: the standing list stands in for the standard ids and
+`current_registrants_event` adds the registrants list, and either can be a list the send also goes
+to. A standing list FOUND among the includes is refused before any write, and the final resolved
+ids are checked once more before returning, so compose creates no master and attach records
+nothing. Either is an `audience.ExclusionOverlapError` (wraps `ErrInvalidRequest`; a 400 naming the
+list).
 
 Not established (2026-10-26): whether `current_registrants_event` names an edition that actually
 has registrations. The only check is that it carries a year (`audience.RegistrantsEditionOK`). The

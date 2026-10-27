@@ -1533,7 +1533,7 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 	// standard suppression list (reused, never one per compose) and each other selected list,
 	// plus the edition's current registrants when asked. They are resolved before the master
 	// exists, so a failure here leaves nothing to reconcile -- both are found by name on a retry.
-	standard, others, rerr := x.resolveSuppressions(ctx, client, projectID, exclude, in.CurrentRegistrantsEvent)
+	standard, others, rerr := x.resolveSuppressions(ctx, client, projectID, include, exclude, in.CurrentRegistrantsEvent)
 	if rerr != nil {
 		return nil, fmt.Errorf("audience compose: %w", systemScopedHubSpot(rerr, fromSystem))
 	}
@@ -1548,12 +1548,15 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 	// ("master lists are not building"). Resolve the name BEFORE creating: when the derived name
 	// is taken, it is tagged with the selection's fingerprint, and a tagged master that already
 	// exists is THIS selection's earlier compose -- reused rather than duplicated or refused.
-	selection := exclude
-	if edition := strings.TrimSpace(in.CurrentRegistrantsEvent); edition != "" {
-		selection = append(append([]string(nil), exclude...), "registrants:"+edition)
-	}
+	//
+	// The fingerprint covers the RESOLVED exclusions (excludeIDs: the standing list's id, each
+	// other list, the registrants list's id), not the requested ones. A reused master excludes
+	// exactly the ids it was built with, so its identity must be those ids: the same requested
+	// selection resolves to a DIFFERENT standing list in another project sharing the portal, or
+	// after a standing or registrants list is recreated, and reusing on the request alone would
+	// hand back a master excluding lists this compose no longer reports.
 	names, nerr := x.resolveComposeNames(ctx, client, masterName, "", false,
-		audience.SelectionFingerprint(include, selection))
+		audience.SelectionFingerprint(include, excludeIDs))
 	if nerr != nil {
 		return nil, fmt.Errorf("audience compose: check list names: %w", systemScopedHubSpot(nerr, fromSystem))
 	}
@@ -1674,7 +1677,7 @@ func (x *AudienceExplorer) AttachExisting(ctx context.Context, projectID string,
 		PortalID:      portalID,
 		Attached:      true,
 	}
-	standard, rest, rerr := x.resolveSuppressions(ctx, client, projectID, suppress, registrantsEvent)
+	standard, rest, rerr := x.resolveSuppressions(ctx, client, projectID, sourceIDs, suppress, registrantsEvent)
 	if rerr != nil {
 		return nil, fmt.Errorf("audience attach: %w", rerr)
 	}

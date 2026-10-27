@@ -85,6 +85,19 @@ func (l *List) resolveSize() {
 // than returning only the first — otherwise a portal with >count matching lists would
 // silently return an incomplete result despite the all-matches contract.
 func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) {
+	return c.searchLists(ctx, query, true)
+}
+
+// SearchListsAnyType is SearchLists without the contact-list constraint: it returns lists of
+// EVERY object type (companies, deals, ...), each carrying its ObjectTypeID. It exists for one
+// question SearchLists cannot answer -- whether a NAME is taken: HubSpot list names are unique
+// per portal across object types, so a company list can hold a name a contact list then cannot
+// be created under. Callers that want contact lists use SearchLists.
+func (c *Client) SearchListsAnyType(ctx context.Context, query string) ([]List, error) {
+	return c.searchLists(ctx, query, false)
+}
+
+func (c *Client) searchLists(ctx context.Context, query string, contactsOnly bool) ([]List, error) {
 	const pageSize = 100
 	// Trim before forwarding — a padded term would otherwise fail to match names it
 	// should, silently returning no lists.
@@ -105,6 +118,9 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 			// hs_list_size so the membership count comes back.
 			"objectTypeId":         contactObjectTID,
 			"additionalProperties": []string{hsListSizeProp},
+		}
+		if !contactsOnly {
+			delete(body, "objectTypeId")
 		}
 		raw, err := c.doRequest(ctx, http.MethodPost, listSearchPath, body, true)
 		if err != nil {
@@ -142,7 +158,7 @@ func (c *Client) SearchLists(ctx context.Context, query string) ([]List, error) 
 			// Defense-in-depth on top of the server-side objectTypeId filter: drop a
 			// hit only if its type is EXPLICITLY non-contact. An empty/omitted type is
 			// trusted (the server already filtered) rather than dropped.
-			if ot := resp.Lists[i].ObjectTypeID; ot != "" && ot != contactObjectTID {
+			if ot := resp.Lists[i].ObjectTypeID; contactsOnly && ot != "" && ot != contactObjectTID {
 				continue
 			}
 			resp.Lists[i].resolveSize()

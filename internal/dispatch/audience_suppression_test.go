@@ -13,11 +13,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 )
 
@@ -46,6 +48,9 @@ type suppressionPortal struct {
 	refuseCreateStores bool
 	refuseFilter       json.RawMessage
 	searches           map[string]int
+	// foreign holds non-contact lists by name; every search returns them with objectTypeId 0-2,
+	// as HubSpot does for a search that does not constrain the type.
+	foreign map[string]string
 	// objectType overrides a list's objectTypeId on read; every other list is a contact list.
 	objectType map[string]string
 	// afterUpdate runs, under the lock, right after a filter update is applied: a concurrent
@@ -108,6 +113,9 @@ func (p *suppressionPortal) serve(t *testing.T) *httptest.Server {
 				p.lagSearches[body.Query]--
 			} else if id, ok := p.byName[body.Query]; ok {
 				lists = append(lists, map[string]any{"listId": id, "name": body.Query, "objectTypeId": "0-1"})
+			}
+			if id, ok := p.foreign[body.Query]; ok {
+				lists = append(lists, map[string]any{"listId": id, "name": body.Query, "objectTypeId": "0-2"})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"lists": lists, "hasMore": false})
 		case r.URL.Path == "/crm/v3/lists" && r.Method == http.MethodPost:
@@ -380,7 +388,8 @@ func TestComposeMaster_CurrentRegistrants_ExcludedAndFingerprinted(t *testing.T)
 	created, _ := portal.writes()
 	require.Len(t, created, 2, "the registrants list, then the master")
 	assert.Equal(t, audience.CurrentRegistrantsName(edition), created[0]["name"])
-	withRegistrants := audience.SelectionFingerprint([]string{"111"}, []string{"6001", "registrants:" + edition})
+	// The fingerprint covers the RESOLVED exclusions, the registrants list's id among them.
+	withRegistrants := audience.SelectionFingerprint([]string{"111"}, []string{"6001", "9001"})
 	assert.Equal(t, audience.WithFingerprint("AGNTCon Japan - Master", withRegistrants), created[1]["name"])
 	assert.NotEqual(t, audience.SelectionFingerprint([]string{"111"}, []string{"6001"}), withRegistrants)
 	master, _ := json.Marshal(created[1]["filterBranch"])
@@ -530,7 +539,7 @@ func TestAttachExisting_RegistrantsCreateRaced_RelooksAndReuses(t *testing.T) {
 }
 
 // A refused create whose list never appears keeps the create's error, after a bounded number
-// of looks.
+// of looks and one look across object types.
 func TestAttachExisting_StandingCreateRefusedAndNeverFound_Fails(t *testing.T) {
 	portal, std := standardPortal()
 	portal.refuseCreate = http.StatusBadRequest
@@ -539,7 +548,7 @@ func TestAttachExisting_StandingCreateRefusedAndNeverFound_Fails(t *testing.T) {
 	_, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, std, "")
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, audience.ErrStandingListConflict)
-	assert.Equal(t, 1+3, portal.searchCount(audience.StandardSuppressionName("proj-1")))
+	assert.Equal(t, 1+3+1, portal.searchCount(audience.StandardSuppressionName("proj-1")))
 }
 
 func TestAttachExisting_RegistrantsListForAnotherEdition_IsAConflict(t *testing.T) {
@@ -665,4 +674,135 @@ func TestSuppressionLists_StandingLookupsAreLenient(t *testing.T) {
 	_, _, err = x.SuppressionLists(context.Background(), "proj-1", "", "", edition)
 	require.Error(t, err)
 	assert.True(t, hubspot.IsPermissionRejection(err))
+}
+
+// composeExplorerProjects is composeExplorer for several projects whose connections reach the
+// SAME portal, as two foundations on the shared LF portal do.
+func composeExplorerProjects(srvURL string, projects ...string) *AudienceExplorer {
+	rows := map[string]*model.Connection{}
+	for _, p := range projects {
+		rows[p] = activeHubSpotConn(goodHubSpotCreds)
+	}
+	x := NewAudienceExplorer(NewAudienceBuilder(&scopedConnReader{rows: rows}, identityEncryptor{}, nil, hubspot.WithBaseURL(srvURL)), nil, nil, nil)
+	x.sleep = func(context.Context, time.Duration) error { return nil }
+	return x
+}
+
+// Two projects on one portal compose the same named selection. Each excludes its OWN standing
+// list, so the second must not reuse the first's fingerprinted master.
+func TestComposeMaster_TwoProjectsOnOnePortal_NeverShareAMaster(t *testing.T) {
+	portal, std := standardPortal()
+	portal.byName["AGNTCon Japan - Master"] = "31349" // the derived name is taken, so masters are fingerprinted
+	x := composeExplorerProjects(portal.serve(t).URL, "proj-1", "proj-2")
+	in := audience.ComposeInput{ListIDs: []string{"111"}, ExcludeListIDs: std, Name: "AGNTCon Japan - Master"}
+
+	first, err := x.ComposeMaster(context.Background(), "proj-1", in)
+	require.NoError(t, err)
+	second, err := x.ComposeMaster(context.Background(), "proj-2", in)
+	require.NoError(t, err)
+
+	require.NotNil(t, first.Suppression)
+	require.NotNil(t, second.Suppression)
+	assert.NotEqual(t, first.Suppression.ListID, second.Suppression.ListID, "one standing list per project")
+	assert.NotEqual(t, first.Master.ListID, second.Master.ListID, "proj-2 must not reuse proj-1's master")
+	master, _ := json.Marshal(portal.filterOf(second.Master.ListID))
+	assert.Contains(t, string(master), `"listId":"`+second.Suppression.ListID+`"`)
+	assert.NotContains(t, string(master), `"listId":"`+first.Suppression.ListID+`"`)
+}
+
+// A recreated standing list has a new id, so the same compose is a new master that excludes it,
+// never the old master that excludes the list that is gone.
+func TestComposeMaster_RecreatedStandingList_IsANewMaster(t *testing.T) {
+	portal, std := standardPortal()
+	portal.byName["AGNTCon Japan - Master"] = "31349"
+	x := composeExplorer(portal.serve(t).URL)
+	in := audience.ComposeInput{ListIDs: []string{"111"}, ExcludeListIDs: std, Name: "AGNTCon Japan - Master"}
+
+	first, err := x.ComposeMaster(context.Background(), "proj-1", in)
+	require.NoError(t, err)
+	again, err := x.ComposeMaster(context.Background(), "proj-1", in)
+	require.NoError(t, err)
+	assert.Equal(t, first.Master.ListID, again.Master.ListID, "an identical compose still reuses its master")
+
+	recreated, err := audience.MasterListFilter(std)
+	require.NoError(t, err)
+	portal.mu.Lock()
+	portal.byName[audience.StandardSuppressionName("proj-1")] = "7777"
+	portal.filters["7777"] = recreated
+	portal.mu.Unlock()
+
+	third, err := x.ComposeMaster(context.Background(), "proj-1", in)
+	require.NoError(t, err)
+	require.NotNil(t, third.Suppression)
+	assert.Equal(t, "7777", third.Suppression.ListID)
+	assert.NotEqual(t, first.Master.ListID, third.Master.ListID)
+	master, _ := json.Marshal(portal.filterOf(third.Master.ListID))
+	assert.Contains(t, string(master), `"listId":"7777"`)
+}
+
+// The edition's registrants list is also one of the lists the send goes to: refused as a 400
+// naming it, before anything is created or rewritten, on attach and on compose.
+func TestResolveSuppressions_RegistrantsListAlsoIncluded_IsRefusedBeforeAnyWrite(t *testing.T) {
+	const edition = "KubeCon + CloudNativeCon Europe 2026"
+	seed := func(t *testing.T) *suppressionPortal {
+		t.Helper()
+		portal, _ := standardPortal()
+		filter, err := audience.CurrentRegistrantsFilter(edition)
+		require.NoError(t, err)
+		portal.byName[audience.CurrentRegistrantsName(edition)] = "88"
+		portal.filters["88"] = filter
+		return portal
+	}
+
+	portal := seed(t)
+	_, std := standardPortal()
+	x := composeExplorer(portal.serve(t).URL)
+	_, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027", "88"}, std, edition)
+	var overlap *audience.ExclusionOverlapError
+	require.ErrorAs(t, err, &overlap)
+	require.ErrorIs(t, err, audience.ErrInvalidRequest)
+	assert.Equal(t, "88", overlap.ListID)
+	assert.Contains(t, err.Error(), "current-registrants list")
+	created, updated := portal.writes()
+	assert.Empty(t, created, "the standing list is not created for a refused request")
+	assert.Empty(t, updated)
+
+	portal = seed(t)
+	x = composeExplorer(portal.serve(t).URL)
+	_, err = x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+		ListIDs: []string{"88", "111"}, ExcludeListIDs: []string{"6001"}, Name: "KubeCon EU - Master", CurrentRegistrantsEvent: edition,
+	})
+	require.ErrorAs(t, err, &overlap)
+	created, _ = portal.writes()
+	assert.Empty(t, created, "no master that excludes its own inclusion branch")
+}
+
+// The standing standard list stands in for the selected standard lists; including it while
+// selecting them is the same contradiction.
+func TestAttachExisting_StandingListAlsoIncluded_IsRefused(t *testing.T) {
+	portal, std := standardPortal()
+	standingWith(t, portal, std)
+	x := composeExplorer(portal.serve(t).URL)
+
+	_, err := x.AttachExisting(context.Background(), "proj-1", []string{"77"}, std, "")
+	var overlap *audience.ExclusionOverlapError
+	require.ErrorAs(t, err, &overlap)
+	assert.Equal(t, "77", overlap.ListID)
+	assert.Contains(t, err.Error(), "standing standard suppression list")
+	_, updated := portal.writes()
+	assert.Empty(t, updated)
+}
+
+// A non-contact list holds the standing name: SearchLists never returns it, so the create is
+// refused with nothing found. The cross-type lookup names it as the 409 conflict.
+func TestAttachExisting_NonContactListHoldsTheStandingName_IsANamedConflict(t *testing.T) {
+	portal, std := standardPortal()
+	portal.foreign = map[string]string{audience.StandardSuppressionName("proj-1"): "5050"}
+	portal.refuseCreate = http.StatusBadRequest
+	x := composeExplorer(portal.serve(t).URL)
+
+	_, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, std, "")
+	require.ErrorIs(t, err, audience.ErrStandingListConflict)
+	assert.Contains(t, err.Error(), "(id 5050)")
+	assert.Contains(t, err.Error(), "not a contact list")
 }

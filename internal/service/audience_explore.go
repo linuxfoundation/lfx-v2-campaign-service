@@ -774,6 +774,13 @@ func audienceExploreErr(ctx context.Context, op, projectID string, err error) er
 			msg = conflict.Error()
 		}
 		return &explore.ConflictError{Code: "409", Message: msg}
+	case errors.As(err, new(*audience.ExclusionOverlapError)):
+		// Above the generic ErrInvalidRequest arm it also matches: that arm's message points at
+		// the event URL or list reference, and the fix here is a specific list, which only this
+		// service's own typed error names.
+		var overlap *audience.ExclusionOverlapError
+		errors.As(err, &overlap)
+		return &explore.BadRequestError{Code: "400", Message: overlap.Error()}
 	case errors.Is(err, audience.ErrInvalidRequest), errors.Is(err, audience.ErrEventNameUnresolved):
 		// 400, not 500: nothing is wrong with the service, and the fix is a different
 		// request — a resolvable list reference, or an event URL whose page declares a

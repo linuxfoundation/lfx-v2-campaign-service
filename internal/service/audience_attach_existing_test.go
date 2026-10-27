@@ -266,3 +266,18 @@ func TestAttachExistingAudienceMapsAStandingListConflictTo409(t *testing.T) {
 	assert.Contains(t, ce.Message, "rename or remove it in HubSpot")
 	assert.Zero(t, repo.calls)
 }
+
+// A resolved exclusion that is also an inclusion is a 400 naming the list, not the generic
+// "check the event URL" text the ErrInvalidRequest arm gives.
+func TestAttachExistingAudienceMapsAResolvedOverlapTo400NamingTheList(t *testing.T) {
+	overlap := &audience.ExclusionOverlapError{ListID: "88", Name: "KubeCon EU 2026 - Current Registrants", Role: "the current-registrants list of current_registrants_event"}
+	svc, repo := attachService(t, &attachExplorer{err: fmt.Errorf("audience attach: %w", overlap)})
+
+	_, err := svc.AttachExistingAudience(context.Background(), attachPayload("brief-1"))
+	var br *explore.BadRequestError
+	require.ErrorAs(t, err, &br)
+	assert.Equal(t, "400", br.Code)
+	assert.Contains(t, br.Message, `list 88 ("KubeCon EU 2026 - Current Registrants")`)
+	assert.Contains(t, br.Message, "cannot be both sent to and suppressed")
+	assert.Zero(t, repo.calls, "nothing is recorded")
+}
