@@ -460,6 +460,21 @@ attaching a campaign to an amount nobody asked for. Refusing on a mismatch inste
 re-impose the dead end, and the end state after adoption equals a clean first-time create:
 one non-shared daily budget at the brief's amount, one PAUSED campaign on it.
 
+**An AMBIGUOUS alignment failure is marked at this call site, not inside
+`UpdateCampaignBudget`** (#384). The method marks only the three 2xx exits where Google
+ACCEPTED the mutate and answered untrustworthily; its ordinary ambiguous failures — a 5xx,
+an exhausted 429, a mid-flight transport timeout on `campaignBudgets:mutate` — return a
+plain wrapped error, because ambiguity of that SHAPE is what `createOutcomeAmbiguous`
+reads and what the method's other caller, `dispatch/googleads_budget.go`, already asks for
+via `IsOutcomeUnconfirmed`. Marking inside would be redundant there and would change the
+error type that path returns. The create path cannot reach the same answer by shape —
+`carriesUnconfirmedWrite` reads the explicit marker only, for the reason in the bullet
+below — so the write that may have landed has to say so itself. The wrap is therefore
+gated on `createOutcomeAmbiguous(err) && !carriesUnconfirmedWrite(err)`, which leaves the
+DEFINITE failures unmarked: a 4xx Google rejected, and the pre-send unsupported-period
+refusal that never left the process. Those changed nothing, so `budget_name_taken` stays
+true of them and the operator keeps the precise token.
+
 A DECLINED reuse changes nothing: the original already-exists error is returned, the
 partial result still carries the names, and Performance Max still appends
 `expansionActionRequiredIfExists`. That hedge is deliberately absent on the ACCEPTED path —
@@ -482,7 +497,10 @@ it to classify what the account now holds:
   `IsOutcomeUnconfirmed`, which also shape-infers ambiguity from a 5xx or transport error —
   on this path usually the lookup read failing, which wrote nothing, and weakening a clean
   `budget_name_taken` would cost the operator the one token that says exactly what to
-  look for.
+  look for. That narrowness is why an ambiguous alignment failure has to be marked
+  explicitly where it happens (above): until #384 the marker existed only on the three
+  2xx exits, so a 5xx on `campaignBudgets:mutate` reached this arm unmarked and was
+  reported as "nothing new was created" when the existing budget's amount may have moved.
 
 ### Resolving an AMBIGUOUS budget create (`budget_lookup.go`, #385)
 

@@ -6,6 +6,7 @@ package googleads
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // budgetRowOpts are the fields of a campaign_budget row a gate test varies. The zero
@@ -652,6 +655,101 @@ func TestReuseBudgetAfterDuplicateName_AlignsAmountToTheBrief(t *testing.T) {
 	if !sawAlign {
 		t.Errorf("an amount change must be recorded in the steps, got: %v", steps)
 	}
+}
+
+// TestReuseBudgetAfterDuplicateName_AmbiguousAlignmentIsMarkedUnconfirmed drives a REAL
+// alignment failure through the production path, rather than handing CreateOutcome an error
+// that was already marked.
+//
+// That distinction is the whole point of the test. The classification case in
+// create_outcome_test.go builds an *unconfirmedBudgetMutateError itself, so it exercises only
+// the predicate that reads the marker — it stays green whether or not anything in production
+// ever sets one. UpdateCampaignBudget marks just its three 2xx exits; an ordinary 5xx, an
+// exhausted 429 or a transport timeout on campaignBudgets:mutate returns a plain wrapped
+// error. So the marker has to come from reuseBudgetAfterDuplicateName, and only a test that
+// starts at the HTTP handler can tell whether it does.
+//
+// The counter-case is the one the gate must NOT catch: a DEFINITE 4xx on the same mutate
+// changed nothing, so "nothing new was created" stays true and the precise token stands.
+func TestReuseBudgetAfterDuplicateName_AmbiguousAlignmentIsMarkedUnconfirmed(t *testing.T) {
+	// The brief asks for 50000000 against an orphan carrying 500000000, so alignment is
+	// always attempted; only the mutate's status differs between the two subtests.
+	newServer := func(t *testing.T, mutateStatus int) *httptest.Server {
+		t.Helper()
+		var (
+			mu       sync.Mutex
+			searches int
+		)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if writeAccountsToken(w, r) {
+				return
+			}
+			if strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate") {
+				w.WriteHeader(mutateStatus)
+				return
+			}
+			mu.Lock()
+			n := searches
+			searches++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			if n == 0 {
+				_ = json.NewEncoder(w).Encode(searchResponse{Results: []json.RawMessage{
+					budgetRow(budgetRowOpts{name: testBudgetName, amountMicros: "500000000"}),
+				}})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(searchResponse{Results: []json.RawMessage{}})
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+
+	// classify wraps reuseErr the way all five channels do — the DUPLICATE_NAME refusal
+	// FIRST, the reuse failure second — so the chain CreateOutcome sees is production's.
+	classify := func(reuseErr error) (string, bool) {
+		duplicate := fmt.Errorf("campaignBudgets:mutate: %w",
+			&apiError{StatusCode: 400, Method: http.MethodPost, ErrorCodes: []string{"DUPLICATE_NAME"}})
+		return CreateOutcome(
+			&CampaignResult{CampaignName: "c", CampaignBudgetName: testBudgetName},
+			fmt.Errorf("already exists (DUPLICATE_NAME): %w — and could not be safely reused: %w", duplicate, reuseErr))
+	}
+
+	t.Run("a 500 on the alignment mutate may have landed", func(t *testing.T) {
+		c := newAccountsTestClient(t, newServer(t, http.StatusInternalServerError))
+
+		_, _, _, err := c.reuseBudgetAfterDuplicateName(context.Background(), testBudgetName, 50_000_000, 50)
+		if err == nil {
+			t.Fatal("a failed alignment must refuse the reuse")
+		}
+		if !carriesUnconfirmedWrite(err) {
+			t.Errorf("the alignment error must carry the unconfirmed-write marker; Google may have applied the amount before the connection dropped. got: %v", err)
+		}
+
+		got, ok := classify(err)
+		if !ok || got != domain.CreateOutcomeUnconfirmed {
+			t.Errorf("CreateOutcome = (%q, %v), want (%q, true): the existing budget's amount may have moved, so \"nothing new was created\" would be false",
+				got, ok, domain.CreateOutcomeUnconfirmed)
+		}
+	})
+
+	t.Run("a 400 on the alignment mutate changed nothing", func(t *testing.T) {
+		c := newAccountsTestClient(t, newServer(t, http.StatusBadRequest))
+
+		_, _, _, err := c.reuseBudgetAfterDuplicateName(context.Background(), testBudgetName, 50_000_000, 50)
+		if err == nil {
+			t.Fatal("a failed alignment must refuse the reuse")
+		}
+		if carriesUnconfirmedWrite(err) {
+			t.Errorf("a definite 4xx wrote nothing and must NOT be marked unconfirmed; marking it would cost the operator the precise token. got: %v", err)
+		}
+
+		got, ok := classify(err)
+		if !ok || got != domain.CreateOutcomeBudgetNameTaken {
+			t.Errorf("CreateOutcome = (%q, %v), want (%q, true): Google refused the mutate, so nothing new was created",
+				got, ok, domain.CreateOutcomeBudgetNameTaken)
+		}
+	})
 }
 
 // TestCreateCampaign_DuplicateBudgetNameReusesTheOrphan is the end-to-end wiring proof on
