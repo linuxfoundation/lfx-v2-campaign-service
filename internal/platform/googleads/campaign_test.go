@@ -73,7 +73,8 @@ func newCampaignClientSearch(t *testing.T, budgetH, campaignH, adGroupH, adGroup
 	t.Cleanup(apiSrv.Close)
 	return NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
-		withRetryBaseDelay(time.Millisecond))
+		withRetryBaseDelay(time.Millisecond),
+		withBudgetResolveDelays(time.Millisecond, time.Millisecond))
 }
 
 func okBudget(w http.ResponseWriter, _ *http.Request) {
@@ -410,7 +411,12 @@ func TestCreateCampaign_BudgetDuplicateNameIsUnconfirmedExists(t *testing.T) {
 	}
 }
 
-func TestCreateCampaign_Budget2xxNoResourceNameIsUnconfirmed(t *testing.T) {
+// A 2xx carrying an EMPTY results array says a budget was committed and refuses to say
+// which. Since #387 that is first answered by a lookup (budget_recovery_test.go covers the
+// recovery itself); when the lookup settles nothing either, the campaign is still never
+// attempted. The sentence no longer says "UNCONFIRMED (may exist)" — Google's 2xx settles
+// that the budget exists, and only its identity is open.
+func TestCreateCampaign_Budget2xxNoResourceNameRefusesAfterRecoveryFails(t *testing.T) {
 	c := newCampaignClient(t,
 		func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"results":[]}`) },
 		func(w http.ResponseWriter, _ *http.Request) {
@@ -419,8 +425,8 @@ func TestCreateCampaign_Budget2xxNoResourceNameIsUnconfirmed(t *testing.T) {
 		},
 	)
 	_, err := c.CreateCampaign(context.Background(), sampleInput())
-	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
-		t.Errorf("budget 2xx-with-no-resource-name must be UNCONFIRMED, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "WAS created") {
+		t.Errorf("budget 2xx-with-no-resource-name must refuse on an existing budget, got: %v", err)
 	}
 }
 
@@ -793,10 +799,11 @@ func TestValidateEntityName_UnitsBytesVsRunes(t *testing.T) {
 	}
 }
 
-// A 2xx whose resourceName is present but MALFORMED (no trailing id segment)
-// yields no reconcilable id, so it must be treated as UNCONFIRMED, not a
-// confirmed create — at both the budget and campaign steps.
-func TestCreateCampaign_MalformedBudgetResourceNameIsUnconfirmed(t *testing.T) {
+// A 2xx whose resourceName is present but MALFORMED (no trailing id segment) yields no
+// reconcilable id. On the CAMPAIGN step that is still a flat UNCONFIRMED (below). On the
+// BUDGET step, #387 sends it through the same lookup as the empty-results shape, and the
+// refusal below is what is left when the lookup settles nothing either.
+func TestCreateCampaign_MalformedBudgetResourceNameRefusesAfterRecoveryFails(t *testing.T) {
 	c := newCampaignClient(t,
 		func(w http.ResponseWriter, _ *http.Request) {
 			// resourceName with an empty id segment → resourceID() returns "".
@@ -808,8 +815,11 @@ func TestCreateCampaign_MalformedBudgetResourceNameIsUnconfirmed(t *testing.T) {
 		},
 	)
 	_, err := c.CreateCampaign(context.Background(), sampleInput())
-	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
-		t.Errorf("malformed budget resourceName must be UNCONFIRMED, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "WAS created") {
+		t.Errorf("a malformed budget resourceName must refuse on an existing budget, got: %v", err)
+	}
+	if err != nil && !strings.Contains(err.Error(), "malformed (no id segment)") {
+		t.Errorf("the parse failure must survive into the refusal: %v", err)
 	}
 }
 

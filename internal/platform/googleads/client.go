@@ -151,6 +151,18 @@ type Client struct {
 	// fast.
 	retryBaseDelay time.Duration
 
+	// budgetResolveMinDelay and budgetResolveMaxDelay are the backoff bounds for
+	// retryFindBudgetByName's no-row re-reads. They default to the
+	// ambiguousBudgetResolveMinDelay/MaxDelay consts; tests shrink them (via
+	// withBudgetResolveDelays) to keep runs fast, exactly as they do retryBaseDelay.
+	//
+	// Only the SLEEPS are overridable. The attempt count and the wall-clock ceiling
+	// stay on their consts, because tests assert on how many reads the account was
+	// given before an absence is called a contradiction — shrinking that would make
+	// those assertions describe the test rig rather than the schedule.
+	budgetResolveMinDelay time.Duration
+	budgetResolveMaxDelay time.Duration
+
 	// imageDialGuard decides whether the Demand Gen creative fetch may connect to a
 	// resolved address. Defaults to checkPublicIP, which refuses every non-public
 	// range; only tests override it (via withImageDialGuard), because httptest
@@ -296,6 +308,22 @@ func withRetryBaseDelay(d time.Duration) Option {
 	}
 }
 
+// withBudgetResolveDelays overrides the backoff bounds for retryFindBudgetByName's
+// no-row re-reads. Unexported: only tests use it, to keep budget-recovery runs fast.
+//
+// It does NOT touch ambiguousBudgetResolveAttempts or the wall-clock ceiling — a test
+// that shrinks the sleeps still walks the real number of reads.
+func withBudgetResolveDelays(minDelay, maxDelay time.Duration) Option {
+	return func(c *Client) {
+		if minDelay > 0 {
+			c.budgetResolveMinDelay = minDelay
+		}
+		if maxDelay > 0 {
+			c.budgetResolveMaxDelay = maxDelay
+		}
+	}
+}
+
 // WithNAT64Prefixes supplies the deployment's operator-specific NAT64 prefixes to the
 // creative-fetch address guard, matching what the event-URL fetcher and the HubSpot image
 // download are given.
@@ -354,6 +382,9 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		now:            time.Now,
 		retryBaseDelay: retryBaseDelay,
 		imageDialGuard: checkPublicIP,
+
+		budgetResolveMinDelay: ambiguousBudgetResolveMinDelay,
+		budgetResolveMaxDelay: ambiguousBudgetResolveMaxDelay,
 	}
 	for _, o := range opts {
 		o(c)
