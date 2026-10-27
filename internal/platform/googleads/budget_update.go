@@ -98,9 +98,10 @@ func (c *Client) UpdateCampaignBudget(ctx context.Context, budgetID string, amou
 	}
 
 	req := mutateRequest{Operations: []mutateOperation{{Update: update, UpdateMask: mask}}}
-	body, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaignBudgets:mutate"), req, true)
+	body, retries, err := c.doRequestCounted(ctx, http.MethodPost, c.customerPath("campaignBudgets:mutate"), req, true)
 	if err != nil {
-		return fmt.Errorf("google-ads campaign budget %s amount update failed: %w", id, err)
+		return retriedUnconfirmed("campaign budget amount update", retries,
+			fmt.Errorf("google-ads campaign budget %s amount update failed: %w", id, err))
 	}
 	// A 2xx is not yet a confirmed write. The caller's contract is that a nil return means the
 	// platform APPLIED the change — it persists the new amount on that basis — so a success

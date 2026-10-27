@@ -159,11 +159,15 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 	var budgetResource, budgetID string
 	switch {
 	case err == nil:
-		budgetResource, budgetID, err = firstResourceName(budgetResp)
+		var recovered string
+		budgetResource, budgetID, recovered, err = c.budgetFromCreateResponse(ctx, "display", budgetName, pf.amountMicros, budgetResp)
 		if err != nil {
-			return namePartial(), fmt.Errorf("google-ads display budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
+			return namePartial(), err
 		}
 		steps = append(steps, fmt.Sprintf("Campaign budget created: %s (%.2f/day in account currency)", budgetID, in.Budget))
+		if recovered != "" {
+			steps = append(steps, recovered)
+		}
 	case isDuplicateBudgetNameErr(err):
 		resource, id, reuseSteps, reuseErr := c.reuseBudgetAfterDuplicateName(ctx, budgetName, pf.amountMicros, in.Budget)
 		if reuseErr != nil {

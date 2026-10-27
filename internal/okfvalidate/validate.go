@@ -8,7 +8,8 @@
 // and use the "* [Title](url) - description" bullet form, a reserved log.md
 // uses "##"-level ISO 8601 date headings sorted newest first, and this
 // bundle's log/ directory holds one dated fragment per entry instead
-// ("YYYY-MM-DD-<slug>.md", no frontmatter, first H1 dated to match).
+// ("YYYY-MM-DD-<slug>.md", no frontmatter, first H1 dated to match, opening
+// with one of CLAUDE.md's bold kind markers).
 package okfvalidate
 
 import (
@@ -22,6 +23,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/okf"
 )
@@ -588,10 +590,26 @@ func withinBundle(root, target string) bool {
 var logFragmentNamePattern = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})-[A-Za-z0-9][A-Za-z0-9._-]*\.md$`)
 var logFragmentHeadingPattern = regexp.MustCompile(`^# (\d{4}-\d{2}-\d{2})\b`)
 
+// logFragmentKinds is the set of bold kind markers CLAUDE.md allows an entry
+// to open with. It is a CLOSED set on purpose: the marker is what classifies
+// an entry for a reader scanning the log, so a one-off spelling ("Feature",
+// "Test") is not a richer label but an entry that sorts under nothing.
+var logFragmentKinds = []string{"Update", "Fix", "Creation", "Note", "Verification", "Docs"}
+
+// logFragmentMarkerPattern matches the opening marker and captures its word,
+// so a failure can name the offending value rather than only rejecting the
+// line. The marker must be the first thing on the line and bold; what follows
+// is free (CLAUDE.md writes an em dash, which is not enforced here because the
+// classification does not depend on it).
+var logFragmentMarkerPattern = regexp.MustCompile(`^\*\*([A-Za-z]+)\*\*`)
+
+// logFragmentSectionPattern matches an archive file's per-entry "##" heading.
+var logFragmentSectionPattern = regexp.MustCompile(`^## \S`)
+
 // validateLogFragment checks a docs/knowledge/log/ entry: its filename
 // matches "YYYY-MM-DD-<slug>.md", it declares no frontmatter block (a
-// fragment is not a concept), and its first H1 begins with the same date as
-// the filename.
+// fragment is not a concept), its first H1 begins with the same date as the
+// filename, and it opens with one of CLAUDE.md's bold kind markers.
 func validateLogFragment(path string) []error {
 	m := logFragmentNamePattern.FindStringSubmatch(filepath.Base(path))
 	if m == nil {
@@ -611,7 +629,9 @@ func validateLogFragment(path string) []error {
 		return []error{fmt.Errorf("%s: log fragment must not declare a frontmatter block", path)}
 	}
 
-	for _, line := range strings.Split(content, "\n") {
+	lines := strings.Split(content, "\n")
+	headingAt := -1
+	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
@@ -623,10 +643,96 @@ func validateLogFragment(path string) []error {
 		if hm[1] != m[1] {
 			return []error{fmt.Errorf("%s: heading date %q does not match filename date %q", path, hm[1], m[1])}
 		}
-		return nil
+		headingAt = i
+		break
+	}
+	if headingAt < 0 {
+		return []error{fmt.Errorf("%s: no \"# YYYY-MM-DD\" heading found", path)}
 	}
 
-	return []error{fmt.Errorf("%s: no \"# YYYY-MM-DD\" heading found", path)}
+	// An ARCHIVE rolls many entries under one H1, each behind its own "##"
+	// heading and each carrying its own marker, so the marker is per SECTION
+	// rather than at the top of the file. Detect that shape by what follows
+	// the H1 rather than by filename: a name convention would be a second
+	// rule to keep in sync, and this one reads the structure it is about.
+	if next, ok := nextMarkerCandidate(lines, headingAt+1); ok && logFragmentSectionPattern.MatchString(next) {
+		var errs []error
+		for i, line := range lines {
+			section := strings.TrimSpace(line)
+			if !logFragmentSectionPattern.MatchString(section) {
+				continue
+			}
+			if err := checkKindMarker(path, lines, i+1, section); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errs
+	}
+
+	if err := checkKindMarker(path, lines, headingAt+1, ""); err != nil {
+		return []error{err}
+	}
+	return nil
+}
+
+// nextMarkerCandidate returns the first line at or after start that could
+// carry a kind marker, with blank lines and a leading blockquote skipped.
+//
+// The blockquote is why this is not just "the next non-blank line". An entry
+// that was later superseded carries a "> **Superseded ...**" banner ABOVE its
+// marker, so a reader meets the warning before the entry it qualifies. That
+// banner is itself bold, so a naive check both misses the real marker and
+// rejects the file for a word ("Superseded", "SUPERSEDED") that was never
+// meant to be one.
+func nextMarkerCandidate(lines []string, start int) (string, bool) {
+	for i := start; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" || strings.HasPrefix(trimmed, ">") {
+			continue
+		}
+		return trimmed, true
+	}
+	return "", false
+}
+
+// checkKindMarker requires the entry body beginning at start to open with one
+// of logFragmentKinds. section names the archive section being checked, and
+// is empty for a single-entry fragment.
+func checkKindMarker(path string, lines []string, start int, section string) error {
+	in := ""
+	if section != "" {
+		in = fmt.Sprintf(" in section %q", section)
+	}
+	allowed := strings.Join(logFragmentKinds, ", ")
+
+	line, ok := nextMarkerCandidate(lines, start)
+	if !ok {
+		return fmt.Errorf("%s: entry%s has no body, so it carries no kind marker; it must open with one of: %s", path, in, allowed)
+	}
+	km := logFragmentMarkerPattern.FindStringSubmatch(line)
+	if km == nil {
+		return fmt.Errorf("%s: entry%s opens with %q, which is not a bold kind marker; it must open with one of: %s", path, in, truncateForError(line), allowed)
+	}
+	for _, kind := range logFragmentKinds {
+		if km[1] == kind {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s: entry%s opens with kind marker %q, which is not one of: %s", path, in, km[1], allowed)
+}
+
+// truncateForError bounds a quoted source line so one malformed entry cannot
+// drown the report in a single long paragraph.
+func truncateForError(s string) string {
+	const max = 60
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }
 
 var logDatePattern = regexp.MustCompile(`^## (\d{4}-\d{2}-\d{2})$`)
