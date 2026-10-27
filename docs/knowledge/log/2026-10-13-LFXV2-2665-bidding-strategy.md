@@ -60,6 +60,7 @@ again in `Dispatch`, before any upstream call. `googleAdsConfig.bidding` is refu
 service layer; no Google code changed. Migration `000050` adds `campaigns.bidding_strategy`. A
 manual create also writes its starting bid to `max_cpc_bid`. The upsert fills both columns only
 while they are empty. The campaign resource now returns `bidding_strategy` and `max_cpc_bid`.
+
 **Migration number: 000050.** It was first numbered `000047`, above `000043`–`000046` from #328
 (`fix/LFXV2-2665-adoption-binding-indexes`), because golang-migrate never applies a lower version
 after a higher one; this PR was held until #328 merged. Main then claimed `000047`–`000049` while
