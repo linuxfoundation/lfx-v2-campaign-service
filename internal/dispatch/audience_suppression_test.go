@@ -1060,4 +1060,19 @@ func TestComposeMaster_ExpansionBudget_RefusedBeforeAnyWrite(t *testing.T) {
 	require.ErrorAs(t, err, &field)
 	created, _ = portal.writes()
 	assert.Empty(t, created, "the registrants list is not created for a refused compose")
+
+	// The existing registrants list already named among the exclusions is one condition, not two:
+	// 25 × (98 others + the registrants list + 1) = 2500 is composed, not refused.
+	const edition = "Synthetic Summit 2026"
+	portal, _ = standardPortal()
+	filter, ferr := audience.CurrentRegistrantsFilter(edition)
+	require.NoError(t, ferr)
+	portal.byName[audience.CurrentRegistrantsName(edition)] = "88"
+	portal.filters["88"] = filter
+	x = composeExplorer(portal.serve(t).URL)
+	_, err = x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+		ListIDs: ids("1", 25), ExcludeListIDs: append(ids("2", 98), "88"), Name: "Registrants Named Twice - Master",
+		CurrentRegistrantsEvent: edition,
+	})
+	require.NoError(t, err, "an exclusion named twice is counted once")
 }

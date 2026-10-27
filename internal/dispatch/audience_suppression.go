@@ -121,18 +121,6 @@ func (x *AudienceExplorer) resolveSuppressions(ctx context.Context, client *hubs
 		standardIDs = resolvedIDs(rows)
 		useStandard, rest = audience.SplitStandardSuppressions(rest, standardIDs)
 	}
-	if budget != nil {
-		exclusions := len(rest)
-		if useStandard {
-			exclusions++
-		}
-		if edition != "" {
-			exclusions++
-		}
-		if err := budget(exclusions); err != nil {
-			return nil, nil, err
-		}
-	}
 	var standingHit, registrantsHit *hubspot.List
 	if useStandard {
 		name := audience.StandardSuppressionName(projectID)
@@ -159,6 +147,22 @@ func (x *AudienceExplorer) resolveSuppressions(ctx context.Context, client *hubs
 			}
 		}
 		registrantsHit = hit
+	}
+	// The budget counts DISTINCT resolved exclusions, so it runs after the name lookups: a
+	// standing list the request already names among its other exclusions is one condition,
+	// not two. A list only a later re-lookup recovers counts as new, erring toward refusal.
+	// Still before any write.
+	if budget != nil {
+		exclusions := len(rest)
+		if useStandard && (standingHit == nil || !slices.Contains(rest, standingHit.ListID)) {
+			exclusions++
+		}
+		if edition != "" && (registrantsHit == nil || !slices.Contains(rest, registrantsHit.ListID)) {
+			exclusions++
+		}
+		if err := budget(exclusions); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	// Obtain both lists: what the reads found, or a create -- and, when a create is refused or
