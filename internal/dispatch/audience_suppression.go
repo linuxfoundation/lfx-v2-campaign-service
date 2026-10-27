@@ -359,16 +359,19 @@ func (x *AudienceExplorer) growStandardList(ctx context.Context, client *hubspot
 					"covered by the project's standing standard suppression list %q (id %s), which replaces the selected standard suppressions", current.Name, current.ListID)}
 			}
 		}
+		// Checked on every read, reuse included: a hand-edited list that ORs in a contact
+		// condition beside the lists would suppress more than the standard lists, and a rewrite
+		// would drop that condition, so it is neither reused nor grown.
+		if !audience.StandingFilterIsUnion(current.FilterBranch) {
+			return nil, &audience.StandingListConflictError{Name: current.Name, ListID: current.ListID,
+				Reason: "its filter holds conditions other than whole lists, so it suppresses more than the standard lists and cannot be reused or grown"}
+		}
 		want = audience.UniqueIDs(append(append([]string(nil), covered...), want...))
 		if len(want) == len(covered) {
 			return &audience.ComposedList{ListRow: listRow(current)}, nil
 		}
 		if attempt > standingGrowAttempts {
 			return nil, fmt.Errorf("standard suppression list %s was replaced by another writer on each of %d attempts to grow it; retry", current.ListID, standingGrowAttempts)
-		}
-		if !audience.StandingFilterIsUnion(current.FilterBranch) {
-			return nil, &audience.StandingListConflictError{Name: current.Name, ListID: current.ListID,
-				Reason: "must gain a standard suppression list, but its filter holds conditions other than whole lists that a rewrite would drop"}
 		}
 		grown, ferr := audience.MasterListFilter(want)
 		if ferr != nil {

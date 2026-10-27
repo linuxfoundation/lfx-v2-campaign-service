@@ -901,6 +901,43 @@ func TestAttachExisting_IncompatibleRegistrantsList_IsRefusedBeforeGrowing(t *te
 	}
 }
 
+// A hand-edited standing list that already covers every standard list but also ORs in a contact
+// condition suppresses more than the standard lists. A full standard selection needs no growth,
+// yet it is still refused, on attach and compose, rather than silently reused.
+func TestResolveSuppressions_HandEditedStandingListWithAllStandardIDs_IsNotReused(t *testing.T) {
+	for _, compose := range []bool{false, true} {
+		portal, std := standardPortal()
+		union, err := audience.MasterListFilter(std)
+		require.NoError(t, err)
+		var tree map[string]any
+		require.NoError(t, json.Unmarshal(union, &tree))
+		tree["filterBranches"] = append(tree["filterBranches"].([]any), map[string]any{
+			"filterBranchType": "AND", "filterBranches": []any{},
+			"filters": []any{map[string]any{"filterType": "PROPERTY", "property": "jobtitle",
+				"operation": map[string]any{"operationType": "MULTISTRING", "operator": "IS_EQUAL_TO", "values": []any{"Engineer"}}}},
+		})
+		edited, err := json.Marshal(tree)
+		require.NoError(t, err)
+		portal.byName[audience.StandardSuppressionName("proj-1")] = "77"
+		portal.filters["77"] = edited
+		x := composeExplorer(portal.serve(t).URL)
+
+		if compose {
+			_, err = x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+				ListIDs: []string{"31027"}, ExcludeListIDs: std, Name: "KubeCon Europe - Master",
+			})
+		} else {
+			_, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, std, "")
+		}
+		var conflict *audience.StandingListConflictError
+		require.ErrorAs(t, err, &conflict, "compose=%v", compose)
+		assert.Equal(t, "77", conflict.ListID)
+		created, updated := portal.writes()
+		assert.Empty(t, created, "compose=%v", compose)
+		assert.Empty(t, updated, "compose=%v", compose)
+	}
+}
+
 // GetList returns the standing list without a filterBranch. Its real filter is unknown, so it is
 // never rewritten from the resolved ids alone, which would drop every suppression it carries.
 func TestAttachExisting_StandingListReadWithoutAFilter_IsNeverRewritten(t *testing.T) {
