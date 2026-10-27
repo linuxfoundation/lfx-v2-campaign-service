@@ -130,16 +130,24 @@ version/If-Match (`428` when missing, `412` on mismatch).
 operator who asks for another campaign on a platform the brief already has one on — the service
 used to hand back the first campaign as a success. `create-campaigns` now takes `new_version`,
 threaded as `StartOptions.NewVersion` (`Start` is `StartWithOptions` with the zero value). In
-`dispatchPlatform` the lookup returns the slot's LATEST campaign, and the claim takes a
-`slotVersion`: the latest one's for a retry, `latest+1` when `NewVersion` is set AND the latest
-is complete, and `1` on an empty slot. An UNFINISHED latest campaign is never built on — the
+`dispatchPlatform` the lookup returns the slot's LATEST live campaign, and the claim takes a
+`slotVersion`: the latest one's for a retry, and `1` on a slot never used. With `NewVersion` set
+it is numbered past every version the slot has EVER used, deleted rows included: `max(latest,
+maxUsed)+1` when the latest is complete, and `maxUsed+1` when every version was deleted (live 1
+plus deleted 2 gives 3, not 2). A deleted campaign keeps its upstream name, which its version
+composed, so reusing that version would let a name-based lookup hand the deleted campaign back.
+For `NewVersion` the lookup is `GetCampaignByPlatformWithMaxSlotVersion`: the latest live row
+and that maximum from ONE statement (one snapshot), falling back to the latest deleted row
+(flagged by `is_live`) so the maximum survives when no row is live. Two reads would let a
+concurrent request's claim land between them, and the two requests would pick different next
+versions that the claim could no longer dedupe. An UNFINISHED latest campaign is never built on — the
 claim targets its own slot version and gets the skip / reconciliation-required answer a retry
 gets, because a second campaign beside an unresolved one would spend twice. The slot version
 reaches the dispatcher on the context (`model.WithDispatchSlotVersion`). Since `000051` dropped
 `000022`'s three-column index (one release after the per-slot adopt/claim lock shipped, so an
 image-only rollback never returns to a lock-free binary on a schema without it — see the postgres
-concept), the claim for `latest+1` simply succeeds and the second campaign is created beside the
-first; the expand-phase "not available yet" refusal and `domain.ErrSlotVersionUnavailable` are
+concept), the claim for the next version simply succeeds and the second campaign is created beside
+the first; the expand-phase "not available yet" refusal and `domain.ErrSlotVersionUnavailable` are
 gone. `CreateCampaigns`
 refuses `new_version` synchronously (400, before a job exists) for any platform outside
 `model.ProviderSupportsSlotVersions` — today Microsoft only, because the other providers reuse
