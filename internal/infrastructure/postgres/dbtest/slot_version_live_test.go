@@ -530,6 +530,62 @@ func TestLiveUpsertWaitsForTheSlotLock(t *testing.T) {
 	}
 }
 
+// TestLiveDeleteWaitsForTheSlotLock pins the other half of ClaimNewCampaignVersion's check. The
+// check sees a concurrent request's version live, and a delete committing before the claim's
+// INSERT would free that version for the live-row index, so the claim would take it, and the
+// deleted campaign's upstream name, again. DeleteCampaign therefore waits for the slot lock the
+// claim holds across its check and INSERT.
+func TestLiveDeleteWaitsForTheSlotLock(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
+	briefID, project := insertApprovedBrief(ctx, t, pool)
+	p := model.ProviderMicrosoftAds
+	c := createSlotVersion(ctx, t, repo, project, briefID, p, model.FirstSlotVersion)
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, liveSlotLockSQL, briefID, string(p), model.VariantDefault); err != nil {
+		t.Fatalf("take the slot lock: %v", err)
+	}
+	var holderPID int
+	if err := tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&holderPID); err != nil {
+		t.Fatalf("read the lock holder's backend pid: %v", err)
+	}
+
+	deleteDone := make(chan error, 1)
+	go func() {
+		deleteDone <- repo.DeleteCampaign(ctx, project, briefID, c.ID, c.Version, nil, nil)
+	}()
+
+	waitForBackendsBlockedBy(ctx, t, pool, holderPID, 1, func() string {
+		select {
+		case derr := <-deleteDone:
+			return fmt.Sprintf("delete finished (%v) while the slot lock was held; it must wait for it", derr)
+		default:
+			return ""
+		}
+	})
+
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatalf("release the slot lock: %v", err)
+	}
+	select {
+	case derr := <-deleteDone:
+		if derr != nil {
+			t.Fatalf("delete after the lock was released: %v", derr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("delete still blocked after the lock was released")
+	}
+	if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 0 {
+		t.Fatalf("live rows on the slot = %d, want 0 (the campaign was deleted)", live)
+	}
+}
+
 // waitForBackendsBlockedBy blocks until PostgreSQL reports at least want backends waiting on the
 // lock holder's backend (pg_blocking_pids), the positive evidence that the calls under test reached
 // the database and are parked on the lock. finished reports a call that returned while the lock was

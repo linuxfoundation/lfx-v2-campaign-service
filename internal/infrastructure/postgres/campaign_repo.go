@@ -108,7 +108,9 @@ const deletedSlotVersionExistsQuery = `SELECT EXISTS (SELECT 1 FROM campaigns
 // campaign is version 2 — would leave two live campaigns for one logical slot, one of them
 // bound by an adopt whose whole contract is "this slot had none". So every statement that
 // can create a live row for a slot (the claim, the upsert's INSERT arm, the adopt) first
-// takes this lock, and the adopt checks for ANY live row on the slot under it. Because the
+// takes this lock, and the adopt checks for ANY live row on the slot under it. DeleteCampaign,
+// which frees a slot version for the live-row index, takes it too, so a delete cannot land
+// between a new-version claim's deleted-version check and its INSERT. Because the
 // lock is held until COMMIT, and READ COMMITTED takes a fresh snapshot per statement, the
 // adopt's check sees every row a previous holder wrote: a claim that got there first makes
 // the adopt a 409, and an adopt that got there first is a live row the claim's caller read
@@ -2099,6 +2101,12 @@ func hashCampaignID(id string) int64 {
 const deleteCampaignLockQuery = `SELECT status, version FROM campaigns
 	WHERE id=$1 AND brief_id=$2 AND project_id=$3 FOR UPDATE`
 
+// deleteCampaignSlotQuery reads the slot a campaign is on, so DeleteCampaign can take the slot
+// lock before its row lock. platform and variant never change after the row is written, so
+// reading them before the lock is safe.
+const deleteCampaignSlotQuery = `SELECT platform, variant FROM campaigns
+	WHERE id=$1 AND brief_id=$2 AND project_id=$3`
+
 // deleteCampaignQuery performs the SOFT delete. It must never become a DELETE FROM:
 // the row holds platform_campaign_id, the only local pointer to a campaign that may
 // still exist and still be spending upstream. Pinned by
@@ -2217,6 +2225,24 @@ func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, i
 	// Roll back unless we explicitly commit. A no-op after a successful Commit
 	// (pgx returns ErrTxClosed, which we ignore) — this guards every error path.
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Take the per-slot lock BEFORE the row lock, the order every slot write uses. A soft delete
+	// frees the row's slot version for the live-row index, so without the lock it could commit
+	// between ClaimNewCampaignVersion's deleted-version check (which saw the row live) and its
+	// INSERT, and the claim would take the deleted campaign's version, and its upstream name, again.
+	var (
+		slotPlatform string
+		slotVariant  string
+	)
+	if serr := tx.QueryRow(ctx, deleteCampaignSlotQuery, id, briefID, projectID).Scan(&slotPlatform, &slotVariant); serr != nil {
+		if errors.Is(serr, pgx.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		return fmt.Errorf("delete campaign: read slot: %w", serr)
+	}
+	if lerr := lockCampaignSlot(ctx, tx, briefID, model.Provider(slotPlatform), slotVariant); lerr != nil {
+		return fmt.Errorf("delete campaign: %w", lerr)
+	}
 
 	var (
 		status  string
