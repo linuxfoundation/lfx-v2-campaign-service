@@ -1655,7 +1655,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 // carries no result/resourceName, OR the resourceName is present but MALFORMED
 // (e.g. "customers/123/campaigns/" or "noslash") such that no id can be extracted —
 // accepting that would let creation continue with an empty, unreconcilable id or
-// report success with a blank id. The caller treats the error as UNCONFIRMED.
+// report success with a blank id.
+//
+// The campaign- and ad-group-side callers treat the error as UNCONFIRMED. The
+// five budget-side callers do NOT: they hand it to budgetFromCreateResponse,
+// which looks the budget up by the name this client composed and, when the
+// account settles which budget it is, continues with a RECOVERED id — because
+// the create that produced this unreadable body answered 2xx, so the budget's
+// existence is settled and only its identity is not.
 func firstResourceName(body []byte) (resourceName, id string, err error) {
 	var mr mutateResponse
 	if uErr := json.Unmarshal(body, &mr); uErr != nil {

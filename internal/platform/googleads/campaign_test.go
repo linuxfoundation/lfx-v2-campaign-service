@@ -73,7 +73,8 @@ func newCampaignClientSearch(t *testing.T, budgetH, campaignH, adGroupH, adGroup
 	t.Cleanup(apiSrv.Close)
 	return NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
-		withRetryBaseDelay(time.Millisecond))
+		withRetryBaseDelay(time.Millisecond),
+		withBudgetResolveDelays(time.Millisecond, time.Millisecond))
 }
 
 func okBudget(w http.ResponseWriter, _ *http.Request) {

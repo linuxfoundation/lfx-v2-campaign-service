@@ -42,6 +42,10 @@ const ambiguousBudgetResolveTimeout = 20 * time.Second
 // ceiling instead would add twenty seconds to every genuinely-failed create, and each
 // attempt is a real googleAds:search against the account's quota — so the schedule buys
 // the replica-lag window without turning a clean failure into a slow one.
+//
+// The two delays are the DEFAULTS for Client.budgetResolveMinDelay/MaxDelay, which tests
+// shrink via withBudgetResolveDelays. The attempt cap is read straight from this const and
+// is not overridable: tests assert on how many reads the account was given.
 const (
 	ambiguousBudgetResolveAttempts = 4
 	ambiguousBudgetResolveMinDelay = 250 * time.Millisecond
@@ -647,7 +651,7 @@ func (c *Client) retryFindBudgetByName(ctx context.Context, budgetName, occasion
 	rctx, cancel := context.WithTimeout(ctx, ambiguousBudgetResolveTimeout)
 	defer cancel()
 
-	delay := ambiguousBudgetResolveMinDelay
+	delay := c.budgetResolveMinDelay
 	for attempt := 1; ; attempt++ {
 		budget, found, err := c.findBudgetByName(rctx, budgetName)
 		if err != nil {
@@ -669,8 +673,8 @@ func (c *Client) retryFindBudgetByName(ctx context.Context, budgetName, occasion
 			return nil, false, fmt.Errorf("resolving budget %q %s: %w", budgetName, occasion, rctx.Err())
 		case <-timer.C:
 		}
-		if delay *= 2; delay > ambiguousBudgetResolveMaxDelay {
-			delay = ambiguousBudgetResolveMaxDelay
+		if delay *= 2; delay > c.budgetResolveMaxDelay {
+			delay = c.budgetResolveMaxDelay
 		}
 	}
 }

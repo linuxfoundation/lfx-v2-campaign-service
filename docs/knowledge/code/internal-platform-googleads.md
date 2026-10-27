@@ -544,7 +544,11 @@ Four details are load-bearing:
   attempts, 1750ms of sleep) under a 20s ceiling, mirroring
   `reconcileAmbiguousAudienceCommit`'s precedent in `audience_repo.go`. A found budget or
   any gate error settles the question immediately and is never retried. The schedule itself
-  lives in `retryFindBudgetByName`, shared with the unreadable-2xx recovery below;
+  lives in `retryFindBudgetByName`, shared with the unreadable-2xx recovery below. The
+  two delays are `Client` fields defaulting to those consts, which tests shrink via the
+  unexported `withBudgetResolveDelays` exactly as they shrink `retryBaseDelay`; the
+  **attempt cap is not overridable**, because tests assert on how many reads the account
+  was given before an absence is reported. Meanwhile,
   `resolveBudgetAfterAmbiguousCreate` adds only the **detachment**
   (`context.WithoutCancel`), which belongs to this arm alone, because one of the three
   shapes that reach it is a transport error — which a cancelled caller context produces —

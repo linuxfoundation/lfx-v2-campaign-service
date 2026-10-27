@@ -83,6 +83,23 @@ and malformed-id variants in `campaign_test.go`. Both now assert the new
 sentence and the behaviour that did not change: no campaign attempted, and the
 parse failure surviving into the refusal.
 
+## Two things the review round corrected
+
+`firstResourceName`'s doc comment ended "The caller treats the error as
+UNCONFIRMED", which was true of all fourteen call sites until this change and is
+now false for five of them: the budget-side callers hand the error to
+`budgetFromCreateResponse` and may continue with a recovered id. The comment now
+separates the two groups rather than describing only the older one.
+
+The four tests that walk the full no-row schedule were sleeping the real 1750ms
+each, taking the package from 10.7s to 18.6s. The delays are now `Client` fields
+with an unexported `withBudgetResolveDelays`, mirroring `retryBaseDelay` and
+`withRetryBaseDelay` — whose own comment already states the rationale ("tests
+shrink it … to keep runs fast"). Only the sleeps are overridable; the attempt
+cap stays on its const because the tests assert on it. The package now runs in
+7.2s, below the original baseline, because the pre-existing ambiguous-arm tests
+shrink with it.
+
 ## Deliberately out of scope
 
 The campaign-side arms where a 2xx **campaign** resource name fails to parse
