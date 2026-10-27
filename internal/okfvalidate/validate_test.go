@@ -178,6 +178,130 @@ func TestValidateLogFragmentHeadingDateMismatch(t *testing.T) {
 	}
 }
 
+// The kind-marker checks below (#176) all assert on the error TEXT, not just
+// on len(errs) != 0. Every other field a fragment has — its filename, its
+// date, its heading — is checked by the same function, so a fixture written
+// to exercise the marker can fail for one of those instead and the test still
+// goes green with the marker check deleted. Naming the offending value in the
+// assertion is what makes these binding: with the check reverted, the
+// expected substring is absent and the test fails.
+
+// writeFragment writes a log fragment whose filename and heading are known
+// good, so only the body is in question.
+func writeFragment(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "log"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeFile(t, filepath.Join(dir, "log", "2026-08-05-LFXV2-2812-find-brief.md"),
+		"# 2026-08-05 — LFXV2-2812 find brief by event slug\n\n"+body)
+}
+
+// errsContain reports whether any error mentions want.
+func errsContain(errs []error, want string) bool {
+	for _, err := range errs {
+		if strings.Contains(err.Error(), want) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestValidateLogFragmentRejectsAnUnknownKindMarker(t *testing.T) {
+	dir := t.TempDir()
+	// "Feature" is bold and well-formed, and reads like a kind. The set is
+	// closed precisely so a plausible one-off does not quietly become a
+	// seventh category nothing classifies.
+	writeFragment(t, dir, "**Feature** — did the thing.\n")
+
+	errs := Validate(dir)
+	if !errsContain(errs, `kind marker "Feature"`) {
+		t.Errorf("Validate() = %v, want an error naming the offending marker", errs)
+	}
+	// The report has to say what IS allowed, or the author is left guessing
+	// at a set that lives in CLAUDE.md rather than in the message.
+	if !errsContain(errs, "Update, Fix, Creation, Note, Verification, Docs") {
+		t.Errorf("Validate() = %v, want the error to list the allowed markers", errs)
+	}
+}
+
+func TestValidateLogFragmentRejectsAMissingKindMarker(t *testing.T) {
+	dir := t.TempDir()
+	writeFragment(t, dir, "Four review findings, all verified real before being acted on.\n")
+
+	if errs := Validate(dir); !errsContain(errs, "is not a bold kind marker") {
+		t.Errorf("Validate() = %v, want an error about the missing marker", errs)
+	}
+}
+
+func TestValidateLogFragmentAcceptsEveryDocumentedKind(t *testing.T) {
+	// This is the test that pins the validator's set to CLAUDE.md's. Adding a
+	// marker to one list and not the other turns a documented kind into a
+	// rejected one, which is the same class of drift #176 is about — just in
+	// the other direction.
+	for _, kind := range []string{"Update", "Fix", "Creation", "Note", "Verification", "Docs"} {
+		t.Run(kind, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFragment(t, dir, "**"+kind+"** — did the thing.\n")
+			if errs := Validate(dir); len(errs) != 0 {
+				t.Errorf("Validate() = %v, want %q accepted", errs, kind)
+			}
+		})
+	}
+}
+
+func TestValidateLogFragmentReadsPastASupersededBanner(t *testing.T) {
+	dir := t.TempDir()
+	// A superseded entry carries its warning ABOVE the marker, so a reader
+	// meets it before the entry it qualifies. The banner is bold too, so a
+	// check that simply took the first non-blank line would both miss the
+	// real marker below and reject the file for the banner's own word.
+	writeFragment(t, dir,
+		"> **Superseded — not what shipped in PR #260.** This entry records the\n"+
+			"> original plan.\n\n**Update** — did the thing.\n")
+
+	if errs := Validate(dir); len(errs) != 0 {
+		t.Errorf("Validate() = %v, want the marker below the banner accepted", errs)
+	}
+}
+
+func TestValidateLogFragmentStillChecksTheMarkerBelowABanner(t *testing.T) {
+	dir := t.TempDir()
+	// The banner must not become a way to skip the check entirely: what
+	// follows it is still an entry and still needs a marker.
+	writeFragment(t, dir,
+		"> **Superseded.** See the later entry.\n\n**Feature** — did the thing.\n")
+
+	if errs := Validate(dir); !errsContain(errs, `kind marker "Feature"`) {
+		t.Errorf("Validate() = %v, want the marker below the banner still checked", errs)
+	}
+}
+
+func TestValidateLogFragmentChecksEveryArchiveSection(t *testing.T) {
+	dir := t.TempDir()
+	// An archive rolls many entries under one H1, each behind its own "##"
+	// heading with its own marker. The check has to descend into the
+	// sections: applied at the top of the file it would find a "##" heading
+	// where it wanted a marker and reject every archive, and skipping
+	// archives outright would leave the bundle's largest files unchecked.
+	writeFragment(t, dir,
+		"## 2026-08-05 (first)\n\n**Fix** — did the thing.\n\n"+
+			"## 2026-08-04 (second)\n\n**Feature** — did the other thing.\n")
+
+	errs := Validate(dir)
+	if !errsContain(errs, `kind marker "Feature"`) {
+		t.Errorf("Validate() = %v, want the bad archive section reported", errs)
+	}
+	// Naming the section is what makes a 34-entry archive actionable: the
+	// path alone does not say which entry to go and fix.
+	if !errsContain(errs, "## 2026-08-04 (second)") {
+		t.Errorf("Validate() = %v, want the error to name the offending section", errs)
+	}
+	if errsContain(errs, "## 2026-08-05 (first)") {
+		t.Errorf("Validate() = %v, want the conformant section left alone", errs)
+	}
+}
+
 // writeConcept writes a concept file with the given frontmatter description.
 func writeConcept(t *testing.T, path, description string) {
 	t.Helper()

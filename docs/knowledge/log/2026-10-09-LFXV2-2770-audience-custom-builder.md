@@ -1,6 +1,6 @@
 # 2026-10-09 — Custom audiences: build a HubSpot list from a described audience
 
-**Feature** — three `audience-builder` endpoints port the legacy app's Custom Audience /
+**Creation** — three `audience-builder` endpoints port the legacy app's Custom Audience /
 "Build From Scratch" tab:
 
 - `POST .../custom/interpret` — a model turns a free-text request ("mailable contacts in Seoul for
