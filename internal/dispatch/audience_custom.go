@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -653,13 +652,27 @@ func selectsPage(urls []string, pageURL string) bool {
 	return false
 }
 
-// editionYearRE is a four-digit 19xx/20xx year standing alone, as in an edition's name.
-var editionYearRE = regexp.MustCompile(`\b(19|20)\d{2}\b`)
-
 // editionFamily is an edition name without its year, lowercased and with whitespace collapsed:
-// "Synthetic Summit 2026" and "Synthetic  Summit 2025" are one family.
+// "Synthetic Summit 2026", "Synthetic  Summit 2025" and "Synthetic Summit2024" are one family.
+//
+// A year is found by the SAME rule the warehouse resolver applies to the names it returns
+// (yearIn here, yearInName in internal/platform/snowflake): a 19xx/20xx run of exactly four
+// digits, bounded by non-digits -- so a year written against letters ("Summit2026") counts and
+// a longer number containing one does not. A \b rule would miss the first and keep its year in
+// the family, so the resolver's own edition would be left out of the default.
 func editionFamily(name string) string {
-	return strings.ToLower(strings.Join(strings.Fields(editionYearRE.ReplaceAllString(name, " ")), " "))
+	var b strings.Builder
+	for i := 0; i < len(name); {
+		if i+4 <= len(name) && isSupportedYear(name[i:i+4]) &&
+			(i == 0 || name[i-1] < '0' || name[i-1] > '9') && (i+4 == len(name) || name[i+4] < '0' || name[i+4] > '9') {
+			b.WriteByte(' ')
+			i += 4
+			continue
+		}
+		b.WriteByte(name[i])
+		i++
+	}
+	return strings.ToLower(strings.Join(strings.Fields(b.String()), " "))
 }
 
 // sameEventEditions splits the warehouse's past editions into those that are eventName's own

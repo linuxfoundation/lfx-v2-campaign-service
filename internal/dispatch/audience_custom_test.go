@@ -1632,6 +1632,13 @@ func TestSameEventEditions(t *testing.T) {
 	assert.Equal(t, []string{"Synthetic Summit 2025", "synthetic  summit 2024"}, same, "kept verbatim, in order")
 	assert.Equal(t, []string{"Synthetic Summit Workshop 2025", "Synthetic Summit Tokyo 2025"}, others)
 
+	// The resolver's own year rule: a year against letters is still a year, a longer number is not.
+	same, others = sameEventEditions([]string{"Synthetic Summit2025", "Synthetic Summit 202512"}, "Synthetic Summit 2026")
+	assert.Equal(t, []string{"Synthetic Summit2025"}, same, "a year written against the name is that edition's year")
+	assert.Equal(t, []string{"Synthetic Summit 202512"}, others, "six digits are not a year")
+	same, _ = sameEventEditions([]string{"Synthetic Summit 2025"}, "Synthetic Summit2026")
+	assert.Equal(t, []string{"Synthetic Summit 2025"}, same, "the event name's own adjacent year is removed too")
+
 	same, others = sameEventEditions([]string{"2025"}, "2026")
 	assert.Empty(t, same, "a name that is only a year has no family to match")
 	assert.Equal(t, []string{"2025"}, others)

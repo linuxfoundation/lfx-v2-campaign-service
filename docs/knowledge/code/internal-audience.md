@@ -362,7 +362,13 @@ The plan is validated first, so a brief that cannot be planned leaves no row beh
 
 Every suppression-hint check reads the name with its separators normalised too
 (`hasSuppressionHint`, used by `DiscoveryHidden`, `ClassifyList`, `MatchesBrandMaster` and
-`MatchesEventSuppression`), so `Opt_Out` is an opt-out. `DiscoveryHidden` classifies test and
+`MatchesEventSuppression`), so `Opt_Out` is an opt-out. `hasSuppressionHint` also recognises the
+lists the standing suppression flow manages, whose names carry no suppression word
+(`isManagedSuppressionName`): every `StandardSuppressionTerms` list (normalised words contained,
+so "26Q2-Kernel-Domain-Contacts" counts), `LFX Standard Suppressions - <project>`, and
+`<edition> - Current Registrants`, which otherwise reads like an inclusion signal.
+`MatchesEventSuppression` keeps to the generic words (`hasGenericSuppressionHint`) and excludes
+the managed lists, since each already has its own picker row. `DiscoveryHidden` classifies test and
 staff before master, so a test or staff master rollup ("… Master [test]") is hidden rather than
 expanded as a master. `TestOrStaffList` applies the same test and staff hints to every
 automatic pick (`MatchesBrandMaster`, `MatchesBrandOptOut`, `MatchesEventSuppression`), so a
@@ -473,7 +479,9 @@ the orchestration that calls HubSpot lives in [internal/dispatch](internal-dispa
   `CurrentRegistrantsFilter` (the edition's registrants via the registration custom event; an
   edition too long for the name is cut and tagged with a short hash of the whole edition),
   `RegistrantsListMatches` (the whole edition and nobody else: `RegistrationEvidence` exclusive AND
-  `CoveredEditions` exactly that edition, compared exactly with only the ends trimmed, and no
+  `CoveredEditions` exactly that edition, compared exactly with only the ends trimmed, every stored
+  `event_name` value byte-equal to it (`eventNameValuesAre`: the QA readers trim and intersect
+  case-insensitively, which reuse must not), and no
   filter setting `includeObjectsWithNoValueSet`) and `StandingFilterIsUnion` (whether a list found under a
   standing name is safe to reuse, or to grow; a missing or null filter is not a union,
   `HasFilterTree`), `SplitStandardSuppressions` (substitute the standing list only for

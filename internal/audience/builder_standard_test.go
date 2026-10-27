@@ -185,3 +185,55 @@ func TestCurrentRegistrantsFilter_YearlessEditionNamesTheField(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidRequest)
 	assert.Contains(t, err.Error(), "year")
 }
+
+// The reuse check compares the stored event_name values byte for byte: a padded value, or two
+// equalities differing only in case (which may select nobody), are not this edition's list,
+// although the trimming, case-insensitive QA readers accept them.
+func TestRegistrantsListMatches_ComparesStoredValuesExactly(t *testing.T) {
+	own, err := CurrentRegistrantsFilter("KubeCon NA 2026")
+	require.NoError(t, err)
+
+	padded := json.RawMessage(strings.Replace(string(own), `"KubeCon NA 2026"`, `" KubeCon NA 2026 "`, 1))
+	require.NotEqual(t, string(own), string(padded), "precondition: the value is present to pad")
+	editions, exclusive := RegistrationEvidence(padded)
+	require.True(t, exclusive)
+	require.Equal(t, []string{"KubeCon NA 2026"}, editions, "precondition: the QA reader trims it")
+	assert.False(t, RegistrantsListMatches(padded, "KubeCon NA 2026"))
+
+	twoCases := json.RawMessage(strings.Replace(string(own),
+		`{"filterType":"PROPERTY","property":"event_name"`,
+		`{"filterType":"PROPERTY","property":"event_name","operation":{"operator":"IS_EQUAL_TO","includeObjectsWithNoValueSet":false,"values":["kubecon na 2026"],"operationType":"MULTISTRING"}},{"filterType":"PROPERTY","property":"event_name"`, 1))
+	require.NotEqual(t, string(own), string(twoCases), "precondition: a second equality was added")
+	editions, exclusive = RegistrationEvidence(twoCases)
+	require.True(t, exclusive)
+	require.Len(t, editions, 1, "precondition: the QA reader intersects them case-insensitively")
+	assert.False(t, RegistrantsListMatches(twoCases, "KubeCon NA 2026"))
+	assert.True(t, RegistrantsListMatches(own, "KubeCon NA 2026"))
+}
+
+// The lists the standing suppression flow resolves or creates are suppressions, never inclusion
+// candidates, although their names carry none of the generic suppression words.
+func TestDiscoveryHidden_ManagedSuppressionNames(t *testing.T) {
+	for _, name := range []string{
+		"26Q2-Kernel-Domain-Contacts",
+		"Q1 2026 - LF - kernel.org Contacts",
+		"26Q3 - Persona Linux Kernel",
+		StandardSuppressionName("cncf"),
+		CurrentRegistrantsName("KubeCon NA 2026"),
+		CurrentRegistrantsName(strings.Repeat("Open Source Summit ", 12) + "Europe 2026"),
+	} {
+		reason, hidden := DiscoveryHidden(name, false)
+		assert.True(t, hidden, name)
+		assert.Equal(t, "suppression", reason, name)
+		assert.Equal(t, SignalUncertain, ClassifyList(name, nil, EventIdentity{}).Signal, name)
+	}
+	// The event's own suppression row is not filled with a managed list, which has its own row.
+	keywords := EventKeywords("KubeCon NA 2026")
+	assert.False(t, MatchesEventSuppression(CurrentRegistrantsName("KubeCon NA 2026"), keywords))
+	assert.True(t, MatchesEventSuppression("KubeCon NA 2026 Suppression", keywords))
+
+	for _, name := range []string{"26Q3 - KubeCon NA 2026 - Registrants", "Kernel Summit 2026 - Prospects"} {
+		_, hidden := DiscoveryHidden(name, false)
+		assert.False(t, hidden, "%s is an ordinary inclusion candidate", name)
+	}
+}

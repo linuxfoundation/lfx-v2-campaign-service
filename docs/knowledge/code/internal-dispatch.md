@@ -4780,7 +4780,9 @@ segment and not the event page, while the event URL's own query and fragment are
 ambassador restriction. Visitors of any other page, or of the event page alone (no education
 branch, a visitors-only request), are a different segment and get none. Anything else gets none. Even then only the warehouse
 editions of THIS event are added (`sameEventEditions`: the name with its year removed equals the
-event's, case and spacing aside), because `ResolvePastEventNames` matches the name as a substring
+event's, case and spacing aside; a year is found by the resolver's own rule, `yearIn` /
+`yearInName`, a 19xx/20xx run of exactly four digits bounded by non-digits, so "Summit2026"
+counts), because `ResolvePastEventNames` matches the name as a substring
 and also returns other events sharing it ("Synthetic Summit Workshop 2025"); those are left out
 and named in a note. Otherwise
 a registration branch would AND a role with a past registration (dropping first-time speakers) or

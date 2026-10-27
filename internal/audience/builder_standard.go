@@ -20,8 +20,15 @@ import (
 // in the project finds the SAME list by name and reuses it, instead of wrapping the same
 // hygiene lists in a new per-audience list each time.
 func StandardSuppressionName(projectID string) string {
-	return cutName("LFX Standard Suppressions - "+strings.TrimSpace(projectID), MaxListNameLength)
+	return cutName(standardSuppressionPrefix+strings.TrimSpace(projectID), MaxListNameLength)
 }
+
+// standardSuppressionPrefix and currentRegistrantsSuffix are the fixed parts of the two standing
+// list names, shared with hasSuppressionHint so discovery never offers either as an inclusion.
+const (
+	standardSuppressionPrefix = "LFX Standard Suppressions - "
+	currentRegistrantsSuffix  = " - Current Registrants"
+)
 
 // RegistrantsEditionOK reports whether editionName can select an edition's registrants: the
 // registration event records the edition WITH its year ("AGNTCon + MCPCon Japan 2026"), so a
@@ -39,7 +46,7 @@ func RegistrantsEditionOK(editionName string) bool {
 // otherwise share one name -- and the second would reuse the first's list, suppressing the
 // wrong edition's registrants. A name that fits is unchanged.
 func CurrentRegistrantsName(editionName string) string {
-	const suffix = " - Current Registrants"
+	const suffix = currentRegistrantsSuffix
 	edition := strings.TrimSpace(editionName)
 	room := MaxListNameLength - utf8.RuneCountInString(suffix)
 	if utf8.RuneCountInString(edition) <= room {
@@ -75,11 +82,39 @@ func RegistrantsListMatches(filter json.RawMessage, editionName string) bool {
 	only := func(editions []string) bool {
 		return len(editions) == 1 && strings.TrimSpace(editions[0]) == want
 	}
-	if includesNoValueSet(filter) {
+	if includesNoValueSet(filter) || !eventNameValuesAre(filter, want) {
 		return false
 	}
 	editions, exclusive := RegistrationEvidence(filter)
 	return exclusive && only(editions) && only(CoveredEditions(filter))
+}
+
+// eventNameValuesAre reports whether every event_name value in the tree is exactly want, byte
+// for byte, and there is at least one. RegistrationEvidence and CoveredEditions serve the QA
+// checks too, so they trim the stored values and intersect several equalities case-insensitively;
+// for reuse that would accept a filter on " KubeCon NA 2026 " (padded), or two equalities that
+// differ only in case and so may select nobody. Only the requested edition is trimmed, as
+// CurrentRegistrantsFilter trims the value it writes.
+func eventNameValuesAre(filter json.RawMessage, want string) bool {
+	var root qaBranch
+	if len(filter) == 0 || json.Unmarshal(filter, &root) != nil {
+		return false
+	}
+	seen, exact := 0, true
+	root.walk(func(b qaBranch) {
+		for _, f := range b.Filters {
+			if !strings.EqualFold(strings.TrimSpace(f.Property), "event_name") {
+				continue
+			}
+			for _, v := range f.Operation.Values {
+				seen++
+				if v != want {
+					exact = false
+				}
+			}
+		}
+	})
+	return seen > 0 && exact
 }
 
 // includesNoValueSet reports whether any filter in the tree sets

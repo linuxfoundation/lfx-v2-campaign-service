@@ -27,8 +27,41 @@ var suppressionNameHints = []string{"suppress", "exclusion", "unsubscribe", "do 
 // exclusion list. The name is also read with its separators normalised, so
 // "Seoul - Opt_Out Contacts" or "Do_Not_Email" match the same as "Opt Out" and
 // "Do Not Email": a missed suppression gets offered as an inclusion.
+//
+// It also recognises the lists this service itself manages as suppressions, whose names carry
+// none of those words: every StandardSuppressionTerms list (the kernel lists, "26Q2-Kernel-
+// Domain-Contacts", among them), the project's standing "LFX Standard Suppressions - <project>"
+// list, and an edition's "<edition> - Current Registrants" list. The last one in particular
+// READS like an inclusion signal, and offering it as one would send to exactly the people the
+// send means to exclude.
 func hasSuppressionHint(name string) bool {
+	return hasGenericSuppressionHint(name) || isManagedSuppressionName(name)
+}
+
+// hasGenericSuppressionHint is hasSuppressionHint without the managed lists: the generic
+// suppression words only. MatchesEventSuppression uses it, because the event's OWN suppression
+// row must not be filled with the current-registrants list (which has its own row) or a
+// standard list (which has its own rows).
+func hasGenericSuppressionHint(name string) bool {
 	return containsAny(name, suppressionNameHints) || containsAny(normaliseSuppressionName(name), suppressionNameHints)
+}
+
+// isManagedSuppressionName reports whether name is one of the suppression lists the standing
+// suppression flow resolves or creates (see hasSuppressionHint). A standard term matches when
+// its normalised words appear in the normalised name, so a quarter code, a year or separators
+// around them do not hide it.
+func isManagedSuppressionName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if strings.HasPrefix(lower, strings.ToLower(standardSuppressionPrefix)) || strings.HasSuffix(lower, strings.ToLower(currentRegistrantsSuffix)) {
+		return true
+	}
+	normalised := " " + normaliseSuppressionName(name) + " "
+	for _, term := range StandardSuppressionTerms {
+		if t := normaliseSuppressionName(term.SearchTerm); t != "" && strings.Contains(normalised, " "+t+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 // Property names that carry an email-subscription type, whose VALUE decides the
