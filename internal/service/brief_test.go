@@ -850,6 +850,9 @@ func (r *campaignEditRepo) GetCampaignByPlatformWithMaxSlotVersion(context.Conte
 func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string, int, string, *model.Actor) (bool, *model.Campaign, error) {
 	return true, nil, nil
 }
+func (r *campaignEditRepo) ClaimNewCampaignVersion(context.Context, string, string, model.Provider, string, int, string, *model.Actor) (bool, *model.Campaign, error) {
+	return true, nil, nil
+}
 func (r *campaignEditRepo) DeleteDispatchClaim(context.Context, string, model.Provider, string, int, string) error {
 	return nil
 }

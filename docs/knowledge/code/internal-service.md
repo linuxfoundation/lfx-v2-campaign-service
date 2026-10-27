@@ -140,7 +140,11 @@ For `NewVersion` the lookup is `GetCampaignByPlatformWithMaxSlotVersion`: the la
 and that maximum from ONE statement (one snapshot), falling back to the latest deleted row
 (flagged by `is_live`) so the maximum survives when no row is live. Two reads would let a
 concurrent request's claim land between them, and the two requests would pick different next
-versions that the claim could no longer dedupe. An UNFINISHED latest campaign is never built on — the
+versions that the claim could no longer dedupe. A fresh version is claimed with
+`ClaimNewCampaignVersion`, which also refuses, under the slot lock, a version a soft-deleted row
+already holds (`domain.ErrSlotVersionUsed`, reported as skipped): a concurrent `new_version` took
+it, completed and was deleted between this request's read and its claim, and the live-row index
+alone would admit a second row there. An UNFINISHED latest campaign is never built on — the
 claim targets its own slot version and gets the skip / reconciliation-required answer a retry
 gets, because a second campaign beside an unresolved one would spend twice. The slot version
 reaches the dispatcher on the context (`model.WithDispatchSlotVersion`). Since `000051` dropped

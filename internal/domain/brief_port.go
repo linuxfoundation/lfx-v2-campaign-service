@@ -232,6 +232,13 @@ type CampaignReader interface {
 	// SlotVersion); 1 for the first. A claim is serialized per (brief, platform, variant)
 	// against AdoptCampaign, so an adopt never lands beside a claimed row on the same slot.
 	ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (claimed bool, row *model.Campaign, err error)
+	// ClaimNewCampaignVersion is ClaimCampaignDispatch for a new_version request's FRESH slot
+	// version, plus one check under the same per-slot lock: a soft-deleted row already holding
+	// slotVersion refuses the claim with ErrSlotVersionUsed. The version was past every used one
+	// when the request read the slot, so such a row is a concurrent new_version's campaign that
+	// completed and was deleted in between; the live-row index would admit a second row there,
+	// recomposing the deleted campaign's upstream name. A plain create keeps ClaimCampaignDispatch.
+	ClaimNewCampaignVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (claimed bool, row *model.Campaign, err error)
 	// DeleteDispatchClaim removes the still-'pending' claim row jobID took on (brief,
 	// platform, variant, slot version) so the slot can be retried after a dispatch fails
 	// before the upstream campaign is created. It only deletes rows still in 'pending'

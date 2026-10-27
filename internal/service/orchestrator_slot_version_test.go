@@ -162,6 +162,34 @@ func TestOrchestrator_ConcurrentNewVersionsTargetTheSameSlot(t *testing.T) {
 	}
 }
 
+// The same double submit, but request A's campaign at slot 2 completes AND is deleted before this
+// request's claim runs. The live-row index ignores the deleted row and would admit a second slot 2,
+// recomposing the deleted campaign's upstream name. The claim refuses it, and this request is
+// reported as the skipped half of the double submit: nothing is dispatched.
+func TestOrchestrator_NewVersionDoesNotReclaimAVersionAConcurrentRequestUsedAndDeleted(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := completedSlot1()
+	camps.afterSlotRead = func() {
+		camps.afterSlotRead = nil
+		camps.deletedSlotVersions = map[string]int{slotKey("b1", model.ProviderGoogleAds, model.VariantDefault): 2}
+	}
+	disp := &slotRecordingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+
+	j := startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+
+	if got := disp.seen(); len(got) != 0 {
+		t.Fatalf("dispatcher saw slot versions %v, want none: slot 2 belongs to a concurrent request's "+
+			"deleted campaign, whose upstream name a second slot 2 would reuse", got)
+	}
+	if len(camps.upserted) != 0 {
+		t.Fatalf("persisted %+v, want nothing", camps.upserted)
+	}
+	if !strings.Contains(string(j.Result), "already used this version") {
+		t.Errorf("result = %s, want it reported as the skipped half of a double submit", j.Result)
+	}
+}
+
 // Without new_version a repeat create is still a retry. This is the behaviour every existing
 // caller relies on, and the reason new_version is opt-in rather than inferred.
 func TestOrchestrator_WithoutNewVersionARepeatCreateStillReuses(t *testing.T) {

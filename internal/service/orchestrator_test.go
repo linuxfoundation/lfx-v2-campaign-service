@@ -519,6 +519,19 @@ func slotVersionKey(briefID string, platform model.Provider, variant string, slo
 	return fmt.Sprintf("%s#%d", slotKey(briefID, platform, variant), model.NormalizeSlotVersion(slotVersion))
 }
 
+// ClaimNewCampaignVersion mirrors the real check: a fresh version is past every version used
+// when the slot was read, so a deleted row at or above it (deletedSlotVersions holds the highest)
+// can only be a concurrent new_version's campaign, completed and deleted since.
+func (r *fakeCampaignRepo) ClaimNewCampaignVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+	r.mu.Lock()
+	used := model.NormalizeSlotVersion(slotVersion) <= r.deletedSlotVersions[slotKey(briefID, platform, variant)]
+	r.mu.Unlock()
+	if used {
+		return false, nil, domain.ErrSlotVersionUsed
+	}
+	return r.ClaimCampaignDispatch(ctx, projectID, briefID, platform, variant, slotVersion, jobID, by)
+}
+
 func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

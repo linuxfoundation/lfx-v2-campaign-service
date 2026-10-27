@@ -1318,6 +1318,15 @@ var (
 	// handles of an id-less partial) where an operator can find them.
 	ErrDispatchClaimLost = errors.New("the dispatch's claim on this campaign slot was lost before its result could be recorded")
 
+	// ErrSlotVersionUsed indicates a new_version claim found its slot version already used by
+	// a SOFT-DELETED campaign. The version was free when the request read the slot, so a
+	// concurrent new_version request took it, completed, and was deleted before this claim
+	// ran. The live-row unique index ignores deleted rows and would admit the claim, but the
+	// deleted campaign keeps the upstream name the version composes, so a name-based lookup
+	// would hand it back as this one. The request is the losing half of a double submit and
+	// is reported as skipped.
+	ErrSlotVersionUsed = errors.New("a concurrent new_version request already used this campaign slot version")
+
 	// ErrAdoptionRequiresOwnConnection indicates the project has no ad-platform connection of
 	// its own. Maps to 409.
 	//

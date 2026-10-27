@@ -91,6 +91,12 @@ const claimCampaignDispatchQuery = `INSERT INTO campaigns
 	VALUES ($1, $2, $3, $4, $5, $7, '', 'pending', $6, $6)
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO NOTHING`
 
+// deletedSlotVersionExistsQuery reports whether a SOFT-DELETED row holds one slot version. Only a
+// new_version claim asks: claimCampaignDispatchQuery's arbiter ignores deleted rows, so without
+// this a fresh version a concurrent request used and deleted would be claimed a second time.
+const deletedSlotVersionExistsQuery = `SELECT EXISTS (SELECT 1 FROM campaigns
+	WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4 AND slot_version=$5 AND status = 'deleted')`
+
 // lockCampaignSlotQuery takes the per-slot advisory lock: transaction-scoped, keyed by
 // (brief, platform, variant) — the slot WITHOUT its slot_version.
 //
@@ -273,13 +279,26 @@ func refuseLegacyBinding(ctx context.Context, tx pgx.Tx, op string, c *model.Cam
 // means "not recorded", which is the honest value; inventing a placeholder actor would make
 // the audit trail claim a principal that never acted.
 func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+	return r.claimDispatch(ctx, projectID, briefID, platform, variant, slotVersion, jobID, by, false)
+}
+
+// ClaimNewCampaignVersion is ClaimCampaignDispatch that also refuses, under the slot lock, a
+// slot version a soft-deleted row already holds (domain.ErrSlotVersionUsed). See the port.
+func (r *CampaignRepo) ClaimNewCampaignVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+	return r.claimDispatch(ctx, projectID, briefID, platform, variant, slotVersion, jobID, by, true)
+}
+
+func (r *CampaignRepo) claimDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor, freshVersion bool) (bool, *model.Campaign, error) {
 	variant = model.NormalizeVariant(variant)
 	slotVersion = model.NormalizeSlotVersion(slotVersion)
 	createdBy, err := marshalActor(by)
 	if err != nil {
 		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
 	}
-	claimed, err := r.insertDispatchClaim(ctx, projectID, briefID, platform, variant, slotVersion, jobID, createdBy)
+	claimed, err := r.insertDispatchClaim(ctx, projectID, briefID, platform, variant, slotVersion, jobID, createdBy, freshVersion)
+	if errors.Is(err, domain.ErrSlotVersionUsed) {
+		return false, nil, err
+	}
 	if err != nil {
 		// The transaction rolled back, so no row of ours exists and there is nothing to
 		// release. The one exception is a COMMIT whose acknowledgement was lost, which can
@@ -326,7 +345,7 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 // per-slot advisory lock and reports whether this caller's row went in. The read-back stays
 // OUTSIDE the transaction, as it always was: the lock is released at COMMIT, so the winner's
 // row — ours or a concurrent claimant's — is committed and visible by then.
-func (r *CampaignRepo) insertDispatchClaim(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, createdBy []byte) (bool, error) {
+func (r *CampaignRepo) insertDispatchClaim(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, createdBy []byte, freshVersion bool) (bool, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return false, fmt.Errorf("begin tx: %w", err)
@@ -334,6 +353,17 @@ func (r *CampaignRepo) insertDispatchClaim(ctx context.Context, projectID, brief
 	defer func() { _ = tx.Rollback(ctx) }()
 	if lerr := lockCampaignSlot(ctx, tx, briefID, platform, variant); lerr != nil {
 		return false, lerr
+	}
+	if freshVersion {
+		// Under the lock, so no delete of a concurrent claim's campaign can land between this
+		// check and the INSERT below.
+		var used bool
+		if qerr := tx.QueryRow(ctx, deletedSlotVersionExistsQuery, briefID, string(platform), projectID, variant, slotVersion).Scan(&used); qerr != nil {
+			return false, fmt.Errorf("check deleted slot version: %w", qerr)
+		}
+		if used {
+			return false, domain.ErrSlotVersionUsed
+		}
 	}
 	tag, err := tx.Exec(ctx, claimCampaignDispatchQuery, projectID, briefID, jobID, string(platform), variant, createdBy, slotVersion)
 	if err != nil {

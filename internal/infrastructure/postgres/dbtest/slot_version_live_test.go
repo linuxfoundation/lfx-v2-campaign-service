@@ -127,6 +127,39 @@ func TestLiveNewVersionCreatesSlotVersion2(t *testing.T) {
 	}
 }
 
+// TestLiveNewVersionClaimRefusesAVersionAConcurrentRequestUsedAndDeleted pins the claim-time check
+// against a double submit whose winner completes and is DELETED before the loser claims. Both read
+// the slot and pick version 2; the winner creates it and an operator deletes it; the loser's claim
+// of version 2 then finds no live row, so the live-row index alone would admit it and recompose the
+// deleted campaign's upstream name. ClaimNewCampaignVersion refuses it with ErrSlotVersionUsed and
+// writes nothing, and still claims a version no row has used.
+func TestLiveNewVersionClaimRefusesAVersionAConcurrentRequestUsedAndDeleted(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
+	briefID, project := insertApprovedBrief(ctx, t, pool)
+	p := model.ProviderMicrosoftAds
+
+	createSlotVersion(ctx, t, repo, project, briefID, p, model.FirstSlotVersion)
+	winner := createSlotVersion(ctx, t, repo, project, briefID, p, 2)
+	if _, err := pool.Exec(ctx, `UPDATE campaigns SET status='deleted' WHERE id=$1`, winner.ID); err != nil {
+		t.Fatalf("soft-delete the winner's campaign: %v", err)
+	}
+
+	claimed, row, err := repo.ClaimNewCampaignVersion(ctx, project, briefID, p, model.VariantDefault, 2, uuid.NewString(), nil)
+	if !errors.Is(err, domain.ErrSlotVersionUsed) || claimed || row != nil {
+		t.Fatalf("new-version claim of a deleted version: claimed=%v row=%v err=%v, want ErrSlotVersionUsed and nothing claimed", claimed, row, err)
+	}
+	if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 1 {
+		t.Fatalf("live campaigns on the slot = %d, want 1: the refused claim must write nothing", live)
+	}
+
+	claimed, _, err = repo.ClaimNewCampaignVersion(ctx, project, briefID, p, model.VariantDefault, 3, uuid.NewString(), nil)
+	if err != nil || !claimed {
+		t.Fatalf("new-version claim of an unused version: claimed=%v err=%v, want it claimed", claimed, err)
+	}
+}
+
 // TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError pins the first-create race. A
 // double-submitted first create is a skip or a reuse, never an error: exactly one claim wins
 // and every other one gets the winner's row. With the claims serialized by the slot lock, the

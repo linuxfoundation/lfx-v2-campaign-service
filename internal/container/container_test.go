@@ -205,6 +205,9 @@ func (stubCampaignRepo) GetCampaignByPlatformWithMaxSlotVersion(context.Context,
 func (stubCampaignRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string, int, string, *model.Actor) (bool, *model.Campaign, error) {
 	return true, &model.Campaign{Status: "pending"}, nil
 }
+func (stubCampaignRepo) ClaimNewCampaignVersion(context.Context, string, string, model.Provider, string, int, string, *model.Actor) (bool, *model.Campaign, error) {
+	return true, &model.Campaign{Status: "pending"}, nil
+}
 func (stubCampaignRepo) DeleteDispatchClaim(context.Context, string, model.Provider, string, int, string) error {
 	return nil
 }
