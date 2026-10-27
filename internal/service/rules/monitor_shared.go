@@ -85,15 +85,16 @@ func unknownPacingRow(m model.AccountCampaignMetrics) model.AccountMonitorRow {
 // MarksFetchFailed / TestListAccountCampaigns_MalformedBudget_MarksFetchFailed in
 // internal/platform/googleads/monitor_test.go, which pin both causes.
 //
-// A metrics-fetch-failed row's numeric fields are left at their platform-reported zero value
+// A metrics-fetch-failed row's numeric metrics fields are left at their platform-reported zero value
 // (see AccountCampaignMetrics.FetchFailed's doc comment) — running the pacing/action-item calc
 // against that placeholder zero would fabricate a bogus "underspending" label and a
-// HIGH-priority action item for a campaign this port never actually measured. A Google
-// budget-only-failed row is different: its impressions/clicks/spend may be genuinely non-zero,
-// only BudgetDailyUSD is untrusted, but the pacing calc needs BudgetDailyUSD, so the whole row
-// is still routed through here rather than partially evaluated. Either way the row is still
-// returned in the campaigns array, with pacing/action-item evaluation skipped — the caller sees
-// it, and its FetchFailed flag. PacingLabel keeps its zero-value "normal" placeholder —
+// HIGH-priority action item for a campaign this port never actually measured. A row whose
+// budget alone failed to parse is different — on ANY platform that reports a budget, not just
+// Google Ads: its impressions/clicks/spend may be genuinely non-zero and only BudgetDay (or
+// TotalBudget) is untrusted, but those are exactly what the pacing calc divides by, so the
+// whole row is still routed through here rather than partially evaluated. Either way the row
+// is still returned in the campaigns array, with pacing/action-item evaluation skipped — the
+// caller sees it, and its FetchFailed flag. PacingLabel keeps its zero-value "normal" placeholder —
 // pacing_label is a required enum with no "unknown" member — and PacingUnknown=true is the
 // caller's signal not to trust it, the same convention pacing_pct's own "meaningless when
 // pacing_unknown is true" doc comment establishes (design/connection.go).
