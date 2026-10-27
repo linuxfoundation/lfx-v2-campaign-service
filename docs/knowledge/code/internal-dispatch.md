@@ -4762,7 +4762,9 @@ never used.
 
 For an event audience the warehouse's past editions are `registered_for`'s DEFAULT, not an
 override (2026-10-15): editions the request or the answers named (the model copies them into
-`registered_for`) are used instead, kept by `knownEditions` only as exact names of this event or one
+`registered_for`) are used instead, kept by `knownEditions` (matched ignoring case and spacing,
+returned as the warehouse spells it with only the ends trimmed, since `CustomListFilter` writes
+`registered_for` through `exactValues` as an exact `event_name` equality) only as exact names of this event or one
 of its editions (in the warehouse's spelling, any other name dropped with a note), and a draft whose
 model set `include_past_editions: false`, or whose every named edition was unknown, gets none. So
 an operator who asked for one edition, or ruled out past registrants, is never sent the whole
@@ -4777,7 +4779,9 @@ page (one of `page_view_urls` is the event URL, compared by `selectsPage` ignori
 trailing slash and case; a page-view URL with a query or fragment, `utm_*` included, is a narrower
 segment and not the event page, while the event URL's own query and fragment are dropped, both here and in the EVENT block's `url` the model copies from, so a tracking link still yields the plain page) together with
 `education_enrolled`, with no speaker or
-ambassador restriction. Visitors of any other page, or of the event page alone (no education
+ambassador restriction, AND only when interpretation explicitly set `include_past_editions: true`
+(`CustomDraft.IncludePastEditions`): the two signals alone also match "this page's visitors plus
+some other course's enrollees". The regional audience keeps its own rule, where unset applies. Visitors of any other page, or of the event page alone (no education
 branch, a visitors-only request), are a different segment and get none. Anything else gets none. Even then only the warehouse
 editions of THIS event are added (`sameEventEditions`: the name with its year removed equals the
 event's, case and spacing aside; a year is found by the resolver's own rule, `yearIn` /

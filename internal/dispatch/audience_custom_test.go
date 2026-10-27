@@ -914,7 +914,7 @@ func TestInterpretCustom_TheDefaultEventAudienceGetsItsPastEditionsNewestFirst(t
 	defer srv.Close()
 	llm := &seqLLM{replies: []string{
 		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
-		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":[],"label":""},"questions":[],"notes":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":[],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
 	}}
 	events := make([]snowflake.Event, 0, 40)
 	for year := 1990; year < 2026; year++ {
@@ -941,7 +941,7 @@ func TestInterpretCustom_ATrackingLinkEventURLStillGetsTheDefault(t *testing.T) 
 	defer srv.Close()
 	llm := &seqLLM{replies: []string{
 		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
-		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["https://events.example.org/synthetic-summit"],"registered_for":[],"label":""},"questions":[],"notes":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["https://events.example.org/synthetic-summit"],"registered_for":[],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
 	}}
 	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}}
 	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
@@ -1576,7 +1576,7 @@ func TestInterpretCustom_VisitorsOfAnotherPageGetNoPastEditions(t *testing.T) {
 	defer srv.Close()
 	llm := &seqLLM{replies: []string{
 		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
-		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":["events.example.org/synthetic-summit/cfp"],"registered_for":[],"label":""},"questions":[],"notes":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":["events.example.org/synthetic-summit/cfp"],"registered_for":[],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
 	}}
 	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}}
 	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
@@ -1595,7 +1595,7 @@ func TestInterpretCustom_VisitorsOnlyOfTheEventPageGetNoPastEditions(t *testing.
 	defer srv.Close()
 	llm := &seqLLM{replies: []string{
 		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
-		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":[],"label":""},"questions":[],"notes":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":[],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
 	}}
 	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}}
 	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
@@ -1652,7 +1652,7 @@ func TestInterpretCustom_DefaultLeavesOutOtherEventsTheWarehouseMatched(t *testi
 	defer srv.Close()
 	llm := &seqLLM{replies: []string{
 		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
-		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":[],"label":""},"questions":[],"notes":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":[],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
 	}}
 	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}, {EventName: "Synthetic Summit Workshop 2025"}}
 	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
@@ -1663,4 +1663,50 @@ func TestInterpretCustom_DefaultLeavesOutOtherEventsTheWarehouseMatched(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Synthetic Summit 2025"}, out.Draft.Criteria.RegisteredFor)
 	assert.Contains(t, strings.Join(out.Draft.Notes, "\n"), "Synthetic Summit Workshop 2025")
+}
+
+// The event page's visitors plus enrollees in some OTHER course carry the same two signals as
+// the default audience. Without the model's explicit include_past_editions: true, no past
+// editions are added.
+func TestInterpretCustom_DefaultNeedsAnExplicitIncludePastEditions(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Unrelated Course"],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":[],"label":""},"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "event page visitors and Unrelated Course enrollees", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.Empty(t, out.Draft.Criteria.RegisteredFor, "unset include_past_editions is not the default audience")
+}
+
+// A warehouse edition spelled with a double space is returned verbatim, so the exact
+// event_name filter built from it matches its registrations.
+func TestInterpretCustom_DoubleSpacedWarehouseEditionIsKeptVerbatim(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":["Synthetic Summit 2024"],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "Synthetic  Summit 2024"}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Synthetic  Summit 2024"}, out.Draft.Criteria.RegisteredFor, "a named edition comes back as the warehouse spells it")
+	criteria := out.Draft.Criteria
+	criteria.EducationTopicProperty = "course_name" // preview resolves this from the portal
+	raw, err := audience.CustomListFilter(criteria)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"Synthetic  Summit 2024"`, "and reaches the filter verbatim")
 }

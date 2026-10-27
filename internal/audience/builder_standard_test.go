@@ -237,3 +237,28 @@ func TestDiscoveryHidden_ManagedSuppressionNames(t *testing.T) {
 		assert.False(t, hidden, "%s is an ordinary inclusion candidate", name)
 	}
 }
+
+// An event's own list that merely CONTAINS a standard list's words is a legitimate event
+// exclusion and stays eligible for the event's suppression row; only a list that IS a standard
+// list, or one of the two standing lists, is kept out.
+func TestMatchesEventSuppression_OnlyExactManagedNamesAreExcluded(t *testing.T) {
+	keywords := EventKeywords("KubeCon NA 2026")
+	assert.True(t, MatchesEventSuppression("KubeCon - LF Events Suppression List", keywords))
+	assert.True(t, MatchesEventSuppression("KubeCon NA 2026 Suppression", keywords))
+
+	for _, name := range []string{
+		"26Q3 - LF Events Suppression List",
+		CurrentRegistrantsName("KubeCon NA 2026"),
+		CurrentRegistrantsName(strings.Repeat("KubeCon NA ", 20) + "2026"),
+		StandardSuppressionName("kubecon"),
+	} {
+		withKeyword := keywords
+		if !SharesKeyword(name, keywords) {
+			withKeyword = EventKeywords(name)
+		}
+		assert.False(t, MatchesEventSuppression(name, withKeyword), name)
+	}
+	// Discovery hiding keeps the broad form.
+	_, hidden := DiscoveryHidden("KubeCon - LF Events Suppression List", false)
+	assert.True(t, hidden)
+}

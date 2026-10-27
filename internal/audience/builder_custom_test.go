@@ -607,3 +607,15 @@ func TestCustomListFilter_GatedHistoryGatesASpeakersOnlyAudience(t *testing.T) {
 	c.GateEventHistory = false
 	assert.False(t, AllBranchesGated(c), "the reference reading leaves it ungated")
 }
+
+// registered_for is an exact event_name equality, so a warehouse edition spelled with a double
+// space reaches the filter verbatim: collapsing it, as the CONTAINS values are, would match nobody.
+func TestCustomListFilter_RegisteredForIsKeptVerbatim(t *testing.T) {
+	c := seoul()
+	c.RegisteredFor = []string{" Synthetic  Summit 2024 ", "Synthetic  Summit 2024", "Synthetic Summit 2025"}
+	raw, err := CustomListFilter(c)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"Synthetic  Summit 2024"`, "internal spacing preserved, ends trimmed")
+	assert.Equal(t, 1, strings.Count(string(raw), `"Synthetic  Summit 2024"`), "an exact repeat is dropped")
+	assert.Contains(t, string(raw), `"Synthetic Summit 2025"`)
+}

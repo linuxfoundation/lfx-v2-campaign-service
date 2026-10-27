@@ -368,7 +368,11 @@ lists the standing suppression flow manages, whose names carry no suppression wo
 so "26Q2-Kernel-Domain-Contacts" counts), `LFX Standard Suppressions - <project>`, and
 `<edition> - Current Registrants`, which otherwise reads like an inclusion signal.
 `MatchesEventSuppression` keeps to the generic words (`hasGenericSuppressionHint`) and excludes
-the managed lists, since each already has its own picker row. `DiscoveryHidden` classifies test and
+only a name that IS a standard list or one of the two standing lists (`isStandingOrStandardName`,
+exact normalised equality, not containment), since each has its own picker row; an event's own
+"KubeCon - LF Events Suppression List" stays eligible. `CustomListFilter` writes `registered_for`
+through `exactValues` (ends trimmed, exact repeats dropped) rather than `cleanValues`, because it
+is an exact `event_name` equality and collapsing a double space would match nobody. `DiscoveryHidden` classifies test and
 staff before master, so a test or staff master rollup ("… Master [test]") is hidden rather than
 expanded as a master. `TestOrStaffList` applies the same test and staff hints to every
 automatic pick (`MatchesBrandMaster`, `MatchesBrandOptOut`, `MatchesEventSuppression`), so a

@@ -39,11 +39,29 @@ func hasSuppressionHint(name string) bool {
 }
 
 // hasGenericSuppressionHint is hasSuppressionHint without the managed lists: the generic
-// suppression words only. MatchesEventSuppression uses it, because the event's OWN suppression
-// row must not be filled with the current-registrants list (which has its own row) or a
-// standard list (which has its own rows).
+// suppression words only. MatchesEventSuppression uses it, with isStandingOrStandardName, because
+// the event's OWN suppression row must not be filled with the current-registrants list (which has
+// its own row) or a standard list (which has its own rows).
 func hasGenericSuppressionHint(name string) bool {
 	return containsAny(name, suppressionNameHints) || containsAny(normaliseSuppressionName(name), suppressionNameHints)
+}
+
+// isStandingOrStandardName is the NARROW form of isManagedSuppressionName, for
+// MatchesEventSuppression: a name that IS a standard list (its normalised words equal a term's,
+// not merely contain them) or one of the two standing lists. The broad substring form would
+// reject an event's own list such as "KubeCon - LF Events Suppression List", which is a
+// legitimate event exclusion, while discovery hiding keeps the broad form.
+func isStandingOrStandardName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if strings.HasPrefix(lower, strings.ToLower(standardSuppressionPrefix)) || strings.HasSuffix(lower, strings.ToLower(currentRegistrantsSuffix)) {
+		return true
+	}
+	for _, term := range StandardSuppressionTerms {
+		if MatchesStandardSuppression(name, term.SearchTerm) {
+			return true
+		}
+	}
+	return false
 }
 
 // isManagedSuppressionName reports whether name is one of the suppression lists the standing

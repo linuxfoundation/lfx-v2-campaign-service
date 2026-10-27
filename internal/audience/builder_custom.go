@@ -568,7 +568,7 @@ func customBaseBranches(c CustomCriteria) []filterBranch {
 			Filters:          []filter{{FilterType: "PAGE_VIEW", Operator: "HAS_PAGEVIEW_CONTAINS", PageURL: u, EnableTracking: &noTracking}},
 		})
 	}
-	if names := cleanValues(c.RegisteredFor); len(names) > 0 {
+	if names := exactValues(c.RegisteredFor); len(names) > 0 {
 		b := filterBranch{
 			FilterBranchType: "AND",
 			FilterBranches:   []filterBranch{eventWith(registrationEventTypeID, valueFilter("event_name", "IS_EQUAL_TO", names, false))},
@@ -699,6 +699,27 @@ func cleanValues(values []string) []string {
 			continue
 		}
 		seen[key] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+// exactValues is cleanValues for EXACT filter values (registered_for's event_name equality): ends
+// trimmed, blanks and exact repeats dropped, and nothing else changed. cleanValues collapses
+// internal whitespace and de-duplicates case-insensitively, which is right for CONTAINS values
+// but would rewrite a warehouse edition spelled with a double space into one that matches nobody.
+func exactValues(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if _, dup := seen[v]; dup {
+			continue
+		}
+		seen[v] = struct{}{}
 		out = append(out, v)
 	}
 	return out

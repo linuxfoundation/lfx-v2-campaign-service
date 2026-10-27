@@ -111,7 +111,10 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 			// brand's education enrollees. A page-view URL of some other page is a different
 			// segment, and a visitors-only draft (no education) asked for visitors alone:
 			// ORing past registrants into either would reach people outside what was asked for.
-			eventDefault := !hasLocation && !rolesOnly && draft.Criteria.EducationEnrolled &&
+			// The signals alone cannot tell the default from "this page's visitors plus some
+			// OTHER course's enrollees", so the model's explicit include_past_editions: true is
+			// required as well. The regional audience keeps its existing rule (unset applies).
+			eventDefault := draft.IncludePastEditions && !hasLocation && !rolesOnly && draft.Criteria.EducationEnrolled &&
 				selectsPage(draft.Criteria.PageViewURLs, event.URL)
 			switch {
 			case len(named) > 0:
@@ -590,8 +593,13 @@ func (x *AudienceExplorer) customEventContext(ctx context.Context, eventURL stri
 func knownEditions(requested, known []string) (kept, unknown []string) {
 	canonical := make(map[string]string, len(known))
 	for _, k := range known {
+		// Matched with spacing and case normalised, but RETURNED as the warehouse spells it,
+		// ends trimmed only: it becomes an exact event_name equality, and collapsing a double
+		// space would match nobody.
 		if n := strings.Join(strings.Fields(k), " "); n != "" {
-			canonical[strings.ToLower(n)] = n
+			if _, dup := canonical[strings.ToLower(n)]; !dup {
+				canonical[strings.ToLower(n)] = strings.TrimSpace(k)
+			}
 		}
 	}
 	seen := map[string]bool{}
