@@ -14,8 +14,6 @@ import (
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 	"unicode"
-
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 )
 
 // ---------------------------------------------------------------------------
@@ -937,6 +935,11 @@ func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
 	return checkCurrentRegistrants(eventName, includedNames)
 }
 
+// StagePostEvent is the email stage for which check 4 does not apply. It must equal
+// `emailstage.PostEvent`, which TestAudienceStagePostEventMatchesEmailStage (internal/service)
+// enforces; it is not imported so this package stays independent of the service layer.
+const StagePostEvent = "Post-Event"
+
 // CheckCurrentRegistrantsForStage is check 4 for a send whose email stage may be known.
 //
 // A Post-Event send ("Thank You + Survey") is written FOR this edition's attendees, so including
@@ -952,7 +955,7 @@ func CheckCurrentRegistrantsForStage(eventName, stage string, includedNames []st
 	if strings.TrimSpace(eventName) == "" {
 		return Check{}
 	}
-	if strings.TrimSpace(stage) == emailstage.PostEvent {
+	if strings.TrimSpace(stage) == StagePostEvent {
 		return Check{
 			Verdict:  VerdictNotApplicable,
 			Findings: []Finding{},

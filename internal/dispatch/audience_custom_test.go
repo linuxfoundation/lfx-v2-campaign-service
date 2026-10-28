@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1532,11 +1533,19 @@ func TestRunQA_AnEmptiedMasterIsNotAPass(t *testing.T) {
 	srv := portal.serve(t)
 	defer srv.Close()
 
-	out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", "", false, false, nil)
-	require.NoError(t, err)
-	assert.Equal(t, audience.VerdictNeedsVerify, out.Checks.CurrentRegistrants.Verdict)
-	require.NotEmpty(t, out.Checks.CurrentRegistrants.Findings)
-	assert.Contains(t, out.Checks.CurrentRegistrants.Findings[0].Message, "reach no one")
+	// Post-Event too (#244): check 4's registrants question does not apply there, but a send
+	// that reaches no one is worth knowing whatever the stage, so the guard must still win over
+	// NOT APPLICABLE rather than be hidden by it.
+	for _, stage := range []string{"", "Post-Event"} {
+		t.Run("stage "+strconv.Quote(stage), func(t *testing.T) {
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", stage, false, false, nil)
+			require.NoError(t, err)
+			assert.Equal(t, audience.VerdictNeedsVerify, out.Checks.CurrentRegistrants.Verdict)
+			assert.Empty(t, out.Checks.CurrentRegistrants.Note, "the guard replaces the check whole, note included")
+			require.NotEmpty(t, out.Checks.CurrentRegistrants.Findings)
+			assert.Contains(t, out.Checks.CurrentRegistrants.Findings[0].Message, "reach no one")
+		})
+	}
 }
 
 // An included list that excludes this edition's registrants on every one of its own
