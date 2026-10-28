@@ -24,9 +24,12 @@ under nothing. Two shapes are not a plain single-entry fragment and are checked
 accordingly: an entry later superseded carries a `> **Superseded …**` blockquote
 ABOVE its marker, so the reader meets the warning first; and an ARCHIVE rolls
 many entries under one H1, each behind its own `##` heading with its own marker,
-which is checked per section. A `##` line inside a fenced code block is quoted
-sample text, not a section, and is skipped; a fence left open to the end of
-the file is an error, because it would hide every section after it (#421). The archive is recognized by
-that structure rather than by filename, so there is no naming convention to keep
-in sync. The validator's set and CLAUDE.md's are held equal by a test that reads
+which is checked per section. The body is read with a CommonMark parser
+(`github.com/yuin/goldmark`), not a line scanner: a section is a level-2 ATX or
+Setext heading that is a direct child of the document, so a `##` line inside
+fenced or indented code, an HTML block, a list or a blockquote is never one, and
+an entry's marker is the bold label opening its first paragraph. A fence left
+open to the end of the file is an error, because it would hide every section
+after it (#421). The archive is recognized by that structure rather than by
+filename, so there is no naming convention to keep in sync. The validator's set and CLAUDE.md's are held equal by a test that reads
 CLAUDE.md (#420), so a kind cannot be added to one and not the other.

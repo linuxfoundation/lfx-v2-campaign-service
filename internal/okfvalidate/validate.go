@@ -13,6 +13,7 @@
 package okfvalidate
 
 import (
+	"bytes"
 	"fmt"
 	"html"
 	"io/fs"
@@ -26,6 +27,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/okf"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/text"
 )
 
 // Validate walks bundleDir and checks it for OKF v0.1 conformance. It
@@ -605,13 +609,23 @@ var logFragmentKinds = []string{"Update", "Fix", "Creation", "Note", "Verificati
 // classification does not depend on it).
 var logFragmentMarkerPattern = regexp.MustCompile(`^\*\*([A-Za-z]+)\*\*`)
 
-// logFragmentSectionPattern matches an archive file's per-entry "##" heading.
+// logFragmentSectionPattern is the text rule for an archive file's per-entry
+// "##" heading, applied to the heading as "## " plus its text: a section has
+// a non-empty title.
 var logFragmentSectionPattern = regexp.MustCompile(`^## \S`)
 
 // validateLogFragment checks a docs/knowledge/log/ entry: its filename
 // matches "YYYY-MM-DD-<slug>.md", it declares no frontmatter block (a
 // fragment is not a concept), its first H1 begins with the same date as the
 // filename, and it opens with one of CLAUDE.md's bold kind markers.
+//
+// The body is read through a CommonMark parser (goldmark), not a line
+// scanner. Which "## " lines are sections and which bold line is an entry's
+// marker depends on fenced and indented code, HTML blocks, lists and
+// blockquotes, and every hand-rolled approximation of those rules was wrong
+// at some corner a review found next. The AST decides block structure
+// exactly as a renderer does, so a heading is a section only when a reader
+// sees one.
 func validateLogFragment(path string) []error {
 	m := logFragmentNamePattern.FindStringSubmatch(filepath.Base(path))
 	if m == nil {
@@ -631,25 +645,25 @@ func validateLogFragment(path string) []error {
 		return []error{fmt.Errorf("%s: log fragment must not declare a frontmatter block", path)}
 	}
 
-	lines := strings.Split(content, "\n")
-	headingAt := -1
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		hm := logFragmentHeadingPattern.FindStringSubmatch(trimmed)
-		if hm == nil {
-			return []error{fmt.Errorf("%s: first heading %q does not start with \"# YYYY-MM-DD\"", path, trimmed)}
-		}
-		if hm[1] != m[1] {
-			return []error{fmt.Errorf("%s: heading date %q does not match filename date %q", path, hm[1], m[1])}
-		}
-		headingAt = i
-		break
-	}
-	if headingAt < 0 {
+	first, ok := firstNonBlankLine(content)
+	if !ok {
 		return []error{fmt.Errorf("%s: no \"# YYYY-MM-DD\" heading found", path)}
+	}
+	hm := logFragmentHeadingPattern.FindStringSubmatch(first)
+	if hm == nil {
+		return []error{fmt.Errorf("%s: first heading %q does not start with \"# YYYY-MM-DD\"", path, first)}
+	}
+	if hm[1] != m[1] {
+		return []error{fmt.Errorf("%s: heading date %q does not match filename date %q", path, hm[1], m[1])}
+	}
+
+	src := []byte(content)
+	doc := goldmark.New().Parser().Parse(text.NewReader(src))
+	// The first line reads as "# YYYY-MM-DD" once trimmed, but only the parser
+	// knows whether it is a heading: indented four spaces, it is code.
+	h1, ok := doc.FirstChild().(*ast.Heading)
+	if !ok || h1.Level != 1 {
+		return []error{fmt.Errorf("%s: first line %q is not a level-1 heading", path, first)}
 	}
 
 	// An ARCHIVE rolls many entries under one H1, each behind its own "##"
@@ -657,208 +671,96 @@ func validateLogFragment(path string) []error {
 	// rather than at the top of the file. Detect that shape by what follows
 	// the H1 rather than by filename: a name convention would be a second
 	// rule to keep in sync, and this one reads the structure it is about.
-	if next, ok := nextMarkerCandidateLine(lines, headingAt+1); ok && isArchiveSectionHeading(next) {
+	if _, ok := archiveSection(entryBlockAfter(h1), src); ok {
 		var errs []error
-		fence, fenceAt := "", 0
-		for i, line := range lines {
-			// A "## " line inside a fenced code block is quoted markdown,
-			// not a section: an entry that shows a sample log must not be
-			// rejected for the sample's headings.
-			wasOpen := fence != ""
-			var inFence bool
-			if fence, inFence = fenceState(fence, line); inFence {
-				if !wasOpen {
-					fenceAt = i + 1
-				}
-				continue
-			}
-			section, ok := archiveSectionHeading(line)
+		// Only direct children of the document are walked: a "## " line in
+		// fenced or indented code, an HTML block, a list or a blockquote is
+		// never a child of the document, so it is never taken for a section.
+		for n := h1.NextSibling(); n != nil; n = n.NextSibling() {
+			section, ok := archiveSection(n, src)
 			if !ok {
 				continue
 			}
-			if err := checkKindMarker(path, lines, i+1, section); err != nil {
+			if err := checkKindMarker(path, src, n, section); err != nil {
 				errs = append(errs, err)
 			}
 		}
-		// A fence that never closes would hide every section after it. That
-		// is how CommonMark renders it, but here it would turn a stray
-		// fence into a silent pass for the rest of the archive, so it is
-		// reported instead of trusted.
-		if fence != "" {
-			_, marker, _ := strings.Cut(fence, "\x00")
-			errs = append(errs, fmt.Errorf("%s: code fence %q opened on line %d is never closed, so the archive sections after it cannot be checked", path, marker, fenceAt))
-		}
-		return errs
+		// A fence that never closes runs to the end of the document and would
+		// hide every section after it. That is how CommonMark renders it, but
+		// here it would turn a stray fence into a silent pass for the rest of
+		// the archive, so it is reported instead of trusted.
+		return append(errs, unclosedFences(path, doc, src)...)
 	}
 
-	if err := checkKindMarker(path, lines, headingAt+1, ""); err != nil {
+	if err := checkKindMarker(path, src, h1, ""); err != nil {
 		return []error{err}
 	}
 	return nil
 }
 
-// isArchiveSectionHeading is archiveSectionHeading's boolean form.
-func isArchiveSectionHeading(line string) bool {
-	_, ok := archiveSectionHeading(line)
-	return ok
+// firstNonBlankLine returns the first line of content with any text on it,
+// trimmed.
+func firstNonBlankLine(content string) (string, bool) {
+	for _, line := range strings.Split(content, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			return trimmed, true
+		}
+	}
+	return "", false
 }
 
-// archiveSectionHeading reports whether line is an archive section heading
-// and returns it trimmed. Like any CommonMark ATX heading it may be indented
-// by at most three spaces; a deeper "## " line is indented code or the body
-// of a list item, not a section.
-func archiveSectionHeading(line string) (string, bool) {
-	if leadingSpaces(line) > 3 {
+// archiveSection reports whether n is an archive section heading and returns
+// its title as "## <text>". A section is a level-2 heading, ATX or Setext,
+// that is a direct child of the document and whose text satisfies
+// logFragmentSectionPattern.
+func archiveSection(n ast.Node, src []byte) (string, bool) {
+	h, ok := n.(*ast.Heading)
+	if !ok || h.Level != 2 || h.Parent() == nil || h.Parent().Kind() != ast.KindDocument {
 		return "", false
 	}
-	section := strings.TrimSpace(line)
+	var parts []string
+	for i := 0; i < h.Lines().Len(); i++ {
+		seg := h.Lines().At(i)
+		parts = append(parts, strings.TrimSpace(string(seg.Value(src))))
+	}
+	section := "## " + strings.Join(parts, " ")
 	return section, logFragmentSectionPattern.MatchString(section)
 }
 
-// fenceState tracks fenced code blocks across the lines of a file. fence is
-// the marker that opened the block the previous line was in ("" outside
-// one); the result is the marker for the next line, and whether THIS line is
-// part of a fence (its opening or closing line, or anything between).
+// entryBlockAfter returns the first block after n that could carry a kind
+// marker, with any blockquote skipped, or nil if there is none.
 //
-// It follows CommonMark's fence rules for the shapes a log entry uses: a run
-// of three or more backticks or tildes, after any blockquote or list-item
-// prefix, indented by at most three spaces; a backtick opener's info string
-// may not contain a backtick (that line is an inline code span, not a
-// fence); and a block closes only on a run of its own character at least as
-// long as the opener, with nothing after it. It does not track list-item
-// content indentation, so a fence indented four or more spaces under a list
-// item is not recognised. That miss is harmless here: the "## " lines inside
-// such a fence are indented too, and archiveSectionHeading ignores them.
-//
-// The returned fence records the blockquote depth the opener sat at as well
-// as its marker, and only a line at that SAME depth can close the block. So a
-// literal "> ```" inside a top-level fence is content, not a closer.
-func fenceState(fence, line string) (string, bool) {
-	prefix, marker, rest := fenceMarker(line)
-	if fence == "" {
-		if marker == "" || (marker[0] == '`' && strings.Contains(rest, "`")) {
-			return "", false
-		}
-		return normaliseContainer(prefix) + "\x00" + marker, true
+// The blockquote is why this is not just "the next block". An entry that was
+// later superseded carries a "> **Superseded ...**" banner ABOVE its marker,
+// so a reader meets the warning before the entry it qualifies. That banner is
+// itself bold, so a naive check both misses the real marker and rejects the
+// file for a word ("Superseded", "SUPERSEDED") that was never meant to be one.
+func entryBlockAfter(n ast.Node) ast.Node {
+	next := n.NextSibling()
+	for next != nil && next.Kind() == ast.KindBlockquote {
+		next = next.NextSibling()
 	}
-	openPrefix, openMarker, _ := strings.Cut(fence, "\x00")
-	// A closer never carries a list marker: inside a list item it is written
-	// as indented content, and at top level it has no prefix at all. So a
-	// line such as "- ```" inside an open fence is content, not a closer.
-	if marker != "" && !hasListMarker(prefix) && normaliseContainer(prefix) == openPrefix && marker[0] == openMarker[0] &&
-		len(marker) >= len(openMarker) && strings.TrimSpace(rest) == "" {
-		return "", true
-	}
-	return fence, true
+	return next
 }
 
-// hasListMarker reports whether a container prefix contains a list-item
-// marker ("- ", "* ", "+ ", "1. ", "1) ") rather than only blockquote markers.
-func hasListMarker(prefix string) bool {
-	return strings.TrimSpace(strings.ReplaceAll(prefix, ">", "")) != ""
-}
-
-// normaliseContainer reduces a container prefix to its blockquote depth. Only
-// that has to match between an opener and its closer: a blockquote repeats
-// its ">" on every line, while a list item's continuation lines are written
-// as indented content without the item marker, so a list-item fence closes on
-// an indented closer.
-func normaliseContainer(prefix string) string {
-	return strings.Repeat("q", strings.Count(prefix, ">"))
-}
-
-// fenceContainerPrefix matches the blockquote and list-item markers a fence
-// may sit inside: "> ", "- ", "* ", "+ ", "1. ", "1) ", in any nesting.
-var fenceContainerPrefix = regexp.MustCompile(`^(?: {0,3}(?:> ?|(?:[-*+]|\d{1,9}[.)])(?: |$)))*`)
-
-// fenceMarker returns the line's container prefix, the run of three or more
-// backticks or tildes it opens with after that prefix and at most three
-// spaces of indentation, and the text after that run. The marker is "" when
-// the line does not open with one.
-func fenceMarker(line string) (string, string, string) {
-	prefix := fenceContainerPrefix.FindString(line)
-	body := line[len(prefix):]
-	if leadingSpaces(body) > 3 {
-		return prefix, "", ""
-	}
-	body = strings.TrimLeft(body, " ")
-	if len(body) < 3 || (body[0] != '`' && body[0] != '~') {
-		return prefix, "", ""
-	}
-	n := 0
-	for n < len(body) && body[n] == body[0] {
-		n++
-	}
-	if n < 3 {
-		return prefix, "", ""
-	}
-	return prefix, body[:n], body[n:]
-}
-
-// leadingSpaces counts the spaces a line opens with, a tab counting as four
-// as CommonMark's tab stop does for indentation.
-func leadingSpaces(s string) int {
-	n := 0
-	for _, r := range s {
-		switch r {
-		case ' ':
-			n++
-		case '\t':
-			n += 4
-		default:
-			return n
-		}
-	}
-	return n
-}
-
-// nextMarkerCandidate returns the first line at or after start that could
-// carry a kind marker, with blank lines and a leading blockquote skipped.
-//
-// The blockquote is why this is not just "the next non-blank line". An entry
-// that was later superseded carries a "> **Superseded ...**" banner ABOVE its
-// marker, so a reader meets the warning before the entry it qualifies. That
-// banner is itself bold, so a naive check both misses the real marker and
-// rejects the file for a word ("Superseded", "SUPERSEDED") that was never
-// meant to be one.
-// nextMarkerCandidateLine is nextMarkerCandidate's untrimmed form: the
-// first non-blank, non-blockquote line from start, as written, so the
-// caller can apply the same indentation rule the section scan does.
-func nextMarkerCandidateLine(lines []string, start int) (string, bool) {
-	for i := start; i < len(lines); i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == "" || strings.HasPrefix(trimmed, ">") {
-			continue
-		}
-		return lines[i], true
-	}
-	return "", false
-}
-
-func nextMarkerCandidate(lines []string, start int) (string, bool) {
-	for i := start; i < len(lines); i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == "" || strings.HasPrefix(trimmed, ">") {
-			continue
-		}
-		return trimmed, true
-	}
-	return "", false
-}
-
-// checkKindMarker requires the entry body beginning at start to open with one
-// of logFragmentKinds. section names the archive section being checked, and
-// is empty for a single-entry fragment.
-func checkKindMarker(path string, lines []string, start int, section string) error {
+// checkKindMarker requires the entry body after the heading n to open with
+// one of logFragmentKinds: its first block, past any banner, must be a
+// paragraph that starts with a bold kind label. section names the archive
+// section being checked, and is empty for a single-entry fragment.
+func checkKindMarker(path string, src []byte, n ast.Node, section string) error {
 	in := ""
 	if section != "" {
 		in = fmt.Sprintf(" in section %q", section)
 	}
 	allowed := strings.Join(logFragmentKinds, ", ")
 
-	line, ok := nextMarkerCandidate(lines, start)
-	if !ok {
+	block := entryBlockAfter(n)
+	if _, next := archiveSection(block, src); block == nil || next {
 		return fmt.Errorf("%s: entry%s has no body, so it carries no kind marker; it must open with one of: %s", path, in, allowed)
+	}
+	line := blockFirstLine(block, src)
+	if block.Kind() != ast.KindParagraph {
+		return fmt.Errorf("%s: entry%s opens with %q, which is not a bold kind marker; it must open with one of: %s", path, in, truncateForError(line), allowed)
 	}
 	km := logFragmentMarkerPattern.FindStringSubmatch(line)
 	if km == nil {
@@ -870,6 +772,92 @@ func checkKindMarker(path string, lines []string, start int, section string) err
 		}
 	}
 	return fmt.Errorf("%s: entry%s opens with kind marker %q, which is not one of: %s", path, in, km[1], allowed)
+}
+
+// blockStart returns the source offset at which block n begins, or -1 when
+// neither it nor any descendant records one.
+func blockStart(n ast.Node) int {
+	for ; n != nil; n = n.FirstChild() {
+		if p := n.Pos(); p >= 0 {
+			return p
+		}
+		if n.Type() == ast.TypeBlock && n.Lines().Len() > 0 {
+			return n.Lines().At(0).Start
+		}
+	}
+	return -1
+}
+
+// lineBounds returns the start and end offsets of the source line holding pos,
+// the end excluding its newline.
+func lineBounds(src []byte, pos int) (int, int) {
+	start := bytes.LastIndexByte(src[:pos], '\n') + 1
+	end := len(src)
+	if i := bytes.IndexByte(src[pos:], '\n'); i >= 0 {
+		end = pos + i
+	}
+	return start, end
+}
+
+// blockFirstLine returns the trimmed source line that block n begins on, so a
+// diagnostic quotes what the author wrote.
+func blockFirstLine(n ast.Node, src []byte) string {
+	pos := blockStart(n)
+	if pos < 0 {
+		return n.Kind().String()
+	}
+	start, end := lineBounds(src, pos)
+	return strings.TrimSpace(string(src[start:end]))
+}
+
+// unclosedFences reports every fenced code block that runs to the end of the
+// document without a closing fence.
+//
+// goldmark does not record whether a fence was closed, so this is read off
+// the source. A fence's content lines are contiguous and end where the block
+// does: if a closing fence ends it, that line follows the last content line
+// (or the opener, for an empty block); if the end of a container ends it, the
+// line that broke the container follows. Only a fence that ran to the end of
+// the document has nothing but whitespace after it, because the parser keeps
+// trailing blank lines as content of a fence that never closed. A fence ended
+// by its container is not reported: it hides nothing past the container.
+func unclosedFences(path string, doc ast.Node, src []byte) []error {
+	var errs []error
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		fb, ok := n.(*ast.FencedCodeBlock)
+		if !entering || !ok {
+			return ast.WalkContinue, nil
+		}
+		open := fb.Pos()
+		if open < 0 {
+			return ast.WalkContinue, nil
+		}
+		_, end := lineBounds(src, open)
+		if fb.Lines().Len() > 0 {
+			end = fb.Lines().At(fb.Lines().Len() - 1).Stop
+		}
+		if end < len(src) && len(bytes.TrimSpace(src[end:])) > 0 {
+			return ast.WalkContinue, nil
+		}
+		errs = append(errs, fmt.Errorf("%s: code fence %q opened on line %d is never closed, so the archive sections after it cannot be checked", path, fenceRun(src, open), bytes.Count(src[:open], []byte("\n"))+1))
+		return ast.WalkSkipChildren, nil
+	})
+	return errs
+}
+
+// fenceRun returns the run of backticks or tildes that opens the fence at or
+// after pos on its line.
+func fenceRun(src []byte, pos int) string {
+	_, end := lineBounds(src, pos)
+	i := pos
+	for i < end && src[i] != '`' && src[i] != '~' {
+		i++
+	}
+	j := i
+	for j < end && src[j] == src[i] {
+		j++
+	}
+	return string(src[i:j])
 }
 
 // truncateForError bounds a quoted source line so one malformed entry cannot

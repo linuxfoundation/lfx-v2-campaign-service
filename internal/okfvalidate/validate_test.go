@@ -359,7 +359,7 @@ func TestValidateLogFragmentChecksEveryArchiveSection(t *testing.T) {
 
 func TestValidateLogFragmentRejectsAnEntryWithNoBody(t *testing.T) {
 	// An H1 and nothing else carries no marker at all. A banner alone is the
-	// same case: nextMarkerCandidate skips the blockquote, and there is no
+	// same case: entryBlockAfter skips the blockquote, and there is no
 	// entry under it to classify.
 	for name, body := range map[string]string{
 		"empty":       "",
@@ -1409,5 +1409,64 @@ func TestValidateLogFragmentListMarkerLookalikeDoesNotCloseATopLevelFence(t *tes
 	}
 	if !errsContain(errs, `kind marker "Feature"`) {
 		t.Errorf("Validate() = %v, want the section after the fence still checked", errs)
+	}
+}
+
+func TestValidateLogFragmentListFenceClosesOnItsIndentedCloser(t *testing.T) {
+	// A fence opened after an ordered-list marker sits at the item's content
+	// column, so its closer is written at that column too: "10. ```text"
+	// closes on "    ```". Missing that closer reports a valid archive as an
+	// unclosed fence and leaves the section after the list unchecked.
+	dir := t.TempDir()
+	writeFragment(t, dir,
+		"## 2026-08-05 (first)\n\n**Docs** — samples:\n\n"+
+			"10. ```text\n    ## 2026-01-01\n    ```\n\n"+
+			"## 2026-08-04 (second)\n\n**Feature** — did the other thing.\n")
+
+	errs := Validate(dir)
+	if errsContain(errs, "never closed") || errsContain(errs, "## 2026-01-01") {
+		t.Errorf("Validate() = %v, want the list fence closed by its indented closer", errs)
+	}
+	if !errsContain(errs, `kind marker "Feature"`) {
+		t.Errorf("Validate() = %v, want the section after the list still checked", errs)
+	}
+}
+
+func TestValidateLogFragmentFenceLookalikesInHTMLBlocksAreNotDelimiters(t *testing.T) {
+	// A line of backticks inside an HTML block is HTML, not a fence. Read as
+	// delimiters, the first lookalike opens a "fence" that the second closes,
+	// and the real section between them, bad marker and all, silently passes.
+	for name, wrap := range map[string][2]string{
+		"comment": {"<!--\n", "-->\n"},
+		"pre":     {"<pre>\n", "</pre>\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			lookalike := wrap[0] + "```\n" + wrap[1]
+			dir := t.TempDir()
+			writeFragment(t, dir,
+				"## 2026-08-05 (first)\n\n**Docs** — did the thing.\n\n"+lookalike+"\n"+
+					"## 2026-08-04 (second)\n\n**Feature** — did the other thing.\n\n"+lookalike)
+
+			if errs := Validate(dir); !errsContain(errs, `kind marker "Feature"`) {
+				t.Errorf("Validate() = %v, want the section between the HTML blocks checked", errs)
+			}
+		})
+	}
+}
+
+func TestValidateLogFragmentBlockquoteFenceClosesAfterATab(t *testing.T) {
+	// A blockquote marker may be followed by a tab, so ">\t```" closes a fence
+	// opened as "> ```" and the section after the quote is still checked.
+	dir := t.TempDir()
+	writeFragment(t, dir,
+		"## 2026-08-05 (first)\n\n**Docs** — quoted sample:\n\n> ```markdown\n> ## 2026-01-01\n>\t```\n\n"+
+			"## 2026-08-04 (second)\n\n**Feature** — did the other thing.\n")
+
+	errs := Validate(dir)
+	if errsContain(errs, "never closed") {
+		t.Errorf("Validate() = %v, want the quoted fence closed by >\\t```", errs)
+	}
+	if !errsContain(errs, `kind marker "Feature"`) {
+		t.Errorf("Validate() = %v, want the section after the quote still checked", errs)
 	}
 }
