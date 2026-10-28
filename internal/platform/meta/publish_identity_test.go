@@ -59,6 +59,30 @@ func TestCheckPublishIdentity(t *testing.T) {
 	}
 }
 
+func TestCheckPublishIdentityOneSidedAdviceFollowsTheGeoTargets(t *testing.T) {
+	// "Omit both" is only an option when no EU country is targeted: with one, the next guard
+	// refuses a create carrying neither disclosure, so the one-sided message must not offer it
+	// (#429).
+	for _, tc := range []struct {
+		name          string
+		geo           []string
+		want, notWant string
+	}{
+		{"EU targeted", []string{"US", "DE"}, "geoTargets include EU countries (DE), so Meta requires both", "omit both"},
+		{"no EU targeted", []string{"US", "GB"}, "supply both or omit both", "EU countries"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := CheckPublishIdentity(&PublishIdentity{GeoTargets: tc.geo, DSABeneficiary: "CNCF"})
+			if err == nil || !strings.Contains(err.Error(), "dsaBeneficiary was supplied without dsaPayor") {
+				t.Fatalf("CheckPublishIdentity = %v, want the one-sided refusal", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), tc.notWant) {
+				t.Errorf("CheckPublishIdentity = %v, want it to contain %q and not %q", err, tc.want, tc.notWant)
+			}
+		})
+	}
+}
+
 func TestCheckPublishIdentityTrimsInPlace(t *testing.T) {
 	in := PublishIdentity{InstagramUserID: " 123 ", DSABeneficiary: " CNCF ", DSAPayor: " LF "}
 	if err := CheckPublishIdentity(&in); err != nil {

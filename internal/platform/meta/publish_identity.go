@@ -120,6 +120,11 @@ func CheckPublishIdentity(id *PublishIdentity) error {
 		if id.DSABeneficiary == "" {
 			supplied, missing = "dsaPayor", "dsaBeneficiary"
 		}
+		// With an EU country targeted, omitting both is refused by the next guard, so the advice
+		// must not offer it.
+		if eu := DSATargets(id.GeoTargets); len(eu) > 0 {
+			return publishIdentityInvalid("EU DSA disclosures are incomplete: %s was supplied without %s; geoTargets include EU countries (%s), so Meta requires both to publish the ad set — supply both, or remove the EU countries", supplied, missing, strings.Join(eu, ", "))
+		}
 		return publishIdentityInvalid("EU DSA disclosures are incomplete: %s was supplied without %s; Meta requires both to publish a regulated ad set — supply both or omit both", supplied, missing)
 	}
 	if id.DSABeneficiary == "" {
