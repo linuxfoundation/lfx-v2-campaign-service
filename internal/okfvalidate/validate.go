@@ -594,6 +594,8 @@ var logFragmentHeadingPattern = regexp.MustCompile(`^# (\d{4}-\d{2}-\d{2})\b`)
 // to open with. It is a CLOSED set on purpose: the marker is what classifies
 // an entry for a reader scanning the log, so a one-off spelling ("Feature",
 // "Test") is not a richer label but an entry that sorts under nothing.
+// TestValidateLogFragmentKindsMatchClaudeMD reads CLAUDE.md and fails when the
+// two lists differ in either direction.
 var logFragmentKinds = []string{"Update", "Fix", "Creation", "Note", "Verification", "Docs"}
 
 // logFragmentMarkerPattern matches the opening marker and captures its word,
@@ -657,8 +659,16 @@ func validateLogFragment(path string) []error {
 	// rule to keep in sync, and this one reads the structure it is about.
 	if next, ok := nextMarkerCandidate(lines, headingAt+1); ok && logFragmentSectionPattern.MatchString(next) {
 		var errs []error
+		fence := ""
 		for i, line := range lines {
 			section := strings.TrimSpace(line)
+			// A "## " line inside a fenced code block is quoted markdown,
+			// not a section: an entry that shows a sample log must not be
+			// rejected for the sample's headings.
+			var inFence bool
+			if fence, inFence = fenceState(fence, section); inFence {
+				continue
+			}
 			if !logFragmentSectionPattern.MatchString(section) {
 				continue
 			}
@@ -673,6 +683,43 @@ func validateLogFragment(path string) []error {
 		return []error{err}
 	}
 	return nil
+}
+
+// fenceState tracks fenced code blocks across the lines of a file. fence is
+// the marker that opened the block the previous line was in ("" outside
+// one); the result is the marker for the next line, and whether THIS line is
+// part of a fence (its opening or closing line, or anything between). A block
+// opened with backticks closes only on backticks and a tilde block only on
+// tildes, at least as long as the opener, as CommonMark has it.
+func fenceState(fence, trimmed string) (string, bool) {
+	marker := fenceMarker(trimmed)
+	if fence == "" {
+		if marker == "" {
+			return "", false
+		}
+		return marker, true
+	}
+	// A closing fence carries no info string.
+	if marker != "" && marker[0] == fence[0] && len(marker) >= len(fence) && strings.TrimSpace(trimmed[len(marker):]) == "" {
+		return "", true
+	}
+	return fence, true
+}
+
+// fenceMarker returns the run of three or more backticks or tildes a line
+// opens with, or "" when it does not open with one.
+func fenceMarker(trimmed string) string {
+	if len(trimmed) < 3 || (trimmed[0] != '`' && trimmed[0] != '~') {
+		return ""
+	}
+	n := 0
+	for n < len(trimmed) && trimmed[n] == trimmed[0] {
+		n++
+	}
+	if n < 3 {
+		return ""
+	}
+	return trimmed[:n]
 }
 
 // nextMarkerCandidate returns the first line at or after start that could

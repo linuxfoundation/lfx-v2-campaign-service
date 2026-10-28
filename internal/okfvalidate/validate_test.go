@@ -6,6 +6,8 @@ package okfvalidate
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -234,17 +236,67 @@ func TestValidateLogFragmentRejectsAMissingKindMarker(t *testing.T) {
 	}
 }
 
-func TestValidateLogFragmentAcceptsEveryDocumentedKind(t *testing.T) {
-	// This is the test that pins the validator's set to CLAUDE.md's. Adding a
-	// marker to one list and not the other turns a documented kind into a
-	// rejected one, which is the same class of drift #176 is about — just in
-	// the other direction.
-	for _, kind := range []string{"Update", "Fix", "Creation", "Note", "Verification", "Docs"} {
+// claudeMDLogKinds returns the bold kind markers CLAUDE.md's knowledge-log
+// step documents, in the order it lists them. It reads the step that names
+// docs/knowledge/log/ and collects every backticked bold word in it, so the
+// test below compares the validator against what an author is actually told.
+func claudeMDLogKinds(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("reading CLAUDE.md: %v", err)
+	}
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	start := strings.Index(text, "`docs/knowledge/log/")
+	if start < 0 {
+		t.Fatal("CLAUDE.md no longer names docs/knowledge/log/; update this test to find the step that documents the kind markers")
+	}
+	// The step runs from the list item that names the log directory to the
+	// next numbered item.
+	if i := strings.LastIndex(text[:start], "\n"); i >= 0 {
+		start = i + 1
+	}
+	step := text[start:]
+	if end := regexp.MustCompile(`\n\d+\. `).FindStringIndex(step); end != nil {
+		step = step[:end[0]]
+	}
+
+	var kinds []string
+	seen := map[string]bool{}
+	for _, m := range regexp.MustCompile("`\\*\\*([A-Za-z]+)\\*\\*").FindAllStringSubmatch(step, -1) {
+		if !seen[m[1]] {
+			seen[m[1]] = true
+			kinds = append(kinds, m[1])
+		}
+	}
+	if len(kinds) == 0 {
+		t.Fatalf("found no backticked bold kind markers in CLAUDE.md's log step:\n%s", step)
+	}
+	return kinds
+}
+
+func TestValidateLogFragmentKindsMatchClaudeMD(t *testing.T) {
+	// This is the test that pins the validator's set to CLAUDE.md's, in BOTH
+	// directions. A kind documented in CLAUDE.md but missing from the
+	// validator is rejected at validate time even though the author followed
+	// the guide; a kind the validator accepts but CLAUDE.md never mentions is
+	// a category no author is told exists. Either is the drift #176 is about.
+	documented := claudeMDLogKinds(t)
+	sorted := func(kinds []string) string {
+		c := append([]string(nil), kinds...)
+		sort.Strings(c)
+		return strings.Join(c, ", ")
+	}
+	if got, want := sorted(logFragmentKinds), sorted(documented); got != want {
+		t.Errorf("logFragmentKinds = [%s], CLAUDE.md documents [%s]; change both lists together", got, want)
+	}
+
+	for _, kind := range documented {
 		t.Run(kind, func(t *testing.T) {
 			dir := t.TempDir()
 			writeFragment(t, dir, "**"+kind+"** — did the thing.\n")
 			if errs := Validate(dir); len(errs) != 0 {
-				t.Errorf("Validate() = %v, want %q accepted", errs, kind)
+				t.Errorf("Validate() = %v, want documented kind %q accepted", errs, kind)
 			}
 		})
 	}
@@ -299,6 +351,73 @@ func TestValidateLogFragmentChecksEveryArchiveSection(t *testing.T) {
 	}
 	if errsContain(errs, "## 2026-08-05 (first)") {
 		t.Errorf("Validate() = %v, want the conformant section left alone", errs)
+	}
+}
+
+func TestValidateLogFragmentRejectsAnEntryWithNoBody(t *testing.T) {
+	// An H1 and nothing else carries no marker at all. A banner alone is the
+	// same case: nextMarkerCandidate skips the blockquote, and there is no
+	// entry under it to classify.
+	for name, body := range map[string]string{
+		"empty":       "",
+		"banner only": "> **Superseded.** See the later entry.\n",
+		"blank lines": "\n\n\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFragment(t, dir, body)
+			if errs := Validate(dir); !errsContain(errs, "has no body") {
+				t.Errorf("Validate() = %v, want an error saying the entry has no body", errs)
+			}
+		})
+	}
+}
+
+func TestValidateLogFragmentReportsAnArchiveSectionWithNoBody(t *testing.T) {
+	dir := t.TempDir()
+	writeFragment(t, dir,
+		"## 2026-08-05 (first)\n\n**Fix** — did the thing.\n\n"+
+			"## 2026-08-04 (second)\n")
+
+	errs := Validate(dir)
+	if !errsContain(errs, `entry in section "## 2026-08-04 (second)" has no body`) {
+		t.Errorf("Validate() = %v, want the empty archive section reported by name", errs)
+	}
+}
+
+func TestValidateLogFragmentIgnoresHeadingsInsideArchiveCodeFences(t *testing.T) {
+	// An archive entry that quotes markdown carries "## " lines that are
+	// sample text, not sections. Matching them would demand a kind marker
+	// under each and reject a conformant archive.
+	for name, fence := range map[string]string{"backticks": "```", "tildes": "~~~"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFragment(t, dir,
+				"## 2026-08-05 (first)\n\n**Docs** — a sample log looks like this:\n\n"+
+					fence+"markdown\n## 2026-01-01\n\nNot a marker.\n"+fence+"\n\n"+
+					"## 2026-08-04 (second)\n\n**Fix** — did the other thing.\n")
+			if errs := Validate(dir); len(errs) != 0 {
+				t.Errorf("Validate() = %v, want a fenced \"## \" line ignored", errs)
+			}
+		})
+	}
+}
+
+func TestValidateLogFragmentStillChecksArchiveSectionsAfterAFence(t *testing.T) {
+	// The fence must close: a section after it is still a section and still
+	// needs a marker. A tilde line inside a backtick block does not close it.
+	dir := t.TempDir()
+	writeFragment(t, dir,
+		"## 2026-08-05 (first)\n\n**Docs** — sample:\n\n"+
+			"```\n~~~\n## 2026-01-01\n```\n\n"+
+			"## 2026-08-04 (second)\n\n**Feature** — did the other thing.\n")
+
+	errs := Validate(dir)
+	if !errsContain(errs, `kind marker "Feature"`) {
+		t.Errorf("Validate() = %v, want the section after the fence still checked", errs)
+	}
+	if errsContain(errs, "## 2026-01-01") {
+		t.Errorf("Validate() = %v, want the fenced heading ignored", errs)
 	}
 }
 
