@@ -78,6 +78,17 @@ func audienceQaVerdictEnum() {
 	Enum("PASS", "NEEDS VERIFY", "FAIL")
 }
 
+// audienceQaCheckVerdictEnum is ONE check's verdict: the three overall verdicts plus
+// "NOT APPLICABLE", which a check reports when it ran but the question it asks does not apply to
+// this send -- check 4 for a Post-Event send, whose intended audience IS this edition's
+// attendees. It is a check-level verdict only: `overall` never carries it, because the roll-up
+// ignores an inapplicable check exactly as it ignores one that did not run. Reported rather than
+// omitted so the operator can see the check was deliberately set aside, not silently skipped.
+// Only AudienceQaStageScopedCheck uses it.
+func audienceQaCheckVerdictEnum() {
+	Enum("PASS", "NEEDS VERIFY", "FAIL", "NOT APPLICABLE")
+}
+
 // ─── Audience-builder types ───
 
 // AudienceBuilderCapabilities reports what the project's portal can actually support, so
@@ -471,6 +482,16 @@ var AudienceQaCheck = Type("audience-qa-check", func() {
 	Required("verdict", "findings")
 })
 
+// AudienceQaStageScopedCheck is a check whose question depends on the send's stage, so it can
+// also answer NOT APPLICABLE, with a note saying why. Only check 4 (current_registrants) is one:
+// the other checks ask about consent and filter shape, which every send needs.
+var AudienceQaStageScopedCheck = Type("audience-qa-stage-scoped-check", func() {
+	Attribute("verdict", String, "Check verdict. NOT APPLICABLE means the check's question does not apply to this send's stage; it then carries no findings and does not affect overall.", audienceQaCheckVerdictEnum)
+	Attribute("findings", ArrayOf(AudienceQaFinding), "Findings that produced the verdict")
+	Attribute("note", String, "Why the check does not apply; set only when verdict is NOT APPLICABLE")
+	Required("verdict", "findings")
+})
+
 // AudienceQaSuppressionCheck adds which regulatory suppressions were detected. The two
 // booleans are reported separately from the verdict because a send that legitimately
 // targets neither region should not read as a failed GDPR check.
@@ -502,7 +523,7 @@ var AudienceQaChecks = Type("audience-qa-checks", func() {
 	// OPTIONAL in the result, because it is only produced when `event_name` was supplied.
 	// Absent means the audit could not run, which is NOT the same as a pass -- a required
 	// field carrying a zero-valued verdict would read as one.
-	Attribute("current_registrants", AudienceQaCheck, "Is this edition's own registration list suppressed rather than included?")
+	Attribute("current_registrants", AudienceQaStageScopedCheck, "Is this edition's own registration list suppressed rather than included? NOT APPLICABLE for a Post-Event send.")
 	Required("signal_mapping", "suppression", "exclusion_completeness")
 })
 
@@ -923,6 +944,15 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 			// verdict.
 			Attribute("event_name", String, "This edition's event name, so an included registration list for THIS event can be told from another event's", func() {
 				MinLength(1)
+			})
+			// OPTIONAL, and absent keeps today's behaviour exactly: check 4 runs whenever
+			// `event_name` is set. Only `Post-Event` changes anything -- its intended audience IS
+			// this edition's attendees, so check 4 reports NOT APPLICABLE instead of a false
+			// CRITICAL (#244). The same vocabulary as a brief's stage, so a client sends the
+			// stage it already holds rather than translating it.
+			Attribute("stage", String, "The send's email stage. Post-Event marks check 4 (current_registrants) NOT APPLICABLE, since this edition's attendees are that send's intended audience; absent or any other stage runs it as before.", func() {
+				briefStageEnum()
+				Example("Post-Event")
 			})
 			Required("project_id", "list_ref")
 		})

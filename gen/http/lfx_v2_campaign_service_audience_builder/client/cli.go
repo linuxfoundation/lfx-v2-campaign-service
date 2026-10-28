@@ -445,7 +445,7 @@ func BuildRunAudienceQaPayload(lfxV2CampaignServiceAudienceBuilderRunAudienceQaB
 		}
 		err = json.Unmarshal([]byte(*lfxV2CampaignServiceAudienceBuilderRunAudienceQaBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"event_name\": \"ki\",\n      \"list_ref\": \"e\",\n      \"send_suppression_list_ids\": [\n         \"Nihil incidunt omnis.\",\n         \"Et dolor placeat vel.\",\n         \"Qui non eos veritatis.\"\n      ],\n      \"targets_ca\": true,\n      \"targets_eu\": true\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"event_name\": \"ki\",\n      \"list_ref\": \"e\",\n      \"send_suppression_list_ids\": [\n         \"Nihil incidunt omnis.\",\n         \"Et dolor placeat vel.\",\n         \"Qui non eos veritatis.\"\n      ],\n      \"stage\": \"Post-Event\",\n      \"targets_ca\": true,\n      \"targets_eu\": true\n   }'")
 		}
 		if utf8.RuneCountInString(body.ListRef) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ref", body.ListRef, utf8.RuneCountInString(body.ListRef), 1, true))
@@ -456,6 +456,11 @@ func BuildRunAudienceQaPayload(lfxV2CampaignServiceAudienceBuilderRunAudienceQaB
 		if body.EventName != nil {
 			if utf8.RuneCountInString(*body.EventName) < 1 {
 				err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_name", *body.EventName, utf8.RuneCountInString(*body.EventName), 1, true))
+			}
+		}
+		if body.Stage != nil {
+			if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Survey Reminder" || *body.Stage == "Survey Closing" || *body.Stage == "Report Promo") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo"}))
 			}
 		}
 		if err != nil {
@@ -480,6 +485,7 @@ func BuildRunAudienceQaPayload(lfxV2CampaignServiceAudienceBuilderRunAudienceQaB
 		TargetsEu: body.TargetsEu,
 		TargetsCa: body.TargetsCa,
 		EventName: body.EventName,
+		Stage:     body.Stage,
 	}
 	if body.SendSuppressionListIds != nil {
 		v.SendSuppressionListIds = make([]string, len(body.SendSuppressionListIds))

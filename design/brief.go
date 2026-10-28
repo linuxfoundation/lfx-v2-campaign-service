@@ -17,6 +17,15 @@ import (
 
 // ─── Brief types ───
 
+// briefStageEnum is the ONE spelling of the send-stage vocabulary, shared by every attribute that
+// names a stage: BriefData (the write side), find-brief's query (the read side) and run-audience-qa
+// (which skips check 4 for a Post-Event send). One function rather than hand copies, so the three
+// cannot drift; TestPublishedStageEnumMatchesEmailStageNames pins the published result of all three
+// to `emailstage.Names()` and `emailstage.SurveyNames()` plus "".
+func briefStageEnum() {
+	Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo")
+}
+
 // BriefData holds the shared brief attributes used by response types. It is Reference()d by the
 // Brief RESPONSE type, and goa copies validations through Reference — so a constraint here also
 // constrains every brief response.
@@ -70,7 +79,7 @@ var BriefData = Type("brief-data", func() {
 	// generation should never be blocked by a misspelling. Storage is the opposite -- a
 	// misspelling there is unrecoverable, so it must fail at the edge.
 	Attribute("stage", String, "Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.", func() {
-		Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo")
+		briefStageEnum()
 		Example("Registration Push")
 	})
 	Attribute("url", String, "Event/course page URL")
@@ -1744,7 +1753,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 				Example("email")
 			})
 			Attribute("stage", String, "Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.", func() {
-				Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo")
+				briefStageEnum()
 				Default("")
 				Example("Registration Push")
 			})

@@ -2540,7 +2540,7 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceQaChecksToAudienceQaCheck
 		res.ExclusionCompleteness = marshalLfxv2campaignserviceaudiencebuilderAudienceQaExclusionCheckToAudienceQaExclusionCheckResponseBody(v.ExclusionCompleteness)
 	}
 	if v.CurrentRegistrants != nil {
-		res.CurrentRegistrants = marshalLfxv2campaignserviceaudiencebuilderAudienceQaCheckToAudienceQaCheckResponseBody(v.CurrentRegistrants)
+		res.CurrentRegistrants = marshalLfxv2campaignserviceaudiencebuilderAudienceQaStageScopedCheckToAudienceQaStageScopedCheckResponseBody(v.CurrentRegistrants)
 	}
 
 	return res
@@ -2615,6 +2615,30 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceQaExclusionCheckToAudienc
 		Verdict:        v.Verdict,
 		ExclusionCount: v.ExclusionCount,
 		SendTimeCount:  v.SendTimeCount,
+	}
+	if v.Findings != nil {
+		res.Findings = make([]*AudienceQaFindingResponseBody, len(v.Findings))
+		for i, val := range v.Findings {
+			if val == nil {
+				res.Findings[i] = nil
+				continue
+			}
+			res.Findings[i] = marshalLfxv2campaignserviceaudiencebuilderAudienceQaFindingToAudienceQaFindingResponseBody(val)
+		}
+	} else {
+		res.Findings = []*AudienceQaFindingResponseBody{}
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceaudiencebuilderAudienceQaStageScopedCheckToAudienceQaStageScopedCheckResponseBody
+// builds a value of type *AudienceQaStageScopedCheckResponseBody from a value
+// of type *lfxv2campaignserviceaudiencebuilder.AudienceQaStageScopedCheck.
+func marshalLfxv2campaignserviceaudiencebuilderAudienceQaStageScopedCheckToAudienceQaStageScopedCheckResponseBody(v *lfxv2campaignserviceaudiencebuilder.AudienceQaStageScopedCheck) *AudienceQaStageScopedCheckResponseBody {
+	res := &AudienceQaStageScopedCheckResponseBody{
+		Verdict: v.Verdict,
+		Note:    v.Note,
 	}
 	if v.Findings != nil {
 		res.Findings = make([]*AudienceQaFindingResponseBody, len(v.Findings))

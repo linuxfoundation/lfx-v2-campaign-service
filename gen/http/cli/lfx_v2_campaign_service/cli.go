@@ -2755,7 +2755,7 @@ func lfxV2CampaignServiceAudienceBuilderRunAudienceQaUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder run-audience-qa --body '{\n      \"event_name\": \"ki\",\n      \"list_ref\": \"e\",\n      \"send_suppression_list_ids\": [\n         \"Nihil incidunt omnis.\",\n         \"Et dolor placeat vel.\",\n         \"Qui non eos veritatis.\"\n      ],\n      \"targets_ca\": true,\n      \"targets_eu\": true\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder run-audience-qa --body '{\n      \"event_name\": \"ki\",\n      \"list_ref\": \"e\",\n      \"send_suppression_list_ids\": [\n         \"Nihil incidunt omnis.\",\n         \"Et dolor placeat vel.\",\n         \"Qui non eos veritatis.\"\n      ],\n      \"stage\": \"Post-Event\",\n      \"targets_ca\": true,\n      \"targets_eu\": true\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceUsage() {

@@ -124,6 +124,17 @@ func TestPublishedStageEnumMatchesEmailStageNames(t *testing.T) {
 					"enums have drifted, so a stage valid on one is unaddressable on the other",
 					rel, readEnum, want)
 			}
+
+			// run-audience-qa's `stage` (#244) shares the vocabulary, so a client sends the
+			// stage a brief already holds. Drift here would make QA refuse a stage the brief
+			// accepted -- or accept a misspelt "Post Event" that silently runs check 4.
+			qa, ok := doc.Components.Schemas["RunAudienceQaRequestBody"]
+			if !ok {
+				t.Fatalf("%s has no RunAudienceQaRequestBody schema", rel)
+			}
+			if qaStage := qa.Properties["stage"]; !equalStrings(qaStage.Enum, want) {
+				t.Errorf("%s: run-audience-qa stage enum = %v, want %v", rel, qaStage.Enum, want)
+			}
 		})
 	}
 }

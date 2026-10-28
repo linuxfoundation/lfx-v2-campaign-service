@@ -62,6 +62,10 @@ type RunAudienceQaRequestBody struct {
 	// This edition's event name, so an included registration list for THIS event
 	// can be told from another event's
 	EventName *string `form:"event_name,omitempty" json:"event_name,omitempty" xml:"event_name,omitempty"`
+	// The send's email stage. Post-Event marks check 4 (current_registrants) NOT
+	// APPLICABLE, since this edition's attendees are that send's intended
+	// audience; absent or any other stage runs it as before.
+	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
 }
 
 // InterpretCustomAudienceRequestBody is the type of the
@@ -1506,8 +1510,9 @@ type AudienceQaChecksResponseBody struct {
 	Suppression *AudienceQaSuppressionCheckResponseBody `form:"suppression" json:"suppression" xml:"suppression"`
 	// Are the exclusions present and well-formed?
 	ExclusionCompleteness *AudienceQaExclusionCheckResponseBody `form:"exclusion_completeness" json:"exclusion_completeness" xml:"exclusion_completeness"`
-	// Is this edition's own registration list suppressed rather than included?
-	CurrentRegistrants *AudienceQaCheckResponseBody `form:"current_registrants,omitempty" json:"current_registrants,omitempty" xml:"current_registrants,omitempty"`
+	// Is this edition's own registration list suppressed rather than included? NOT
+	// APPLICABLE for a Post-Event send.
+	CurrentRegistrants *AudienceQaStageScopedCheckResponseBody `form:"current_registrants,omitempty" json:"current_registrants,omitempty" xml:"current_registrants,omitempty"`
 }
 
 // AudienceQaCheckResponseBody is used to define fields on response body types.
@@ -1554,6 +1559,18 @@ type AudienceQaExclusionCheckResponseBody struct {
 	// How many of those are send-time suppression lists rather than filters on the
 	// list
 	SendTimeCount *int64 `form:"send_time_count,omitempty" json:"send_time_count,omitempty" xml:"send_time_count,omitempty"`
+}
+
+// AudienceQaStageScopedCheckResponseBody is used to define fields on response
+// body types.
+type AudienceQaStageScopedCheckResponseBody struct {
+	// Check verdict. NOT APPLICABLE means the check's question does not apply to
+	// this send's stage; it then carries no findings and does not affect overall.
+	Verdict string `form:"verdict" json:"verdict" xml:"verdict"`
+	// Findings that produced the verdict
+	Findings []*AudienceQaFindingResponseBody `form:"findings" json:"findings" xml:"findings"`
+	// Why the check does not apply; set only when verdict is NOT APPLICABLE
+	Note *string `form:"note,omitempty" json:"note,omitempty" xml:"note,omitempty"`
 }
 
 // AudienceCustomCriteriaResponseBody is used to define fields on response body
@@ -3289,6 +3306,7 @@ func NewRunAudienceQaPayload(body *RunAudienceQaRequestBody, projectID string, b
 		TargetsEu: body.TargetsEu,
 		TargetsCa: body.TargetsCa,
 		EventName: body.EventName,
+		Stage:     body.Stage,
 	}
 	if body.SendSuppressionListIds != nil {
 		v.SendSuppressionListIds = make([]string, len(body.SendSuppressionListIds))
@@ -3419,6 +3437,11 @@ func ValidateRunAudienceQaRequestBody(body *RunAudienceQaRequestBody) (err error
 	if body.EventName != nil {
 		if utf8.RuneCountInString(*body.EventName) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_name", *body.EventName, utf8.RuneCountInString(*body.EventName), 1, true))
+		}
+	}
+	if body.Stage != nil {
+		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Survey Reminder" || *body.Stage == "Survey Closing" || *body.Stage == "Report Promo") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo"}))
 		}
 	}
 	return

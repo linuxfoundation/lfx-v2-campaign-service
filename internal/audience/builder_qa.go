@@ -14,6 +14,8 @@ import (
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 	"unicode"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 )
 
 // ---------------------------------------------------------------------------
@@ -43,6 +45,10 @@ const (
 	VerdictPass        Verdict = "PASS"
 	VerdictNeedsVerify Verdict = "NEEDS VERIFY"
 	VerdictFail        Verdict = "FAIL"
+	// VerdictNotApplicable is a check-level verdict only: the check's question does not apply
+	// to this send (check 4 on a Post-Event send). It carries no findings, CombineVerdicts
+	// ignores it, and `Overall` never takes it.
+	VerdictNotApplicable Verdict = "NOT APPLICABLE"
 )
 
 // Severity ranks a finding by legal exposure, not tidiness.
@@ -66,6 +72,8 @@ type Finding struct {
 type Check struct {
 	Verdict  Verdict
 	Findings []Finding
+	// Note says why the check does not apply; set only with VerdictNotApplicable.
+	Note string
 }
 
 // engagementHints indicate a real engagement signal — something the contact did.
@@ -910,16 +918,11 @@ var registrantNegationWords = map[string]bool{
 // ticking it raised nothing, and QA passed -- the three existing checks all look at consent
 // suppression or filter shape, and none of them reads the audience's own INTENT.
 //
-// SCOPED TO A REGISTRATION-ORIENTED SEND, and the contract cannot yet say so. `Post-Event`
-// is a real stage (`internal/service/emailstage/stage.go`), and for one this edition's own
-// attendees are the intended audience -- so this finding would be wrong there. The QA payload
-// carries no stage today, so there is nothing to gate on.
-//
-// That is safe only because the check is DORMANT: `event_name` is optional and no client sends
-// it, so check 4 is omitted from every audit in production. The gate belongs in the same change
-// that wires `event_name` through from the UI, where the stage is known -- adding a stage
-// attribute to the contract now would be guessing at a shape before there is a caller to fit.
-// Until then this must not be enabled for a `Post-Event` send -- tracked as #244.
+// SCOPED TO A REGISTRATION-ORIENTED SEND. `Post-Event` is a real stage
+// (`internal/service/emailstage/stage.go`), and for one this edition's own attendees are the
+// intended audience -- so this finding would be wrong there. Callers that know the send's stage
+// go through CheckCurrentRegistrantsForStage, which reports NOT APPLICABLE for a Post-Event send
+// instead of calling this (#244).
 //
 // Keyed on the registration SIGNAL plus the event's own name, not on the name alone. A
 // portfolio contains many registration lists and including a PAST edition's is the correct
@@ -931,6 +934,35 @@ var registrantNegationWords = map[string]bool{
 // event (QA can be run on a bare list id), and an audit that silently skipped would be
 // indistinguishable from one that looked and found nothing.
 func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
+	return checkCurrentRegistrants(eventName, includedNames)
+}
+
+// CheckCurrentRegistrantsForStage is check 4 for a send whose email stage may be known.
+//
+// A Post-Event send ("Thank You + Survey") is written FOR this edition's attendees, so including
+// their list is the point of the send, not the defect check 4 looks for. It is reported as NOT
+// APPLICABLE, with a note, rather than dropped: an omitted check reads as "no event name was
+// given", and the operator should see that the check was considered and set aside on purpose.
+//
+// Every other stage, and an absent one, runs CheckCurrentRegistrants unchanged. Absent MUST keep
+// today's behaviour: a caller that predates `stage` has not said the send is post-event, and
+// assuming so would switch off the check that catches a registration push mailing its own
+// registrants. No event name is still "did not run" (the zero Check), whatever the stage.
+func CheckCurrentRegistrantsForStage(eventName, stage string, includedNames []string) Check {
+	if strings.TrimSpace(eventName) == "" {
+		return Check{}
+	}
+	if strings.TrimSpace(stage) == emailstage.PostEvent {
+		return Check{
+			Verdict:  VerdictNotApplicable,
+			Findings: []Finding{},
+			Note:     "Not applicable to a Post-Event send: this edition's attendees are its intended audience, so including their registration list is expected.",
+		}
+	}
+	return checkCurrentRegistrants(eventName, includedNames)
+}
+
+func checkCurrentRegistrants(eventName string, includedNames []string) Check {
 	// NO event name means the check DID NOT RUN, which is the zero Check -- an empty verdict and
 	// no findings.
 	//
@@ -1156,8 +1188,11 @@ func CombineVerdicts(verdicts ...Verdict) Verdict {
 			worst = VerdictNeedsVerify
 		case VerdictPass:
 			// Leaves `worst` as-is.
-		case "":
-			// A check that did NOT RUN, which check 4 is whenever no event name reached the
+		case "", VerdictNotApplicable:
+			// NOT APPLICABLE: the check ran and its question does not apply to this send, so
+			// it neither passes nor fails the list.
+			//
+			// "": a check that did NOT RUN, which check 4 is whenever no event name reached the
 			// audit. Stated rather than left to fall through: the empty verdict is now a
 			// routine input, and an unexhausted switch made "neither passes nor fails" true
 			// by accident of `worst`'s initial value rather than by intent.

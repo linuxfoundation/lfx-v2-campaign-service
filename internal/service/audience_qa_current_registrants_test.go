@@ -38,11 +38,13 @@ type qaExplorer struct {
 	AudienceExplorer
 
 	gotEventName string
+	gotStage     string
 	outcome      *audience.QaOutcome
 }
 
-func (q *qaExplorer) RunQA(_ context.Context, _, _, eventName string, _, _ bool, _ []string) (*audience.QaOutcome, error) {
+func (q *qaExplorer) RunQA(_ context.Context, _, _, eventName, stage string, _, _ bool, _ []string) (*audience.QaOutcome, error) {
 	q.gotEventName = eventName
+	q.gotStage = stage
 	return q.outcome, nil
 }
 
@@ -131,3 +133,53 @@ func TestRunAudienceQaForwardsTheEventNameItWasGiven(t *testing.T) {
 }
 
 func strPtrQA(s string) *string { return &s }
+
+// TestRunAudienceQaForwardsTheStageItWasGiven pins that the payload's `stage` reaches the
+// explorer, where check 4 is gated on it (#244). A service that dropped it would leave every
+// Post-Event audit running check 4 as a registration push -- the false CRITICAL this fixes.
+func TestRunAudienceQaForwardsTheStageItWasGiven(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		given *string
+		want  string
+	}{
+		{name: "absent reaches the explorer as empty", given: nil, want: ""},
+		{name: "Post-Event reaches the explorer verbatim", given: strPtrQA("Post-Event"), want: "Post-Event"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ex := &qaExplorer{outcome: &audience.QaOutcome{ListID: "123", Name: "L", Overall: audience.VerdictPass}}
+			p := qaPayload(strPtrQA("KubeCon North America 2026"))
+			p.Stage = tc.given
+			_, err := NewAudienceExploreService(ex).RunAudienceQa(context.Background(), p)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, ex.gotStage)
+		})
+	}
+}
+
+// TestRunAudienceQaReportsAnInapplicableCheckFourWithItsNote pins the wire shape of a check 4
+// set aside for a Post-Event send: PRESENT, verdict NOT APPLICABLE, its note carried, and no
+// findings -- not omitted, which a client reads as "no event name was given".
+func TestRunAudienceQaReportsAnInapplicableCheckFourWithItsNote(t *testing.T) {
+	name := "KubeCon North America 2026"
+	svc := NewAudienceExploreService(&qaExplorer{outcome: &audience.QaOutcome{
+		ListID:  "123",
+		Name:    "26Q2 - CNCF - KubeCon NA 2026 - Attendees",
+		Overall: audience.VerdictPass,
+		Checks: audience.QaChecks{
+			CurrentRegistrants: audience.CheckCurrentRegistrantsForStage(name, "Post-Event",
+				[]string{"26Q2 KubeCon North America 2026 Event Registration"}),
+		},
+	}})
+
+	p := qaPayload(&name)
+	p.Stage = strPtrQA("Post-Event")
+	res, err := svc.RunAudienceQa(context.Background(), p)
+	require.NoError(t, err)
+	require.NotNil(t, res.Checks.CurrentRegistrants,
+		"an inapplicable check 4 must be REPORTED, not dropped")
+	assert.Equal(t, string(audience.VerdictNotApplicable), res.Checks.CurrentRegistrants.Verdict)
+	assert.Empty(t, res.Checks.CurrentRegistrants.Findings)
+	require.NotNil(t, res.Checks.CurrentRegistrants.Note)
+	assert.Contains(t, *res.Checks.CurrentRegistrants.Note, "Post-Event")
+}
