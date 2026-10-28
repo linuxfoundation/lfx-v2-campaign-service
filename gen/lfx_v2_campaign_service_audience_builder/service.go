@@ -441,6 +441,9 @@ type AudienceListBrief struct {
 	ResolvedFromLegacyID *string
 	// Deep link to the list in the HubSpot UI; absent when the list is missing.
 	// Present on an unresolved row, where checking the list by hand is the remedy
+	// — unless the row's list_id is still the legacy id it was resolved_from,
+	// which this link's route cannot open. Absence is never itself a statement
+	// about the list: read missing and unresolved for that
 	HubspotURL *string
 }
 

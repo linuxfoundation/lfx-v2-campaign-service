@@ -580,7 +580,11 @@ exclusion. `IsNotFound` lets a caller tell "deleted" apart from "unreadable", wh
 different answers for an operator.
 
 `ListIDForLegacy` maps a legacy id to its v3 (ILS) id through `GET /crm/v3/lists/idmapping`, and
-returns `""` on any failure so the caller falls back to `LegacyListName`. It exists because a
+returns `""` on any failure so the caller falls back to `LegacyListName`. Both helpers return the
+error beside that `""`: still best-effort, in that the empty string is the answer and no caller is
+failed because one list could not be named, but a caller that must tell "HubSpot reported no such
+list" from "the lookup never reached an answer" can ask `IsNotFound` about it instead of reading a
+throttled call as a deletion (#238). A caller that only wants a name discards it. It exists because a
 marketing email carries the SAME list in both `contactIlsLists` and the legacy `contactLists`,
 under two different ids — reading them as two lists rendered every inclusion and suppression of a
 pre-cut-off send twice ([[2026-09-30-audience-suppression-and-last-sent-scoping]]).

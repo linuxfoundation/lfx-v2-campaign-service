@@ -199,7 +199,9 @@ var AudienceListBrief = Type("audience-list-brief", func() {
 			"it still exists is UNKNOWN. Never true together with missing.")
 	Attribute("resolved_from_legacy_id", String, "Legacy list id this row was translated from")
 	Attribute("hubspot_url", String, "Deep link to the list in the HubSpot UI; absent when the list is missing. "+
-		"Present on an unresolved row, where checking the list by hand is the remedy")
+		"Present on an unresolved row, where checking the list by hand is the remedy — unless the row's "+
+		"list_id is still the legacy id it was resolved_from, which this link's route cannot open. Absence "+
+		"is never itself a statement about the list: read missing and unresolved for that")
 	Required("list_id", "name", "missing", "unresolved")
 	// TYPE-LEVEL so the published example is a possible one: Goa's synthesised example drew
 	// each attribute independently and showed `missing: true` beside a populated name and

@@ -1155,7 +1155,14 @@ func (x *AudienceExplorer) listBriefs(ctx context.Context, client *hubspot.Clien
 		// An UNRESOLVED row keeps its link on purpose: the read failed, so the operator's
 		// next step is to open the list themselves, and only a confirmed deletion makes
 		// the link pointless.
-		if !brief.Missing {
+		//
+		// Linked by the id ListURL's route can actually resolve. That route is objectLists,
+		// which takes v3 (ILS) ids only, so a row still carrying its LEGACY id -- one that
+		// never mapped, or that resolved by legacy name alone -- has no v3 id to link to,
+		// and putting the legacy id through this route opens HubSpot on a "list not found"
+		// page. On an unresolved row that reads as exactly the deletion the row is saying it
+		// cannot confirm, so no link beats a wrong one.
+		if !brief.Missing && brief.ListID != brief.ResolvedFromLegacyID {
 			brief.HubSpotURL = client.ListURL(brief.ListID)
 		}
 		// The name-based drop applies ONLY to a brief resolved from a legacy id, which is what
@@ -1177,24 +1184,34 @@ func (x *AudienceExplorer) listBriefs(ctx context.Context, client *hubspot.Clien
 		list, err := client.GetList(ctx, id)
 		if err == nil && list != nil {
 			brief.Name, brief.Size, brief.Missing = list.Name, sizeOf(list), false
-		} else if name := client.LegacyListName(ctx, id); name != "" {
+		} else if name, _ := client.LegacyListName(ctx, id); name != "" {
 			// A v3 id that only resolves under the legacy API still names a real list.
 			brief.Name, brief.Missing = name, false
 		} else if err != nil && !hubspot.IsNotFound(err) {
 			// Only a 404 is evidence the list is gone. A throttle, a 401/403 or a 5xx says
 			// the READ failed and the list's existence is still unknown -- reporting that as
-			// deleted sends an operator to rebuild a list they still have. The legacy
-			// fallback swallows its own error, so this is decided on the v3 error.
+			// deleted sends an operator to rebuild a list they still have. Decided on the v3
+			// error alone: the legacy lookup above is enrichment for an id this API already
+			// answered about, and it is only reached when that answer was not a usable list.
 			brief.Missing, brief.Unresolved = false, true
 		}
 		add(brief)
 	}
 	for _, id := range audience.UniqueIDs(legacyIDs) {
 		// readFailed carries the same distinction as the v3 loop across the fallback below:
-		// the id MAPPED to a v3 list, so the list was there to read, and a non-404 failure
-		// on it is a failed read rather than a deletion.
-		var readFailed bool
-		if mapped := client.ListIDForLegacy(ctx, id); mapped != "" {
+		// only a 404 is evidence the list is gone, and a non-404 failure ANYWHERE on this
+		// path -- the id mapping, the mapped read, or the legacy name lookup -- leaves the
+		// list's existence unknown. It is set for a failed MAPPING too: a throttled or
+		// 401'd idmapping call reports nothing about whether the list exists, and shipping
+		// that row as `missing` is the #238 failure through a second door.
+		mapped, mapErr := client.ListIDForLegacy(ctx, id)
+		readFailed := mapErr != nil && !hubspot.IsNotFound(mapErr)
+		// listID is what the recovery link is built from. ListURL's objectLists route takes
+		// v3 (ILS) ids only -- a legacy id opens HubSpot on a "list not found" page, which
+		// reads as exactly the deletion this row is saying it cannot confirm -- so a row
+		// that reaches the unresolved branch holding a mapping links to the MAPPED id.
+		listID := id
+		if mapped != "" {
 			if _, dup := seenIDs[mapped]; dup {
 				continue
 			}
@@ -1203,11 +1220,20 @@ func (x *AudienceExplorer) listBriefs(ctx context.Context, client *hubspot.Clien
 				add(audience.ListBrief{ListID: mapped, ResolvedFromLegacyID: id, Name: list.Name, Size: sizeOf(list)})
 				continue
 			}
+			// mapped != "" means the mapping call itself answered, so mapErr was nil and
+			// this is the first read failure on the row rather than an overwrite.
 			readFailed = err != nil && !hubspot.IsNotFound(err)
+			if readFailed {
+				listID = mapped
+			}
 		}
-		brief := audience.ListBrief{ListID: id, ResolvedFromLegacyID: id, Missing: !readFailed, Unresolved: readFailed}
-		if name := client.LegacyListName(ctx, id); name != "" {
+		brief := audience.ListBrief{ListID: listID, ResolvedFromLegacyID: id, Missing: !readFailed, Unresolved: readFailed}
+		if name, err := client.LegacyListName(ctx, id); name != "" {
 			brief.Name, brief.Missing, brief.Unresolved = name, false, false
+		} else if err != nil && !hubspot.IsNotFound(err) {
+			// The name lookup is the last word on this path, so its failure decides the row
+			// the same way the v3 error does above: unknown, not deleted.
+			brief.Missing, brief.Unresolved = false, true
 		}
 		add(brief)
 	}
@@ -2119,7 +2145,11 @@ func (x *AudienceExplorer) listName(ctx context.Context, client *hubspot.Client,
 		cache[listID] = list
 		return list.Name
 	}
-	return client.LegacyListName(ctx, listID)
+	// The error is discarded on purpose: this resolver's contract is "" for genuinely
+	// unresolvable, and a name that could not be read and a list that has no legacy name
+	// are the same answer to a caller that only wants to print one.
+	name, _ := client.LegacyListName(ctx, listID)
+	return name
 }
 
 // listWithFilters fetches a list with its filters and flattens them, consulting

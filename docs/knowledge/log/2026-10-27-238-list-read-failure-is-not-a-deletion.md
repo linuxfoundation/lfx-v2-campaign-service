@@ -14,12 +14,14 @@ the list's existence unknown.
 ## What changed
 
 - `audience.ListBrief` gains `Unresolved bool`. `Missing` now means HubSpot said there is no such
-  list; `Unresolved` means the read failed for another reason. Exactly one is ever set.
+  list; `Unresolved` means the read failed for another reason. At most one is ever set, and a row
+  that resolves carries neither.
 - `listBriefs` decides on the v3 error: `hubspot.IsNotFound(err)` (or a nil error with no list) is
   `Missing`; anything else is `Unresolved`. The legacy-id loop decides the same way on the mapped
   id's read, because an id that mapped had a v3 list to read.
-- `LegacyListName` and `ListIDForLegacy` are unchanged and remain best-effort — they swallow their
-  own errors, so neither can carry the distinction, and neither is asked to.
+- `LegacyListName` and `ListIDForLegacy` return their error beside the `""` they already returned,
+  so the legacy loop can make the same distinction at the id-mapping and name-lookup steps. See
+  the 2026-10-28 entry, which closed the two paths this round left deciding on absence alone.
 - An unresolved row keeps its `HubSpotURL`: the remedy is to open the list by hand. A missing row
   still has none.
 - The Goa design (`design/audience_builder.go`) publishes `unresolved` as a REQUIRED boolean on

@@ -4549,12 +4549,22 @@ expensive `listBriefs` fan-out (which resolves v3 ids first, then maps each lega
 selections is one row). A row that does not resolve carries WHICH of the two things happened
 (#238): `Missing` only where HubSpot said there is no such list — `hubspot.IsNotFound`, a 404 —
 and `Unresolved` for every other read failure, a throttle, a 401/403 or a 5xx, where the list may
-well still be there. The two are never both set. The legacy loop decides the same way on the
-mapped id's read, since a legacy id that MAPPED had a v3 list to read; `LegacyListName` and
-`ListIDForLegacy` stay best-effort and swallow their own errors, so neither is consulted for the
-distinction. An unresolved row keeps its `HubSpotURL` — the remedy is for the operator to open the
-list — where a missing one has none. Collapsing the two told an operator a list they still hold was
-deleted, and rebuilding a suppression list is the costly half of that mistake. Truncating to `limit` before reading any authoritative date — which
+well still be there. The two are never both set, and a row that resolves carries neither. The
+legacy loop decides the same way at every step it has, not only on the mapped id's read:
+`ListIDForLegacy` and `LegacyListName` return their error beside the "" they already returned, so
+a throttled or rejected id mapping, and a failed name lookup on an id that never mapped, are both
+`Unresolved` rather than `Missing` — reading a 401 on the mapping call as a deletion was the same
+#238 failure through a second door. Both still answer "" for a 404 and for a failure alike, and a
+caller that only wants a name (`listName`) discards the error; only the row classification asks
+`hubspot.IsNotFound` about it. An unresolved row keeps its `HubSpotURL` where there is a v3 id to
+build one from, because opening the list by hand is the operator's remedy; it is built from the
+MAPPED id, not the legacy id the row came in as. The `objectLists` route resolves v3 (ILS) ids
+only, so a link built from a legacy id opens HubSpot on "list not found" — exactly the deletion the
+row is saying it cannot confirm — and a row that never mapped, or that resolved by legacy name
+alone, therefore carries no link rather than a wrong one. A missing row has no link either. An
+absent link is never itself a statement about the list. Collapsing `Unresolved` into `Missing` told
+an operator a list they still hold was deleted, and rebuilding a suppression list is the costly
+half of that mistake. Truncating to `limit` before reading any authoritative date — which
 is what this replaced — discarded the newest send on the strength of an edit timestamp, and no later
 sort can bring back a row already cut. The claim is therefore bounded rather than unconditional:
 "most recently sent first" holds for any portal whose most recent send is within the shortlist, and
