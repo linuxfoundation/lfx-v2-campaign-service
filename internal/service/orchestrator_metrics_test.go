@@ -395,6 +395,20 @@ func (d upstreamCapableDispatcher) ListAccounts(context.Context, string, model.P
 	return []model.AccessibleAccount{}, nil
 }
 
+func (d upstreamCapableDispatcher) SuggestGeoTargets(context.Context, string, model.Provider, model.GeoTargetQuery) ([]model.GeoTargetSuggestion, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return []model.GeoTargetSuggestion{}, nil
+}
+
+func (d upstreamCapableDispatcher) ListUserLists(context.Context, string, model.Provider, string) (*model.AudienceUserLists, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.AudienceUserLists{Lists: []model.AudienceUserList{}}, nil
+}
+
 func (d upstreamCapableDispatcher) SearchEmails(context.Context, string, model.Provider, string) ([]model.MarketingEmail, error) {
 	if d.err != nil {
 		return nil, d.err
@@ -619,6 +633,22 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opListAccounts,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ReadAccounts(ctx, "p1", platform)
+				return err
+			},
+		},
+		{
+			name: "suggest geo targets",
+			op:   opSuggestGeoTargets,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadGeoTargetSuggestions(ctx, "p1", platform, model.GeoTargetQuery{Query: "q"})
+				return err
+			},
+		},
+		{
+			name: "list user lists",
+			op:   opListUserLists,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadUserLists(ctx, "p1", platform, "")
 				return err
 			},
 		},

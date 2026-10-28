@@ -215,6 +215,12 @@ spec:
           # Maps a Google Ads campaign id to this service's campaign + brief, so a caller
           # holding keyword rows can address the brief-scoped mutation routes.
           - path: /projects/:projectId/google-ads/campaign-ref
+          # Targeting lookups for the create form's pickers: geo target constants
+          # (Google's public location table, read with the system fallback like
+          # /accounts) and the user lists on the connection's customer (own connection
+          # only, never the shared LF credential). campaign_manager reads; nothing persisted.
+          - path: /projects/:projectId/google-ads/geo-targets
+          - path: /projects/:projectId/google-ads/user-lists
           # Microsoft keyword read (LFXV2-2665): the Google read's row shape, served from a
           # saved asynchronous Microsoft report. A campaign_manager read like its Google sibling.
           - path: /projects/:projectId/microsoft-ads/keywords

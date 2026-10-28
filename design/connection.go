@@ -1752,6 +1752,9 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
+	// Targeting lookups (design/google_ads_lookups.go): the geo target and user-list pickers.
+	googleAdsLookupMethods()
+
 	Method("get-meta-ads-audience", func() {
 		Description("Read Meta audience insights — age and gender (one combined breakdown) and placement " +
 			"(publisher_platform and platform_position) — for this project's own campaigns, live from the " +

@@ -6914,6 +6914,357 @@ func EncodeGetGoogleAdsAudienceError(encoder func(context.Context, http.Response
 	}
 }
 
+// EncodeSuggestGoogleAdsGeoTargetsResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// suggest-google-ads-geo-targets endpoint.
+func EncodeSuggestGoogleAdsGeoTargetsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.GoogleAdsGeoTargetSuggestions)
+		enc := encoder(ctx, w)
+		body := NewSuggestGoogleAdsGeoTargetsResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeSuggestGoogleAdsGeoTargetsRequest returns a decoder for requests sent
+// to the lfx-v2-campaign-service-connections suggest-google-ads-geo-targets
+// endpoint.
+func DecodeSuggestGoogleAdsGeoTargetsRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.SuggestGoogleAdsGeoTargetsPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.SuggestGoogleAdsGeoTargetsPayload, error) {
+		var payload *lfxv2campaignserviceconnections.SuggestGoogleAdsGeoTargetsPayload
+		var (
+			projectID   string
+			q           string
+			countryCode *string
+			targetTypes []string
+			limit       int
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		qp := r.URL.Query()
+		q = qp.Get("q")
+		if q == "" {
+			err = goa.MergeErrors(err, goa.MissingFieldError("q", "query string"))
+		}
+		if utf8.RuneCountInString(q) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("q", q, utf8.RuneCountInString(q), 1, true))
+		}
+		if utf8.RuneCountInString(q) > 100 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("q", q, utf8.RuneCountInString(q), 100, false))
+		}
+		countryCodeRaw := qp.Get("country_code")
+		if countryCodeRaw != "" {
+			countryCode = &countryCodeRaw
+		}
+		if countryCode != nil {
+			err = goa.MergeErrors(err, goa.ValidatePattern("country_code", *countryCode, "^[A-Za-z]{2}$"))
+		}
+		targetTypes = qp["target_types"]
+		if len(targetTypes) > 10 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("target_types", targetTypes, len(targetTypes), 10, false))
+		}
+		for _, e := range targetTypes {
+			if utf8.RuneCountInString(e) < 1 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("target_types[*]", e, utf8.RuneCountInString(e), 1, true))
+			}
+			if utf8.RuneCountInString(e) > 40 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("target_types[*]", e, utf8.RuneCountInString(e), 40, false))
+			}
+		}
+		{
+			limitRaw := qp.Get("limit")
+			if limitRaw == "" {
+				limit = 20
+			} else {
+				v, err2 := strconv.ParseInt(limitRaw, 10, strconv.IntSize)
+				if err2 != nil {
+					err = goa.MergeErrors(err, goa.InvalidFieldTypeError("limit", limitRaw, "integer"))
+				}
+				limit = int(v)
+			}
+		}
+		if limit < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("limit", limit, 1, true))
+		}
+		if limit > 50 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("limit", limit, 50, false))
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewSuggestGoogleAdsGeoTargetsPayload(projectID, q, countryCode, targetTypes, limit, bearerToken)
+		if payload.BearerToken != nil {
+			cred := *payload.BearerToken
+			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred = cred[index+1:]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeSuggestGoogleAdsGeoTargetsError returns an encoder for errors returned
+// by the suggest-google-ads-geo-targets lfx-v2-campaign-service-connections
+// endpoint.
+func EncodeSuggestGoogleAdsGeoTargetsError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSuggestGoogleAdsGeoTargetsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSuggestGoogleAdsGeoTargetsNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSuggestGoogleAdsGeoTargetsUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeListGoogleAdsUserListsResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// list-google-ads-user-lists endpoint.
+func EncodeListGoogleAdsUserListsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.GoogleAdsUserLists)
+		enc := encoder(ctx, w)
+		body := NewListGoogleAdsUserListsResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeListGoogleAdsUserListsRequest returns a decoder for requests sent to
+// the lfx-v2-campaign-service-connections list-google-ads-user-lists endpoint.
+func DecodeListGoogleAdsUserListsRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.ListGoogleAdsUserListsPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.ListGoogleAdsUserListsPayload, error) {
+		var payload *lfxv2campaignserviceconnections.ListGoogleAdsUserListsPayload
+		var (
+			projectID   string
+			accountID   *string
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		accountIDRaw := r.URL.Query().Get("account_id")
+		if accountIDRaw != "" {
+			accountID = &accountIDRaw
+		}
+		if accountID != nil {
+			err = goa.MergeErrors(err, goa.ValidatePattern("account_id", *accountID, "^[0-9]+$"))
+		}
+		if accountID != nil {
+			if utf8.RuneCountInString(*accountID) > 64 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", *accountID, utf8.RuneCountInString(*accountID), 64, false))
+			}
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewListGoogleAdsUserListsPayload(projectID, accountID, bearerToken)
+		if payload.BearerToken != nil {
+			cred := *payload.BearerToken
+			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred = cred[index+1:]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeListGoogleAdsUserListsError returns an encoder for errors returned by
+// the list-google-ads-user-lists lfx-v2-campaign-service-connections endpoint.
+func EncodeListGoogleAdsUserListsError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListGoogleAdsUserListsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListGoogleAdsUserListsServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListGoogleAdsUserListsInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListGoogleAdsUserListsNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListGoogleAdsUserListsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListGoogleAdsUserListsUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeGetMetaAdsAudienceResponse returns an encoder for responses returned
 // by the lfx-v2-campaign-service-connections get-meta-ads-audience endpoint.
 func EncodeGetMetaAdsAudienceResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
@@ -11604,6 +11955,42 @@ func marshalLfxv2campaignserviceconnectionsGoogleAdsAudienceBucketToGoogleAdsAud
 		CostMicros:  v.CostMicros,
 		Ctr:         v.Ctr,
 		Conversions: v.Conversions,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceconnectionsGoogleAdsGeoTargetSuggestionToGoogleAdsGeoTargetSuggestionResponseBody
+// builds a value of type *GoogleAdsGeoTargetSuggestionResponseBody from a
+// value of type *lfxv2campaignserviceconnections.GoogleAdsGeoTargetSuggestion.
+func marshalLfxv2campaignserviceconnectionsGoogleAdsGeoTargetSuggestionToGoogleAdsGeoTargetSuggestionResponseBody(v *lfxv2campaignserviceconnections.GoogleAdsGeoTargetSuggestion) *GoogleAdsGeoTargetSuggestionResponseBody {
+	res := &GoogleAdsGeoTargetSuggestionResponseBody{
+		ID:            v.ID,
+		Name:          v.Name,
+		CanonicalName: v.CanonicalName,
+		CountryCode:   v.CountryCode,
+		TargetType:    v.TargetType,
+		Status:        v.Status,
+		Reach:         v.Reach,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceconnectionsGoogleAdsUserListToGoogleAdsUserListResponseBody
+// builds a value of type *GoogleAdsUserListResponseBody from a value of type
+// *lfxv2campaignserviceconnections.GoogleAdsUserList.
+func marshalLfxv2campaignserviceconnectionsGoogleAdsUserListToGoogleAdsUserListResponseBody(v *lfxv2campaignserviceconnections.GoogleAdsUserList) *GoogleAdsUserListResponseBody {
+	res := &GoogleAdsUserListResponseBody{
+		ResourceName:       v.ResourceName,
+		ID:                 v.ID,
+		Name:               v.Name,
+		Type:               v.Type,
+		MembershipStatus:   v.MembershipStatus,
+		AccountStatus:      v.AccountStatus,
+		SizeForSearch:      v.SizeForSearch,
+		SizeRangeForSearch: v.SizeRangeForSearch,
+		EligibleForSearch:  v.EligibleForSearch,
 	}
 
 	return res

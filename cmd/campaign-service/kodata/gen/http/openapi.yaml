@@ -10406,6 +10406,110 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/google-ads/geo-targets:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: suggest-google-ads-geo-targets lfx-v2-campaign-service-connections
+            description: 'Search Google Ads geo target constants by place name or postal code, live from Google''s GeoTargetConstantService.SuggestGeoTargetConstants, for picking googleAdsConfig.geoTargets. Returns Google''s public location table, not data any ad account holds, so a project with no Google Ads connection of its own reads through the shared LF system credential, exactly as GET .../connection-google-ads/accounts does. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#suggest-google-ads-geo-targets
+            parameters:
+                - name: q
+                  in: query
+                  description: Place name or postal code to search for
+                  required: true
+                  type: string
+                  maxLength: 100
+                  minLength: 1
+                - name: country_code
+                  in: query
+                  description: Optional ISO 3166-1 alpha-2 country to search within
+                  required: false
+                  type: string
+                  pattern: ^[A-Za-z]{2}$
+                - name: target_types
+                  in: query
+                  description: Optional location types to keep (e.g. City, Postal Code). Matched ignoring case, spaces, underscores and hyphens, so postal_code matches Postal Code.
+                  required: false
+                  type: array
+                  items:
+                    type: string
+                    maxLength: 40
+                    minLength: 1
+                  collectionFormat: multi
+                  maxItems: 10
+                - name: limit
+                  in: query
+                  description: Maximum suggestions to return
+                  required: false
+                  type: integer
+                  default: 20
+                  maximum: 50
+                  minimum: 1
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/GoogleAdsGeoTargetSuggestions'
+                        required:
+                            - suggestions
+                            - suggestion_count
+                            - truncated
+                "400":
+                    description: 'BadRequest: Bad request'
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: 'NotFound: Resource not found'
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/google-ads/keywords:
         get:
             tags:
@@ -10471,6 +10575,86 @@ paths:
                     description: 'Conflict: Conflict'
                     schema:
                         $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/google-ads/user-lists:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-google-ads-user-lists lfx-v2-campaign-service-connections
+            description: 'List the Google Ads user lists (audiences) on a customer, live from GAQL on user_list, for picking googleAdsConfig.audienceSegments (Search only). account_id names the customer; omitted, the customer the project''s connection is bound to is read. Like the account monitor, this resolves the project''s OWN connection only and never falls back to the shared LF system credential: user lists are account data on a customer shared across foundations, so a project with no Google Ads connection of its own gets a 404, not the LF account''s audiences. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#list-google-ads-user-lists
+            parameters:
+                - name: account_id
+                  in: query
+                  description: Optional Google Ads customer to read (digits only). Defaults to the connection's account.
+                  required: false
+                  type: string
+                  maxLength: 64
+                  pattern: ^[0-9]+$
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/GoogleAdsUserLists'
+                        required:
+                            - account_id
+                            - user_lists
+                            - user_list_count
+                            - truncated
+                "400":
+                    description: 'BadRequest: Bad request'
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: 'NotFound: Resource not found'
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
                         required:
                             - code
                             - message
@@ -15937,6 +16121,124 @@ definitions:
             - client_id
             - client_secret
             - developer_token
+    GoogleAdsGeoTargetSuggestion:
+        title: GoogleAdsGeoTargetSuggestion
+        type: object
+        properties:
+            canonical_name:
+                type: string
+                description: Google's fully qualified name, which disambiguates same-named places
+                example: Austin,Texas,United States
+            country_code:
+                type: string
+                description: ISO 3166-1 alpha-2 country of the location, as Google reports it
+                example: US
+            id:
+                type: string
+                description: The numeric geo target constant id, in exactly the form googleAdsConfig.geoTargets and excludedGeoTargets accept. Send it as-is; the geoTargetConstants/{id} resource name is NOT accepted there.
+                example: "1026201"
+                pattern: ^[1-9][0-9]{0,18}$
+            name:
+                type: string
+                description: Google's display name for the location
+                example: Austin
+            reach:
+                type: integer
+                description: Google's approximate audience estimate. Absent when Google sent none.
+                example: 2100000
+                format: int64
+            status:
+                type: string
+                description: ENABLED, or REMOVAL_PLANNED for a location Google is retiring
+                example: ENABLED
+            target_type:
+                type: string
+                description: Google's location type label, verbatim (e.g. Country, State, City, Postal Code, DMA Region)
+                example: City
+        example:
+            canonical_name: Austin,Texas,United States
+            country_code: US
+            id: "1026201"
+            name: Austin
+            reach: 2100000
+            status: ENABLED
+            target_type: City
+        required:
+            - id
+            - name
+            - canonical_name
+            - country_code
+            - target_type
+            - status
+    GoogleAdsGeoTargetSuggestions:
+        title: GoogleAdsGeoTargetSuggestions
+        type: object
+        properties:
+            suggestion_count:
+                type: integer
+                description: How many suggestions are in `suggestions`
+                example: 1
+                format: int64
+            suggestions:
+                type: array
+                items:
+                    $ref: '#/definitions/GoogleAdsGeoTargetSuggestion'
+                description: Matching locations in Google's order, filtered to target_types when given, capped at limit
+                example:
+                    - canonical_name: Austin,Texas,United States
+                      country_code: US
+                      id: "1026201"
+                      name: Austin
+                      reach: 2100000
+                      status: ENABLED
+                      target_type: City
+                    - canonical_name: Austin,Texas,United States
+                      country_code: US
+                      id: "1026201"
+                      name: Austin
+                      reach: 2100000
+                      status: ENABLED
+                      target_type: City
+                    - canonical_name: Austin,Texas,United States
+                      country_code: US
+                      id: "1026201"
+                      name: Austin
+                      reach: 2100000
+                      status: ENABLED
+                      target_type: City
+            truncated:
+                type: boolean
+                description: True when more matching locations were available than `limit` allowed
+                example: false
+        example:
+            suggestion_count: 1
+            suggestions:
+                - canonical_name: Austin,Texas,United States
+                  country_code: US
+                  id: "1026201"
+                  name: Austin
+                  reach: 2100000
+                  status: ENABLED
+                  target_type: City
+                - canonical_name: Austin,Texas,United States
+                  country_code: US
+                  id: "1026201"
+                  name: Austin
+                  reach: 2100000
+                  status: ENABLED
+                  target_type: City
+                - canonical_name: Austin,Texas,United States
+                  country_code: US
+                  id: "1026201"
+                  name: Austin
+                  reach: 2100000
+                  status: ENABLED
+                  target_type: City
+            truncated: false
+        required:
+            - suggestions
+            - suggestion_count
+            - truncated
     GoogleAdsKeyword:
         title: GoogleAdsKeyword
         type: object
@@ -16140,6 +16442,170 @@ definitions:
             - window
             - rows
             - row_count
+            - truncated
+    GoogleAdsUserList:
+        title: GoogleAdsUserList
+        type: object
+        properties:
+            account_status:
+                type: string
+                description: The list's account_user_list_status (ENABLED or DISABLED), verbatim. Absent when Google sent none.
+                example: ENABLED
+            eligible_for_search:
+                type: boolean
+                description: Whether Google reports the list usable on Search. audienceSegments applies to Search campaigns, so an ineligible list will not serve there.
+                example: true
+            id:
+                type: string
+                description: The user list id
+                example: "7012345678"
+            membership_status:
+                type: string
+                description: OPEN (accepting members) or CLOSED, verbatim
+                example: OPEN
+            name:
+                type: string
+                description: The list's display name. Not an identifier.
+                example: KubeCon NA 2025 registrants
+            resource_name:
+                type: string
+                description: customers/{customerId}/userLists/{id}, in exactly the form googleAdsConfig.audienceSegments accepts (Search only). A list targets campaigns on its own customer.
+                example: customers/8666746580/userLists/7012345678
+                pattern: ^customers/[0-9]+/userLists/[1-9][0-9]{0,18}$
+            size_for_search:
+                type: integer
+                description: Google's estimated Search-network size. Absent when Google sent none, which is not a size of 0.
+                example: 12000
+                format: int64
+            size_range_for_search:
+                type: string
+                description: Google's bucketed Search-network size, verbatim. Absent when Google sent none.
+                example: TEN_THOUSAND_TO_FIFTY_THOUSAND
+            type:
+                type: string
+                description: Google's UserListType, verbatim (e.g. CRM_BASED, RULE_BASED, LOGICAL, SIMILAR)
+                example: CRM_BASED
+        example:
+            account_status: ENABLED
+            eligible_for_search: true
+            id: "7012345678"
+            membership_status: OPEN
+            name: KubeCon NA 2025 registrants
+            resource_name: customers/8666746580/userLists/7012345678
+            size_for_search: 12000
+            size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+            type: CRM_BASED
+        required:
+            - resource_name
+            - id
+            - name
+            - type
+            - membership_status
+            - eligible_for_search
+    GoogleAdsUserLists:
+        title: GoogleAdsUserLists
+        type: object
+        properties:
+            account_id:
+                type: string
+                description: The Google Ads customer the lists were read from
+                example: "8666746580"
+            truncated:
+                type: boolean
+                description: True when the customer holds more lists than were returned
+                example: false
+            user_list_count:
+                type: integer
+                description: How many lists are in `user_lists`
+                example: 1
+                format: int64
+            user_lists:
+                type: array
+                items:
+                    $ref: '#/definitions/GoogleAdsUserList'
+                description: User lists on the customer, sorted by name, capped at 500 (see `truncated`)
+                example:
+                    - account_status: ENABLED
+                      eligible_for_search: true
+                      id: "7012345678"
+                      membership_status: OPEN
+                      name: KubeCon NA 2025 registrants
+                      resource_name: customers/8666746580/userLists/7012345678
+                      size_for_search: 12000
+                      size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+                      type: CRM_BASED
+                    - account_status: ENABLED
+                      eligible_for_search: true
+                      id: "7012345678"
+                      membership_status: OPEN
+                      name: KubeCon NA 2025 registrants
+                      resource_name: customers/8666746580/userLists/7012345678
+                      size_for_search: 12000
+                      size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+                      type: CRM_BASED
+                    - account_status: ENABLED
+                      eligible_for_search: true
+                      id: "7012345678"
+                      membership_status: OPEN
+                      name: KubeCon NA 2025 registrants
+                      resource_name: customers/8666746580/userLists/7012345678
+                      size_for_search: 12000
+                      size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+                      type: CRM_BASED
+                    - account_status: ENABLED
+                      eligible_for_search: true
+                      id: "7012345678"
+                      membership_status: OPEN
+                      name: KubeCon NA 2025 registrants
+                      resource_name: customers/8666746580/userLists/7012345678
+                      size_for_search: 12000
+                      size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+                      type: CRM_BASED
+        example:
+            account_id: "8666746580"
+            truncated: false
+            user_list_count: 1
+            user_lists:
+                - account_status: ENABLED
+                  eligible_for_search: true
+                  id: "7012345678"
+                  membership_status: OPEN
+                  name: KubeCon NA 2025 registrants
+                  resource_name: customers/8666746580/userLists/7012345678
+                  size_for_search: 12000
+                  size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+                  type: CRM_BASED
+                - account_status: ENABLED
+                  eligible_for_search: true
+                  id: "7012345678"
+                  membership_status: OPEN
+                  name: KubeCon NA 2025 registrants
+                  resource_name: customers/8666746580/userLists/7012345678
+                  size_for_search: 12000
+                  size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+                  type: CRM_BASED
+                - account_status: ENABLED
+                  eligible_for_search: true
+                  id: "7012345678"
+                  membership_status: OPEN
+                  name: KubeCon NA 2025 registrants
+                  resource_name: customers/8666746580/userLists/7012345678
+                  size_for_search: 12000
+                  size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+                  type: CRM_BASED
+                - account_status: ENABLED
+                  eligible_for_search: true
+                  id: "7012345678"
+                  membership_status: OPEN
+                  name: KubeCon NA 2025 registrants
+                  resource_name: customers/8666746580/userLists/7012345678
+                  size_for_search: 12000
+                  size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+                  type: CRM_BASED
+        required:
+            - account_id
+            - user_lists
+            - user_list_count
             - truncated
     HubspotCampaign:
         title: HubspotCampaign

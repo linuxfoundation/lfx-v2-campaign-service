@@ -469,6 +469,11 @@ var (
 	// importing the orchestration layer.
 	ErrAccountsUnsupported = errors.New("account discovery is not supported for this platform")
 
+	// ErrTargetingLookupUnsupported indicates the platform has no targeting-lookup capability
+	// wired (geo target suggestions, user lists). Maps to 400, like ErrAccountsUnsupported:
+	// the platform is never contacted.
+	ErrTargetingLookupUnsupported = errors.New("targeting lookup is not supported for this platform")
+
 	// ErrAccountMetricsUnsupported indicates the platform has no account-scoped monitor
 	// capability wired (the AccountMetricsReader interface). The platform is never contacted.
 	//
