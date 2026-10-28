@@ -81,7 +81,10 @@ type ToggleCampaignStatusRequestBody struct {
 // HTTP request body.
 type UpdateCampaignBudgetRequestBody struct {
 	// New budget amount, in the AD ACCOUNT's own currency (NOT USD). Must be
-	// strictly positive.
+	// strictly positive. On Meta it must also be a whole number of the account
+	// currency's minor unit — whole units for a zero-decimal currency such as JPY
+	// or KRW, cents for USD — and an amount finer than that is refused with 400,
+	// never rounded, so the budget this service records is the one Meta was sent.
 	Budget *float64 `form:"budget,omitempty" json:"budget,omitempty" xml:"budget,omitempty"`
 	// The pacing the amount is expressed in. MUST match the campaign's current
 	// upstream pacing — this endpoint changes the amount, never the pacing.
@@ -5115,7 +5118,21 @@ type CampaignCreateInputRequestBody struct {
 	// date fails the platform job before anything is created, as an invalid Meta
 	// date does. Microsoft dates are recorded on the campaign row only when this
 	// run created the ad group that carries them; a retry that reuses an existing
-	// ad group leaves its schedule unchanged and records no dates.
+	// ad group leaves its schedule unchanged and records no dates. META LAUNCH
+	// READINESS: metaConfig takes `instagramUserId` (the numeric Instagram account
+	// id, IGSID, bound to each ad creative as `instagram_user_id` when an
+	// Instagram placement is enabled — the default placements include Instagram
+	// Feed) and `dsaBeneficiary` / `dsaPayor` (the EU Digital Services Act
+	// advertiser and payer, set on the ad set as `dsa_beneficiary` / `dsa_payor`).
+	// Supply both disclosures or neither; when geoTargets include any EU or EEA
+	// country (the 27 member states, Åland, France's outermost regions, Iceland,
+	// Liechtenstein and Norway) both are required, because Meta will not publish
+	// an EU-targeted ad set without them. A missing or one-sided pair, a
+	// disclosure over 256 characters or with a control, line-separator or bidi
+	// character, a non-numeric instagramUserId, and any of the three with a
+	// non-string JSON type (null counts as absent) are refused here with a 400,
+	// before any job exists. An absent instagramUserId is not refused, but Meta
+	// will not publish an Instagram placement without it.
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

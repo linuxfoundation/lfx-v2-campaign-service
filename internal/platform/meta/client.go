@@ -2780,18 +2780,20 @@ type CampaignInput struct {
 	EndDate        string // YYYY-MM-DD
 	Placements     Placement
 	PixelID        string
-	// InstagramUserID is the Instagram account (IGSID) bound to the ad creative. It
-	// is REQUIRED for an ad set that requests any Instagram placement (the default
+	// InstagramUserID is the Instagram account (IGSID) bound to the ad creative. Meta
+	// needs it to publish an ad set that requests any Instagram placement (the default
 	// placements include Instagram Feed): without it Meta flags the ad "Please add
 	// Instagram account" and refuses to publish, even though the Page's connected
-	// Instagram account shows pre-selected in the editor. Sent only when supplied, so
-	// Facebook-only flows are unchanged. (Legacy Graph field name: instagram_actor_id.)
+	// Instagram account shows pre-selected in the editor. Sent only when supplied AND an
+	// Instagram placement is enabled (CreateCampaign clears it otherwise), so Facebook-only
+	// creatives are unchanged. An absent value is not refused (CheckPublishIdentity).
+	// (Legacy Graph field name: instagram_actor_id.)
 	InstagramUserID string
 	// DSABeneficiary and DSAPayor are the EU Digital Services Act "advertiser" and
 	// "payer" disclosures set on the ad set. Meta holds the ad set unpublishable
-	// ("Please add Advertiser" / "Please add Payer") for regulated locations until both
-	// are present. Both are sent only when supplied, so flows that target no regulated
-	// location are unchanged.
+	// ("Please add Advertiser" / "Please add Payer") for EU targets until both are
+	// present, so CheckPublishIdentity refuses an EU target without them. Both are sent
+	// only when supplied.
 	DSABeneficiary string
 	DSAPayor       string
 	HSToken        string
@@ -3074,38 +3076,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// producing a malformed parse. Trim once here, ahead of both consumers.
 	in.RegistrationURL = strings.TrimSpace(in.RegistrationURL)
 
-	// Trim the disclosure/identity fields once here so the "sent only when supplied"
-	// guards below treat a whitespace-only value as absent (not as a blank string that
-	// Meta would reject) and every consumer sees the same normalized value.
-	in.InstagramUserID = strings.TrimSpace(in.InstagramUserID)
-	in.DSABeneficiary = strings.TrimSpace(in.DSABeneficiary)
-	in.DSAPayor = strings.TrimSpace(in.DSAPayor)
-
-	// A SUPPLIED InstagramUserID must be well-formed. It is optional (an empty value
-	// is a legitimate Facebook-only campaign and stays allowed), but when present it
-	// is only consumed at the CREATIVE POST — which runs after the campaign and ad set
-	// already exist, and where a 4xx is treated as a non-fatal per-variant failure.
-	// A malformed IGSID would therefore surface as a created_degraded campaign with no
-	// publishable ad: a billable resource that can never serve. The value is knowable-
-	// bad here, so reject it before the first mutating call, the same gate PageID and
-	// PixelID already get (Meta object ids are decimal strings).
-	if in.InstagramUserID != "" && !numericIDRE.MatchString(in.InstagramUserID) {
-		return nil, domain.PreflightRefusalf("instagramUserId %s is malformed: Meta Instagram account IDs (IGSID) are numeric strings", domain.CallerValue(in.InstagramUserID))
+	// The Instagram identity and EU DSA disclosures are trimmed in place and checked BEFORE any
+	// mutating call (CheckPublishIdentity): a malformed IGSID, a one-sided disclosure pair, or an
+	// EU-targeted ad set with no disclosures is deterministically unpublishable and knowable here.
+	// The dispatcher runs the same check synchronously at create time (a 400); this is the backstop
+	// for any path that skipped it.
+	pid := PublishIdentity{GeoTargets: in.GeoTargets, InstagramUserID: in.InstagramUserID, DSABeneficiary: in.DSABeneficiary, DSAPayor: in.DSAPayor}
+	if err := CheckPublishIdentity(&pid); err != nil {
+		return nil, err
 	}
-
-	// The two EU DSA disclosures are attached to the ad set independently, so exactly
-	// one could otherwise be sent. Meta requires BOTH to publish an ad set targeting a
-	// regulated location (docs/api-catalog.md), so a one-sided pair is deterministically
-	// incomplete: it either gets the ad set rejected after the campaign exists, or leaves
-	// it unpublishable. Unlike Meta's other publish-time requirements, one-sidedness is
-	// knowable HERE, so reject it before any mutating call. Both absent remains valid —
-	// that is the ordinary non-regulated flow and must not break.
-	if (in.DSABeneficiary == "") != (in.DSAPayor == "") {
-		supplied, missing := "dsaBeneficiary", "dsaPayor"
-		if in.DSABeneficiary == "" {
-			supplied, missing = "dsaPayor", "dsaBeneficiary"
-		}
-		return nil, domain.PreflightRefusalf("EU DSA disclosures are incomplete: %s was supplied without %s; Meta requires both to publish a regulated ad set — supply both or omit both", supplied, missing)
+	in.InstagramUserID, in.DSABeneficiary, in.DSAPayor = pid.InstagramUserID, pid.DSABeneficiary, pid.DSAPayor
+	// The Instagram identity is bound only when the ad set actually runs on Instagram; a
+	// Facebook-only ad set's creatives are left exactly as before.
+	if !UsesInstagram(in.Placements) {
+		in.InstagramUserID = ""
 	}
 
 	// Resolve the objective and validate deterministic inputs (placements and the
@@ -4388,7 +4372,8 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 	// default includes Instagram Feed) is publishable. Without it Meta flags "Please add
 	// Instagram account" and blocks publish. instagram_user_id is a top-level adcreative
 	// field, sibling to object_story_spec — not nested inside it. Sent only when
-	// configured so Facebook-only creatives are unchanged.
+	// configured AND an Instagram placement is enabled (CreateCampaign clears it otherwise),
+	// so Facebook-only creatives are unchanged.
 	if in.InstagramUserID != "" {
 		creativeBody["instagram_user_id"] = in.InstagramUserID
 	}

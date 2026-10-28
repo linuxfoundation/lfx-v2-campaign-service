@@ -131,11 +131,12 @@ and, for writers that never reach the handler, as a table CHECK on `byte_size`
 `base64.EncodedLen(31457280) == 41943040`. `MaxLength` does not bound the wire either: the
 validator sees the string only after the JSON decoder has read the entire body, so it alone
 leaves the server buffering whatever a caller chooses to send. The inbound bound is
-`constants.MaxRequestBodyBytes` (42 MiB), applied by `middleware.MaxBodyBytes` across every route
-and sized from this ceiling: base64 expands by 4/3, so a maximum-size 30-MiB image is 40 MiB of
+`constants.MaxRequestBodyBytes` (42 MiB), applied to this route by `middleware.MaxBodyBytesPerRoute`
+(every other route gets the 4 MiB `constants.MaxNonUploadRequestBodyBytes`, #177) and sized from
+this ceiling: base64 expands by 4/3, so a maximum-size 30-MiB image is 40 MiB of
 base64 exactly, plus the JSON envelope — which is why the cap is not 40 MiB, and why raising
 `MaxLength` requires raising it in step. Every brief and connection method also declares a
-`PayloadTooLarge` error mapped to `413`. No handler returns it — `middleware.MaxBodyBytes` sits
+`PayloadTooLarge` error mapped to `413`. No handler returns it — `middleware.MaxBodyBytesPerRoute` sits
 outside the mux and never reaches a Goa encoder — but declaring it is what gives the generated
 CLIENT a decode case (without it an ordinary oversized upload surfaces as `ErrInvalidResponse`,
 an unknown-status failure) and what puts the status in the OpenAPI documents. It is declared on
