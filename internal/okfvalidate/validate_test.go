@@ -1511,6 +1511,31 @@ func TestValidateLogFragmentFenceLookalikesInHTMLBlocksAreNotDelimiters(t *testi
 	}
 }
 
+func TestValidateLogFragmentReadsSetextArchiveSections(t *testing.T) {
+	// A section heading may be Setext ("text" over a "---" underline) as well
+	// as ATX. Both positions are covered: an archive that OPENS with one must
+	// be recognised as an archive, and a later one must still have its kind
+	// marker checked rather than escape as body text.
+	t.Run("first section", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFragment(t, dir,
+			"2026-08-05 (first)\n------------------\n\n**Docs** — did the thing.\n\n"+
+				"## 2026-08-04 (second)\n\n**Fix** — did the other thing.\n")
+		if errs := Validate(dir); len(errs) != 0 {
+			t.Errorf("Validate() = %v, want an archive opening with a Setext section accepted", errs)
+		}
+	})
+	t.Run("later section with a bad marker", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFragment(t, dir,
+			"## 2026-08-05 (first)\n\n**Docs** — did the thing.\n\n"+
+				"2026-08-04 (second)\n-------------------\n\n**Feature** — did the other thing.\n")
+		if errs := Validate(dir); !errsContain(errs, `kind marker "Feature"`) {
+			t.Errorf("Validate() = %v, want the later Setext section's marker checked", errs)
+		}
+	})
+}
+
 func TestValidateLogFragmentContainerFenceAtEndOfFileIsNotUnclosed(t *testing.T) {
 	// A fence inside a blockquote or list item ends with its container, so it
 	// hides nothing even when the container is the file's last block and only

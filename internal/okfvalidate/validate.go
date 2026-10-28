@@ -685,11 +685,12 @@ func validateLogFragment(path string) []error {
 				errs = append(errs, err)
 			}
 		}
-		// A fence that never closes runs to the end of the document and would
-		// hide every section after it. That is how CommonMark renders it, but
-		// here it would turn a stray fence into a silent pass for the rest of
-		// the archive, so it is reported instead of trusted.
-		return append(errs, unclosedFences(path, doc, src)...)
+		// A fence or an HTML block of types 1 to 5 that never closes runs to
+		// the end of the document and would hide every section after it. That
+		// is how CommonMark renders it, but here it would turn a stray opener
+		// into a silent pass for the rest of the archive, so it is reported
+		// instead of trusted.
+		return append(errs, unclosedBlocks(path, doc, src)...)
 	}
 
 	if err := checkKindMarker(path, src, h1, ""); err != nil {
@@ -810,7 +811,7 @@ func blockFirstLine(n ast.Node, src []byte) string {
 	return strings.TrimSpace(string(src[start:end]))
 }
 
-// unclosedFences reports every fenced code block, and every HTML block of
+// unclosedBlocks reports every fenced code block, and every HTML block of
 // CommonMark types 1 to 5 (see htmlBlockNeverClosed), that runs to the end of
 // the document without its closer. Either swallows every later section.
 //
@@ -824,7 +825,7 @@ func blockFirstLine(n ast.Node, src []byte) string {
 // content line (or the opener, for an empty block). Only a fence that ran to
 // the end of the document has nothing but whitespace after it, because the
 // parser keeps trailing blank lines as content of a fence that never closed.
-func unclosedFences(path string, doc ast.Node, src []byte) []error {
+func unclosedBlocks(path string, doc ast.Node, src []byte) []error {
 	var errs []error
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
