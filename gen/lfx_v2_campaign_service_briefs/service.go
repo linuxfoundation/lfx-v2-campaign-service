@@ -1054,7 +1054,8 @@ type CampaignCreateInput struct {
 	// Liechtenstein and Norway) both are required, because Meta will not publish
 	// an EU-targeted ad set without them. A missing or one-sided pair, a
 	// disclosure over 256 characters or with a control, line-separator or bidi
-	// character, and a non-numeric instagramUserId are refused here with a 400,
+	// character, a non-numeric instagramUserId, and any of the three with a
+	// non-string JSON type (null counts as absent) are refused here with a 400,
 	// before any job exists. An absent instagramUserId is not refused, but Meta
 	// will not publish an Instagram placement without it.
 	Config any

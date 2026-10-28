@@ -1773,6 +1773,8 @@ instagramUserId?: string        — Instagram account id (IGSID, numeric) bound 
                                   `placements` enable Instagram Feed). Meta will not PUBLISH an
                                   Instagram placement without it ("Please add Instagram account"),
                                   though the ad is created. A non-numeric value is a synchronous 400.
+                                  A non-string JSON type (for any of instagramUserId, dsaBeneficiary,
+                                  dsaPayor) is a 400 too; null counts as absent.
                                   An ABSENT value is NOT refused (Facebook-only callers, and callers
                                   not yet collecting it, keep working). Blank/whitespace = absent.
 dsaBeneficiary?: string         — EU Digital Services Act "advertiser" (who the ads benefit), set on
