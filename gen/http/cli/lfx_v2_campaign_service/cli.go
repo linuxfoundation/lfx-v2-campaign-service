@@ -32,7 +32,7 @@ func UsageCommands() []string {
 		"lfx-v2-campaign-service-audience-builder (get-audience-builder-capabilities|discover-audience-lists|search-audience-lists|get-audience-suppression-lists|get-audience-last-sent|get-existing-audience-master-lists|preview-audience-count|compose-audience-master|attach-existing-audience|run-audience-qa|interpret-custom-audience|preview-custom-audience|create-custom-audience)",
 		"lfx-v2-campaign-service-briefs (create-brief|find-brief|get-brief|update-brief|approve-brief|delete-brief|fetch-event-url|upload-creative-asset|list-creative-assets|get-creative-asset|get-asset-plan|delete-creative-asset|create-campaigns|adopt-campaign|get-campaign|get-campaign-metrics|get-campaign-settings|get-brief-metrics|generate-email-copy|update-campaign|toggle-campaign-status|update-campaign-budget|update-campaign-bid|apply-keyword-actions|add-negative-keywords|get-keyword-targeting|remove-keyword-targeting|list-meta-ad-sets|list-meta-ads|toggle-meta-ad-set-status|delete-campaign|get-job|start-email-wizard-plan|plan-email-wizard|generate-wizard-content|update-wizard-sections|clone-wizard-email|set-wizard-send-list|chat-wizard-turn|get-wizard-session)",
 		"lfx-v2-campaign-service-svc (readyz|livez)",
-		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|get-meta-ads-audience|get-twitter-ads-audience|get-linkedin-ads-audience|get-microsoft-ads-keywords|get-microsoft-ads-audience|get-reddit-ads-audience|get-reddit-ads-keywords|resolve-google-ads-campaign|resolve-microsoft-ads-campaign|resolve-meta-ads-campaign|resolve-reddit-ads-campaign|resolve-twitter-ads-campaign|resolve-linkedin-ads-campaign|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-reddit-ads-accounts|list-hubspot-emails|search-hubspot-campaigns|create-hubspot-campaign|monitor-google-ads-account|monitor-linkedin-ads-account|monitor-meta-ads-account|monitor-reddit-ads-account|monitor-microsoft-ads-account|monitor-twitter-ads-account|monitor-hubspot-account)",
+		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|suggest-google-ads-geo-targets|list-google-ads-user-lists|get-meta-ads-audience|get-twitter-ads-audience|get-linkedin-ads-audience|get-microsoft-ads-keywords|get-microsoft-ads-audience|get-reddit-ads-audience|get-reddit-ads-keywords|resolve-google-ads-campaign|resolve-microsoft-ads-campaign|resolve-meta-ads-campaign|resolve-reddit-ads-campaign|resolve-twitter-ads-campaign|resolve-linkedin-ads-campaign|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-reddit-ads-accounts|list-hubspot-emails|search-hubspot-campaigns|create-hubspot-campaign|monitor-google-ads-account|monitor-linkedin-ads-account|monitor-meta-ads-account|monitor-reddit-ads-account|monitor-microsoft-ads-account|monitor-twitter-ads-account|monitor-hubspot-account)",
 		"lfx-v2-campaign-service-signed-assets get-signed-creative-asset",
 	}
 }
@@ -656,6 +656,19 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceWindowFlag      = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceBearerTokenFlag = new(cliStringFlag)
 
+		lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsFlags           = flag.NewFlagSet("suggest-google-ads-geo-targets", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsProjectIDFlag   = new(cliStringFlag)
+		lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsQFlag           = new(cliStringFlag)
+		lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsCountryCodeFlag = new(cliStringFlag)
+		lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsTargetTypesFlag = new(cliStringFlag)
+		lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsLimitFlag       = new(cliStringFlag)
+		lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsBearerTokenFlag = new(cliStringFlag)
+
+		lfxV2CampaignServiceConnectionsListGoogleAdsUserListsFlags           = flag.NewFlagSet("list-google-ads-user-lists", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsListGoogleAdsUserListsProjectIDFlag   = new(cliStringFlag)
+		lfxV2CampaignServiceConnectionsListGoogleAdsUserListsAccountIDFlag   = new(cliStringFlag)
+		lfxV2CampaignServiceConnectionsListGoogleAdsUserListsBearerTokenFlag = new(cliStringFlag)
+
 		lfxV2CampaignServiceConnectionsGetMetaAdsAudienceFlags           = flag.NewFlagSet("get-meta-ads-audience", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsGetMetaAdsAudienceProjectIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsGetMetaAdsAudienceWindowFlag      = new(cliStringFlag)
@@ -1163,6 +1176,15 @@ func ParseEndpoint(
 	lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceFlags.Var(lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceFlags.Var(lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceWindowFlag, "window", "")
 	lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceFlags.Var(lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceBearerTokenFlag, "bearer-token", "")
+	lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsFlags.Var(lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
+	lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsFlags.Var(lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsQFlag, "q", "")
+	lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsFlags.Var(lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsCountryCodeFlag, "country-code", "")
+	lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsFlags.Var(lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsTargetTypesFlag, "target-types", "")
+	lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsFlags.Var(lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsLimitFlag, "limit", "")
+	lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsFlags.Var(lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsBearerTokenFlag, "bearer-token", "")
+	lfxV2CampaignServiceConnectionsListGoogleAdsUserListsFlags.Var(lfxV2CampaignServiceConnectionsListGoogleAdsUserListsProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
+	lfxV2CampaignServiceConnectionsListGoogleAdsUserListsFlags.Var(lfxV2CampaignServiceConnectionsListGoogleAdsUserListsAccountIDFlag, "account-id", "")
+	lfxV2CampaignServiceConnectionsListGoogleAdsUserListsFlags.Var(lfxV2CampaignServiceConnectionsListGoogleAdsUserListsBearerTokenFlag, "bearer-token", "")
 	lfxV2CampaignServiceConnectionsGetMetaAdsAudienceFlags.Var(lfxV2CampaignServiceConnectionsGetMetaAdsAudienceProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceConnectionsGetMetaAdsAudienceFlags.Var(lfxV2CampaignServiceConnectionsGetMetaAdsAudienceWindowFlag, "window", "")
 	lfxV2CampaignServiceConnectionsGetMetaAdsAudienceFlags.Var(lfxV2CampaignServiceConnectionsGetMetaAdsAudienceBearerTokenFlag, "bearer-token", "")
@@ -1368,6 +1390,8 @@ func ParseEndpoint(
 	lfxV2CampaignServiceConnectionsListGoogleAdsAccountsFlags.Usage = lfxV2CampaignServiceConnectionsListGoogleAdsAccountsUsage
 	lfxV2CampaignServiceConnectionsGetGoogleAdsKeywordsFlags.Usage = lfxV2CampaignServiceConnectionsGetGoogleAdsKeywordsUsage
 	lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceFlags.Usage = lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceUsage
+	lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsFlags.Usage = lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsUsage
+	lfxV2CampaignServiceConnectionsListGoogleAdsUserListsFlags.Usage = lfxV2CampaignServiceConnectionsListGoogleAdsUserListsUsage
 	lfxV2CampaignServiceConnectionsGetMetaAdsAudienceFlags.Usage = lfxV2CampaignServiceConnectionsGetMetaAdsAudienceUsage
 	lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceFlags.Usage = lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceUsage
 	lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceFlags.Usage = lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceUsage
@@ -1774,6 +1798,12 @@ func ParseEndpoint(
 
 			case "get-google-ads-audience":
 				epf = lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceFlags
+
+			case "suggest-google-ads-geo-targets":
+				epf = lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsFlags
+
+			case "list-google-ads-user-lists":
+				epf = lfxV2CampaignServiceConnectionsListGoogleAdsUserListsFlags
 
 			case "get-meta-ads-audience":
 				epf = lfxV2CampaignServiceConnectionsGetMetaAdsAudienceFlags
@@ -2220,6 +2250,12 @@ func ParseEndpoint(
 			case "get-google-ads-audience":
 				endpoint = c.GetGoogleAdsAudience()
 				data, err = lfxv2campaignserviceconnectionsc.BuildGetGoogleAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceProjectIDFlag.value, lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceWindowFlag.value, lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceBearerTokenFlag.value)
+			case "suggest-google-ads-geo-targets":
+				endpoint = c.SuggestGoogleAdsGeoTargets()
+				data, err = lfxv2campaignserviceconnectionsc.BuildSuggestGoogleAdsGeoTargetsPayload(lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsProjectIDFlag.value, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsQFlag.value, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsCountryCodeFlag.value, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsTargetTypesFlag.value, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsLimitFlag.value, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsBearerTokenFlag.value)
+			case "list-google-ads-user-lists":
+				endpoint = c.ListGoogleAdsUserLists()
+				data, err = lfxv2campaignserviceconnectionsc.BuildListGoogleAdsUserListsPayload(lfxV2CampaignServiceConnectionsListGoogleAdsUserListsProjectIDFlag.value, lfxV2CampaignServiceConnectionsListGoogleAdsUserListsAccountIDFlag.value, lfxV2CampaignServiceConnectionsListGoogleAdsUserListsBearerTokenFlag.value)
 			case "get-meta-ads-audience":
 				endpoint = c.GetMetaAdsAudience()
 				data, err = lfxv2campaignserviceconnectionsc.BuildGetMetaAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetMetaAdsAudienceProjectIDFlag.value, lfxV2CampaignServiceConnectionsGetMetaAdsAudienceWindowFlag.value, lfxV2CampaignServiceConnectionsGetMetaAdsAudienceBearerTokenFlag.value)
@@ -3912,6 +3948,8 @@ func lfxV2CampaignServiceConnectionsUsage() {
 	fmt.Fprintln(os.Stderr, `    list-google-ads-accounts: Enumerate the Google Ads ad accounts accessible via the stored connection credential.`)
 	fmt.Fprintln(os.Stderr, `    get-google-ads-keywords: Read Google Ads keyword performance for this project's own campaigns, live from the platform. Scoped to the campaigns this service holds for the project, NOT to the connected ad account: the Google Ads customer is shared across foundations, so an account-wide read would return other projects' keywords. A pure read-through — nothing is persisted, and this service stores no keyword of its own. Rows are the TOP keywords by impressions over the window, capped; `+"`"+`truncated`+"`"+` reports whether the project's campaigns hold more. The returned criterion_id/ad_group_id pairs are the handles the keyword-actions endpoint takes.`)
 	fmt.Fprintln(os.Stderr, `    get-google-ads-audience: Read Google Ads audience demographics — age, gender and device — for this project's own campaigns, live from the platform. Scoped to the campaigns this service holds for the project, NOT to the connected ad account, which is a Google Ads customer shared across foundations. A pure read-through; nothing is persisted. The three breakdowns are returned in one array discriminated by `+"`"+`dimension`+"`"+`. Each breakdown covers the SAME traffic independently, so impressions must be totalled within a dimension, never across them. Google's UNDETERMINED/UNKNOWN buckets are returned as-is rather than dropped: they are real unattributed traffic, and hiding them would make the buckets silently under-sum.`)
+	fmt.Fprintln(os.Stderr, `    suggest-google-ads-geo-targets: Search Google Ads geo target constants by place name or postal code, live from Google's GeoTargetConstantService.SuggestGeoTargetConstants, for picking googleAdsConfig.geoTargets. Returns Google's public location table, not data any ad account holds, so a project with no Google Ads connection of its own reads through the shared LF system credential, exactly as GET .../connection-google-ads/accounts does. A pure read: nothing is persisted.`)
+	fmt.Fprintln(os.Stderr, `    list-google-ads-user-lists: List the Google Ads user lists (audiences) on a customer, live from GAQL on user_list, for picking googleAdsConfig.audienceSegments (Search only). account_id names the customer; omitted, the customer the project's connection is bound to is read. Like the account monitor, this resolves the project's OWN connection only and never falls back to the shared LF system credential: user lists are account data on a customer shared across foundations, so a project with no Google Ads connection of its own gets a 404, not the LF account's audiences. On a platform whose ad account is shared across foundations — Google Ads today — the read is refused with 409 before Google is contacted: the read is account-wide, this service records no user list per project, and a project's own connection points at the same shared customer, so answering would expose every foundation's audiences. Only a per-foundation customer is listed. An account_id the credential cannot reach is refused by Google and answered 503, like the account monitor. A pure read: nothing is persisted.`)
 	fmt.Fprintln(os.Stderr, `    get-meta-ads-audience: Read Meta audience insights — age and gender (one combined breakdown) and placement (publisher_platform and platform_position) — for this project's own campaigns, live from the Meta Marketing API Insights edge of the connected ad account. Scoped to the campaigns this service holds for the project, NOT to the ad account: the request filters on those campaign ids and every returned row is checked against them, because the account is shared across foundations. A pure read-through; nothing is persisted. A project with no Meta campaigns of its own receives an empty `+"`"+`buckets`+"`"+` array and Meta is not contacted. Both breakdowns must load or the request fails (503): each covers the same traffic independently, and one presented without the other is a partial picture. Spend is in the account's own currency (`+"`"+`account_currency`+"`"+`); no FX conversion is performed. There is no conversions counter: Meta reports conversions only as per-action-type entries, not as one scalar.`)
 	fmt.Fprintln(os.Stderr, `    get-twitter-ads-audience: Read X (Twitter) Ads audience insights — age, gender and device platform — for this project's own campaigns, live from the X Ads API on the connected ad account. Scoped to the campaigns this service holds for the project, NOT to the ad account: the stats requests name those campaign ids and every returned row is checked against them, because the account is shared across foundations. X serves segmented stats ONLY through its asynchronous stats-jobs API, so one read creates one job per segmentation per 20 campaigns (at most 40 campaigns), waits for them inside the request and downloads the results; nothing is persisted. A project with no X campaigns of its own receives an empty `+"`"+`buckets`+"`"+` array and X is not contacted. The window NAMES are the X metrics read's — today, yesterday or the last 7 days including today — but the days are taken on the ad ACCOUNT's calendar (its timezone), whereas the metrics read uses UTC days, so on a non-UTC account the two cover different instants and their totals are not directly comparable; longer windows are refused (400). Identical reads are shared and successful results reused for a few minutes, and at most one read per ad account runs at a time, because each read holds stats-job slots on an account shared across foundations; these limits are per service process, so only the instance holding a per-account database lease runs X stats jobs and any other instance answers 503 (retry). `+"`"+`all_counters_null`+"`"+` flags segment rows that carried no measurement. All three segmentations must load or the request fails (503). Billed charge is in the account's own currency (`+"`"+`account_currency`+"`"+`); no FX conversion is performed. There is no conversions counter. Disabled (400 not supported) unless TWITTER_METRICS_ENABLED is "true", like the X account monitor that shares the stats-jobs contract.`)
 	fmt.Fprintln(os.Stderr, `    get-linkedin-ads-audience: Read LinkedIn professional demographics — job function, seniority, industry, company size and country — for this project's own campaigns, live from LinkedIn's Ad Analytics API. Scoped to the campaigns this service holds for the project, NOT to the connected ad account, and read from the project's OWN connection only (never the LF system account) and only the account that connection is bound to. LinkedIn serves MEMBER_* pivots only through its single-pivot Analytics finder, so the read issues one Ad Analytics request per (pivot, campaign), each filtered to that one campaign and the bound account, and sums the answers; at most 10 campaigns (50 requests), because the account is shared across foundations and the read must fit one request budget. A pure read-through; nothing is persisted. A project with no LinkedIn campaigns of its own receives an empty `+"`"+`buckets`+"`"+` array and LinkedIn is not contacted. All five pivots must load or the request fails (503). Values are LinkedIn URNs, verbatim, not names. Every counter is APPROXIMATE (see `+"`"+`approximate`+"`"+`): LinkedIn drops values under 3 events, withholds values for ads reaching too few members, keeps only the top 100 values per creative per day, and delays demographics 12-24 hours. Cost is USD (costInUsd). No conversions. Not gated: LinkedIn has no metrics feature flag.`)
@@ -4902,6 +4940,56 @@ func lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-google-ads-audience --project-id \"cncf\" --window \"last_14_days\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections suggest-google-ads-geo-targets", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -q STRING")
+	fmt.Fprint(os.Stderr, " -country-code STRING")
+	fmt.Fprint(os.Stderr, " -target-types JSON")
+	fmt.Fprint(os.Stderr, " -limit INT")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Search Google Ads geo target constants by place name or postal code, live from Google's GeoTargetConstantService.SuggestGeoTargetConstants, for picking googleAdsConfig.geoTargets. Returns Google's public location table, not data any ad account holds, so a project with no Google Ads connection of its own reads through the shared LF system credential, exactly as GET .../connection-google-ads/accounts does. A pure read: nothing is persisted.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -q STRING: `)
+	fmt.Fprintln(os.Stderr, `    -country-code STRING: `)
+	fmt.Fprintln(os.Stderr, `    -target-types JSON: `)
+	fmt.Fprintln(os.Stderr, `    -limit INT: `)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections suggest-google-ads-geo-targets --project-id \"cncf\" --q \"Austin\" --country-code \"US\" --target-types '[\n      \"Postal Code\"\n   ]' --limit 20 --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsListGoogleAdsUserListsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections list-google-ads-user-lists", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -account-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `List the Google Ads user lists (audiences) on a customer, live from GAQL on user_list, for picking googleAdsConfig.audienceSegments (Search only). account_id names the customer; omitted, the customer the project's connection is bound to is read. Like the account monitor, this resolves the project's OWN connection only and never falls back to the shared LF system credential: user lists are account data on a customer shared across foundations, so a project with no Google Ads connection of its own gets a 404, not the LF account's audiences. On a platform whose ad account is shared across foundations — Google Ads today — the read is refused with 409 before Google is contacted: the read is account-wide, this service records no user list per project, and a project's own connection points at the same shared customer, so answering would expose every foundation's audiences. Only a per-foundation customer is listed. An account_id the credential cannot reach is refused by Google and answered 503, like the account monitor. A pure read: nothing is persisted.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -account-id STRING: `)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections list-google-ads-user-lists --project-id \"cncf\" --account-id \"8666746580\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsGetMetaAdsAudienceUsage() {

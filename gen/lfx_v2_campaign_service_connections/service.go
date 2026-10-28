@@ -161,6 +161,29 @@ type Service interface {
 	// than dropped: they are real unattributed traffic, and hiding them would make
 	// the buckets silently under-sum.
 	GetGoogleAdsAudience(context.Context, *GetGoogleAdsAudiencePayload) (res *GoogleAdsAudience, err error)
+	// Search Google Ads geo target constants by place name or postal code, live
+	// from Google's GeoTargetConstantService.SuggestGeoTargetConstants, for
+	// picking googleAdsConfig.geoTargets. Returns Google's public location table,
+	// not data any ad account holds, so a project with no Google Ads connection of
+	// its own reads through the shared LF system credential, exactly as GET
+	// .../connection-google-ads/accounts does. A pure read: nothing is persisted.
+	SuggestGoogleAdsGeoTargets(context.Context, *SuggestGoogleAdsGeoTargetsPayload) (res *GoogleAdsGeoTargetSuggestions, err error)
+	// List the Google Ads user lists (audiences) on a customer, live from GAQL on
+	// user_list, for picking googleAdsConfig.audienceSegments (Search only).
+	// account_id names the customer; omitted, the customer the project's
+	// connection is bound to is read. Like the account monitor, this resolves the
+	// project's OWN connection only and never falls back to the shared LF system
+	// credential: user lists are account data on a customer shared across
+	// foundations, so a project with no Google Ads connection of its own gets a
+	// 404, not the LF account's audiences. On a platform whose ad account is
+	// shared across foundations — Google Ads today — the read is refused with 409
+	// before Google is contacted: the read is account-wide, this service records
+	// no user list per project, and a project's own connection points at the same
+	// shared customer, so answering would expose every foundation's audiences.
+	// Only a per-foundation customer is listed. An account_id the credential
+	// cannot reach is refused by Google and answered 503, like the account
+	// monitor. A pure read: nothing is persisted.
+	ListGoogleAdsUserLists(context.Context, *ListGoogleAdsUserListsPayload) (res *GoogleAdsUserLists, err error)
 	// Read Meta audience insights — age and gender (one combined breakdown) and
 	// placement (publisher_platform and platform_position) — for this project's
 	// own campaigns, live from the Meta Marketing API Insights edge of the
@@ -683,7 +706,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [73]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
+var MethodNames = [75]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -1350,6 +1373,39 @@ type GoogleAdsCredentials struct {
 	DeveloperToken string
 }
 
+type GoogleAdsGeoTargetSuggestion struct {
+	// The numeric geo target constant id, in exactly the form
+	// googleAdsConfig.geoTargets and excludedGeoTargets accept. Send it as-is; the
+	// geoTargetConstants/{id} resource name is NOT accepted there.
+	ID string
+	// Google's display name for the location
+	Name string
+	// Google's fully qualified name, which disambiguates same-named places
+	CanonicalName string
+	// ISO 3166-1 alpha-2 country of the location, as Google reports it
+	CountryCode string
+	// Google's location type label, verbatim (e.g. Country, State, City, Postal
+	// Code, DMA Region)
+	TargetType string
+	// ENABLED, or REMOVAL_PLANNED for a location Google is retiring
+	Status string
+	// Google's approximate audience estimate. Absent when Google sent none.
+	Reach *int64
+}
+
+// GoogleAdsGeoTargetSuggestions is the result type of the
+// lfx-v2-campaign-service-connections service suggest-google-ads-geo-targets
+// method.
+type GoogleAdsGeoTargetSuggestions struct {
+	// Matching locations in Google's order, filtered to target_types when given,
+	// capped at limit
+	Suggestions []*GoogleAdsGeoTargetSuggestion
+	// How many suggestions are in `suggestions`
+	SuggestionCount int
+	// True when more matching locations were available than `limit` allowed
+	Truncated bool
+}
+
 type GoogleAdsKeyword struct {
 	// The ad-group criterion id — the handle keyword-actions takes. Bare numeric,
 	// unique only within its ad group, which is why ad_group_id travels with it.
@@ -1411,6 +1467,48 @@ type GoogleAdsKeywords struct {
 	// True when this project's campaigns have more keywords than were returned.
 	// The rows are the TOP ones by impressions, not the project's full keyword set
 	// — do not total them and present the result as the project's whole spend.
+	Truncated bool
+}
+
+type GoogleAdsUserList struct {
+	// customers/{customerId}/userLists/{id}, in exactly the form
+	// googleAdsConfig.audienceSegments accepts (Search only). A list targets
+	// campaigns on its own customer.
+	ResourceName string
+	// The user list id
+	ID string
+	// The list's display name. Not an identifier.
+	Name string
+	// Google's UserListType, verbatim (e.g. CRM_BASED, RULE_BASED, LOGICAL,
+	// SIMILAR)
+	Type string
+	// OPEN (accepting members) or CLOSED, verbatim
+	MembershipStatus string
+	// The list's account_user_list_status (ENABLED or DISABLED), verbatim. Absent
+	// when Google sent none.
+	AccountStatus *string
+	// Google's estimated Search-network size. Absent when Google sent none, which
+	// is not a size of 0.
+	SizeForSearch *int64
+	// Google's bucketed Search-network size, verbatim. Absent when Google sent
+	// none.
+	SizeRangeForSearch *string
+	// Whether Google reports the list usable on Search. audienceSegments applies
+	// to Search campaigns, so an ineligible list will not serve there.
+	EligibleForSearch bool
+}
+
+// GoogleAdsUserLists is the result type of the
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// method.
+type GoogleAdsUserLists struct {
+	// The Google Ads customer the lists were read from
+	AccountID string
+	// User lists on the customer, sorted by name, capped at 500 (see `truncated`)
+	UserLists []*GoogleAdsUserList
+	// How many lists are in `user_lists`
+	UserListCount int
+	// True when the customer holds more lists than were returned
 	Truncated bool
 }
 
@@ -1741,6 +1839,19 @@ type ListGoogleAdsAccountsPayload struct {
 // lfx-v2-campaign-service-connections service list-google-ads-accounts method.
 type ListGoogleAdsAccountsResult struct {
 	Accounts []*AccessibleAccount
+}
+
+// ListGoogleAdsUserListsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// method.
+type ListGoogleAdsUserListsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Optional Google Ads customer to read (digits only). Defaults to the
+	// connection's account.
+	AccountID *string
 }
 
 // ListHubspotEmailsPayload is the payload type of the
@@ -2542,6 +2653,25 @@ type SetCredentialTwitterAdsPayload struct {
 	Credentials *TwitterAdsCredentials
 }
 
+// SuggestGoogleAdsGeoTargetsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service suggest-google-ads-geo-targets
+// method.
+type SuggestGoogleAdsGeoTargetsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Place name or postal code to search for
+	Q string
+	// Optional ISO 3166-1 alpha-2 country to search within
+	CountryCode *string
+	// Optional location types to keep (e.g. City, Postal Code). Matched ignoring
+	// case, spaces, underscores and hyphens, so postal_code matches Postal Code.
+	TargetTypes []string
+	// Maximum suggestions to return (1-50). Defaults to 20 when omitted.
+	Limit *int
+}
+
 // TestGoogleAdsPayload is the payload type of the
 // lfx-v2-campaign-service-connections service test-google-ads method.
 type TestGoogleAdsPayload struct {
@@ -2797,6 +2927,13 @@ type UpdateTwitterAdsPayload struct {
 	Config  *TwitterAdsConnectionConfig
 }
 
+type UserListsConflictError struct {
+	// HTTP status code
+	Code string
+	// Error message
+	Message string
+}
+
 // Error returns an error description.
 func (e *AccountMonitorConflictError) Error() string {
 	return ""
@@ -2982,4 +3119,21 @@ func (e *UnauthorizedError) ErrorName() string {
 // GoaErrorName returns the error name.
 func (e *UnauthorizedError) GoaErrorName() string {
 	return "Unauthorized"
+}
+
+// Error returns an error description.
+func (e *UserListsConflictError) Error() string {
+	return ""
+}
+
+// ErrorName returns the error name.
+//
+// Deprecated: Use GoaErrorName - https://github.com/goadesign/goa/issues/3105
+func (e *UserListsConflictError) ErrorName() string {
+	return e.GoaErrorName()
+}
+
+// GoaErrorName returns the error name.
+func (e *UserListsConflictError) GoaErrorName() string {
+	return "Conflict"
 }
