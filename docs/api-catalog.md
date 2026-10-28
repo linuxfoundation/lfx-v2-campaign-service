@@ -697,9 +697,9 @@ imageAltText?: string           — OPTIONAL extension AlternativeText, at most 
 startDate?: string              — OPTIONAL flight start, YYYY-MM-DD (the `metaConfig` key and
                                   format). Sent as the AD GROUP's StartDate — Microsoft schedules
                                   delivery on the ad group, not the campaign. Must be a real
-                                  calendar date and not before today's UTC calendar day — or, when
-                                  `timeZone` is supplied, today at UTC+14 (Microsoft reads the date
-                                  in the campaign's zone, which may be ahead of UTC). Omitted,
+                                  calendar date and not already past in every time zone (today is
+                                  taken at UTC-12, with or without `timeZone`). Microsoft reads the
+                                  date in the campaign's zone and is the final judge. Omitted,
                                   Microsoft's default applies: eligible to serve from today.
 endDate?: string                — OPTIONAL flight end, YYYY-MM-DD, sent as the ad group's EndDate.
                                   Must be after startDate, or after today when startDate is
@@ -712,8 +712,10 @@ same job-time failure an invalid `metaConfig` date gives — not a synchronous 4
 are recorded on the campaign row (`start_date`/`end_date`), so the brief view paces the campaign
 over its flight — but only when this run created the ad group that carries them. A retry that
 REUSES an existing ad group leaves its schedule unchanged, records no dates on the row and adds a
-warning step. Microsoft interprets the dates in the campaign's `timeZone` (default Pacific, which
-is behind UTC, so the UTC-day rule is safe there).
+warning step. Microsoft interprets the dates in the campaign's `timeZone` (default Pacific).
+The up-front past-date check is deliberately lenient (UTC-12), so a start already past in the
+campaign's own zone but not yet at UTC-12 passes it and can still be refused by Microsoft when
+the ad group is created — after the campaign exists, reported as an ad-group rejection.
 
 `geoTargets` is accepted (LFXV2-3279), using the SAME ISO 3166-1 alpha-2 vocabulary as
 `redditConfig`/`metaConfig`/`linkedInConfig`. Microsoft's location criteria take numeric

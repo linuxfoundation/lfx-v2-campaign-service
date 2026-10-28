@@ -1030,11 +1030,12 @@ type CampaignCreateInput struct {
 	// exists. googleAdsConfig.bidding is refused with 400 (use
 	// googleAdsConfig.biddingStrategy). FLIGHT DATES: metaConfig (required) and
 	// microsoftConfig (optional) take `startDate` and `endDate` as YYYY-MM-DD
-	// strings that must be real calendar dates, with the start not before today's
-	// UTC calendar day and the end after the start (for microsoftConfig with an
-	// explicit timeZone, today is the calendar day at UTC+14, since Microsoft
-	// reads the dates in the campaign's zone, which may be ahead of UTC).
-	// Microsoft Advertising sets them on the campaign's AD GROUP
+	// strings that must be real calendar dates, with the start not before today
+	// and the end after the start. For metaConfig today is the UTC calendar day.
+	// For microsoftConfig it is the calendar day at UTC-12, with or without
+	// timeZone, so only a date already past in every time zone is refused up
+	// front; Microsoft reads the dates in the campaign's time zone and remains the
+	// final judge. Microsoft Advertising sets them on the campaign's AD GROUP
 	// (AdGroup.StartDate/EndDate), each independently optional: an omitted
 	// startDate leaves Microsoft's default (eligible from today, so an endDate
 	// alone must be after today) and an omitted endDate runs until stopped;

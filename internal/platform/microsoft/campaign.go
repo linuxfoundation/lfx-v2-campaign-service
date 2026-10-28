@@ -600,10 +600,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign geo targets invalid: %w", err))
 	}
 
-	// Flight dates go on the ad group, which is created only AFTER the campaign, so they are
-	// checked here: a date Microsoft refused at AddAdGroups would leave a campaign with no ad
-	// group behind.
-	flightDates, err := validateFlightDates(in.StartDate, in.EndDate, c.now(), strings.TrimSpace(in.TimeZone) != "")
+	// Flight dates go on the ad group, which is created only AFTER the campaign, so a date that
+	// is wrong on its face is refused here, before anything exists. The past-date rule is lenient
+	// (only past in every zone) — Microsoft judges the rest; see flight.go.
+	flightDates, err := validateFlightDates(in.StartDate, in.EndDate, c.now())
 	if err != nil {
 		return nil, err
 	}

@@ -15,7 +15,8 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
-// The fixed test clock (fixedClock) is 2026-01-01T00:00:00Z, so "today" is 2026-01-01.
+// The fixed test clock (fixedClock) is 2026-01-01T00:00:00Z, which is still 2025-12-31 at UTC-12,
+// so the lenient "today" (earliestZone) is 2025-12-31.
 
 // flightBodies records the raw AddCampaigns and AddAdGroups bodies. The handler writes them on
 // the server goroutine, so every read goes through the mutex (the test-hygiene pattern
@@ -160,10 +161,10 @@ func TestCreateCampaign_InvalidFlightDatesRefusedBeforeAnyRequest(t *testing.T) 
 		"bad end format":         {end: "Feb 3 2026", wantErr: "invalid end date format"},
 		"impossible start":       {start: "2026-13-40", wantErr: "invalid start date"},
 		"impossible end":         {start: "2026-02-01", end: "2026-02-30", wantErr: "invalid end date"},
-		"start in the past":      {start: "2025-12-31", wantErr: "is in the past"},
+		"start in the past":      {start: "2025-12-30", wantErr: "is in the past"},
 		"end before start":       {start: "2026-03-01", end: "2026-02-01", wantErr: "must be after start date"},
 		"end equal to start":     {start: "2026-03-01", end: "2026-03-01", wantErr: "must be after start date"},
-		"end only, today":        {end: "2026-01-01", wantErr: "must be after today"},
+		"end only, today":        {end: "2025-12-31", wantErr: "must be after today"},
 		"end only, in the past":  {end: "2025-06-01", wantErr: "must be after today"},
 		"past start, future end": {start: "2025-12-01", end: "2026-02-01", wantErr: "is in the past"},
 	}
@@ -223,62 +224,51 @@ func TestCreateCampaign_ReusedAdGroupKeepsItsSchedule(t *testing.T) {
 	}
 }
 
-func TestValidateFlightDates_TodayIsTheUTCDay(t *testing.T) {
-	// 23:30 on 2026-01-01 in UTC-8 is already 2026-01-02 in UTC, so 2026-01-01 is past.
-	now := time.Date(2026, 1, 1, 23, 30, 0, 0, time.FixedZone("PST", -8*3600))
-	if _, err := validateFlightDates("2026-01-01", "", now, false); err == nil {
-		t.Error("start 2026-01-01 accepted although the UTC day is 2026-01-02")
-	}
-	f, err := validateFlightDates(" 2026-01-02 ", "", now, false)
+// TestValidateFlightDates_TodayIsTheEarliestZonesDay: "today" is the calendar day at UTC-12, so
+// a date is refused only once it is past in every zone. A pre-flight check must never refuse a
+// date Microsoft would accept; Microsoft judges the campaign's own zone.
+func TestValidateFlightDates_TodayIsTheEarliestZonesDay(t *testing.T) {
+	// 2026-01-02 10:00 UTC: already 2026-01-02 in UTC, Pacific (02:00) and Tokyo (19:00), but
+	// still 2026-01-01 at UTC-12 (22:00 the previous day).
+	now := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
+	f, err := validateFlightDates(" 2026-01-01 ", "", now)
 	if err != nil {
-		t.Fatalf("start equal to the UTC day refused: %v", err)
+		t.Fatalf("start 2026-01-01 refused although it is still that day at UTC-12: %v", err)
 	}
-	if f.start == nil || *f.start != (msDate{Year: 2026, Month: 1, Day: 2}) || f.end != nil {
-		t.Errorf("flight = %+v, want start 2026-01-02 and no end", f)
+	if f.start == nil || *f.start != (msDate{Year: 2026, Month: 1, Day: 1}) || f.end != nil {
+		t.Errorf("flight = %+v, want start 2026-01-01 and no end", f)
 	}
-}
-
-// TestValidateFlightDates_ExplicitZoneUsesTheLatestDay: with a caller-chosen TimeZone (which may
-// be ahead of UTC) "today" is the UTC+14 calendar day, so a start that is today in UTC but already
-// yesterday in Tokyo or Kiritimati is refused up front instead of at AddAdGroups.
-func TestValidateFlightDates_ExplicitZoneUsesTheLatestDay(t *testing.T) {
-	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC) // 2026-01-02 02:00 at UTC+14
-	if _, err := validateFlightDates("2026-01-01", "", now, false); err != nil {
-		t.Errorf("default zone: start of the UTC day refused: %v", err)
+	if _, err := validateFlightDates("2025-12-31", "", now); err == nil {
+		t.Error("start 2025-12-31 accepted although it is past in every zone")
 	}
-	if _, err := validateFlightDates("2026-01-01", "", now, true); err == nil {
-		t.Error("explicit zone: start 2026-01-01 accepted although it is already 2026-01-02 at UTC+14")
+	// End-only is judged against the same lenient today: after 2026-01-01, not after the UTC day.
+	if _, err := validateFlightDates("", "2026-01-02", now); err != nil {
+		t.Errorf("end-only 2026-01-02 refused although it is after today at UTC-12: %v", err)
 	}
-	if _, err := validateFlightDates("2026-01-02", "", now, true); err != nil {
-		t.Errorf("explicit zone: start of the UTC+14 day refused: %v", err)
-	}
-	if _, err := validateFlightDates("", "2026-01-02", now, true); err == nil {
-		t.Error("explicit zone: end-only 2026-01-02 accepted although that is today at UTC+14")
+	if _, err := validateFlightDates("", "2026-01-01", now); err == nil {
+		t.Error("end-only 2026-01-01 accepted although that is today at UTC-12")
 	}
 }
 
-// TestCreateCampaign_ExplicitTimeZoneTightensToday drives the rule through CreateCampaign: the
-// explicit-zone flag is derived from CampaignInput.TimeZone, so a same-UTC-day start that the
-// default zone accepts (TestCreateCampaign_OneFlightDateOnly) is refused once a zone is
-// supplied, with nothing sent.
-func TestCreateCampaign_ExplicitTimeZoneTightensToday(t *testing.T) {
-	var reached reachFlag
-	api := &campaignsAPI{}
-	base := api.handler(t)
-	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-		reached.mark()
-		base(w, r)
-	})
-	// Midday UTC on 2026-01-01 is already 2026-01-02 at UTC+14.
-	WithClock(func() time.Time { return time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC) })(c)
-	in := validInput()
-	in.StartDate = "2026-01-01" // the clock's UTC day
-	in.TimeZone = "OsakaSapporoTokyo"
-	if _, err := c.CreateCampaign(context.Background(), in); err == nil || !strings.Contains(err.Error(), "is in the past") {
-		t.Fatalf("err = %v, want a past-start refusal under an explicit zone", err)
-	}
-	if reached.hit() {
-		t.Error("a request was sent although the start date was refused")
+// TestCreateCampaign_TimeZoneDoesNotTightenToday: the rule is the same with or without a
+// TimeZone. A US operator choosing their own today as the start — late in their evening, when
+// the UTC day (and every zone east of it) has already moved on — is not refused up front.
+func TestCreateCampaign_TimeZoneDoesNotTightenToday(t *testing.T) {
+	for _, tz := range []string{"", "PacificTimeUSCanadaTijuana", "OsakaSapporoTokyo"} {
+		t.Run("timeZone="+tz, func(t *testing.T) {
+			c, bodies := captureCreateBodies(t, &campaignsAPI{})
+			// 2026-01-02 06:00 UTC is 22:00 on 2026-01-01 in Pacific.
+			WithClock(func() time.Time { return time.Date(2026, 1, 2, 6, 0, 0, 0, time.UTC) })(c)
+			in := validInput()
+			in.StartDate = "2026-01-01"
+			in.TimeZone = tz
+			if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+				t.Fatalf("CreateCampaign refused the operator's own today: %v", err)
+			}
+			if !strings.Contains(bodies.adGroup(), `"StartDate":{"Month":1,"Day":1,"Year":2026}`) {
+				t.Errorf("AddAdGroups body lacks the start date: %s", bodies.adGroup())
+			}
+		})
 	}
 }
 

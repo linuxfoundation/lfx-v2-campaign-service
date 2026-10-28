@@ -25,16 +25,18 @@ import (
 // The input format and rules mirror the Meta client's (meta.Client.CreateCampaign): YYYY-MM-DD,
 // calendar-valid, an end strictly after the start, and a start that is not in the past. They
 // are checked BEFORE the first mutating call, because the ad group is created only after the
-// campaign: a date Microsoft refused at AddAdGroups would otherwise leave a campaign with no ad
-// group behind.
+// campaign, so a date that is wrong on its face fails with nothing created.
 //
-// "Today" needs one Microsoft-specific adjustment. Microsoft reads the dates in the CAMPAIGN's
-// time zone, not UTC. With the default zone (defaultTimeZone, Pacific — always behind UTC) the
-// UTC calendar day Meta uses is never earlier than Microsoft's today, so it is safe. A
-// caller-supplied TimeZone may be AHEAD of UTC, and this client does not map Microsoft's zone
-// enum to an offset, so "today" is then taken in the most-eastern zone on Earth (UTC+14,
-// latestZone): a start that passes there is not in the past in any zone. The cost is that, with
-// an explicit zone, a start of the caller's own today may be refused for part of the day.
+// "Today" is deliberately LENIENT, and that is the one departure from Meta. Microsoft reads the
+// dates in the CAMPAIGN's time zone (Pacific by default, or the caller's TimeZone), and this
+// client does not map Microsoft's zone enum to an offset. A pre-flight check must never refuse a
+// date Microsoft would accept, so "today" is the calendar day at the EARLIEST offset on Earth
+// (UTC-12, earliestZone), with or without a TimeZone: only a date that is already past in every
+// zone is refused here. Microsoft stays the final judge. A start that is past in the campaign's
+// own zone but not yet at UTC-12 (for example yesterday in Tokyo, or for a few hours each day
+// yesterday in Pacific) passes this check and can still be refused at AddAdGroups, AFTER the
+// campaign exists — that failure is reported like any other ad-group rejection, with the
+// campaign in the partial result.
 
 // flightDateLayout is the YYYY-MM-DD layout every flight date is given in.
 const flightDateLayout = "2006-01-02"
@@ -43,8 +45,9 @@ const flightDateLayout = "2006-01-02"
 // dateRE does, so a malformed string and a well-formed impossible date get distinct refusals.
 var flightDateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
-// latestZone is the time zone whose calendar day is furthest ahead (UTC+14, Line Islands).
-var latestZone = time.FixedZone("UTC+14", 14*60*60)
+// earliestZone is the time zone whose calendar day is furthest behind (UTC-12, Baker Island):
+// a date before today there is past in every zone.
+var earliestZone = time.FixedZone("UTC-12", -12*60*60)
 
 // flight is the validated flight window sent on the ad group create. A nil field is omitted
 // from the request, which leaves Microsoft's default for it in place.
@@ -76,9 +79,8 @@ func (d msDate) String() string {
 
 // validateFlightDates checks the optional flight window and converts it to Microsoft's Date
 // objects. Each date is independent: either, both or neither may be supplied. now is the
-// client's clock; "today" is its UTC calendar day, as in the Meta client, unless
-// explicitZone is set (the caller chose the campaign's TimeZone), when it is the calendar day
-// in latestZone — see the file comment.
+// client's clock; "today" is its calendar day in earliestZone (UTC-12), so only a date past
+// everywhere is refused — see the file comment.
 //
 //   - a supplied date must be YYYY-MM-DD and a real calendar date;
 //   - startDate must not be before today;
@@ -87,17 +89,14 @@ func (d msDate) String() string {
 //
 // Every refusal is a PreflightRefusal carrying the caller's value through domain.CallerValue,
 // exactly as Meta's date refusals are.
-func validateFlightDates(startDate, endDate string, now time.Time, explicitZone bool) (flight, error) {
+func validateFlightDates(startDate, endDate string, now time.Time) (flight, error) {
 	startDate = strings.TrimSpace(startDate)
 	endDate = strings.TrimSpace(endDate)
 	if startDate == "" && endDate == "" {
 		return flight{}, nil
 	}
-	today := now.UTC().Truncate(24 * time.Hour)
-	if explicitZone {
-		y, m, d := now.In(latestZone).Date()
-		today = time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
-	}
+	y, m, d := now.In(earliestZone).Date()
+	today := time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 
 	var f flight
 	effectiveStart := today

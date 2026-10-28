@@ -9,12 +9,12 @@ schedule at all: it was created PAUSED and, once enabled, ran until someone stop
 sends them on the ad-group create in `findOrCreateAdGroup`, which is what the `msDate` /
 `toMSDate` helper in `campaign.go` had been reserved for.
 
-**Validation mirrors Meta.** A real calendar date in YYYY-MM-DD, start not before today's UTC
-day, end strictly after start (after today when only an end is given). One Microsoft-specific
-adjustment: Microsoft reads the dates in the campaign's time zone, so when the caller supplies
-`timeZone` (possibly ahead of UTC) "today" is the calendar day at UTC+14. It runs in the
-`CreateCampaign` prologue, before any request, so a bad date cannot leave a campaign without an
-ad group. Like Meta's, a refusal fails the platform job pre-create (claim released); it is not
+**Validation mirrors Meta, with a lenient today.** A real calendar date in YYYY-MM-DD, start
+not before today, end strictly after start (after today when only an end is given). Microsoft
+reads the dates in the campaign's time zone, so "today" is the calendar day at UTC-12, with or
+without `timeZone`: only a date past in every zone is refused, and Microsoft judges the rest.
+It runs in the `CreateCampaign` prologue, before any request, so a date wrong on its face fails
+with nothing created. Like Meta's, a refusal fails the platform job pre-create (claim released); it is not
 a synchronous 400.
 
 **Absent dates change nothing.** With neither date the ad-group body is byte-for-byte what it
