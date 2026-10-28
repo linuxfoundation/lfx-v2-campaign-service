@@ -4,4 +4,5 @@
 an upstream call whenever it was false. That included a missing or unusable connection refused
 locally before any request was sent. It now returns `called`, which is true only when Google was
 contacted, whether that call succeeded or failed. The `suggest_geo_targets` metric is recorded
-only on that path, so cache hits and local refusals are not counted.
+only on that path, so cache hits and local refusals are not counted. See
+[google-ads-targeting-lookups](../architecture/google-ads-targeting-lookups.md).
