@@ -11,8 +11,23 @@ Package middleware provides HTTP middleware for the service.
 
 ## Inbound request body cap (LFXV2-3295)
 
-`MaxBodyBytes(limit)` bounds how much of a request body the server will read, and
-`cmd/campaign-service` applies it on every route at `constants.MaxRequestBodyBytes` (42 MiB).
+`MaxBodyBytes(limit)` bounds how much of a request body the server will read.
+`cmd/campaign-service` applies it per route through `MaxBodyBytesPerRoute(uploadLimit, otherLimit)`:
+`constants.MaxRequestBodyBytes` (42 MiB) for the creative-asset upload (`isUploadRequest`, the
+same predicate `UploadAdmission` gates on) and `constants.MaxNonUploadRequestBodyBytes` (1 MiB)
+for every other route.
+
+**Why per route (#177).** Goa decodes a body before the endpoint authenticates the caller, and
+only the upload is gated by `UploadAdmission`, so on every other route the per-request cap is the
+ONLY pre-auth bound. While all routes shared the upload's 42 MiB cap, one request to create-brief
+(whose `Any` attributes accept arbitrary JSON) could make the decoder allocate tens of MiB, and
+several times that once boxed into interface values, before any token was checked. The smaller
+cap runs at the same point and through the same two arms as the upload's. The largest declared
+string on a non-upload route is 8000 characters, so 1 MiB leaves an order of magnitude of
+headroom. What it does not bound is concurrency: many sub-cap unauthenticated bodies at once is
+the gateway's to own, since only it can authenticate before reading.
+`TestNonUploadRoutes_RejectOversizeBodyBeforeDecoding` drives every body-bearing route in the
+served OpenAPI document (both the declared and chunked arms) through the real chain.
 
 It exists because the size bounds declared in `design/` do not bound the wire. A Goa `Bytes`
 attribute's `MaxLength` is checked by the GENERATED VALIDATOR against the encoded base64 string,

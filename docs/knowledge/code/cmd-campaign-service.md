@@ -45,8 +45,9 @@ classified, and only when it does not begin with `-`: a subcommand has to come f
 further would mistake a flag VALUE (`-p 8080`) for a command and break ordinary startup.
 
 `buildHandler` is the chain seam beside `buildMux`, and exists for the same reason: it
-wraps the mounted mux in the service's middleware — innermost `middleware.MaxBodyBytes`
-(the inbound body cap that answers `413`, sized by `constants.MaxRequestBodyBytes`), then
+wraps the mounted mux in the service's middleware — innermost `middleware.MaxBodyBytesPerRoute`
+(the inbound body cap that answers `413`: `constants.MaxRequestBodyBytes` for the creative-asset
+upload, `constants.MaxNonUploadRequestBodyBytes` for every other route, #177), then
 `middleware.UploadAdmission`, then request-ID, then debug/OTel, with the in-flight tracker
 outermost.
 

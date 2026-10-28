@@ -594,3 +594,43 @@ func measureTrailing(t *testing.T, limit int64, h http.Handler, envelope string,
 	MaxBodyBytes(limit)(h).ServeHTTP(rec, req)
 	return *read
 }
+
+// TestMaxBodyBytesPerRoute_PicksTheCapByRoute pins #177's split: the creative-asset POST is held
+// to the upload limit and every other request to the smaller one, on both arms. The same body
+// size is sent to each so the only variable is the route.
+func TestMaxBodyBytesPerRoute_PicksTheCapByRoute(t *testing.T) {
+	const uploadLimit, otherLimit int64 = 4096, 1024
+	const size = 2048 // over otherLimit, under uploadLimit
+
+	for _, tc := range []struct {
+		name     string
+		method   string
+		path     string
+		declared bool
+		want413  bool
+	}{
+		{"upload declared", http.MethodPost, "/projects/p/briefs/b/creative-assets", true, false},
+		{"upload chunked", http.MethodPost, "/projects/p/briefs/b/creative-assets", false, false},
+		{"other declared", http.MethodPost, "/projects/p/briefs", true, true},
+		{"other chunked", http.MethodPost, "/projects/p/briefs", false, true},
+		// The upload predicate is POST-only, so a PUT to the same path gets the smaller cap.
+		{"non-POST to upload path", http.MethodPut, "/projects/p/briefs/b/creative-assets", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &echoReadAll{}
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(strings.Repeat("a", size)))
+			if !tc.declared {
+				req.ContentLength = -1
+			}
+			rec := httptest.NewRecorder()
+			MaxBodyBytesPerRoute(uploadLimit, otherLimit)(h).ServeHTTP(rec, req)
+
+			if got413 := rec.Code == http.StatusRequestEntityTooLarge; got413 != tc.want413 {
+				t.Fatalf("status = %d, want413 = %v", rec.Code, tc.want413)
+			}
+			if tc.want413 && h.read > otherLimit {
+				t.Errorf("handler read %d bytes, past the %d-byte cap", h.read, otherLimit)
+			}
+		})
+	}
+}

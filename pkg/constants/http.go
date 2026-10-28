@@ -41,11 +41,32 @@ const (
 // headroom, while still bounding the read at a fixed, modest multiple of the largest
 // thing the contract admits.
 //
-// It applies to every route, not just the upload: no other endpoint takes a body
-// remotely this large, so one ceiling costs them nothing and closes the same
-// unbounded-read hole on all of them. Raising design/'s MaxLength requires raising
-// this in step, or max-size uploads start failing with 413.
+// It applies ONLY to the creative-asset upload (middleware.isUploadRequest). Every other
+// route is held to MaxNonUploadRequestBodyBytes, because no other endpoint takes a body
+// remotely this large and a 42 MiB ceiling on them is 42 MiB of pre-auth allocation per
+// request for nothing (#177). Raising design/'s MaxLength requires raising this in step,
+// or max-size uploads start failing with 413.
 const MaxRequestBodyBytes int64 = 42 << 20 // 42 MiB
+
+// MaxNonUploadRequestBodyBytes caps the request body of every route EXCEPT the creative-asset
+// upload, before the body is read.
+//
+// Why a separate, much smaller cap (#177). Goa decodes the body before the endpoint
+// authenticates the caller, so whatever this cap admits is allocated on behalf of a caller nobody
+// has checked yet. Those routes are not gated by UploadAdmission, so the per-request cap is the
+// only bound on them, and the decoder amplifies it: an `Any` attribute (create-brief's copy,
+// keywords, targeting, event_details; a campaign's config; the wizard's sections) materialises as
+// boxed interface values several times the size of the JSON it came from. At 42 MiB a single
+// request could approach the pod's 512 MiB limit on its own.
+//
+// Sized from the contract, with headroom. The largest DECLARED string on any non-upload route is
+// 8000 characters (an email-copy section's html), and a realistic brief, campaign or section
+// list is tens of KiB. 1 MiB is an order of magnitude above that, so no legitimate request is
+// refused, while cutting the pre-auth allocation one request can force by a factor of 42.
+//
+// What it does NOT do: bound how many such requests run at once. Concurrency of unauthenticated
+// bodies belongs at the gateway, which can authenticate before reading (see #177).
+const MaxNonUploadRequestBodyBytes int64 = 1 << 20 // 1 MiB
 
 // PodMemoryLimitBytes mirrors resources.limits.memory in
 // charts/lfx-v2-campaign-service/values.yaml (512Mi).
