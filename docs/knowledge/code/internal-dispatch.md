@@ -2126,6 +2126,17 @@ de-duplication, 300-ceiling and provenance rules, but the AUDIENCE sentinels
 would overflow. Tests (`microsoft_audience_report_test.go`) mirror the keyword ones on the same
 fake Microsoft, plus a check that a malformed report fails rather than returning partial rows.
 
+## Meta launch readiness: Instagram identity and EU DSA (`meta.go`)
+
+`MetaDispatcher.PreflightCreate` runs `checkMetaPublishIdentity` after the bid plan, on the same
+best-effort decode, so these are a synchronous 400 (`ErrCreateConfigInvalid`) before the create
+job exists: `geoTargets` naming any EU country without BOTH `dsaBeneficiary` and `dsaPayor`; a
+one-sided pair; a disclosure over 256 runes or with a control character; a non-numeric
+`instagramUserId`. The rules are `meta.CheckPublishIdentity`'s, so the 400 and the client agree;
+`Dispatch` runs them again before the client exists, as `notCreated`, and the client a third time.
+An absent `instagramUserId` is not refused. The client binds it only when an Instagram placement
+is enabled. See [internal/platform/meta](internal-platform-meta.md) § Publishability.
+
 ## Meta audience read (`meta_audience.go`, LFXV2-2665)
 
 `MetaDispatcher` implements `service.MetaAudienceReader` (`ReadMetaAudienceInsights`), a

@@ -684,45 +684,42 @@ already is. `Status == 0` means Meta omitted the field, not that the account is 
 
 `CreateCampaign` builds an API-accepted hierarchy, but two additional fields decide
 whether Meta will let a human PUBLISH the resulting ad. Both are optional
-`CampaignInput` fields, trimmed once in `CreateCampaign` and attached only when
-non-empty (so Facebook-only / non-regulated flows are unchanged and Meta never
-receives an empty string it would reject):
+`CampaignInput` fields, checked and trimmed by `CheckPublishIdentity`
+(`publish_identity.go`) before the first request and attached only when non-empty, so
+Meta never receives an empty string it would reject. Field names and placement follow
+Meta's Marketing API reference (ad creative; ad set):
 
 - **`InstagramUserID`** (config `instagramUserId`) — the Instagram account (IGSID)
-  bound to the ad creative as the top-level `instagram_user_id` adcreative field,
-  SIBLING to `object_story_spec`, not nested inside it. The default placements
-  include Instagram Feed, and an ad that requests an Instagram placement without this
-  field is flagged "Please add Instagram account" and cannot be published — even
-  though the Page's connected Instagram account shows pre-selected in the editor. The
-  legacy Graph field name is `instagram_actor_id`. A SUPPLIED value must be a numeric
-  IGSID (`numericIDRE`, the same gate `PageID` and `PixelID` get); a malformed one is
-  rejected before the first mutating call, because the field is otherwise consumed only
-  at the creative POST — which runs after the campaign and ad set exist and treats a 4xx
-  as a non-fatal per-variant failure, leaving a `created_degraded` billable campaign with
-  no publishable ad. An EMPTY value stays valid: that is a Facebook-only campaign.
+  bound to the ad creative as the top-level `instagram_user_id` adcreative field
+  (Graph v22.0+; the legacy name is `instagram_actor_id`), SIBLING to
+  `object_story_spec`, not nested inside it. It is sent only when the ad set runs on
+  Instagram (`UsesInstagram`: Instagram Feed, Stories or Reels after the defaults,
+  which include Instagram Feed); a Facebook-only ad set's creative is unchanged. An ad
+  on an Instagram placement without it is flagged "Please add Instagram account" and
+  cannot be published. A SUPPLIED value must be numeric (`numericIDRE`), because the
+  field is otherwise consumed only at the creative POST, after the campaign and ad set
+  exist, where a 4xx leaves a `created_degraded` campaign with no publishable ad. An
+  ABSENT value is not refused: requiring it would refuse every existing caller that has
+  not yet collected an Instagram account.
 - **`DSABeneficiary` / `DSAPayor`** (config `dsaBeneficiary` / `dsaPayor`) — the EU
   Digital Services Act advertiser/payer disclosures set on the ad set as
-  `dsa_beneficiary` / `dsa_payor`. Meta blocks publish ("Please add Advertiser" /
-  "Please add Payer") for regulated locations until both are present. The two attach
-  independently, so exactly one could otherwise be sent; a ONE-SIDED pair is rejected
-  before any mutating call, since Meta requires both to publish a regulated ad set and
-  the incompleteness is knowable at validation time rather than only after a billable
-  campaign exists. BOTH ABSENT remains valid — that is the ordinary non-regulated flow.
+  `dsa_beneficiary` / `dsa_payor`. Meta: "For ad sets targeting the EU and/or
+  associated territories, the dsa_payor and dsa_beneficiary fields are required."
+  Refused: a one-sided pair; a value over 256 runes or with a control character; and
+  NEITHER value when `DSATargets(geoTargets)` is non-empty — any targeted country in
+  `dsaTerritories` (the 27 member states plus AX, GF, GP, MQ, RE, YT, MF), read from the
+  same `validateGeoTargets` list the ad set is built from. Non-EU EEA states (IS, LI, NO)
+  are not listed. Both absent with no EU target is the ordinary flow.
 
 These live in the per-campaign config (like `pixelId`) rather than the connection's
-persisted `providerConfig`, so no new stored column is required; a launch-ready
-config must supply all three when the ad set uses Instagram placement and/or targets
-a regulated location.
+persisted `providerConfig`, so no new stored column is required.
 
-The distinction these guards draw is between a PERMANENT input fault and Meta's own
-publish-time requirements. Whether a disclosure is REQUIRED at all depends on the
-targeted location, which this client does not evaluate, so PRESENCE is still not
-validated locally and a genuinely missing disclosure surfaces as an async publish block
-on Meta. What IS validated is what is deterministically knowable here: a malformed IGSID
-and a one-sided DSA pair are unpublishable regardless of targeting, so they fail
-pre-create rather than after a paid resource exists. Both rejections are plain errors
-returned with a `nil` result, which is what the dispatch adapter keys on to mark them
-`NoUpstreamCreate` so the orchestrator RELEASES the claim (see below).
+Every refusal wraps `domain.ErrCreateConfigInvalid` and is a `domain.PreflightRefusal`.
+The dispatcher's `PreflightCreate` runs the same check on the create request, so a
+caller gets a synchronous 400 before any job exists; `Dispatch` and this client run it
+again for any path that skipped the pre-check. In the client the refusal is a plain
+error with a `nil` result, which the dispatch adapter marks `NoUpstreamCreate` so the
+orchestrator RELEASES the claim (see below).
 
 ## Dispatch adapter (internal/dispatch)
 

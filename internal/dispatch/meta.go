@@ -669,6 +669,12 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	if err != nil {
 		return nil, notCreated(err)
 	}
+	// The Instagram identity / EU DSA rules (meta.CheckPublishIdentity), before the credential is
+	// used for anything: PreflightCreate refused these synchronously already, this covers any path
+	// that skipped it. The client runs the same check again as its own backstop.
+	if err := checkMetaPublishIdentity(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
 	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
@@ -1505,7 +1511,8 @@ func metaAccountLabel(a meta.AdAccount) string {
 }
 
 // PreflightCreate refuses, before the create job exists, a metaConfig whose bidding cannot be
-// created as asked (see metaBidPlan). It never calls Meta, so every other outcome is
+// created as asked (see metaBidPlan) or whose ads could not be published for want of the EU DSA
+// disclosures or a well-formed Instagram id (checkMetaPublishIdentity). It never calls Meta, so every other outcome is
 // ErrPreflightNotApplicable; a config that does not decode is left to Dispatch — except a wrong-typed
 // `bidding`, refused here by checkBiddingShape.
 func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
@@ -1523,7 +1530,25 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 	if _, err := metaBidPlan(cfg); err != nil {
 		return err
 	}
+	// Launch readiness: a config whose ads Meta would create but never publish (an EU target with
+	// no DSA disclosures, a one-sided disclosure pair, a malformed Instagram id) is a 400 here
+	// rather than a job that "succeeds" into an unpublishable campaign.
+	if err := checkMetaPublishIdentity(cfg); err != nil {
+		return err
+	}
 	return domain.ErrPreflightNotApplicable
+}
+
+// checkMetaPublishIdentity applies meta.CheckPublishIdentity to the decoded config. It works on a
+// copy, so the config the client later receives is the caller's as given; the client normalizes it
+// the same way.
+func checkMetaPublishIdentity(cfg metaConfig) error {
+	return meta.CheckPublishIdentity(&meta.PublishIdentity{
+		GeoTargets:      cfg.GeoTargets,
+		InstagramUserID: cfg.InstagramUserID,
+		DSABeneficiary:  cfg.DSABeneficiary,
+		DSAPayor:        cfg.DSAPayor,
+	})
 }
 
 // metaBidPlan resolves metaConfig's bidding choice. Manual bidding is a LINK-CLICK bid cap on the
