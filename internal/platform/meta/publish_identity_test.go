@@ -59,6 +59,38 @@ func TestCheckPublishIdentity(t *testing.T) {
 	}
 }
 
+func TestCheckPublishIdentityOneSidedAdviceFollowsTheGeoTargets(t *testing.T) {
+	// "Omit both" alone is only an option when no EU country is targeted: with one, the next
+	// guard refuses a create carrying neither disclosure, and removing the EU countries alone
+	// still leaves a one-sided pair. So with an EU target the advice is "supply both, or remove
+	// the EU countries and omit both disclosures" (#429). Both directions of the pair are covered,
+	// so a refactor that names the wrong side on the EU branch is caught.
+	for _, tc := range []struct {
+		name          string
+		id            PublishIdentity
+		supplied      string
+		want, notWant string
+	}{
+		{"EU targeted, beneficiary only", PublishIdentity{GeoTargets: []string{"US", "DE"}, DSABeneficiary: "CNCF"},
+			"dsaBeneficiary was supplied without dsaPayor", "geoTargets include EU countries (DE), so Meta requires both", "supply both or omit both"},
+		{"EU targeted, payor only", PublishIdentity{GeoTargets: []string{"FR"}, DSAPayor: "LF"},
+			"dsaPayor was supplied without dsaBeneficiary", "remove the EU countries and omit both disclosures", "supply both or omit both"},
+		{"no EU targeted", PublishIdentity{GeoTargets: []string{"US", "GB"}, DSABeneficiary: "CNCF"},
+			"dsaBeneficiary was supplied without dsaPayor", "supply both or omit both", "EU countries"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := tc.id
+			err := CheckPublishIdentity(&id)
+			if err == nil || !strings.Contains(err.Error(), tc.supplied) {
+				t.Fatalf("CheckPublishIdentity = %v, want the one-sided refusal %q", err, tc.supplied)
+			}
+			if !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), tc.notWant) {
+				t.Errorf("CheckPublishIdentity = %v, want it to contain %q and not %q", err, tc.want, tc.notWant)
+			}
+		})
+	}
+}
+
 func TestCheckPublishIdentityTrimsInPlace(t *testing.T) {
 	in := PublishIdentity{InstagramUserID: " 123 ", DSABeneficiary: " CNCF ", DSAPayor: " LF "}
 	if err := CheckPublishIdentity(&in); err != nil {
