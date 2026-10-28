@@ -256,12 +256,14 @@ func buildServer(cfg *config.Config, handler http.Handler) *http.Server {
 //
 // Order, innermost (applied first) to outermost (applied last):
 //
-//   - MaxBodyBytes wraps the mux directly. The Goa decoders live behind the mux and are
-//     exactly what would otherwise buffer an unbounded body, so the
-//     cap has to be inside every other wrapper but outside the mux (see
-//     constants.MaxRequestBodyBytes).
-//   - UploadAdmission sits immediately OUTSIDE MaxBodyBytes, and that order is the point.
-//     MaxBodyBytes bounds ONE body; admission bounds how many may be in flight at once. It
+//   - MaxBodyBytesPerRoute wraps the mux directly. The Goa decoders live behind the mux and
+//     are exactly what would otherwise buffer an unbounded body, so the
+//     cap has to be inside every other wrapper but outside the mux. The cap is per route:
+//     constants.MaxRequestBodyBytes for the creative-asset upload, and the far smaller
+//     constants.MaxNonUploadRequestBodyBytes for every other route (#177), since those are
+//     decoded pre-auth with no admission control and never legitimately carry a large body.
+//   - UploadAdmission sits immediately OUTSIDE MaxBodyBytesPerRoute, and that order is the point.
+//     MaxBodyBytesPerRoute bounds ONE body; admission bounds how many may be in flight at once. It
 //     has to run before the body is read at all, because Goa's generated handler decodes the
 //     request before the endpoint authenticates it — so the permit must be taken while the
 //     pre-auth allocation is still ahead of us, not after the decoder has already made it.
@@ -270,7 +272,7 @@ func buildServer(cfg *config.Config, handler http.Handler) *http.Server {
 //     before seeking a permit: that verdict is permanent and knowable from the headers, and
 //     shedding it with a retryable 503 because the budget was busy told the caller to retry
 //     something that can never succeed. Undeclared/chunked bodies are unaffected and still
-//     reach MaxBodyBytes' reader arm, which is the only place their size becomes known.
+//     reach MaxBodyBytesPerRoute's reader arm, which is the only place their size becomes known.
 //   - RequestID and, when enabled, debug/OTel sit OUTSIDE it, so a request refused with
 //     413 still carries a request id and is still traced — an operator investigating a
 //     rejection needs it correlated like any other response.
@@ -280,7 +282,7 @@ func buildServer(cfg *config.Config, handler http.Handler) *http.Server {
 //     close the pool, and let that straggler touch a closing pool.
 func buildHandler(mux http.Handler, cfg *config.Config, inflight *middleware.InflightTracker) http.Handler {
 	handler := mux
-	handler = middleware.MaxBodyBytes(constants.MaxRequestBodyBytes)(handler)
+	handler = middleware.MaxBodyBytesPerRoute(constants.MaxRequestBodyBytes, constants.MaxNonUploadRequestBodyBytes)(handler)
 	handler = middleware.UploadAdmission(
 		constants.UploadAdmissionBudgetBytes,
 		constants.MaxRequestBodyBytes,
