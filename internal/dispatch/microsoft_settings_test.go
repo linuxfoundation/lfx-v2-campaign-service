@@ -31,7 +31,7 @@ func msSettingsDispatcher(t *testing.T, status int, body string) (*MicrosoftDisp
 }
 
 // msSettingsRow is a created row: provenance matching activeMicrosoftConn (account 1234567), a
-// daily budget and the composed name. Microsoft's create path records no flight dates.
+// daily budget and the composed name, with no flight dates (the readback never reports them).
 func msSettingsRow() *model.Campaign {
 	return &model.Campaign{
 		ID: "camp-1", Platform: model.ProviderMicrosoftAds, PlatformCampaignID: "321",

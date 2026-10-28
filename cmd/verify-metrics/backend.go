@@ -78,9 +78,28 @@ func openLiveBackend(ctx context.Context) (*backend, error) {
 	}, nil
 }
 
+// dsnSourceVerifyMetrics names where this command's DSN came from, for an operator who has to
+// go and fix it. config.ResolveDatabaseURL reads DATABASE_URL first and otherwise composes one
+// from the chart's PG* variables, so the answer is one of two places and the message says both
+// rather than guessing which.
+const dsnSourceVerifyMetrics = "the database settings (" + constants.EnvDatabaseURL + " or the PG* variables)"
+
 // openReadOnlyPool opens a small pool whose every session is READ ONLY, so no statement this
-// process issues can write, whichever repository method runs it. The DSN is never rendered into
-// an error, matching postgres.NewPool's dsnParseError.
+// process issues can write, whichever repository method runs it.
+//
+// It is a hand-rolled sibling of postgres.NewPool — same three arms, same order — and it carries
+// the same obligation: no arm may render a DSN identifier into an error. ParseConfig's message
+// is replaced outright, because pgx's ParseConfigError prints the whole connection string
+// through redactPW, which masks the password and keeps the username. The connect and ping arms
+// go through postgres.SafeDSNErr, which compares the driver's text against the identifiers
+// actually configured and withholds the message wholesale when it names one — pgconn's
+// ConnectError embeds a `user=%s database=%s` fragment on every connection failure, and the
+// server's own 28P01/28000/3D000 diagnostics quote the role and database verbatim.
+//
+// The redacted text is interpolated with %s rather than wrapped with %w deliberately: wrapping
+// would leave the driver's original message reachable through errors.As for any later caller to
+// print. Nothing in this command inspects this error's chain — run only matches flag.ErrHelp —
+// so there is no behaviour to preserve, and dropping the cause is the safe direction.
 func openReadOnlyPool(ctx context.Context, dsn string) (*postgres.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -93,11 +112,11 @@ func openReadOnlyPool(ctx context.Context, dsn string) (*postgres.Pool, error) {
 	}
 	p, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
+		return nil, fmt.Errorf("open database: %s", postgres.SafeDSNErr(dsn, dsnSourceVerifyMetrics, err))
 	}
 	if err := p.Ping(ctx); err != nil {
 		p.Close()
-		return nil, fmt.Errorf("ping database: %w", err)
+		return nil, fmt.Errorf("ping database: %s", postgres.SafeDSNErr(dsn, dsnSourceVerifyMetrics, err))
 	}
 	return &postgres.Pool{Pool: p}, nil
 }

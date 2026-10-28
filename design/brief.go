@@ -177,7 +177,7 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		// supplied config — a copyable request that fails asynchronously.
 		Example([]string{"reddit-ads", "meta-ads"})
 	})
-	Attribute("config", Any, "Per-platform campaign configuration", func() {
+	Attribute("config", Any, "Per-platform campaign configuration: an object keyed by platform config name (microsoftConfig, metaConfig, redditConfig, twitterConfig, linkedInConfig, googleAdsConfig, hubspotConfig) plus the top-level hsToken. BIDDING (LFXV2-2665): microsoftConfig, metaConfig, redditConfig, twitterConfig and linkedInConfig each accept an optional `bidding` object, {\"strategy\": \"automatic\" | \"manual\", \"bidAmount\": number}. Omitted means automatic (Microsoft MaxClicks; Meta LOWEST_COST_WITHOUT_CAP; Reddit BIDLESS; X AUTO). DEFAULT CHANGES: a Microsoft campaign created with no bidding and no cpcBid used to get Microsoft's EnhancedCpc default and is now MaxClicks, so update-campaign-bid answers 409 for it; a LinkedIn campaign created with no bidding is now WEBSITE_VISIT / MAX_CLICK / CPM with a Traffic name segment. Manual-created campaigns are immediately eligible for the bid lever; eligibility follows the platform's current strategy. LinkedIn automatic creates an objectiveType WEBSITE_VISIT campaign bidding MAX_CLICK with costType CPM (decision 2026-10-13: automatic LinkedIn campaigns optimise for clicks because MAX_CONVERSION, the only automated target of WEBSITE_CONVERSION, needs a conversion association this service doesn't create); LinkedIn manual keeps objectiveType WEBSITE_CONVERSION. `manual` requires `bidAmount`, the starting max cost-per-click bid in the ad account's own currency (LinkedIn: USD), greater than zero, at most 1,000,000 and a whole number of micro-units; it creates the campaign in the shape update-campaign-bid accepts. Per platform, a manual bid must also be: Microsoft within 0.01–1,000 (a legacy microsoftConfig.cpcBid without `bidding` still means a manual bid at that amount; with `bidding` it must be omitted or equal bidAmount); Meta at most two decimals, a whole minor unit of the account currency (checked against the currency at dispatch), and only for the traffic or leads objective; Reddit only for the traffic objective; LinkedIn whole cents; X at most the campaign's daily budget (X does not accept a line item bid above it). Keys are exact: `bidding`, `strategy` and `bidAmount`; a case variant (`Bidding`, `Strategy`) or an unknown key inside `bidding` is refused. `automatic` with a `bidAmount`, an unknown strategy, a wrong JSON type, an explicit null or empty value (only an ABSENT field defaults: `\"strategy\": null` or `\"\"`, `\"bidAmount\": null` and `\"bidding\": null` are refused), or a bid breaking these rules is refused synchronously with 400 \"invalid campaign config: <configKey>.bidding: ...\" before any job exists. googleAdsConfig.bidding is refused with 400 (use googleAdsConfig.biddingStrategy). FLIGHT DATES: metaConfig (required) and microsoftConfig (optional) take `startDate` and `endDate` as YYYY-MM-DD strings that must be real calendar dates, with the start not before today and the end after the start. For metaConfig today is the UTC calendar day. For microsoftConfig it is the calendar day at UTC-12, with or without timeZone, so only a date already past in every time zone is refused up front; Microsoft reads the dates in the campaign's time zone and remains the final judge. Microsoft Advertising sets them on the campaign's AD GROUP (AdGroup.StartDate/EndDate), each independently optional: an omitted startDate leaves Microsoft's default (eligible from today, so an endDate alone must be after today) and an omitted endDate runs until stopped; omitting both creates the campaign exactly as before. An invalid Microsoft date fails the platform job before anything is created, as an invalid Meta date does. Microsoft dates are recorded on the campaign row only when this run created the ad group that carries them; a retry that reuses an existing ad group leaves its schedule unchanged and records no dates.", func() {
 		// config is an OBJECT ENVELOPE keyed by per-platform config name
 		// (redditConfig / linkedInConfig / metaConfig / twitterConfig — plus the
 		// top-level hsToken sibling), NOT a string. Goa renders an Any without an
@@ -199,7 +199,7 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 			},
 		})
 	})
-	Attribute("new_version", Boolean, "Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label. Supported on microsoft-ads only for now; any other platform in the request is refused with 400. Until the follow-up release removes the one-campaign-per-slot index, a request on a platform that already has a live campaign fails that platform with 'not available yet' and creates nothing.", func() {
+	Attribute("new_version", Boolean, "Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label. Supported on microsoft-ads only for now; any other platform in the request is refused with 400. Two concurrent requests that both find the same complete campaign create one new campaign between them, not two: the second is reported as a reuse of (or skipped behind) the first.", func() {
 		Default(false)
 		Example(false)
 	})
@@ -234,7 +234,7 @@ var PlatformResult = Type("platform-result", func() {
 	Attribute("platform", String, "Platform this result is for")
 	Attribute("ok", Boolean, "Whether the campaign was created (or reused) successfully")
 	Attribute("campaign_id", String, "Upstream platform campaign id. Present when ok; also set on the specific failure where the upstream campaign was created but recording it failed, so the orphaned id isn't lost.")
-	Attribute("error", String, "Failure reason (present when not ok). For a failed campaign dispatch it says WHY without quoting the platform: a refusal this service raised before anything was sent is given verbatim (e.g. a missing Reddit conversion pixel, or a budget under the platform minimum), with any caller value it names quoted, truncated, or withheld when it looks like a URL; anything else is a fixed sentence per class, naming at most a connection reason token or the HTTP status the platform answered — no connection, connection unusable, credentials undecryptable, token refresh failed, refused or not answered by the platform before anything was created (HTTP status only), or could not be confirmed (something may have been created; verify before retrying). An unclassified failure reads \"platform campaign creation failed\". Never contains a platform response body, URL, query or token. Google Ads dispatch failures are not yet classified beyond the connection classes.")
+	Attribute("error", String, "Failure reason (present when not ok). For a failed campaign dispatch it says WHY without quoting the platform: a refusal this service raised before anything was sent is given verbatim (e.g. a missing Reddit conversion pixel, or a budget under the platform minimum), with any caller value it names quoted, truncated, or withheld when it looks like a URL; anything else is a fixed sentence per class, naming at most a connection reason token or the HTTP status the platform answered — no connection, connection unusable, credentials undecryptable, token refresh failed, refused or not answered by the platform before anything was created (HTTP status only), or could not be confirmed (something may have been created; verify before retrying). An unclassified failure reads \"platform campaign creation failed\". Never contains a platform response body, URL, query or token. A Google Ads dispatch failure the dispatcher could classify replaces the could-not-be-confirmed sentence with one naming what is in the ad account: a budget of the name this service composes already exists and nothing new was created, a campaign of that name already exists, a budget was created or reused and the campaign was then refused or left unconfirmed, or the campaign was created and its setup could not be confirmed. Each is a fixed sentence chosen by a service-authored token and never built from it, so it too carries no platform text. No other provider is classified beyond the classes above.")
 	Attribute("hubspot_url", String, "Deep link to this campaign's email in the HubSpot editor. Present only for the email (HubSpot) channel, and only once the portal that created it is known.")
 	Attribute("warnings", ArrayOf(String), "Best-effort steps of a successful create that did not apply, in operator-readable sentences. For the email channel this reports a requested hero image that could not be added; the draft exists, and its banner needs checking in the HubSpot editor (it may have none, or still carry the template's).", func() { MaxLength(10) })
 	Attribute("reconcile", ArrayOf(ReconcileIdentifier), "Present only when this dispatch's claim was lost before its result was recorded: the identifiers of what it created upstream (ids, names, urns, image hashes, X media keys — never state, platform text, URLs or other key-like fields), which this service no longer tracks, sorted by key. The only handle on an id-less partial (no campaign_id).")
@@ -265,6 +265,13 @@ var Campaign = Type("campaign", func() {
 	Attribute("slot_version", Int, "Which campaign this is among the brief's campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.", func() {
 		Minimum(1)
 		Example(1)
+	})
+	Attribute("bidding_strategy", String, "How the campaign was CREATED to bid, as its dispatch config asked (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft Advertising create carrying the legacy `microsoftConfig.cpcBid` with no `bidding` object is recorded as `manual` (that bid is a manual starting bid), so this does not always echo an explicit `bidding.strategy`: `automatic` (the default — the platform sets every bid) or `manual` (a manual max cost-per-click bid the update-campaign-bid endpoint can change). A record of the request, not an observation: an operator may switch the strategy in the ad platform afterwards. ABSENT when not recorded — a campaign created before this field existed, an adopted campaign, or a Google Ads or email campaign — never read as `automatic`.", func() {
+		Enum("automatic", "manual")
+		Example("manual")
+	})
+	Attribute("max_cpc_bid", Float64, "The manual max cost-per-click bid this service most recently set, in the currency the provider expects: the ad account's own currency for Microsoft Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the starting bid of a campaign created with manual bidding, then whatever update-campaign-bid set. A request the platform confirmed, never an observation — a bid changed in the platform's own UI is not reflected. ABSENT when this service never set one.", func() {
+		Example(1.25)
 	})
 	// Read-only and OPTIONAL: present (true) only on a row bound by adopt-campaign. Absent rather
 	// than false on every other row, because the marker it is derived from is only as old as its
@@ -443,7 +450,7 @@ var CampaignActionItem = Type("campaign-action-item", func() {
 // indistinguishable from a campaign that really has none, and the two mean opposite things
 // to an operator deciding whether to intervene.
 var CampaignSettingsField = Type("campaign-settings-field", func() {
-	Attribute("field", String, "The setting's name in this service's own stable vocabulary rather than the platform's field names. Several names do coincide with a campaign-row column, but the vocabulary is NOT a column list and must not be read as one: `advertising_channel_type` has no column and is recovered from the campaign's config snapshot, and the upstream-only names below have no recorded side at all. On Google Ads the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `advertising_channel_type`, `start_date` and `end_date`. `budget_delivery_method`, `budget_explicitly_shared` and `bidding_strategy_type` are reported UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an `unknown` verdict. For the two budget fields that is because nothing this service records expresses them. `bidding_strategy_type` IS recorded, and is left uncompared deliberately: the comparison would require mapping this service's caller vocabulary onto Google's OUTPUT_ONLY bidding-strategy enum, which is unverified exactly where it is ambiguous, and on an adopted campaign the recorded strategy was never pushed upstream, so a guessed mapping would report a false divergence on a campaign set exactly as asked. `status` is also reported with no `recorded` counterpart, but for a DIFFERENT reason: the campaign row DOES record a `status`, and it is deliberately never compared because the two are different axes. The column carries this service's own lifecycle vocabulary — mostly provisioning state (`pending`, `created`, `created_degraded`, soft-deleted) and only sometimes a run state — while Google's `ENABLED`/`PAUSED`/`REMOVED` is purely delivery state, so comparing them would report a permanent, meaningless divergence on nearly every campaign. The upstream value is still reported so an operator can see that a campaign is paused upstream. `advertising_channel_type` is compared rather than upstream-only because the dispatch config's channel IS persisted in the campaign's config snapshot; it still reads `unknown` on a legacy row that carries no snapshot, but for the ordinary reason that nothing was recorded there — not because the field has no recorded side. On Microsoft Advertising, Meta, Reddit and X the COMPARED settings are `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and `end_date` on Meta, Reddit and X (a Microsoft campaign carries no flight dates, so they are not reported there); `status` and `bidding_strategy_type` are upstream-only on all four (none of their create paths records a strategy); Microsoft also reports `budget_explicitly_shared` upstream-only, Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the last two say where the budget lives, and explain a budget that reads `unknown` because the campaign-level amount is not the one the row recorded (Reddit with campaign budget optimization off, X under anything but `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged forward past UTC midnight (because the requested day had already begun at dispatch) is shown with both sides and an `unknown` verdict rather than a false `diverged`. On LinkedIn the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `start_date` and `end_date` (the start, like Meta's and Reddit's, may be nudged by the create path); `status`, `bidding_strategy_type` (LinkedIn's optimizationTargetType), `cost_type`, `unit_cost` (the bid amount), `unit_cost_currency` (its ISO currency, from LinkedIn's `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the currency is not reported, never a bare number) and `objective_type` are upstream-only; a campaign reporting both a daily and a total budget, neither (as under a campaign group's shared budget), or a non-USD amount reads both budget fields `unknown`. The vocabulary is per-platform and may grow, so a consumer must render an unrecognised field name rather than dropping it.", func() { Example("budget_amount") })
+	Attribute("field", String, "The setting's name in this service's own stable vocabulary rather than the platform's field names. Several names do coincide with a campaign-row column, but the vocabulary is NOT a column list and must not be read as one: `advertising_channel_type` has no column and is recovered from the campaign's config snapshot, and the upstream-only names below have no recorded side at all. On Google Ads the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `advertising_channel_type`, `start_date` and `end_date`. `budget_delivery_method`, `budget_explicitly_shared` and `bidding_strategy_type` are reported UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an `unknown` verdict. For the two budget fields that is because nothing this service records expresses them. `bidding_strategy_type` IS recorded, and is left uncompared deliberately: the comparison would require mapping this service's caller vocabulary onto Google's OUTPUT_ONLY bidding-strategy enum, which is unverified exactly where it is ambiguous, and on an adopted campaign the recorded strategy was never pushed upstream, so a guessed mapping would report a false divergence on a campaign set exactly as asked. `status` is also reported with no `recorded` counterpart, but for a DIFFERENT reason: the campaign row DOES record a `status`, and it is deliberately never compared because the two are different axes. The column carries this service's own lifecycle vocabulary — mostly provisioning state (`pending`, `created`, `created_degraded`, soft-deleted) and only sometimes a run state — while Google's `ENABLED`/`PAUSED`/`REMOVED` is purely delivery state, so comparing them would report a permanent, meaningless divergence on nearly every campaign. The upstream value is still reported so an operator can see that a campaign is paused upstream. `advertising_channel_type` is compared rather than upstream-only because the dispatch config's channel IS persisted in the campaign's config snapshot; it still reads `unknown` on a legacy row that carries no snapshot, but for the ordinary reason that nothing was recorded there — not because the field has no recorded side. On Microsoft Advertising, Meta, Reddit and X the COMPARED settings are `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and `end_date` on Meta, Reddit and X (Microsoft keeps flight dates on the ad group, not the campaign, and this read does not read the ad group, so they are not reported there); `status` and `bidding_strategy_type` are upstream-only on all four (since LFXV2-2665 their create paths record an `automatic` or `manual` choice — the campaign's `bidding_strategy` — but that vocabulary is deliberately not mapped onto each platform's strategy enum, for the reason given for Google above); Microsoft also reports `budget_explicitly_shared` upstream-only, Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the last two say where the budget lives, and explain a budget that reads `unknown` because the campaign-level amount is not the one the row recorded (Reddit with campaign budget optimization off, X under anything but `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged forward past UTC midnight (because the requested day had already begun at dispatch) is shown with both sides and an `unknown` verdict rather than a false `diverged`. On LinkedIn the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `start_date` and `end_date` (the start, like Meta's and Reddit's, may be nudged by the create path); `status`, `bidding_strategy_type` (LinkedIn's optimizationTargetType), `cost_type`, `unit_cost` (the bid amount), `unit_cost_currency` (its ISO currency, from LinkedIn's `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the currency is not reported, never a bare number) are upstream-only, and `objective_type` is compared against the objective the recorded bidding strategy implies (automatic WEBSITE_VISIT, manual WEBSITE_CONVERSION; `unknown` when none is recorded); a campaign reporting both a daily and a total budget, neither (as under a campaign group's shared budget), or a non-USD amount reads both budget fields `unknown`. The vocabulary is per-platform and may grow, so a consumer must render an unrecognised field name rather than dropping it.", func() { Example("budget_amount") })
 	Attribute("recorded", String, "What the campaign row records — what this dispatch ASKED FOR. Absent when the row records nothing for this field.", func() { Example("500.00") })
 	Attribute("upstream", String, "What the platform currently holds, read live. Absent when the platform did not return the field — never a zero standing in for one.", func() { Example("750.00") })
 	Attribute("comparison", String, "The verdict. `match` and `diverged` both require BOTH sides to have been read; `unknown` means the comparison could not be made and is deliberately NOT folded into `match`.", settingsComparisonEnum)
@@ -1496,6 +1503,19 @@ var CreativeAsset = Type("creative-asset", func() {
 	})
 	Attribute("byte_size", Int64, "Size of the stored image in bytes")
 	Attribute("checksum", String, "Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a brief")
+	// width/height are OPTIONAL — not in Required below — and the reason is a fact about the
+	// data, not a hedge. They were added in the release that began recording them (migration
+	// 000047), so an asset uploaded before it has no dimensions and never will until a backfill
+	// runs. Absent therefore means UNKNOWN, which is a different answer from any number this
+	// field could carry, and marking them Required would force the transport to publish a
+	// fabricated 0 for those rows — a shape no image has, and one a client matching assets to
+	// platform slots would read as "fails every minimum".
+	Attribute("width", Int, "Pixel width, as read from the image header at upload. Absent for an asset stored before the service recorded dimensions.", func() {
+		Minimum(1)
+	})
+	Attribute("height", Int, "Pixel height, as read from the image header at upload. Absent for an asset stored before the service recorded dimensions.", func() {
+		Minimum(1)
+	})
 	// created SELECTS the upload response status and is deliberately NOT Required, so it stays
 	// out of every other representation of this type (get/list responses never set it).
 	//
@@ -1520,6 +1540,90 @@ var CreativeAsset = Type("creative-asset", func() {
 		Example("true")
 	})
 	Required("id", "project_id", "brief_id", "mime_type", "byte_size", "checksum")
+})
+
+// CreativeSlotAssignment is one platform image slot and the stored assets that fill it.
+//
+// It carries `requirement` — the slot's rule rendered as a sentence — even on a slot that is
+// FULL, because the operator's next question after "what fits here" is "what else would".
+// Re-deriving that sentence client-side would mean shipping every platform's geometry to the
+// browser and keeping two copies of it in step.
+var CreativeSlotAssignment = Type("creative-slot-assignment", func() {
+	Attribute("slot_key", String, "Stable identifier for this slot: platform/channel/slot, or platform/slot where the platform has a single ad shape. It is the join key between a plan row and an operator override, so it survives a round trip through a client unchanged.")
+	Attribute("platform", String, "Campaign platform this slot belongs to, using the same identifier a campaign config carries (\"google-ads\").")
+	Attribute("channel", String, "Ad channel within the platform whose rules differ from its siblings (\"PERFORMANCE_MAX\", \"DEMAND_GEN\", \"DISPLAY\"). Absent where the platform has a single ad shape.")
+	Attribute("slot", String, "Wire name of the slot within its channel — the asset field type or payload array key a campaign config puts this image under.")
+	Attribute("label", String, "Operator-facing name of the slot. It NAMES ITS CHANNEL, because three Google channels each have a slot called \"logo image\" under different rules and a bare \"logo image\" would not say which creative is meant.")
+	Attribute("requirement", String, "The slot's rule as a sentence an operator can act on — ratio, tolerance and pixel floor, plus the byte cap where one applies.")
+	Attribute("asset_ids", ArrayOf(String, func() { Format(FormatUUID) }), "Assets assigned to this slot, best fit first. An asset may appear in several slots: one library feeds every platform, and the same square image legitimately serves a 1:1 slot on each. It never appears twice within one slot.")
+	Attribute("min_count", Int, "Images the platform requires in this slot. 0 marks the slot optional.")
+	Attribute("max_count", Int, "Images the platform will accept in this slot. 0 means the platform states no per-slot ceiling; a shared ceiling across sibling slots may still apply.")
+	Required("slot_key", "platform", "slot", "label", "requirement", "asset_ids", "min_count", "max_count")
+})
+
+// CreativeSlotGap is one requirement the library cannot meet.
+//
+// A gap is first-class output, not an error: a plan with gaps is a correct and complete answer
+// about a library that is not yet complete, and it is the most useful thing this endpoint
+// produces. Only REQUIRED shortfalls appear — an optional slot left empty is simply an optional
+// slot left empty, and listing it would bury the shortfalls that actually block a launch.
+//
+// The fields are flat rather than nesting a slot, because a gap may span SEVERAL slots: Google
+// requires Demand Gen's landscape and square marketing images only of each other, so the
+// shortfall belongs to the pair and `slot_key` is then absent.
+var CreativeSlotGap = Type("creative-slot-gap", func() {
+	Attribute("platform", String, "Campaign platform whose rule is unmet.")
+	Attribute("channel", String, "Ad channel whose rule is unmet. Absent where the platform has a single ad shape.")
+	Attribute("slot_key", String, "The slot this shortfall belongs to. ABSENT when the requirement spans several slots and no single one of them is required on its own.")
+	Attribute("label", String, "Operator-facing name of the unmet requirement.")
+	Attribute("need", Int, "How many more images the requirement needs beyond what the plan could assign. Always at least 1.", func() { Minimum(1) })
+	Attribute("reason", String, "What is missing and what would satisfy it, as the sentence an operator takes back to their designer. It names every shape that would close the gap, not just one, so an either-or requirement does not send someone to produce an image they did not need.")
+	Required("platform", "label", "need", "reason")
+})
+
+// CreativeAssetPlan is the whole computed grid: which stored assets fit which platform slots,
+// and what is still missing.
+//
+// It is a pure READ. Nothing is written, no asset is attached to anything, and calling it twice
+// with an unchanged library returns an identical plan — so a client may call it as often as it
+// likes while the operator is still deciding, and an operator override replaces a row here
+// rather than racing it.
+var CreativeAssetPlan = Type("creative-asset-plan", func() {
+	Attribute("platforms", ArrayOf(String), "The platforms this plan covers, after defaulting — echoed so a caller who sent no filter knows what was actually evaluated.")
+	Attribute("assignments", ArrayOf(CreativeSlotAssignment), "Every slot that received at least one asset, in platform catalog order.")
+	Attribute("gaps", ArrayOf(CreativeSlotGap), "Every required slot or cross-slot rule the library leaves short. Empty means this library can fill every requested platform.")
+	Attribute("unclassified", ArrayOf(String, func() { Format(FormatUUID) }), "Assets whose dimensions were never recorded, so their shape is unknown. They are NOT counted against any slot and NOT reported as failing one: unknown is a different answer from wrong, and a dimension backfill makes them classifiable without the operator doing anything.")
+	Attribute("unused", ArrayOf(String, func() { Format(FormatUUID) }), "Assets whose dimensions are known and which this plan did not place in any slot. Wider than \"nothing would accept them\": an asset also appears here when every slot that would take it was already filled to its minimum, or when a sibling slot had already spent a shared group ceiling. The mirror of gaps: not only \"what am I missing\" but \"which of the files I just dropped is this plan not using\" — with no gaps reported, what is listed here is surplus rather than unusable.")
+	// All five are Required so a client never has to tell an omitted list from an empty one.
+	// Empty gaps is the answer that means "ready to launch", and it has to be expressible.
+	Required("platforms", "assignments", "gaps", "unclassified", "unused")
+})
+
+// CreativeAssetList is the brief's creative-asset library: every stored asset, plus the
+// quota the next upload will be judged against.
+//
+// The quota fields are on the LIST rather than only in the 409 an upload returns, and that is
+// the point of putting them here. A folder upload sends many files in sequence; without the
+// limits up front the only way to discover the brief is full is to send file 51 and be
+// refused, having already paid for fifty round trips. With them, a client knows before it
+// starts how many assets and how many bytes it may still add.
+//
+// `count` and `bytes_used` are served rather than left for the client to derive from `assets`.
+// They are computed from the same rows the server read, so they are by construction the figures
+// the upload path's quota check will compare against — a client that totalled `assets` itself
+// would be reimplementing that check, and would diverge the moment an asset exists that the
+// caller cannot see (there are none today).
+var CreativeAssetList = Type("creative-asset-list", func() {
+	Attribute("assets", ArrayOf(CreativeAsset), "Every asset stored for this brief, oldest first. Each carries metadata only — the image bytes are served by the signed creative-asset URL, never inline here.")
+	Attribute("count", Int, "Number of assets stored for this brief.")
+	Attribute("count_limit", Int, "Maximum assets one brief may hold. An upload that would exceed it is refused with 409 reason=creative_asset_quota_exceeded.")
+	Attribute("bytes_used", Int64, "Total stored bytes across those assets.")
+	Attribute("bytes_limit", Int64, "Maximum total stored bytes one brief may hold. Enforced alongside count_limit; either one alone bounds the wrong thing — a count cap still admits that many maximum-sized images, and a byte cap alone still admits unboundedly many tiny ones.")
+	// All five are Required, including the two totals that look redundant beside `assets`.
+	// A client that has to decide whether `count` was omitted or is genuinely zero cannot
+	// tell an empty library from a field the server declined to compute, and "0 of 100 used"
+	// is exactly the state a folder picker must render correctly.
+	Required("assets", "count", "count_limit", "bytes_used", "bytes_limit")
 })
 
 // ─── Brief + campaign service ───
@@ -1722,7 +1826,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("upload-creative-asset", func() {
-		Description("Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account's media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig variant names one by imageAssetId, and at dispatch it is uploaded once through LinkedIn's Images API (an organization-owned image URN) and used as that dark post's article thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320 (vertical) pixels.")
+		Description("Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account's media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig variant names one by imageAssetId, and at dispatch it is uploaded once through LinkedIn's Images API (an organization-owned image URN) and used as that dark post's article thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320 (vertical) pixels. A brief's library is bounded by a per-brief quota on both count and total stored bytes; an upload that would exceed either is refused with 409 and reason creative_asset_quota_exceeded, and list-creative-assets publishes the ceilings and the current totals so a client can see the headroom before it uploads. A re-upload of identical bytes is idempotent and is NOT judged against the quota, since it stores nothing. An archived brief returns 404, matching every other access to a brief's children.")
 		Payload(func() {
 			bearerToken()
 			// Permissive project identifier (UUID or slug), matching the other brief
@@ -1850,8 +1954,100 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
+	Method("list-creative-assets", func() {
+		Description("List the creative assets stored for a brief, with the per-brief quota the next upload will be judged against. Metadata only: the image bytes are never returned inline — byte_size, width and height exist precisely so a reader can size and classify an asset without loading a blob of up to 30 MiB. Assets are ordered oldest first, and the whole library is returned (it is bounded by count_limit). An archived brief returns 404, matching every other read of a brief's children.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			Required("project_id", "brief_id")
+		})
+		Result(CreativeAssetList)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/creative-assets")
+			Header("bearer_token:Authorization")
+			// No ETag, for the reason upload gives: creative assets are insert-only and
+			// carry no version, so there is no optimistic-concurrency handle to hand back.
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("get-creative-asset", func() {
+		Description("Get one stored creative asset's metadata. The image bytes are not returned here — they are served, when signed creative-asset URLs are configured, by the separate signed-asset route. An asset belonging to another project or brief, or to an archived brief, is 404, the same as one that does not exist.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			creativeAssetIDAttr()
+			Required("project_id", "brief_id", "asset_id")
+		})
+		Result(CreativeAsset)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/creative-assets/{asset_id}")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("get-asset-plan", func() {
+		Description("Match the brief's stored creative assets against the image slots each ad platform publishes, and report what fits where and what is still missing. A pure read: nothing is stored, no asset is attached to a campaign, and an unchanged library always produces an identical plan. Eligibility is the slot's own rule — aspect ratio within the platform's documented tolerance, the pixel floor, and the slot's byte cap — and among eligible assets the closest fit to the slot's target ratio wins, then the larger image, then the earlier upload. An asset may fill slots on several platforms at once but never appears twice in one slot. Assets stored before the service recorded dimensions come back under `unclassified` rather than being judged against a shape they never declared. An archived brief returns 404, matching every other read of a brief's children.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			// Repeatable query parameter (?platforms=google-ads&platforms=...), not a
+			// comma-joined string: a platform identifier is opaque to this endpoint, and a
+			// separator baked into the wire format would have to be escaped the day one
+			// contains it.
+			//
+			// ABSENT means every platform the service publishes slot rules for, which is the
+			// answer an operator asking "is my library ready" actually wants. An unknown
+			// platform is IGNORED rather than refused — it contributes no slots, so it can
+			// produce neither an assignment nor a gap, and a client built against a newer
+			// release asking for a platform this one has not shipped gets the plan for the
+			// platforms it does know instead of a 400 and nothing.
+			Attribute("platforms", ArrayOf(String), "Restrict the plan to these campaign platforms (\"google-ads\"). Repeat the parameter for several. Absent means every platform whose slot rules this service publishes. A platform it does not know is ignored, not refused.", func() {
+				Example([]string{"google-ads"})
+			})
+			Required("project_id", "brief_id")
+		})
+		Result(CreativeAssetPlan)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/creative-assets/plan")
+			Param("platforms")
+			Header("bearer_token:Authorization")
+			// No ETag: the plan is derived, holds no version of its own, and is cheap to
+			// recompute — there is nothing to concurrency-control against.
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("delete-creative-asset", func() {
+		Description("Permanently delete a stored creative asset, freeing its bytes against the brief's quota. Refused with 409 reason=creative_asset_in_use when any live campaign on the brief could still need it: one whose creation has not finished on the ad platform — its status is still 'pending' — whatever its stored configuration says; one whose stored configuration names this asset id; or one whose configuration has not been recorded yet, because a dispatch claims its campaign row before it resolves any asset. Delete the campaign, or reconcile a stuck claim, then retry. This is a HARD delete — unlike a campaign or a brief, which are retired by a status flip — because reclaiming the storage is the entire reason the endpoint exists.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			creativeAssetIDAttr()
+			Required("project_id", "brief_id", "asset_id")
+		})
+		commonBriefErrors()
+		HTTP(func() {
+			DELETE("/projects/{project_id}/briefs/{brief_id}/creative-assets/{asset_id}")
+			Header("bearer_token:Authorization")
+			Response(StatusNoContent)
+			briefErrorResponses()
+		})
+	})
+
 	Method("create-campaigns", func() {
-		Description("Create campaigns across the selected platforms (async -> job). Besides the request-shape 400s (an unknown or duplicate platform, new_version on a platform that does not support it, and the like), two dispatch-time rules are refused synchronously, before any job exists. (1) An email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients' time zones, which HubSpot does not allow together: 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. (2) A Reddit config that names a stored creative asset it cannot use, decided from the config alone: redditConfig.imageAssetId together with imageUrl or postUrl, an imageAssetId that is not a UUID, or imageAssetId while signed creative-asset URLs are not configured ('stored creative assets are not enabled for Reddit; supply imageUrl'): 400 with that message. Every other dispatch failure, including an imageAssetId that does not exist for this brief, still arrives later, as the job's own result.")
+		Description("Create campaigns across the selected platforms (async -> job). Besides the request-shape 400s (an unknown or duplicate platform, new_version on a platform that does not support it, and the like), two dispatch-time rules are refused synchronously, before any job exists. (1) An email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients' time zones, which HubSpot does not allow together: 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. (2) A Reddit config that names a stored creative asset it cannot use, decided from the config alone: redditConfig.imageAssetId together with imageUrl or postUrl, an imageAssetId that is not a UUID, or imageAssetId while signed creative-asset URLs are not configured ('stored creative assets are not enabled for Reddit; supply imageUrl'): 400 with that message. An invalid per-platform `bidding` object (see the config attribute) is also refused synchronously, with 400 \"invalid campaign config: <configKey>.bidding: ...\". Bidding defaults changed in LFXV2-2665: a Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc) and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are immediately eligible for the bid lever, and eligibility follows the platform's current strategy. Every other dispatch failure, including an imageAssetId that does not exist for this brief, still arrives later, as the job's own result.")
 		Payload(func() {
 			bearerToken()
 			// Slug-only on CREATE: project_id is stamped into the campaign name and is the
@@ -1952,7 +2148,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("get-campaign-settings", func() {
-		Description("Read the campaign's CURRENT configuration from the platform that runs it and report, per setting, where it diverges from what the campaign row recorded. A pure read: the platform is only read, never written, and the observation is never persisted back onto the campaign row — the row means \"what this dispatch asked for\", and the two can legitimately disagree: nothing pushes the recorded config upstream, and more than one path lets them drift apart. This is the read metrics cannot be: impressions, clicks, cost and CTR do not describe a campaign's configuration. A setting that could not be read on either side is reported ABSENT with an `unknown` verdict, never defaulted to zero and never counted as a match. Support is per-platform: Google Ads, Microsoft Advertising, Meta, Reddit, X (Twitter) Ads and LinkedIn are wired, and a campaign on any other platform returns 400. The field set is per-platform too — each platform reports only the settings it can answer honestly, normalised to the units its create path wrote (Microsoft carries no flight dates, so reports none) — and on every platform the provenance rules are the same: a campaign that does not record the account it was created under, or that belongs to a different account than the connection now resolves to, is refused 409 before anything is read.")
+		Description("Read the campaign's CURRENT configuration from the platform that runs it and report, per setting, where it diverges from what the campaign row recorded. A pure read: the platform is only read, never written, and the observation is never persisted back onto the campaign row — the row means \"what this dispatch asked for\", and the two can legitimately disagree: nothing pushes the recorded config upstream, and more than one path lets them drift apart. This is the read metrics cannot be: impressions, clicks, cost and CTR do not describe a campaign's configuration. A setting that could not be read on either side is reported ABSENT with an `unknown` verdict, never defaulted to zero and never counted as a match. Support is per-platform: Google Ads, Microsoft Advertising, Meta, Reddit, X (Twitter) Ads and LinkedIn are wired, and a campaign on any other platform returns 400. The field set is per-platform too — each platform reports only the settings it can answer honestly, normalised to the units its create path wrote (Microsoft keeps flight dates on the ad group, which this read does not read, so reports none) — and on every platform the provenance rules are the same: a campaign that does not record the account it was created under, or that belongs to a different account than the connection now resolves to, is refused 409 before anything is read.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -2047,7 +2243,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("update-campaign", func() {
-		Description("Replace a campaign (requires If-Match).")
+		Description("Replace a campaign (requires If-Match). A request carrying a configuration is refused with 409 reason=campaign_dispatch_in_flight while the campaign's creation has not finished on the ad platform — its status is still 'pending' — because a dispatcher may still be resolving the configuration this request would overwrite. Retry once the status is no longer 'pending'. A name-only edit is NOT refused and stays available throughout. A configuration that NEWLY names a stored creative asset which no longer exists for the brief — typically one deleted between reading the campaign and sending this request — is refused with 409 reason=creative_asset_reference_missing, naming the ids that did not resolve; upload the asset again, or remove the reference, then retry. References already present on the stored configuration are carried through unchanged and are never refused by this check.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -2255,17 +2451,24 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"the same way rather than assumed manual. On Reddit the CAMPAIGN's strategy is checked first " +
 			"and then the ad group's: with Campaign Budget Optimization on (as on every campaign this " +
 			"service creates) the ad group's strategy must match the campaign's, so both must be " +
-			"MANUAL_BIDDING. NOTE: every Reddit campaign this service creates is BIDLESS on both the " +
-			"campaign and its ad group, every Meta campaign LOWEST_COST_WITHOUT_CAP billed on IMPRESSIONS, " +
-			"and every X campaign AUTO, so those three legs apply only after an operator has moved the " +
-			"Reddit campaign and ad group, the Meta ad set or the X line item to a manual per-click bid in " +
-			"the platform's own UI. GOOGLE ADS IS THE EXCEPTION: a SEARCH campaign this service creates " +
+			"MANUAL_BIDDING. ELIGIBILITY FOLLOWS THE PLATFORM'S CURRENT STRATEGY, not how the campaign was " +
+			"created: campaigns created with strategy manual are immediately eligible, an automatic one " +
+			"an operator later switches to a manual per-click bid becomes eligible, and a manual one switched " +
+			"to automatic becomes ineligible. Since LFXV2-2665 a Microsoft campaign created without `bidding` " +
+			"(and without cpcBid) is MaxClicks, not Microsoft's EnhancedCpc default, so this endpoint answers " +
+			"409 for it until switched, and a LinkedIn one is WEBSITE_VISIT + MAX_CLICK. CAMPAIGNS THIS SERVICE CREATES: one created with the dispatch config's " +
+			"`bidding.strategy` `manual` (create-campaigns) is created in exactly the shape this endpoint " +
+			"accepts on its platform — Microsoft EnhancedCpc with the ad group's CpcBid, Meta a link-click " +
+			"bid cap, Reddit MANUAL_BIDDING CPC on campaign and ad group, X MAX per link click, LinkedIn CPC " +
+			"with optimizationTargetType NONE and unitCost — so it can be re-bid here. One created with " +
+			"AUTOMATIC bidding (the default) is refused (409) until an operator moves it to a manual " +
+			"per-click bid in the platform's own UI: Microsoft MaxClicks, Meta LOWEST_COST_WITHOUT_CAP, " +
+			"Reddit BIDLESS, X AUTO, LinkedIn WEBSITE_VISIT + MAX_CLICK. GOOGLE ADS, which `bidding` does not " +
+			"cover, is the exception: a SEARCH campaign this service creates " +
 			"defaults to MANUAL_CPC, so the guard is expected to pass there without any operator change — " +
 			"while a Demand Gen, Performance Max, Video or Display campaign defaults to an automated " +
-			"strategy and is refused. The guard still decides on what Google REPORTS, never on that default. " +
-			"A LinkedIn campaign this service creates sends no optimizationTargetType, " +
-			"which LinkedIn documents as defaulting to NONE (manual), so it is expected to pass — but the " +
-			"guard decides on what LinkedIn REPORTS, never on that expectation. " +
+			"strategy and is refused. Either way the guard decides on what the " +
+			"platform REPORTS, never on what was created. " +
 			"On every adapter but LinkedIn the amount is in the AD ACCOUNT's own currency, not USD, and " +
 			"this service neither knows nor converts it; the LinkedIn adapter writes USD and refuses " +
 			"(409) a campaign whose bid is in any other or an unreported currency. " +
@@ -2731,6 +2934,16 @@ func briefIDAttr() {
 
 func campaignIDAttr() {
 	Attribute("campaign_id", String, "Campaign UUID", func() { Format(FormatUUID) })
+}
+
+// creativeAssetIDAttr is the path segment identifying one stored creative asset.
+//
+// `Format(FormatUUID)` is load-bearing rather than documentation: the repository's
+// creative-asset queries bind the id straight into a `::uuid` comparison and the port
+// documents validation as the caller's obligation, so the transport layer rejecting a
+// malformed id is what keeps a typo out of the database as a 400 instead of a 500.
+func creativeAssetIDAttr() {
+	Attribute("asset_id", String, "Creative asset UUID", func() { Format(FormatUUID) })
 }
 
 // metricsWindowEnum applies the platform-agnostic reporting-window vocabulary

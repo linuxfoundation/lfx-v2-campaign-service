@@ -1728,6 +1728,146 @@ func BuildGetGoogleAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetGoogleAd
 	return v, nil
 }
 
+// BuildSuggestGoogleAdsGeoTargetsPayload builds the payload for the
+// lfx-v2-campaign-service-connections suggest-google-ads-geo-targets endpoint
+// from CLI flags.
+func BuildSuggestGoogleAdsGeoTargetsPayload(lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsProjectID *string, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsQ *string, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsCountryCode *string, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsTargetTypes *string, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsLimit *string, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsBearerToken *string) (*lfxv2campaignserviceconnections.SuggestGoogleAdsGeoTargetsPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsProjectID
+	}
+	var q string
+	{
+		if lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsQ == nil {
+			return nil, fmt.Errorf("missing required flag --q")
+		}
+		q = *lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsQ
+		err = goa.MergeErrors(err, goa.ValidatePattern("q", q, "\\S"))
+		if utf8.RuneCountInString(q) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("q", q, utf8.RuneCountInString(q), 1, true))
+		}
+		if utf8.RuneCountInString(q) > 100 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("q", q, utf8.RuneCountInString(q), 100, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var countryCode *string
+	{
+		if lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsCountryCode != nil {
+			countryCode = lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsCountryCode
+			err = goa.MergeErrors(err, goa.ValidatePattern("country_code", *lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsCountryCode, "^[A-Za-z]{2}$"))
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	var targetTypes []string
+	{
+		if lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsTargetTypes != nil {
+			err = json.Unmarshal([]byte(*lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsTargetTypes), &targetTypes)
+			if err != nil {
+				return nil, fmt.Errorf("invalid JSON for targetTypes, \nerror: %s, \nexample of valid JSON:\n%s", err, "'[\n      \"Postal Code\"\n   ]'")
+			}
+			if len(targetTypes) > 10 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("target_types", targetTypes, len(targetTypes), 10, false))
+			}
+			for _, e := range targetTypes {
+				err = goa.MergeErrors(err, goa.ValidatePattern("target_types[*]", e, "[A-Za-z0-9]"))
+				if utf8.RuneCountInString(e) < 1 {
+					err = goa.MergeErrors(err, goa.InvalidLengthError("target_types[*]", e, utf8.RuneCountInString(e), 1, true))
+				}
+				if utf8.RuneCountInString(e) > 40 {
+					err = goa.MergeErrors(err, goa.InvalidLengthError("target_types[*]", e, utf8.RuneCountInString(e), 40, false))
+				}
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	var limit *int
+	{
+		if lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsLimit != nil {
+			var v int64
+			v, err = strconv.ParseInt(*lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsLimit, 10, strconv.IntSize)
+			val := int(v)
+			limit = &val
+			if err != nil {
+				return nil, fmt.Errorf("invalid value for limit, must be INT")
+			}
+			if val < 1 {
+				err = goa.MergeErrors(err, goa.InvalidRangeError("limit", val, 1, true))
+			}
+			if val > 50 {
+				err = goa.MergeErrors(err, goa.InvalidRangeError("limit", val, 50, false))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.SuggestGoogleAdsGeoTargetsPayload{}
+	v.ProjectID = projectID
+	v.Q = q
+	v.CountryCode = countryCode
+	v.TargetTypes = targetTypes
+	v.Limit = limit
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildListGoogleAdsUserListsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-google-ads-user-lists endpoint from
+// CLI flags.
+func BuildListGoogleAdsUserListsPayload(lfxV2CampaignServiceConnectionsListGoogleAdsUserListsProjectID *string, lfxV2CampaignServiceConnectionsListGoogleAdsUserListsAccountID *string, lfxV2CampaignServiceConnectionsListGoogleAdsUserListsBearerToken *string) (*lfxv2campaignserviceconnections.ListGoogleAdsUserListsPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListGoogleAdsUserListsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListGoogleAdsUserListsProjectID
+	}
+	var accountID *string
+	{
+		if lfxV2CampaignServiceConnectionsListGoogleAdsUserListsAccountID != nil {
+			accountID = lfxV2CampaignServiceConnectionsListGoogleAdsUserListsAccountID
+			err = goa.MergeErrors(err, goa.ValidatePattern("account_id", *lfxV2CampaignServiceConnectionsListGoogleAdsUserListsAccountID, "^[0-9]+$"))
+			if utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsListGoogleAdsUserListsAccountID) > 64 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", *lfxV2CampaignServiceConnectionsListGoogleAdsUserListsAccountID, utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsListGoogleAdsUserListsAccountID), 64, false))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListGoogleAdsUserListsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListGoogleAdsUserListsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListGoogleAdsUserListsPayload{}
+	v.ProjectID = projectID
+	v.AccountID = accountID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildGetMetaAdsAudiencePayload builds the payload for the
 // lfx-v2-campaign-service-connections get-meta-ads-audience endpoint from CLI
 // flags.

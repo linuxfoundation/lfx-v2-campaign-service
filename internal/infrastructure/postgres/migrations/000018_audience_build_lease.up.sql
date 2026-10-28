@@ -32,8 +32,9 @@
 -- duplicate-creation this migration closes, just later and less visibly.
 --
 -- Deploy shape, and why the code changes can ship in the same commit. The chart pins
--- strategy: type: Recreate at replicaCount 1 (charts/.../deployment.yaml), so the old pod
--- is gone before the new one starts and runs this migration. Nothing is serving requests
+-- strategy: type: Recreate (charts/.../deployment.yaml), so every old pod is gone before
+-- any new one starts and runs this migration -- that holds at any replica count, and
+-- deployments do run more than one. Nothing is serving requests
 -- against a table this constraint newly covers while the old binary — which does not map
 -- 23505 on campaign_audiences to anything — is still alive. That is what makes it safe to
 -- land this index together with the isUniqueViolation mappings in audience_repo.go rather

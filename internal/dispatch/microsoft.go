@@ -67,10 +67,15 @@ type microsoftConfig struct {
 	// the campaign is created but can NEVER SERVE, and ToggleStatus refuses to activate it —
 	// so a caller that wants a servable campaign must supply at least one.
 	Keywords []microsoftKeywordConfig `json:"keywords"`
-	// CpcBid is an OPTIONAL ad-group max cost-per-click in whole units of the account currency
-	// (no micros, no FX). Omitted/zero means unset, and Microsoft then applies the
-	// account-currency minimum — a documented, serve-capable floor, so omitting it is safe.
+	// CpcBid is the LEGACY spelling of a manual starting bid: an ad-group max cost-per-click in
+	// whole units of the account currency (no micros, no FX). Since LFXV2-2665 the bidding choice
+	// is Bidding's; a cpcBid sent WITHOUT bidding still means what it always did — the ad group
+	// bids cpcBid under EnhancedCpc — and is recorded as manual bidding. See microsoftBidPlan for
+	// how the two fields combine.
 	CpcBid float64 `json:"cpcBid"`
+	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted (and no cpcBid)
+	// means automatic: the campaign is created with the MaxClicks bid strategy.
+	Bidding *biddingConfig `json:"bidding,omitempty"`
 	// GeoTargets are ISO 3166-1 alpha-2 country codes, the SAME vocabulary
 	// redditConfig/metaConfig/googleAdsConfig take (LFXV2-3279). Microsoft's location
 	// criteria take numeric LocationIds rather than ISO codes, so the client resolves each
@@ -89,6 +94,13 @@ type microsoftConfig struct {
 	// ImageAltText is the extension's AlternativeText (at most 35 characters). Optional;
 	// defaults to the event name cut to 35 characters. Only meaningful with ImageAssetID.
 	ImageAltText string `json:"imageAltText"`
+	// StartDate and EndDate are the OPTIONAL flight dates, YYYY-MM-DD — the same keys and
+	// format metaConfig takes. Microsoft schedules delivery on the AD GROUP, so the client sends
+	// them as its StartDate/EndDate; validated (calendar date, start not in the past, end after
+	// start) before anything is created. Omitted, the ad group serves from when a human enables
+	// it and runs until stopped — exactly the behaviour before these fields existed.
+	StartDate string `json:"startDate"` // YYYY-MM-DD
+	EndDate   string `json:"endDate"`   // YYYY-MM-DD
 }
 
 // MicrosoftDispatcher creates Microsoft Advertising (Bing) campaigns for the orchestrator.
@@ -175,6 +187,24 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err := unmarshalPlatformConfig(config, "microsoftConfig", &cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The bidding choice, validated BEFORE any upstream call (PreflightCreate has normally
+	// refused a bad one already, as a 400). Recorded on every row this dispatch returns.
+	if err := checkBiddingShape(config, "microsoftConfig"); err != nil {
+		return nil, notCreated(err)
+	}
+	plan, err := microsoftBidPlan(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
+	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
+	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
+	var bidApplied bool
+	defer func() {
+		if err == nil && bidApplied {
+			plan.stamp(camp)
+		}
+	}()
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -204,8 +234,11 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		TimeZone:        cfg.TimeZone,
 		RegistrationURL: bf.RegistrationURL,
 		Keywords:        microsoftKeywords(cfg.Keywords),
-		CpcBid:          cfg.CpcBid,
+		CpcBid:          plan.amount,
+		BiddingScheme:   microsoftBiddingScheme(plan),
 		GeoTargets:      cfg.GeoTargets,
+		StartDate:       cfg.StartDate,
+		EndDate:         cfg.EndDate,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: Microsoft
 		// enforces case-insensitive campaign-name uniqueness, so a retry composes the SAME name
 		// and the client's find-first lookup cleanly REUSES the existing campaign
@@ -258,12 +291,106 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// The image extension is attached only to a CONFIRMED campaign, and its failure degrades
 	// the campaign rather than failing the job: the campaign exists, so an error here would
 	// retain the claim for a reconcile that cannot re-run this step (see attachMicrosoftImage).
+	bidApplied = result.BidApplied
 	degraded := d.attachMicrosoftImage(ctx, client, result, img)
 	camp = campaignFromMicrosoft(ctx, result, cfg)
 	if degraded {
 		camp.Status = campaignStatusCreatedDegraded
 	}
 	return camp, nil
+}
+
+// PreflightCreate refuses, before the create job exists, a microsoftConfig whose bidding cannot be
+// created as asked (see microsoftBidPlan). It never calls Microsoft, so every other outcome is
+// ErrPreflightNotApplicable; a config that does not decode is left to Dispatch (except a wrong-typed
+// `bidding`, refused here by checkBiddingShape), which reports it as
+// the job failure, as Reddit's pre-check does.
+func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
+	if err := checkBiddingShape(config, "microsoftConfig"); err != nil {
+		return err
+	}
+	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
+	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
+	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
+	// not decode is its zero value, which no plan rule reads as a refusal. The decode error itself
+	// stays "not applicable" — only bidding is promised as a synchronous 400.
+	var cfg microsoftConfig
+	_ = unmarshalPlatformConfig(config, "microsoftConfig", &cfg)
+	if _, err := microsoftBidPlan(cfg); err != nil {
+		return err
+	}
+	return domain.ErrPreflightNotApplicable
+}
+
+// microsoftBidPlan resolves microsoftConfig's bidding choice.
+//
+//   - bidding omitted, no cpcBid: AUTOMATIC — the campaign gets the MaxClicks strategy and its
+//     ad group no bid.
+//   - bidding omitted, cpcBid set: MANUAL at cpcBid. This is the legacy field keeping the
+//     meaning it had before LFXV2-2665 (an EnhancedCpc campaign whose ad group bids cpcBid), now
+//     recorded as manual so the row and the bid lever agree with what was created.
+//   - bidding manual: bidAmount is the ad-group CpcBid. A cpcBid alongside it must be the same
+//     amount — two different starting bids are refused rather than one silently winning.
+//   - bidding automatic with any cpcBid: refused, since MaxClicks ignores the ad group bid.
+//
+// A manual amount must also be within the bounds the bid lever applies on Microsoft
+// (microsoft.ValidateMaxCPCBid), so a campaign this path creates can always be re-bid there.
+func microsoftBidPlan(cfg microsoftConfig) (bidPlan, error) {
+	const key = "microsoftConfig"
+	if cfg.Bidding == nil && cfg.CpcBid != 0 {
+		amount := cfg.CpcBid
+		return microsoftManualPlan(key, &biddingConfig{Strategy: biddingStrategyManual, BidAmount: &amount}, "cpcBid")
+	}
+	plan, err := resolveBidding(key, cfg.Bidding)
+	if err != nil {
+		return bidPlan{}, err
+	}
+	if !plan.manual() {
+		if cfg.CpcBid != 0 {
+			return bidPlan{}, biddingInvalid(key, "cpcBid sets a manual ad group bid, which the automatic (MaxClicks) strategy ignores; remove cpcBid, or choose strategy \"manual\" with bidAmount")
+		}
+		return plan, nil
+	}
+	if cfg.CpcBid != 0 && cfg.CpcBid != plan.amount {
+		return bidPlan{}, biddingInvalid(key, "cpcBid %s and bidAmount %s name two different starting bids; send bidAmount only", formatBid(cfg.CpcBid), formatBid(plan.amount))
+	}
+	return microsoftManualPlan(key, cfg.Bidding, "bidding.bidAmount")
+}
+
+// microsoftManualPlan validates a manual starting bid against the generic rules and Microsoft's.
+//
+// PRECISION: at most two decimal places, mirroring metaBidPlan. A Microsoft bid is a plain decimal
+// in the account currency (Bid.Amount), and the bid is sent as the ad group's CpcBid only AFTER the
+// campaign POST, so an amount Microsoft cannot hold must be refused here, before anything exists,
+// rather than rounded or refused mid-tree. Two decimals is the finest minor unit of the currencies
+// these accounts use; the account currency is not known before dispatch (the create path never
+// reads it), so a zero-decimal account (JPY) is not checked for whole units here — Microsoft's own
+// validation of the account currency decides that, as ValidateMaxCPCBid's comment already states.
+func microsoftManualPlan(key string, b *biddingConfig, field string) (bidPlan, error) {
+	plan, err := resolveBidding(key, b)
+	if err != nil {
+		return bidPlan{}, err
+	}
+	if _, ok := exactScaled(plan.amount, 100); !ok {
+		return bidPlan{}, biddingInvalid(key, "%s %s has more than two decimal places; Microsoft Advertising bids are set in the account currency to at most two, so it is refused rather than rounded", field, formatBid(plan.amount))
+	}
+	if verr := microsoft.ValidateMaxCPCBid(plan.amount); verr != nil {
+		reason, ok := microsoft.BidAmountReason(verr)
+		if !ok {
+			reason = "the bid is not accepted by Microsoft Advertising"
+		}
+		return bidPlan{}, biddingInvalid(key, "%s: %s", field, reason)
+	}
+	return plan, nil
+}
+
+// microsoftBiddingScheme maps a plan to the campaign BiddingScheme the client sends.
+func microsoftBiddingScheme(plan bidPlan) string {
+	if plan.manual() {
+		return microsoft.BidSchemeEnhancedCpc
+	}
+	return microsoft.BidSchemeMaxClicks
 }
 
 // microsoftKeywords maps the wire-shaped keyword config to the platform client's Keyword
@@ -306,7 +433,8 @@ func microsoftKeywords(in []microsoftKeywordConfig) []microsoft.Keyword {
 // canonicalized, case-insensitive duplicates dropped).
 //
 // Also kept verbatim, because they cannot carry a URL by construction: Budget and CpcBid
-// (numbers), Keywords[].MatchType (only Exact/Phrase/Broad gets past the client, and a
+// (numbers), StartDate/EndDate (YYYY-MM-DD, validated by the client before anything is
+// created), Keywords[].MatchType (only Exact/Phrase/Broad gets past the client, and a
 // snapshot is only written once it has) and GeoTargets (ISO 3166-1 alpha-2 codes,
 // shape-checked by the client before anything is sent).
 //
@@ -341,7 +469,16 @@ func campaignFromMicrosoft(ctx context.Context, r *microsoft.CampaignResult, cfg
 	// SANITIZED COPY (microsoftSnapshotConfig), never cfg itself: config_snapshot is stored
 	// UNENCRYPTED, and the unvalidated free-text timeZone is scrubbed of any link it carries
 	// before it gets there.
-	applyCampaignConfig(ctx, c, cfg.Budget, false, "", "", microsoftSnapshotConfig(cfg))
+	// The flight dates are recorded as Meta's are, so the brief view paces the campaign over its
+	// flight — but ONLY when the client confirms it created the ad group carrying them
+	// (r.FlightApplied, set on a successful result only). A reused ad group keeps its existing
+	// schedule and a partial may never have reached the ad group, so both record no dates, as
+	// absent dates do; the snapshot still keeps what was asked for.
+	startDate, endDate := "", ""
+	if r.FlightApplied {
+		startDate, endDate = cfg.StartDate, cfg.EndDate
+	}
+	applyCampaignConfig(ctx, c, cfg.Budget, false, startDate, endDate, microsoftSnapshotConfig(cfg))
 	if raw, err := json.Marshal(r); err != nil {
 		// Near-impossible for this plain struct, but do NOT swallow it: on an ambiguous-orphan
 		// path Result is the sole carrier of the reconcile-by-name payload (campaign/ad-group/ad

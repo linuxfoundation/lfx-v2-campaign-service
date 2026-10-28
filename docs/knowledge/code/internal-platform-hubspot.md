@@ -202,7 +202,9 @@ would be sent nothing while the send reports success. Single-list callers pass a
 SERVER-SIDE via the `objectTypeId "0-1"` request field (a valid `ListSearchRequest`
 field per HubSpot's v3 docs), with a per-hit `ObjectTypeID` check kept as
 defense-in-depth; follows `offset`/`hasMore` pagination with a repeated-page guard;
-`includeFilters` is a GET-single-list field, NOT a search field, and is not sent),
+`includeFilters` is a GET-single-list field, NOT a search field, and is not sent;
+`SearchListsAnyType` is the same search with no `objectTypeId` and no per-hit drop, for asking
+whether a NAME is taken, since list names are unique per portal across object types),
 `GetList` (with `includeFilters=true`
 so the filterBranch + processingType come back),
 `CreateList` (`POST /crm/v3/lists` — canonical no-trailing-slash path, since the client
@@ -580,10 +582,15 @@ exclusion. `IsNotFound` lets a caller tell "deleted" apart from "unreadable", wh
 different answers for an operator.
 
 `ListIDForLegacy` maps a legacy id to its v3 (ILS) id through `GET /crm/v3/lists/idmapping`, and
-returns `""` on any failure so the caller falls back to `LegacyListName`. It exists because a
-marketing email carries the SAME list in both `contactIlsLists` and the legacy `contactLists`,
-under two different ids — reading them as two lists rendered every inclusion and suppression of a
-pre-cut-off send twice ([[2026-09-30-audience-suppression-and-last-sent-scoping]]).
+returns `""` on any failure so the caller falls back to `LegacyListName`. Both helpers return the
+error beside that `""`: still best-effort, in that the empty string is the answer and no caller is
+failed because one list could not be named, but a caller that must tell "HubSpot reported no such
+list" from "the lookup never reached an answer" can ask `IsNotFound` about it instead of reading a
+throttled call as a deletion (#238). A caller that only wants a name discards it.
+`ListIDForLegacy` exists because a marketing email carries the SAME list in both
+`contactIlsLists` and the legacy `contactLists`, under two different ids — reading them as two
+lists rendered every inclusion and suppression of a pre-cut-off send twice
+([[2026-09-30-audience-suppression-and-last-sent-scoping]]).
 
 `email_sendlists.go` reads the same `to.contactIlsLists` object `SetSendList` WRITES — otherwise
 the builder would report a precedent the sender never used. The legacy `to.contactLists`

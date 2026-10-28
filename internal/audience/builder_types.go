@@ -142,6 +142,11 @@ var StandardSuppressionTerms = []SuppressionTerm{
 	{Key: "lf_europe_gdpr", Label: "LF Europe GDPR Suppression", SearchTerm: "LF Europe GDPR Suppression"},
 	{Key: "lf_master_exclusion", Label: "LF Master Exclusion List", SearchTerm: "LF Master Exclusion"},
 	{Key: "lf_events_suppression", Label: "LF Events Suppression List", SearchTerm: "LF Events Suppression List"},
+	// Linux kernel contacts, kept out of every marketing send. Rebuilt per quarter
+	// like the rest ("26Q2-Kernel-Domain-Contacts", "Q1 2026 - LF - kernel.org Contacts").
+	{Key: "kernel_domain_contacts", Label: "Kernel Domain Contacts", SearchTerm: "Kernel Domain Contacts"},
+	{Key: "persona_linux_kernel", Label: "Persona Linux Kernel", SearchTerm: "Persona Linux Kernel"},
+	{Key: "lf_kernel_org_contacts", Label: "LF kernel.org Contacts", SearchTerm: "LF kernel.org Contacts"},
 }
 
 // EventIdentity is what discovery extracted from the event page: enough to search

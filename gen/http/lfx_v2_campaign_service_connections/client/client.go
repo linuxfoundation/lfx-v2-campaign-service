@@ -198,6 +198,14 @@ type Client struct {
 	// get-google-ads-audience endpoint.
 	GetGoogleAdsAudienceDoer goahttp.Doer
 
+	// SuggestGoogleAdsGeoTargets Doer is the HTTP client used to make requests to
+	// the suggest-google-ads-geo-targets endpoint.
+	SuggestGoogleAdsGeoTargetsDoer goahttp.Doer
+
+	// ListGoogleAdsUserLists Doer is the HTTP client used to make requests to the
+	// list-google-ads-user-lists endpoint.
+	ListGoogleAdsUserListsDoer goahttp.Doer
+
 	// GetMetaAdsAudience Doer is the HTTP client used to make requests to the
 	// get-meta-ads-audience endpoint.
 	GetMetaAdsAudienceDoer goahttp.Doer
@@ -376,6 +384,8 @@ func NewClient(
 		ListGoogleAdsAccountsDoer:       doer,
 		GetGoogleAdsKeywordsDoer:        doer,
 		GetGoogleAdsAudienceDoer:        doer,
+		SuggestGoogleAdsGeoTargetsDoer:  doer,
+		ListGoogleAdsUserListsDoer:      doer,
 		GetMetaAdsAudienceDoer:          doer,
 		GetTwitterAdsAudienceDoer:       doer,
 		GetLinkedinAdsAudienceDoer:      doer,
@@ -1490,6 +1500,56 @@ func (c *Client) GetGoogleAdsAudience() goa.Endpoint {
 		resp, err := c.GetGoogleAdsAudienceDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// SuggestGoogleAdsGeoTargets returns an endpoint that makes HTTP requests to
+// the lfx-v2-campaign-service-connections service
+// suggest-google-ads-geo-targets server.
+func (c *Client) SuggestGoogleAdsGeoTargets() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeSuggestGoogleAdsGeoTargetsRequest(c.encoder)
+		decodeResponse = DecodeSuggestGoogleAdsGeoTargetsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildSuggestGoogleAdsGeoTargetsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.SuggestGoogleAdsGeoTargetsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListGoogleAdsUserLists returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// server.
+func (c *Client) ListGoogleAdsUserLists() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListGoogleAdsUserListsRequest(c.encoder)
+		decodeResponse = DecodeListGoogleAdsUserListsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListGoogleAdsUserListsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListGoogleAdsUserListsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
 		}
 		return decodeResponse(resp)
 	}

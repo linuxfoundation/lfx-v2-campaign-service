@@ -87,6 +87,25 @@
     {{- $xStats = or (and $entry.valueFrom true) (eq (toString $entry.value) "true") }}
   {{- end }}
 {{- end }}
+{{- /*
+  NOTE — this guard is now reachable in production, which it was not when it was written. Until
+  the Reddit guard below it was retired, the chart refused ANY render above one replica, so this
+  one could never be the thing that fired. Deployments set three replicas
+  (lfx-v2-argocd values/global/lfx-v2-campaign-service.yaml), so from here on, turning
+  TWITTER_METRICS_ENABLED on in a deployed environment makes `helm template` fail and ArgoCD
+  unable to generate the manifest AT ALL — blocking every unrelated deploy of this service, which
+  is the incident the Reddit guard caused. No environment sets the flag today, so this is latent,
+  not live.
+
+  It is kept for now because it is flag-scoped and opt-in rather than unconditional, so the blast
+  radius is "whoever turns the flag on", not "everyone, always". But the argument that retired the
+  Reddit guard likely applies here too: the runtime lease (postgres.StatsJobLease) already confines
+  the background stats jobs to one pod, which leaves this guard covering only the user-facing X
+  monitor — and if nothing polls that either, this should become a non-fatal signal (a NOTES.txt
+  warning or a CI-side `helm template` assertion) rather than a render failure. That needs the same
+  poller audit the Reddit paths got before it is acted on; it has not been done. Do not reinstate
+  an unconditional guard here in the meantime.
+*/}}
 {{- if $xStats }}
   {{- $replicas := int (default 1 .Values.replicaCount) }}
   {{- $autoscaleMax := 1 }}
@@ -96,33 +115,41 @@
   {{- end }}
 {{- end }}
 {{- /*
-  Guard: the Reddit reporting budget needs ONE replica — ALWAYS, not only with a flag on.
+  No replica guard for Reddit — deliberately, and this is not an oversight. An earlier revision of
+  this file refused to render at replicaCount > 1 on the reasoning below; that refusal was wrong
+  and is recorded here so it is not reintroduced.
 
-  Every request to Reddit's reports operation (POST /ad_accounts/{id}/reports) spends from one
-  quota, the `ads-reporting` policy: 60 requests per 60 s per ad account. The ledger that keeps
-  this service under it (internal/platform/reddit/report_budget.go: 45 of the 60, 24 of those for
-  the audience and keyword performance reads) is process-local, so N replicas could send up to N × 45 a minute against one
-  account.
+  The constraint it was protecting is real. Every request to Reddit's reports operation
+  (POST /ad_accounts/{id}/reports) spends from one quota, the `ads-reporting` policy: 60 requests
+  per 60 s per ad account. The ledger that keeps this service under it
+  (internal/platform/reddit/report_budget.go: 45 of the 60, 24 of those reserved for the audience
+  and keyword performance reads) is PROCESS-LOCAL, so N replicas each carry a separate 45 against
+  one shared account quota.
 
-  Not keyed on REDDIT_METRICS_ENABLED, because that flag does not cover all of the traffic: it
-  gates the campaign metrics read and the audience and keyword performance reads, but the Reddit ACCOUNT MONITOR
-  (connection-reddit-ads/account-monitor → RedditDispatcher.ListAccountCampaignMetrics →
-  reddit.Client.ListAccountCampaigns) is ungated, always routed, and reads the same reports
-  operation. So any replica can spend the budget whenever the monitor can serve — which is
-  always. (X differs: TWITTER_METRICS_ENABLED gates the X monitor too, and a runtime lease
-  confines its stats jobs to one pod, so the X guard above can stay flag-scoped.)
+  Why that is a ceiling and not a deploy blocker: every path that spends the ledger is reached
+  only by an inbound request. The Reddit account monitor
+  (connection-reddit-ads/account-monitor → ConnectionService.MonitorRedditAdsAccount →
+  RedditDispatcher.readAccountMonitor) is ungated by REDDIT_METRICS_ENABLED and therefore always
+  ROUTED — but nothing polls it: no ticker, cron or subscriber in internal/ or cmd/ invokes it or
+  the audience and keyword reads. N × 45 a minute is what concurrent user traffic could reach at
+  worst, not a rate the service sustains, and the failure mode when it is reached is a 429 on a
+  Monitoring-tab read, not lost or corrupted data. A render-time `fail` traded that for blocking
+  every unrelated deploy of this service, which is the larger harm.
 
-  This costs the default deploy nothing: the chart ships replicaCount: 1 and no HPA, and the
-  Recreate strategy's migration-ordering guarantee (TestDeploymentUsesRecreateStrategy) already
-  rests on one replica. There is no runtime lease behind it, so it cannot see an out-of-band scale
-  or an external HPA (ArgoCD ignores /spec/replicas); a shared ledger is what would lift it.
+  The two obvious fixes do not work, so do not reach for them:
+    - A lease like the X stats jobs' (postgres.StatsJobLease) makes a NON-OWNER POD REFUSE
+      (domain.ErrStatsJobLeaseNotHeld). That is fine for X's flag-gated background stats jobs; on
+      Reddit's always-routed, user-facing monitor endpoint it would fail most page loads outright.
+    - Dividing the budget by replica count breaks the audience read: one read is up to
+      MaxReportCampaigns (8) × 3 breakdowns = 24 reports, which is already the whole insight
+      sub-budget, so a divided 45 ÷ 3 = 15 could never serve it.
+
+  The fix that does work is a SHARED ledger — a token bucket keyed by ad account in Postgres,
+  replacing the process-local one in report_budget.go. Until that lands the ceiling stands as a
+  documented limit, not a render failure. (The X guard above stays: it is flag-scoped,
+  TWITTER_METRICS_ENABLED gates the X monitor too, and the runtime lease already confines those
+  jobs to one pod.)
 */}}
-{{- $redditReplicas := int (default 1 .Values.replicaCount) }}
-{{- $redditAutoscaleMax := 1 }}
-{{- with .Values.autoscaling }}{{- if .enabled }}{{- $redditAutoscaleMax = int (default 2 .maxReplicas) }}{{- end }}{{- end }}
-{{- if or (gt $redditReplicas 1) (gt $redditAutoscaleMax 1) }}
-  {{- fail "more than one replica (replicaCount > 1, or autoscaling with maxReplicas > 1) is refused: the Reddit reporting budget (45 of an ad account's 60 report requests a minute) is kept per process, and the always-on Reddit account monitor spends it whatever REDDIT_METRICS_ENABLED says, so each replica would multiply it against the account-wide quota. Run one replica until the ledger is shared." }}
-{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -141,7 +168,10 @@ metadata:
     # omits is removed and SSA field-ownership is bypassed. Concretely spec.replicas: the chart
     # pins it and the Application sets ignoreDifferences:/spec/replicas (RespectIgnoreDifferences),
     # so an ordinary sync leaves an out-of-band scale or HPA value alone but a full replace
-    # overwrites it back to replicaCount -- low risk today (no HPA, replicaCount 1).
+    # overwrites it back to replicaCount -- which, since deployments set their own (production
+    # sets three), is the value their own values file carries, not the chart default. No
+    # environment enables autoscaling today, so no HPA value is at stake; what IS at stake is an
+    # out-of-band `kubectl scale` during an incident, which the next sync silently reverts.
     #
     # Replace=true makes ArgoCD apply this Deployment with `kubectl replace` instead of a
     # strategic-merge / server-side-apply patch. Required because `strategy.type` below is
@@ -185,9 +215,17 @@ spec:
   # claimed"). Deferring the drop therefore ships a delete endpoint whose whole purpose --
   # freeing the slot -- does not work, and fails silently rather than loudly.
   #
-  # The cost is a brief gap in availability instead of an overlap. That is the right trade
-  # here: replicaCount is 1, so RollingUpdate provides no real availability benefit anyway,
-  # and /readyz already gates traffic until migrations finish.
+  # The cost is a gap in availability instead of an overlap, and at the three replicas
+  # deployments actually run that gap is a FULL restart: Recreate scales the old ReplicaSet to
+  # zero and waits for every pod to terminate before starting any new one. Note the
+  # podDisruptionBudget (minAvailable: 2 in production) does NOT soften this -- the Deployment
+  # controller deletes those pods directly rather than evicting them, so the PDB never applies.
+  #
+  # That is still the right trade while migrations run at pod boot: as stated above, an overlap
+  # would leave the previous release's bare ON CONFLICT (brief_id, platform) running against a
+  # schema that no longer has the matching constraint, failing every dispatch claim. /readyz
+  # gates traffic until migrations finish. Moving migrations to a PreSync Job is what retires
+  # this and lets RollingUpdate come back.
   strategy:
     type: Recreate
   selector:

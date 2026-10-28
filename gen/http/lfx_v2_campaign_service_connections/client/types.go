@@ -830,6 +830,33 @@ type GetGoogleAdsAudienceResponseBody struct {
 	BucketCount *int `form:"bucket_count,omitempty" json:"bucket_count,omitempty" xml:"bucket_count,omitempty"`
 }
 
+// SuggestGoogleAdsGeoTargetsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body.
+type SuggestGoogleAdsGeoTargetsResponseBody struct {
+	// Matching locations in Google's order, filtered to target_types when given,
+	// capped at limit
+	Suggestions []*GoogleAdsGeoTargetSuggestionResponseBody `form:"suggestions,omitempty" json:"suggestions,omitempty" xml:"suggestions,omitempty"`
+	// How many suggestions are in `suggestions`
+	SuggestionCount *int `form:"suggestion_count,omitempty" json:"suggestion_count,omitempty" xml:"suggestion_count,omitempty"`
+	// True when more matching locations were available than `limit` allowed
+	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
+}
+
+// ListGoogleAdsUserListsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body.
+type ListGoogleAdsUserListsResponseBody struct {
+	// The Google Ads customer the lists were read from
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// User lists on the customer, sorted by name, capped at 500 (see `truncated`)
+	UserLists []*GoogleAdsUserListResponseBody `form:"user_lists,omitempty" json:"user_lists,omitempty" xml:"user_lists,omitempty"`
+	// How many lists are in `user_lists`
+	UserListCount *int `form:"user_list_count,omitempty" json:"user_list_count,omitempty" xml:"user_list_count,omitempty"`
+	// True when the customer holds more lists than were returned
+	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
+}
+
 // GetMetaAdsAudienceResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body.
@@ -4157,6 +4184,142 @@ type GetGoogleAdsAudienceUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// SuggestGoogleAdsGeoTargetsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "BadRequest" error.
+type SuggestGoogleAdsGeoTargetsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type SuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "InternalServerError" error.
+type SuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SuggestGoogleAdsGeoTargetsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "NotFound" error.
+type SuggestGoogleAdsGeoTargetsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type SuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SuggestGoogleAdsGeoTargetsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "Unauthorized" error.
+type SuggestGoogleAdsGeoTargetsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsUserListsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListGoogleAdsUserListsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsUserListsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListGoogleAdsUserListsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsUserListsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListGoogleAdsUserListsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsUserListsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "NotFound" error.
+type ListGoogleAdsUserListsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsUserListsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListGoogleAdsUserListsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsUserListsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListGoogleAdsUserListsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsUserListsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "Conflict" error.
+type ListGoogleAdsUserListsConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMetaAdsAudienceBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -5520,6 +5683,22 @@ type CreateHubspotCampaignUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// MonitorGoogleAdsAccountConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
+// endpoint HTTP response body for the "Conflict" error.
+type MonitorGoogleAdsAccountConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Why the project's recorded campaigns cannot be read under the monitored
+	// account: campaign_account_mismatch (a campaign recorded for this project was
+	// created under a different account, or does not record which) or
+	// campaign_scope_invalid (a campaign recorded for this project has an id the
+	// platform cannot read).
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
 // MonitorGoogleAdsAccountBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -5640,6 +5819,22 @@ type MonitorLinkedinAdsAccountUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// MonitorMetaAdsAccountConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
+// endpoint HTTP response body for the "Conflict" error.
+type MonitorMetaAdsAccountConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Why the project's recorded campaigns cannot be read under the monitored
+	// account: campaign_account_mismatch (a campaign recorded for this project was
+	// created under a different account, or does not record which) or
+	// campaign_scope_invalid (a campaign recorded for this project has an id the
+	// platform cannot read).
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
 // MonitorMetaAdsAccountBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -5698,6 +5893,22 @@ type MonitorMetaAdsAccountUnauthorizedResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorRedditAdsAccountConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
+// endpoint HTTP response body for the "Conflict" error.
+type MonitorRedditAdsAccountConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Why the project's recorded campaigns cannot be read under the monitored
+	// account: campaign_account_mismatch (a campaign recorded for this project was
+	// created under a different account, or does not record which) or
+	// campaign_scope_invalid (a campaign recorded for this project has an id the
+	// platform cannot read).
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // MonitorRedditAdsAccountBadRequestResponseBody is the type of the
@@ -5836,8 +6047,13 @@ type MonitorTwitterAdsAccountConflictResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 	// Why the account cannot be monitored as it stands:
 	// account_too_many_active_campaigns (more campaigns active in the window than
-	// one report covers) or account_timezone_unsupported (the account's timezone
-	// does not start its days on a whole UTC hour).
+	// one report covers, counted across every project on the shared account, not
+	// only this project's campaigns), account_timezone_unsupported (the account's
+	// timezone does not start its days on a whole UTC hour),
+	// campaign_account_mismatch (a campaign recorded for this project was created
+	// under a different account, or does not record which) or
+	// campaign_scope_invalid (a campaign recorded for this project has an id the
+	// platform cannot read).
 	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
@@ -6052,6 +6268,58 @@ type GoogleAdsAudienceBucketResponseBody struct {
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
 }
 
+// GoogleAdsGeoTargetSuggestionResponseBody is used to define fields on
+// response body types.
+type GoogleAdsGeoTargetSuggestionResponseBody struct {
+	// The numeric geo target constant id, in exactly the form
+	// googleAdsConfig.geoTargets and excludedGeoTargets accept. Send it as-is; the
+	// geoTargetConstants/{id} resource name is NOT accepted there.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Google's display name for the location
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Google's fully qualified name, which disambiguates same-named places
+	CanonicalName *string `form:"canonical_name,omitempty" json:"canonical_name,omitempty" xml:"canonical_name,omitempty"`
+	// ISO 3166-1 alpha-2 country of the location, as Google reports it
+	CountryCode *string `form:"country_code,omitempty" json:"country_code,omitempty" xml:"country_code,omitempty"`
+	// Google's location type label, verbatim (e.g. Country, State, City, Postal
+	// Code, DMA Region)
+	TargetType *string `form:"target_type,omitempty" json:"target_type,omitempty" xml:"target_type,omitempty"`
+	// ENABLED, or REMOVAL_PLANNED for a location Google is retiring
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Google's approximate audience estimate. Absent when Google sent none.
+	Reach *int64 `form:"reach,omitempty" json:"reach,omitempty" xml:"reach,omitempty"`
+}
+
+// GoogleAdsUserListResponseBody is used to define fields on response body
+// types.
+type GoogleAdsUserListResponseBody struct {
+	// customers/{customerId}/userLists/{id}, in exactly the form
+	// googleAdsConfig.audienceSegments accepts (Search only). A list targets
+	// campaigns on its own customer.
+	ResourceName *string `form:"resource_name,omitempty" json:"resource_name,omitempty" xml:"resource_name,omitempty"`
+	// The user list id
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// The list's display name. Not an identifier.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Google's UserListType, verbatim (e.g. CRM_BASED, RULE_BASED, LOGICAL,
+	// SIMILAR)
+	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
+	// OPEN (accepting members) or CLOSED, verbatim
+	MembershipStatus *string `form:"membership_status,omitempty" json:"membership_status,omitempty" xml:"membership_status,omitempty"`
+	// The list's account_user_list_status (ENABLED or DISABLED), verbatim. Absent
+	// when Google sent none.
+	AccountStatus *string `form:"account_status,omitempty" json:"account_status,omitempty" xml:"account_status,omitempty"`
+	// Google's estimated Search-network size. Absent when Google sent none, which
+	// is not a size of 0.
+	SizeForSearch *int64 `form:"size_for_search,omitempty" json:"size_for_search,omitempty" xml:"size_for_search,omitempty"`
+	// Google's bucketed Search-network size, verbatim. Absent when Google sent
+	// none.
+	SizeRangeForSearch *string `form:"size_range_for_search,omitempty" json:"size_range_for_search,omitempty" xml:"size_range_for_search,omitempty"`
+	// Whether Google reports the list usable on Search. audienceSegments applies
+	// to Search campaigns, so an ineligible list will not serve there.
+	EligibleForSearch *bool `form:"eligible_for_search,omitempty" json:"eligible_for_search,omitempty" xml:"eligible_for_search,omitempty"`
+}
+
 // MetaAdsAudienceBucketResponseBody is used to define fields on response body
 // types.
 type MetaAdsAudienceBucketResponseBody struct {
@@ -6260,10 +6528,12 @@ type GoogleAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -6346,12 +6616,17 @@ type AccountMonitorCampaignResponseBody struct {
 	// Google Ads only: true when the campaign's advertising_channel_type is
 	// SEARCH. Always false for LinkedIn/Meta/Reddit rows.
 	IsSearchChannel *bool `form:"is_search_channel,omitempty" json:"is_search_channel,omitempty" xml:"is_search_channel,omitempty"`
-	// True when some part of this row's upstream data could not be trusted: either
-	// its per-campaign metrics fetch failed outright (numeric fields left at their
-	// zero value), or, for Google Ads, its budget field was present but
-	// unparseable alongside otherwise-good metrics. A renderer MUST check this
-	// before treating any of this row's fields, zero or not, as a fully trusted
-	// reading.
+	// True when some part of this row's upstream data could not be trusted. WHICH
+	// part is not conveyed, and it is NOT always the metrics. The shapes it takes
+	// include: a per-campaign metrics fetch that failed outright, leaving that
+	// read's delivery metrics (spend, impressions, clicks, ctr) at their zero
+	// value while fields sourced from a different call — a budget read from the
+	// campaign list, say — may still be real; a budget or flight value that was
+	// present but unparseable alongside metrics that were read fine; and a spend
+	// that could not be parsed while impressions and clicks are real. Read those
+	// as examples rather than a closed set — every platform sets this flag and
+	// each has its own partial cases. A renderer MUST NOT treat ANY of this row's
+	// fields, zero or not, as a fully trusted reading.
 	FetchFailed *bool `form:"fetch_failed,omitempty" json:"fetch_failed,omitempty" xml:"fetch_failed,omitempty"`
 	// spend / expected-spend * 100. Meaningless when pacing_unknown is true.
 	PacingPct *float64 `form:"pacing_pct,omitempty" json:"pacing_pct,omitempty" xml:"pacing_pct,omitempty"`
@@ -6389,13 +6664,13 @@ type AccountMonitorActionItemResponseBody struct {
 // AccountMonitorTotalsResponseBody is used to define fields on response body
 // types.
 type AccountMonitorTotalsResponseBody struct {
-	// Account-wide spend over the window.
+	// Spend over the window, summed over the returned campaigns.
 	Spend *float64 `form:"spend,omitempty" json:"spend,omitempty" xml:"spend,omitempty"`
-	// Account-wide impressions over the window.
+	// Impressions over the window, summed over the returned campaigns.
 	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
-	// Account-wide clicks over the window.
+	// Clicks over the window, summed over the returned campaigns.
 	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
-	// Account-wide conversions over the window, summed over the campaigns that
+	// Conversions over the window, summed over the returned campaigns that
 	// reported a conversion measurement. ABSENT when none of them did — not a
 	// measured 0.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
@@ -6405,12 +6680,12 @@ type AccountMonitorTotalsResponseBody struct {
 	// How many of the campaign_count campaigns have fetch_failed=true. The totals
 	// include those rows at what they carry — zero for a row whose metrics could
 	// not be read — so a non-zero value means the totals may UNDERSTATE the
-	// account, by up to this many campaigns' delivery. An upper bound rather than
-	// an exact count of rows missing from the sum: fetch_failed also marks a row
-	// whose budget or flight alone was unreadable while its metrics were read and
-	// summed. pacing_unknown=true alone does not count a row (every fetch_failed
-	// row also has it, but most pacing_unknown rows were read in full). 0 means
-	// every campaign in the sum was fully read.
+	// returned campaigns, by up to this many campaigns' delivery. An upper bound
+	// rather than an exact count of rows missing from the sum: fetch_failed also
+	// marks a row whose budget or flight alone was unreadable while its metrics
+	// were read and summed. pacing_unknown=true alone does not count a row (every
+	// fetch_failed row also has it, but most pacing_unknown rows were read in
+	// full). 0 means every campaign in the sum was fully read.
 	UnmeasuredCampaigns *int `form:"unmeasured_campaigns,omitempty" json:"unmeasured_campaigns,omitempty" xml:"unmeasured_campaigns,omitempty"`
 }
 
@@ -6426,10 +6701,12 @@ type LinkedinAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -6483,10 +6760,12 @@ type MetaAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -6540,10 +6819,12 @@ type RedditAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -6597,10 +6878,12 @@ type MicrosoftAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -6654,10 +6937,12 @@ type TwitterAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
+	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
+	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// every campaign visible on the account — with the rule engine's per-row
+	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
+	// The rule engine's findings across the returned campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
@@ -11159,6 +11444,205 @@ func NewGetGoogleAdsAudienceUnauthorized(body *GetGoogleAdsAudienceUnauthorizedR
 	return v
 }
 
+// NewSuggestGoogleAdsGeoTargetsGoogleAdsGeoTargetSuggestionsOK builds a
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint result from a HTTP "OK" response.
+func NewSuggestGoogleAdsGeoTargetsGoogleAdsGeoTargetSuggestionsOK(body *SuggestGoogleAdsGeoTargetsResponseBody) *lfxv2campaignserviceconnections.GoogleAdsGeoTargetSuggestions {
+	v := &lfxv2campaignserviceconnections.GoogleAdsGeoTargetSuggestions{
+		SuggestionCount: *body.SuggestionCount,
+		Truncated:       *body.Truncated,
+	}
+	v.Suggestions = make([]*lfxv2campaignserviceconnections.GoogleAdsGeoTargetSuggestion, len(body.Suggestions))
+	for i, val := range body.Suggestions {
+		if val == nil {
+			v.Suggestions[i] = nil
+			continue
+		}
+		v.Suggestions[i] = unmarshalGoogleAdsGeoTargetSuggestionResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsGeoTargetSuggestion(val)
+	}
+
+	return v
+}
+
+// NewSuggestGoogleAdsGeoTargetsBadRequest builds a
+// lfx-v2-campaign-service-connections service suggest-google-ads-geo-targets
+// endpoint BadRequest error.
+func NewSuggestGoogleAdsGeoTargetsBadRequest(body *SuggestGoogleAdsGeoTargetsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSuggestGoogleAdsGeoTargetsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service suggest-google-ads-geo-targets
+// endpoint ServiceUnavailable error.
+func NewSuggestGoogleAdsGeoTargetsServiceUnavailable(body *SuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSuggestGoogleAdsGeoTargetsInternalServerError builds a
+// lfx-v2-campaign-service-connections service suggest-google-ads-geo-targets
+// endpoint InternalServerError error.
+func NewSuggestGoogleAdsGeoTargetsInternalServerError(body *SuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSuggestGoogleAdsGeoTargetsNotFound builds a
+// lfx-v2-campaign-service-connections service suggest-google-ads-geo-targets
+// endpoint NotFound error.
+func NewSuggestGoogleAdsGeoTargetsNotFound(body *SuggestGoogleAdsGeoTargetsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSuggestGoogleAdsGeoTargetsPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service suggest-google-ads-geo-targets
+// endpoint PayloadTooLarge error.
+func NewSuggestGoogleAdsGeoTargetsPayloadTooLarge(body *SuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSuggestGoogleAdsGeoTargetsUnauthorized builds a
+// lfx-v2-campaign-service-connections service suggest-google-ads-geo-targets
+// endpoint Unauthorized error.
+func NewSuggestGoogleAdsGeoTargetsUnauthorized(body *SuggestGoogleAdsGeoTargetsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewListGoogleAdsUserListsGoogleAdsUserListsOK builds a
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint result from a HTTP "OK" response.
+func NewListGoogleAdsUserListsGoogleAdsUserListsOK(body *ListGoogleAdsUserListsResponseBody) *lfxv2campaignserviceconnections.GoogleAdsUserLists {
+	v := &lfxv2campaignserviceconnections.GoogleAdsUserLists{
+		AccountID:     *body.AccountID,
+		UserListCount: *body.UserListCount,
+		Truncated:     *body.Truncated,
+	}
+	v.UserLists = make([]*lfxv2campaignserviceconnections.GoogleAdsUserList, len(body.UserLists))
+	for i, val := range body.UserLists {
+		if val == nil {
+			v.UserLists[i] = nil
+			continue
+		}
+		v.UserLists[i] = unmarshalGoogleAdsUserListResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsUserList(val)
+	}
+
+	return v
+}
+
+// NewListGoogleAdsUserListsBadRequest builds a
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// endpoint BadRequest error.
+func NewListGoogleAdsUserListsBadRequest(body *ListGoogleAdsUserListsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListGoogleAdsUserListsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// endpoint ServiceUnavailable error.
+func NewListGoogleAdsUserListsServiceUnavailable(body *ListGoogleAdsUserListsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListGoogleAdsUserListsInternalServerError builds a
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// endpoint InternalServerError error.
+func NewListGoogleAdsUserListsInternalServerError(body *ListGoogleAdsUserListsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListGoogleAdsUserListsNotFound builds a
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// endpoint NotFound error.
+func NewListGoogleAdsUserListsNotFound(body *ListGoogleAdsUserListsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListGoogleAdsUserListsPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// endpoint PayloadTooLarge error.
+func NewListGoogleAdsUserListsPayloadTooLarge(body *ListGoogleAdsUserListsPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListGoogleAdsUserListsUnauthorized builds a
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// endpoint Unauthorized error.
+func NewListGoogleAdsUserListsUnauthorized(body *ListGoogleAdsUserListsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewListGoogleAdsUserListsConflict builds a
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// endpoint Conflict error.
+func NewListGoogleAdsUserListsConflict(body *ListGoogleAdsUserListsConflictResponseBody) *lfxv2campaignserviceconnections.UserListsConflictError {
+	v := &lfxv2campaignserviceconnections.UserListsConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewGetMetaAdsAudienceMetaAdsAudienceOK builds a
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint result from a HTTP "OK" response.
@@ -13214,6 +13698,19 @@ func NewMonitorGoogleAdsAccountAccountMonitorOK(body *MonitorGoogleAdsAccountRes
 	return v
 }
 
+// NewMonitorGoogleAdsAccountConflict builds a
+// lfx-v2-campaign-service-connections service monitor-google-ads-account
+// endpoint Conflict error.
+func NewMonitorGoogleAdsAccountConflict(body *MonitorGoogleAdsAccountConflictResponseBody) *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError {
+	v := &lfxv2campaignserviceconnections.AccountMonitorScopeConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  *body.Reason,
+	}
+
+	return v
+}
+
 // NewMonitorGoogleAdsAccountBadRequest builds a
 // lfx-v2-campaign-service-connections service monitor-google-ads-account
 // endpoint BadRequest error.
@@ -13428,6 +13925,19 @@ func NewMonitorMetaAdsAccountAccountMonitorOK(body *MonitorMetaAdsAccountRespons
 	return v
 }
 
+// NewMonitorMetaAdsAccountConflict builds a
+// lfx-v2-campaign-service-connections service monitor-meta-ads-account
+// endpoint Conflict error.
+func NewMonitorMetaAdsAccountConflict(body *MonitorMetaAdsAccountConflictResponseBody) *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError {
+	v := &lfxv2campaignserviceconnections.AccountMonitorScopeConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  *body.Reason,
+	}
+
+	return v
+}
+
 // NewMonitorMetaAdsAccountBadRequest builds a
 // lfx-v2-campaign-service-connections service monitor-meta-ads-account
 // endpoint BadRequest error.
@@ -13531,6 +14041,19 @@ func NewMonitorRedditAdsAccountAccountMonitorOK(body *MonitorRedditAdsAccountRes
 		v.ActionItems[i] = unmarshalAccountMonitorActionItemResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorActionItem(val)
 	}
 	v.Totals = unmarshalAccountMonitorTotalsResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorTotals(body.Totals)
+
+	return v
+}
+
+// NewMonitorRedditAdsAccountConflict builds a
+// lfx-v2-campaign-service-connections service monitor-reddit-ads-account
+// endpoint Conflict error.
+func NewMonitorRedditAdsAccountConflict(body *MonitorRedditAdsAccountConflictResponseBody) *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError {
+	v := &lfxv2campaignserviceconnections.AccountMonitorScopeConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  *body.Reason,
+	}
 
 	return v
 }
@@ -14688,6 +15211,53 @@ func ValidateGetGoogleAdsAudienceResponseBody(body *GetGoogleAdsAudienceResponse
 	return
 }
 
+// ValidateSuggestGoogleAdsGeoTargetsResponseBody runs the validations defined
+// on SuggestGoogleAdsGeoTargetsResponseBody
+func ValidateSuggestGoogleAdsGeoTargetsResponseBody(body *SuggestGoogleAdsGeoTargetsResponseBody) (err error) {
+	if body.Suggestions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("suggestions", "body"))
+	}
+	if body.SuggestionCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("suggestion_count", "body"))
+	}
+	if body.Truncated == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("truncated", "body"))
+	}
+	for _, e := range body.Suggestions {
+		if e != nil {
+			if err2 := validateGoogleAdsGeoTargetSuggestionResponseBody(e, "body.suggestions[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsResponseBody runs the validations defined on
+// ListGoogleAdsUserListsResponseBody
+func ValidateListGoogleAdsUserListsResponseBody(body *ListGoogleAdsUserListsResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.UserLists == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("user_lists", "body"))
+	}
+	if body.UserListCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("user_list_count", "body"))
+	}
+	if body.Truncated == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("truncated", "body"))
+	}
+	for _, e := range body.UserLists {
+		if e != nil {
+			if err2 := validateGoogleAdsUserListResponseBody(e, "body.user_lists[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
 // ValidateGetMetaAdsAudienceResponseBody runs the validations defined on
 // GetMetaAdsAudienceResponseBody
 func ValidateGetMetaAdsAudienceResponseBody(body *GetMetaAdsAudienceResponseBody) (err error) {
@@ -15567,8 +16137,8 @@ func ValidateCreateGoogleAdsConflictResponseBody(body *CreateGoogleAdsConflictRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -16028,8 +16598,8 @@ func ValidateCreateLinkedinAdsConflictResponseBody(body *CreateLinkedinAdsConfli
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -16490,8 +17060,8 @@ func ValidateCreateMetaAdsConflictResponseBody(body *CreateMetaAdsConflictRespon
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -16951,8 +17521,8 @@ func ValidateCreateRedditAdsConflictResponseBody(body *CreateRedditAdsConflictRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -17412,8 +17982,8 @@ func ValidateCreateTwitterAdsConflictResponseBody(body *CreateTwitterAdsConflict
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -17873,8 +18443,8 @@ func ValidateCreateMicrosoftAdsConflictResponseBody(body *CreateMicrosoftAdsConf
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -18336,8 +18906,8 @@ func ValidateCreateHubspotConflictResponseBody(body *CreateHubspotConflictRespon
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -18869,8 +19439,8 @@ func ValidateGetGoogleAdsKeywordsConflictResponseBody(body *GetGoogleAdsKeywords
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -18958,8 +19528,8 @@ func ValidateGetGoogleAdsAudienceConflictResponseBody(body *GetGoogleAdsAudience
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -19025,6 +19595,164 @@ func ValidateGetGoogleAdsAudienceUnauthorizedResponseBody(body *GetGoogleAdsAudi
 	return
 }
 
+// ValidateSuggestGoogleAdsGeoTargetsBadRequestResponseBody runs the
+// validations defined on SuggestGoogleAdsGeoTargetsBadRequestResponseBody
+func ValidateSuggestGoogleAdsGeoTargetsBadRequestResponseBody(body *SuggestGoogleAdsGeoTargetsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody runs the
+// validations defined on
+// SuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody
+func ValidateSuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody(body *SuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody runs the
+// validations defined on
+// SuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody
+func ValidateSuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody(body *SuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSuggestGoogleAdsGeoTargetsNotFoundResponseBody runs the validations
+// defined on SuggestGoogleAdsGeoTargetsNotFoundResponseBody
+func ValidateSuggestGoogleAdsGeoTargetsNotFoundResponseBody(body *SuggestGoogleAdsGeoTargetsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody runs the
+// validations defined on SuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody
+func ValidateSuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody(body *SuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSuggestGoogleAdsGeoTargetsUnauthorizedResponseBody runs the
+// validations defined on SuggestGoogleAdsGeoTargetsUnauthorizedResponseBody
+func ValidateSuggestGoogleAdsGeoTargetsUnauthorizedResponseBody(body *SuggestGoogleAdsGeoTargetsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsBadRequestResponseBody runs the validations
+// defined on ListGoogleAdsUserListsBadRequestResponseBody
+func ValidateListGoogleAdsUserListsBadRequestResponseBody(body *ListGoogleAdsUserListsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsServiceUnavailableResponseBody runs the
+// validations defined on ListGoogleAdsUserListsServiceUnavailableResponseBody
+func ValidateListGoogleAdsUserListsServiceUnavailableResponseBody(body *ListGoogleAdsUserListsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsInternalServerErrorResponseBody runs the
+// validations defined on ListGoogleAdsUserListsInternalServerErrorResponseBody
+func ValidateListGoogleAdsUserListsInternalServerErrorResponseBody(body *ListGoogleAdsUserListsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsNotFoundResponseBody runs the validations
+// defined on ListGoogleAdsUserListsNotFoundResponseBody
+func ValidateListGoogleAdsUserListsNotFoundResponseBody(body *ListGoogleAdsUserListsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsPayloadTooLargeResponseBody runs the
+// validations defined on ListGoogleAdsUserListsPayloadTooLargeResponseBody
+func ValidateListGoogleAdsUserListsPayloadTooLargeResponseBody(body *ListGoogleAdsUserListsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsUnauthorizedResponseBody runs the validations
+// defined on ListGoogleAdsUserListsUnauthorizedResponseBody
+func ValidateListGoogleAdsUserListsUnauthorizedResponseBody(body *ListGoogleAdsUserListsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsConflictResponseBody runs the validations
+// defined on ListGoogleAdsUserListsConflictResponseBody
+func ValidateListGoogleAdsUserListsConflictResponseBody(body *ListGoogleAdsUserListsConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMetaAdsAudienceBadRequestResponseBody runs the validations
 // defined on GetMetaAdsAudienceBadRequestResponseBody
 func ValidateGetMetaAdsAudienceBadRequestResponseBody(body *GetMetaAdsAudienceBadRequestResponseBody) (err error) {
@@ -19047,8 +19775,8 @@ func ValidateGetMetaAdsAudienceConflictResponseBody(body *GetMetaAdsAudienceConf
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -19136,8 +19864,8 @@ func ValidateGetTwitterAdsAudienceConflictResponseBody(body *GetTwitterAdsAudien
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -19225,8 +19953,8 @@ func ValidateGetLinkedinAdsAudienceConflictResponseBody(body *GetLinkedinAdsAudi
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -19314,8 +20042,8 @@ func ValidateGetMicrosoftAdsKeywordsConflictResponseBody(body *GetMicrosoftAdsKe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -19403,8 +20131,8 @@ func ValidateGetMicrosoftAdsAudienceConflictResponseBody(body *GetMicrosoftAdsAu
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -19492,8 +20220,8 @@ func ValidateGetRedditAdsAudienceConflictResponseBody(body *GetRedditAdsAudience
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -19581,8 +20309,8 @@ func ValidateGetRedditAdsKeywordsConflictResponseBody(body *GetRedditAdsKeywords
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -20665,6 +21393,26 @@ func ValidateCreateHubspotCampaignUnauthorizedResponseBody(body *CreateHubspotCa
 	return
 }
 
+// ValidateMonitorGoogleAdsAccountConflictResponseBody runs the validations
+// defined on MonitorGoogleAdsAccountConflictResponseBody
+func ValidateMonitorGoogleAdsAccountConflictResponseBody(body *MonitorGoogleAdsAccountConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("reason", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "campaign_account_mismatch" || *body.Reason == "campaign_scope_invalid") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"campaign_account_mismatch", "campaign_scope_invalid"}))
+		}
+	}
+	return
+}
+
 // ValidateMonitorGoogleAdsAccountBadRequestResponseBody runs the validations
 // defined on MonitorGoogleAdsAccountBadRequestResponseBody
 func ValidateMonitorGoogleAdsAccountBadRequestResponseBody(body *MonitorGoogleAdsAccountBadRequestResponseBody) (err error) {
@@ -20811,6 +21559,26 @@ func ValidateMonitorLinkedinAdsAccountUnauthorizedResponseBody(body *MonitorLink
 	return
 }
 
+// ValidateMonitorMetaAdsAccountConflictResponseBody runs the validations
+// defined on MonitorMetaAdsAccountConflictResponseBody
+func ValidateMonitorMetaAdsAccountConflictResponseBody(body *MonitorMetaAdsAccountConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("reason", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "campaign_account_mismatch" || *body.Reason == "campaign_scope_invalid") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"campaign_account_mismatch", "campaign_scope_invalid"}))
+		}
+	}
+	return
+}
+
 // ValidateMonitorMetaAdsAccountBadRequestResponseBody runs the validations
 // defined on MonitorMetaAdsAccountBadRequestResponseBody
 func ValidateMonitorMetaAdsAccountBadRequestResponseBody(body *MonitorMetaAdsAccountBadRequestResponseBody) (err error) {
@@ -20879,6 +21647,26 @@ func ValidateMonitorMetaAdsAccountUnauthorizedResponseBody(body *MonitorMetaAdsA
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorRedditAdsAccountConflictResponseBody runs the validations
+// defined on MonitorRedditAdsAccountConflictResponseBody
+func ValidateMonitorRedditAdsAccountConflictResponseBody(body *MonitorRedditAdsAccountConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("reason", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "campaign_account_mismatch" || *body.Reason == "campaign_scope_invalid") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"campaign_account_mismatch", "campaign_scope_invalid"}))
+		}
 	}
 	return
 }
@@ -21042,8 +21830,8 @@ func ValidateMonitorTwitterAdsAccountConflictResponseBody(body *MonitorTwitterAd
 		err = goa.MergeErrors(err, goa.MissingFieldError("reason", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported" || *body.Reason == "campaign_account_mismatch" || *body.Reason == "campaign_scope_invalid") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"account_too_many_active_campaigns", "account_timezone_unsupported", "campaign_account_mismatch", "campaign_scope_invalid"}))
 		}
 	}
 	return
@@ -21399,6 +22187,115 @@ func validateGoogleAdsAudienceBucketResponseBody(body *GoogleAdsAudienceBucketRe
 		if !(*body.Dimension == "age" || *body.Dimension == "gender" || *body.Dimension == "device") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".dimension", *body.Dimension, []any{"age", "gender", "device"}))
 		}
+	}
+	return
+}
+
+// ValidateGoogleAdsGeoTargetSuggestionResponseBody runs the validations
+// defined on google-ads-geo-target-suggestion
+func ValidateGoogleAdsGeoTargetSuggestionResponseBody(body *GoogleAdsGeoTargetSuggestionResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.CanonicalName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("canonical_name", "body"))
+	}
+	if body.CountryCode == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("country_code", "body"))
+	}
+	if body.TargetType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("target_type", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.id", *body.ID, "^[1-9][0-9]{0,18}$"))
+	}
+	return
+}
+
+// validateGoogleAdsGeoTargetSuggestionResponseBody checks
+// google-ads-geo-target-suggestion and reports errors using the path supplied
+// by its caller
+func validateGoogleAdsGeoTargetSuggestionResponseBody(body *GoogleAdsGeoTargetSuggestionResponseBody, path string) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	if body.CanonicalName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("canonical_name", path))
+	}
+	if body.CountryCode == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("country_code", path))
+	}
+	if body.TargetType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("target_type", path))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", path))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".id", *body.ID, "^[1-9][0-9]{0,18}$"))
+	}
+	return
+}
+
+// ValidateGoogleAdsUserListResponseBody runs the validations defined on
+// google-ads-user-list
+func ValidateGoogleAdsUserListResponseBody(body *GoogleAdsUserListResponseBody) (err error) {
+	if body.ResourceName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource_name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+	}
+	if body.MembershipStatus == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("membership_status", "body"))
+	}
+	if body.EligibleForSearch == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("eligible_for_search", "body"))
+	}
+	if body.ResourceName != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.resource_name", *body.ResourceName, "^customers/[0-9]+/userLists/[1-9][0-9]{0,18}$"))
+	}
+	return
+}
+
+// validateGoogleAdsUserListResponseBody checks google-ads-user-list and
+// reports errors using the path supplied by its caller
+func validateGoogleAdsUserListResponseBody(body *GoogleAdsUserListResponseBody, path string) (err error) {
+	if body.ResourceName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource_name", path))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", path))
+	}
+	if body.MembershipStatus == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("membership_status", path))
+	}
+	if body.EligibleForSearch == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("eligible_for_search", path))
+	}
+	if body.ResourceName != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".resource_name", *body.ResourceName, "^customers/[0-9]+/userLists/[1-9][0-9]{0,18}$"))
 	}
 	return
 }

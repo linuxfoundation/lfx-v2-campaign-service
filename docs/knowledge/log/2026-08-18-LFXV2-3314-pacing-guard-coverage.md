@@ -1,6 +1,6 @@
 # 2026-08-18 — LFXV2-3314 two pacing guards had no binding test
 
-**Tests** — the inverted/zero-length flight guard and `minTime`'s clamp were both unreachable
+**Verification** — the inverted/zero-length flight guard and `minTime`'s clamp were both unreachable
 from the suite. Deleting the first made no test fail.
 
 **The table cases meant to reach the inverted-flight guard bound a different one.** Both used a

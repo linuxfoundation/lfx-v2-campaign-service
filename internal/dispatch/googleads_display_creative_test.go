@@ -13,10 +13,10 @@ import (
 
 func fullDisplayCreativeConfig() *googleAdsDisplayCreativeConfig {
 	return &googleAdsDisplayCreativeConfig{
-		MarketingImages:       []string{signedCreativeURL},
-		SquareMarketingImages: []string{"https://cdn.example.org/s.png?sig=square-secret"},
-		LogoImages:            []string{"https://cdn.example.org/l.png?sig=logo-secret"},
-		SquareLogoImages:      []string{"https://cdn.example.org/sl.png?sig=square-logo-secret"},
+		MarketingImages:       googleAdsImageRefsFromURLs([]string{signedCreativeURL}),
+		SquareMarketingImages: googleAdsImageRefsFromURLs([]string{"https://cdn.example.org/s.png?sig=square-secret"}),
+		LogoImages:            googleAdsImageRefsFromURLs([]string{"https://cdn.example.org/l.png?sig=logo-secret"}),
+		SquareLogoImages:      googleAdsImageRefsFromURLs([]string{"https://cdn.example.org/sl.png?sig=square-logo-secret"}),
 		Headlines:             []string{"Join us at KubeCon"},
 		LongHeadline:          "KubeCon + CloudNativeCon Europe 2026",
 		Descriptions:          []string{"Talks, workshops and hallway track."},
@@ -36,7 +36,7 @@ func TestGoogleAdsSnapshotConfig_SanitizesEveryDisplayURLList(t *testing.T) {
 	if snapshot.DisplayCreative == nil {
 		t.Fatal("the snapshot dropped the display creative entirely")
 	}
-	lists := map[string][]string{
+	lists := map[string]googleAdsImageRefs{
 		"marketingImages":       snapshot.DisplayCreative.MarketingImages,
 		"squareMarketingImages": snapshot.DisplayCreative.SquareMarketingImages,
 		"logoImages":            snapshot.DisplayCreative.LogoImages,
@@ -47,11 +47,11 @@ func TestGoogleAdsSnapshotConfig_SanitizesEveryDisplayURLList(t *testing.T) {
 			t.Errorf("%s: snapshot has %d entries, want 1", name, len(got))
 			continue
 		}
-		if strings.Contains(got[0], "secret") || strings.Contains(got[0], "s3cr3t") {
-			t.Errorf("%s: snapshot still carries the signing query: %q", name, got[0])
+		if strings.Contains(got[0].URL, "secret") || strings.Contains(got[0].URL, "s3cr3t") {
+			t.Errorf("%s: snapshot still carries the signing query: %q", name, got[0].URL)
 		}
-		if !strings.HasPrefix(got[0], "https://cdn.example.org") {
-			t.Errorf("%s: snapshot lost the host: %q", name, got[0])
+		if !strings.HasPrefix(got[0].URL, "https://cdn.example.org") {
+			t.Errorf("%s: snapshot lost the host: %q", name, got[0].URL)
 		}
 	}
 }
@@ -63,13 +63,13 @@ func TestGoogleAdsSnapshotConfig_DoesNotMutateTheCallersDisplayCreative(t *testi
 	cfg := googleAdsConfig{DisplayCreative: creative}
 
 	snapshot := googleAdsSnapshotConfig(cfg)
-	if creative.MarketingImages[0] != signedCreativeURL {
-		t.Errorf("the caller's creative was mutated to %q; the signed url must still be fetchable", creative.MarketingImages[0])
+	if creative.MarketingImages[0].URL != signedCreativeURL {
+		t.Errorf("the caller's creative was mutated to %q; the signed url must still be fetchable", creative.MarketingImages[0].URL)
 	}
 	if snapshot.DisplayCreative == creative {
 		t.Error("the snapshot points at the caller's creative; a later edit to either would change both")
 	}
-	if strings.Contains(snapshot.DisplayCreative.MarketingImages[0], "s3cr3t") {
+	if strings.Contains(snapshot.DisplayCreative.MarketingImages[0].URL, "s3cr3t") {
 		t.Error("the snapshot creative was not sanitized")
 	}
 }
@@ -79,14 +79,14 @@ func TestGoogleAdsSnapshotConfig_DoesNotMutateTheCallersDisplayCreative(t *testi
 // added to prevent, one channel later.
 func TestGoogleAdsSnapshotConfig_SanitizesTheDisplayCreativeAlone(t *testing.T) {
 	cfg := googleAdsConfig{DisplayCreative: &googleAdsDisplayCreativeConfig{
-		MarketingImages: []string{signedCreativeURL},
+		MarketingImages: googleAdsImageRefsFromURLs([]string{signedCreativeURL}),
 	}}
 	snapshot := googleAdsSnapshotConfig(cfg)
 	if snapshot.DisplayCreative == nil {
 		t.Fatal("a display creative with no sitelinks and no sibling creative was dropped")
 	}
-	if strings.Contains(snapshot.DisplayCreative.MarketingImages[0], "s3cr3t") {
-		t.Errorf("not sanitized: %q", snapshot.DisplayCreative.MarketingImages[0])
+	if strings.Contains(snapshot.DisplayCreative.MarketingImages[0].URL, "s3cr3t") {
+		t.Errorf("not sanitized: %q", snapshot.DisplayCreative.MarketingImages[0].URL)
 	}
 }
 
@@ -102,10 +102,10 @@ func TestGoogleAdsSnapshotConfig_NoDisplayCreativeStaysAbsent(t *testing.T) {
 // borrowed a sibling's list would still compile if it took the first element.
 func TestGoogleAdsDisplayCreative_MapsEachFieldToItsOwnSlot(t *testing.T) {
 	in := &googleAdsDisplayCreativeConfig{
-		MarketingImages:       []string{"m"},
-		SquareMarketingImages: []string{"s"},
-		LogoImages:            []string{"l"},
-		SquareLogoImages:      []string{"sl"},
+		MarketingImages:       googleAdsImageRefsFromURLs([]string{"m"}),
+		SquareMarketingImages: googleAdsImageRefsFromURLs([]string{"s"}),
+		LogoImages:            googleAdsImageRefsFromURLs([]string{"l"}),
+		SquareLogoImages:      googleAdsImageRefsFromURLs([]string{"sl"}),
 		Headlines:             []string{"h"},
 		LongHeadline:          "lh",
 		Descriptions:          []string{"d"},

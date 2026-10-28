@@ -655,22 +655,36 @@ func TestLiveMigrationsGoDownAndUpAgain(t *testing.T) {
 	// stepping down to N" against "schema after migrating up to N" is the strong form:
 	// it pins the down file as the exact inverse of its up, rather than merely asserting
 	// it did not error. See schemaAtVersion for why the upward construction is required.
-	for version := topVersion; version > 0; version-- {
+	//
+	// The step's TARGET is the version the migrator reports after it, not version-1: a
+	// transitional gap that allowedVersionGaps excuses (versions claimed by an unmerged sibling
+	// PR) has no files, so version-1 can name a migration that does not exist in this tree.
+	for version := topVersion; version > 0; {
 		if err := m.Steps(-1); err != nil {
 			t.Fatalf("Down one step from version %d: %s — a down migration that cannot "+
 				"run is a rollback that fails during an incident, and nothing else in the "+
 				"suite executes these files", version, dbtest.SafeDSNErrFor(dsn, err))
 		}
+		var target uint
+		switch v, _, verr := m.Version(); {
+		case verr == migrate.ErrNilVersion:
+			target = 0
+		case verr != nil:
+			t.Fatalf("read version after stepping down from %d: %s", version, dbtest.SafeDSNErrFor(dsn, verr))
+		default:
+			target = v
+		}
 
-		// What the schema SHOULD look like now: the up set applied through version-1.
-		want := schemaAtVersion(ctx, t, version-1)
+		// What the schema SHOULD look like now: the up set applied through the target.
+		want := schemaAtVersion(ctx, t, target)
 		got := schemaObjects(ctx, t, dsn)
 		if diff := objectDiff(want, got); diff != "" {
 			t.Fatalf("stepping DOWN from version %d did not restore the schema that "+
 				"migrating UP to version %d produces:\n%s\n"+
 				"a down file must be the inverse of its up; an incomplete one makes a "+
-				"rollback leave objects behind", version, version-1, diff)
+				"rollback leave objects behind", version, target, diff)
 		}
+		version = target
 	}
 	if _, _, err := m.Version(); err != migrate.ErrNilVersion {
 		t.Fatalf("after Down the version is not nil (err = %s); the schema did not return "+

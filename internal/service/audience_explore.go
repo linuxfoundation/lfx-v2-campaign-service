@@ -47,7 +47,7 @@ type AudienceExplorer interface {
 	Capabilities(ctx context.Context, projectID string) audience.ExploreCapabilities
 	Discover(ctx context.Context, projectID, eventURL string) (*audience.DiscoveryOutcome, error)
 	SearchLists(ctx context.Context, projectID, query string) ([]audience.ListRow, error)
-	SuppressionLists(ctx context.Context, projectID, brandShort, eventName string) ([]audience.SuppressionRow, error)
+	SuppressionLists(ctx context.Context, projectID, brandShort, eventName, registrantsEvent string) ([]audience.SuppressionRow, *audience.ListRow, error)
 	LastSent(ctx context.Context, projectID, eventName, brandShort string, limit int) ([]audience.LastSentEmail, error)
 	ExistingMasterLists(ctx context.Context, projectID, eventName, brandShort string) ([]audience.ListRow, error)
 	PreviewCount(ctx context.Context, projectID string, listIDs []string) (audience.PreviewCount, error)
@@ -57,9 +57,10 @@ type AudienceExplorer interface {
 	// flatten — see composeErr.
 	ComposeMaster(ctx context.Context, projectID string, in audience.ComposeInput) (*audience.ComposeOutcome, error)
 	// AttachExisting reads existing lists back from the portal and returns them as an
-	// outcome to record. It creates nothing in HubSpot. includeIDs are the lists the send
+	// outcome to record. Its only creates are the project's standing standard suppression
+	// list and the edition's current-registrants list, both reused by name. includeIDs are the lists the send
 	// goes to; the first is reported as the outcome's Master, and every one is verified.
-	AttachExisting(ctx context.Context, projectID string, includeIDs, suppressionIDs []string) (*audience.ComposeOutcome, error)
+	AttachExisting(ctx context.Context, projectID string, includeIDs, suppressionIDs []string, registrantsEvent string) (*audience.ComposeOutcome, error)
 	RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool, sendSuppressionIDs []string) (*audience.QaOutcome, error)
 	// InterpretCustom asks the model for draft criteria; it creates nothing.
 	InterpretCustom(ctx context.Context, projectID, request, eventURL string, answers []audience.CustomAnswer) (*audience.CustomInterpretOutcome, error)
@@ -269,13 +270,13 @@ func (s *AudienceExploreService) GetAudienceSuppressionLists(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	rows, serr := explorer.SuppressionLists(ctx, p.ProjectID, derefStr(p.BrandShort), derefStr(p.EventName))
+	rows, standing, serr := explorer.SuppressionLists(ctx, p.ProjectID, derefStr(p.BrandShort), derefStr(p.EventName), derefStr(p.RegistrantsEvent))
 	if serr != nil {
 		return nil, audienceExploreErr(ctx, "resolve suppression lists", p.ProjectID, serr)
 	}
 	res := &explore.GetAudienceSuppressionListsResult{Lists: make([]*explore.AudienceSuppressionList, 0, len(rows))}
 	for _, r := range rows {
-		res.Lists = append(res.Lists, &explore.AudienceSuppressionList{
+		row := &explore.AudienceSuppressionList{
 			Key:        r.Key,
 			Label:      r.Label,
 			ListID:     r.ListID,
@@ -283,7 +284,14 @@ func (s *AudienceExploreService) GetAudienceSuppressionLists(ctx context.Context
 			Size:       r.Size,
 			Category:   r.Category,
 			HubspotURL: r.HubSpotURL,
-		})
+		}
+		if r.WillCreate {
+			row.WillCreate = &r.WillCreate
+		}
+		res.Lists = append(res.Lists, row)
+	}
+	if standing != nil {
+		res.StandardList = composedListResult(&audience.ComposedList{ListRow: *standing})
 	}
 	return res, nil
 }
@@ -410,14 +418,17 @@ func (s *AudienceExploreService) ComposeAudienceMaster(ctx context.Context, p *e
 		EventName:          derefStr(p.Compose.EventName),
 		EventDates:         p.Compose.EventDates,
 		RecordUnderBriefID: briefID,
+
+		CurrentRegistrantsEvent: strings.TrimSpace(derefStr(p.Compose.CurrentRegistrantsEvent)),
 	}
 	outcome, cerr := explorer.ComposeMaster(ctx, p.ProjectID, in)
 	if cerr != nil {
 		return nil, composeErr(ctx, p.ProjectID, cerr)
 	}
 	res := &explore.AudienceComposeMasterResult{
-		Master:        composedListResult(&outcome.Master),
-		SourceListIds: outcome.SourceListIDs,
+		Master:             composedListResult(&outcome.Master),
+		SourceListIds:      outcome.SourceListIDs,
+		SuppressionListIds: composedSuppressionIDs(outcome),
 	}
 	if outcome.Suppression != nil {
 		res.Suppression = composedListResult(outcome.Suppression)
@@ -432,10 +443,15 @@ func (s *AudienceExploreService) ComposeAudienceMaster(ctx context.Context, p *e
 		// The lists exist and are usable; only the attachment failed. That is a partial,
 		// not a 500: a 500 invites the retry that would create a second master, and the
 		// UI branches on the partial type to suppress exactly that affordance.
+		//
+		// No Suppression: the master excludes the project's STANDING standard list, shared by
+		// every audience in the project and reused by any repeat, so there is nothing of it to
+		// reconcile. The field's legacy meaning is an orphaned per-compose list, and a client
+		// built for that tells the operator to delete it -- which here would strip suppressions
+		// from every other audience.
 		return nil, composeErr(ctx, p.ProjectID, &audience.ComposePartialError{
-			Master:      &outcome.Master,
-			Suppression: suppressionOrZero(outcome.Suppression),
-			Err:         rerr,
+			Master: &outcome.Master,
+			Err:    rerr,
 		})
 	}
 	res.Recorded = true
@@ -450,8 +466,10 @@ func (s *AudienceExploreService) ComposeAudienceMaster(ctx context.Context, p *e
 
 // AttachExistingAudience records lists that already exist as the brief's built audience.
 //
-// Nothing is created in HubSpot, so unlike compose there is no partial state: every failure
-// here, including the record itself, is safe to retry.
+// The only lists it may create are the project's standing standard suppression list and the
+// edition's current-registrants list, both found by name and reused on repeat, so unlike
+// compose there is no partial state: every failure here, including the record itself, is safe
+// to retry.
 func (s *AudienceExploreService) AttachExistingAudience(ctx context.Context, p *explore.AttachExistingAudiencePayload) (*explore.AudienceAttachExistingResult, error) {
 	explorer, err := s.ready()
 	if err != nil {
@@ -476,7 +494,8 @@ func (s *AudienceExploreService) AttachExistingAudience(ctx context.Context, p *
 		return nil, composeBriefErr(ctx, p.ProjectID, briefID, berr)
 	}
 
-	outcome, aerr := explorer.AttachExisting(ctx, p.ProjectID, includeIDs, p.Attach.SuppressionListIds)
+	outcome, aerr := explorer.AttachExisting(ctx, p.ProjectID, includeIDs, p.Attach.SuppressionListIds,
+		strings.TrimSpace(derefStr(p.Attach.CurrentRegistrantsEvent)))
 	if aerr != nil {
 		return nil, composeErr(ctx, p.ProjectID, aerr)
 	}
@@ -495,13 +514,14 @@ func (s *AudienceExploreService) AttachExistingAudience(ctx context.Context, p *
 			"project_id", p.ProjectID, "brief_id", briefID, "error", rerr)
 		return nil, &explore.ConnServiceUnavailableError{
 			Code:    "503",
-			Message: "the lists were verified but the audience could not be saved; nothing was created in HubSpot, so it is safe to retry",
+			Message: "the lists were verified but the audience could not be saved; it is safe to retry, and a standing suppression list already created is reused rather than duplicated",
 		}
 	}
 	recordedIDs := unmarshalStrings(recorded.IncludeListIDs)
 	return &explore.AudienceAttachExistingResult{
 		Master:             composedListResult(&outcome.Master),
 		SuppressionListIds: unmarshalStrings(recorded.SuppressionListIDs),
+		Suppression:        composedListResult(outcome.Suppression),
 		IncludeListIds:     recordedIDs,
 		Audience: &explore.AudienceComposeRecordedAudience{
 			ID:                   recorded.ID,
@@ -613,15 +633,6 @@ func composeBriefErr(ctx context.Context, projectID, briefID string, err error) 
 		Code:    "503",
 		Message: "the brief could not be read, so a composed master cannot be attached to it; please retry",
 	}
-}
-
-// suppressionOrZero flattens the optional suppression for ComposePartialError, whose
-// Suppression field is a value rather than a pointer.
-func suppressionOrZero(s *audience.ComposedList) audience.ComposedList {
-	if s == nil {
-		return audience.ComposedList{}
-	}
-	return *s
 }
 
 // recordComposedAudience writes the composed master as the brief's built audience.
@@ -748,6 +759,30 @@ func audienceExploreErr(ctx context.Context, op, projectID string, err error) er
 	switch {
 	case errors.Is(err, audience.ErrListNotFound):
 		return &explore.NotFoundError{Code: "404", Message: "no list in this project's HubSpot portal matches that reference"}
+	case errors.Is(err, audience.ErrStandingListConflict):
+		// 409, not 500: a list in the portal holds the name of one of the standing suppression
+		// lists but is not one the service can reuse. Nothing is wrong with the service and a
+		// retry hits the same list; an operator must rename or remove it. The message names
+		// it, from this service's own typed error -- never upstream text.
+		var conflict *audience.StandingListConflictError
+		msg := "a list in the HubSpot portal already holds a standing suppression list's name but cannot be reused; rename or remove it in HubSpot"
+		if errors.As(err, &conflict) {
+			msg = conflict.Error()
+		}
+		return &explore.ConflictError{Code: "409", Message: msg}
+	case errors.As(err, new(*audience.FieldError)):
+		// Above the generic ErrInvalidRequest arm for the same reason as the overlap arm: the
+		// fix is one named field, and the generic text names the event URL instead.
+		var field *audience.FieldError
+		errors.As(err, &field)
+		return &explore.BadRequestError{Code: "400", Message: field.Error()}
+	case errors.As(err, new(*audience.ExclusionOverlapError)):
+		// Above the generic ErrInvalidRequest arm it also matches: that arm's message points at
+		// the event URL or list reference, and the fix here is a specific list, which only this
+		// service's own typed error names.
+		var overlap *audience.ExclusionOverlapError
+		errors.As(err, &overlap)
+		return &explore.BadRequestError{Code: "400", Message: overlap.Error()}
 	case errors.Is(err, audience.ErrInvalidRequest), errors.Is(err, audience.ErrEventNameUnresolved):
 		// 400, not 500: nothing is wrong with the service, and the fix is a different
 		// request — a resolvable list reference, or an event URL whose page declares a
@@ -866,12 +901,18 @@ func composeErr(ctx context.Context, projectID string, err error) error {
 	return audienceExploreErr(ctx, "compose audience master", projectID, err)
 }
 
-// composePartialMessage distinguishes a CONFIRMED suppression orphan (the master
-// create definitely failed) from an UNCONFIRMED master create, and from an
-// UNCONFIRMED suppression create (HubSpot may have created either despite the
-// error) — the remedy differs: the confirmed case names one list an operator must
-// reconcile, the unconfirmed cases tell them to search by name before assuming
-// nothing happened.
+// composePartialMessage tells the operator what to reconcile for each partial shape.
+//
+// Compose creates no suppression list of its own any more: it excludes the project's standing
+// lists, which are found by name and reused on any repeat, so the shapes a current deployment
+// produces are the record-failed one (Master alone: the shared standing list is deliberately not
+// reported, see ComposeAudienceMaster) and an unconfirmed master (MasterName alone). The shapes
+// that carry a suppression are legacy: they stay in the contract and keep a message, without the
+// "combined" list they used to name.
+//
+// A repeat compose is NOT a safe remedy for a confirmed master: a master created under its
+// derived name is not found again by a repeat, which takes the fingerprinted name and creates a
+// second master beside it (resolveComposeNames). Attaching the existing master is.
 func composePartialMessage(partial *audience.ComposePartialError) string {
 	hasSuppression := partial.Suppression.ListID != "" || partial.Suppression.Name != ""
 	switch {
@@ -880,20 +921,25 @@ func composePartialMessage(partial *audience.ComposePartialError) string {
 		// suppression, so every arm below would describe it wrongly as a create that did
 		// not finish. Nothing needs reconciling in HubSpot here — the lists are correct
 		// and complete; only the link to the campaign is missing.
-		return "the master list and its suppression list were created, but attaching them to the campaign failed — " +
-			"attach the master list to the campaign's audience manually; do not compose again, the lists already exist"
+		return "the master list was created, but attaching it to the campaign failed — " +
+			"attach the master list to the campaign's audience manually; composing again can create a second master list, " +
+			"while the suppression lists it excludes are standing lists that any repeat reuses"
 	case partial.SuppressionUnconfirmed:
-		return "the combined suppression list creation is unconfirmed (it may have been created) — " +
+		return "the suppression list creation is unconfirmed (it may have been created) — " +
 			"search HubSpot for it by name before composing again; do not simply retry"
 	case partial.MasterName != "" && hasSuppression:
-		return "the combined suppression list was created and the master list creation is unconfirmed " +
+		return "the suppression list was created and the master list creation is unconfirmed " +
 			"(it may have been created) — verify both in HubSpot before composing again; do not simply retry"
 	case partial.MasterName != "":
 		return "the master list creation is unconfirmed (it may have been created) — " +
 			"search HubSpot for it by name before composing again; do not simply retry"
+	case hasSuppression:
+		return "the suppression list was created but the master list was not — " +
+			"check the suppression list in HubSpot before composing again; do not simply retry"
 	default:
-		return "the combined suppression list was created but the master list was not — " +
-			"reconcile the suppression list in HubSpot before composing again; do not simply retry"
+		// No production path builds a partial with nothing set; kept so a future one still
+		// reads as "check the portal" rather than as a clean failure.
+		return "compose may have left lists in HubSpot — check the portal before composing again; do not simply retry"
 	}
 }
 
@@ -934,10 +980,11 @@ func listBriefResults(briefs []audience.ListBrief) []*explore.AudienceListBrief 
 	out := make([]*explore.AudienceListBrief, 0, len(briefs))
 	for _, b := range briefs {
 		row := &explore.AudienceListBrief{
-			ListID:  b.ListID,
-			Name:    b.Name,
-			Size:    b.Size,
-			Missing: b.Missing,
+			ListID:     b.ListID,
+			Name:       b.Name,
+			Size:       b.Size,
+			Missing:    b.Missing,
+			Unresolved: b.Unresolved,
 		}
 		if legacy := strings.TrimSpace(b.ResolvedFromLegacyID); legacy != "" {
 			row.ResolvedFromLegacyID = &legacy

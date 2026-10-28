@@ -23,6 +23,7 @@
 package charts_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -464,6 +465,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/google-ads/keywords", true},
 		{"/projects/p1/google-ads/audience", true},
 		{"/projects/p1/google-ads/campaign-ref", true},
+		{"/projects/p1/google-ads/geo-targets", true},
+		{"/projects/p1/google-ads/user-lists", true},
 		{"/projects/p1/microsoft-ads/keywords", true},
 		{"/projects/p1/microsoft-ads/audience", true},
 		{"/projects/p1/microsoft-ads/audience/x", false},
@@ -735,8 +738,8 @@ func TestRouteRuleSetParityWitnesses(t *testing.T) {
 //
 // 000014 is no longer the only migration relying on this. 000030 WIDENS the brief unique key
 // from (project_id, event_slug) to (project_id, event_slug, delivery_type, stage), and its
-// safety rests on the SAME guarantee from the other direction: with Recreate and replicaCount 1
-// there is no overlap in which a pre-000030 pod queries `WHERE project_id=$1 AND event_slug=$2`
+// safety rests on the SAME guarantee from the other direction: under Recreate there is no
+// overlap in which a pre-000030 pod queries `WHERE project_id=$1 AND event_slug=$2`
 // against a table now holding several briefs per event, where it would match an arbitrary member
 // of that set. It is also why 000030 can use a plain CREATE UNIQUE INDEX rather than
 // CONCURRENTLY, which its multi-statement form forbids anyway.
@@ -1165,9 +1168,9 @@ func TestScrapePortCannotDriftFromServicePort(t *testing.T) {
 // TestDeploymentRefusesXStatsJobsOnMultipleReplicas pins the single-replica guard: the X
 // stats-job features' limits (audience job budget, account pacer) are per process, so the chart
 // refuses TWITTER_METRICS_ENABLED with more than one replica — set through either env input, or
-// sourced where the template cannot see it. A multi-replica render with the X flag effectively
-// off is now refused too, but by the unconditional Reddit guard below it, so each case is judged
-// by WHICH guard fired: the X refusal text must appear exactly when refuse is set.
+// sourced where the template cannot see it. This is the chart's ONLY replica guard: a
+// multi-replica render with the X flag effectively off must render, which is also what pins that
+// the retired Reddit guard has not come back (see TestDeploymentAllowsMultipleReplicasForReddit).
 func TestDeploymentRefusesXStatsJobsOnMultipleReplicas(t *testing.T) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
@@ -1208,42 +1211,56 @@ func TestDeploymentRefusesXStatsJobsOnMultipleReplicas(t *testing.T) {
 				t.Errorf("failed, but not on the X guard:\n%s", out)
 			case !tc.refuse && xRefused:
 				t.Fatalf("the X guard refused %v:\n%s", tc.set, out)
-			case !tc.refuse && err != nil && !strings.Contains(string(out), redditReplicaRefusal):
-				t.Fatalf("refused %v, and not by the Reddit replica guard: %v\n%s", tc.set, err, out)
+			case !tc.refuse && err != nil:
+				t.Fatalf("refused %v: %v\n%s", tc.set, err, out)
 			}
 		})
 	}
 }
 
-// redditReplicaRefusal is a fragment of the unconditional Reddit replica guard's failure text.
-const redditReplicaRefusal = "Run one replica until the ledger is shared"
-
-// TestDeploymentRefusesRedditReportsOnMultipleReplicas pins the Reddit replica guard: the Reddit
-// reporting budget (report_budget.go) is a per-process ledger, and the ungated Reddit account
-// monitor spends it whatever REDDIT_METRICS_ENABLED says, so the chart refuses more than one
-// replica (or autoscaling past one) with the flag off, on, or sourced from a secret — and still
-// renders the default deploy and every single-replica combination.
-func TestDeploymentRefusesRedditReportsOnMultipleReplicas(t *testing.T) {
+// TestDeploymentAllowsMultipleReplicasForReddit is the inverse of a guard this chart used to
+// carry, and exists to keep it retired.
+//
+// The Reddit reporting budget (internal/platform/reddit/report_budget.go) is a per-process
+// ledger, and the ungated Reddit account monitor spends it whatever REDDIT_METRICS_ENABLED says,
+// so N replicas each carry a separate 45 against an ad account's 60 a minute. An earlier revision
+// turned that into an unconditional `fail` in templates/deployment.yaml. That was wrong twice
+// over: the ceiling is only reachable by concurrent user traffic (nothing polls these paths), and
+// a render-time fail blocked ArgoCD from generating the manifest AT ALL for a production
+// deployment that has long run three replicas — so it held up every unrelated change to this
+// service, which is far worse than the 429 it was averting.
+//
+// These cases therefore assert that multi-replica and autoscaling renders SUCCEED, and — where
+// the case sets an explicit replicaCount — that the render actually CARRIES it. Asserting only
+// that helm exits 0 would not keep the guard retired: a reinstated guard keyed above this
+// table's replica counts, or one that quietly clamps spec.replicas to 1 instead of failing,
+// would both pass. The real fix is a shared ledger (a Postgres token bucket keyed by ad
+// account), not a refusal to deploy. Note the two shortcuts
+// that look like fixes and are not — a lease as the X stats jobs use makes non-owner pods refuse,
+// which is intolerable on a user-facing monitor endpoint, and dividing the 45 by the replica
+// count leaves less than the 24 one audience read already needs.
+func TestDeploymentAllowsMultipleReplicasForReddit(t *testing.T) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
 	}
 	const on = "app.environment.REDDIT_METRICS_ENABLED.value=true"
 	for _, tc := range []struct {
-		name   string
-		set    []string
-		refuse bool
+		name string
+		set  []string
+		// wantReplicas is the spec.replicas the render must carry, or 0 to assert only that
+		// the render succeeds (the autoscaling cases, where replicaCount is left at default).
+		wantReplicas int
 	}{
-		{"default (flag off, one replica)", nil, false},
-		{"flag on, one replica", []string{on}, false},
-		{"flag off, autoscaling capped at one", []string{"autoscaling.enabled=true", "autoscaling.maxReplicas=1"}, false},
-		{"flag on, autoscaling capped at one", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=1"}, false},
-		// The account monitor is always on, so the flag does not matter.
-		{"flag off, two replicas", []string{"replicaCount=2"}, true},
-		{"flag off explicitly, three replicas", []string{"app.environment.REDDIT_METRICS_ENABLED.value=false", "replicaCount=3"}, true},
-		{"flag on, two replicas", []string{on, "replicaCount=2"}, true},
-		{"flag from a secret, two replicas", []string{"app.environment.REDDIT_METRICS_ENABLED.value=null", "app.environment.REDDIT_METRICS_ENABLED.valueFrom.secretKeyRef.name=s", "app.environment.REDDIT_METRICS_ENABLED.valueFrom.secretKeyRef.key=k", "replicaCount=2"}, true},
-		{"flag off, autoscaling to four", []string{"autoscaling.enabled=true", "autoscaling.maxReplicas=4"}, true},
-		{"flag off, autoscaling with the default max", []string{"autoscaling.enabled=true"}, true},
+		{"default (flag off, one replica)", nil, 1},
+		{"flag on, one replica", []string{on}, 1},
+		// The production shape that the retired guard refused to render.
+		{"flag off, three replicas", []string{"replicaCount=3"}, 3},
+		{"flag off explicitly, three replicas", []string{"app.environment.REDDIT_METRICS_ENABLED.value=false", "replicaCount=3"}, 3},
+		{"flag on, two replicas", []string{on, "replicaCount=2"}, 2},
+		{"flag from a secret, two replicas", []string{"app.environment.REDDIT_METRICS_ENABLED.value=null", "app.environment.REDDIT_METRICS_ENABLED.valueFrom.secretKeyRef.name=s", "app.environment.REDDIT_METRICS_ENABLED.valueFrom.secretKeyRef.key=k", "replicaCount=2"}, 2},
+		{"flag off, autoscaling to four", []string{"autoscaling.enabled=true", "autoscaling.maxReplicas=4"}, 0},
+		{"flag on, autoscaling to four", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=4"}, 0},
+		{"flag off, autoscaling with the default max", []string{"autoscaling.enabled=true"}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := []string{"template", chartDir, "--show-only", "templates/deployment.yaml"}
@@ -1251,13 +1268,14 @@ func TestDeploymentRefusesRedditReportsOnMultipleReplicas(t *testing.T) {
 				args = append(args, "--set", s)
 			}
 			out, err := exec.Command("helm", args...).CombinedOutput()
-			switch {
-			case tc.refuse && err == nil:
-				t.Fatalf("rendered with %v; want the single-replica refusal", tc.set)
-			case tc.refuse && !strings.Contains(string(out), redditReplicaRefusal):
-				t.Errorf("failed, but not on the Reddit guard:\n%s", out)
-			case !tc.refuse && err != nil:
-				t.Fatalf("refused %v: %v\n%s", tc.set, err, out)
+			if err != nil {
+				t.Fatalf("refused %v, but no Reddit replica guard may exist: %v\n%s", tc.set, err, out)
+			}
+			if tc.wantReplicas == 0 {
+				return
+			}
+			if want := fmt.Sprintf("replicas: %d", tc.wantReplicas); !strings.Contains(string(out), want) {
+				t.Errorf("rendered %v without %q -- a guard that clamps replicas is still a guard:\n%s", tc.set, want, out)
 			}
 		})
 	}

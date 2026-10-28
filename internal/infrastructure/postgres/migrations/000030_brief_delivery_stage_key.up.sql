@@ -36,16 +36,22 @@
 --      in this directory's README requires it to live ALONE in its file for exactly that reason:
 --      a multi-statement migration is batched in an implicit transaction. This file is
 --      multi-statement (two ALTERs, a constraint swap, a DROP INDEX and a CREATE INDEX).
---   2. It is UNNECESSARY. The chart pins `strategy.type: Recreate` (deployment.yaml) with
---      `replicaCount: 1` (values.yaml), so the old pod is fully terminated before the new one
---      starts and migrates. There is no concurrent writer for a plain CREATE INDEX to block,
---      and no window in which old code meets the new schema -- which is also why the narrowing
---      this migration performs satisfies the README's expand/contract rule.
+--   2. It is UNNECESSARY. The chart pins `strategy.type: Recreate` (deployment.yaml), so every
+--      old pod is fully terminated before any new one starts and migrates. There is no
+--      concurrent writer for a plain CREATE INDEX to block, and no window in which old code
+--      meets the new schema -- which is also why the narrowing this migration performs
+--      satisfies the README's expand/contract rule.
 --
--- BOTH of those are load-bearing. Raising `replicaCount` above 1, or restoring `RollingUpdate`,
--- reintroduces an overlap window in which a pre-000030 pod reads `WHERE project_id=$1 AND
--- event_slug=$2` against a table now holding several briefs per event -- and it would match an
--- arbitrary member of that set. Revisit this migration if either changes.
+-- `Recreate` ALONE carries that guarantee, at any replica count: the Deployment controller
+-- scales the old ReplicaSet to zero and waits for termination before scaling up the new one,
+-- so a higher `replicaCount` adds concurrent NEW pods (whose boot migrations serialize on
+-- golang-migrate's advisory lock) but never an old/new overlap. Deployments do run more than
+-- one replica -- production sets three -- and this migration is unaffected by that.
+--
+-- Restoring `RollingUpdate` is therefore the one change that reintroduces an overlap window,
+-- in which a pre-000030 pod reads `WHERE project_id=$1 AND event_slug=$2` against a table now
+-- holding several briefs per event and would match an arbitrary member of that set. Revisit
+-- this migration only if that happens.
 
 ALTER TABLE campaign_briefs
     ADD COLUMN IF NOT EXISTS delivery_type TEXT NOT NULL DEFAULT 'paid-marketing';

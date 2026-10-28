@@ -420,10 +420,23 @@ snapshot-redacted — only the client's own validation applies (trim, canonical 
 case-insensitive de-duplication); only the stored copy is redacted. The keyword slice is
 reallocated first, so the snapshot redaction never reaches the config sent to Microsoft.
 `budget`, `cpcBid`, `matchType` (only Exact/Phrase/Broad gets past
-the client before a snapshot can be written) and `geoTargets` (ISO-2 codes, shape-checked by
-the client) cannot carry a URL. The persisted `result` (`microsoft.CampaignResult`) carries no
-caller URL: its `Steps` interpolate only ids, counts and geo codes, and its `microsoftAdsUrl`
-is a deep link the client composes from the account id.
+the client before a snapshot can be written), `geoTargets` (ISO-2 codes, shape-checked by
+the client) and `startDate`/`endDate` (YYYY-MM-DD, validated by the client before anything is
+created) cannot carry a URL. The persisted `result` (`microsoft.CampaignResult`) carries no
+caller URL: its `Steps` interpolate only ids, counts, geo codes and the validated flight dates,
+and its `microsoftAdsUrl` is a deep link the client composes from the account id.
+
+**Microsoft flight dates.** `microsoftConfig.startDate`/`endDate` are optional, YYYY-MM-DD —
+the keys and format `metaConfig` uses. The dispatcher passes them to the client as
+`CampaignInput.StartDate`/`EndDate`, which validates them before any request and sends them
+as the AD GROUP's `StartDate`/`EndDate` (see [microsoft](internal-platform-microsoft.md),
+"Flight dates"). `campaignFromMicrosoft` records them on the row through `applyCampaignConfig`,
+as Meta's are, so the brief view paces the campaign over its flight — but only when the result
+says `FlightApplied` (this run created the ad group with them), the same rule `BidApplied`
+sets for the recorded bid. A reused ad group or an UNCONFIRMED partial records no dates; the
+config snapshot still keeps what was asked for. Absent dates record none, as before. An invalid date is a `PreflightRefusal` from the client, so `Dispatch` returns it
+wrapped in `notCreated` and the claim is released — the same job-time (not synchronous 400)
+failure an invalid Meta date gives; `PreflightCreate` does not check dates.
 
 ## The claim contract (release vs retain)
 
@@ -1047,7 +1060,8 @@ so all five platforms report in one vocabulary and render amounts one way.
 wrote.** Microsoft: one campaign read; `budget_amount` (DailyBudget, account-currency decimal,
 read only under a daily `BudgetType`), `budget_type`, `campaign_name` compared;
 `status`, `budget_explicitly_shared`, `bidding_strategy_type` upstream-only; no flight dates
-(Microsoft campaigns have none and the create path records none). Meta: campaign + the
+(Microsoft campaigns have none — `microsoftConfig.startDate`/`endDate` go on the ad group, which
+this reader does not read, so the dates the create path records have no upstream side). Meta: campaign + the
 recorded ad set (budget, flight and bid strategy live on the ad set) + the account currency
 when there is an amount; minor units are compared through the account's own offset with the
 recorded side encoded exactly as `budgetToMinorUnits` sends it (`meta.MinorUnitsExact`, exact
@@ -1995,6 +2009,30 @@ reports false numbers:
   WHOLE set — a suppression naming any include list is refused before the clone, because HubSpot
   applies exclusions after inclusions and the send would exclude that entire list while reporting
   success. Unreadable include ids fail the dispatch rather than falling back to the master.
+
+  Send-time standing-list check (LFXV2-2770): the project's standing standard suppression list is
+  shared and only grows, so after an audience is recorded a later compose or attach can make it
+  cover a list that audience sends to -- or a SOURCE of one: a composed audience's one send list is
+  its master, and attach-existing accepts existing masters in `include_list_ids` -- and excluding it
+  would then exclude that whole inclusion while the id check above passes. After the portal guard
+  and before the clone, `standingCoversSendList` runs `audience.StandingSendCheck`:
+  - the filter of every DYNAMIC send list is read, up to `audience.MaxSendListFilterReads` (50);
+    the rest keep the direct id check only, logged, and no send is refused for its size. A static
+    (MANUAL, SNAPSHOT) send list has no filter and no sources and is checked by id only;
+  - the send's exclusions are its recorded suppressions plus every NOT_IN_LIST list a read send
+    list excludes itself (a master excludes the standing list whatever the email's suppressions);
+  - the standing list among them is the name-search hit when that is one of them; otherwise, since
+    search lags a fresh list and misses a renamed one, the exclusions are read (at most
+    `audience.MaxStandingCandidateReads`, 50; over that only the search hit counts, logged) and one
+    named `LFX Standard Suppressions - …` is it;
+  - the standing list is IN EFFECT per OR alternative of each send list: everywhere when it is
+    among the email's suppressions (and then a send list it covers is refused by id), otherwise
+    only in an alternative that excludes it itself -- in (IN X) OR (IN Y AND NOT S), X still
+    delivers whatever S covers. Where it is in effect, a covered IN_LIST source refuses.
+  Any covered inclusion path is a pre-create `PreflightRefusalf` naming the lists. A failed read,
+  or a DYNAMIC send list or the standing list read back without a filter tree
+  (`audience.ErrListFilterUnreadable`), refuses too, with nothing created. The email wizard applies
+  the same check (`wizardStandingCoversSendList`: a 409, or a 503 for an unreadable list).
 
 - **The window does not scope the counters.** HubSpot's statistics span selects WHICH EMAILS
   are in scope by SEND date; the counters returned are that email's totals to date. `today`
@@ -4466,10 +4504,23 @@ short-circuits to `IncompleteSizePreviewCount`: an under-counted sum over the li
 report a size, which is a different, less trustworthy caveat than `DegradedPreviewCount`'s ("we
 know the sum, the live sweep just failed") — here even the sum is known to be short.
 
-`ComposeMaster` creates the combined suppression list FIRST and the master second, because that
-ordering is what makes a partial failure describable: the suppression list exists and the master
-does not, which is exactly what `ComposePartialError` carries up so the handler can report the
-created list instead of inviting a blind retry that would duplicate it.
+`ComposeMaster` creates no suppression list of its own. Its exclusions go through
+`resolveSuppressions` (`audience_suppression.go`) BEFORE the master exists, and the master excludes
+the resulting STANDING lists directly (`audience.MasterListWithSuppressionsFilter`: one
+`NOT_IN_LIST` per excluded list on every inclusion path). Those standing lists are found by name and
+reused, so the only create that can leave state to reconcile is the master's own, and
+`ComposePartialError` now only ever carries `MasterName`. The outcome reports the standard list as
+`Suppression` and every other excluded list as `AttachedSuppressionIDs`; the master name is
+fingerprinted over the includes and the RESOLVED exclusion ids (the standing list's id, each other
+excluded list, the registrants list's id), not the requested ones. A reused master excludes exactly
+the ids it was built with, so its identity must be those ids: the same request resolves to a
+different standing list in another project on the same portal, or after a standing or registrants
+list is recreated, and either way gets a new master rather than one excluding lists it no longer
+reports. The hash also covers a scheme marker (`fingerprintScheme`, `direct-exclusions-v2`): a
+master from before LFXV2-2770 excluded one combined wrapper list, and for a selection whose
+resolved ids equal the requested ones (no full standard set, no registrants edition) the ids alone
+would tag it the same, so a repeat would reuse a master whose wrapper may have been edited or
+deleted. The first such compose after deploy creates a new master once.
 
 When `ComposeInput.RecordUnderBriefID` is set, `ComposeMaster` resolves the portal right after
 `cachedClient` and BEFORE that first create, returning it on `ComposeOutcome.PortalID`. Both halves
@@ -4480,8 +4531,8 @@ service layer cannot obtain anywhere else honestly. With no brief id the path is
 is why the lookup is conditional: it is a live round trip the exploratory caller should not pay
 for.
 
-`AttachExisting(ctx, projectID, includeIDs, suppressionIDs)` verifies lists that ALREADY exist
-instead of creating any, so it is the one write-adjacent path here that creates nothing upstream.
+`AttachExisting(ctx, projectID, includeIDs, suppressionIDs, registrantsEvent)` verifies lists that ALREADY exist
+instead of composing a master.
 The include ids are trimmed and de-duplicated (`audience.UniqueIDs`; none left is
 `ErrNoInclusionLists`), suppressions that repeat an include id are dropped
 (`audience.ExclusionIDs` — the service refuses an explicit overlap with a 400 before this runs),
@@ -4490,6 +4541,100 @@ includes, then the suppressions, so a mistyped id (or one that is not a contact 
 rather than an audience that silently reaches fewer people. `SourceListIDs` reports the master
 followed by the other include ids. The portal is resolved only after every read succeeds, and a
 blank one is `ErrComposePortalUnconfirmed` rather than an unstamped row.
+
+The suppressions then go through `resolveSuppressions`, shared with `ComposeMaster`:
+
+- **Standard suppressions reuse ONE standing list per project.** `standardRows` resolves every
+  `StandardSuppressionTerms` entry (the same lookup `SuppressionLists` serves). When the selection
+  holds EVERY resolved standard list, they are replaced by the standing list (`findOrCreateStanding`, then `growStandardList`): the list named
+  `audience.StandardSuppressionName(projectID)` (`LFX Standard Suppressions - <project>`, no date or
+  fingerprint), found with `exactList`, created on first use as their union, and otherwise only
+  ever GROWN: the new filter is the union of the lists it already covers (`CoveredListIDs`) and the
+  resolved set, written with `UpdateListFilters` only when that union adds an id. It never
+  shrinks, because every audience in the project excludes this one list and dispatch applies its id
+  at send time: a quarter rotation (the old quarter's list still holds people while the new one
+  fills), a term that stops resolving, search lag or a list an operator added by hand must not stop
+  suppressing anyone. HubSpot has no conditional filter update, so every write is confirmed by
+  reading the list back; when an id it meant to keep is missing (another writer replaced the filter
+  from an older read) it is merged again, up to `standingGrowAttempts` (3) writes, then the call
+  fails. That is the whole guarantee: it is not a lock, and a stale overwrite landing AFTER a
+  writer's confirming read is not seen by that writer. A resolved standard list lost that way is
+  re-added by the next attach or compose with the full standard set; a hand-added list is not. A
+  list found under the name is reused only when it is a `DYNAMIC` contact list (`reusableStanding`),
+  and is grown only when its filter is a pure union of lists (`audience.StandingFilterIsUnion`)
+  that the rewrite reproduces; otherwise it is an `audience.StandingListConflictError` naming the
+  list (409). A list read back with no `filterBranch` (missing or null), or with any node lacking
+an explicit `filterBranchType` (`{}` included), is never grown: its real
+  filter is unknown, and rewriting it from the resolved ids would drop everything else it
+  suppresses (`audience.HasFilterTree`). It is
+  the outcome's `Suppression`. A PARTIAL standard selection is attached list by list instead,
+  because the union would exclude a list the operator unticked.
+- **Everything else stays its own entry** in `AttachedSuppressionIDs`: brand, event-specific and
+  Exclude-marked lists.
+- **Current registrants.** With a registrants edition (event name with year), `findOrCreateStanding` (then `verifyRegistrantsList` for a list that already existed, BEFORE `growStandardList`, so an incompatible registrants list (409) never leaves the shared standing list grown)
+  finds or creates `audience.CurrentRegistrantsName(edition)` from
+  `audience.CurrentRegistrantsFilter` (the registration custom event, `event_name` IS_EQUAL_TO the
+  edition) and appends it as its own entry. A list found under that name is reused only when it is
+  a `DYNAMIC` contact list whose filter selects ALL of this edition's registrations and nobody else
+  (`audience.RegistrantsListMatches`: `RegistrationEvidence`'s exclusive case for "nobody else",
+  `CoveredEditions` for "all of it", which rejects an AND adding a condition beside the
+  registration or an extra filter inside the event branch, and no filter setting
+  `includeObjectsWithNoValueSet`, which would also admit events with no `event_name`; the
+  edition is compared exactly, only its ends trimmed); the name match is case-insensitive and anyone can create a
+  list under any name, so anything else is a `StandingListConflictError` naming it (409). The name
+  of an edition too long to fit is cut and tagged with a short hash of the full edition, so two
+  long editions sharing a prefix never share a list.
+
+Both standing lists are found by exact name before any create (`findOrCreateStanding`), so a repeat
+or retry reuses them. HubSpot list names are unique per portal, so a create can be REFUSED because
+a concurrent attach or compose made the list first, or because an earlier create landed and search
+has not indexed it yet; a create can also be unconfirmed. In both cases the name is looked up again
+up to three times with a short backoff (`standingRelookupWaits`, under two seconds in all) and what
+is found is used; only when it is still not found does the create's own error stand, with its
+unconfirmed classification intact. A permission rejection is not retried. A refused create that is
+still not found is checked once more with `SearchListsAnyType` (no contact constraint): list names
+are unique across object types, so a company or deal list can hold the standing name, and it is
+then reported as the named `StandingListConflictError` (409) rather than a bare refusal. Nothing is
+recorded on any failure.
+
+Compose passes `resolveSuppressions` a budget check (`audience.CheckMasterExpansion`), called after
+the reads and before the first write with the RESOLVED exclusion count (the standing list as one,
+plus the registrants list): a master needs inclusions × (exclusions + 1) filter conditions, and
+over `audience.MaxMasterFilterConditions` (2,500, conservative; HubSpot's real limit is unverified)
+it is a 400 `FieldError` with nothing created or grown. Attach builds no master filter and passes
+none.
+
+`resolveSuppressions` reads before it writes: the standard terms, then each standing list by name,
+and only then creates or grows anything. It also takes the send's inclusion ids (compose's includes,
+attach's read-back include ids), because the caller's input overlap check cannot see what
+resolution substitutes or adds: the standing list stands in for the standard ids and
+`current_registrants_event` adds the registrants list, and either can be a list the send also goes
+to. It runs in three steps: read both standing lists by name; obtain each (the read's hit, a
+create, or what the re-lookups RECOVER after a refused or unconfirmed create); and only then verify
+the registrants list and grow the standing list. Every list found or recovered is checked against
+the includes before that last step, and so is every list the standing list COVERS, on its first
+read and on each confirming read after a growth (`growStandardList`): it stands in for the
+selected standard lists but also covers prior-quarter and hand-added lists, and excluding it
+excludes all of them, so a rejected request never grows the standing list (search
+lag can hide an included standing list from the read, and a late registrants hit used to surface
+after the standing list had grown). The final resolved ids are checked once more before returning, so compose creates no master and attach records
+nothing. Either is an `audience.ExclusionOverlapError` (wraps `ErrInvalidRequest`; a 400 naming the
+list).
+
+Not established (2026-10-26): whether `current_registrants_event` names an edition that actually
+has registrations. The only check is that it carries a year (`audience.RegistrantsEditionOK`). The
+warehouse resolver (`ResolvePastEditions`) returns PAST editions only, from
+`event_registrations`, so it can neither confirm a current edition nor tell a misspelt one from a
+new edition with no registrations yet; a misspelt edition therefore builds a list that matches
+nobody. Likewise the standing standard list is named from `project_id` as given: the audience routes
+accept a UUID or a slug and the service has no UUID-to-slug resolver, so one project addressed both
+ways gets two standing lists (each correct on its own; case differences alone collapse, because
+the name match is case-insensitive).
+`SuppressionLists` adds a `current_registrants` row (with `WillCreate` when the list does not exist
+yet: a read never creates) and reports the standing standard list when it already exists. Both
+lookups are lenient like the standard rows: a failed search is logged and leaves the registrants
+row with no list id and `WillCreate` unset, and the standing link omitted; only a permission
+rejection fails the picker.
 
 `LastSent` is ONE portal sweep, ranked by when each email WENT OUT. Every part of that sentence was
 once otherwise, and the endpoint returned no recent sends at all. The event name was searched as a
@@ -4546,7 +4691,25 @@ projected date blank. Candidates are ordered by the projected date, trimmed to a
 re-sorted on that date by the SAME comparator and trimmed to `limit`, and only the survivors pay the
 expensive `listBriefs` fan-out (which resolves v3 ids first, then maps each legacy id through
 `ListIDForLegacy` and drops any id or name already listed, so one list selected under both
-selections is one row). Truncating to `limit` before reading any authoritative date — which
+selections is one row). A row that does not resolve carries WHICH of the two things happened
+(#238): `Missing` only where HubSpot said there is no such list — `hubspot.IsNotFound`, a 404 —
+and `Unresolved` for every other read failure, a throttle, a 401/403 or a 5xx, where the list may
+well still be there. The two are never both set, and a row that resolves carries neither. The
+legacy loop decides the same way at every step it has, not only on the mapped id's read:
+`ListIDForLegacy` and `LegacyListName` return their error beside the "" they already returned, so
+a throttled or rejected id mapping, and a failed name lookup on an id that never mapped, are both
+`Unresolved` rather than `Missing` — reading a 401 on the mapping call as a deletion was the same
+#238 failure through a second door. Both still answer "" for a 404 and for a failure alike, and a
+caller that only wants a name (`listName`) discards the error; only the row classification asks
+`hubspot.IsNotFound` about it. An unresolved row keeps its `HubSpotURL` where there is a v3 id to
+build one from, because opening the list by hand is the operator's remedy; it is built from the
+MAPPED id, not the legacy id the row came in as. The `objectLists` route resolves v3 (ILS) ids
+only, so a link built from a legacy id opens HubSpot on "list not found" — exactly the deletion the
+row is saying it cannot confirm — and a row that never mapped, or that resolved by legacy name
+alone, therefore carries no link rather than a wrong one. A missing row has no link either. An
+absent link is never itself a statement about the list. Collapsing `Unresolved` into `Missing` told
+an operator a list they still hold was deleted, and rebuilding a suppression list is the costly
+half of that mistake. Truncating to `limit` before reading any authoritative date — which
 is what this replaced — discarded the newest send on the strength of an edit timestamp, and no later
 sort can bring back a row already cut. The claim is therefore bounded rather than unconditional:
 "most recently sent first" holds for any portal whose most recent send is within the shortlist, and
@@ -4639,7 +4802,11 @@ count. `ErrNoSentEmailInWindow` is counted
 optional `completer` (`ErrCustomInterpretUnavailable` when none is configured — the criteria form
 still works without it) and then resolves what the model cannot know: the brand master gate via
 `bestMatch` over `BrandMasterProbes`, and an existing `<Label> Speakers` list. Both are filled into
-the draft as suggestions the operator can change.
+the draft as suggestions the operator can change. When the named brand has no master list (a hosted
+project such as "gRPC"), `listBrand` searches the portal's lists for it and takes the brand they
+are filed under (`DominantBrand`, e.g. CNCF), and that brand's master becomes the gate, with a draft
+note saying so. This runs for a typed description as well as an event URL; a tie between brands
+leaves the gate empty.
 
 Preview and Create share `previewCustom`: every contact property the criteria read is fetched with
 `GetContactProperty` (all missing names are reported together as `UnknownPropertiesError`), each
@@ -4662,7 +4829,13 @@ never used.
 
 For an event audience the warehouse's past editions are `registered_for`'s DEFAULT, not an
 override (2026-10-15): editions the request or the answers named (the model copies them into
-`registered_for`) are used instead, kept by `knownEditions` only as exact names of this event or one
+`registered_for`, verbatim: parsing trims only to detect a blank) are used instead, kept by
+`knownEditions` (an EXACT warehouse match first; otherwise a match ignoring case and spacing only
+when exactly one warehouse spelling normalises to it, an ambiguous name being left out with a note
+naming the candidates;
+returned exactly as the warehouse spells it, padding included, since `CustomListFilter` writes
+`registered_for` through `exactValues`, blanks dropped and every other value verbatim, padding
+included, as an exact `event_name` equality) only as exact names of this event or one
 of its editions (in the warehouse's spelling, any other name dropped with a note), and a draft whose
 model set `include_past_editions: false`, or whose every named edition was unknown, gets none. So
 an operator who asked for one edition, or ruled out past registrants, is never sent the whole
@@ -4670,12 +4843,38 @@ family. The check runs even when the warehouse returned no past editions (unconf
 first edition): only this edition's own name is known then, and any other is dropped with a note
 saying it could not be verified. This edition's name is year-qualified (`WithEventYear`) for the
 prompt and the check, as registrations are stored, while the response's `event` reports the name as
-the page declares it, as `discover` does. The past editions are a REGIONAL audience's default only: one with cities or countries AND a
-location branch (`contact_location`, `event_registered` or `education_enrolled`); anything else
-gets none. Otherwise a registration branch would AND a role with a past registration (dropping
-first-time speakers) or add registrants beside a topic-only education audience. The system prompt
-says the same, so a model drafting an audience without a location copies the editions it wants
-from the EVENT block, and `knownEditions` checks them.
+the page declares it, as `discover` does. The past editions are the default of two audiences only: a REGIONAL one (cities or countries
+AND a location branch: `contact_location`, `event_registered` or `education_enrolled`), and the
+event's default audience, which is not location-scoped and selects the visitors of THIS event's
+page (one of `page_view_urls` is the event URL, compared by `selectsPage` ignoring scheme, `www.`,
+trailing slash and the path's case. The event URL loses only its fragment and its TRACKING
+parameters (`withoutTracking`: `utm_*`, `hsa_*`, `gclid`, `fbclid`, `msclkid`, `mc_cid`, `mc_eid`,
+`_hsenc`, `_hsmi`), both here and in the EVENT block's `url` the model copies from, so a tracking
+link still yields the plain page while "/event?id=123" keeps the query that names it. Such a
+query-identified page is never the event's DEFAULT audience, though: HubSpot's page-view filter is
+a CONTAINS match, so "?id=123" also matches "?id=1234" and misses "?utm_source=x&id=123", and the
+page cannot be isolated. No past editions are added for it, a note asks the operator to choose
+editions and pages, and the prompt tells the model not to treat it as the default. A page-view
+URL is the event page only when its query is exactly that remainder: another id, a bare route
+(every event on it), any added parameter including a tracking tag (a narrower segment), or a
+fragment is not) together with
+`education_enrolled`, with no speaker or
+ambassador restriction, AND only when interpretation explicitly set `include_past_editions: true`
+(`CustomDraft.IncludePastEditions`): the two signals alone also match "this page's visitors plus
+some other course's enrollees". The regional audience keeps its own rule, where unset applies. Visitors of any other page, or of the event page alone (no education
+branch, a visitors-only request), are a different segment and get none. Anything else gets none. Even then only the warehouse
+editions of THIS event are added (`sameEventEditions`: the name with its year removed equals the
+event's, case and spacing aside; a year is found by the resolver's own rule, `yearIn` /
+`yearInName`, a 19xx/20xx run of exactly four digits bounded by non-digits, so "Summit2026"
+counts), because `ResolvePastEventNames` matches the name as a substring
+and also returns other events sharing it ("Synthetic Summit Workshop 2025"); those are left out
+and named in a note. Otherwise
+a registration branch would AND a role with a past registration (dropping first-time speakers) or
+add registrants beside a topic-only education audience. The service adds the defaults itself and
+the system prompt tells the model to leave `registered_for` empty for them, so they are always
+capped newest first (after dropping exact repeats: the warehouse returns distinct name and event-id
+pairs, so a name can repeat and would otherwise use up cap slots); the model copies editions from the EVENT block only when specific ones are
+asked for, and `knownEditions` checks them.
 
 Interpretation keeps every draft inside the contract preview enforces: an event audience's
 `registered_for` takes its editions capped at `CustomMaxRegisteredFor` (25) by
@@ -4745,7 +4944,9 @@ identity-checked, with a 404 proven absent only by a confirming ad-account read 
   `campaign_name`, `start_date` (through `compareNudgedStart`, since `toMs` nudges a begun start)
   and `end_date`; upstream-only `status`, `bidding_strategy_type` (`optimizationTargetType`),
   `cost_type`, `unit_cost`, `unit_cost_currency` (`unitCost.currencyCode`; `unit_cost` is absent
-  whenever the currency is missing, never a bare number), `objective_type`. An `account` URN naming another account →
+  whenever the currency is missing, never a bare number); `objective_type` is COMPARED (LFXV2-2665)
+  against `linkedinRecordedObjective` — automatic → `WEBSITE_VISIT`, manual → `WEBSITE_CONVERSION`,
+  `unknown` with no recorded strategy. An `account` URN naming another account →
   `ErrCampaignUpstreamIdentityMismatch`; a 401 → the usual `linkedinExpiry` re-tag.
 - **Bid** (`WriteBid`): the bid is the CAMPAIGN's `unitCost`, so there is no child id to require.
   Order: provenance (fail closed), bid type CPC, adopted row → `ErrBidAdoptedCampaign` joined with `ErrBidUnwritable` (the handler
@@ -4795,6 +4996,58 @@ malformed stored account → `ErrConnectionNotUsable`), `linkedinConnectionDefec
 (503). Tests: `linkedin_audience_test.go` (every pivot mapped, LF fallback refused with zero upstream
 calls, foreign/legacy-URL/mixed provenance 409 with zero calls, unknown provenance proceeds, window
 and scope faults beat an inactive connection, 401 → expired, 5xx unclassified without its body).
+
+## Create-time bidding (`bidding.go`, LFXV2-2665)
+
+Every lane config (`microsoftConfig`, `metaConfig`, `redditConfig`, `twitterConfig`,
+`linkedInConfig`) carries an optional `bidding` object (`biddingConfig`: `strategy`
+`automatic`|`manual`, `bidAmount`). `resolveBidding` applies the shared rules — omitted =
+automatic; `automatic` with any `bidAmount` refused; `manual` needs a finite `bidAmount` > 0, at
+most 1,000,000 and a whole number of micro-units (`exactScaled`, a round-trip test that never
+rounds) — and each platform's `*BidPlan` adds its own: Microsoft `microsoft.ValidateMaxCPCBid`
+(0.01–1,000) plus the legacy `cpcBid` (alone = manual at that amount; with `bidding` it must agree,
+and `automatic` refuses it); Meta `meta.ManualBidSupported` (traffic/leads) and at most two
+decimals; Reddit `reddit.ManualCPCBidSupported` (traffic); LinkedIn `linkedin.ValidateBidAmount` (whole
+cents), the client choosing the objective from the strategy (automatic `WEBSITE_VISIT` +
+`MAX_CLICK`, manual `WEBSITE_CONVERSION`; decision 2026-10-13); X nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
+`<configKey>.bidding: <reason>`, and `biddingInvalid` marks every one a `domain.PreflightRefusal`
+(issue #208): each is a pure check raised before any upstream call, its only caller-derived text is
+an amount or a config key rendered through `domain.CallerValue` (`quoteKey`), so when `Dispatch`
+raises it the async job reports it verbatim.
+
+The rules run twice: in each lane dispatcher's `PreflightCreate` (a `service.CreatePreflighter`, so
+the create path answers a synchronous 400 before any job; it returns `ErrPreflightNotApplicable`
+otherwise and never calls a platform), and again in `Dispatch` before any upstream call
+(`notCreated`, claim released). `Dispatch` passes the plan to the client (Microsoft
+`BiddingScheme` + `CpcBid`, Meta `BidCap`, Reddit `ManualCPCBid`, X `MaxBid`, LinkedIn
+`ManualCPCBid`); a deferred `plan.stamp(camp)` records `BiddingStrategy` and, for manual, the
+starting bid in `MaxCPCBid` ONLY when the dispatch succeeded (`err == nil`) AND the client's result
+reports `BidApplied` — the run created the entity carrying the bid. A reused entity (the client adds
+a "bid NOT applied to reused …" step) or a partial leaves both NULL, so the row never claims a bid
+the platform was not given. Microsoft also requires at most two decimals. Meta's 5 × bid daily-budget
+minimum (`meta.BidCapDailyBudgetMultiple`, from the Ad Set reference) is the CLIENT's, compared in
+encoded minor units once the account currency is known — the pre-check does not attempt it. `TestMicrosoft_ManualCreatedCampaignIsAcceptedByTheBidLever`
+drives a manual create and then `WriteBid` on the returned row.
+
+`TestCreateCampaigns_LanePlatformBiddingRefusalIsSynchronous400` (`bidding_create_e2e_test.go`)
+drives the real Meta and Microsoft dispatchers through `service.BriefService.CreateCampaigns`: a bad
+`bidding` is a synchronous 400 naming `<configKey>.bidding` and no job is created.
+`checkBiddingShape` runs first in every lane `PreflightCreate`. It type-checks `<configKey>.bidding`
+alone from the raw envelope, so a wrong-typed `bidAmount` or `strategy` is that 400 rather than a
+decode failure left to Dispatch. Other fields' type errors are still left to Dispatch, as before.
+PRESENCE is preserved: `biddingConfig.UnmarshalJSON` records which keys appeared, and only a
+genuinely absent field defaults — an explicit `null`/`""` strategy, a `null` bidAmount or a `null`
+bidding is a 400 (`checkBiddingShape`, which Dispatch also runs, and `resolveBidding`).
+KEYS ARE EXACT: encoding/json matches the config's `bidding` case-insensitively with the last key
+winning, so `checkBiddingShape` refuses any case variant of it, and `biddingKeyProblem` (shared with
+`biddingConfig.UnmarshalJSON`) refuses a case-variant or unknown key inside bidding — keys sorted,
+so the message is deterministic. Each lane `PreflightCreate` decodes its config BEST-EFFORT
+(encoding/json fills every field it can past a type error) and runs the bid plan on that, so an
+invalid bidding is the 400 even when an unrelated field fails the full decode; that decode error
+itself stays not-applicable (Reddit's asset checks still run only on a clean decode).
+SNAPSHOTS: every lane config tags `Bidding` `omitempty`, and `biddingConfig.MarshalJSON` writes only
+the fields that carry a value, so a stored `config_snapshot` re-decodes through the validator to the
+same plan (`TestConfigSnapshot_BiddingRoundTripsThroughTheValidator`).
 
 ## Operator-safe pre-flight refusals (issue #208)
 
@@ -4915,6 +5168,11 @@ profile and facet names — is rendered through `domain.CallerValue`, a strict A
 reaches a marked refusal (LinkedIn `toMs`/`validateSchedule`/`resolveAccountID`/`resolveOrgID`/
 targeting profile and facet checks, Meta `buildPromotedObject`, Microsoft keyword/geo/ad-copy
 validators, X `validateDate`/`validateImageInput`, Reddit's asset-id check) use it too.
+Create-time bidding (LFXV2-2665) follows the same rule: the dispatchers' `biddingInvalid`
+refusals, and the clients' own pre-send bid checks — X `manualMaxBidMicros` and bid-over-budget,
+Reddit's manual-bid objective and amount checks, LinkedIn `campaignBidding`, Microsoft
+`validateBiddingScheme` — are marked. Meta's bid-cap checks are NOT: they need the account currency,
+so they run after the account preflight GET.
 Refusals that can quote a URL
 (registration, image or post URL validators), carry credential-derived text (credential shape,
 JSON decode) or come after a read was sent (Meta's inactive-account check) are deliberately

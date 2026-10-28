@@ -52,8 +52,52 @@ type Service interface {
 	// through LinkedIn's Images API (an organization-owned image URN) and used as
 	// that dark post's article thumbnail; LinkedIn accepts at most 5,000,000 bytes
 	// and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or
-	// 360x640 to 2430x4320 (vertical) pixels.
+	// 360x640 to 2430x4320 (vertical) pixels. A brief's library is bounded by a
+	// per-brief quota on both count and total stored bytes; an upload that would
+	// exceed either is refused with 409 and reason creative_asset_quota_exceeded,
+	// and list-creative-assets publishes the ceilings and the current totals so a
+	// client can see the headroom before it uploads. A re-upload of identical
+	// bytes is idempotent and is NOT judged against the quota, since it stores
+	// nothing. An archived brief returns 404, matching every other access to a
+	// brief's children.
 	UploadCreativeAsset(context.Context, *UploadCreativeAssetPayload) (res *CreativeAsset, err error)
+	// List the creative assets stored for a brief, with the per-brief quota the
+	// next upload will be judged against. Metadata only: the image bytes are never
+	// returned inline — byte_size, width and height exist precisely so a reader
+	// can size and classify an asset without loading a blob of up to 30 MiB.
+	// Assets are ordered oldest first, and the whole library is returned (it is
+	// bounded by count_limit). An archived brief returns 404, matching every other
+	// read of a brief's children.
+	ListCreativeAssets(context.Context, *ListCreativeAssetsPayload) (res *CreativeAssetList, err error)
+	// Get one stored creative asset's metadata. The image bytes are not returned
+	// here — they are served, when signed creative-asset URLs are configured, by
+	// the separate signed-asset route. An asset belonging to another project or
+	// brief, or to an archived brief, is 404, the same as one that does not exist.
+	GetCreativeAsset(context.Context, *GetCreativeAssetPayload) (res *CreativeAsset, err error)
+	// Match the brief's stored creative assets against the image slots each ad
+	// platform publishes, and report what fits where and what is still missing. A
+	// pure read: nothing is stored, no asset is attached to a campaign, and an
+	// unchanged library always produces an identical plan. Eligibility is the
+	// slot's own rule — aspect ratio within the platform's documented tolerance,
+	// the pixel floor, and the slot's byte cap — and among eligible assets the
+	// closest fit to the slot's target ratio wins, then the larger image, then the
+	// earlier upload. An asset may fill slots on several platforms at once but
+	// never appears twice in one slot. Assets stored before the service recorded
+	// dimensions come back under `unclassified` rather than being judged against a
+	// shape they never declared. An archived brief returns 404, matching every
+	// other read of a brief's children.
+	GetAssetPlan(context.Context, *GetAssetPlanPayload) (res *CreativeAssetPlan, err error)
+	// Permanently delete a stored creative asset, freeing its bytes against the
+	// brief's quota. Refused with 409 reason=creative_asset_in_use when any live
+	// campaign on the brief could still need it: one whose creation has not
+	// finished on the ad platform — its status is still 'pending' — whatever its
+	// stored configuration says; one whose stored configuration names this asset
+	// id; or one whose configuration has not been recorded yet, because a dispatch
+	// claims its campaign row before it resolves any asset. Delete the campaign,
+	// or reconcile a stuck claim, then retry. This is a HARD delete — unlike a
+	// campaign or a brief, which are retired by a status flip — because reclaiming
+	// the storage is the entire reason the endpoint exists.
+	DeleteCreativeAsset(context.Context, *DeleteCreativeAssetPayload) (err error)
 	// Create campaigns across the selected platforms (async -> job). Besides the
 	// request-shape 400s (an unknown or duplicate platform, new_version on a
 	// platform that does not support it, and the like), two dispatch-time rules
@@ -66,9 +110,15 @@ type Service interface {
 	// alone: redditConfig.imageAssetId together with imageUrl or postUrl, an
 	// imageAssetId that is not a UUID, or imageAssetId while signed creative-asset
 	// URLs are not configured ('stored creative assets are not enabled for Reddit;
-	// supply imageUrl'): 400 with that message. Every other dispatch failure,
-	// including an imageAssetId that does not exist for this brief, still arrives
-	// later, as the job's own result.
+	// supply imageUrl'): 400 with that message. An invalid per-platform `bidding`
+	// object (see the config attribute) is also refused synchronously, with 400
+	// "invalid campaign config: <configKey>.bidding: ...". Bidding defaults
+	// changed in LFXV2-2665: a Microsoft campaign created without bidding is
+	// MaxClicks (it was EnhancedCpc) and a LinkedIn one WEBSITE_VISIT/MAX_CLICK;
+	// manual-created campaigns are immediately eligible for the bid lever, and
+	// eligibility follows the platform's current strategy. Every other dispatch
+	// failure, including an imageAssetId that does not exist for this brief, still
+	// arrives later, as the job's own result.
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
 	// platform is read, never written: the campaign must already exist under the
@@ -132,11 +182,12 @@ type Service interface {
 	// Microsoft Advertising, Meta, Reddit, X (Twitter) Ads and LinkedIn are wired,
 	// and a campaign on any other platform returns 400. The field set is
 	// per-platform too — each platform reports only the settings it can answer
-	// honestly, normalised to the units its create path wrote (Microsoft carries
-	// no flight dates, so reports none) — and on every platform the provenance
-	// rules are the same: a campaign that does not record the account it was
-	// created under, or that belongs to a different account than the connection
-	// now resolves to, is refused 409 before anything is read.
+	// honestly, normalised to the units its create path wrote (Microsoft keeps
+	// flight dates on the ad group, which this read does not read, so reports
+	// none) — and on every platform the provenance rules are the same: a campaign
+	// that does not record the account it was created under, or that belongs to a
+	// different account than the connection now resolves to, is refused 409 before
+	// anything is read.
 	GetCampaignSettings(context.Context, *GetCampaignSettingsPayload) (res *CampaignSettingsReadback, err error)
 	// Read live performance metrics for EVERY campaign on a brief in one request,
 	// by calling each campaign's platform directly. A pure read — never persisted.
@@ -153,7 +204,18 @@ type Service interface {
 	// the brief. The AI model is optional — without it configured this endpoint
 	// returns 503.
 	GenerateEmailCopy(context.Context, *GenerateEmailCopyPayload) (res *EmailCopy, err error)
-	// Replace a campaign (requires If-Match).
+	// Replace a campaign (requires If-Match). A request carrying a configuration
+	// is refused with 409 reason=campaign_dispatch_in_flight while the campaign's
+	// creation has not finished on the ad platform — its status is still 'pending'
+	// — because a dispatcher may still be resolving the configuration this request
+	// would overwrite. Retry once the status is no longer 'pending'. A name-only
+	// edit is NOT refused and stays available throughout. A configuration that
+	// NEWLY names a stored creative asset which no longer exists for the brief —
+	// typically one deleted between reading the campaign and sending this request
+	// — is refused with 409 reason=creative_asset_reference_missing, naming the
+	// ids that did not resolve; upload the asset again, or remove the reference,
+	// then retry. References already present on the stored configuration are
+	// carried through unchanged and are never refused by this check.
 	UpdateCampaign(context.Context, *UpdateCampaignPayload) (res *Campaign, err error)
 	// Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist
 	// the new status. Unlike update-campaign (which only writes the DB row), this
@@ -296,39 +358,48 @@ type Service interface {
 	// rather than assumed manual. On Reddit the CAMPAIGN's strategy is checked
 	// first and then the ad group's: with Campaign Budget Optimization on (as on
 	// every campaign this service creates) the ad group's strategy must match the
-	// campaign's, so both must be MANUAL_BIDDING. NOTE: every Reddit campaign this
-	// service creates is BIDLESS on both the campaign and its ad group, every Meta
-	// campaign LOWEST_COST_WITHOUT_CAP billed on IMPRESSIONS, and every X campaign
-	// AUTO, so those three legs apply only after an operator has moved the Reddit
-	// campaign and ad group, the Meta ad set or the X line item to a manual
-	// per-click bid in the platform's own UI. GOOGLE ADS IS THE EXCEPTION: a
-	// SEARCH campaign this service creates defaults to MANUAL_CPC, so the guard is
-	// expected to pass there without any operator change — while a Demand Gen,
-	// Performance Max, Video or Display campaign defaults to an automated strategy
-	// and is refused. The guard still decides on what Google REPORTS, never on
-	// that default. A LinkedIn campaign this service creates sends no
-	// optimizationTargetType, which LinkedIn documents as defaulting to NONE
-	// (manual), so it is expected to pass — but the guard decides on what LinkedIn
-	// REPORTS, never on that expectation. On every adapter but LinkedIn the amount
-	// is in the AD ACCOUNT's own currency, not USD, and this service neither knows
-	// nor converts it; the LinkedIn adapter writes USD and refuses (409) a
-	// campaign whose bid is in any other or an unreported currency. Google Ads,
-	// Microsoft Advertising, Reddit, Meta, X and LinkedIn today: a campaign on any
-	// other platform is refused with 400. **409** when the change is refused
-	// BEFORE the platform is written, so nothing has changed: the campaign is
-	// unprovisioned; it belongs to a different ad account than the project's
-	// connection now resolves to, or does not record which ad account it was
-	// created under; its bid strategy is automated, a target, or unreported; or
-	// the bid could not be addressed (no recorded ad group, ad set or line item,
-	// one reporting another campaign or deleted, or one bidding in a unit other
-	// than `bid_type`). None is retryable. **400** for a request fault: a
-	// non-positive, non-finite or out-of-range bid, an unknown bid type, a
-	// platform with no bid-write capability wired, or a bid the campaign's
-	// platform refuses on its own minimum or maximum — the response names what it
-	// was. **503** when the platform could not be reached or did not confirm —
-	// including a throttled Meta, X or LinkedIn write, which is never retried
-	// in-call; the row is unchanged. Setting the same bid twice converges, but
-	// verify the bid in the ad platform before retrying.
+	// campaign's, so both must be MANUAL_BIDDING. ELIGIBILITY FOLLOWS THE
+	// PLATFORM'S CURRENT STRATEGY, not how the campaign was created: campaigns
+	// created with strategy manual are immediately eligible, an automatic one an
+	// operator later switches to a manual per-click bid becomes eligible, and a
+	// manual one switched to automatic becomes ineligible. Since LFXV2-2665 a
+	// Microsoft campaign created without `bidding` (and without cpcBid) is
+	// MaxClicks, not Microsoft's EnhancedCpc default, so this endpoint answers 409
+	// for it until switched, and a LinkedIn one is WEBSITE_VISIT + MAX_CLICK.
+	// CAMPAIGNS THIS SERVICE CREATES: one created with the dispatch config's
+	// `bidding.strategy` `manual` (create-campaigns) is created in exactly the
+	// shape this endpoint accepts on its platform — Microsoft EnhancedCpc with the
+	// ad group's CpcBid, Meta a link-click bid cap, Reddit MANUAL_BIDDING CPC on
+	// campaign and ad group, X MAX per link click, LinkedIn CPC with
+	// optimizationTargetType NONE and unitCost — so it can be re-bid here. One
+	// created with AUTOMATIC bidding (the default) is refused (409) until an
+	// operator moves it to a manual per-click bid in the platform's own UI:
+	// Microsoft MaxClicks, Meta LOWEST_COST_WITHOUT_CAP, Reddit BIDLESS, X AUTO,
+	// LinkedIn WEBSITE_VISIT + MAX_CLICK. GOOGLE ADS, which `bidding` does not
+	// cover, is the exception: a SEARCH campaign this service creates defaults to
+	// MANUAL_CPC, so the guard is expected to pass there without any operator
+	// change — while a Demand Gen, Performance Max, Video or Display campaign
+	// defaults to an automated strategy and is refused. Either way the guard
+	// decides on what the platform REPORTS, never on what was created. On every
+	// adapter but LinkedIn the amount is in the AD ACCOUNT's own currency, not
+	// USD, and this service neither knows nor converts it; the LinkedIn adapter
+	// writes USD and refuses (409) a campaign whose bid is in any other or an
+	// unreported currency. Google Ads, Microsoft Advertising, Reddit, Meta, X and
+	// LinkedIn today: a campaign on any other platform is refused with 400.
+	// **409** when the change is refused BEFORE the platform is written, so
+	// nothing has changed: the campaign is unprovisioned; it belongs to a
+	// different ad account than the project's connection now resolves to, or does
+	// not record which ad account it was created under; its bid strategy is
+	// automated, a target, or unreported; or the bid could not be addressed (no
+	// recorded ad group, ad set or line item, one reporting another campaign or
+	// deleted, or one bidding in a unit other than `bid_type`). None is retryable.
+	// **400** for a request fault: a non-positive, non-finite or out-of-range bid,
+	// an unknown bid type, a platform with no bid-write capability wired, or a bid
+	// the campaign's platform refuses on its own minimum or maximum — the response
+	// names what it was. **503** when the platform could not be reached or did not
+	// confirm — including a throttled Meta, X or LinkedIn write, which is never
+	// retried in-call; the row is unchanged. Setting the same bid twice converges,
+	// but verify the bid in the ad platform before retrying.
 	UpdateCampaignBid(context.Context, *UpdateCampaignBidPayload) (res *Campaign, err error)
 	// Pause or remove Google Ads or Microsoft Advertising keywords on one
 	// campaign. A MUTATION on a live paid campaign: pausing or removing a keyword
@@ -666,7 +737,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [36]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+var MethodNames = [40]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "list-creative-assets", "get-creative-asset", "get-asset-plan", "delete-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
 
 // AddNegativeKeywordsPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service add-negative-keywords method.
@@ -867,6 +938,26 @@ type Campaign struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
+	BiddingStrategy *string
+	// The manual max cost-per-click bid this service most recently set, in the
+	// currency the provider expects: the ad account's own currency for Microsoft
+	// Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the
+	// starting bid of a campaign created with manual bidding, then whatever
+	// update-campaign-bid set. A request the platform confirmed, never an
+	// observation — a bid changed in the platform's own UI is not reflected.
+	// ABSENT when this service never set one.
+	MaxCpcBid *float64
 	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
 	// existing campaign on the ad platform by adopt-campaign) rather than created
 	// by this service. An adopted campaign records none of its serving children,
@@ -901,7 +992,58 @@ type CampaignActionItem struct {
 type CampaignCreateInput struct {
 	// Platforms to create campaigns on (binding selection)
 	Platforms []string
-	// Per-platform campaign configuration
+	// Per-platform campaign configuration: an object keyed by platform config name
+	// (microsoftConfig, metaConfig, redditConfig, twitterConfig, linkedInConfig,
+	// googleAdsConfig, hubspotConfig) plus the top-level hsToken. BIDDING
+	// (LFXV2-2665): microsoftConfig, metaConfig, redditConfig, twitterConfig and
+	// linkedInConfig each accept an optional `bidding` object, {"strategy":
+	// "automatic" | "manual", "bidAmount": number}. Omitted means automatic
+	// (Microsoft MaxClicks; Meta LOWEST_COST_WITHOUT_CAP; Reddit BIDLESS; X AUTO).
+	// DEFAULT CHANGES: a Microsoft campaign created with no bidding and no cpcBid
+	// used to get Microsoft's EnhancedCpc default and is now MaxClicks, so
+	// update-campaign-bid answers 409 for it; a LinkedIn campaign created with no
+	// bidding is now WEBSITE_VISIT / MAX_CLICK / CPM with a Traffic name segment.
+	// Manual-created campaigns are immediately eligible for the bid lever;
+	// eligibility follows the platform's current strategy. LinkedIn automatic
+	// creates an objectiveType WEBSITE_VISIT campaign bidding MAX_CLICK with
+	// costType CPM (decision 2026-10-13: automatic LinkedIn campaigns optimise for
+	// clicks because MAX_CONVERSION, the only automated target of
+	// WEBSITE_CONVERSION, needs a conversion association this service doesn't
+	// create); LinkedIn manual keeps objectiveType WEBSITE_CONVERSION. `manual`
+	// requires `bidAmount`, the starting max cost-per-click bid in the ad
+	// account's own currency (LinkedIn: USD), greater than zero, at most 1,000,000
+	// and a whole number of micro-units; it creates the campaign in the shape
+	// update-campaign-bid accepts. Per platform, a manual bid must also be:
+	// Microsoft within 0.01–1,000 (a legacy microsoftConfig.cpcBid without
+	// `bidding` still means a manual bid at that amount; with `bidding` it must be
+	// omitted or equal bidAmount); Meta at most two decimals, a whole minor unit
+	// of the account currency (checked against the currency at dispatch), and only
+	// for the traffic or leads objective; Reddit only for the traffic objective;
+	// LinkedIn whole cents; X at most the campaign's daily budget (X does not
+	// accept a line item bid above it). Keys are exact: `bidding`, `strategy` and
+	// `bidAmount`; a case variant (`Bidding`, `Strategy`) or an unknown key inside
+	// `bidding` is refused. `automatic` with a `bidAmount`, an unknown strategy, a
+	// wrong JSON type, an explicit null or empty value (only an ABSENT field
+	// defaults: `"strategy": null` or `""`, `"bidAmount": null` and `"bidding":
+	// null` are refused), or a bid breaking these rules is refused synchronously
+	// with 400 "invalid campaign config: <configKey>.bidding: ..." before any job
+	// exists. googleAdsConfig.bidding is refused with 400 (use
+	// googleAdsConfig.biddingStrategy). FLIGHT DATES: metaConfig (required) and
+	// microsoftConfig (optional) take `startDate` and `endDate` as YYYY-MM-DD
+	// strings that must be real calendar dates, with the start not before today
+	// and the end after the start. For metaConfig today is the UTC calendar day.
+	// For microsoftConfig it is the calendar day at UTC-12, with or without
+	// timeZone, so only a date already past in every time zone is refused up
+	// front; Microsoft reads the dates in the campaign's time zone and remains the
+	// final judge. Microsoft Advertising sets them on the campaign's AD GROUP
+	// (AdGroup.StartDate/EndDate), each independently optional: an omitted
+	// startDate leaves Microsoft's default (eligible from today, so an endDate
+	// alone must be after today) and an omitted endDate runs until stopped;
+	// omitting both creates the campaign exactly as before. An invalid Microsoft
+	// date fails the platform job before anything is created, as an invalid Meta
+	// date does. Microsoft dates are recorded on the campaign row only when this
+	// run created the ad group that carries them; a retry that reuses an existing
+	// ad group leaves its schedule unchanged and records no dates.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
@@ -911,10 +1053,9 @@ type CampaignCreateInput struct {
 	// flight or needs reconciliation is reported exactly as a retry would be. The
 	// version is tracked by this service only and is never shown on the ad
 	// platform as a label. Supported on microsoft-ads only for now; any other
-	// platform in the request is refused with 400. Until the follow-up release
-	// removes the one-campaign-per-slot index, a request on a platform that
-	// already has a live campaign fails that platform with 'not available yet' and
-	// creates nothing.
+	// platform in the request is refused with 400. Two concurrent requests that
+	// both find the same complete campaign create one new campaign between them,
+	// not two: the second is reported as a reuse of (or skipped behind) the first.
 	NewVersion bool
 }
 
@@ -1034,28 +1175,35 @@ type CampaignSettingsField struct {
 	// nothing was recorded there — not because the field has no recorded side. On
 	// Microsoft Advertising, Meta, Reddit and X the COMPARED settings are
 	// `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and
-	// `end_date` on Meta, Reddit and X (a Microsoft campaign carries no flight
-	// dates, so they are not reported there); `status` and `bidding_strategy_type`
-	// are upstream-only on all four (none of their create paths records a
-	// strategy); Microsoft also reports `budget_explicitly_shared` upstream-only,
-	// Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the
-	// last two say where the budget lives, and explain a budget that reads
-	// `unknown` because the campaign-level amount is not the one the row recorded
-	// (Reddit with campaign budget optimization off, X under anything but
-	// `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged
-	// forward past UTC midnight (because the requested day had already begun at
-	// dispatch) is shown with both sides and an `unknown` verdict rather than a
-	// false `diverged`. On LinkedIn the COMPARED settings are `budget_amount`,
-	// `budget_type`, `campaign_name`, `start_date` and `end_date` (the start, like
-	// Meta's and Reddit's, may be nudged by the create path); `status`,
+	// `end_date` on Meta, Reddit and X (Microsoft keeps flight dates on the ad
+	// group, not the campaign, and this read does not read the ad group, so they
+	// are not reported there); `status` and `bidding_strategy_type` are
+	// upstream-only on all four (since LFXV2-2665 their create paths record an
+	// `automatic` or `manual` choice — the campaign's `bidding_strategy` — but
+	// that vocabulary is deliberately not mapped onto each platform's strategy
+	// enum, for the reason given for Google above); Microsoft also reports
+	// `budget_explicitly_shared` upstream-only, Reddit
+	// `is_campaign_budget_optimization` and X `budget_optimization` — the last two
+	// say where the budget lives, and explain a budget that reads `unknown`
+	// because the campaign-level amount is not the one the row recorded (Reddit
+	// with campaign budget optimization off, X under anything but `CAMPAIGN`). A
+	// Meta or Reddit start that the create path itself nudged forward past UTC
+	// midnight (because the requested day had already begun at dispatch) is shown
+	// with both sides and an `unknown` verdict rather than a false `diverged`. On
+	// LinkedIn the COMPARED settings are `budget_amount`, `budget_type`,
+	// `campaign_name`, `start_date` and `end_date` (the start, like Meta's and
+	// Reddit's, may be nudged by the create path); `status`,
 	// `bidding_strategy_type` (LinkedIn's optimizationTargetType), `cost_type`,
 	// `unit_cost` (the bid amount), `unit_cost_currency` (its ISO currency, from
 	// LinkedIn's `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the
-	// currency is not reported, never a bare number) and `objective_type` are
-	// upstream-only; a campaign reporting both a daily and a total budget, neither
-	// (as under a campaign group's shared budget), or a non-USD amount reads both
-	// budget fields `unknown`. The vocabulary is per-platform and may grow, so a
-	// consumer must render an unrecognised field name rather than dropping it.
+	// currency is not reported, never a bare number) are upstream-only, and
+	// `objective_type` is compared against the objective the recorded bidding
+	// strategy implies (automatic WEBSITE_VISIT, manual WEBSITE_CONVERSION;
+	// `unknown` when none is recorded); a campaign reporting both a daily and a
+	// total budget, neither (as under a campaign group's shared budget), or a
+	// non-USD amount reads both budget fields `unknown`. The vocabulary is
+	// per-platform and may grow, so a consumer must render an unrecognised field
+	// name rather than dropping it.
 	Field string
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.
@@ -1204,10 +1352,119 @@ type CreativeAsset struct {
 	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
 	// brief
 	Checksum string
+	// Pixel width, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Width *int
+	// Pixel height, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Height *int
 	// "true" when this request stored the asset; "false" when an identical upload
 	// already existed. Set only on the upload response, where it selects 201 vs
 	// 200.
 	Created *string
+}
+
+// CreativeAssetList is the result type of the lfx-v2-campaign-service-briefs
+// service list-creative-assets method.
+type CreativeAssetList struct {
+	// Every asset stored for this brief, oldest first. Each carries metadata only
+	// — the image bytes are served by the signed creative-asset URL, never inline
+	// here.
+	Assets []*CreativeAsset
+	// Number of assets stored for this brief.
+	Count int
+	// Maximum assets one brief may hold. An upload that would exceed it is refused
+	// with 409 reason=creative_asset_quota_exceeded.
+	CountLimit int
+	// Total stored bytes across those assets.
+	BytesUsed int64
+	// Maximum total stored bytes one brief may hold. Enforced alongside
+	// count_limit; either one alone bounds the wrong thing — a count cap still
+	// admits that many maximum-sized images, and a byte cap alone still admits
+	// unboundedly many tiny ones.
+	BytesLimit int64
+}
+
+// CreativeAssetPlan is the result type of the lfx-v2-campaign-service-briefs
+// service get-asset-plan method.
+type CreativeAssetPlan struct {
+	// The platforms this plan covers, after defaulting — echoed so a caller who
+	// sent no filter knows what was actually evaluated.
+	Platforms []string
+	// Every slot that received at least one asset, in platform catalog order.
+	Assignments []*CreativeSlotAssignment
+	// Every required slot or cross-slot rule the library leaves short. Empty means
+	// this library can fill every requested platform.
+	Gaps []*CreativeSlotGap
+	// Assets whose dimensions were never recorded, so their shape is unknown. They
+	// are NOT counted against any slot and NOT reported as failing one: unknown is
+	// a different answer from wrong, and a dimension backfill makes them
+	// classifiable without the operator doing anything.
+	Unclassified []string
+	// Assets whose dimensions are known and which this plan did not place in any
+	// slot. Wider than "nothing would accept them": an asset also appears here
+	// when every slot that would take it was already filled to its minimum, or
+	// when a sibling slot had already spent a shared group ceiling. The mirror of
+	// gaps: not only "what am I missing" but "which of the files I just dropped is
+	// this plan not using" — with no gaps reported, what is listed here is surplus
+	// rather than unusable.
+	Unused []string
+}
+
+type CreativeSlotAssignment struct {
+	// Stable identifier for this slot: platform/channel/slot, or platform/slot
+	// where the platform has a single ad shape. It is the join key between a plan
+	// row and an operator override, so it survives a round trip through a client
+	// unchanged.
+	SlotKey string
+	// Campaign platform this slot belongs to, using the same identifier a campaign
+	// config carries ("google-ads").
+	Platform string
+	// Ad channel within the platform whose rules differ from its siblings
+	// ("PERFORMANCE_MAX", "DEMAND_GEN", "DISPLAY"). Absent where the platform has
+	// a single ad shape.
+	Channel *string
+	// Wire name of the slot within its channel — the asset field type or payload
+	// array key a campaign config puts this image under.
+	Slot string
+	// Operator-facing name of the slot. It NAMES ITS CHANNEL, because three Google
+	// channels each have a slot called "logo image" under different rules and a
+	// bare "logo image" would not say which creative is meant.
+	Label string
+	// The slot's rule as a sentence an operator can act on — ratio, tolerance and
+	// pixel floor, plus the byte cap where one applies.
+	Requirement string
+	// Assets assigned to this slot, best fit first. An asset may appear in several
+	// slots: one library feeds every platform, and the same square image
+	// legitimately serves a 1:1 slot on each. It never appears twice within one
+	// slot.
+	AssetIds []string
+	// Images the platform requires in this slot. 0 marks the slot optional.
+	MinCount int
+	// Images the platform will accept in this slot. 0 means the platform states no
+	// per-slot ceiling; a shared ceiling across sibling slots may still apply.
+	MaxCount int
+}
+
+type CreativeSlotGap struct {
+	// Campaign platform whose rule is unmet.
+	Platform string
+	// Ad channel whose rule is unmet. Absent where the platform has a single ad
+	// shape.
+	Channel *string
+	// The slot this shortfall belongs to. ABSENT when the requirement spans
+	// several slots and no single one of them is required on its own.
+	SlotKey *string
+	// Operator-facing name of the unmet requirement.
+	Label string
+	// How many more images the requirement needs beyond what the plan could
+	// assign. Always at least 1.
+	Need int
+	// What is missing and what would satisfy it, as the sentence an operator takes
+	// back to their designer. It names every shape that would close the gap, not
+	// just one, so an either-or requirement does not send someone to produce an
+	// image they did not need.
+	Reason string
 }
 
 // DeleteBriefPayload is the payload type of the lfx-v2-campaign-service-briefs
@@ -1234,6 +1491,19 @@ type DeleteCampaignPayload struct {
 	CampaignID string
 	// If-Match header carrying the current ETag/version
 	IfMatch *string
+}
+
+// DeleteCreativeAssetPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service delete-creative-asset method.
+type DeleteCreativeAssetPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Creative asset UUID
+	AssetID string
 }
 
 // EmailCopy is the result type of the lfx-v2-campaign-service-briefs service
@@ -1381,6 +1651,21 @@ type GenerateWizardContentPayload struct {
 	ChangeRequest *string
 }
 
+// GetAssetPlanPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service get-asset-plan method.
+type GetAssetPlanPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Restrict the plan to these campaign platforms ("google-ads"). Repeat the
+	// parameter for several. Absent means every platform whose slot rules this
+	// service publishes. A platform it does not know is ignored, not refused.
+	Platforms []string
+}
+
 // GetBriefMetricsPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service get-brief-metrics method.
 type GetBriefMetricsPayload struct {
@@ -1449,6 +1734,19 @@ type GetCampaignSettingsPayload struct {
 	BriefID string
 	// Campaign UUID
 	CampaignID string
+}
+
+// GetCreativeAssetPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service get-creative-asset method.
+type GetCreativeAssetPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Creative asset UUID
+	AssetID string
 }
 
 // GetJobPayload is the payload type of the lfx-v2-campaign-service-briefs
@@ -1644,6 +1942,17 @@ type KeywordTargetingRemovals struct {
 	Results []*KeywordTargetingRemovalResult
 	// How many results are APPLIED.
 	AppliedCount int
+}
+
+// ListCreativeAssetsPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service list-creative-assets method.
+type ListCreativeAssetsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
 }
 
 // ListMetaAdSetsPayload is the payload type of the
@@ -1941,8 +2250,16 @@ type PlatformResult struct {
 	// the platform before anything was created (HTTP status only), or could not be
 	// confirmed (something may have been created; verify before retrying). An
 	// unclassified failure reads "platform campaign creation failed". Never
-	// contains a platform response body, URL, query or token. Google Ads dispatch
-	// failures are not yet classified beyond the connection classes.
+	// contains a platform response body, URL, query or token. A Google Ads
+	// dispatch failure the dispatcher could classify replaces the
+	// could-not-be-confirmed sentence with one naming what is in the ad account: a
+	// budget of the name this service composes already exists and nothing new was
+	// created, a campaign of that name already exists, a budget was created or
+	// reused and the campaign was then refused or left unconfirmed, or the
+	// campaign was created and its setup could not be confirmed. Each is a fixed
+	// sentence chosen by a service-authored token and never built from it, so it
+	// too carries no platform text. No other provider is classified beyond the
+	// classes above.
 	Error *string
 	// Deep link to this campaign's email in the HubSpot editor. Present only for
 	// the email (HubSpot) channel, and only once the portal that created it is

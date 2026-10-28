@@ -134,6 +134,8 @@ type SearchAudienceListsResponseBody struct {
 type GetAudienceSuppressionListsResponseBody struct {
 	// Suppression rows, standard first
 	Lists []*AudienceSuppressionListResponseBody `form:"lists,omitempty" json:"lists,omitempty" xml:"lists,omitempty"`
+	// The project's standing standard suppression list, when it already exists
+	StandardList *AudienceComposedListResponseBody `form:"standard_list,omitempty" json:"standard_list,omitempty" xml:"standard_list,omitempty"`
 }
 
 // GetAudienceLastSentResponseBody is the type of the
@@ -175,10 +177,18 @@ type PreviewAudienceCountResponseBody struct {
 type ComposeAudienceMasterResponseBody struct {
 	// The created master list
 	Master *AudienceComposedListResponseBody `form:"master,omitempty" json:"master,omitempty" xml:"master,omitempty"`
-	// The combined suppression list, when exclusions were requested
+	// The project's standing standard suppression list the master excludes, reused
+	// across composes; absent unless every resolved standard list was selected.
+	// Changed meaning in LFXV2-2770: it used to be a per-compose combined list
+	// covering every exclusion and now covers the standard lists only, so read
+	// suppression_list_ids for the full set of excluded lists
 	Suppression *AudienceComposedListResponseBody `form:"suppression,omitempty" json:"suppression,omitempty" xml:"suppression,omitempty"`
 	// The inclusion lists the master unions
 	SourceListIds []string `form:"source_list_ids,omitempty" json:"source_list_ids,omitempty" xml:"source_list_ids,omitempty"`
+	// Every list the master excludes, in the order attach-existing records them:
+	// the standing standard list first (when used), then each other excluded list,
+	// then the current-registrants list. Absent when the master excludes nothing
+	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
 	// The audience row recorded for brief_id, when one was requested and written
 	Audience *AudienceComposeRecordedAudienceResponseBody `form:"audience,omitempty" json:"audience,omitempty" xml:"audience,omitempty"`
 	// Whether the master was recorded as the brief's audience; false when no
@@ -192,8 +202,15 @@ type ComposeAudienceMasterResponseBody struct {
 type AttachExistingAudienceResponseBody struct {
 	// The existing master list, as read back from the portal
 	Master *AudienceComposedListResponseBody `form:"master,omitempty" json:"master,omitempty" xml:"master,omitempty"`
-	// The suppression list ids recorded beside it
+	// The suppression list ids recorded beside it. Not the input ids: a full
+	// standard set is recorded as the standing list's id, and the
+	// current-registrants list's id is appended
 	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
+	// The project's standing standard suppression list, reused across audiences,
+	// recorded in place of the standard lists; absent unless every resolved
+	// standard list was selected. It covers the standard lists only;
+	// suppression_list_ids holds every excluded list
+	Suppression *AudienceComposedListResponseBody `form:"suppression,omitempty" json:"suppression,omitempty" xml:"suppression,omitempty"`
 	// Every include list the send goes to, when include_list_ids was supplied;
 	// absent for a single master_list_id
 	IncludeListIds []string `form:"include_list_ids,omitempty" json:"include_list_ids,omitempty" xml:"include_list_ids,omitempty"`
@@ -1373,6 +1390,22 @@ type AudienceSuppressionListResponseBody struct {
 	Category *string `form:"category,omitempty" json:"category,omitempty" xml:"category,omitempty"`
 	// Deep link to the list in the HubSpot UI
 	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
+	// The list does not exist yet; an attach or compose that applies this row
+	// creates it by name (current_registrants only)
+	WillCreate *bool `form:"will_create,omitempty" json:"will_create,omitempty" xml:"will_create,omitempty"`
+}
+
+// AudienceComposedListResponseBody is used to define fields on response body
+// types.
+type AudienceComposedListResponseBody struct {
+	// HubSpot list id
+	ListID *string `form:"list_id,omitempty" json:"list_id,omitempty" xml:"list_id,omitempty"`
+	// HubSpot list name
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Deep link to the list in the HubSpot UI
+	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
+	// Membership size, when HubSpot reported one
+	Size *int64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
 }
 
 // AudienceLastSentEmailResponseBody is used to define fields on response body
@@ -1405,15 +1438,22 @@ type AudienceLastSentEmailResponseBody struct {
 type AudienceListBriefResponseBody struct {
 	// HubSpot list id
 	ListID *string `form:"list_id,omitempty" json:"list_id,omitempty" xml:"list_id,omitempty"`
-	// HubSpot list name; empty when the list no longer resolves
+	// HubSpot list name; empty when the list could not be read
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 	// Membership size, when HubSpot reported one
 	Size *int64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
-	// True when the referenced list could not be resolved
+	// True when HubSpot reported no such list
 	Missing *bool `form:"missing,omitempty" json:"missing,omitempty" xml:"missing,omitempty"`
+	// True when the list could not be read for a reason other than its absence, so
+	// whether it still exists is UNKNOWN. Never true together with missing.
+	Unresolved *bool `form:"unresolved,omitempty" json:"unresolved,omitempty" xml:"unresolved,omitempty"`
 	// Legacy list id this row was translated from
 	ResolvedFromLegacyID *string `form:"resolved_from_legacy_id,omitempty" json:"resolved_from_legacy_id,omitempty" xml:"resolved_from_legacy_id,omitempty"`
-	// Deep link to the list in the HubSpot UI; absent when it no longer resolves
+	// Deep link to the list in the HubSpot UI; absent when the list is missing.
+	// Present on an unresolved row, where checking the list by hand is the remedy
+	// — unless the row's list_id is still the legacy id it was resolved_from,
+	// which this link's route cannot open. Absence is never itself a statement
+	// about the list: read missing and unresolved for that
 	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
 }
 
@@ -1428,19 +1468,6 @@ type AudienceMasterListBriefResponseBody struct {
 	Size *int64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
 	// Deep link to the list in the HubSpot UI
 	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
-}
-
-// AudienceComposedListResponseBody is used to define fields on response body
-// types.
-type AudienceComposedListResponseBody struct {
-	// HubSpot list id
-	ListID *string `form:"list_id,omitempty" json:"list_id,omitempty" xml:"list_id,omitempty"`
-	// HubSpot list name
-	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
-	// Deep link to the list in the HubSpot UI
-	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
-	// Membership size, when HubSpot reported one
-	Size *int64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
 }
 
 // AudienceComposeRecordedAudienceResponseBody is used to define fields on
@@ -1627,6 +1654,9 @@ type AudienceComposeMasterInputRequestBody struct {
 	EventName *string `form:"event_name,omitempty" json:"event_name,omitempty" xml:"event_name,omitempty"`
 	// Event dates; drive the derived name's quarter segment
 	EventDates []string `form:"event_dates,omitempty" json:"event_dates,omitempty" xml:"event_dates,omitempty"`
+	// Edition (event name with year) whose current registrants the master also
+	// excludes, through a list found or created by name
+	CurrentRegistrantsEvent *string `form:"current_registrants_event,omitempty" json:"current_registrants_event,omitempty" xml:"current_registrants_event,omitempty"`
 	// Record the composed master as this brief's built audience, stamped with the
 	// portal it was composed in
 	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
@@ -1649,6 +1679,9 @@ type AudienceAttachExistingInputRequestBody struct {
 	IncludeListIds []string `form:"include_list_ids,omitempty" json:"include_list_ids,omitempty" xml:"include_list_ids,omitempty"`
 	// Existing lists the send suppresses
 	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
+	// Edition (event name with year) whose current registrants the send also
+	// suppresses, through a list found or created by name
+	CurrentRegistrantsEvent *string `form:"current_registrants_event,omitempty" json:"current_registrants_event,omitempty" xml:"current_registrants_event,omitempty"`
 	// Operator-visible provenance for the recorded audience; derived from the
 	// master list when omitted
 	InclusionSummary *string `form:"inclusion_summary,omitempty" json:"inclusion_summary,omitempty" xml:"inclusion_summary,omitempty"`
@@ -1670,8 +1703,9 @@ type AudienceCustomAnswerRequestBody struct {
 type AudienceCustomInputRequestBody struct {
 	// The reviewed criteria
 	Criteria *AudienceCustomCriteriaRequestBody `form:"criteria" json:"criteria" xml:"criteria"`
-	// Explicit list name; derived from the criteria when omitted. A taken name is
-	// versioned, never reused
+	// Explicit list name, at most 200 characters (HubSpot cannot search a longer
+	// one); derived from the criteria when omitted. A taken name is versioned,
+	// never reused
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 }
 
@@ -2172,6 +2206,9 @@ func NewGetAudienceSuppressionListsResultOK(body *GetAudienceSuppressionListsRes
 		}
 		v.Lists[i] = unmarshalAudienceSuppressionListResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceSuppressionList(val)
 	}
+	if body.StandardList != nil {
+		v.StandardList = unmarshalAudienceComposedListResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceComposedList(body.StandardList)
+	}
 
 	return v
 }
@@ -2584,6 +2621,12 @@ func NewComposeAudienceMasterAudienceComposeMasterResultCreated(body *ComposeAud
 	for i, val := range body.SourceListIds {
 		v.SourceListIds[i] = val
 	}
+	if body.SuppressionListIds != nil {
+		v.SuppressionListIds = make([]string, len(body.SuppressionListIds))
+		for i, val := range body.SuppressionListIds {
+			v.SuppressionListIds[i] = val
+		}
+	}
 	if body.Audience != nil {
 		v.Audience = unmarshalAudienceComposeRecordedAudienceResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceComposeRecordedAudience(body.Audience)
 	}
@@ -2706,6 +2749,9 @@ func NewAttachExistingAudienceAudienceAttachExistingResultCreated(body *AttachEx
 	v.SuppressionListIds = make([]string, len(body.SuppressionListIds))
 	for i, val := range body.SuppressionListIds {
 		v.SuppressionListIds[i] = val
+	}
+	if body.Suppression != nil {
+		v.Suppression = unmarshalAudienceComposedListResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceComposedList(body.Suppression)
 	}
 	if body.IncludeListIds != nil {
 		v.IncludeListIds = make([]string, len(body.IncludeListIds))
@@ -3351,6 +3397,11 @@ func ValidateGetAudienceSuppressionListsResponseBody(body *GetAudienceSuppressio
 			}
 		}
 	}
+	if body.StandardList != nil {
+		if err2 := validateAudienceComposedListResponseBody(body.StandardList, "body.standard_list"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
 	return
 }
 
@@ -3448,6 +3499,11 @@ func ValidateAttachExistingAudienceResponseBody(body *AttachExistingAudienceResp
 	}
 	if body.Master != nil {
 		if err2 := validateAudienceComposedListResponseBody(body.Master, "body.master"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Suppression != nil {
+		if err2 := validateAudienceComposedListResponseBody(body.Suppression, "body.suppression"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -3609,8 +3665,8 @@ func ValidateGetAudienceBuilderCapabilitiesConflictResponseBody(body *GetAudienc
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -3701,8 +3757,8 @@ func ValidateDiscoverAudienceListsConflictResponseBody(body *DiscoverAudienceLis
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -3790,8 +3846,8 @@ func ValidateSearchAudienceListsConflictResponseBody(body *SearchAudienceListsCo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -3879,8 +3935,8 @@ func ValidateGetAudienceSuppressionListsConflictResponseBody(body *GetAudienceSu
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -3970,8 +4026,8 @@ func ValidateGetAudienceLastSentConflictResponseBody(body *GetAudienceLastSentCo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -4059,8 +4115,8 @@ func ValidateGetExistingAudienceMasterListsConflictResponseBody(body *GetExistin
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -4151,8 +4207,8 @@ func ValidatePreviewAudienceCountConflictResponseBody(body *PreviewAudienceCount
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -4274,8 +4330,8 @@ func ValidateComposeAudienceMasterConflictResponseBody(body *ComposeAudienceMast
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -4351,8 +4407,8 @@ func ValidateAttachExistingAudienceConflictResponseBody(body *AttachExistingAudi
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -4440,8 +4496,8 @@ func ValidateRunAudienceQaConflictResponseBody(body *RunAudienceQaConflictRespon
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -4529,8 +4585,8 @@ func ValidateInterpretCustomAudienceConflictResponseBody(body *InterpretCustomAu
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -4618,8 +4674,8 @@ func ValidatePreviewCustomAudienceConflictResponseBody(body *PreviewCustomAudien
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -4741,8 +4797,8 @@ func ValidateCreateCustomAudienceConflictResponseBody(body *CreateCustomAudience
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
 		}
 	}
 	return
@@ -4935,8 +4991,8 @@ func ValidateAudienceSuppressionListResponseBody(body *AudienceSuppressionListRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("hubspot_url", "body"))
 	}
 	if body.Category != nil {
-		if !(*body.Category == "standard" || *body.Category == "brand" || *body.Category == "event_specific") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.category", *body.Category, []any{"standard", "brand", "event_specific"}))
+		if !(*body.Category == "standard" || *body.Category == "brand" || *body.Category == "event_specific" || *body.Category == "current_registrants") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.category", *body.Category, []any{"standard", "brand", "event_specific", "current_registrants"}))
 		}
 	}
 	return
@@ -4964,9 +5020,39 @@ func validateAudienceSuppressionListResponseBody(body *AudienceSuppressionListRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("hubspot_url", path))
 	}
 	if body.Category != nil {
-		if !(*body.Category == "standard" || *body.Category == "brand" || *body.Category == "event_specific") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".category", *body.Category, []any{"standard", "brand", "event_specific"}))
+		if !(*body.Category == "standard" || *body.Category == "brand" || *body.Category == "event_specific" || *body.Category == "current_registrants") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".category", *body.Category, []any{"standard", "brand", "event_specific", "current_registrants"}))
 		}
+	}
+	return
+}
+
+// ValidateAudienceComposedListResponseBody runs the validations defined on
+// audience-composed-list
+func ValidateAudienceComposedListResponseBody(body *AudienceComposedListResponseBody) (err error) {
+	if body.ListID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("list_id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.HubspotURL == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("hubspot_url", "body"))
+	}
+	return
+}
+
+// validateAudienceComposedListResponseBody checks audience-composed-list and
+// reports errors using the path supplied by its caller
+func validateAudienceComposedListResponseBody(body *AudienceComposedListResponseBody, path string) (err error) {
+	if body.ListID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("list_id", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	if body.HubspotURL == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("hubspot_url", path))
 	}
 	return
 }
@@ -5063,6 +5149,9 @@ func ValidateAudienceListBriefResponseBody(body *AudienceListBriefResponseBody) 
 	if body.Missing == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("missing", "body"))
 	}
+	if body.Unresolved == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("unresolved", "body"))
+	}
 	return
 }
 
@@ -5077,6 +5166,9 @@ func validateAudienceListBriefResponseBody(body *AudienceListBriefResponseBody, 
 	}
 	if body.Missing == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("missing", path))
+	}
+	if body.Unresolved == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("unresolved", path))
 	}
 	return
 }
@@ -5100,36 +5192,6 @@ func ValidateAudienceMasterListBriefResponseBody(body *AudienceMasterListBriefRe
 // audience-master-list-brief and reports errors using the path supplied by its
 // caller
 func validateAudienceMasterListBriefResponseBody(body *AudienceMasterListBriefResponseBody, path string) (err error) {
-	if body.ListID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("list_id", path))
-	}
-	if body.Name == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
-	}
-	if body.HubspotURL == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("hubspot_url", path))
-	}
-	return
-}
-
-// ValidateAudienceComposedListResponseBody runs the validations defined on
-// audience-composed-list
-func ValidateAudienceComposedListResponseBody(body *AudienceComposedListResponseBody) (err error) {
-	if body.ListID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("list_id", "body"))
-	}
-	if body.Name == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
-	}
-	if body.HubspotURL == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("hubspot_url", "body"))
-	}
-	return
-}
-
-// validateAudienceComposedListResponseBody checks audience-composed-list and
-// reports errors using the path supplied by its caller
-func validateAudienceComposedListResponseBody(body *AudienceComposedListResponseBody, path string) (err error) {
 	if body.ListID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("list_id", path))
 	}
@@ -5736,6 +5798,11 @@ func ValidateAudienceComposeMasterInputRequestBody(body *AudienceComposeMasterIn
 	if len(body.ExcludeListIds) > 200 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.exclude_list_ids", body.ExcludeListIds, len(body.ExcludeListIds), 200, false))
 	}
+	if body.CurrentRegistrantsEvent != nil {
+		if utf8.RuneCountInString(*body.CurrentRegistrantsEvent) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.current_registrants_event", *body.CurrentRegistrantsEvent, utf8.RuneCountInString(*body.CurrentRegistrantsEvent), 200, false))
+		}
+	}
 	if body.BriefID != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.brief_id", *body.BriefID, goa.FormatUUID))
 	}
@@ -5758,6 +5825,11 @@ func validateAudienceComposeMasterInputRequestBody(body *AudienceComposeMasterIn
 	if len(body.ExcludeListIds) > 200 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".exclude_list_ids", body.ExcludeListIds, len(body.ExcludeListIds), 200, false))
 	}
+	if body.CurrentRegistrantsEvent != nil {
+		if utf8.RuneCountInString(*body.CurrentRegistrantsEvent) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".current_registrants_event", *body.CurrentRegistrantsEvent, utf8.RuneCountInString(*body.CurrentRegistrantsEvent), 200, false))
+		}
+	}
 	if body.BriefID != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat(path+".brief_id", *body.BriefID, goa.FormatUUID))
 	}
@@ -5779,6 +5851,11 @@ func ValidateAudienceAttachExistingInputRequestBody(body *AudienceAttachExisting
 	if len(body.SuppressionListIds) > 200 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.suppression_list_ids", body.SuppressionListIds, len(body.SuppressionListIds), 200, false))
 	}
+	if body.CurrentRegistrantsEvent != nil {
+		if utf8.RuneCountInString(*body.CurrentRegistrantsEvent) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.current_registrants_event", *body.CurrentRegistrantsEvent, utf8.RuneCountInString(*body.CurrentRegistrantsEvent), 200, false))
+		}
+	}
 	return
 }
 
@@ -5797,6 +5874,11 @@ func validateAudienceAttachExistingInputRequestBody(body *AudienceAttachExisting
 	}
 	if len(body.SuppressionListIds) > 200 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".suppression_list_ids", body.SuppressionListIds, len(body.SuppressionListIds), 200, false))
+	}
+	if body.CurrentRegistrantsEvent != nil {
+		if utf8.RuneCountInString(*body.CurrentRegistrantsEvent) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".current_registrants_event", *body.CurrentRegistrantsEvent, utf8.RuneCountInString(*body.CurrentRegistrantsEvent), 200, false))
+		}
 	}
 	return
 }
@@ -5831,8 +5913,8 @@ func ValidateAudienceCustomInputRequestBody(body *AudienceCustomInputRequestBody
 		}
 	}
 	if body.Name != nil {
-		if utf8.RuneCountInString(*body.Name) > 250 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", *body.Name, utf8.RuneCountInString(*body.Name), 250, false))
+		if utf8.RuneCountInString(*body.Name) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", *body.Name, utf8.RuneCountInString(*body.Name), 200, false))
 		}
 	}
 	return
@@ -5850,8 +5932,8 @@ func validateAudienceCustomInputRequestBody(body *AudienceCustomInputRequestBody
 		}
 	}
 	if body.Name != nil {
-		if utf8.RuneCountInString(*body.Name) > 250 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".name", *body.Name, utf8.RuneCountInString(*body.Name), 250, false))
+		if utf8.RuneCountInString(*body.Name) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".name", *body.Name, utf8.RuneCountInString(*body.Name), 200, false))
 		}
 	}
 	return

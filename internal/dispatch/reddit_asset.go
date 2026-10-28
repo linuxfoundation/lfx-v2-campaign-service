@@ -84,13 +84,26 @@ func (d *RedditDispatcher) checkRedditAssetChoice(cfg redditConfig) (string, err
 }
 
 // PreflightCreate refuses, before the create job exists, a Reddit config that names a stored
-// asset the service cannot serve: the feature off, imageAssetId together with imageUrl or
-// postUrl, or a malformed id. It never calls Reddit, so every other outcome is
-// ErrPreflightNotApplicable. Whether the asset belongs to the brief cannot be checked here (the
-// pre-check is not given the brief); Dispatch checks it before any upstream call.
+// asset the service cannot serve (the feature off, imageAssetId together with imageUrl or
+// postUrl, or a malformed id), or whose bidding cannot be created as asked (redditBidPlan). It
+// never calls Reddit, so every other outcome is ErrPreflightNotApplicable. Whether the asset belongs to the brief cannot be checked here (the
+// pre-check is not given the brief); Dispatch checks it before any upstream call. A config that does
+// not decode is left to Dispatch, except a wrong-typed `bidding` (checkBiddingShape).
 func (d *RedditDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
+	if err := checkBiddingShape(config, "redditConfig"); err != nil {
+		return err
+	}
+	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can past a type
+	// error, so the bid plan runs even when an unrelated field is broken — an invalid bidding is
+	// always the synchronous 400. The asset checks keep their old scope: they run only on a config
+	// that decoded cleanly, and a malformed one is still Dispatch's job failure.
 	var cfg redditConfig
-	if err := unmarshalPlatformConfig(config, "redditConfig", &cfg); err != nil {
+	decodeErr := unmarshalPlatformConfig(config, "redditConfig", &cfg)
+	if _, err := redditBidPlan(cfg); err != nil {
+		return err
+	}
+	if decodeErr != nil {
 		return domain.ErrPreflightNotApplicable // Dispatch reports a malformed config as the job failure
 	}
 	if _, err := d.checkRedditAssetChoice(cfg); err != nil {

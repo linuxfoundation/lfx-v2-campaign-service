@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	sf "github.com/snowflakedb/gosnowflake"
+	sf "github.com/snowflakedb/gosnowflake/v2"
 )
 
 const (
@@ -127,6 +127,31 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 		Role:          strings.TrimSpace(cfg.Role),
 		Authenticator: sf.AuthTypeJwt,
 		PrivateKey:    key,
+		// OCSP is OPT-IN in v2 and was ON by default in v1, so leaving this field
+		// at its zero value silently drops TLS certificate-revocation checking
+		// across the module-path move. v1 PROMOTED the unset value to
+		// OCSPFailOpenTrue (fillMissingConfigParameters) and skipped OCSP only
+		// when DisableOCSPChecks/InsecureMode was set — neither is set here, so
+		// revocation was checked, fail-open. v2 gates the same code on
+		// OCSPEnabled(cfg), which is false for OCSPFailOpenNotSet, the zero
+		// value. Setting this explicitly restores v1's effective default exactly:
+		// revocation is checked, and an unreachable responder does not break the
+		// connection. v2's own doc.go says to do exactly this: "OCSP is off by
+		// default. Production that still wants revocation checking must opt in
+		// via ocspFailOpen or SF_DISABLE_OCSP_CHECKS=false." The field is chosen
+		// over the env var so the guarantee travels with the config rather than
+		// with the pod's environment.
+		//
+		// Not the two alternatives, deliberately. OCSPFailOpenFalse (fail-closed)
+		// would hand a Snowflake OCSP-responder outage the power to stop event
+		// resolution, which v1 never did. CertRevocationCheckMode (v2's CRL
+		// checking) is a mutually exclusive REPLACEMENT — the driver refuses to
+		// run both — with its own download/cache behaviour this service has never
+		// exercised; adopting it is a change of mechanism, not the restoration of
+		// a lost default, so it does not belong in a security-remediation fix.
+		// Leaving it at its Disabled zero value is also what keeps this line from
+		// tripping that conflict check.
+		OCSPFailOpen: sf.OCSPFailOpenTrue,
 	}
 	dsn, err := sf.DSN(sfCfg)
 	if err != nil {

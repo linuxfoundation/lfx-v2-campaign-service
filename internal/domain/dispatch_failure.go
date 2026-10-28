@@ -230,18 +230,23 @@ type UpstreamCreateOutcomeCarrier interface {
 // not get to pick.
 const (
 	// CreateOutcomeBudgetNameTaken: nothing new was created. A budget of the name this
-	// service composes already exists from an earlier attempt and is holding the
-	// idempotency key, so the retry cannot get past the budget step until it is dealt with.
+	// service composes already exists from an earlier attempt, and this attempt tried to
+	// adopt it and did not get far enough to use it — the lookup failed, or what it read
+	// back did not satisfy the reuse gates. A later retry may still succeed: the decline can
+	// be transient (the lookup read failing) as well as a standing property of that budget.
 	CreateOutcomeBudgetNameTaken = "budget_name_taken"
-	// CreateOutcomeBudgetCreatedCampaignRefused: the budget was created and the platform
-	// then definitely refused the campaign. The budget is an orphan — it exists, carries no
-	// campaign, and accrues no spend.
+	// CreateOutcomeBudgetCreatedCampaignRefused: the budget for this brief exists — created
+	// by this attempt, or an earlier attempt's budget of the same name adopted by it — and
+	// the platform then definitely refused the campaign. The budget is an orphan: it exists,
+	// carries no campaign, and accrues no spend. Which of the two put it there does not
+	// change what is in the account or what to do about it, so both share this token.
 	CreateOutcomeBudgetCreatedCampaignRefused = "budget_created_campaign_refused"
-	// CreateOutcomeBudgetCreatedCampaignUnconfirmed: the budget was created; whether the
-	// campaign was is genuinely unknown (a 5xx, a 429, a mid-flight timeout).
+	// CreateOutcomeBudgetCreatedCampaignUnconfirmed: the budget for this brief exists
+	// (created or adopted, as above); whether the campaign was created is genuinely unknown
+	// (a 5xx, a 429, a mid-flight timeout).
 	CreateOutcomeBudgetCreatedCampaignUnconfirmed = "budget_created_campaign_unconfirmed"
-	// CreateOutcomeCampaignNameTaken: the budget was created and a campaign of the composed
-	// name already exists from an earlier attempt.
+	// CreateOutcomeCampaignNameTaken: the budget for this brief exists (created or adopted,
+	// as above) and a campaign of the composed name already exists from an earlier attempt.
 	CreateOutcomeCampaignNameTaken = "campaign_name_taken"
 	// CreateOutcomeCampaignCreatedSetupIncomplete: the campaign itself exists; a later step of
 	// the cascade (ad group, ad, targeting, assets) did not report success, so whether its

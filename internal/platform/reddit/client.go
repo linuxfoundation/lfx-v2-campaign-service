@@ -491,6 +491,40 @@ type CampaignInput struct {
 	// Reddit has no bare "VIDEO_VIEWS" optimization goal, so a concrete goal must
 	// be supplied. Ignored for non-video objectives.
 	VideoGoal string
+	// ManualCPCBid is the manual starting bid (LFXV2-2665), in whole units of the ad account's
+	// currency like BudgetUSD. ZERO means AUTOMATIC bidding: campaign and ad group are created
+	// BIDLESS exactly as before. A positive value creates both with bid_strategy MANUAL_BIDDING
+	// (under campaign budget optimization the ad group's bid_strategy and bid_type must match the
+	// campaign's) and gives the ad group bid_value in micro-units — the shape the bid lever
+	// accepts (MANUAL_BIDDING with bid_type CPC). Only the traffic objective bids CPC
+	// (ManualCPCBidSupported); the amount must be a whole number of micro-units, refused rather
+	// than rounded. Both are checked before the first mutating call.
+	ManualCPCBid float64
+}
+
+// ManualCPCBidSupported reports whether a campaign with this objective can be created with a
+// manual cost-per-click bid: only an objective whose bid_type is CPC (traffic) — the CPM
+// objectives would make the bid a cost per thousand impressions, which the bid lever refuses.
+// objective is resolved the way CreateCampaign resolves it (empty = the default, conversions).
+func ManualCPCBidSupported(objective string) bool {
+	if objective == "" {
+		objective = defaultRedditObjective
+	}
+	p, ok := redditObjectiveParams[objective]
+	return ok && p.bidType == BidTypeCPC
+}
+
+// manualBidMicros encodes a create-time manual bid in micro-units, refusing (never rounding) an
+// amount that is not a whole number of them.
+func manualBidMicros(amount float64) (int64, error) {
+	if math.IsNaN(amount) || math.IsInf(amount, 0) || amount <= 0 || amount > redditMaxBid {
+		return 0, &bidAmountError{msg: "the manual bid must be a finite number greater than zero and at most " + formatBudgetAmount(redditMaxBid)}
+	}
+	micros := toMicrodollars(amount)
+	if float64(micros)/1_000_000 != amount || micros < 1 {
+		return 0, &bidAmountError{msg: "the manual bid " + formatBudgetAmount(amount) + " is not a whole number of micro-units; it is refused rather than rounded"}
+	}
+	return micros, nil
 }
 
 // CampaignResult mirrors RedditCampaignCreateResult.
@@ -511,7 +545,11 @@ type CampaignResult struct {
 	AdGroupName string `json:"adGroupName"`
 	AdGroupID   string `json:"adGroupId"`
 	AdCount     int    `json:"adCount"`
-	AdID        string `json:"adId,omitempty"`
+	// BidApplied reports that THIS run created the campaign and ad group that carry the
+	// requested bidding (LFXV2-2665); the dispatcher records the strategy and starting bid only
+	// when it is true. Set only on the successful result.
+	BidApplied bool   `json:"bidApplied,omitempty"`
+	AdID       string `json:"adId,omitempty"`
 	// AdWarning is set (non-empty) whenever an ad was REQUESTED and the result does
 	// not carry a confirmed one. That covers three shortfalls:
 	//   - the ad POST failed, or returned a 2xx with no ad id;
@@ -542,10 +580,11 @@ type objectiveParams struct {
 	viewThroughConversionType string
 }
 
-// Note: campaigns and ad groups use the BIDLESS bid strategy, so no explicit
-// bid value is sent to Reddit. The upstream TS constants carry a bidValue field
-// but the reddit-ads.service.ts client never writes it into any request body, so
-// it is intentionally omitted here.
+// Note: campaigns and ad groups use the BIDLESS bid strategy unless the caller asks
+// for manual bidding (CampaignInput.ManualCPCBid, LFXV2-2665), so by default no
+// explicit bid value is sent to Reddit. The upstream TS constants carry a bidValue
+// field but the reddit-ads.service.ts client never writes it into any request
+// body, so it is intentionally omitted here; a manual bid is the caller's amount.
 var redditObjectiveParams = map[string]objectiveParams{
 	"awareness": {redditObjective: "IMPRESSIONS", bidType: "CPM", optimizationGoal: "IMPRESSIONS"},
 	"traffic":   {redditObjective: "CLICKS", bidType: "CPC", optimizationGoal: "CLICKS"},
@@ -1649,6 +1688,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		optimizationGoal = videoGoal
 	}
 
+	// The manual bid, validated before any mutating call: only a CPC objective can carry it,
+	// and the amount must be whole micro-units.
+	bidStrategy := "BIDLESS"
+	var bidMicros int64
+	if in.ManualCPCBid != 0 {
+		if objParams.bidType != BidTypeCPC {
+			// Raised before the account-verify GET, so operator-safe (issue #208); the
+			// objective is rendered through CallerValue like every other marked refusal.
+			return nil, domain.WrapPreflightRefusal(&bidAmountError{msg: fmt.Sprintf("manual bidding sets a cost-per-click bid, which needs the traffic objective; %s bids %s", domain.CallerValue(objective), objParams.bidType)})
+		}
+		micros, err := manualBidMicros(in.ManualCPCBid)
+		if err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+		bidStrategy, bidMicros = BidStrategyManual, micros
+	}
+
 	// Validate/resolve the conversion pixel before any mutating call. A missing pixel would
 	// otherwise create the campaign in Step 2 and then fail at ad-group creation, orphaning a
 	// PAUSED campaign — so it is rejected up front and nothing is created.
@@ -2066,7 +2122,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		"objective":                       objParams.redditObjective,
 		"configured_status":               "PAUSED",
 		"is_campaign_budget_optimization": true,
-		"bid_strategy":                    "BIDLESS",
+		"bid_strategy":                    bidStrategy,
 		"bid_type":                        objParams.bidType,
 		"optimization_goal":               optimizationGoal,
 		"goal_type":                       "LIFETIME_SPEND",
@@ -2205,12 +2261,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			"name":              adGroupName,
 			"campaign_id":       campaignID,
 			"configured_status": "PAUSED",
-			"bid_strategy":      "BIDLESS",
+			"bid_strategy":      bidStrategy,
 			"bid_type":          objParams.bidType,
 			"optimization_goal": optimizationGoal,
 			"targeting":         targeting,
 			"start_time":        effectiveStart,
 			"end_time":          campaignEndTime,
+		}
+		// MANUAL bidding: the ad group's bid_value is the max CPC, in micro-units of the account
+		// currency like every Reddit money field. Ad Group fields per the Reddit Ads API v3
+		// reference (https://ads-api.reddit.com/docs/v3/): bid_strategy BIDLESS | MANUAL_BIDDING |
+		// MAXIMIZE_VOLUME | TARGET_CPX, bid_type CPC | CPM | CPV, bid_value. See bid_update.go for
+		// why that page could not be re-fetched and how the guards fail closed.
+		if bidMicros > 0 {
+			data["bid_value"] = bidMicros
 		}
 		// Reddit requires the conversion pixel on a conversion ad group; without it
 		// the ad-group create fails and orphans the PAUSED campaign.
@@ -2528,6 +2592,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		AccountID:    c.account.AccountID,
 		RedditURL:    redditAdsManagerURL,
 		Steps:        steps,
+		// Reddit never reuses a campaign or ad group by name, so a successful run created both
+		// entities carrying the bidding (LFXV2-2665).
+		BidApplied: true,
 	}, nil
 }
 

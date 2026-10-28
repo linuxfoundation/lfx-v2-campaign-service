@@ -65,6 +65,8 @@ type Server struct {
 	ListGoogleAdsAccounts       http.Handler
 	GetGoogleAdsKeywords        http.Handler
 	GetGoogleAdsAudience        http.Handler
+	SuggestGoogleAdsGeoTargets  http.Handler
+	ListGoogleAdsUserLists      http.Handler
 	GetMetaAdsAudience          http.Handler
 	GetTwitterAdsAudience       http.Handler
 	GetLinkedinAdsAudience      http.Handler
@@ -168,6 +170,8 @@ func New(
 			{"ListGoogleAdsAccounts", "GET", "/projects/{project_id}/connection-google-ads/accounts"},
 			{"GetGoogleAdsKeywords", "GET", "/projects/{project_id}/google-ads/keywords"},
 			{"GetGoogleAdsAudience", "GET", "/projects/{project_id}/google-ads/audience"},
+			{"SuggestGoogleAdsGeoTargets", "GET", "/projects/{project_id}/google-ads/geo-targets"},
+			{"ListGoogleAdsUserLists", "GET", "/projects/{project_id}/google-ads/user-lists"},
 			{"GetMetaAdsAudience", "GET", "/projects/{project_id}/meta-ads/audience"},
 			{"GetTwitterAdsAudience", "GET", "/projects/{project_id}/twitter-ads/audience"},
 			{"GetLinkedinAdsAudience", "GET", "/projects/{project_id}/linkedin-ads/audience"},
@@ -242,6 +246,8 @@ func New(
 		ListGoogleAdsAccounts:       NewListGoogleAdsAccountsHandler(e.ListGoogleAdsAccounts, mux, decoder, encoder, errhandler, formatter),
 		GetGoogleAdsKeywords:        NewGetGoogleAdsKeywordsHandler(e.GetGoogleAdsKeywords, mux, decoder, encoder, errhandler, formatter),
 		GetGoogleAdsAudience:        NewGetGoogleAdsAudienceHandler(e.GetGoogleAdsAudience, mux, decoder, encoder, errhandler, formatter),
+		SuggestGoogleAdsGeoTargets:  NewSuggestGoogleAdsGeoTargetsHandler(e.SuggestGoogleAdsGeoTargets, mux, decoder, encoder, errhandler, formatter),
+		ListGoogleAdsUserLists:      NewListGoogleAdsUserListsHandler(e.ListGoogleAdsUserLists, mux, decoder, encoder, errhandler, formatter),
 		GetMetaAdsAudience:          NewGetMetaAdsAudienceHandler(e.GetMetaAdsAudience, mux, decoder, encoder, errhandler, formatter),
 		GetTwitterAdsAudience:       NewGetTwitterAdsAudienceHandler(e.GetTwitterAdsAudience, mux, decoder, encoder, errhandler, formatter),
 		GetLinkedinAdsAudience:      NewGetLinkedinAdsAudienceHandler(e.GetLinkedinAdsAudience, mux, decoder, encoder, errhandler, formatter),
@@ -323,6 +329,8 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.ListGoogleAdsAccounts = m(s.ListGoogleAdsAccounts)
 	s.GetGoogleAdsKeywords = m(s.GetGoogleAdsKeywords)
 	s.GetGoogleAdsAudience = m(s.GetGoogleAdsAudience)
+	s.SuggestGoogleAdsGeoTargets = m(s.SuggestGoogleAdsGeoTargets)
+	s.ListGoogleAdsUserLists = m(s.ListGoogleAdsUserLists)
 	s.GetMetaAdsAudience = m(s.GetMetaAdsAudience)
 	s.GetTwitterAdsAudience = m(s.GetTwitterAdsAudience)
 	s.GetLinkedinAdsAudience = m(s.GetLinkedinAdsAudience)
@@ -404,6 +412,8 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountListGoogleAdsAccountsHandler(mux, h.ListGoogleAdsAccounts)
 	MountGetGoogleAdsKeywordsHandler(mux, h.GetGoogleAdsKeywords)
 	MountGetGoogleAdsAudienceHandler(mux, h.GetGoogleAdsAudience)
+	MountSuggestGoogleAdsGeoTargetsHandler(mux, h.SuggestGoogleAdsGeoTargets)
+	MountListGoogleAdsUserListsHandler(mux, h.ListGoogleAdsUserLists)
 	MountGetMetaAdsAudienceHandler(mux, h.GetMetaAdsAudience)
 	MountGetTwitterAdsAudienceHandler(mux, h.GetTwitterAdsAudience)
 	MountGetLinkedinAdsAudienceHandler(mux, h.GetLinkedinAdsAudience)
@@ -2860,6 +2870,116 @@ func NewGetGoogleAdsAudienceHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "get-google-ads-audience")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountSuggestGoogleAdsGeoTargetsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint.
+func MountSuggestGoogleAdsGeoTargetsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/google-ads/geo-targets", f)
+}
+
+// NewSuggestGoogleAdsGeoTargetsHandler creates a HTTP handler which loads the
+// HTTP request and calls the "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint.
+func NewSuggestGoogleAdsGeoTargetsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeSuggestGoogleAdsGeoTargetsRequest(mux, decoder)
+		encodeResponse = EncodeSuggestGoogleAdsGeoTargetsResponse(encoder)
+		encodeError    = EncodeSuggestGoogleAdsGeoTargetsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "suggest-google-ads-geo-targets")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountListGoogleAdsUserListsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint.
+func MountListGoogleAdsUserListsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/google-ads/user-lists", f)
+}
+
+// NewListGoogleAdsUserListsHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-connections" service
+// "list-google-ads-user-lists" endpoint.
+func NewListGoogleAdsUserListsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeListGoogleAdsUserListsRequest(mux, decoder)
+		encodeResponse = EncodeListGoogleAdsUserListsResponse(encoder)
+		encodeError    = EncodeListGoogleAdsUserListsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "list-google-ads-user-lists")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
 		payload, err := decodeRequest(r)
 		if err != nil {
