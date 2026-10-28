@@ -5,10 +5,11 @@
 **The one-sided-pair message no longer offers advice that is then refused.** When only one of
 `dsaBeneficiary` and `dsaPayor` is supplied, `meta.CheckPublishIdentity` used to answer "supply
 both or omit both" whatever was targeted. For a create whose `geoTargets` include an EU country,
-omitting both is refused by the very next guard. With an EU country targeted, the message now
-names the countries and says "supply both, or remove the EU countries"; otherwise it still says
+omitting both is refused by the very next guard, and removing the EU countries alone still
+leaves a one-sided pair. With an EU country targeted, the message now names the countries and
+says "supply both, or remove the EU countries and omit both disclosures"; otherwise it still says
 "supply both or omit both". `TestCheckPublishIdentityOneSidedAdviceFollowsTheGeoTargets` covers
-both, and its EU case fails against the old message.
+both directions of the pair with an EU target, and the EU cases fail against the old message.
 
 **The dispatcher's own DSA check is pinned.** `TestMeta_DispatchRefusesEUWithoutDSABeforeAnyRequest`
 passed with the dispatcher's `checkMetaPublishIdentity` call deleted, because the Meta client runs
