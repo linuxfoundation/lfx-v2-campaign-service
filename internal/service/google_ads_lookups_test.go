@@ -287,7 +287,7 @@ func TestListGoogleAdsUserLists_SharedTenancyIsRefusedWith409(t *testing.T) {
 	for _, acct := range []*string{nil, strp("8666746580")} {
 		d := &sharedTenancyLookupDispatcher{mockLookupDispatcher{lists: &model.AudienceUserLists{Lists: []model.AudienceUserList{}}}}
 		_, err := lookupService(d).ListGoogleAdsUserLists(context.Background(), &conn.ListGoogleAdsUserListsPayload{ProjectID: "cncf", AccountID: acct})
-		var c *conn.ConflictError
+		var c *conn.UserListsConflictError
 		if !errors.As(err, &c) || c.Code != "409" {
 			t.Fatalf("err = %T %v, want 409", err, err)
 		}

@@ -2927,6 +2927,13 @@ type UpdateTwitterAdsPayload struct {
 	Config  *TwitterAdsConnectionConfig
 }
 
+type UserListsConflictError struct {
+	// HTTP status code
+	Code string
+	// Error message
+	Message string
+}
+
 // Error returns an error description.
 func (e *AccountMonitorConflictError) Error() string {
 	return ""
@@ -3112,4 +3119,21 @@ func (e *UnauthorizedError) ErrorName() string {
 // GoaErrorName returns the error name.
 func (e *UnauthorizedError) GoaErrorName() string {
 	return "Unauthorized"
+}
+
+// Error returns an error description.
+func (e *UserListsConflictError) Error() string {
+	return ""
+}
+
+// ErrorName returns the error name.
+//
+// Deprecated: Use GoaErrorName - https://github.com/goadesign/goa/issues/3105
+func (e *UserListsConflictError) ErrorName() string {
+	return e.GoaErrorName()
+}
+
+// GoaErrorName returns the error name.
+func (e *UserListsConflictError) GoaErrorName() string {
+	return "Conflict"
 }

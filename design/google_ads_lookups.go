@@ -145,7 +145,7 @@ func googleAdsLookupMethods() {
 		})
 		Result(GoogleAdsUserLists)
 		Error("NotFound", NotFoundError, "Resource not found")
-		Error("Conflict", ConflictError, "User lists cannot be listed per project on an ad account shared across foundations")
+		Error("Conflict", UserListsConflictError, "User lists cannot be listed per project on an ad account shared across foundations")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")

@@ -10668,7 +10668,7 @@ paths:
                 "409":
                     description: 'Conflict: User lists cannot be listed per project on an ad account shared across foundations'
                     schema:
-                        $ref: '#/definitions/ConflictError'
+                        $ref: '#/definitions/UserListsConflictError'
                         required:
                             - code
                             - message
@@ -22125,6 +22125,24 @@ definitions:
         example:
             code: "401"
             message: Unauthorized.
+        required:
+            - code
+            - message
+    UserListsConflictError:
+        title: UserListsConflictError
+        type: object
+        properties:
+            code:
+                type: string
+                description: HTTP status code
+                example: "409"
+            message:
+                type: string
+                description: Error message
+                example: user lists cannot be listed per project on an ad account shared across foundations; enter the user-list resource name directly
+        example:
+            code: "409"
+            message: user lists cannot be listed per project on an ad account shared across foundations; enter the user-list resource name directly
         required:
             - code
             - message

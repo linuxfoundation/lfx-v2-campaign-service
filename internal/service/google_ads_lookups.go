@@ -151,7 +151,7 @@ func (s *ConnectionService) classifyTargetingLookupError(ctx context.Context, pr
 		return &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
 	}
 	if errors.Is(err, domain.ErrUserListsSharedTenancy) {
-		return &conn.ConflictError{Code: "409", Message: domain.ErrUserListsSharedTenancy.Error() + "; enter the user-list resource name directly"}
+		return &conn.UserListsConflictError{Code: "409", Message: domain.ErrUserListsSharedTenancy.Error() + "; enter the user-list resource name directly"}
 	}
 	return s.classifyDiscoveryError(ctx, projectID, d, err)
 }

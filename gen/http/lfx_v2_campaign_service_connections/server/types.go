@@ -4260,19 +4260,6 @@ type ListGoogleAdsUserListsBadRequestResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
-// ListGoogleAdsUserListsConflictResponseBody is the type of the
-// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
-// endpoint HTTP response body for the "Conflict" error.
-type ListGoogleAdsUserListsConflictResponseBody struct {
-	// HTTP status code
-	Code string `form:"code" json:"code" xml:"code"`
-	// Error message
-	Message string `form:"message" json:"message" xml:"message"`
-	// Stable machine-readable discriminator, present only where an endpoint
-	// returns more than one kind of conflict. Absent means unspecified.
-	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
-}
-
 // ListGoogleAdsUserListsServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
@@ -4317,6 +4304,16 @@ type ListGoogleAdsUserListsPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
 // endpoint HTTP response body for the "Unauthorized" error.
 type ListGoogleAdsUserListsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsUserListsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "Conflict" error.
+type ListGoogleAdsUserListsConflictResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -11829,18 +11826,6 @@ func NewListGoogleAdsUserListsBadRequestResponseBody(res *lfxv2campaignserviceco
 	return body
 }
 
-// NewListGoogleAdsUserListsConflictResponseBody builds the HTTP response body
-// from the result of the "list-google-ads-user-lists" endpoint of the
-// "lfx-v2-campaign-service-connections" service.
-func NewListGoogleAdsUserListsConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *ListGoogleAdsUserListsConflictResponseBody {
-	body := &ListGoogleAdsUserListsConflictResponseBody{
-		Code:    res.Code,
-		Message: res.Message,
-		Reason:  res.Reason,
-	}
-	return body
-}
-
 // NewListGoogleAdsUserListsServiceUnavailableResponseBody builds the HTTP
 // response body from the result of the "list-google-ads-user-lists" endpoint
 // of the "lfx-v2-campaign-service-connections" service.
@@ -11890,6 +11875,17 @@ func NewListGoogleAdsUserListsPayloadTooLargeResponseBody(res *lfxv2campaignserv
 // "lfx-v2-campaign-service-connections" service.
 func NewListGoogleAdsUserListsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListGoogleAdsUserListsUnauthorizedResponseBody {
 	body := &ListGoogleAdsUserListsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsUserListsConflictResponseBody builds the HTTP response body
+// from the result of the "list-google-ads-user-lists" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsUserListsConflictResponseBody(res *lfxv2campaignserviceconnections.UserListsConflictError) *ListGoogleAdsUserListsConflictResponseBody {
+	body := &ListGoogleAdsUserListsConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
