@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -60,6 +61,10 @@ func (s *secretSet) add(v string) {
 		if e != v {
 			s.values[e] = struct{}{}
 		}
+	}
+	// And as Go's %q writes it inside an error message (a parse error quoting a cell).
+	if q := strconv.Quote(v); q[1:len(q)-1] != v {
+		s.values[q[1:len(q)-1]] = struct{}{}
 	}
 }
 
@@ -168,6 +173,15 @@ type scrubWriter struct {
 
 func (w *scrubWriter) printf(format string, a ...any) {
 	_, _ = io.WriteString(w.w, w.secrets.scrub(fmt.Sprintf(format, a...)))
+}
+
+// Write makes a scrubWriter an io.Writer for the service's slog output (scrubbedLogger). A log
+// handler writes each record in one call, so a secret cannot straddle two writes.
+func (w *scrubWriter) Write(p []byte) (int, error) {
+	if _, err := io.WriteString(w.w, w.secrets.scrub(string(p))); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
 
 // displayURL renders a request URL for output: pkg/redact.URL (userinfo, query and fragment

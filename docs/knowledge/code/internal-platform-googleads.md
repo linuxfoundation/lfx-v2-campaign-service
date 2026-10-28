@@ -1292,8 +1292,9 @@ would claim Google refused keywords it was never sent.
 ## Metrics reads (GA-5)
 
 `GetCampaignMetrics` (in `metrics.go`) reads live impressions, clicks, cost,
-CTR and CONVERSIONS for one campaign over a predefined date-range window (e.g.
-`LAST_30_DAYS`) via a single GAQL `googleAds:search` query.
+CTR, CONVERSIONS and CONVERSION VALUE for one campaign over a predefined
+date-range window (e.g. `LAST_30_DAYS`) via a single GAQL `googleAds:search`
+query, and derives ROAS from the last two.
 
 `metrics.conversions` is handled differently from the other metrics in two ways,
 both of which are properties of the upstream encoding. It is declared **DOUBLE**
@@ -1318,6 +1319,41 @@ rather than parse errors. CTR is computed client-side (Clicks/Impressions, 0
 when Impressions is 0 — never divides by zero). The return type `CampaignMetrics`
 is distinct from the domain type `model.CampaignMetrics` (an application-level
 neutral staging area), converted at the dispatcher boundary.
+
+`metrics.conversions_value` follows the conversions encoding exactly — DOUBLE, a
+bare JSON number, always selected, so an absent member is a measured 0.0 — and
+differs from it in one way that matters to every consumer: it is reported in
+**WHOLE units of the account's currency, not micros**, so it is deliberately
+asymmetric with `cost_micros` beside it. It is not scaled to micros here,
+because scaling would invent precision the upstream figure does not carry.
+**ROAS is therefore derived in the adapter**, `conversions_value` over
+`cost_micros/1e6`, so that no caller ever has to reconcile the two units or
+decide for itself what a zero-cost window means. ROAS is a POINTER and is
+WITHHELD — nil — whenever the division would not be a measurement: no conversion
+value, or no spend. A window that earned value without spending has an UNDEFINED
+return on ad spend, and both available substitutions state something false (0
+says the campaign earned nothing; an infinity says it earned without limit). A
+negative `cost_micros` withholds it too: `parseMetricInt` wraps
+`strconv.ParseInt`, which accepts a leading minus, so a corrupt cost would
+otherwise divide into a negative ROAS that renders as a real, terrible result.
+Google Ads is currently the only adapter that populates either field, and that
+is a scope boundary rather than a finding about the other six platforms — the
+doc comment on `model.CampaignMetrics.ConversionValue` says so explicitly, so
+that a nil there is never read as the kind of claim a nil `Conversions` carries.
+`Conversions` states its nil over the read as well, but backs it with a
+vendor-by-vendor audit — four channels cannot report a campaign-level count,
+and two more withdraw a total on an incomplete response. `ConversionValue` was
+audited for neither, so its nil asserts nothing about any platform. Neither field is consumed by `internal/service/rules`:
+no rule evaluates a return on ad spend, so nothing fires or fails to fire on
+them. They are reporting surface only, on the `campaign-metrics` response.
+
+ROAS is a RATIO, not a percentage (2.4 is 240%), on the same scale as the
+`TargetROAS` `bidding.go` sends, so a read compares against the target
+directly. Its nil adds no new meaning to the response: which of the three
+cases withheld it is read off the sibling fields (`conversion_value` absent,
+`cost_micros` 0, `cost_micros` below 0), so it does not repeat the overloaded
+nil #175 records for `conversions`, and a PRESENT 0 is always a measurement —
+the campaign spent and earned no conversion value.
 
 `WindowFor` maps the platform-agnostic `model.MetricsWindow` (`last_30_days`, …)
 onto this package's GAQL literals. It lives HERE, not in the dispatcher, so

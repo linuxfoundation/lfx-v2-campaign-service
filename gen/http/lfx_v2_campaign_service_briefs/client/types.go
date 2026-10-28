@@ -706,8 +706,10 @@ type GetCampaignMetricsResponseBody struct {
 	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
 	// Cost over the window, in micro-units of the platform's native currency
 	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
-	// etc.). Always 0 on the email channel, which bills no per-send cost — do not
-	// blend that 0 into a cross-channel cost-per-acquisition.
+	// the ad account's own currency for Google Ads — the same currency
+	// conversion_value is reported in — etc.). Always 0 on the email channel,
+	// which bills no per-send cost — do not blend that 0 into a cross-channel
+	// cost-per-acquisition.
 	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
@@ -732,6 +734,33 @@ type GetCampaignMetricsResponseBody struct {
 	// same as a measured 0: a consumer must not render it as zero or fold it into
 	// a conversion total.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
+	// Summed monetary value of the conversions above, over the window, in WHOLE
+	// units of the ad account's currency — NOT micros, deliberately unlike
+	// cost_micros, because the platforms report it as a decimal amount and scaling
+	// it would invent precision. The currency is the ad account's and is NOT
+	// carried in this response, so a figure rendered with a currency symbol is
+	// asserting something this contract does not say. Reported by Google Ads only
+	// at present; ABSENT on every other channel, and absent means "not measured
+	// here", never a measured 0. Use `roas` rather than dividing this by
+	// cost_micros — the units differ, and the zero-cost case has one right answer,
+	// given below.
+	ConversionValue *float64 `form:"conversion_value,omitempty" json:"conversion_value,omitempty" xml:"conversion_value,omitempty"`
+	// Return on ad spend: conversion_value divided by cost over the same window
+	// and in the same currency, so it is DIMENSIONLESS and is the only figure here
+	// comparable across accounts in different currencies. Derived upstream so
+	// every consumer gets the same answer. ABSENT whenever that division would not
+	// be a measurement — no conversion value, no spend in the window, or a
+	// reported cost below zero. A campaign that earned value without spending has
+	// an UNDEFINED return on ad spend, not an infinite one and not a zero one;
+	// rendering absent as 0 would state the opposite of what happened. A RATIO,
+	// not a percentage: 2.41 means 2.41 units of value per unit spent (241%), the
+	// scale Google's own target ROAS uses. Absence carries no meaning of its own
+	// beyond "not computed": which of the three cases applies is read from the
+	// sibling fields (conversion_value absent; cost_micros 0; cost_micros below
+	// 0), so a consumer never has to interpret it, and it says nothing about
+	// whether the channel can report a return. A PRESENT 0 is a real measurement:
+	// the campaign spent and earned no conversion value.
+	Roas *float64 `form:"roas,omitempty" json:"roas,omitempty" xml:"roas,omitempty"`
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
 	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
@@ -4636,8 +4665,10 @@ type CampaignMetricsResponseBody struct {
 	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
 	// Cost over the window, in micro-units of the platform's native currency
 	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
-	// etc.). Always 0 on the email channel, which bills no per-send cost — do not
-	// blend that 0 into a cross-channel cost-per-acquisition.
+	// the ad account's own currency for Google Ads — the same currency
+	// conversion_value is reported in — etc.). Always 0 on the email channel,
+	// which bills no per-send cost — do not blend that 0 into a cross-channel
+	// cost-per-acquisition.
 	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
@@ -4662,6 +4693,33 @@ type CampaignMetricsResponseBody struct {
 	// same as a measured 0: a consumer must not render it as zero or fold it into
 	// a conversion total.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
+	// Summed monetary value of the conversions above, over the window, in WHOLE
+	// units of the ad account's currency — NOT micros, deliberately unlike
+	// cost_micros, because the platforms report it as a decimal amount and scaling
+	// it would invent precision. The currency is the ad account's and is NOT
+	// carried in this response, so a figure rendered with a currency symbol is
+	// asserting something this contract does not say. Reported by Google Ads only
+	// at present; ABSENT on every other channel, and absent means "not measured
+	// here", never a measured 0. Use `roas` rather than dividing this by
+	// cost_micros — the units differ, and the zero-cost case has one right answer,
+	// given below.
+	ConversionValue *float64 `form:"conversion_value,omitempty" json:"conversion_value,omitempty" xml:"conversion_value,omitempty"`
+	// Return on ad spend: conversion_value divided by cost over the same window
+	// and in the same currency, so it is DIMENSIONLESS and is the only figure here
+	// comparable across accounts in different currencies. Derived upstream so
+	// every consumer gets the same answer. ABSENT whenever that division would not
+	// be a measurement — no conversion value, no spend in the window, or a
+	// reported cost below zero. A campaign that earned value without spending has
+	// an UNDEFINED return on ad spend, not an infinite one and not a zero one;
+	// rendering absent as 0 would state the opposite of what happened. A RATIO,
+	// not a percentage: 2.41 means 2.41 units of value per unit spent (241%), the
+	// scale Google's own target ROAS uses. Absence carries no meaning of its own
+	// beyond "not computed": which of the three cases applies is read from the
+	// sibling fields (conversion_value absent; cost_micros 0; cost_micros below
+	// 0), so a consumer never has to interpret it, and it says nothing about
+	// whether the channel can report a return. A PRESENT 0 is a real measurement:
+	// the campaign spent and earned no conversion value.
+	Roas *float64 `form:"roas,omitempty" json:"roas,omitempty" xml:"roas,omitempty"`
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
 	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
@@ -6997,6 +7055,8 @@ func NewGetCampaignMetricsCampaignMetricsOK(body *GetCampaignMetricsResponseBody
 		CostMicros:         *body.CostMicros,
 		Ctr:                *body.Ctr,
 		Conversions:        body.Conversions,
+		ConversionValue:    body.ConversionValue,
+		Roas:               body.Roas,
 	}
 	if body.Email != nil {
 		v.Email = unmarshalEmailMetricsResponseBodyToLfxv2campaignservicebriefsEmailMetrics(body.Email)
