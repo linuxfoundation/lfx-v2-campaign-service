@@ -803,3 +803,30 @@ func TestCreateSendWorkflow_EditLinkUsesTheVerifiedPortal(t *testing.T) {
 		t.Errorf("edit_url = %q, want %q", res.EditURL, want)
 	}
 }
+
+// A workflow create whose outcome is unknown (here a mutating 429 from a real client) must say
+// that a workflow may already exist, so the operator checks HubSpot instead of retrying into a
+// duplicate. Only the unreadable-success path used to say so.
+func TestMapFlowCloneErr_UnconfirmedCreateSaysCheckHubSpot(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	hc := hubspot.NewClient(
+		hubspot.Credentials{PrivateAppToken: "t"}, hubspot.AccountConfig{PortalID: "8112310"},
+		hubspot.WithBaseURL(srv.URL),
+	)
+	_, upstreamErr := hc.CreateList(context.Background(), "probe", json.RawMessage(`{"filterBranches":[]}`))
+	if !hubspot.IsUnconfirmed(upstreamErr) {
+		t.Fatalf("fixture precondition: a mutating 429 must classify as unconfirmed, got %v", upstreamErr)
+	}
+
+	err := mapFlowCloneErr(upstreamErr, "1841232183", false)
+	var ise *briefs.InternalServerError
+	if !errors.As(err, &ise) {
+		t.Fatalf("an unconfirmed create must be a 500, got %T: %v", err, err)
+	}
+	if !strings.Contains(ise.Message, "a workflow may have been created, so check HubSpot before retrying") {
+		t.Fatalf("the 500 must warn that a workflow may exist, got %q", ise.Message)
+	}
+}

@@ -506,7 +506,7 @@ func mapFlowCloneErr(err error, flowID string, sourceNamed bool) error {
 	case hubspot.IsUnconfirmed(err):
 		// The workflow MAY exist. Reported as a server error with that said plainly, because a
 		// client that retried would enroll the same contacts in a second workflow.
-		return &briefs.InternalServerError{Code: "500", Message: msg}
+		return &briefs.InternalServerError{Code: "500", Message: msg + "; a workflow may have been created, so check HubSpot before retrying"}
 	case hubspot.IsPermissionRejection(err):
 		return &briefs.ConflictError{
 			Code:    "409",
