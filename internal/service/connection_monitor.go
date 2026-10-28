@@ -100,12 +100,14 @@ func validateMonitorDays(days int) error {
 //
 // A row is never specially excluded from the sum: a metrics-fetch-failed row contributes its
 // zero-value numeric fields, which is a no-op, since there is no correct non-zero contribution
-// to substitute; a row whose budget alone was unparseable — on any platform that reports a
-// budget, not only Google Ads — contributes its genuinely non-zero spend/impressions/clicks,
-// which is correct because only its budget field, not summed here, was untrusted. LinkedIn is
-// the case that does contribute a wrong figure: a row whose costInLocalCurrency was unreadable
-// carries Spend=0 with real impressions/clicks, so the spend sum understates it — which is
-// exactly what UnmeasuredCampaigns exists to flag below.
+// to substitute — or, on Google Ads, whose client sums any repeated GAQL rows for a campaign,
+// the partial delivery the rows that did parse contributed, which understates it; a row whose
+// budget alone was unparseable — on any platform that reports a budget, not only Google Ads —
+// contributes its genuinely non-zero spend/impressions/clicks, which is correct because only its
+// budget field, not summed here, was untrusted. LinkedIn is another case that contributes a
+// wrong figure: a row whose costInLocalCurrency was unreadable carries Spend=0 with real
+// impressions/clicks, so the spend sum understates it — which is exactly what
+// UnmeasuredCampaigns exists to flag below.
 //
 // What the sum cannot say by itself is that some of it was not measured: UnmeasuredCampaigns
 // counts the FetchFailed rows so the response does (#218). It counts every FetchFailed row,

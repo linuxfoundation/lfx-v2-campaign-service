@@ -92,7 +92,7 @@ the test, and an unbounded channel receive that hangs the suite when the code pa
 regresses before reaching the handler.
 
 **Why it matters:** `httptest.Server` runs each handler in its own goroutine.
-`make test` runs `go test -race` (`Makefile:95`), so the unsynchronised handoff is
+`make test` runs `go test -race` (the Makefile's `test` target), so the unsynchronised handoff is
 a detected failure, not a theoretical one — and the flake surfaces as an unrelated
 test failing on a loaded runner.
 

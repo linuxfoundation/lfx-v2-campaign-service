@@ -103,7 +103,7 @@ makes a reviewer necessary rather than redundant. As of the SHA above:
   `git diff --exit-code` afterwards, so committed `gen/` drift is masked rather
   than merely unchecked.
 
-`make test` does run `go test -race` (`Makefile:95`), which is why the test-hygiene
+`make test` does run `go test -race` (the Makefile's `test` target), which is why the test-hygiene
 entries are written around *unsynchronised handoff* rather than around whether a
 race detector exists.
 
@@ -196,7 +196,7 @@ before you weaken an entry: read the file, then decide.
   *test files are excluded from secret scanning* claim look false. The probe was
   wrong, not the claim: as a basic regular expression that pattern matches the
   literal text `_test.go`, while the file carries the backslash-escaped form
-  `'''.*_test\.go$''` at `.gitleaks.toml:16`. Reading the file settled it. The
+  `'''.*_test\.go$''` in the `paths` of `.gitleaks.toml`'s test-fixture `[[allowlists]]` entry. Reading the file settled it. The
   claim stands, and this disclosure stays as the worked example of the rule above.
 - **Microsoft *upstream-only* path labels — removed as false.** Several entries
   once labelled `internal/platform/microsoft/**` paths as present upstream but not
@@ -302,6 +302,11 @@ with one sanctioned exception: a dated floor entry carried over from the retired
 repo conventions reviewer on 2026-09-25 (`known-false-positives.md` entries 9 and
 10), marked as such in its provenance and carrying present-day proof in place of
 a thread. No further thread-less entries are added under that exception.
+Cite code and docs by symbol, not by line number: a function, type or field
+name with its file path, a Markdown section heading, a Makefile target or
+variable, a YAML key, or a SQL object name. A line number rots with every edit
+above it, while a symbol moves with the thing it names (#425). A line number
+quoted inside a reviewer's comment stays as written.
 When an entry stops matching the code, say so in the entry rather than deleting
 its history. Removing a pattern changes which findings the local reviewer can emit, and
 removing a floor entry lets it surface that claim again — so either is a

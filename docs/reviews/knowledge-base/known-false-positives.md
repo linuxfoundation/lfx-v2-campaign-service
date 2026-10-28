@@ -33,7 +33,7 @@ where the reviewer then contradicted itself by calling the corrected note
 inaccurate.
 
 **Current proof:** the rebuttal is written into the migration itself —
-`internal/infrastructure/postgres/migrations/000001_create_connection_tables.up.sql:9`:
+`internal/infrastructure/postgres/migrations/000001_create_connection_tables.up.sql`, in the comment above the first table:
 `-- gen_random_uuid() is in PostgreSQL core since v13 (no pgcrypto extension).`
 
 ---
@@ -96,11 +96,11 @@ supported configuration**. FR-009 applies to an *incomplete* `PG*` set, not to a
 fully-omitted one, and production charts always inject `PG*`.
 
 **Current proof:** the distinction is in the code and the README.
-`internal/infrastructure/config/config.go:129-131`: "An empty database
+`internal/infrastructure/config/config.go` (`ValidateDatabaseSettings` doc): "An empty database
 configuration remains allowed for unit tests and metadata-only local runs (no-DB
 mode). Production charts inject PG* so this path is not used in-cluster."
-`config.go:142`: "An explicit PGPORT or PGENGINE alone counts as partial
-configuration (FR-009)." `README.md:24-27`: "When any PostgreSQL setting is
+and in the same function: "An explicit PGPORT or PGENGINE alone counts as partial
+configuration (FR-009)." The root `README.md` § "Required (startup)": "When any PostgreSQL setting is
 supplied, the set must be complete or the process exits non-zero. Fully omitting
 all database settings is allowed for unit tests / metadata-only local runs".
 
@@ -200,23 +200,26 @@ drifted from the live contract; none of them claims authority over the code. A
 doc/code disagreement is therefore not by itself a finding. Drift confirmed as
 deliberate, which must not be raised:
 
-- **`project_id` is `TEXT`, not `UUID`.** `docs/channel-connections-schema.md:29`
-  and `:55` still show `UUID NOT NULL UNIQUE`; every connection table in
+- **`project_id` is `TEXT`, not `UUID`.** `docs/channel-connections-schema.md`'s
+  common column fragment and its `google_ads_connections` worked example still show
+  `UUID NOT NULL UNIQUE`; every connection table in
   `internal/infrastructure/postgres/migrations/000001_create_connection_tables.up.sql`
-  creates `project_id TEXT NOT NULL`, and `docs/architecture.md:491` records why
+  creates `project_id TEXT NOT NULL`, and `docs/architecture.md`'s ER diagram records why
   (a project is addressed by UUID **or** slug). The migration wins.
 - **Provider singletons are a *partial* unique index**, `(project_id) WHERE
-  status <> 'deleted'` (`000001_create_connection_tables.up.sql:135-139`), not the
+  status <> 'deleted'` (the `uq_*_connections_project` indexes in
+  `000001_create_connection_tables.up.sql`), not the
   flat `UNIQUE (project_id)` the schema doc shows — deliberately, so a project can
   reconnect a provider after disconnecting it. `docs/architecture.md` repeats the
-  flat form at `:440` and `:449` and types `project_id` as UUID in the ER diagram
-  at `:358`; those lines are design intent, not the live schema.
+  flat form in its connections prose and its future-channels note, and types
+  `project_id` as UUID in one ER entity; those lines are design intent, not the
+  live schema.
 - **`docs/build-summary.md` is a dated status snapshot, not a rule source.** Its
   header reads `**Status:** Architecture Review` / `**Date:** 2026-06-30`, and its
   layout section describes a `cmd/campaign-api/` tree that does not exist (the
   binary is `cmd/campaign-service`). Do not cite it for layout, middleware or
   structure.
-- **`Makefile:21` `GO_VERSION := 1.24.2` is an unused duplicate pin.** Nothing in
+- **The Makefile's `GO_VERSION := 1.24.2` is an unused duplicate pin.** Nothing in
   the Makefile reads it; `go.mod` (`go 1.25.0`) and the workflows'
   `go-version-file: go.mod` resolve the toolchain. A go.mod bump that leaves it
   behind is not a finding.
@@ -244,34 +247,34 @@ covered by this entry and stays a candidate finding.
 
 | Check | Excluded paths | Proof |
 |---|---|---|
-| License-header check | `gen/`, `specs/`, `.specify/` | `.github/workflows/license-header-check.yml:18` — `exclude_pattern: "gen,specs,.specify"` |
-| MegaLinter file-based linters (`FILTER_REGEX_EXCLUDE`) | `gen/`, `.specify/`, chart `templates/` — **not** `specs/` | `.mega-linter.yml:46` — `FILTER_REGEX_EXCLUDE` names `gen/.*`, `\.specify/.*` and the chart `templates/` YAML; `specs/` is not in it |
-| `make check-fmt` (`gofmt -s -l $(GO_FILES)`) | `gen/` | `Makefile:25` — `GO_FILES := $(shell find . -type f -name '*.go' -not -path './gen/*')`; `Makefile:79` |
+| License-header check | `gen/`, `specs/`, `.specify/` | `.github/workflows/license-header-check.yml` — `exclude_pattern: "gen,specs,.specify"` |
+| MegaLinter file-based linters (`FILTER_REGEX_EXCLUDE`) | `gen/`, `.specify/`, chart `templates/` — **not** `specs/` | `.mega-linter.yml` — `FILTER_REGEX_EXCLUDE` names `gen/.*`, `\.specify/.*` and the chart `templates/` YAML; `specs/` is not in it |
+| `make check-fmt` (`gofmt -s -l $(GO_FILES)`) | `gen/` | `Makefile` — `GO_FILES := $(shell find . -type f -name '*.go' -not -path './gen/*')`, read by the `check-fmt` target |
 
 Boundaries the table implies, stated so they are not inferred the other way:
 
 - **`specs/` is excluded from the license-header check only.** A markdown, YAML
   or other MegaLinter finding under `specs/` is real.
-- **`make fmt` does touch `gen/`.** `Makefile:73` runs `go fmt ./...` before the
-  `gofmt -s -w $(GO_FILES)` pass at `Makefile:74`, so `gen/` is gofmt-formatted
+- **`make fmt` does touch `gen/`.** The `fmt` target runs `go fmt ./...` before its
+  `gofmt -s -w $(GO_FILES)` pass, so `gen/` is gofmt-formatted
   (without `-s`) whenever `make fmt` runs; only the `-s` simplification and the
   `check-fmt` gate skip it. `gen/` is regenerated by `make apigen` and never
   hand-edited, which is why the gate leaves it alone.
 - **Project-mode scanners ignore `FILTER_REGEX_EXCLUDE`.** secretlint runs in
   MegaLinter's `project` CLI lint mode, where the filter-regex variables do not
-  apply (`docs/knowledge/architecture/megalinter-secrets.md:64-66`), and gitleaks
+  apply (`docs/knowledge/architecture/megalinter-secrets.md` § "Secretlint"), and gitleaks
   scans committed content subject to its own `.gitleaks.toml` allowlists (test
-  files, `go.mod`/`go.sum`, `CLAUDE.md`; `megalinter-secrets.md:22-31`) and
+  files, `go.mod`/`go.sum`, `CLAUDE.md`; `megalinter-secrets.md` § "Gitleaks") and
   `.gitleaksignore` fingerprints; treat any other `REPOSITORY_*` linter the same way
   only after checking its own lint mode in MegaLinter's docs. KICS carries its
-  own `--exclude-paths="gen/*"` (`.mega-linter.yml:31-32`) and `.gitleaksignore:6`
-  fingerprints a real hit inside `gen/`. Each scanner's coverage is set by its own
+  own `--exclude-paths="gen/*"` (`.mega-linter.yml` `REPOSITORY_KICS_ARGUMENTS`) and a
+  `.gitleaksignore` fingerprint covers a real hit inside `gen/`. Each scanner's coverage is set by its own
   configuration, not by this table — gitleaks by `.gitleaks.toml` allowlists and
   `.gitleaksignore`, secretlint by the `.gitignore` fallback
-  (`megalinter-secrets.md:41-44`) — so check that
+  (`megalinter-secrets.md` § "Secretlint") — so check that
   configuration before treating a path as scanned or unscanned. A secret-scanner
   finding under `gen/` or `.specify/` is real and outside this entry.
-- **`make lint` has no path exclusion** (`Makefile:90` — `golangci-lint run
+- **`make lint` has no path exclusion** (the `lint` target — `golangci-lint run
   ./...`, and the repo has no `.golangci.*` config). A `golangci-lint` finding
   is outside this entry regardless of path.
 - `specs/` and `.specify/` contain no Go files at the time of writing, so the

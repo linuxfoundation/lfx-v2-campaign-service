@@ -50,7 +50,7 @@ abort — or, in the other direction, a real caller cancellation is swallowed an
 **Status on main:** held across the clients — `ctx.Err()` gates appear in
 googleads, hubspot, reddit, meta, linkedin and twitter, and the orchestrator uses
 `gctx.Err() != nil` to distinguish "dispatch cancelled" from "queue timed out".
-`docs/knowledge/code/internal-platform-googleads.md:146` records the pattern, and
+`docs/knowledge/code/internal-platform-googleads.md` § "Campaign creation (GA-2)" records the pattern, and
 the most explicit prose statement is in the Microsoft client's concept doc,
 `docs/knowledge/code/internal-platform-microsoft.md`: "`(nil, err)` abort ONLY
 when the CALLER's context is done — the gate is `ctx.Err() != nil`, not
@@ -85,7 +85,7 @@ committed upstream:
   request must **retain** the prior partial and the claim, and return that partial
   alongside the error. The earlier resource is real and paid for.
 
-`internal/platform/googleads/campaign.go:486-491` is the worked example: the budget
+`(*Client).CreateCampaign` in `internal/platform/googleads/campaign.go` is the worked example: the budget
 is committed, then `ctx.Err()` is checked before the campaign `:mutate`, and the
 correct return is `budgetPartial(), err` — not `(nil, err)`. Reading the clean
 outcome as unconditional would flag that correct code and recommend discarding a
@@ -128,7 +128,7 @@ created.
 **Status on main:** the classification is a named, cross-client contract —
 `preSendError`, `transportError` and `apiError` with the shared predicates
 `isPreSendDialError`, `isMutatingMethod` and `createOutcomeAmbiguous`.
-`docs/knowledge/code/internal-platform-reddit.md:45-50` records the deliberate
+`docs/knowledge/code/internal-platform-reddit.md` (its pre-send classification paragraph) records the deliberate
 boundary, including that **no** TLS error is ever classified pre-send.
 
 **Not a finding when:** the request is a read. A GET is never UNCONFIRMED — a
