@@ -24,6 +24,16 @@
 -- index is gone that 23505 simply never happens: a same-version race resolves on the arbiter
 -- as DO NOTHING, and a slot-2 claim succeeds, which is what new_version asked for.
 --
+-- NOT safe for that binary's new_version ALLOCATION. With the index gone the N-1 binary's
+-- new_version starts succeeding at slot 2+, without this release's safeguards: it numbers from the
+-- latest LIVE row (so it re-picks a deleted version), claims with ClaimCampaignDispatch (no
+-- refusal of a used, deleted version), and its DeleteCampaign takes no slot lock. After an
+-- image-only rollback, a new_version on a slot whose latest version was deleted reuses that
+-- version and its platform name, and on Microsoft the name lookup returns the deleted upstream
+-- campaign. Until the image is rolled forward again, do not send new_version for a slot that has a
+-- deleted version; a first create, a re-dispatch and a new_version on a slot with no deleted
+-- version are unaffected. See docs/knowledge/kubernetes/deployment.md.
+--
 -- What the index used to provide for free — "an adopt binds only an EMPTY slot", and "a stale
 -- upsert whose claim was cleared cannot insert beside a live row" — is enforced in code under
 -- that lock: AdoptCampaign checks for ANY live row on the slot, and UpsertCampaign's ownership

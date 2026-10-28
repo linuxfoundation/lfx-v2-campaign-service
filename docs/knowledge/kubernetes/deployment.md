@@ -268,4 +268,13 @@ stay compatible with the next release's schema — since nothing marks a newer m
 compatible. Pinned live by
 `TestMigrateStartsOnACleanSchemaNewerThanThisImage`.
 
+One limitation of that rollback is stated rather than engineered away. Dropping the index lets
+the N-1 binary's `new_version` succeed at slot 2 and above, and that binary predates `000051`'s
+allocation safeguards: it numbers from the latest LIVE row, claims without refusing a used
+deleted version, and deletes without the slot lock. So while the image is rolled back to the
+`000050` release, a `new_version` on a slot whose latest version was deleted reuses that version
+and its platform name (on Microsoft, the name lookup returns the deleted upstream campaign).
+Operators should not send `new_version` for such a slot until the image is rolled forward. First
+creates, re-dispatches, and `new_version` on slots with no deleted version are unaffected.
+
 See [charts/lfx-v2-campaign-service/templates/deployment.yaml](../../../charts/lfx-v2-campaign-service/templates/deployment.yaml).
