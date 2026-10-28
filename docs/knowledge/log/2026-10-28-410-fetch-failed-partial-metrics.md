@@ -22,7 +22,8 @@ behaviour changes and no code path moves.
    `/insights?level=campaign` read. If that read fails, the whole monitor read errors. So a Meta
    metrics failure is per row: its insights row will not parse and its metrics stay zero. A
    campaign-level budget from the campaign list, if the campaign has one, may still be real. The
-   ad-set budget fallback is skipped for such a row, so a budget held on ad sets is not applied to it.
+   ad-set budget fallback is skipped for such a row, so a budget held on ad sets is not
+   applied to it.
    That is not Meta's only cause: an unreadable or negative campaign budget also sets
    `FetchFailed`, with its insights read fine (the budget shape, already listed).
    `model.AccountCampaignMetrics.FetchFailed` no longer gives Meta as an example of an outright

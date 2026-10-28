@@ -182,7 +182,8 @@ type AccountCampaignMetrics struct {
 	// not parse — Meta's row in its one account-level insights read, whose metrics are then zero
 	// while a campaign-level budget set earlier from the campaign list, if the campaign has one,
 	// may still be real (the ad-set budget fallback is skipped for such a row, so a budget held on
-	// ad sets is not applied to this row and reads as absent), and a Google Ads GAQL row. Google is expected to
+	// ad sets is not applied to this row and reads as absent), and a Google Ads GAQL row.
+	// Google is expected to
 	// return one aggregated row per campaign, but the client sums any repeated rows for a campaign
 	// rather than rely on that, so if one of several rows fails, the others' contribution stays:
 	// real but incomplete delivery. If the campaign's only row fails, Impressions, Clicks and Spend
