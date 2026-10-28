@@ -2471,7 +2471,8 @@ LinkedIn not contacted). No `AudienceEnabled` gate — LinkedIn has no metrics f
 
 `CreateCampaigns` runs `refuseUnsupportedBidding` (`create_bidding.go`) before the preflight: a
 `bidding` object under the config of a selected platform that does not implement it —
-`googleAdsConfig` only — is a 400 naming `googleAdsConfig.biddingStrategy`, rather than being
+`googleAdsConfig` only — is a 400 naming `googleAdsConfig.biddingStrategy` and
+`googleAdsConfig.cpcBid` (#156), rather than being
 silently dropped by the Google decoder (no Google code changed). The lane platforms' own
 `bidding` refusals arrive through `Orchestrator.PreflightCreate` as `ErrCreateConfigInvalid` (400).
 `campaignResult` returns the row's `bidding_strategy` and `max_cpc_bid` (absent when not
