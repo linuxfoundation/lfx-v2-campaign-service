@@ -1915,7 +1915,8 @@ func TestLastSent_LegacyListReadFailure(t *testing.T) {
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = io.WriteString(w, `{"message":"permission denied"}`)
 		default:
-			// Everything else — 901's mapped read, and every legacy name but 802's — is a 404.
+			// Everything else — 901's mapped read, and every legacy name but 802's and
+			// 804's — is a 404.
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
@@ -1971,6 +1972,8 @@ func TestLastSent_LegacyListReadFailure(t *testing.T) {
 	assert.False(t, mapRefused.Missing,
 		"a refused id mapping is the only signal on this row, and it is not a deletion")
 	assert.True(t, mapRefused.Unresolved)
+	assert.Equal(t, "803", mapRefused.ListID, "nothing mapped, so the legacy id is all the row has")
+	assert.Empty(t, mapRefused.HubSpotURL, "no v3 id to link to")
 
 	// 804: the mapping route answered a definite 404 — there is no v3 copy, which is a normal
 	// answer — and then the legacy name lookup was refused. The last call on the path is the
