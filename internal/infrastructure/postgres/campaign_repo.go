@@ -594,8 +594,9 @@ func (r *CampaignRepo) ListCampaignsForBrief(ctx context.Context, projectID, bri
 // over an unscoped read is the same cross-tenant exposure one layer up, and it would be invisible
 // in review because the call site would look identical.
 //
-// Only the platform id is selected. The caller scopes a GAQL query with these, and selecting whole
-// rows would hand it credentials-adjacent fields it has no use for.
+// Two columns are selected, platform_campaign_id and result, and nothing else. The caller scopes a
+// GAQL query with the ids; result carries their provenance (see below). Selecting whole rows would
+// hand it credentials-adjacent fields it has no use for.
 //
 // Rows with an EMPTY platform_campaign_id are excluded: a claimed-but-not-yet-dispatched campaign
 // has no upstream id, and an empty string in an IN list would either match nothing or, worse,
