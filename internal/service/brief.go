@@ -237,8 +237,12 @@ func campaignDoc(c *briefs.Campaign) indexer.CampaignDoc {
 		CampaignName:       c.CampaignName,
 		Status:             c.Status,
 		SlotVersion:        c.SlotVersion,
-		Adopted:            c.Adopted != nil && *c.Adopted,
-		Version:            c.Version,
+		// The bidding fields the API returns (LFXV2-2665), so the Query Service index shows them
+		// too. Both pointers pass through: nil stays absent in the document.
+		BiddingStrategy: c.BiddingStrategy,
+		MaxCPCBid:       c.MaxCpcBid,
+		Adopted:         c.Adopted != nil && *c.Adopted,
+		Version:         c.Version,
 	}
 }
 
@@ -722,6 +726,11 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 		}
 	}
 	config := marshalAny(p.Input.Config)
+	// The create-time `bidding` object exists only on the platforms that implement it; on any
+	// other selected platform it is refused rather than silently ignored.
+	if err := refuseUnsupportedBidding(platforms, config); err != nil {
+		return nil, err
+	}
 	// Refuse a request that can never produce what it asks for BEFORE the job exists. Dispatch
 	// runs after the 202 and reports every failure as one opaque job error, so a request shape
 	// that is knowably unsatisfiable (an A/B test on an email that sends by recipients' time
@@ -1400,6 +1409,46 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 		}
 		return nil, &briefs.BadRequestError{Code: "400", Message: "status cannot be changed via update-campaign; re-send the campaign's current status (it is set by the create/dispatch flow and the status-toggle endpoint)"}
 	}
+	// Refuse a CONFIG edit while the campaign is still 'pending'. The status-mismatch check
+	// above does not cover this: 'pending' is not a run status, so a pending->pending edit
+	// carrying a config body passes it and goes on to overwrite config_snapshot.
+	//
+	// 'pending' means the dispatch claim's row is committed but the platform call has not
+	// resolved (the dispatcher deliberately holds NO lock across that call -- see
+	// orchestrator.go's note at the INSERT). Two things break if a config write lands in that
+	// window. The dispatch resolves against a config the caller has since replaced, so what
+	// the ad platform was asked to create and what the row says it was asked to create no
+	// longer agree. And the creative-asset delete guard reads config_snapshot to decide
+	// whether an asset is still referenced: a claim inserts the row with a NULL snapshot and
+	// the guard treats NULL as "could reference anything", so replacing that NULL with a
+	// caller's object makes an asset the in-flight dispatch is about to use look unreferenced
+	// and therefore deletable. deleteCreativeAssetQuery now also refuses on 'pending' outright,
+	// so that hole is closed on the delete side regardless of what this path does; this guard
+	// is the other half -- it keeps the snapshot honest rather than relying on the reader to
+	// compensate for a writer that should not have written.
+	//
+	// Only a config-bearing edit is refused. A name-only edit does not touch the snapshot and
+	// stays allowed while pending, so a caller can still correct a typo on a campaign that is
+	// mid-dispatch.
+	//
+	// 409 rather than 400: nothing about the request is malformed, and the same request
+	// succeeds once the dispatch settles. Validated BEFORE claiming, for the reason the block
+	// above gives.
+	//
+	// 'pending' ALONE, deliberately. model.CampaignStatusNeedsReconciliation also covers
+	// 'group_created' and 'unconfirmed', and both were considered here and excluded: each one
+	// means the dispatch has already run and left a durable record behind, so the snapshot IS
+	// written and a config edit has something real to replace. 'pending' is the only status that
+	// means "a dispatcher may still be resolving this campaign's assets", which is the condition
+	// this guard and DeleteAsset's matching CTE arm are both about. Widening either one to the
+	// full reconciliation set would refuse edits on campaigns that are merely stuck.
+	if p.Campaign.Config != nil && existing.Status == model.CampaignStatusPending {
+		return nil, &briefs.ConflictError{
+			Code:    "409",
+			Reason:  conflictReason(conflictReasonCampaignDispatchInFlight),
+			Message: "this campaign's creation has not finished on the ad platform yet, so its configuration cannot be replaced; retry once its status is no longer 'pending'",
+		}
+	}
 	// Claim write ownership at the read version BEFORE building the edit, not just
 	// at the final ReplaceCampaign. This path itself has no I/O in between, so a
 	// bare ReplaceCampaign(version) would already be race-free against another
@@ -1455,6 +1504,19 @@ const unconfirmedLockCooldown = 30 * time.Second
 // literally by TestToggleCampaignStatus_ResumeOfAnAdoptedCampaignHasItsOwnReason and listed in
 // the design Enum in design/connection.go — keep the three in step by hand.
 const conflictReasonCampaignAdopted = "campaign_adopted"
+
+// conflictReasonCampaignDispatchInFlight is update-campaign's ConflictError.reason for a CONFIG
+// edit refused because the campaign is still 'pending' — its create has not resolved on the ad
+// platform. Pinned literally by TestUpdateCampaign_ConfigEditOnAPendingCampaignIsRefused and
+// listed in the design Enum in design/connection.go — keep the three in step by hand.
+const conflictReasonCampaignDispatchInFlight = "campaign_dispatch_in_flight"
+
+// conflictReasonCreativeAssetReferenceMissing is update-campaign's ConflictError.reason for a
+// config edit refused because the configuration newly names a creative asset that no longer
+// exists for the brief (see domain.ErrCreativeAssetReferenceMissing). Pinned literally by
+// TestUpdateCampaign_ConfigNamingAMissingAssetIsRefused and listed in the design Enum in
+// design/connection.go — keep the three in step by hand.
+const conflictReasonCreativeAssetReferenceMissing = "creative_asset_reference_missing"
 
 // ToggleCampaignStatus pauses/resumes a campaign ON THE AD PLATFORM, then persists the new
 // status. Unlike UpdateCampaign (DB-only), the platform call happens FIRST — the row is
@@ -2122,10 +2184,22 @@ func campaignResult(c *model.Campaign) *briefs.Campaign {
 		CampaignName:       c.CampaignName,
 		Status:             c.Status,
 		SlotVersion:        model.NormalizeSlotVersion(c.SlotVersion),
+		BiddingStrategy:    biddingStrategyResult(c.BiddingStrategy),
+		MaxCpcBid:          c.MaxCPCBid,
 		Adopted:            adoptedFlag(c),
 		Version:            c.Version,
 		Etag:               optStr(briefETag(c.Version)),
 	}
+}
+
+// biddingStrategyResult renders the recorded create-time bidding strategy; nil (not recorded)
+// stays absent rather than becoming "".
+func biddingStrategyResult(bs *model.BiddingStrategy) *string {
+	if bs == nil {
+		return nil
+	}
+	v := string(*bs)
+	return &v
 }
 
 // adoptedFlag is the campaign's optional `adopted` attribute: true for a row bound by
@@ -2310,6 +2384,36 @@ func mapBriefErr(err error) error {
 		// A create pre-check refused the config before any platform was asked. Its message is
 		// fixed, caller-safe text by the sentinel's contract, and it is the actionable part.
 		return &briefs.BadRequestError{Code: "400", Message: err.Error()}
+	case errors.Is(err, domain.ErrCreativeAssetQuotaExceeded):
+		// Both 409s below carry a reason for ab_test_unsupported_send_type's purpose: a folder
+		// upload sends many files and has to branch on WHICH refusal it got -- stop and prompt the
+		// user to free space, versus skip this one file -- and the two are indistinguishable from
+		// prose. The remedy names the endpoint that provides it, because "the brief is full" with
+		// no way to empty it is not actionable.
+		return &briefs.ConflictError{
+			Code:    "409",
+			Reason:  conflictReason("creative_asset_quota_exceeded"),
+			Message: domain.ErrCreativeAssetQuotaExceeded.Error() + "; delete an asset from the brief and retry",
+		}
+	case errors.Is(err, domain.ErrCreativeAssetInUse):
+		return &briefs.ConflictError{
+			Code:    "409",
+			Reason:  conflictReason("creative_asset_in_use"),
+			Message: domain.ErrCreativeAssetInUse.Error() + "; delete that campaign, or reconcile a dispatch stuck pending, then retry",
+		}
+	case errors.Is(err, domain.ErrCreativeAssetReferenceMissing):
+		// The inverse refusal to creative_asset_in_use above, and it carries a reason for the
+		// same purpose: a client that just lost an asset has to tell "re-upload the image" from
+		// "the brief is full" or "someone else is writing", and prose alone does not give it
+		// that. err.Error() rather than the sentinel's text because the repo appends the ids
+		// that failed to resolve — supplied by this request and canonicalized, never anything a
+		// platform returned — and naming them is what makes the remedy actionable when a config
+		// references more than one asset.
+		return &briefs.ConflictError{
+			Code:    "409",
+			Reason:  conflictReason(conflictReasonCreativeAssetReferenceMissing),
+			Message: err.Error() + "; upload the asset again, or remove the reference, then retry",
+		}
 	case errors.Is(err, domain.ErrConflict):
 		return &briefs.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):

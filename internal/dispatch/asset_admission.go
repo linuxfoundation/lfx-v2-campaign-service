@@ -45,19 +45,33 @@ import (
 // A bound is only worth its number if every copy of the image is inside it, so the sites are
 // listed rather than implied. Per dispatch:
 //
-//   - the resolved asset slices — CHARGED here. Variants naming the same asset alias one buffer,
-//     so the charge is per DISTINCT asset.
-//   - the multipart request body — ZERO. internal/platform/meta frames the body AROUND the image
-//     (a small fixed prefix and suffix, with the payload referenced in place) rather than copying
-//     it into a buffer. It used to copy, which put a second full copy of every in-flight image
-//     outside this budget: five concurrent dispatches added ~150 MiB nothing accounted for.
+//   - the resolved asset slices — CHARGED here, on every platform that resolves stored assets.
+//     Variants naming the same asset alias one buffer, so the charge is per DISTINCT asset.
+//   - the multipart request body (META) — ZERO. internal/platform/meta frames the body AROUND the
+//     image (a small fixed prefix and suffix, with the payload referenced in place) rather than
+//     copying it into a buffer. It used to copy, which put a second full copy of every in-flight
+//     image outside this budget: five concurrent dispatches added ~150 MiB nothing accounted for.
 //     Measured at ~0.5% of the payload by TestUploadImageDoesNotCopyTheImage.
-//   - the per-attempt HTTP body reader — ZERO. bytes.NewReader is a view over a slice, not a copy,
-//     and a fresh one per retry attempt copies nothing.
-//   - the per-campaign uploadCache — ZERO. It stores sha256 keys and hash strings, never bytes.
+//   - the per-attempt HTTP body reader (META) — ZERO. bytes.NewReader is a view over a slice, not
+//     a copy, and a fresh one per retry attempt copies nothing.
+//   - the per-campaign uploadCache (META) — ZERO. It stores sha256 keys and hash strings, never
+//     bytes.
+//   - the assets:mutate request body (GOOGLE) — NOT ZERO, and NOT covered by this budget. Google
+//     has no multipart upload: internal/platform/googleads base64-encodes each image (base64Image,
+//     adding a third again) into an imageAssetCreate and json.Marshals every image of the creative
+//     into ONE assets:mutate body, so a creative's images are transiently resident a second and a
+//     third time outside this semaphore. Bounding that would mean streaming the mutate body, which
+//     is a platform-client design change and not this control's business.
 //
-// So the dispatch-side figure above is the whole of it, and it does not scale with the number of
-// concurrent dispatches: this semaphore is the only thing that admits asset bytes.
+// So the dispatch-side figure above is the whole of what THIS semaphore admits, and it does not
+// scale with the number of concurrent dispatches. For Google it is not the whole of the resident
+// bytes, and the thing that bounds those is the pair of caps the platform client applies to the
+// same images before it serializes them — googleads.MaxImageBytes per image and
+// maxCreativeTotalImageBytes (64 MiB) across the creative, both of which run on the PRE-RESOLVED
+// path too (see fetchSlotImages), so an asset-backed creative is held to them exactly as a fetched
+// one is. 64 MiB of images is ~85 MiB base64 inside a JSON body of about the same again; that is
+// the figure to revisit if either cap is raised, and it is why dispatch refuses an oversized asset
+// on its SIZE before the blob is ever loaded.
 //
 // # Why the charge is taken BEFORE the read
 //

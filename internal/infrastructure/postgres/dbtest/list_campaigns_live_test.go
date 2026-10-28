@@ -25,8 +25,9 @@ import (
 //
 // LIMITATION, stated rather than glossed: the soft-delete assertion is revert-binding —
 // dropping `status <> 'deleted'` fails this test — but the ORDER BY is NOT independently
-// binding today. The planner serves this query from uq_campaigns_brief_platform_variant_live,
-// which is keyed on (brief_id, platform, variant), so an index scan already returns rows in
+// binding today. The planner serves this query from
+// uq_campaigns_brief_platform_variant_slot_version_live, which is keyed on
+// (brief_id, platform, variant, slot_version), so an index scan already returns rows in
 // the asserted order and removing the clause changes nothing at these row counts (verified
 // with EXPLAIN). The clause stays because that is an accident of the current plan: a bitmap
 // heap scan or parallel seq scan on a larger table returns no order at all, and the consumer's

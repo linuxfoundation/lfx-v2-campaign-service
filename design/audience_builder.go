@@ -158,9 +158,10 @@ var AudienceSuppressionList = Type("audience-suppression-list", func() {
 	Attribute("name", String, "HubSpot list name")
 	Attribute("size", Int64, "Membership size, when HubSpot reported one")
 	Attribute("category", String, "Which group the row belongs to", func() {
-		Enum("standard", "brand", "event_specific")
+		Enum("standard", "brand", "event_specific", "current_registrants")
 	})
 	Attribute("hubspot_url", String, "Deep link to the list in the HubSpot UI")
+	Attribute("will_create", Boolean, "The list does not exist yet; an attach or compose that applies this row creates it by name (current_registrants only)")
 	Required("key", "label", "list_id", "name", "category", "hubspot_url")
 })
 
@@ -183,14 +184,26 @@ var AudienceListSearchResult = Type("audience-list-search-result", func() {
 // resolved_from_legacy_id records that the id on the email was a legacy (v1) list id that
 // had to be translated to reach the v3 list. Surfaced because an operator comparing the
 // two ids in HubSpot would otherwise see a mismatch and distrust the whole row.
+//
+// unresolved is REQUIRED alongside missing, and the two are never both true. missing means
+// HubSpot answered "no such list"; unresolved means the read itself failed — a throttle, a
+// 401/403, a 5xx — so the list may well still be there. Reporting the second as the first
+// told an operator a list they still have had been deleted, which is the one conclusion
+// they act on irreversibly.
 var AudienceListBrief = Type("audience-list-brief", func() {
 	Attribute("list_id", String, "HubSpot list id")
-	Attribute("name", String, "HubSpot list name; empty when the list no longer resolves")
+	Attribute("name", String, "HubSpot list name; empty when the list could not be read")
 	Attribute("size", Int64, "Membership size, when HubSpot reported one")
-	Attribute("missing", Boolean, "True when the referenced list could not be resolved")
+	Attribute("missing", Boolean, "True when HubSpot reported no such list")
+	Attribute("unresolved", Boolean,
+		"True when the list could not be read for a reason other than its absence, so whether "+
+			"it still exists is UNKNOWN. Never true together with missing.")
 	Attribute("resolved_from_legacy_id", String, "Legacy list id this row was translated from")
-	Attribute("hubspot_url", String, "Deep link to the list in the HubSpot UI; absent when it no longer resolves")
-	Required("list_id", "name", "missing")
+	Attribute("hubspot_url", String, "Deep link to the list in the HubSpot UI; absent when the list is missing. "+
+		"Present on an unresolved row, where checking the list by hand is the remedy — unless the row's "+
+		"list_id is still the legacy id it was resolved_from, which this link's route cannot open. Absence "+
+		"is never itself a statement about the list: read missing and unresolved for that")
+	Required("list_id", "name", "missing", "unresolved")
 	// TYPE-LEVEL so the published example is a possible one: Goa's synthesised example drew
 	// each attribute independently and showed `missing: true` beside a populated name and
 	// hubspot_url, which the descriptions above rule out. A resolved list is the common shape.
@@ -237,13 +250,14 @@ var AudienceLastSentEmail = Type("audience-last-sent-email", func() {
 })
 
 // audienceIncludedListsExample / audienceSuppressionListsExample are resolved list rows (missing
-// false, so name and hubspot_url are present), shared by the attribute and type examples above.
+// and unresolved both false, so name and hubspot_url are present), shared by the attribute and
+// type examples above.
 var audienceIncludedListsExample = []map[string]any{
-	{"list_id": "4821", "name": "KubeCon NA 2025 attendees", "size": 18250, "missing": false, "hubspot_url": "https://app.hubspot.com/contacts/8675309/lists/4821"},
+	{"list_id": "4821", "name": "KubeCon NA 2025 attendees", "size": 18250, "missing": false, "unresolved": false, "hubspot_url": "https://app.hubspot.com/contacts/8675309/lists/4821"},
 }
 
 var audienceSuppressionListsExample = []map[string]any{
-	{"list_id": "1022", "name": "Global unsubscribes", "size": 3120, "missing": false, "hubspot_url": "https://app.hubspot.com/contacts/8675309/lists/1022"},
+	{"list_id": "1022", "name": "Global unsubscribes", "size": 3120, "missing": false, "unresolved": false, "hubspot_url": "https://app.hubspot.com/contacts/8675309/lists/1022"},
 }
 
 // AudienceMasterListBrief is one previously composed master list for this event family.
@@ -315,6 +329,9 @@ var AudienceComposeMasterInput = Type("audience-compose-master-input", func() {
 	Attribute("brand_short", String, "Short brand token for the derived name")
 	Attribute("event_name", String, "Event name for the derived name")
 	Attribute("event_dates", ArrayOf(String), "Event dates; drive the derived name's quarter segment")
+	Attribute("current_registrants_event", String, "Edition (event name with year) whose current registrants the master also excludes, through a list found or created by name", func() {
+		MaxLength(200)
+	})
 	// brief_id turns compose from a pure create into a create-and-attach. It is optional
 	// because the builder is also used exploratorily, with no campaign to attach to --
 	// which is why these routes are scoped to the project rather than to a brief.
@@ -344,8 +361,15 @@ var AudienceComposeRecordedAudience = Type("audience-compose-recorded-audience",
 // AudienceComposeMasterResult reports what was created.
 var AudienceComposeMasterResult = Type("audience-compose-master-result", func() {
 	Attribute("master", AudienceComposedList, "The created master list")
-	Attribute("suppression", AudienceComposedList, "The combined suppression list, when exclusions were requested")
+	// CHANGED MEANING (LFXV2-2770), not additive: this was the per-compose combined suppression
+	// list wrapping EVERY exclusion. Its only client, lfx-self-serve, moves to
+	// suppression_list_ids in the same change.
+	Attribute("suppression", AudienceComposedList, "The project's standing standard suppression list the master excludes, reused across composes; absent unless every resolved standard list was selected. Changed meaning in LFXV2-2770: it used to be a per-compose combined list covering every exclusion and now covers the standard lists only, so read suppression_list_ids for the full set of excluded lists")
 	Attribute("source_list_ids", ArrayOf(String), "The inclusion lists the master unions")
+	// Without it a caller sees only `suppression`, which is set for a full standard set alone,
+	// and never learns the id of anything else the master excludes -- including a
+	// current-registrants list this compose may just have created.
+	Attribute("suppression_list_ids", ArrayOf(String), "Every list the master excludes, in the order attach-existing records them: the standing standard list first (when used), then each other excluded list, then the current-registrants list. Absent when the master excludes nothing")
 	Attribute("audience", AudienceComposeRecordedAudience, "The audience row recorded for brief_id, when one was requested and written")
 	// Required, and separate from `audience`, so no caller has to infer "attached" from an
 	// absent object. An older client reading only `audience` and a newer one reading
@@ -381,6 +405,9 @@ var AudienceAttachExistingInput = Type("audience-attach-existing-input", func() 
 	Attribute("suppression_list_ids", ArrayOf(String), "Existing lists the send suppresses", func() {
 		MaxLength(200)
 	})
+	Attribute("current_registrants_event", String, "Edition (event name with year) whose current registrants the send also suppresses, through a list found or created by name", func() {
+		MaxLength(200)
+	})
 	Attribute("inclusion_summary", String, "Operator-visible provenance for the recorded audience; derived from the master list when omitted")
 	Required("brief_id")
 	// An explicit example: exactly one of master_list_id / include_list_ids is accepted, and the
@@ -396,7 +423,8 @@ var AudienceAttachExistingInput = Type("audience-attach-existing-input", func() 
 // AudienceAttachExistingResult reports the verified lists and the row recorded for them.
 var AudienceAttachExistingResult = Type("audience-attach-existing-result", func() {
 	Attribute("master", AudienceComposedList, "The existing master list, as read back from the portal")
-	Attribute("suppression_list_ids", ArrayOf(String), "The suppression list ids recorded beside it")
+	Attribute("suppression_list_ids", ArrayOf(String), "The suppression list ids recorded beside it. Not the input ids: a full standard set is recorded as the standing list's id, and the current-registrants list's id is appended")
+	Attribute("suppression", AudienceComposedList, "The project's standing standard suppression list, reused across audiences, recorded in place of the standard lists; absent unless every resolved standard list was selected. It covers the standard lists only; suppression_list_ids holds every excluded list")
 	Attribute("include_list_ids", ArrayOf(String), "Every include list the send goes to, when include_list_ids was supplied; absent for a single master_list_id")
 	Attribute("audience", AudienceComposeRecordedAudience, "The audience row recorded for brief_id")
 	Required("master", "suppression_list_ids", "audience")
@@ -600,7 +628,9 @@ var AudienceCustomInterpretResult = Type("audience-custom-interpret-result", fun
 // AudienceCustomInput is the preview/create payload.
 var AudienceCustomInput = Type("audience-custom-input", func() {
 	Attribute("criteria", AudienceCustomCriteria, "The reviewed criteria")
-	Attribute("name", String, "Explicit list name; derived from the criteria when omitted. A taken name is versioned, never reused", func() { MaxLength(250) })
+	// 200, not 250: HubSpot's list search refuses a longer name, so the taken-name check could
+	// never see it (audience.CustomNameMaxLen).
+	Attribute("name", String, "Explicit list name, at most 200 characters (HubSpot cannot search a longer one); derived from the criteria when omitted. A taken name is versioned, never reused", func() { MaxLength(200) })
 	Required("criteria")
 	// An explicit example: the generated one filled page_view_urls with prose sentences, which
 	// the service refuses, so the CLI usage it produced was a request that returns a 400.
@@ -720,10 +750,14 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 			projectIDAttr()
 			Attribute("brand_short", String, "Short brand token to match brand suppression lists")
 			Attribute("event_name", String, "Event name to match event-specific suppression lists")
+			Attribute("registrants_event", String, "Edition (event name with year) whose current-registrants row to add", func() {
+				MaxLength(200)
+			})
 			Required("project_id")
 		})
 		Result(func() {
 			Attribute("lists", ArrayOf(AudienceSuppressionList), "Suppression rows, standard first")
+			Attribute("standard_list", AudienceComposedList, "The project's standing standard suppression list, when it already exists")
 			Required("lists")
 		})
 		commonBriefErrors()
@@ -732,6 +766,7 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 			Header("bearer_token:Authorization")
 			Param("brand_short")
 			Param("event_name")
+			Param("registrants_event")
 			Response(StatusOK)
 			briefErrorResponses()
 		})
@@ -817,7 +852,7 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 	})
 
 	Method("compose-audience-master", func() {
-		Description("Create the combined suppression list and then the master list in the project's HubSpot portal, and when brief_id is supplied record the master as that brief's built audience. NOT idempotent.")
+		Description("Create the master list in the project's HubSpot portal, excluding the requested suppressions directly through the project's standing standard suppression list and, when asked, the edition's current-registrants list (both found by name and reused), and when brief_id is supplied record the master as that brief's built audience. NOT idempotent.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -827,8 +862,10 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 		Result(AudienceComposeMasterResult)
 		commonBriefErrors()
 		// ComposePartial is separate from InternalServerError because the caller must NOT
-		// retry it: the suppression list already exists upstream, and a retry would create a
-		// second one. It carries that list so the UI can show what to reconcile.
+		// retry it: the master create is unconfirmed upstream, and a retry could create a second
+		// one. It carries the master's name so the UI can show what to reconcile. (Compose no
+		// longer creates a suppression list of its own; the suppression fields stay in the
+		// contract for older deployments.)
 		Error("ComposePartial", AudienceComposePartialError, "Platform state was partially created; do not retry")
 		HTTP(func() {
 			POST("/projects/{project_id}/audience-builder/compose-master")
@@ -842,7 +879,7 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 	})
 
 	Method("attach-existing-audience", func() {
-		Description("Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. Creates nothing in HubSpot.")
+		Description("Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. When every resolved standard suppression list is supplied they are recorded as the project's standing standard suppression list, and with current_registrants_event the edition's current-registrants list is recorded too; those two lists, found by name and reused, are the only lists HubSpot may create here, so an attach creates at most two. The recorded and returned suppression_list_ids are therefore not the input ids: the standing list's id replaces the standard ids, and the registrants list's id is appended. A list already holding either name that cannot safely be reused is a 409 naming it.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()

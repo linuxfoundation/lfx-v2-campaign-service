@@ -198,3 +198,48 @@ func TestAPIError_CarriesUpstreamStatus(t *testing.T) {
 		t.Fatal("*apiError must implement domain.UpstreamStatusCarrier")
 	}
 }
+
+// TestCreateOutcome_DeclinedReuseWithAPossibleWriteIsNotBudgetNameTaken pins the guard that
+// keeps the budget-name-taken sentence true after budget adoption. A declined reuse returns
+// BOTH errors — Google's original DUPLICATE_NAME refusal and the reason the reuse was
+// declined — and one possible reason is an amount alignment Google ACCEPTED without a usable
+// acknowledgement. The budget create did fail, but the EXISTING budget's amount may have
+// moved, so "nothing new was created" would be false.
+//
+// The companion case is the one the guard must NOT catch: a declined reuse whose cause is a
+// failed lookup READ. Nothing was written then, and the operator keeps the precise token.
+func TestCreateOutcome_DeclinedReuseWithAPossibleWriteIsNotBudgetNameTaken(t *testing.T) {
+	namePartial := &CampaignResult{CampaignName: "c", CampaignBudgetName: "b"}
+	duplicate := fmt.Errorf("campaignBudgets:mutate: %w",
+		&apiError{StatusCode: 400, Method: http.MethodPost, ErrorCodes: []string{"DUPLICATE_NAME"}})
+
+	t.Run("alignment mutate may have landed", func(t *testing.T) {
+		reuseErr := fmt.Errorf("aligning it failed: %w",
+			&unconfirmedBudgetMutateError{err: errors.New("amount update returned an unusable response")})
+		// The wrap order is production's: the DUPLICATE_NAME refusal first, the reuse
+		// failure second — see the five channel files for why that order is load-bearing.
+		err := fmt.Errorf("already exists (DUPLICATE_NAME): %w — and could not be safely reused: %w",
+			duplicate, reuseErr)
+
+		got, ok := CreateOutcome(namePartial, err)
+		if !ok || got != domain.CreateOutcomeUnconfirmed {
+			t.Errorf("CreateOutcome = (%q, %v), want (%q, true): an accepted-but-unacknowledged amount mutate means the account may have changed",
+				got, ok, domain.CreateOutcomeUnconfirmed)
+		}
+	})
+
+	t.Run("lookup read failed, nothing written", func(t *testing.T) {
+		reuseErr := fmt.Errorf("looking up the budget failed: %w",
+			&apiError{StatusCode: 500, Method: http.MethodPost})
+		// The wrap order is production's: the DUPLICATE_NAME refusal first, the reuse
+		// failure second — see the five channel files for why that order is load-bearing.
+		err := fmt.Errorf("already exists (DUPLICATE_NAME): %w — and could not be safely reused: %w",
+			duplicate, reuseErr)
+
+		got, ok := CreateOutcome(namePartial, err)
+		if !ok || got != domain.CreateOutcomeBudgetNameTaken {
+			t.Errorf("CreateOutcome = (%q, %v), want (%q, true): a failed READ wrote nothing, so the precise token stands",
+				got, ok, domain.CreateOutcomeBudgetNameTaken)
+		}
+	})
+}

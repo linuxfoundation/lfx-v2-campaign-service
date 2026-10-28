@@ -38,8 +38,12 @@ const (
 //   - upstream-only: status (a different axis from the row's lifecycle status, as on every
 //     platform), bidding_strategy_type (optimizationTargetType), cost_type, unit_cost (the bid
 //     amount, in whole units of its currency), unit_cost_currency (that currency — unit_cost is
-//     absent whenever it is not reported) and objective_type. The create path records none
-//     of these, so each reads `unknown`.
+//     absent whenever it is not reported). The create path records none of these, so each
+//     reads `unknown`.
+//   - objective_type is COMPARED since LFXV2-2665: the create path's objective follows the
+//     bidding strategy it records (automatic → WEBSITE_VISIT, manual → WEBSITE_CONVERSION;
+//     linkedinRecordedObjective), so a row with a recorded strategy has a recorded objective. A
+//     row without one (legacy, adopted) reads `unknown`, never a guessed objective.
 //
 // BUDGET. The create path sets exactly one of dailyBudget/totalBudget in USD, so a campaign
 // reporting one is compared as that type. One reporting BOTH (LinkedIn allows a daily budget
@@ -141,7 +145,7 @@ func (d *LinkedInDispatcher) ReadSettings(ctx context.Context, projectID string,
 		model.CompareSettingsField(settingsFieldCostType, nil, settings.CostType),
 		model.CompareSettingsField(settingsFieldUnitCost, nil, unitCost),
 		model.CompareSettingsField(settingsFieldUnitCostCurrency, nil, unitCostCurrency),
-		model.CompareSettingsField(settingsFieldObjectiveType, nil, settings.ObjectiveType),
+		model.CompareSettingsField(settingsFieldObjectiveType, linkedinRecordedObjective(campaign), settings.ObjectiveType),
 	}
 	rb.SummariseSettings()
 	return rb, nil
@@ -154,4 +158,21 @@ func (d *LinkedInDispatcher) ReadSettings(ctx context.Context, projectID string,
 func linkedinAccountIDUnusable(res *resolved, projectID, op string) error {
 	return res.systemScoped(fmt.Errorf("%w: %w: %s: the linkedin connection for project %s stores an ad account id that is not a positive 64-bit integer",
 		domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, op, projectID))
+}
+
+// linkedinRecordedObjective is the objectiveType the create path sent for this row's recorded
+// bidding strategy (LFXV2-2665; linkedin.campaignBidding): automatic → WEBSITE_VISIT, manual →
+// WEBSITE_CONVERSION. nil when no strategy is recorded — a legacy or adopted row — so the field
+// reads `unknown` rather than comparing against a guess.
+func linkedinRecordedObjective(campaign *model.Campaign) *string {
+	if campaign == nil || campaign.BiddingStrategy == nil {
+		return nil
+	}
+	switch *campaign.BiddingStrategy {
+	case model.BiddingAutomatic:
+		return strPtr(linkedin.ObjectiveWebsiteVisit)
+	case model.BiddingManual:
+		return strPtr(linkedin.ObjectiveWebsiteConversion)
+	}
+	return nil
 }

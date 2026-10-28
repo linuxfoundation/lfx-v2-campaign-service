@@ -796,6 +796,11 @@ type campaignEditRepo struct {
 	// the try-lock losing: the real repo answers ErrCampaignWriteInProgress immediately
 	// rather than waiting for the holder.
 	claimErr error
+	// replaceErr, when set, is returned by ReplaceCampaign instead of the written campaign,
+	// and nothing is recorded. It models the refusals the real repo decides INSIDE its
+	// transaction — where a fake cannot stand in for the lock — so a service test can still
+	// pin how such a sentinel is mapped onto the wire.
+	replaceErr error
 }
 
 func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
@@ -804,6 +809,14 @@ func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) 
 }
 
 func (r *campaignEditRepo) ListProjectPlatformCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
+	return nil, nil
+}
+
+func (r *campaignEditRepo) ListProjectPlatformDeletedCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
+	return nil, nil
+}
+
+func (r *campaignEditRepo) ListProjectPlatformMonitorCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
 	return nil, nil
 }
 
@@ -831,7 +844,13 @@ func (r *campaignEditRepo) ListCampaignsForBrief(context.Context, string, string
 func (r *campaignEditRepo) GetCampaignByPlatform(context.Context, string, string, model.Provider, string) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
+func (r *campaignEditRepo) GetCampaignByPlatformWithMaxSlotVersion(context.Context, string, string, model.Provider, string) (*model.Campaign, int, error) {
+	return nil, 0, domain.ErrNotFound
+}
 func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string, int, string, *model.Actor) (bool, *model.Campaign, error) {
+	return true, nil, nil
+}
+func (r *campaignEditRepo) ClaimNewCampaignVersion(context.Context, string, string, model.Provider, string, int, string, *model.Actor) (bool, *model.Campaign, error) {
 	return true, nil, nil
 }
 func (r *campaignEditRepo) DeleteDispatchClaim(context.Context, string, model.Provider, string, int, string) error {
@@ -845,6 +864,11 @@ func (r *campaignEditRepo) AdoptCampaign(_ context.Context, c *model.Campaign, _
 }
 func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64, _ domain.CampaignLockToken, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	r.got = c
+	if r.replaceErr != nil {
+		// Refused inside the transaction: no version bump and no index payload, because the
+		// real repo rolls back rather than committing a row it then refuses.
+		return nil, r.replaceErr
+	}
 	// The version bump lives here, not in the claim — mirroring the real repo, which
 	// increments inside the same transaction that writes the outbox event.
 	r.cur.Version++
@@ -2110,6 +2134,30 @@ func TestIndexedDocsUseSnakeCase(t *testing.T) {
 	raw, _ = json.Marshal(campaignDoc(&briefs.Campaign{ID: "c2"}))
 	if strings.Contains(string(raw), "null") {
 		t.Errorf("nil optionals must be omitted, not emitted as null\ngot: %s", raw)
+	}
+	// The bidding fields (LFXV2-2665, PR #332 review) are indexed like the API returns them:
+	// absent when not recorded (above), present when they are.
+	for _, absent := range []string{`"bidding_strategy"`, `"max_cpc_bid"`} {
+		if strings.Contains(string(raw), absent) {
+			t.Errorf("an unrecorded %s must be omitted\ngot: %s", absent, raw)
+		}
+	}
+	manual, bid := "manual", 1.25
+	raw, err = json.Marshal(campaignDoc(campaignResult(&model.Campaign{
+		ID: "c3", BiddingStrategy: func() *model.BiddingStrategy { s := model.BiddingManual; return &s }(), MaxCPCBid: &bid,
+	})))
+	if err != nil {
+		t.Fatalf("marshal campaign doc: %v", err)
+	}
+	for _, want := range []string{`"bidding_strategy":"` + manual + `"`, `"max_cpc_bid":1.25`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("campaign doc missing %s\ngot: %s", want, raw)
+		}
+	}
+	for _, bad := range []string{`"BiddingStrategy"`, `"MaxCPCBid"`, `"MaxCpcBid"`} {
+		if strings.Contains(string(raw), bad) {
+			t.Errorf("campaign doc leaks the Go field name %s\ngot: %s", bad, raw)
+		}
 	}
 }
 

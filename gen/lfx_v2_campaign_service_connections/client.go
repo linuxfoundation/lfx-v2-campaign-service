@@ -60,6 +60,8 @@ type Client struct {
 	ListGoogleAdsAccountsEndpoint       goa.Endpoint
 	GetGoogleAdsKeywordsEndpoint        goa.Endpoint
 	GetGoogleAdsAudienceEndpoint        goa.Endpoint
+	SuggestGoogleAdsGeoTargetsEndpoint  goa.Endpoint
+	ListGoogleAdsUserListsEndpoint      goa.Endpoint
 	GetMetaAdsAudienceEndpoint          goa.Endpoint
 	GetTwitterAdsAudienceEndpoint       goa.Endpoint
 	GetLinkedinAdsAudienceEndpoint      goa.Endpoint
@@ -92,7 +94,7 @@ type Client struct {
 
 // NewClient initializes a "lfx-v2-campaign-service-connections" service client
 // given the endpoints.
-func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts, getGoogleAdsKeywords, getGoogleAdsAudience, getMetaAdsAudience, getTwitterAdsAudience, getLinkedinAdsAudience, getMicrosoftAdsKeywords, getMicrosoftAdsAudience, getRedditAdsAudience, getRedditAdsKeywords, resolveGoogleAdsCampaign, resolveMicrosoftAdsCampaign, resolveMetaAdsCampaign, resolveRedditAdsCampaign, resolveTwitterAdsCampaign, resolveLinkedinAdsCampaign, listMetaAdsAccounts, listLinkedinAdsAccounts, listMicrosoftAdsAccounts, listTwitterAdsAccounts, listRedditAdsAccounts, listHubspotEmails, searchHubspotCampaigns, createHubspotCampaign, monitorGoogleAdsAccount, monitorLinkedinAdsAccount, monitorMetaAdsAccount, monitorRedditAdsAccount, monitorMicrosoftAdsAccount, monitorTwitterAdsAccount, monitorHubspotAccount goa.Endpoint) *Client {
+func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts, getGoogleAdsKeywords, getGoogleAdsAudience, suggestGoogleAdsGeoTargets, listGoogleAdsUserLists, getMetaAdsAudience, getTwitterAdsAudience, getLinkedinAdsAudience, getMicrosoftAdsKeywords, getMicrosoftAdsAudience, getRedditAdsAudience, getRedditAdsKeywords, resolveGoogleAdsCampaign, resolveMicrosoftAdsCampaign, resolveMetaAdsCampaign, resolveRedditAdsCampaign, resolveTwitterAdsCampaign, resolveLinkedinAdsCampaign, listMetaAdsAccounts, listLinkedinAdsAccounts, listMicrosoftAdsAccounts, listTwitterAdsAccounts, listRedditAdsAccounts, listHubspotEmails, searchHubspotCampaigns, createHubspotCampaign, monitorGoogleAdsAccount, monitorLinkedinAdsAccount, monitorMetaAdsAccount, monitorRedditAdsAccount, monitorMicrosoftAdsAccount, monitorTwitterAdsAccount, monitorHubspotAccount goa.Endpoint) *Client {
 	return &Client{
 		CreateGoogleAdsEndpoint:             createGoogleAds,
 		GetGoogleAdsEndpoint:                getGoogleAds,
@@ -139,6 +141,8 @@ func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, 
 		ListGoogleAdsAccountsEndpoint:       listGoogleAdsAccounts,
 		GetGoogleAdsKeywordsEndpoint:        getGoogleAdsKeywords,
 		GetGoogleAdsAudienceEndpoint:        getGoogleAdsAudience,
+		SuggestGoogleAdsGeoTargetsEndpoint:  suggestGoogleAdsGeoTargets,
+		ListGoogleAdsUserListsEndpoint:      listGoogleAdsUserLists,
 		GetMetaAdsAudienceEndpoint:          getMetaAdsAudience,
 		GetTwitterAdsAudienceEndpoint:       getTwitterAdsAudience,
 		GetLinkedinAdsAudienceEndpoint:      getLinkedinAdsAudience,
@@ -985,6 +989,45 @@ func (c *Client) GetGoogleAdsAudience(ctx context.Context, p *GetGoogleAdsAudien
 	return ires.(*GoogleAdsAudience), nil
 }
 
+// SuggestGoogleAdsGeoTargets calls the "suggest-google-ads-geo-targets"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+// SuggestGoogleAdsGeoTargets may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) SuggestGoogleAdsGeoTargets(ctx context.Context, p *SuggestGoogleAdsGeoTargetsPayload) (res *GoogleAdsGeoTargetSuggestions, err error) {
+	var ires any
+	ires, err = c.SuggestGoogleAdsGeoTargetsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*GoogleAdsGeoTargetSuggestions), nil
+}
+
+// ListGoogleAdsUserLists calls the "list-google-ads-user-lists" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+// ListGoogleAdsUserLists may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *UserListsConflictError): User lists cannot be listed per project on an ad account shared across foundations
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) ListGoogleAdsUserLists(ctx context.Context, p *ListGoogleAdsUserListsPayload) (res *GoogleAdsUserLists, err error) {
+	var ires any
+	ires, err = c.ListGoogleAdsUserListsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*GoogleAdsUserLists), nil
+}
+
 // GetMetaAdsAudience calls the "get-meta-ads-audience" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // GetMetaAdsAudience may return the following errors:
@@ -1395,6 +1438,7 @@ func (c *Client) CreateHubspotCampaign(ctx context.Context, p *CreateHubspotCamp
 // the "lfx-v2-campaign-service-connections" service.
 // MonitorGoogleAdsAccount may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *AccountMonitorScopeConflictError): A campaign recorded for this project does not fit the monitored account: created under a different customer than account_id, or recording none (see reason)
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
@@ -1433,6 +1477,7 @@ func (c *Client) MonitorLinkedinAdsAccount(ctx context.Context, p *MonitorLinked
 // "lfx-v2-campaign-service-connections" service.
 // MonitorMetaAdsAccount may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *AccountMonitorScopeConflictError): A campaign recorded for this project does not fit the monitored account: created under a different account, or carrying an id the platform cannot read (see reason)
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
@@ -1452,6 +1497,7 @@ func (c *Client) MonitorMetaAdsAccount(ctx context.Context, p *MonitorMetaAdsAcc
 // the "lfx-v2-campaign-service-connections" service.
 // MonitorRedditAdsAccount may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *AccountMonitorScopeConflictError): A campaign recorded for this project does not fit the monitored account: created under a different account, recording none, or carrying an id the platform cannot read (see reason)
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
@@ -1490,7 +1536,7 @@ func (c *Client) MonitorMicrosoftAdsAccount(ctx context.Context, p *MonitorMicro
 // the "lfx-v2-campaign-service-connections" service.
 // MonitorTwitterAdsAccount may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
-//   - "Conflict" (type *AccountMonitorConflictError): The account cannot be monitored as it stands: too many active campaigns, or a timezone off the whole UTC hour (see reason)
+//   - "Conflict" (type *AccountMonitorConflictError): The account cannot be monitored as it stands: too many active campaigns on the shared account, a timezone off the whole UTC hour, or a recorded campaign that does not fit the account (see reason)
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large

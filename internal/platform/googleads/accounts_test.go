@@ -188,6 +188,7 @@ func newAccountsTestClient(t *testing.T, srv *httptest.Server) *Client {
 		WithTokenURL(srv.URL+"/token"),
 		WithAPIVersion("v23"),
 		WithClock(func() time.Time { return time.Unix(0, 0) }),
+		withBudgetResolveDelays(time.Millisecond, time.Millisecond),
 	)
 }
 

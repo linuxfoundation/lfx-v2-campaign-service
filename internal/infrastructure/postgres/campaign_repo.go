@@ -70,13 +70,11 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 // columns and the predicate must match the index EXACTLY -- Postgres infers the arbiter
 // by matching both.
 //
-// Naming the four-column index as the arbiter is also what keeps the expand phase loud.
-// While 000022's three-column index still exists, a slot_version 2 claim does not conflict
-// on the arbiter, so DO NOTHING does not apply; it violates the OTHER unique index and
-// raises 23505, which ClaimCampaignDispatch classifies as ErrSlotVersionUnavailable. A
-// retry of an existing slot version conflicts on the arbiter itself and is swallowed as
-// before. It runs under lockCampaignSlotQuery — see there for what the lock adds that the
-// four-column index cannot, and why it ships a release BEFORE the three-column index goes.
+// Since 000051 dropped 000022's three-column index, the four-column one is the ONLY unique
+// index on the slot, so a claim for the next slot version simply inserts alongside the
+// earlier ones, and a retry of an existing slot version conflicts on the arbiter and is
+// swallowed as before. It runs under lockCampaignSlotQuery — see there for what the lock
+// adds that the index cannot.
 //
 // The conflict target carries the partial index's predicate (`WHERE status <>
 // 'deleted'`) because 000013/000014 replaced the full UNIQUE (brief_id, platform)
@@ -93,36 +91,35 @@ const claimCampaignDispatchQuery = `INSERT INTO campaigns
 	VALUES ($1, $2, $3, $4, $5, $7, '', 'pending', $6, $6)
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO NOTHING`
 
-// legacySlotUniqueIndex is 000022's three-column slot index. It stays in place until the
-// release AFTER the per-slot lock ships (see lockCampaignSlotQuery) and, while it does, is
-// the index a slot_version above 1 collides with. Named so the claim can tell that collision
-// from any other unique violation.
-const legacySlotUniqueIndex = "uq_campaigns_brief_platform_variant_live"
+// deletedSlotVersionExistsQuery reports whether one slot version is held by a SOFT-DELETED row and
+// by no live one. Only a new_version claim asks: claimCampaignDispatchQuery's arbiter ignores
+// deleted rows, so without this a version a concurrent request used and deleted would be claimed a
+// second time. A live row at the version is left to that arbiter, which hands it back for the
+// caller's reuse or reconciliation answer.
+const deletedSlotVersionExistsQuery = `SELECT
+	EXISTS (SELECT 1 FROM campaigns
+	  WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4 AND slot_version=$5 AND status = 'deleted')
+	AND NOT EXISTS (SELECT 1 FROM campaigns
+	  WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4 AND slot_version=$5 AND status <> 'deleted')`
 
 // lockCampaignSlotQuery takes the per-slot advisory lock: transaction-scoped, keyed by
 // (brief, platform, variant) — the slot WITHOUT its slot_version.
 //
 // Why a lock at all. The four-column unique index arbitrates races on ONE slot version, and
-// today 000022's three-column index also refuses a second live row on the slot whatever its
-// version. Once that index is dropped nothing in the schema says "an adopt binds only an
-// EMPTY slot": an adopt (always slot_version 1) and a claim of slot_version 2 do not conflict on
+// until 000051 the three-column index also refused a second live row on the slot whatever its
+// version. With that index gone nothing in the schema says "an adopt binds only an EMPTY
+// slot": an adopt (always slot_version 1) and a claim of slot_version 2 do not conflict on
 // any index, so an adopt racing a new-version claim — or landing on a slot whose only live
 // campaign is version 2 — would leave two live campaigns for one logical slot, one of them
 // bound by an adopt whose whole contract is "this slot had none". So every statement that
 // can create a live row for a slot (the claim, the upsert's INSERT arm, the adopt) first
-// takes this lock, and the adopt checks for ANY live row on the slot under it. Because the
+// takes this lock, and the adopt checks for ANY live row on the slot under it. DeleteCampaign,
+// which frees a slot version for the live-row index, takes it too, so a delete cannot land
+// between a new-version claim's deleted-version check and its INSERT. Because the
 // lock is held until COMMIT, and READ COMMITTED takes a fresh snapshot per statement, the
 // adopt's check sees every row a previous holder wrote: a claim that got there first makes
 // the adopt a 409, and an adopt that got there first is a live row the claim's caller read
 // (or will read) as the slot's latest.
-//
-// Why it ships BEFORE the index drop (expand/contract, one release apart). Both are needed
-// together only once the three-column index is gone; while it exists it still enforces the
-// empty-slot rule by itself. The drop is staged one release after this lock is deployed so
-// that every binary that can run against the contracted schema — including the one an
-// image-only rollback returns to, since reverting the image does not revert the schema —
-// already takes the lock. Dropping the index in the same release as the lock would leave the
-// previous binary, which takes no slot lock, able to race an adopt against a slot-2 claim.
 //
 // Transaction-scoped (pg_advisory_xact_lock), so it cannot leak past COMMIT or ROLLBACK the
 // way the session locks ClaimCampaignVersion holds can, and it is held only across local
@@ -289,36 +286,27 @@ func refuseLegacyBinding(ctx context.Context, tx pgx.Tx, op string, c *model.Cam
 // means "not recorded", which is the honest value; inventing a placeholder actor would make
 // the audit trail claim a principal that never acted.
 func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+	return r.claimDispatch(ctx, projectID, briefID, platform, variant, slotVersion, jobID, by, false)
+}
+
+// ClaimNewCampaignVersion is ClaimCampaignDispatch that also refuses, under the slot lock, a
+// slot version a soft-deleted row already holds (domain.ErrSlotVersionUsed). See the port.
+func (r *CampaignRepo) ClaimNewCampaignVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+	return r.claimDispatch(ctx, projectID, briefID, platform, variant, slotVersion, jobID, by, true)
+}
+
+func (r *CampaignRepo) claimDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor, freshVersion bool) (bool, *model.Campaign, error) {
 	variant = model.NormalizeVariant(variant)
 	slotVersion = model.NormalizeSlotVersion(slotVersion)
 	createdBy, err := marshalActor(by)
 	if err != nil {
 		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
 	}
-	claimed, err := r.insertDispatchClaim(ctx, projectID, briefID, platform, variant, slotVersion, jobID, createdBy)
+	claimed, err := r.insertDispatchClaim(ctx, projectID, briefID, platform, variant, slotVersion, jobID, createdBy, freshVersion)
+	if errors.Is(err, domain.ErrSlotVersionUsed) {
+		return false, nil, err
+	}
 	if err != nil {
-		if isUniqueViolationOn(err, legacySlotUniqueIndex) {
-			// The transaction rolled back, so no row of ours exists and there is nothing to
-			// release.
-			//
-			// Above slot 1 this is the expand phase refusing a second live campaign on the slot.
-			if slotVersion > model.FirstSlotVersion {
-				return false, nil, fmt.Errorf("claim campaign dispatch: %w", domain.ErrSlotVersionUnavailable)
-			}
-			// At slot 1 it is a lost RACE, not a refusal. Two claims from binaries that both
-			// take the slot lock cannot get here — the second runs only after the first
-			// committed, and conflicts on the arbiter instead — but a previous binary's claim
-			// during a rollout takes no lock. Postgres pre-checks only the arbiter, so two
-			// concurrent slot-1 claims can both pass it; the loser then waits on the winner's
-			// entry in the legacy index and gets 23505 there once the winner commits, instead
-			// of the arbiter conflict DO NOTHING would have swallowed. Answer it the way the
-			// arbiter conflict is answered: not claimed, here is the winner's row.
-			row, gerr := r.getCampaignBySlot(ctx, projectID, briefID, platform, variant, slotVersion)
-			if gerr != nil {
-				return false, nil, fmt.Errorf("read campaign after lost claim: %w", gerr)
-			}
-			return false, row, nil
-		}
 		// The transaction rolled back, so no row of ours exists and there is nothing to
 		// release. The one exception is a COMMIT whose acknowledgement was lost, which can
 		// leave the row committed after all — the same exposure the claim had when it was a
@@ -364,7 +352,7 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 // per-slot advisory lock and reports whether this caller's row went in. The read-back stays
 // OUTSIDE the transaction, as it always was: the lock is released at COMMIT, so the winner's
 // row — ours or a concurrent claimant's — is committed and visible by then.
-func (r *CampaignRepo) insertDispatchClaim(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, createdBy []byte) (bool, error) {
+func (r *CampaignRepo) insertDispatchClaim(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, createdBy []byte, freshVersion bool) (bool, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return false, fmt.Errorf("begin tx: %w", err)
@@ -372,6 +360,17 @@ func (r *CampaignRepo) insertDispatchClaim(ctx context.Context, projectID, brief
 	defer func() { _ = tx.Rollback(ctx) }()
 	if lerr := lockCampaignSlot(ctx, tx, briefID, platform, variant); lerr != nil {
 		return false, lerr
+	}
+	if freshVersion {
+		// Under the lock, so no delete of a concurrent claim's campaign can land between this
+		// check and the INSERT below.
+		var used bool
+		if qerr := tx.QueryRow(ctx, deletedSlotVersionExistsQuery, briefID, string(platform), projectID, variant, slotVersion).Scan(&used); qerr != nil {
+			return false, fmt.Errorf("check deleted slot version: %w", qerr)
+		}
+		if used {
+			return false, domain.ErrSlotVersionUsed
+		}
 	}
 	tag, err := tx.Exec(ctx, claimCampaignDispatchQuery, projectID, briefID, jobID, string(platform), variant, createdBy, slotVersion)
 	if err != nil {
@@ -495,7 +494,7 @@ func (r *CampaignRepo) ClearDispatchClaim(ctx context.Context, briefID string, p
 
 const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, variant, slot_version, platform_campaign_id, campaign_name,
 	status, budget_amount, budget_type, start_date, end_date, config_snapshot, result, version,
-	created_by, updated_by, ran_on_system_account, created_at, updated_at, max_cpc_bid::float8`
+	created_by, updated_by, ran_on_system_account, created_at, updated_at, max_cpc_bid::float8, bidding_strategy`
 
 // getCampaignQuery and getCampaignByPlatformQuery both exclude soft-deleted rows;
 // pinned by TestCampaignRepo_ReadsExcludeSoftDeleted.
@@ -516,6 +515,25 @@ const getCampaignQuery = `SELECT ` + campaignCols + ` FROM campaigns
 const getCampaignByPlatformQuery = `SELECT ` + campaignCols + ` FROM campaigns
 	WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4 AND status <> 'deleted'
 	ORDER BY slot_version DESC
+	LIMIT 1`
+
+// getCampaignByPlatformWithMaxSlotVersionQuery is getCampaignByPlatformQuery plus, as a scalar
+// subquery in the SAME statement (one snapshot), the highest slot_version ever used on the slot.
+// The subquery deliberately does NOT exclude deleted rows: a deleted campaign's version is used,
+// since its upstream campaign still carries the name that version composed. See
+// GetCampaignByPlatformWithMaxSlotVersion.
+//
+// The outer read does NOT filter deleted rows either: it ranks live rows first and returns the
+// latest one, falling back to the latest DELETED row, flagged by is_live. When every version on
+// the slot is deleted there is still a row to carry the maximum; filtering would return none,
+// and a new_version would restart at version 1 and recompose the deleted campaign's name.
+const getCampaignByPlatformWithMaxSlotVersionQuery = `SELECT ` + campaignCols + `,
+	(SELECT COALESCE(MAX(h.slot_version), 0) FROM campaigns h
+	  WHERE h.brief_id=$1 AND h.platform=$2 AND h.project_id=$3 AND h.variant=$4) AS max_slot_version,
+	status <> 'deleted' AS is_live
+	FROM campaigns
+	WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4
+	ORDER BY (status <> 'deleted') DESC, slot_version DESC
 	LIMIT 1`
 
 // getCampaignBySlotQuery reads ONE slot version's live row. It is what the claim reads back:
@@ -605,9 +623,72 @@ const listProjectPlatformCampaignIDsQuery = `SELECT DISTINCT platform_campaign_i
 // That is an ordinary state — a project that has not run a campaign yet — and the caller renders
 // it as an empty result rather than a failure.
 func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
-	rows, err := r.db.Query(ctx, listProjectPlatformCampaignIDsQuery, projectID, platform)
+	return r.queryProjectCampaignScope(ctx, listProjectPlatformCampaignIDsQuery, "project platform campaign ids", projectID, platform)
+}
+
+// listProjectPlatformDeletedCampaignIDsQuery is listProjectPlatformCampaignIDsQuery's complement
+// on status: the project's SOFT-DELETED campaigns with an upstream id, scoped by project_id and
+// platform in SQL for the same reason. A local delete does not touch the ad platform, so the
+// account monitor reads these too — a deleted campaign may still be spending.
+//
+// The NOT EXISTS hands the campaign to its LATEST owner. The per-platform binding indexes cover
+// live rows only, so once this project deletes its row another project can adopt the same
+// upstream campaign; from then on it is that project's campaign and must not stay in this
+// project's monitor. Another project's row takes it over when it is live, OR when it bound the
+// id later than this one whatever its status: if the adopter then deletes its row too, a
+// live-only test would find no owner left and hand the campaign — with the adopter's budget and
+// spend — back to this project.
+//
+// "Bound later" is platform_bound_at (000048), NOT created_at. A dispatch's created_at is its
+// claim INSERT, made before the platform call; a dispatch that binds an EXISTING upstream
+// campaign (Google's adoptExisting, Meta's same-name reuse) can claim, wait out another
+// project's adopt-then-delete, and only then bind, so ordering by created_at would rank the
+// current owner first and expose its budget and spend to the former one. COALESCE to created_at
+// for rows with no stamp — written before 000048 or by an N-1 binary during a rollout — which is
+// exact for adoptions and the only evidence those rows carry. Matched on the id
+// alone, not its provenance: on Reddit and X an id is only unique within an account, so another
+// account's row with the same id also hides this one — the conservative direction for a read
+// that exists to keep projects apart.
+// Shared by the deleted precheck and the final monitor snapshot; the ownership rule
+// must not drift between the two reads.
+const monitorCampaignNotTakenOver = `NOT EXISTS (SELECT 1 FROM campaigns l
+	    WHERE l.platform = c.platform AND l.platform_campaign_id = c.platform_campaign_id
+	      AND l.project_id <> c.project_id
+	      AND (l.status <> 'deleted'
+	        OR COALESCE(l.platform_bound_at, l.created_at) > COALESCE(c.platform_bound_at, c.created_at)))`
+
+const listProjectPlatformDeletedCampaignIDsQuery = `SELECT DISTINCT c.platform_campaign_id, c.result FROM campaigns c
+	WHERE c.project_id=$1 AND c.platform=$2 AND c.status = 'deleted'
+	  AND c.platform_campaign_id IS NOT NULL AND c.platform_campaign_id <> ''
+	  AND ` + monitorCampaignNotTakenOver + `
+	ORDER BY c.platform_campaign_id ASC`
+
+// ListProjectPlatformDeletedCampaignIDs returns the upstream campaign ids of this project's
+// soft-deleted campaigns on platform. Returns an EMPTY slice, not an error, when there are none.
+func (r *CampaignRepo) ListProjectPlatformDeletedCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	return r.queryProjectCampaignScope(ctx, listProjectPlatformDeletedCampaignIDsQuery, "project platform deleted campaign ids", projectID, platform)
+}
+
+// listProjectPlatformMonitorCampaignIDsQuery sees live rows, deleted rows and competing
+// bindings in one statement snapshot. Repeating the two precheck queries would allow a
+// delete/adopt between them to retain an id that was live only in the first snapshot.
+const listProjectPlatformMonitorCampaignIDsQuery = `SELECT DISTINCT c.platform_campaign_id, c.result FROM campaigns c
+	WHERE c.project_id=$1 AND c.platform=$2
+	  AND c.platform_campaign_id IS NOT NULL AND c.platform_campaign_id <> ''
+	  AND (c.status <> 'deleted' OR ` + monitorCampaignNotTakenOver + `)
+	ORDER BY c.platform_campaign_id ASC`
+
+// ListProjectPlatformMonitorCampaignIDs returns the project's current monitor bindings.
+func (r *CampaignRepo) ListProjectPlatformMonitorCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	return r.queryProjectCampaignScope(ctx, listProjectPlatformMonitorCampaignIDsQuery, "project platform monitor campaign ids", projectID, platform)
+}
+
+// queryProjectCampaignScope runs one of the (platform_campaign_id, result) scope queries above;
+// what names the read in its errors.
+func (r *CampaignRepo) queryProjectCampaignScope(ctx context.Context, query, what, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {
+	rows, err := r.db.Query(ctx, query, projectID, platform)
 	if err != nil {
-		return nil, fmt.Errorf("list project platform campaign ids: %w", err)
+		return nil, fmt.Errorf("list %s: %w", what, err)
 	}
 	defer rows.Close()
 
@@ -618,12 +699,12 @@ func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, proje
 			result []byte
 		)
 		if serr := rows.Scan(&id, &result); serr != nil {
-			return nil, fmt.Errorf("scan project platform campaign id: %w", serr)
+			return nil, fmt.Errorf("scan %s: %w", what, serr)
 		}
 		out = append(out, model.ProjectCampaignScope{PlatformCampaignID: id, Result: result})
 	}
 	if rerr := rows.Err(); rerr != nil {
-		return nil, fmt.Errorf("iterate project platform campaign ids: %w", rerr)
+		return nil, fmt.Errorf("iterate %s: %w", what, rerr)
 	}
 	return out, nil
 }
@@ -765,6 +846,40 @@ func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, projectID, bri
 	return c, nil
 }
 
+// GetCampaignByPlatformWithMaxSlotVersion returns the slot's latest live campaign and the
+// highest slot version it has ever used, deleted rows included, from one statement. When the
+// slot has no live campaign it returns ErrNotFound WITH that maximum (0 for a slot never used):
+// a new_version on a slot whose campaigns were all deleted must still number past them.
+func (r *CampaignRepo) GetCampaignByPlatformWithMaxSlotVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string) (*model.Campaign, int, error) {
+	var (
+		maxUsed int
+		live    bool
+	)
+	row := r.db.QueryRow(ctx, getCampaignByPlatformWithMaxSlotVersionQuery, briefID, string(platform), projectID, model.NormalizeVariant(variant))
+	c, err := scanCampaign(trailingScanRow{row: row, extra: []any{&maxUsed, &live}})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, 0, domain.ErrNotFound
+		}
+		return nil, 0, fmt.Errorf("get campaign by platform with max slot version: %w", err)
+	}
+	if !live {
+		return nil, maxUsed, domain.ErrNotFound
+	}
+	return c, maxUsed, nil
+}
+
+// trailingScanRow lets scanCampaign read a row that carries extra columns after campaignCols:
+// it appends extra's destinations to the ones scanCampaign passes.
+type trailingScanRow struct {
+	row   pgx.Row
+	extra []any
+}
+
+func (t trailingScanRow) Scan(dest ...any) error {
+	return t.row.Scan(append(dest, t.extra...)...)
+}
+
 // getCampaignBySlot returns the live campaign at one slot version, or ErrNotFound.
 func (r *CampaignRepo) getCampaignBySlot(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int) (*model.Campaign, error) {
 	c, err := scanCampaign(r.db.QueryRow(ctx, getCampaignBySlotQuery, briefID, string(platform), projectID,
@@ -786,14 +901,36 @@ func (r *CampaignRepo) getCampaignBySlot(ctx context.Context, projectID, briefID
 const upsertCampaignQuery = `INSERT INTO campaigns
 	(project_id, brief_id, job_id, platform, variant, platform_campaign_id, campaign_name, status,
 	 budget_amount, budget_type, start_date, end_date, config_snapshot, result, created_by, updated_by,
-	 ran_on_system_account, slot_version)
-	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17,$18)
+	 ran_on_system_account, slot_version, max_cpc_bid, bidding_strategy, platform_bound_at)
+	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17,$18,$19,$20,
+	        CASE WHEN NULLIF($5::text, '') IS NOT NULL THEN clock_timestamp() END)
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO UPDATE SET
 		job_id=EXCLUDED.job_id, platform_campaign_id=EXCLUDED.platform_campaign_id,
+		-- platform_bound_at (000048) is stamped when this write gives the row an upstream id it
+		-- did not hold — on a normal dispatch, this arm finalizing the claim. created_at cannot
+		-- stand in for it: the claim INSERT set that before the platform call, and a dispatch
+		-- that binds an EXISTING upstream campaign can finish after another project adopted and
+		-- deleted it (see listProjectPlatformDeletedCampaignIDsQuery). The owning job's re-upsert
+		-- of the same id keeps the first stamp. clock_timestamp(), not now(): the stamp orders
+		-- bindings, so it is when this statement ran, not when its transaction began.
+		platform_bound_at=CASE
+			WHEN NULLIF(EXCLUDED.platform_campaign_id, '') IS NOT NULL
+			 AND EXCLUDED.platform_campaign_id IS DISTINCT FROM NULLIF(campaigns.platform_campaign_id, '')
+			THEN clock_timestamp()
+			ELSE campaigns.platform_bound_at
+		END,
 		campaign_name=EXCLUDED.campaign_name, status=EXCLUDED.status,
 		budget_amount=EXCLUDED.budget_amount, budget_type=EXCLUDED.budget_type,
 		start_date=EXCLUDED.start_date, end_date=EXCLUDED.end_date,
 		config_snapshot=EXCLUDED.config_snapshot, result=EXCLUDED.result,
+		-- The create path's bidding choice (000050) and its starting manual bid (000039), FILLED
+		-- ONLY WHILE EMPTY: the STORED value wins. On a normal dispatch this arm lands on the
+		-- claim row, whose two columns are still NULL, so the create's values are written. A
+		-- bid the update-campaign-bid endpoint set later lives in the same column, and an
+		-- upsert reaching this row afterwards (none does today; see created_by below) must not
+		-- put the create's starting bid back over it, nor a NULL over either value.
+		max_cpc_bid=COALESCE(campaigns.max_cpc_bid, EXCLUDED.max_cpc_bid),
+		bidding_strategy=COALESCE(campaigns.bidding_strategy, EXCLUDED.bidding_strategy),
 		-- created_by is NOT in the update list. What this arm does, on every path the
 		-- orchestrator actually takes, is FINALIZE THE CURRENT CLAIM: dispatchPlatform
 		-- reaches an upsert only when ClaimCampaignDispatch returned claimed=true, and
@@ -909,6 +1046,8 @@ const replaceCampaignQuery = `UPDATE campaigns SET
 	-- max_cpc_bid (000039) is written from the loaded row, so every caller that does not
 	-- change the bid writes back exactly what it read. Only update-campaign-bid changes it.
 	max_cpc_bid=$14,
+	-- bidding_strategy (000050) likewise round-trips the loaded row: no update path changes it.
+	bidding_strategy=$15,
 	-- Same COALESCE reasoning as the upsert's conflict arm: an update whose caller had no
 	-- authenticated principal (attributedActor returned nil, having logged it) is an
 	-- ordinary unattributed write, not an instruction to forget the last actor we know.
@@ -958,12 +1097,12 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 	//     slot 1, or another job's claim) or a version this job's slot was claimed beside; in
 	//     both cases inserting would put a second live campaign on the slot beside one this
 	//     service already tracks, so it is ErrDispatchClaimLost.
-	// This is the rule 000022's three-column index enforces today for the INSERT arm (one live
-	// row per slot), restated so it still holds once that index is dropped: the advisory lock
-	// alone would let the stale slot-2 INSERT land beside an adopted slot 1. The conflict arm's
-	// job_id guard and the legacy-index classification below stay as the statement-level
-	// backstops. Pinned by TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim and, against the
-	// contracted schema, TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex.
+	// This is the rule 000022's three-column index used to enforce for the INSERT arm (one live
+	// row per slot). Since 000051 dropped that index this check is the ONLY thing enforcing it:
+	// the advisory lock alone would let the stale slot-2 INSERT land beside an adopted slot 1.
+	// The conflict arm's job_id guard below stays as the statement-level backstop for the same
+	// slot version. Pinned by TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim and
+	// TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex.
 	var ownClaim, occupied bool
 	if qerr := tx.QueryRow(ctx, slotOwnershipQuery, c.BriefID, string(c.Platform), variant,
 		model.NormalizeSlotVersion(c.SlotVersion), c.JobID).Scan(&ownClaim, &occupied); qerr != nil {
@@ -1002,6 +1141,7 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 		// The slot version the claim took. It is part of the conflict target, so a wrong
 		// value here would land the result on a different campaign of the same slot.
 		model.NormalizeSlotVersion(c.SlotVersion),
+		c.MaxCPCBid, biddingStrategyArg(c.BiddingStrategy),
 	)
 	upserted, err := scanCampaign(row)
 	if err != nil {
@@ -1016,17 +1156,7 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 		// The INSERT arm always returns its row, so no row back means the conflict arm's
 		// ownership guard declined: the live row on this slot version is not this job's claim.
 		// Nothing was written, and the upstream id is named so the caller can keep it.
-		//
-		// 000022's three-column index is the SAME loss reached through the other arm. It can
-		// only fire on the INSERT arm (the conflict arm never changes brief, platform or
-		// variant), and the INSERT arm runs only when this slot version has no live row — so a
-		// violation means ANOTHER live row holds the slot at a different version while this
-		// job's claim is gone. The case that reaches it: a slot-2 claim cleared by an operator,
-		// then an adopt (always slot 1) binding the emptied slot; the stale slot-2 upsert does
-		// not conflict on the four-column arbiter and hits the legacy index instead. Reported as
-		// a lost claim, not a persist failure that would claim the cleared claim is "retained".
-		// Pinned by TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim.
-		if errors.Is(err, pgx.ErrNoRows) || isUniqueViolationOn(err, legacySlotUniqueIndex) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("upsert campaign: %w: %s campaign %s (slot version %d) is no longer held by job %s",
 				domain.ErrDispatchClaimLost, c.Platform, c.PlatformCampaignID,
 				model.NormalizeSlotVersion(c.SlotVersion), derefStr(c.JobID))
@@ -1061,9 +1191,10 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 // (000037). Adoption only ever binds an EMPTY slot, so slot 1 is the right answer, not a
 // simplification. The service refuses with 409 when GetCampaignByPlatform finds a live row,
 // but that read happens outside any lock; what ENFORCES it is AdoptCampaign checking
-// slotLiveRowExistsQuery under the per-slot advisory lock. The ON CONFLICT arm is still
-// needed: it is what keeps the N-1 binary's lock-free adopt and claim from both landing on
-// slot 1 during a rolling deploy.
+// slotLiveRowExistsQuery under the per-slot advisory lock. The ON CONFLICT arm stays as the
+// statement-level backstop: the four-column index is the arbiter every slot statement names,
+// and DO NOTHING is what answers a same-slot-version collision as "already bound" rather than
+// as a raw unique violation.
 // The variant is BOUND ($4), not the literal 'default' it used to be. Adoption establishes
 // the slot from what the platform reports the campaign actually is, and hardcoding 'default'
 // here silently discarded that: an adopted Demand Gen campaign landed in the Search slot,
@@ -1083,9 +1214,13 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 // resolved credential in scope, so the deferred stampProvenance DOES record which account
 // served it. The two paths answer differently because they genuinely know different things:
 // one resolved a credential and used it, the other was handed an id by a caller.
+//
+// platform_bound_at (000048) is stamped unconditionally: an adoption always carries its
+// upstream id, so the row is bound the moment it exists. See upsertCampaignQuery.
 const adoptCampaignQuery = `INSERT INTO campaigns
-	(project_id, brief_id, platform, variant, platform_campaign_id, campaign_name, status, result, created_by, updated_by)
-	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
+	(project_id, brief_id, platform, variant, platform_campaign_id, campaign_name, status, result, created_by, updated_by,
+	 platform_bound_at)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,clock_timestamp())
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO NOTHING
 	RETURNING ` + campaignCols
 
@@ -1185,16 +1320,8 @@ func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, exp
 		// behaviour and it must be classified separately: the DO NOTHING conflict means "this
 		// BRIEF is taken", the unique violation means "this upstream CAMPAIGN is taken", and
 		// reporting the second as the first sends the caller to look at the wrong brief.
-		// Classified by INDEX, not by "any 23505": this INSERT names the four-column slot
-		// index as its arbiter, so a race with a concurrent claim on the same slot can also
-		// raise 23505 — on 000022's legacy slot index, while it exists. Under the slot lock a
-		// claim from this binary cannot interleave, but a previous binary's lock-free claim
-		// can during a rollout. That is "this brief is taken" (ErrConflict), and reporting it
-		// as an upstream campaign bound elsewhere would send the caller to look for a binding
-		// that does not exist.
-		if isUniqueViolationOn(err, legacySlotUniqueIndex) {
-			return nil, fmt.Errorf("%w: brief %s already has a live %s campaign", domain.ErrConflict, c.BriefID, c.Platform)
-		}
+		// Classified by INDEX, not by "any 23505", so a unique violation on some other index
+		// is never misreported as an upstream campaign bound elsewhere.
 		if isPlatformCampaignBindingViolation(err) {
 			// The other brief is deliberately not named, and neither is its project. Both
 			// binding indexes are global (000020 for Google Ads — one shared upstream account
@@ -1296,6 +1423,49 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Lock the parent brief FIRST, as the opening statement of this transaction, to order this
+	// write against a concurrent CreativeAssetRepo.DeleteAsset. This statement writes EVERY
+	// mutable column, config_snapshot included, so every caller -- the config edit, the budget
+	// and bid updates, the status toggle's persist -- rewrites the snapshot DeleteAsset reads to
+	// decide whether an asset is still referenced. Nothing else orders the two: this UPDATE
+	// touches `campaigns` only, and the advisory lock the caller may hold is
+	// ClaimCampaignVersion's, keyed on the CAMPAIGN.
+	//
+	// Being the OPENING statement is load-bearing, not incidental: it is one of the two named
+	// claims that make the lock graph acyclic. Both live above lockBriefForAssetWriteQuery, which
+	// owns lock order for all three sites; the cost of holding this for the rest of the
+	// transaction is in the internal-infrastructure-postgres concept under ReplaceCampaign. Do not
+	// restate either here.
+	//
+	// It is taken unconditionally rather than only when config_snapshot changed, because this
+	// statement cannot tell: it writes the column either way, and a caller that "did not change"
+	// the config still re-writes the value it read, which is exactly how a concurrently-added
+	// reference gets dropped back out.
+	//
+	// THE ERROR IS CHECKED; THE STATUS IS NOT. briefStatus is read and deliberately never
+	// consulted -- the column is projected only because a SELECT ... FOR UPDATE has to select
+	// something. The asset-side callers of the sibling query DO act on it (CreateAsset refuses an
+	// archived brief), so the asymmetry is worth stating rather than leaving a reader to infer a
+	// status check from the variable's name. A replace under an archived brief stays allowed; that
+	// is pre-existing behaviour and this change does not alter it. Why the predicate is brief_id
+	// alone, and what this scan adds on top of it, are above lockBriefRowByIDQuery.
+	var briefStatus string
+	if lerr := tx.QueryRow(ctx, lockBriefRowByIDQuery, c.BriefID).Scan(&briefStatus); lerr != nil {
+		if errors.Is(lerr, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("replace campaign: lock brief: %w", lerr)
+	}
+
+	// Position is the whole point: after the brief lock above, before the UPDATE below. The lock
+	// orders this replace against a concurrent DeleteAsset but does not say which of the two won,
+	// and when the delete won the snapshot about to be written can name a row that is already
+	// gone. See checkNewSnapshotAssetRefs for why the question has to be asked inside this
+	// transaction and why it covers only newly introduced ids — do not restate it here.
+	if aerr := r.checkNewSnapshotAssetRefs(ctx, tx, c); aerr != nil {
+		return nil, aerr
+	}
+
 	updatedBy, err := marshalActor(c.UpdatedBy)
 	if err != nil {
 		return nil, fmt.Errorf("replace campaign: %w", err)
@@ -1303,7 +1473,7 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	updated, err := scanCampaign(tx.QueryRow(ctx, q,
 		c.CampaignName, c.Status, c.BudgetAmount, budgetTypeArg(c.BudgetType), c.StartDate, c.EndDate,
 		nullJSON(c.ConfigSnapshot), nullJSON(c.Result), updatedBy, c.ID, c.BriefID, c.ProjectID, expectedVersion,
-		c.MaxCPCBid,
+		c.MaxCPCBid, biddingStrategyArg(c.BiddingStrategy),
 	))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("replace campaign: %w", err)
@@ -1936,6 +2106,12 @@ func hashCampaignID(id string) int64 {
 const deleteCampaignLockQuery = `SELECT status, version FROM campaigns
 	WHERE id=$1 AND brief_id=$2 AND project_id=$3 FOR UPDATE`
 
+// deleteCampaignSlotQuery reads the slot a campaign is on, so DeleteCampaign can take the slot
+// lock before its row lock. platform and variant never change after the row is written, so
+// reading them before the lock is safe.
+const deleteCampaignSlotQuery = `SELECT platform, variant FROM campaigns
+	WHERE id=$1 AND brief_id=$2 AND project_id=$3`
+
 // deleteCampaignQuery performs the SOFT delete. It must never become a DELETE FROM:
 // the row holds platform_campaign_id, the only local pointer to a campaign that may
 // still exist and still be spending upstream. Pinned by
@@ -2055,6 +2231,24 @@ func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, i
 	// (pgx returns ErrTxClosed, which we ignore) — this guards every error path.
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Take the per-slot lock BEFORE the row lock, the order every slot write uses. A soft delete
+	// frees the row's slot version for the live-row index, so without the lock it could commit
+	// between ClaimNewCampaignVersion's deleted-version check (which saw the row live) and its
+	// INSERT, and the claim would take the deleted campaign's version, and its upstream name, again.
+	var (
+		slotPlatform string
+		slotVariant  string
+	)
+	if serr := tx.QueryRow(ctx, deleteCampaignSlotQuery, id, briefID, projectID).Scan(&slotPlatform, &slotVariant); serr != nil {
+		if errors.Is(serr, pgx.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		return fmt.Errorf("delete campaign: read slot: %w", serr)
+	}
+	if lerr := lockCampaignSlot(ctx, tx, briefID, model.Provider(slotPlatform), slotVariant); lerr != nil {
+		return fmt.Errorf("delete campaign: %w", lerr)
+	}
+
 	var (
 		status  string
 		version int64
@@ -2124,14 +2318,16 @@ func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 		platform   string
 		pcID       *string
 		budgetType *string
-		createdBy  []byte
-		updatedBy  []byte
+		// bidding_strategy (000050): NULL on a legacy or adopted row.
+		biddingStrategy *string
+		createdBy       []byte
+		updatedBy       []byte
 	)
 	err := row.Scan(
 		&c.ID, &c.ProjectID, &c.BriefID, &c.JobID, &platform, &c.Variant, &c.SlotVersion, &pcID, &c.CampaignName,
 		&c.Status, &c.BudgetAmount, &budgetType, &c.StartDate, &c.EndDate,
 		&c.ConfigSnapshot, &c.Result, &c.Version, &createdBy, &updatedBy, &c.RanOnSystemAccount,
-		&c.CreatedAt, &c.UpdatedAt, &c.MaxCPCBid,
+		&c.CreatedAt, &c.UpdatedAt, &c.MaxCPCBid, &biddingStrategy,
 	)
 	if err != nil {
 		return nil, err
@@ -2150,7 +2346,20 @@ func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 		bt := model.BudgetType(*budgetType)
 		c.BudgetType = &bt
 	}
+	if biddingStrategy != nil {
+		bs := model.BiddingStrategy(*biddingStrategy)
+		c.BiddingStrategy = &bs
+	}
 	return &c, nil
+}
+
+// biddingStrategyArg passes a nil strategy as SQL NULL ("not recorded") rather than "".
+func biddingStrategyArg(bs *model.BiddingStrategy) *string {
+	if bs == nil {
+		return nil
+	}
+	v := string(*bs)
+	return &v
 }
 
 func budgetTypeArg(bt *model.BudgetType) any {

@@ -120,7 +120,8 @@ func BuildSearchAudienceListsPayload(lfxV2CampaignServiceAudienceBuilderSearchAu
 // BuildGetAudienceSuppressionListsPayload builds the payload for the
 // lfx-v2-campaign-service-audience-builder get-audience-suppression-lists
 // endpoint from CLI flags.
-func BuildGetAudienceSuppressionListsPayload(lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsProjectID *string, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBrandShort *string, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsEventName *string, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBearerToken *string) (*lfxv2campaignserviceaudiencebuilder.GetAudienceSuppressionListsPayload, error) {
+func BuildGetAudienceSuppressionListsPayload(lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsProjectID *string, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBrandShort *string, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsEventName *string, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsRegistrantsEvent *string, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBearerToken *string) (*lfxv2campaignserviceaudiencebuilder.GetAudienceSuppressionListsPayload, error) {
+	var err error
 	var projectID string
 	{
 		if lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsProjectID == nil {
@@ -140,6 +141,18 @@ func BuildGetAudienceSuppressionListsPayload(lfxV2CampaignServiceAudienceBuilder
 			eventName = lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsEventName
 		}
 	}
+	var registrantsEvent *string
+	{
+		if lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsRegistrantsEvent != nil {
+			registrantsEvent = lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsRegistrantsEvent
+			if utf8.RuneCountInString(*lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsRegistrantsEvent) > 200 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("registrants_event", *lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsRegistrantsEvent, utf8.RuneCountInString(*lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsRegistrantsEvent), 200, false))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	var bearerToken *string
 	{
 		if lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBearerToken != nil {
@@ -150,6 +163,7 @@ func BuildGetAudienceSuppressionListsPayload(lfxV2CampaignServiceAudienceBuilder
 	v.ProjectID = projectID
 	v.BrandShort = brandShort
 	v.EventName = eventName
+	v.RegistrantsEvent = registrantsEvent
 	v.BearerToken = bearerToken
 
 	return v, nil
@@ -333,7 +347,7 @@ func BuildComposeAudienceMasterPayload(lfxV2CampaignServiceAudienceBuilderCompos
 		}
 		err = json.Unmarshal([]byte(*lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"compose\": {\n         \"brand_short\": \"Qui voluptatem dolore.\",\n         \"brief_id\": \"c32fcca9-7994-4925-b99f-3faa2c231afe\",\n         \"event_dates\": [\n            \"Temporibus nobis minus neque.\",\n            \"Hic aut.\"\n         ],\n         \"event_name\": \"Et et dolor recusandae unde similique at.\",\n         \"exclude_list_ids\": [\n            \"Repudiandae ut.\",\n            \"Minima sit voluptatem labore nihil quo.\",\n            \"Molestiae at nesciunt.\"\n         ],\n         \"inclusion_summary\": \"Odit qui voluptas illo dolore quisquam.\",\n         \"list_ids\": [\n            \"Nam architecto.\"\n         ],\n         \"name\": \"Qui placeat aut.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"compose\": {\n         \"brand_short\": \"Qui voluptatem dolore.\",\n         \"brief_id\": \"c32fcca9-7994-4925-b99f-3faa2c231afe\",\n         \"current_registrants_event\": \"0tk\",\n         \"event_dates\": [\n            \"Temporibus nobis minus neque.\",\n            \"Hic aut.\"\n         ],\n         \"event_name\": \"Et et dolor recusandae unde similique at.\",\n         \"exclude_list_ids\": [\n            \"Repudiandae ut.\",\n            \"Minima sit voluptatem labore nihil quo.\",\n            \"Molestiae at nesciunt.\"\n         ],\n         \"inclusion_summary\": \"Odit qui voluptas illo dolore quisquam.\",\n         \"list_ids\": [\n            \"Nam architecto.\"\n         ],\n         \"name\": \"Qui placeat aut.\"\n      }\n   }'")
 		}
 		if body.Compose == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("compose", "body"))

@@ -221,6 +221,9 @@ type performanceMaxPlan struct {
 	assetGroupName string
 	path1          string
 	path2          string
+	// resolved is CampaignInput.ResolvedImages, carried for the reason
+	// demandGenCreativePlan.resolved gives.
+	resolved map[string][]byte
 	// present is false when the caller asked for no asset group, which leaves the
 	// campaign-only behaviour intact.
 	present bool
@@ -251,12 +254,12 @@ func validatePerformanceMaxCreative(kind string, in CampaignInput) (performanceM
 		return performanceMaxPlan{}, fmt.Errorf("google-ads Performance Max creative (asset group headlines, images, logos, business name) is supported on Performance Max campaigns only, not on %s", kind)
 	}
 
-	plan := performanceMaxPlan{present: true, urls: make([][]string, len(performanceMaxImageSlots))}
+	plan := performanceMaxPlan{present: true, urls: make([][]string, len(performanceMaxImageSlots)), resolved: in.ResolvedImages}
 
 	raw := [][]string{p.MarketingImages, p.SquareMarketingImages, p.PortraitImages, p.LogoImages, p.LandscapeLogoImages}
 	marketing := 0
 	for i, slot := range performanceMaxImageSlots {
-		urls, err := validateImageURLs(slot, raw[i])
+		urls, err := validateImageEntries(slot, raw[i], in.ResolvedImages)
 		if err != nil {
 			return performanceMaxPlan{}, err
 		}
@@ -571,9 +574,10 @@ func (c *Client) UpdateAssetGroupStatus(ctx context.Context, assetGroupID, statu
 		Update:     assetGroupStatusUpdate{ResourceName: groupResource, Status: status},
 		UpdateMask: "status",
 	}}}
-	resp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("assetGroups:mutate"), req, true)
+	resp, retries, err := c.doRequestCounted(ctx, http.MethodPost, c.customerPath("assetGroups:mutate"), req, true)
 	if err != nil {
-		return fmt.Errorf("google-ads asset group %s status update to %s failed: %w", id, status, err)
+		return retriedUnconfirmed("asset group status update", retries,
+			fmt.Errorf("google-ads asset group %s status update to %s failed: %w", id, status, err))
 	}
 	if cErr := c.checkStatusMutateResults(resp, "assetGroups", "asset group", []string{groupResource}, true); cErr != nil {
 		return &unconfirmedAssetGroupStatusError{err: fmt.Errorf("google-ads asset group %s status update to %s: %w", id, status, cErr)}

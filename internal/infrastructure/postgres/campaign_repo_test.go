@@ -31,9 +31,9 @@ const livePredicate = `status <> 'deleted'`
 // action keyword (DO). The capture is what the assertions inspect for the predicate.
 //
 // slot_version joined the target in 000037. All three statements name the four-column index
-// as their arbiter, because the follow-up release drops the three-column one and a statement
-// still naming it would then fail at runtime with "no unique or exclusion constraint matching
-// the ON CONFLICT specification" — the same failure this test exists for.
+// as their arbiter, because 000051 dropped the three-column one and a statement still naming
+// it would fail at runtime with "no unique or exclusion constraint matching the ON CONFLICT
+// specification" — the same failure this test exists for.
 var onConflictBriefPlatform = regexp.MustCompile(`(?is)ON\s+CONFLICT\s*\(\s*brief_id\s*,\s*platform\s*,\s*variant\s*,\s*slot_version\s*\)(.*?)\bDO\b`)
 
 // TestCampaignRepo_OnConflictCarriesLivePredicate pins the single most dangerous
@@ -90,10 +90,21 @@ func TestCampaignRepo_OnConflictCarriesLivePredicate(t *testing.T) {
 func TestReplaceCampaignWritesTheBidColumn(t *testing.T) {
 	assert.Regexp(t, `max_cpc_bid=\$\d+`, normalizeWS(replaceCampaignQuery),
 		"ReplaceCampaign must SET max_cpc_bid, or a confirmed bid change is silently not recorded")
-	// RETURNING campaignCols legitimately SELECTS the column; what must be absent is a write.
-	assert.NotRegexp(t, `max_cpc_bid\s*=`, normalizeWS(upsertCampaignQuery),
-		"the dispatch upsert must not touch max_cpc_bid: it records only bids set through the bid "+
-			"endpoint, and a re-dispatch writing NULL over it would erase that record")
+	assert.Regexp(t, `bidding_strategy=\$\d+`, normalizeWS(replaceCampaignQuery),
+		"ReplaceCampaign must round-trip bidding_strategy (000050), or every update would null it")
+}
+
+// TestUpsertCampaignFillsBiddingOnlyWhileEmpty pins the dispatch upsert's treatment of the two
+// bidding columns (LFXV2-2665). The create path now records its bidding choice and its starting
+// manual bid, so the upsert writes them — but the STORED value must win: max_cpc_bid also holds
+// whatever update-campaign-bid set later, and an upsert that put the create's starting bid (or a
+// NULL) back over it would erase that record. COALESCE(EXCLUDED, campaigns) would do exactly that.
+func TestUpsertCampaignFillsBiddingOnlyWhileEmpty(t *testing.T) {
+	q := normalizeWS(upsertCampaignQuery)
+	assert.Contains(t, q, "max_cpc_bid=COALESCE(campaigns.max_cpc_bid, EXCLUDED.max_cpc_bid)",
+		"the upsert may fill max_cpc_bid only while it is empty; a bid set through the bid endpoint must win")
+	assert.Contains(t, q, "bidding_strategy=COALESCE(campaigns.bidding_strategy, EXCLUDED.bidding_strategy)",
+		"the upsert may fill bidding_strategy only while it is empty")
 }
 
 func TestClaimVersionIsBackedByACompareAndSwap(t *testing.T) {
@@ -153,6 +164,27 @@ func TestCampaignRepo_ReadsExcludeSoftDeleted(t *testing.T) {
 	}
 }
 
+// TestMaxSlotVersion_CountsSoftDeletedRows pins the one read that must NOT filter deleted rows.
+// A deleted campaign still holds its upstream name, so a new_version numbered from live rows
+// alone would compose that name again and get the deleted campaign back by name lookup.
+//
+// And both values must come from ONE statement: read separately, a concurrent new_version's
+// claim can land between them and the two requests pick different next versions.
+func TestMaxSlotVersion_CountsSoftDeletedRows(t *testing.T) {
+	q := normalizeWS(getCampaignByPlatformWithMaxSlotVersionQuery)
+	sub := q[strings.Index(q, "(SELECT"):strings.Index(q, "AS max_slot_version")]
+	require.NotContains(t, sub, livePredicate,
+		"the max subquery must count soft-deleted rows, or a new_version can reuse a deleted campaign's slot version and name")
+	require.Contains(t, sub, "h.project_id=$3", "the max subquery must stay scoped by project like GetCampaignByPlatform")
+	outer := q[strings.Index(q, "AS max_slot_version"):]
+	require.Contains(t, outer, "ORDER BY ("+livePredicate+") DESC, slot_version DESC",
+		"the campaign it returns must still be the latest LIVE one when the slot has one")
+	require.Contains(t, outer, livePredicate+" AS is_live", "a deleted fallback row must be flagged, or it would be reused as live")
+	require.NotContains(t, outer[strings.Index(outer, "WHERE"):strings.Index(outer, "ORDER BY")], livePredicate,
+		"the outer WHERE must not drop deleted rows: with every version deleted it would return no row, "+
+			"lose the maximum, and a new_version would restart at slot 1")
+}
+
 // TestListProjectPlatformCampaignIDs_IsScopedInSQL pins the authorization boundary for the
 // Google Ads keyword and audience endpoints.
 //
@@ -185,6 +217,37 @@ func TestListProjectPlatformCampaignIDs_IsScopedInSQL(t *testing.T) {
 	require.Contains(t, q, "result",
 		"the provenance blob must travel with each id, or the adapter cannot apply the "+
 			"creation-customer check that ReadMetrics already enforces")
+}
+
+// TestListProjectPlatformDeletedCampaignIDs_IsScopedInSQL pins the account monitor's soft-deleted
+// scope to the same boundary as the live one above, with the status predicate inverted: only
+// this project's deleted rows on this platform that have an upstream id, and none that another
+// project now holds live or bound later.
+func TestListProjectPlatformDeletedCampaignIDs_IsScopedInSQL(t *testing.T) {
+	q := normalizeWS(listProjectPlatformDeletedCampaignIDsQuery)
+	outer, sub, ok := strings.Cut(q, "NOT EXISTS")
+	require.True(t, ok, "a campaign another project holds live must be excluded")
+
+	require.Contains(t, outer, "c.project_id=$1", "the project scope must be applied in SQL")
+	require.Contains(t, outer, "c.platform=$2", "the platform must be part of the scope")
+	require.Contains(t, outer, "c.status = 'deleted'", "this read returns the soft-deleted rows the live scope excludes")
+	require.NotContains(t, outer, livePredicate, "the live predicate would make this read always empty")
+	require.Contains(t, outer, "c.platform_campaign_id <> ''", "rows with no upstream id must be excluded")
+	require.Contains(t, strings.ToUpper(outer), "SELECT DISTINCT C.PLATFORM_CAMPAIGN_ID, C.RESULT",
+		"the id and its provenance are needed and nothing else")
+
+	// The latest owner wins: the same upstream id on ANOTHER project's row hides this one when
+	// that row is live, or BOUND the id later whatever its status — so an adopter deleting its
+	// own row does not hand the campaign back. Bound, not created: a dispatch's created_at is its
+	// claim, made before it binds anything (000048).
+	require.Contains(t, sub, "l.platform = c.platform")
+	require.Contains(t, sub, "l.platform_campaign_id = c.platform_campaign_id")
+	require.Contains(t, sub, "(l."+livePredicate+
+		" OR COALESCE(l.platform_bound_at, l.created_at) > COALESCE(c.platform_bound_at, c.created_at))",
+		"a live row elsewhere, or one of any status that bound the id later, takes the campaign over")
+	require.NotContains(t, sub, "l.created_at > c.created_at",
+		"claim insertion order is not binding order")
+	require.Contains(t, sub, "l.project_id <> c.project_id", "this project's own live row is in the live scope already")
 }
 
 // The HubSpot email monitor reads per recorded email, so its scope query is the tenant boundary
@@ -496,6 +559,32 @@ func TestUpsertCampaignDoesNotRewriteCreatedBy(t *testing.T) {
 			"COALESCE on EXCLUDED would still let a later TRUE overwrite")
 }
 
+// TestCampaignWritesStampPlatformBoundAt pins where platform_bound_at (000048) is written. The
+// deleted-campaign scope orders ownership by it, so a write that binds an upstream id without
+// stamping it falls back to created_at — the claim time — and reopens the ordering it replaced.
+//
+// The conflict arm is the one a real dispatch takes (the claim INSERTed the row), and it must
+// stamp only when the id CHANGES: the owning job re-upserts its finalized row with the same id,
+// and re-stamping then would move its binding later than a takeover that really came after it.
+func TestCampaignWritesStampPlatformBoundAt(t *testing.T) {
+	insertArm, updateArm, found := strings.Cut(upsertCampaignQuery, "DO UPDATE SET")
+	require.True(t, found, "upsertCampaignQuery has no DO UPDATE SET arm")
+	assert.Contains(t, normalizeWS(insertArm),
+		"CASE WHEN NULLIF($5::text, '') IS NOT NULL THEN clock_timestamp() END",
+		"the INSERT arm must stamp a row it creates with an upstream id, and only then")
+
+	setList, _, _ := strings.Cut(stripSQLComments(updateArm), "RETURNING")
+	assert.Contains(t, normalizeWS(setList),
+		"platform_bound_at=CASE WHEN NULLIF(EXCLUDED.platform_campaign_id, '') IS NOT NULL "+
+			"AND EXCLUDED.platform_campaign_id IS DISTINCT FROM NULLIF(campaigns.platform_campaign_id, '') "+
+			"THEN clock_timestamp() ELSE campaigns.platform_bound_at END",
+		"the conflict arm must stamp when the write binds a new upstream id and keep the stamp otherwise")
+
+	assert.Contains(t, normalizeWS(adoptCampaignQuery), "platform_bound_at) VALUES",
+		"an adoption binds its id on INSERT and must stamp it")
+	assert.Contains(t, normalizeWS(adoptCampaignQuery), "$9,$9,clock_timestamp())")
+}
+
 // stripSQLComments removes `-- ...` line comments so an assertion can be made about the
 // STATEMENT rather than about the prose explaining it. Without it, a guard that forbids a
 // column name is defeated by the comment that documents why the column is absent.
@@ -550,7 +639,7 @@ var campaignColumnOrder = []string{
 	"id", "project_id", "brief_id", "job_id", "platform", "variant", "slot_version", "platform_campaign_id",
 	"campaign_name", "status", "budget_amount", "budget_type", "start_date", "end_date",
 	"config_snapshot", "result", "version", "created_by", "updated_by", "ran_on_system_account",
-	"created_at", "updated_at", "max_cpc_bid",
+	"created_at", "updated_at", "max_cpc_bid", "bidding_strategy",
 }
 
 // fakeCampaignRow is a pgx.Row handing scanCampaign a fixed, positionally ordered result set.
@@ -612,15 +701,18 @@ func TestScanCampaign_MapsEachColumnToItsField(t *testing.T) {
 	amount := 250.5
 	ranOnSystem := true
 	bid := 1.75
+	biddingStrategy := "manual"
 
 	c, err := scanCampaign(fakeCampaignRow{vals: []any{
 		"c1", "cncf", "b1", &jobID, "google-ads", "demand-gen", 3, &pcID, "Spring launch", "created",
 		&amount, &budgetType, &start, &end,
 		json.RawMessage(`{"cfg":1}`), json.RawMessage(`{"res":2}`), int64(9),
 		[]byte(`{"email":"ada@lf.dev"}`), []byte(`{"email":"grace@lf.dev"}`), &ranOnSystem,
-		created, updated, &bid,
+		created, updated, &bid, &biddingStrategy,
 	}})
 	require.NoError(t, err)
+	require.NotNil(t, c.BiddingStrategy)
+	assert.Equal(t, model.BiddingManual, *c.BiddingStrategy)
 
 	assert.Equal(t, "c1", c.ID)
 	// max_cpc_bid (000039) and budget_amount are both *float64, so a destination swap would
@@ -680,7 +772,7 @@ func TestScanCampaign_NullActorsDecodeToNil(t *testing.T) {
 	c, err := scanCampaign(fakeCampaignRow{vals: []any{
 		"c1", "cncf", "b1", nil, "google-ads", "default", 1, nil, "n", "created",
 		nil, nil, nil, nil, nil, nil, int64(1),
-		nil, nil, nil, time.Time{}, time.Time{}, nil,
+		nil, nil, nil, time.Time{}, time.Time{}, nil, nil,
 	}})
 	require.NoError(t, err)
 	// A NULL max_cpc_bid means "never set through update-campaign-bid", which is nil.
@@ -714,7 +806,7 @@ func TestScanCampaign_MalformedActorJSONIsAnError(t *testing.T) {
 		return []any{
 			"c1", "cncf", "b1", nil, "google-ads", "default", 1, nil, "n", "created",
 			nil, nil, nil, nil, nil, nil, int64(1),
-			createdBy, updatedBy, nil, time.Time{}, time.Time{}, nil,
+			createdBy, updatedBy, nil, time.Time{}, time.Time{}, nil, nil,
 		}
 	}
 	_, err := scanCampaign(fakeCampaignRow{vals: base([]byte(`["not","an","actor"]`), nil)})
@@ -786,4 +878,32 @@ func TestLockAdoptBriefQuery_IsProjectScoped(t *testing.T) {
 			"a brief from another project must not be adopted")
 	require.Contains(t, upper, "FOR UPDATE",
 		"the lock must use FOR UPDATE to serialize concurrent mutations")
+}
+
+func TestListProjectPlatformMonitorCampaignIDs_UsesOneScopedSnapshot(t *testing.T) {
+	q := normalizeWS(listProjectPlatformMonitorCampaignIDsQuery)
+	require.Contains(t, q, "c.project_id=$1 AND c.platform=$2")
+	require.Contains(t, q, "c.platform_campaign_id IS NOT NULL AND c.platform_campaign_id <> ''")
+	require.Contains(t, q, "(c.status <> 'deleted' OR "+normalizeWS(monitorCampaignNotTakenOver)+")",
+		"live and eligible deleted bindings must be evaluated in the same statement snapshot")
+	require.Equal(t, 1, strings.Count(q, "SELECT DISTINCT"))
+	require.Contains(t, q, "SELECT DISTINCT c.platform_campaign_id, c.result")
+}
+
+func TestMigration000049_IndexesAllBindingHistoryConcurrently(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		want string
+	}{
+		{"000049_campaigns_platform_campaign_history.up.sql", "CREATE INDEX CONCURRENTLY idx_campaigns_platform_campaign_history ON campaigns (platform, platform_campaign_id);"},
+		{"000049_campaigns_platform_campaign_history.down.sql", "DROP INDEX CONCURRENTLY IF EXISTS idx_campaigns_platform_campaign_history;"},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			data, err := fs.ReadFile(migrations.FS, tc.file)
+			require.NoError(t, err)
+			sql := regexp.MustCompile(`(?m)--.*$`).ReplaceAllString(string(data), "")
+			require.Equal(t, tc.want, normalizeWS(sql),
+				"one concurrent statement; all statuses; non-unique; no silent invalid-index reuse")
+		})
+	}
 }

@@ -303,17 +303,22 @@ func TestCreateVideoCampaign_BudgetFailureReturnsNoResult(t *testing.T) {
 }
 
 // TestCreateVideoCampaign_AmbiguousBudgetKeepsTheClaim is the same step with an
-// AMBIGUOUS outcome: the budget may exist, so the error arrives with a partial and
-// says UNCONFIRMED. Reporting it as a clean failure would invite a retry into a
-// second paid budget.
+// AMBIGUOUS outcome the account cannot settle: the budget may exist, so the error
+// arrives with a partial and says UNCONFIRMED. Reporting it as a clean failure would
+// invite a retry into a second paid budget.
+//
+// The resolution READ is permitted and answered with a 5xx — an unreadable account is
+// what leaves the outcome unknown. What stays forbidden is any further MUTATE.
 func TestCreateVideoCampaign_AmbiguousBudgetKeepsTheClaim(t *testing.T) {
 	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate") {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"),
+			strings.HasSuffix(r.URL.Path, "googleAds:search"):
 			serverError(w, r)
-			return
+		default:
+			t.Errorf("no further mutate may be sent after an unconfirmed budget, got %s", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
 		}
-		t.Errorf("nothing may be sent after an unconfirmed budget, got %s", r.URL.Path)
-		w.WriteHeader(http.StatusInternalServerError)
 	})
 	c := demandGenClient(t, srv)
 
