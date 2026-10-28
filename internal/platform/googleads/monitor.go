@@ -157,10 +157,11 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, da
 			// legitimate "no budget set" (that's the empty-string / -1-sentinel case, which
 			// budgetOK still reports true for). Mark FetchFailed so the rule engine treats
 			// this row's budget as unknown rather than a real $0 (round-24 review). Checked on
-			// EVERY row, not only the first sighting: segments.date makes this query multi-row
-			// per campaign (see the doc comment above), so a malformed amount_micros on an
-			// intermediate row must still mark the campaign FetchFailed even though some row's
-			// budget parsed fine and was assigned to BudgetDailyUSD.
+			// EVERY row, not only the first sighting: one row per campaign is an unverified
+			// assumption (see the doc comment above), so should Google return several, a
+			// malformed amount_micros on an intermediate row must still mark the campaign
+			// FetchFailed even though some row's budget parsed fine and was assigned to
+			// BudgetDailyUSD.
 			existing.FetchFailed = true
 		}
 		impressions, errI := parseMetricInt(row.Metrics.Impressions)

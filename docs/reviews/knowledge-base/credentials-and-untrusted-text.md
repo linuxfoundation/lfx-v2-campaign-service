@@ -5,14 +5,16 @@ stay in memory**. They reach two persisted, unencrypted, API-reachable sinks —
 by **different paths, carrying different things**:
 
 - **`Steps`** — the per-variant failure narrative, persisted inside the campaign's
-  `Result` blob (`internal/platform/meta/client.go:1750`,
-  `internal/dispatch/meta.go:271-282`). This is where a *propagated error string*
+  `Result` blob (`CampaignResult.Steps` in `internal/platform/meta/client.go`,
+  marshalled into `Result` by `campaignFromMeta` in `internal/dispatch/meta.go`).
+  This is where a *propagated error string*
   lands.
 - **`config_snapshot`** — written by `applyCampaignConfig`
-  (`internal/dispatch/creds.go:51`) from the **validated per-platform config**, not
+  (`internal/dispatch/creds.go`) from the **validated per-platform config**, not
   from error text. Its leak vector is a config *field* — a destination or post URL
   with a secret in its query string — which is why `sanitizeSnapshotURL`
-  (`creds.go:89`) strips query and fragment before the write.
+  (`internal/dispatch/creds.go`, delegating to `redact.SnapshotURL` in
+  `pkg/redact`, where the rule lives) strips query and fragment before the write.
 
 Look for error-string leakage in `Steps` and config-field leakage in
 `config_snapshot`; each is the wrong sink for the other's vector. Either way the
@@ -65,24 +67,24 @@ client.
 - Six loci across five merged PRs, 2026-07-14 → 2026-07-24.
 
 **Status on main:** the convention is written into the clients as comments on the
-suppression itself. `internal/platform/reddit/client.go:628-635` states:
+suppression itself. `internal/platform/reddit/client.go` (`apiError.Error`) states:
 "Deliberately DO NOT include e.Body: the upstream response body is untrusted and
-can reflect request material". `internal/infrastructure/postgres/pool.go:52`
-renders a static, DSN-free message and keeps the cause only for `Unwrap`.
+can reflect request material". `dsnParseError` in
+`internal/infrastructure/postgres/pool.go` renders a static, DSN-free message and keeps the cause only for `Unwrap`.
 
 **The named helpers split into two kinds, and only one of them redacts.**
 
 | Helper | What it does |
 |---|---|
-| `safeTransportCause` (`internal/platform/twitter/client.go:549`) | **redacts by peeling** — unwraps every `*url.Error` layer, then renders the inner cause, which carries no URL |
-| `safeCause` (`internal/platform/hubspot/client.go:360`, `internal/platform/microsoft/client.go:362`) | **redacts by allow-list** — maps to a fixed vocabulary (`context canceled`, `context deadline exceeded`, `timeout`, `connection closed`) and collapses everything else to `transport failure`. It **never renders unknown error text at all** |
-| `truncateErr` / `truncate` (`internal/platform/meta/client.go:1652,1663`) | **length only** — clamps to a rune count without splitting a rune. Strips nothing |
+| `safeTransportCause` (`internal/platform/twitter/client.go`) | **redacts by peeling** — unwraps every `*url.Error` layer, then renders the inner cause, which carries no URL |
+| `safeCause` (`internal/platform/hubspot/client.go`, `internal/platform/microsoft/client.go`) | **redacts by allow-list** — maps to a fixed vocabulary (`context canceled`, `context deadline exceeded`, `timeout`, `connection closed`) and collapses everything else to `transport failure`. It **never renders unknown error text at all** |
+| `truncateErr` / `truncate` (`internal/platform/meta/client.go`) | **length only** — clamps to a rune count without splitting a rune. Strips nothing |
 
 **The two mechanisms fail differently, which is why the distinction matters.**
 Peeling fails by depth — an inner error the peel loop stops short of can still embed
 the URL. The allow-list fails by gap — a genuinely useful cause not in the vocabulary
 degrades to `transport failure`. `safeCause`'s own doc comment
-(`internal/platform/hubspot/client.go:352-359`) states that peeling "is NOT sufficient
+(`internal/platform/hubspot/client.go`) states that peeling "is NOT sufficient
 on its own", because `WithHTTPClient` accepts a caller-supplied `RoundTripper` whose
 inner error text is caller-controlled and can embed the URL after the wrapper is
 peeled. Do not describe one helper's mechanism when reviewing the other.
@@ -92,7 +94,7 @@ their own. Applied to an error whose message still embeds a URL or raw upstream
 text, the credential-bearing content survives — merely shorter. They belong
 **after** a redaction step, never instead of one, so a call site that only
 truncates is still a finding.
-`docs/knowledge/code/internal-platform-hubspot.md:44-47,53-55` records both the
+`docs/knowledge/code/internal-platform-hubspot.md` § "Request layer" records both the
 body-free error rule and the `*url.Error` peeling.
 
 **Not a finding when:** the material is kept for `Unwrap()` only and never
@@ -102,10 +104,16 @@ with parsed `Message`/`Type`/`Code`/`FBTraceID` fields deliberately — parsed
 vendor fields are not the raw body.
 
 **But `Message` is only parsed vendor data in one of its two branches.**
-`internal/platform/meta/client.go:1184-1189` assigns `env.Error.Message` when
+`(*Client).do` in `internal/platform/meta/client.go` assigns `env.Error.Message` when
 `env.Error != nil && env.Error.Message != ""`; otherwise — a non-Graph or
-malformed error body — it falls back to `truncate(strings.TrimSpace(string(raw)),
-300)`, which is the **raw HTTP response body**, shortened and unparsed. The
+malformed error body — it falls back to `truncate(c.redactSecrets(snippet), 300)`,
+where `snippet` is the trimmed **raw HTTP response body**. *(Updated 2026-10-28,
+#425: this entry previously quoted the fallback as
+`truncate(strings.TrimSpace(string(raw)), 300)`; the client now runs
+`redactSecrets` over the snippet first.)* Redaction removes only what `redactSecrets`
+recognises (the client's own access token, and the `Bearer` and `key=value`
+credential shapes via `redactCredentials`); the rest is
+still upstream text, shortened and unparsed. The
 exemption covers the envelope branch only. `Message` reaching a log, error or
 response sink from the fallback branch is a genuine instance of this entry's
 detect condition, not something already covered.
@@ -143,11 +151,12 @@ fallback that echoes the input instead of failing closed.
 - Five clients plus the dispatch snapshot layer.
 
 **Status on main:** the redactors exist and are named — `sanitizeSnapshotURL`
-(`internal/dispatch/creds.go:89`, fail-closed on `@`), `redactURL`
-(`internal/platform/meta/client.go:1627`,
-`internal/platform/reddit/client.go:2145`), `redactURLForError`
-(`internal/platform/twitter/client.go:1068`) and `sanitizePath`
-(`internal/platform/reddit/client.go:980`). `config_snapshot` is stored
+(`internal/dispatch/creds.go`, delegating to `redact.SnapshotURL` in `pkg/redact`,
+which fails closed on `@`), `redactURL`
+(`internal/platform/meta/client.go`,
+`internal/platform/reddit/client.go`), `redactURLForError`
+(`internal/platform/twitter/client.go`) and `sanitizePath`
+(`internal/platform/reddit/client.go`). `config_snapshot` is stored
 unencrypted (`internal/domain/model/campaign.go` `ConfigSnapshot`), which is why
 `applyCampaignConfig` scrubs before storing.
 

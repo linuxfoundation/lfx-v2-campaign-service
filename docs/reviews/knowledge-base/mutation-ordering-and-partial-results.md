@@ -56,7 +56,7 @@ Every one of these inputs was knowable before the first byte left the client.
   (`internal/platform/reddit/client_test.go`).
 
 **Status on main:** the convention is held in the merged clients and is stated in
-the knowledge bundle — `docs/knowledge/code/internal-platform-meta.md:44`:
+the knowledge bundle — `docs/knowledge/code/internal-platform-meta.md`:
 "Inputs are validated up front, before any mutating call". Sibling concepts for
 twitter and googleads say the same. In `internal/dispatch`, the adapters push the
 same gate one layer out: every pre-create failure returns `notCreated(...)`
@@ -115,12 +115,12 @@ so the next retry creates a *second* paid campaign and reports success.
 - Six files, six merged PRs.
 
 **Status on main:** the contract is written into the code —
-`internal/platform/meta/client.go:1761` and
-`internal/platform/reddit/client.go:1014` both open with `PARTIAL-RESULT
-CONTRACT:`, and `internal/platform/googleads/campaign.go:424,480` implement the
+the `CreateCampaign` doc comments in `internal/platform/meta/client.go` and
+`internal/platform/reddit/client.go` both carry a `PARTIAL-RESULT
+CONTRACT:` paragraph, and `CreateCampaign` in `internal/platform/googleads/campaign.go` implements the
 two-stage `campaignNamePartial` / `budgetPartial` closures. The knowledge bundle
 states the orchestrator half at
-`docs/knowledge/code/internal-dispatch.md:61`: "The decision keys on
+`docs/knowledge/code/internal-dispatch.md` § "The claim contract (release vs retain)": "The decision keys on
 `result == nil` ALONE — NOT on whether the campaign id is populated".
 
 **Not a finding when:** the failure is provably pre-create — a
@@ -129,13 +129,13 @@ states the orchestrator half at
 
 **Two different predicates, and neither replaced the other.** Assert the
 *reuse/skip* half against the named `isReusableCampaign`
-(`internal/service/orchestrator.go:88`, used at `:577` and `:621`) — that is the
+(`internal/service/orchestrator.go`, used by `dispatchPlatform`'s skip paths) — that is the
 question "may I skip creating this again?".
 
 The *orphan-persistence* half is a different question — "is there a reconcilable
-artifact worth recording or reporting?" — and it is asked inline, on purpose, at
-`internal/service/orchestrator.go:642` (retained orphan found on retry) and `:716`
-(persist-on-error). Both read
+artifact worth recording or reporting?" — and it is asked inline, on purpose, at two places in `dispatchPlatform`
+(`internal/service/orchestrator.go`): the retained-orphan-on-retry branch (it logs
+"retained partial orphan found on retry") and the persist-on-error branch. Both read
 `PlatformCampaignID != "" || len(Result) > 0`. These are **current, not
 historical**: `isReusableCampaign` would be wrong here because it also requires a
 non-pending status and excludes `partialOrphanStatuses` — exactly the rows the
