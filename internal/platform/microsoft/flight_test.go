@@ -151,8 +151,10 @@ func TestCreateCampaign_NoFlightDatesKeepsTodaysBody(t *testing.T) {
 }
 
 // TestCreateCampaign_InvalidFlightDatesRefusedBeforeAnyRequest: every invalid date is a
-// PreflightRefusal returned with a nil result and NO request sent — the ad group is created
-// after the campaign, so a date discovered bad there would orphan the campaign.
+// PreflightRefusal returned with a nil result and NO create sent — the ad group is created after
+// the campaign, so a date discovered bad there would orphan the campaign. A malformed or
+// out-of-order date is refused before any request at all; a past one after the read-only name
+// lookup (which tells a new campaign from a reused one), still before anything is created.
 func TestCreateCampaign_InvalidFlightDatesRefusedBeforeAnyRequest(t *testing.T) {
 	cases := map[string]struct {
 		start, end, wantErr string
@@ -174,7 +176,11 @@ func TestCreateCampaign_InvalidFlightDatesRefusedBeforeAnyRequest(t *testing.T) 
 			api := &campaignsAPI{}
 			base := api.handler(t)
 			c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-				reached.mark()
+				// Only a CREATE counts: the not-in-the-past rule runs after the campaign name
+				// lookup (a read), so a past date may be preceded by reads but never by a create.
+				if isCreatePath(r.URL.Path) {
+					reached.mark()
+				}
 				base(w, r)
 			})
 			in := validInput()
@@ -193,7 +199,7 @@ func TestCreateCampaign_InvalidFlightDatesRefusedBeforeAnyRequest(t *testing.T) 
 				t.Errorf("an invalid date must fail cleanly (nil result), got %+v", res)
 			}
 			if reached.hit() {
-				t.Error("a request was sent although the flight dates were invalid up front")
+				t.Error("a create was sent although the flight dates were invalid")
 			}
 		})
 	}
@@ -231,21 +237,21 @@ func TestValidateFlightDates_TodayIsTheEarliestZonesDay(t *testing.T) {
 	// 2026-01-02 10:00 UTC: already 2026-01-02 in UTC, Pacific (02:00) and Tokyo (19:00), but
 	// still 2026-01-01 at UTC-12 (22:00 the previous day).
 	now := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
-	f, err := validateFlightDates(" 2026-01-01 ", "", now)
+	f, err := checkWindow(" 2026-01-01 ", "", now)
 	if err != nil {
 		t.Fatalf("start 2026-01-01 refused although it is still that day at UTC-12: %v", err)
 	}
 	if f.start == nil || *f.start != (msDate{Year: 2026, Month: 1, Day: 1}) || f.end != nil {
 		t.Errorf("flight = %+v, want start 2026-01-01 and no end", f)
 	}
-	if _, err := validateFlightDates("2025-12-31", "", now); err == nil {
+	if _, err := checkWindow("2025-12-31", "", now); err == nil {
 		t.Error("start 2025-12-31 accepted although it is past in every zone")
 	}
 	// End-only is judged against the same lenient today: after 2026-01-01, not after the UTC day.
-	if _, err := validateFlightDates("", "2026-01-02", now); err != nil {
+	if _, err := checkWindow("", "2026-01-02", now); err != nil {
 		t.Errorf("end-only 2026-01-02 refused although it is after today at UTC-12: %v", err)
 	}
-	if _, err := validateFlightDates("", "2026-01-01", now); err == nil {
+	if _, err := checkWindow("", "2026-01-01", now); err == nil {
 		t.Error("end-only 2026-01-01 accepted although that is today at UTC-12")
 	}
 }
@@ -269,6 +275,47 @@ func TestCreateCampaign_TimeZoneDoesNotTightenToday(t *testing.T) {
 				t.Errorf("AddAdGroups body lacks the start date: %s", bodies.adGroup())
 			}
 		})
+	}
+}
+
+// isCreatePath reports whether a request path is one of the create (mutating) routes; the
+// lookups are /<Entity>/QueryBy….
+func isCreatePath(p string) bool {
+	for _, suffix := range []string{"/Campaigns", "/AdGroups", "/Ads", "/Keywords"} {
+		if strings.HasSuffix(p, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkWindow runs both halves of the flight check, as a NEW campaign's create does.
+func checkWindow(startDate, endDate string, now time.Time) (flight, error) {
+	f, err := validateFlightDates(startDate, endDate)
+	if err != nil {
+		return flight{}, err
+	}
+	return f, f.checkNotPast(now)
+}
+
+// TestCreateCampaign_RetryOnReusedCampaignSkipsThePastCheck: a retry that finds the campaign a
+// previous attempt created must not answer "nothing created" because the start date has since
+// passed — that would release the claim on a campaign that exists. The dates go to Microsoft with
+// the ad group create instead, and Microsoft judges them.
+func TestCreateCampaign_RetryOnReusedCampaignSkipsThePastCheck(t *testing.T) {
+	in := validInput()
+	in.StartDate = "2025-06-01" // past in every zone on the fixed clock
+	api := &campaignsAPI{getBody: `{"Campaigns":[{"Id":999,"Name":` + jsonString(composeName(in)) + `}]}`}
+	c, bodies := captureCreateBodies(t, api)
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign on a reused campaign refused a past start up front: %v", err)
+	}
+	if res.CampaignID != "999" {
+		t.Errorf("CampaignID = %q, want the reused 999", res.CampaignID)
+	}
+	if !strings.Contains(bodies.adGroup(), `"StartDate":{"Month":6,"Day":1,"Year":2025}`) {
+		t.Errorf("AddAdGroups body lacks the start date Microsoft should judge: %s", bodies.adGroup())
 	}
 }
 

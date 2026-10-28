@@ -13,8 +13,10 @@ sends them on the ad-group create in `findOrCreateAdGroup`, which is what the `m
 not before today, end strictly after start (after today when only an end is given). Microsoft
 reads the dates in the campaign's time zone, so "today" is the calendar day at UTC-12, with or
 without `timeZone`: only a date past in every zone is refused, and Microsoft judges the rest.
-It runs in the `CreateCampaign` prologue, before any request, so a date wrong on its face fails
-with nothing created. Like Meta's, a refusal fails the platform job pre-create (claim released); it is not
+The shape is checked in the `CreateCampaign` prologue, before any request; the past-date rule
+just before a NEW campaign is created, and not on a retry that reuses the campaign an earlier
+attempt created (refusing there would release the claim on a campaign that exists). A date
+wrong on its face fails with nothing created. Like Meta's, a refusal fails the platform job pre-create (claim released); it is not
 a synchronous 400.
 
 **Absent dates change nothing.** With neither date the ad-group body is byte-for-byte what it

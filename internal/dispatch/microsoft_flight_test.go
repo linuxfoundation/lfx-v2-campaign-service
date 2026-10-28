@@ -20,35 +20,38 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 )
 
-// msFlightCapture records the raw AddAdGroups body and whether any API request was made.
+// msFlightCapture records the raw AddAdGroups body and whether any create (non-QueryBy) request
+// was made.
 type msFlightCapture struct {
 	mu          sync.Mutex
 	adGroupBody string
-	sawAPI      bool
+	sawCreate   bool
 }
 
 func (c *msFlightCapture) snapshot() (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.adGroupBody, c.sawAPI
+	return c.adGroupBody, c.sawCreate
 }
 
 // microsoftFlightServers is microsoftServers with the AddAdGroups body captured and the client
 // clock pinned to 2026-01-01 UTC, so "today" is deterministic for the past-date rule.
 func microsoftFlightServers(t *testing.T) ([]microsoft.Option, *msFlightCapture) {
 	t.Helper()
-	cap := &msFlightCapture{}
+	capture := &msFlightCapture{}
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"access_token":"at-123","expires_in":3600,"token_type":"Bearer"}`)
 	}))
 	t.Cleanup(tokenSrv.Close)
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cap.mu.Lock()
-		cap.sawAPI = true
-		cap.mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
 		p := r.URL.Path
+		if !strings.Contains(p, "/QueryBy") {
+			capture.mu.Lock()
+			capture.sawCreate = true
+			capture.mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(p, "/Campaigns/QueryByAccountId"):
 			_, _ = io.WriteString(w, `{"Campaigns":[]}`)
@@ -60,9 +63,9 @@ func microsoftFlightServers(t *testing.T) ([]microsoft.Option, *msFlightCapture)
 			_, _ = io.WriteString(w, `{"CampaignIds":[321],"PartialErrors":[]}`)
 		case strings.HasSuffix(p, "/AdGroups"):
 			b, _ := io.ReadAll(r.Body)
-			cap.mu.Lock()
-			cap.adGroupBody = string(b)
-			cap.mu.Unlock()
+			capture.mu.Lock()
+			capture.adGroupBody = string(b)
+			capture.mu.Unlock()
 			_, _ = io.WriteString(w, `{"AdGroupIds":[654],"PartialErrors":[]}`)
 		case strings.HasSuffix(p, "/Ads"):
 			_, _ = io.WriteString(w, `{"AdIds":[987],"PartialErrors":[]}`)
@@ -77,21 +80,21 @@ func microsoftFlightServers(t *testing.T) ([]microsoft.Option, *msFlightCapture)
 		microsoft.WithTokenURL(tokenSrv.URL),
 		microsoft.WithBaseURL(apiSrv.URL),
 		microsoft.WithClock(func() time.Time { return now }),
-	}, cap
+	}, capture
 }
 
 // TestMicrosoft_FlightDatesReachAdGroupAndRow: microsoftConfig.startDate/endDate (the metaConfig
 // keys and format) reach the AddAdGroups body as Date objects, and are recorded on the row and in
 // the config snapshot the way Meta's are.
 func TestMicrosoft_FlightDatesReachAdGroupAndRow(t *testing.T) {
-	opts, cap := microsoftFlightServers(t)
+	opts, capture := microsoftFlightServers(t)
 	d := NewMicrosoftDispatcher(fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{}, opts...)
 	cfg := json.RawMessage(`{"microsoftConfig":{"budget":50,"startDate":"2026-02-01","endDate":"2026-02-28"}}`)
 	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds, cfg)
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	body, _ := cap.snapshot()
+	body, _ := capture.snapshot()
 	for _, want := range []string{`"StartDate":{"Month":2,"Day":1,"Year":2026}`, `"EndDate":{"Month":2,"Day":28,"Year":2026}`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("AddAdGroups body lacks %s: %s", want, body)
@@ -115,13 +118,13 @@ func TestMicrosoft_FlightDatesReachAdGroupAndRow(t *testing.T) {
 // TestMicrosoft_NoFlightDatesKeepsTodaysBehaviour: a config without dates sends no ad-group date
 // and records none on the row — the create as it was before the fields existed.
 func TestMicrosoft_NoFlightDatesKeepsTodaysBehaviour(t *testing.T) {
-	opts, cap := microsoftFlightServers(t)
+	opts, capture := microsoftFlightServers(t)
 	d := NewMicrosoftDispatcher(fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{}, opts...)
 	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds, json.RawMessage(`{"microsoftConfig":{"budget":50}}`))
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	body, _ := cap.snapshot()
+	body, _ := capture.snapshot()
 	if body == "" {
 		t.Fatal("ad group create not captured")
 	}
@@ -135,7 +138,8 @@ func TestMicrosoft_NoFlightDatesKeepsTodaysBehaviour(t *testing.T) {
 
 // TestMicrosoft_InvalidFlightDatesFailBeforeAnyUpstreamCall: an invalid date is a pre-create
 // failure exactly like Meta's — the claim is released (NoUpstreamCreate), the refusal is
-// operator-readable, and Microsoft is never called.
+// operator-readable, and no Microsoft create is sent (a past date is judged after the read-only
+// name lookup).
 func TestMicrosoft_InvalidFlightDatesFailBeforeAnyUpstreamCall(t *testing.T) {
 	cases := map[string]struct{ cfg, wantErr string }{
 		"start in the past": {`{"budget":50,"startDate":"2025-12-31"}`, "is in the past"},
@@ -144,7 +148,7 @@ func TestMicrosoft_InvalidFlightDatesFailBeforeAnyUpstreamCall(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			opts, cap := microsoftFlightServers(t)
+			opts, capture := microsoftFlightServers(t)
 			d := NewMicrosoftDispatcher(fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{}, opts...)
 			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds, json.RawMessage(`{"microsoftConfig":`+tc.cfg+`}`))
 			if err == nil {
@@ -161,8 +165,8 @@ func TestMicrosoft_InvalidFlightDatesFailBeforeAnyUpstreamCall(t *testing.T) {
 			if !ok || !strings.Contains(msg, tc.wantErr) {
 				t.Errorf("refusal = %q (preflight %v), want it to contain %q", msg, ok, tc.wantErr)
 			}
-			if _, sawAPI := cap.snapshot(); sawAPI {
-				t.Error("Microsoft was called although the flight dates were invalid")
+			if _, sawCreate := capture.snapshot(); sawCreate {
+				t.Error("a Microsoft create was sent although the flight dates were invalid")
 			}
 		})
 	}

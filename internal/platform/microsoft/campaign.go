@@ -601,9 +601,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	// Flight dates go on the ad group, which is created only AFTER the campaign, so a date that
-	// is wrong on its face is refused here, before anything exists. The past-date rule is lenient
-	// (only past in every zone) — Microsoft judges the rest; see flight.go.
-	flightDates, err := validateFlightDates(in.StartDate, in.EndDate, c.now())
+	// is malformed or out of order is refused here, before anything exists. Whether it is already
+	// past is checked just before a NEW campaign is created, below; see flight.go.
+	flightDates, err := validateFlightDates(in.StartDate, in.EndDate)
 	if err != nil {
 		return nil, err
 	}
@@ -681,6 +681,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		campaignID = existingID
 		alreadyExisted = true
 	} else {
+		// A flight window already past everywhere is refused before the campaign create, while
+		// nothing exists yet. Not on the reuse branch above: refusing there would report "nothing
+		// created" for a campaign a previous attempt did create (see flight.checkNotPast).
+		if perr := flightDates.checkNotPast(c.now()); perr != nil {
+			return nil, perr
+		}
 		// Step 2: create the campaign (PAUSED). Non-idempotent — NOT retried on 429.
 		timeZone := in.TimeZone
 		if timeZone == "" {

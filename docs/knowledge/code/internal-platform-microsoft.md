@@ -199,9 +199,14 @@ dates (below) and the report date ranges.
 Microsoft schedules delivery on the **ad group**, not the campaign: the v13 `AdGroup` has
 optional `StartDate` and `EndDate`, each a Date object (`{Month,Day,Year}`, `msDate` — not an
 ISO string); the `Campaign` object has none. `CampaignInput.StartDate`/`EndDate` (YYYY-MM-DD,
-each independently optional) are validated by `validateFlightDates` (`flight.go`) in the
-`CreateCampaign` prologue, BEFORE the first request, so a date that is wrong on its face fails
-with nothing created. The rules mirror the Meta client's: `^\d{4}-\d{2}-\d{2}$` then a calendar parse (separate refusals for
+each independently optional) are checked in two halves (`flight.go`). `validateFlightDates`
+checks the shape and order in the `CreateCampaign` prologue, BEFORE the first request.
+`flight.checkNotPast` checks the clock just before a NEW campaign is created, after the
+read-only name lookup — NOT when the lookup finds the campaign a previous attempt created: a
+refusal there would return "nothing created" and release the claim on a campaign that exists,
+so on a reuse the dates go to Microsoft with the ad group and its verdict comes back as an
+ad-group rejection carrying the campaign. Either way a date wrong on its face fails with
+nothing created. The rules mirror the Meta client's: `^\d{4}-\d{2}-\d{2}$` then a calendar parse (separate refusals for
 format and value), start not before "today", end strictly after the start — or after today
 when only an end is given, since Microsoft then starts the ad group today. "Today" is the one
 departure from Meta: it is the calendar day at UTC-12 (`earliestZone`), with or without
