@@ -28,8 +28,8 @@ never injected by the chart, which is what makes "declared but never supplied" a
 failure rather than a silently disabled feature.
 
 `MaxRequestBodyBytes` (in `http.go`) is not an environment variable but a security
-ceiling: it bounds how many bytes the server reads from ANY request body before answering
-`413`, and `middleware.MaxBodyBytes` applies it on every route (see
+ceiling: it bounds how many bytes the server reads from the creative-asset upload's body
+before answering `413`, and `middleware.MaxBodyBytesPerRoute` applies it to that route only (see
 [internal/middleware](internal-middleware.md)). It exists because a Goa `MaxLength` does
 not bound the wire — the generated validator counts CHARACTERS of the encoded string, which
 it sees only after the JSON decoder has read the whole body. The value is derived from the
@@ -42,6 +42,14 @@ in the same change**,
 or maximum-size uploads begin failing with `413`. Note the chart parity test does not cover
 it — that test extracts only `Env…` constants from `constants.go` — so this documentation is
 the only place the lockstep obligation is recorded outside the constant's own comment.
+
+`MaxNonUploadRequestBodyBytes` (4 MiB, also `http.go`) is the cap for every OTHER route (#177).
+Those routes are decoded before authentication and are not gated by upload admission, so a
+generous cap there is pre-auth allocation for nothing. It is sized from the largest legitimate
+body, the email wizard's `update-sections`: 120 blocks and a 200,000-rune assembled body
+(`internal/service/email_wizard_sections.go`), ~2.4 MB at worst when a client escapes every
+rune as a 12-byte surrogate pair. Raising those
+wizard limits requires revisiting this cap.
 
 `PodMemoryLimitBytes`, `UploadAdmissionBudgetBytes`, `UploadAdmissionWeightBytes` and
 `UploadAdmissionWait` (also in `http.go`) size the concurrent-upload admission bound applied by

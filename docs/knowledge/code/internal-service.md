@@ -254,7 +254,7 @@ an oversize upload before `DecodeConfig` reads its header.
 
 Note also what neither bound does: neither one bounds the bytes read off the WIRE, because both are
 applied after the JSON decoder has read the whole request body. That bound is a separate, inbound
-one — `constants.MaxRequestBodyBytes`, applied by `middleware.MaxBodyBytes` (see
+one — `constants.MaxRequestBodyBytes`, applied to the upload by `middleware.MaxBodyBytesPerRoute` (see
 [internal/middleware](internal-middleware.md)). Validation then runs in three stages, and the ORDER is
 the security property. **Stage 1**, `image.DecodeConfig`, reads only the header — enough to name
 the format and read the declared dimensions — and rejects garbage a declared `content_type`
