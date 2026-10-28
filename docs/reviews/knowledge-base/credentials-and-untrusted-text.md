@@ -13,7 +13,8 @@ by **different paths, carrying different things**:
   (`internal/dispatch/creds.go`) from the **validated per-platform config**, not
   from error text. Its leak vector is a config *field* — a destination or post URL
   with a secret in its query string — which is why `sanitizeSnapshotURL`
-  (`internal/dispatch/creds.go`) strips query and fragment before the write.
+  (`internal/dispatch/creds.go`, delegating to `redact.SnapshotURL` in
+  `pkg/redact`, where the rule lives) strips query and fragment before the write.
 
 Look for error-string leakage in `Steps` and config-field leakage in
 `config_snapshot`; each is the wrong sink for the other's vector. Either way the
@@ -150,7 +151,8 @@ fallback that echoes the input instead of failing closed.
 - Five clients plus the dispatch snapshot layer.
 
 **Status on main:** the redactors exist and are named — `sanitizeSnapshotURL`
-(`internal/dispatch/creds.go`, fail-closed on `@`), `redactURL`
+(`internal/dispatch/creds.go`, delegating to `redact.SnapshotURL` in `pkg/redact`,
+which fails closed on `@`), `redactURL`
 (`internal/platform/meta/client.go`,
 `internal/platform/reddit/client.go`), `redactURLForError`
 (`internal/platform/twitter/client.go`) and `sanitizePath`
