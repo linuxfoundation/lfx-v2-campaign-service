@@ -813,20 +813,25 @@ func blockFirstLine(n ast.Node, src []byte) string {
 // unclosedFences reports every fenced code block that runs to the end of the
 // document without a closing fence.
 //
+// Only a fence directly under the document can run to its end. A fence inside
+// a blockquote or list item ends with that container, so it hides nothing past
+// it, and is not reported even when the container is the last block.
+//
 // goldmark does not record whether a fence was closed, so this is read off
-// the source. A fence's content lines are contiguous and end where the block
-// does: if a closing fence ends it, that line follows the last content line
-// (or the opener, for an empty block); if the end of a container ends it, the
-// line that broke the container follows. Only a fence that ran to the end of
-// the document has nothing but whitespace after it, because the parser keeps
-// trailing blank lines as content of a fence that never closed. A fence ended
-// by its container is not reported: it hides nothing past the container.
+// the source. A top-level fence's content lines are contiguous and end where
+// the block does: if a closing fence ends it, that line follows the last
+// content line (or the opener, for an empty block). Only a fence that ran to
+// the end of the document has nothing but whitespace after it, because the
+// parser keeps trailing blank lines as content of a fence that never closed.
 func unclosedFences(path string, doc ast.Node, src []byte) []error {
 	var errs []error
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		fb, ok := n.(*ast.FencedCodeBlock)
 		if !entering || !ok {
 			return ast.WalkContinue, nil
+		}
+		if fb.Parent() == nil || fb.Parent().Kind() != ast.KindDocument {
+			return ast.WalkSkipChildren, nil
 		}
 		open := fb.Pos()
 		if open < 0 {

@@ -25,9 +25,10 @@ What the validator now reads:
 - CommonMark closes an unclosed fence at the end of the document, which would hide every
   later section, so that is still an error. goldmark does not record whether a fence was
   closed. The validator reads it off the source instead: only a fence that ran to the end
-  of the document has nothing but whitespace after its last content line. A fence ended
-  by its container (a blockquote or list item that stops) hides nothing past that
-  container and is not reported.
+  of the document has nothing but whitespace after its last content line. Only a fence
+  directly under the document is checked: one inside a blockquote or list item ends with
+  that container and hides nothing past it, so it is not reported, even when the
+  container is the file's last block.
 - An H1 indented four spaces is code, not a heading, and is now reported as such.
 
 The helpers that implemented the scanner (`fenceState`, `fenceMarker`,

@@ -1454,6 +1454,27 @@ func TestValidateLogFragmentFenceLookalikesInHTMLBlocksAreNotDelimiters(t *testi
 	}
 }
 
+func TestValidateLogFragmentContainerFenceAtEndOfFileIsNotUnclosed(t *testing.T) {
+	// A fence inside a blockquote or list item ends with its container, so it
+	// hides nothing even when the container is the file's last block and only
+	// blank lines follow it.
+	for name, tail := range map[string]string{
+		"blockquote": "> ```markdown\n> ## 2026-01-01\n\n\n",
+		"list item":  "- ```markdown\n  ## 2026-01-01\n\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFragment(t, dir,
+				"## 2026-08-05 (first)\n\n**Docs** — did the thing.\n\n"+
+					"## 2026-08-04 (second)\n\n**Docs** — quoted sample:\n\n"+tail)
+
+			if errs := Validate(dir); errsContain(errs, "never closed") {
+				t.Errorf("Validate() = %v, want a fence ended by its container not reported", errs)
+			}
+		})
+	}
+}
+
 func TestValidateLogFragmentBlockquoteFenceClosesAfterATab(t *testing.T) {
 	// A blockquote marker may be followed by a tab, so ">\t```" closes a fence
 	// opened as "> ```" and the section after the quote is still checked.
