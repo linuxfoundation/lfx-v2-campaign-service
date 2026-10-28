@@ -240,6 +240,9 @@ func TestValidateLogFragmentRejectsAMissingKindMarker(t *testing.T) {
 // step documents, in the order it lists them. It reads the step that names
 // docs/knowledge/log/ and collects every backticked bold word in it, so the
 // test below compares the validator against what an author is actually told.
+// It captures the WHOLE bold label, not just a leading run of letters, so a
+// documented "**Bug-Fix**" is compared as "Bug-Fix" and fails the match
+// rather than being silently skipped.
 func claudeMDLogKinds(t *testing.T) []string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "..", "CLAUDE.md"))
@@ -263,7 +266,7 @@ func claudeMDLogKinds(t *testing.T) []string {
 
 	var kinds []string
 	seen := map[string]bool{}
-	for _, m := range regexp.MustCompile("`\\*\\*([A-Za-z]+)\\*\\*").FindAllStringSubmatch(step, -1) {
+	for _, m := range regexp.MustCompile("`\\*\\*([^*`]+)\\*\\*`").FindAllStringSubmatch(step, -1) {
 		if !seen[m[1]] {
 			seen[m[1]] = true
 			kinds = append(kinds, m[1])
@@ -418,6 +421,63 @@ func TestValidateLogFragmentStillChecksArchiveSectionsAfterAFence(t *testing.T) 
 	}
 	if errsContain(errs, "## 2026-01-01") {
 		t.Errorf("Validate() = %v, want the fenced heading ignored", errs)
+	}
+}
+
+func TestValidateLogFragmentFenceLookalikesDoNotHideLaterSections(t *testing.T) {
+	// Each sample is something an archive entry can contain that is NOT a
+	// fence opener. Treated as one, it would never close and every later
+	// section would go unchecked, so each case puts a bad section after it.
+	for name, sample := range map[string]string{
+		"indented code block": "    ```\n",
+		"inline code span":    "```go test``` runs it.\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFragment(t, dir,
+				"## 2026-08-05 (first)\n\n**Docs** — sample:\n\n"+sample+"\n"+
+					"## 2026-08-04 (second)\n\n**Feature** — did the other thing.\n")
+			errs := Validate(dir)
+			if !errsContain(errs, `kind marker "Feature"`) {
+				t.Errorf("Validate() = %v, want the section after the lookalike still checked", errs)
+			}
+			if errsContain(errs, "never closed") {
+				t.Errorf("Validate() = %v, want the lookalike not taken for a fence", errs)
+			}
+		})
+	}
+}
+
+func TestValidateLogFragmentRecognisesAFenceInsideAListItem(t *testing.T) {
+	// A sample inside a list item is fenced after the item marker, and its
+	// heading is indented with the item's content. Neither the fence nor
+	// the heading may be read as structure, and the section after the
+	// list is still checked.
+	dir := t.TempDir()
+	writeFragment(t, dir,
+		"## 2026-08-05 (first)\n\n**Docs** — samples:\n\n"+
+			"- ```markdown\n  ## 2026-01-01\n  ```\n\n"+
+			"## 2026-08-04 (second)\n\n**Feature** — did the other thing.\n")
+
+	errs := Validate(dir)
+	if errsContain(errs, "## 2026-01-01") {
+		t.Errorf("Validate() = %v, want the list-contained sample heading ignored", errs)
+	}
+	if !errsContain(errs, `kind marker "Feature"`) {
+		t.Errorf("Validate() = %v, want the section after the list still checked", errs)
+	}
+}
+
+func TestValidateLogFragmentReportsAnUnclosedArchiveFence(t *testing.T) {
+	// An unclosed fence swallows the rest of the file. Trusting it would
+	// make the sections after it a silent pass, so it is an error.
+	dir := t.TempDir()
+	writeFragment(t, dir,
+		"## 2026-08-05 (first)\n\n**Docs** — sample:\n\n```markdown\n\n"+
+			"## 2026-08-04 (second)\n\n**Feature** — did the other thing.\n")
+
+	if errs := Validate(dir); !errsContain(errs, "is never closed") {
+		t.Errorf("Validate() = %v, want the unclosed fence reported", errs)
 	}
 }
 

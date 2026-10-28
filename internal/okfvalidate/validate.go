@@ -659,22 +659,33 @@ func validateLogFragment(path string) []error {
 	// rule to keep in sync, and this one reads the structure it is about.
 	if next, ok := nextMarkerCandidate(lines, headingAt+1); ok && logFragmentSectionPattern.MatchString(next) {
 		var errs []error
-		fence := ""
+		fence, fenceAt := "", 0
 		for i, line := range lines {
-			section := strings.TrimSpace(line)
 			// A "## " line inside a fenced code block is quoted markdown,
 			// not a section: an entry that shows a sample log must not be
 			// rejected for the sample's headings.
+			wasOpen := fence != ""
 			var inFence bool
-			if fence, inFence = fenceState(fence, section); inFence {
+			if fence, inFence = fenceState(fence, line); inFence {
+				if !wasOpen {
+					fenceAt = i + 1
+				}
 				continue
 			}
-			if !logFragmentSectionPattern.MatchString(section) {
+			section, ok := archiveSectionHeading(line)
+			if !ok {
 				continue
 			}
 			if err := checkKindMarker(path, lines, i+1, section); err != nil {
 				errs = append(errs, err)
 			}
+		}
+		// A fence that never closes would hide every section after it. That
+		// is how CommonMark renders it, but here it would turn a stray
+		// fence into a silent pass for the rest of the archive, so it is
+		// reported instead of trusted.
+		if fence != "" {
+			errs = append(errs, fmt.Errorf("%s: code fence %q opened on line %d is never closed, so the archive sections after it cannot be checked", path, fence, fenceAt))
 		}
 		return errs
 	}
@@ -685,41 +696,88 @@ func validateLogFragment(path string) []error {
 	return nil
 }
 
+// archiveSectionHeading reports whether line is an archive section heading
+// and returns it trimmed. Like any CommonMark ATX heading it may be indented
+// by at most three spaces; a deeper "## " line is indented code or the body
+// of a list item, not a section.
+func archiveSectionHeading(line string) (string, bool) {
+	if leadingSpaces(line) > 3 {
+		return "", false
+	}
+	section := strings.TrimSpace(line)
+	return section, logFragmentSectionPattern.MatchString(section)
+}
+
 // fenceState tracks fenced code blocks across the lines of a file. fence is
 // the marker that opened the block the previous line was in ("" outside
 // one); the result is the marker for the next line, and whether THIS line is
-// part of a fence (its opening or closing line, or anything between). A block
-// opened with backticks closes only on backticks and a tilde block only on
-// tildes, at least as long as the opener, as CommonMark has it.
-func fenceState(fence, trimmed string) (string, bool) {
-	marker := fenceMarker(trimmed)
+// part of a fence (its opening or closing line, or anything between).
+//
+// It follows CommonMark's fence rules for the shapes a log entry uses: a run
+// of three or more backticks or tildes, after any blockquote or list-item
+// prefix, indented by at most three spaces; a backtick opener's info string
+// may not contain a backtick (that line is an inline code span, not a
+// fence); and a block closes only on a run of its own character at least as
+// long as the opener, with nothing after it. It does not track list-item
+// content indentation, so a fence indented four or more spaces under a list
+// item is not recognised. That miss is harmless here: the "## " lines inside
+// such a fence are indented too, and archiveSectionHeading ignores them.
+func fenceState(fence, line string) (string, bool) {
+	marker, rest := fenceMarker(line)
 	if fence == "" {
-		if marker == "" {
+		if marker == "" || (marker[0] == '`' && strings.Contains(rest, "`")) {
 			return "", false
 		}
 		return marker, true
 	}
-	// A closing fence carries no info string.
-	if marker != "" && marker[0] == fence[0] && len(marker) >= len(fence) && strings.TrimSpace(trimmed[len(marker):]) == "" {
+	if marker != "" && marker[0] == fence[0] && len(marker) >= len(fence) && strings.TrimSpace(rest) == "" {
 		return "", true
 	}
 	return fence, true
 }
 
+// fenceContainerPrefix matches the blockquote and list-item markers a fence
+// may sit inside: "> ", "- ", "* ", "+ ", "1. ", "1) ", in any nesting.
+var fenceContainerPrefix = regexp.MustCompile(`^(?: {0,3}(?:>|[-*+]|\d{1,9}[.)])(?: |$))*`)
+
 // fenceMarker returns the run of three or more backticks or tildes a line
-// opens with, or "" when it does not open with one.
-func fenceMarker(trimmed string) string {
-	if len(trimmed) < 3 || (trimmed[0] != '`' && trimmed[0] != '~') {
-		return ""
+// opens with, after its container prefix and at most three spaces of
+// indentation, and the text after that run. It returns "" when the line
+// does not open with one.
+func fenceMarker(line string) (string, string) {
+	body := line[len(fenceContainerPrefix.FindString(line)):]
+	if leadingSpaces(body) > 3 {
+		return "", ""
+	}
+	body = strings.TrimLeft(body, " ")
+	if len(body) < 3 || (body[0] != '`' && body[0] != '~') {
+		return "", ""
 	}
 	n := 0
-	for n < len(trimmed) && trimmed[n] == trimmed[0] {
+	for n < len(body) && body[n] == body[0] {
 		n++
 	}
 	if n < 3 {
-		return ""
+		return "", ""
 	}
-	return trimmed[:n]
+	return body[:n], body[n:]
+}
+
+// leadingSpaces counts the spaces a line opens with, a tab counting as four
+// as CommonMark's tab stop does for indentation.
+func leadingSpaces(s string) int {
+	n := 0
+	for _, r := range s {
+		switch r {
+		case ' ':
+			n++
+		case '\t':
+			n += 4
+		default:
+			return n
+		}
+	}
+	return n
 }
 
 // nextMarkerCandidate returns the first line at or after start that could

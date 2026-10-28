@@ -26,3 +26,21 @@ the second test, a tilde line inside a backtick block does not close the block.
 New tests cover three single-entry fragments (an empty body, a body that is only a superseded
 banner, and blank lines only) and an archive whose last section is empty. Each asserts on
 the error text, so deleting or rewording the branch fails a test.
+
+**Review round on the PR.** Reviewers on the PR found three ways a fence lookalike could still
+hide later archive sections:
+
+- a backtick line indented four or more spaces, which is indented code, not a fence;
+- an inline code span that opens a line, such as ```` ```go test``` runs it ````;
+- a fence inside a list item (`- ```markdown`), which the trimmed match missed.
+
+Fence detection now strips any blockquote or list-item prefix, allows at most three spaces
+of indentation, and refuses a backtick opener whose info string contains a backtick. A
+section heading likewise counts only when it is indented by at most three spaces, as for any
+CommonMark ATX heading.
+
+A fence still open at the end of an archive is now reported as an error instead of being
+trusted, so a stray fence can never turn the rest of the file into a silent pass. The
+CLAUDE.md drift test also captures the whole bold label, so a documented `**Bug-Fix**`
+fails the match instead of being skipped. Each new test was checked by reverting the line
+it guards.
