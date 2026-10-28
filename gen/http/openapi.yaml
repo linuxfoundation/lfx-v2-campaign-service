@@ -18,7 +18,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-audience-builder
             summary: attach-existing-audience lfx-v2-campaign-service-audience-builder
-            description: Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. Creates nothing in HubSpot.
+            description: 'Record lists that already exist in the project''s HubSpot portal as a brief''s built audience, without composing a new master. Every id is read back from the portal first. When every resolved standard suppression list is supplied they are recorded as the project''s standing standard suppression list, and with current_registrants_event the edition''s current-registrants list is recorded too; those two lists, found by name and reused, are the only lists HubSpot may create here, so an attach creates at most two. The recorded and returned suppression_list_ids are therefore not the input ids: the standing list''s id replaces the standard ids, and the registrants list''s id is appended. A list already holding either name that cannot safely be reused is a 409 naming it.'
             operationId: lfx-v2-campaign-service-audience-builder#attach-existing-audience
             parameters:
                 - name: project_id
@@ -181,7 +181,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-audience-builder
             summary: compose-audience-master lfx-v2-campaign-service-audience-builder
-            description: Create the combined suppression list and then the master list in the project's HubSpot portal, and when brief_id is supplied record the master as that brief's built audience. NOT idempotent.
+            description: Create the master list in the project's HubSpot portal, excluding the requested suppressions directly through the project's standing standard suppression list and, when asked, the edition's current-registrants list (both found by name and reused), and when brief_id is supplied record the master as that brief's built audience. NOT idempotent.
             operationId: lfx-v2-campaign-service-audience-builder#compose-audience-master
             parameters:
                 - name: project_id
@@ -1063,6 +1063,12 @@ paths:
                   description: Event name to match event-specific suppression lists
                   required: false
                   type: string
+                - name: registrants_event
+                  in: query
+                  description: Edition (event name with year) whose current-registrants row to add
+                  required: false
+                  type: string
+                  maxLength: 200
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -3771,7 +3777,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: get-campaign-settings lfx-v2-campaign-service-briefs
-            description: 'Read the campaign''s CURRENT configuration from the platform that runs it and report, per setting, where it diverges from what the campaign row recorded. A pure read: the platform is only read, never written, and the observation is never persisted back onto the campaign row — the row means "what this dispatch asked for", and the two can legitimately disagree: nothing pushes the recorded config upstream, and more than one path lets them drift apart. This is the read metrics cannot be: impressions, clicks, cost and CTR do not describe a campaign''s configuration. A setting that could not be read on either side is reported ABSENT with an `unknown` verdict, never defaulted to zero and never counted as a match. Support is per-platform: Google Ads, Microsoft Advertising, Meta, Reddit, X (Twitter) Ads and LinkedIn are wired, and a campaign on any other platform returns 400. The field set is per-platform too — each platform reports only the settings it can answer honestly, normalised to the units its create path wrote (Microsoft carries no flight dates, so reports none) — and on every platform the provenance rules are the same: a campaign that does not record the account it was created under, or that belongs to a different account than the connection now resolves to, is refused 409 before anything is read.'
+            description: 'Read the campaign''s CURRENT configuration from the platform that runs it and report, per setting, where it diverges from what the campaign row recorded. A pure read: the platform is only read, never written, and the observation is never persisted back onto the campaign row — the row means "what this dispatch asked for", and the two can legitimately disagree: nothing pushes the recorded config upstream, and more than one path lets them drift apart. This is the read metrics cannot be: impressions, clicks, cost and CTR do not describe a campaign''s configuration. A setting that could not be read on either side is reported ABSENT with an `unknown` verdict, never defaulted to zero and never counted as a match. Support is per-platform: Google Ads, Microsoft Advertising, Meta, Reddit, X (Twitter) Ads and LinkedIn are wired, and a campaign on any other platform returns 400. The field set is per-platform too — each platform reports only the settings it can answer honestly, normalised to the units its create path wrote (Microsoft keeps flight dates on the ad group, which this read does not read, so reports none) — and on every platform the provenance rules are the same: a campaign that does not record the account it was created under, or that belongs to a different account than the connection now resolves to, is refused 409 before anything is read.'
             operationId: lfx-v2-campaign-service-briefs#get-campaign-settings
             parameters:
                 - name: project_id
@@ -10406,6 +10412,111 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/google-ads/geo-targets:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: suggest-google-ads-geo-targets lfx-v2-campaign-service-connections
+            description: 'Search Google Ads geo target constants by place name or postal code, live from Google''s GeoTargetConstantService.SuggestGeoTargetConstants, for picking googleAdsConfig.geoTargets. Returns Google''s public location table, not data any ad account holds, so a project with no Google Ads connection of its own reads through the shared LF system credential, exactly as GET .../connection-google-ads/accounts does. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#suggest-google-ads-geo-targets
+            parameters:
+                - name: q
+                  in: query
+                  description: Place name or postal code to search for
+                  required: true
+                  type: string
+                  maxLength: 100
+                  minLength: 1
+                  pattern: \S
+                - name: country_code
+                  in: query
+                  description: Optional ISO 3166-1 alpha-2 country to search within
+                  required: false
+                  type: string
+                  pattern: ^[A-Za-z]{2}$
+                - name: target_types
+                  in: query
+                  description: Optional location types to keep (e.g. City, Postal Code). Matched ignoring case, spaces, underscores and hyphens, so postal_code matches Postal Code.
+                  required: false
+                  type: array
+                  items:
+                    type: string
+                    maxLength: 40
+                    minLength: 1
+                    pattern: '[A-Za-z0-9]'
+                  collectionFormat: multi
+                  maxItems: 10
+                - name: limit
+                  in: query
+                  description: Maximum suggestions to return (1-50). Defaults to 20 when omitted.
+                  required: false
+                  type: integer
+                  maximum: 50
+                  minimum: 1
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/GoogleAdsGeoTargetSuggestions'
+                        required:
+                            - suggestions
+                            - suggestion_count
+                            - truncated
+                "400":
+                    description: 'BadRequest: Bad request'
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: 'NotFound: Resource not found'
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/google-ads/keywords:
         get:
             tags:
@@ -10471,6 +10582,93 @@ paths:
                     description: 'Conflict: Conflict'
                     schema:
                         $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/google-ads/user-lists:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-google-ads-user-lists lfx-v2-campaign-service-connections
+            description: 'List the Google Ads user lists (audiences) on a customer, live from GAQL on user_list, for picking googleAdsConfig.audienceSegments (Search only). account_id names the customer; omitted, the customer the project''s connection is bound to is read. Like the account monitor, this resolves the project''s OWN connection only and never falls back to the shared LF system credential: user lists are account data on a customer shared across foundations, so a project with no Google Ads connection of its own gets a 404, not the LF account''s audiences. On a platform whose ad account is shared across foundations — Google Ads today — the read is refused with 409 before Google is contacted: the read is account-wide, this service records no user list per project, and a project''s own connection points at the same shared customer, so answering would expose every foundation''s audiences. Only a per-foundation customer is listed. An account_id the credential cannot reach is refused by Google and answered 503, like the account monitor. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#list-google-ads-user-lists
+            parameters:
+                - name: account_id
+                  in: query
+                  description: Optional Google Ads customer to read (digits only). Defaults to the connection's account.
+                  required: false
+                  type: string
+                  maxLength: 64
+                  pattern: ^[0-9]+$
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/GoogleAdsUserLists'
+                        required:
+                            - account_id
+                            - user_lists
+                            - user_list_count
+                            - truncated
+                "400":
+                    description: 'BadRequest: Bad request'
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: 'NotFound: Resource not found'
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "409":
+                    description: 'Conflict: User lists cannot be listed per project on an ad account shared across foundations'
+                    schema:
+                        $ref: '#/definitions/UserListsConflictError'
                         required:
                             - code
                             - message
@@ -11711,7 +11909,7 @@ definitions:
                 example: "2026-11-30"
             fetch_failed:
                 type: boolean
-                description: 'True when some part of this row''s upstream data could not be trusted: either its per-campaign metrics fetch failed outright (numeric fields left at their zero value), or, for Google Ads, its budget field was present but unparseable alongside otherwise-good metrics. A renderer MUST check this before treating any of this row''s fields, zero or not, as a fully trusted reading.'
+                description: 'True when some part of this row''s upstream data could not be trusted. WHICH part is not conveyed, and it is NOT always the metrics. The shapes it takes include: a per-campaign metrics fetch that failed outright, leaving that read''s delivery metrics (spend, impressions, clicks, ctr) at their zero value while fields sourced from a different call — a budget read from the campaign list, say — may still be real; a budget or flight value that was present but unparseable alongside metrics that were read fine; and a spend that could not be parsed while impressions and clicks are real. Read those as examples rather than a closed set — every platform sets this flag and each has its own partial cases. A renderer MUST NOT treat ANY of this row''s fields, zero or not, as a fully trusted reading.'
                 example: false
             impressions:
                 type: integer
@@ -11981,6 +12179,11 @@ definitions:
                 description: The brief to record the audience under
                 example: a20685c0-2378-4c21-84e7-b2f9d998ebbe
                 format: uuid
+            current_registrants_event:
+                type: string
+                description: Edition (event name with year) whose current registrants the send also suppresses, through a list found or created by name
+                example: cro
+                maxLength: 200
             include_list_ids:
                 type: array
                 items:
@@ -12040,12 +12243,14 @@ definitions:
                     - Dolorum beatae officiis voluptatem hic.
             master:
                 $ref: '#/definitions/AudienceComposedList'
+            suppression:
+                $ref: '#/definitions/AudienceComposedList'
             suppression_list_ids:
                 type: array
                 items:
                     type: string
                     example: Aliquam fugit vel nemo aut.
-                description: The suppression list ids recorded beside it
+                description: 'The suppression list ids recorded beside it. Not the input ids: a full standard set is recorded as the standing list''s id, and the current-registrants list''s id is appended'
                 example:
                     - Aliquam fugit vel nemo aut.
                     - Earum voluptas ut voluptatem et id.
@@ -12065,6 +12270,11 @@ definitions:
                 - Repellendus est facilis.
                 - Dolorum beatae officiis voluptatem hic.
             master:
+                hubspot_url: Aliquam quis dicta voluptas odio quo.
+                list_id: Quia nihil qui ab accusamus tempora culpa.
+                name: Eaque dicta qui numquam.
+                size: 4504693386713616226
+            suppression:
                 hubspot_url: Aliquam quis dicta voluptas odio quo.
                 list_id: Quia nihil qui ab accusamus tempora culpa.
                 name: Eaque dicta qui numquam.
@@ -12106,6 +12316,11 @@ definitions:
                 description: Record the composed master as this brief's built audience, stamped with the portal it was composed in
                 example: c32fcca9-7994-4925-b99f-3faa2c231afe
                 format: uuid
+            current_registrants_event:
+                type: string
+                description: Edition (event name with year) whose current registrants the master also excludes, through a list found or created by name
+                example: 0tk
+                maxLength: 200
             event_dates:
                 type: array
                 items:
@@ -12151,6 +12366,7 @@ definitions:
         example:
             brand_short: Qui voluptatem dolore.
             brief_id: c32fcca9-7994-4925-b99f-3faa2c231afe
+            current_registrants_event: 0tk
             event_dates:
                 - Temporibus nobis minus neque.
                 - Hic aut.
@@ -12189,6 +12405,17 @@ definitions:
                     - Autem optio.
             suppression:
                 $ref: '#/definitions/AudienceComposedList'
+            suppression_list_ids:
+                type: array
+                items:
+                    type: string
+                    example: Tempore consequatur sed placeat modi sed.
+                description: 'Every list the master excludes, in the order attach-existing records them: the standing standard list first (when used), then each other excluded list, then the current-registrants list. Absent when the master excludes nothing'
+                example:
+                    - Tempore consequatur sed placeat modi sed.
+                    - Molestiae cum quisquam ad illum.
+                    - A aut rerum repellat ducimus.
+                    - Quas nemo qui et molestiae qui.
         example:
             audience:
                 id: Sit nisi rem id ullam tenetur voluptatem.
@@ -12215,6 +12442,11 @@ definitions:
                 list_id: Quia nihil qui ab accusamus tempora culpa.
                 name: Eaque dicta qui numquam.
                 size: 4504693386713616226
+            suppression_list_ids:
+                - Tempore consequatur sed placeat modi sed.
+                - Molestiae cum quisquam ad illum.
+                - A aut rerum repellat ducimus.
+                - Quas nemo qui et molestiae qui.
         required:
             - master
             - source_list_ids
@@ -12543,9 +12775,9 @@ definitions:
                 $ref: '#/definitions/AudienceCustomCriteria'
             name:
                 type: string
-                description: Explicit list name; derived from the criteria when omitted. A taken name is versioned, never reused
+                description: Explicit list name, at most 200 characters (HubSpot cannot search a longer one); derived from the criteria when omitted. A taken name is versioned, never reused
                 example: np4
-                maxLength: 250
+                maxLength: 200
         example:
             criteria:
                 cities:
@@ -13848,11 +14080,12 @@ definitions:
             category:
                 type: string
                 description: Which group the row belongs to
-                example: standard
+                example: current_registrants
                 enum:
                     - standard
                     - brand
                     - event_specific
+                    - current_registrants
             hubspot_url:
                 type: string
                 description: Deep link to the list in the HubSpot UI
@@ -13878,14 +14111,19 @@ definitions:
                 description: Membership size, when HubSpot reported one
                 example: 876045623713169027
                 format: int64
+            will_create:
+                type: boolean
+                description: The list does not exist yet; an attach or compose that applies this row creates it by name (current_registrants only)
+                example: true
         example:
-            category: standard
+            category: current_registrants
             hubspot_url: Consequuntur autem velit.
             key: Et nisi voluptas est saepe vel.
             label: Facere nulla minima consectetur explicabo iusto.
             list_id: Ad quo.
             name: Maxime recusandae velit.
             size: 876045623713169027
+            will_create: true
         required:
             - key
             - label
@@ -14522,7 +14760,7 @@ definitions:
         type: object
         properties:
             config:
-                description: 'Per-platform campaign configuration: an object keyed by platform config name (microsoftConfig, metaConfig, redditConfig, twitterConfig, linkedInConfig, googleAdsConfig, hubspotConfig) plus the top-level hsToken. BIDDING (LFXV2-2665): microsoftConfig, metaConfig, redditConfig, twitterConfig and linkedInConfig each accept an optional `bidding` object, {"strategy": "automatic" | "manual", "bidAmount": number}. Omitted means automatic (Microsoft MaxClicks; Meta LOWEST_COST_WITHOUT_CAP; Reddit BIDLESS; X AUTO). DEFAULT CHANGES: a Microsoft campaign created with no bidding and no cpcBid used to get Microsoft''s EnhancedCpc default and is now MaxClicks, so update-campaign-bid answers 409 for it; a LinkedIn campaign created with no bidding is now WEBSITE_VISIT / MAX_CLICK / CPM with a Traffic name segment. Manual-created campaigns are immediately eligible for the bid lever; eligibility follows the platform''s current strategy. LinkedIn automatic creates an objectiveType WEBSITE_VISIT campaign bidding MAX_CLICK with costType CPM (decision 2026-10-13: automatic LinkedIn campaigns optimise for clicks because MAX_CONVERSION, the only automated target of WEBSITE_CONVERSION, needs a conversion association this service doesn''t create); LinkedIn manual keeps objectiveType WEBSITE_CONVERSION. `manual` requires `bidAmount`, the starting max cost-per-click bid in the ad account''s own currency (LinkedIn: USD), greater than zero, at most 1,000,000 and a whole number of micro-units; it creates the campaign in the shape update-campaign-bid accepts. Per platform, a manual bid must also be: Microsoft within 0.01–1,000 (a legacy microsoftConfig.cpcBid without `bidding` still means a manual bid at that amount; with `bidding` it must be omitted or equal bidAmount); Meta at most two decimals, a whole minor unit of the account currency (checked against the currency at dispatch), and only for the traffic or leads objective; Reddit only for the traffic objective; LinkedIn whole cents; X at most the campaign''s daily budget (X does not accept a line item bid above it). Keys are exact: `bidding`, `strategy` and `bidAmount`; a case variant (`Bidding`, `Strategy`) or an unknown key inside `bidding` is refused. `automatic` with a `bidAmount`, an unknown strategy, a wrong JSON type, an explicit null or empty value (only an ABSENT field defaults: `"strategy": null` or `""`, `"bidAmount": null` and `"bidding": null` are refused), or a bid breaking these rules is refused synchronously with 400 "invalid campaign config: <configKey>.bidding: ..." before any job exists. googleAdsConfig.bidding is refused with 400 (use googleAdsConfig.biddingStrategy).'
+                description: 'Per-platform campaign configuration: an object keyed by platform config name (microsoftConfig, metaConfig, redditConfig, twitterConfig, linkedInConfig, googleAdsConfig, hubspotConfig) plus the top-level hsToken. BIDDING (LFXV2-2665): microsoftConfig, metaConfig, redditConfig, twitterConfig and linkedInConfig each accept an optional `bidding` object, {"strategy": "automatic" | "manual", "bidAmount": number}. Omitted means automatic (Microsoft MaxClicks; Meta LOWEST_COST_WITHOUT_CAP; Reddit BIDLESS; X AUTO). DEFAULT CHANGES: a Microsoft campaign created with no bidding and no cpcBid used to get Microsoft''s EnhancedCpc default and is now MaxClicks, so update-campaign-bid answers 409 for it; a LinkedIn campaign created with no bidding is now WEBSITE_VISIT / MAX_CLICK / CPM with a Traffic name segment. Manual-created campaigns are immediately eligible for the bid lever; eligibility follows the platform''s current strategy. LinkedIn automatic creates an objectiveType WEBSITE_VISIT campaign bidding MAX_CLICK with costType CPM (decision 2026-10-13: automatic LinkedIn campaigns optimise for clicks because MAX_CONVERSION, the only automated target of WEBSITE_CONVERSION, needs a conversion association this service doesn''t create); LinkedIn manual keeps objectiveType WEBSITE_CONVERSION. `manual` requires `bidAmount`, the starting max cost-per-click bid in the ad account''s own currency (LinkedIn: USD), greater than zero, at most 1,000,000 and a whole number of micro-units; it creates the campaign in the shape update-campaign-bid accepts. Per platform, a manual bid must also be: Microsoft within 0.01–1,000 (a legacy microsoftConfig.cpcBid without `bidding` still means a manual bid at that amount; with `bidding` it must be omitted or equal bidAmount); Meta at most two decimals, a whole minor unit of the account currency (checked against the currency at dispatch), and only for the traffic or leads objective; Reddit only for the traffic objective; LinkedIn whole cents; X at most the campaign''s daily budget (X does not accept a line item bid above it). Keys are exact: `bidding`, `strategy` and `bidAmount`; a case variant (`Bidding`, `Strategy`) or an unknown key inside `bidding` is refused. `automatic` with a `bidAmount`, an unknown strategy, a wrong JSON type, an explicit null or empty value (only an ABSENT field defaults: `"strategy": null` or `""`, `"bidAmount": null` and `"bidding": null` are refused), or a bid breaking these rules is refused synchronously with 400 "invalid campaign config: <configKey>.bidding: ..." before any job exists. googleAdsConfig.bidding is refused with 400 (use googleAdsConfig.biddingStrategy). FLIGHT DATES: metaConfig (required) and microsoftConfig (optional) take `startDate` and `endDate` as YYYY-MM-DD strings that must be real calendar dates, with the start not before today and the end after the start. For metaConfig today is the UTC calendar day. For microsoftConfig it is the calendar day at UTC-12, with or without timeZone, so only a date already past in every time zone is refused up front; Microsoft reads the dates in the campaign''s time zone and remains the final judge. Microsoft Advertising sets them on the campaign''s AD GROUP (AdGroup.StartDate/EndDate), each independently optional: an omitted startDate leaves Microsoft''s default (eligible from today, so an endDate alone must be after today) and an omitted endDate runs until stopped; omitting both creates the campaign exactly as before. An invalid Microsoft date fails the platform job before anything is created, as an invalid Meta date does. Microsoft dates are recorded on the campaign row only when this run created the ad group that carries them; a retry that reuses an existing ad group leaves its schedule unchanged and records no dates.'
                 example:
                     hsToken: hs-abc123
                     metaConfig:
@@ -14547,7 +14785,7 @@ definitions:
                             - headline: Join us
             new_version:
                 type: boolean
-                description: Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label. Supported on microsoft-ads only for now; any other platform in the request is refused with 400. Until the follow-up release removes the one-campaign-per-slot index, a request on a platform that already has a live campaign fails that platform with 'not available yet' and creates nothing.
+                description: 'Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label. Supported on microsoft-ads only for now; any other platform in the request is refused with 400. Two concurrent requests that both find the same complete campaign create one new campaign between them, not two: the second is reported as a reuse of (or skipped behind) the first.'
                 default: false
                 example: false
             platforms:
@@ -14729,7 +14967,7 @@ definitions:
                     - unknown
             field:
                 type: string
-                description: 'The setting''s name in this service''s own stable vocabulary rather than the platform''s field names. Several names do coincide with a campaign-row column, but the vocabulary is NOT a column list and must not be read as one: `advertising_channel_type` has no column and is recovered from the campaign''s config snapshot, and the upstream-only names below have no recorded side at all. On Google Ads the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `advertising_channel_type`, `start_date` and `end_date`. `budget_delivery_method`, `budget_explicitly_shared` and `bidding_strategy_type` are reported UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an `unknown` verdict. For the two budget fields that is because nothing this service records expresses them. `bidding_strategy_type` IS recorded, and is left uncompared deliberately: the comparison would require mapping this service''s caller vocabulary onto Google''s OUTPUT_ONLY bidding-strategy enum, which is unverified exactly where it is ambiguous, and on an adopted campaign the recorded strategy was never pushed upstream, so a guessed mapping would report a false divergence on a campaign set exactly as asked. `status` is also reported with no `recorded` counterpart, but for a DIFFERENT reason: the campaign row DOES record a `status`, and it is deliberately never compared because the two are different axes. The column carries this service''s own lifecycle vocabulary — mostly provisioning state (`pending`, `created`, `created_degraded`, soft-deleted) and only sometimes a run state — while Google''s `ENABLED`/`PAUSED`/`REMOVED` is purely delivery state, so comparing them would report a permanent, meaningless divergence on nearly every campaign. The upstream value is still reported so an operator can see that a campaign is paused upstream. `advertising_channel_type` is compared rather than upstream-only because the dispatch config''s channel IS persisted in the campaign''s config snapshot; it still reads `unknown` on a legacy row that carries no snapshot, but for the ordinary reason that nothing was recorded there — not because the field has no recorded side. On Microsoft Advertising, Meta, Reddit and X the COMPARED settings are `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and `end_date` on Meta, Reddit and X (a Microsoft campaign carries no flight dates, so they are not reported there); `status` and `bidding_strategy_type` are upstream-only on all four (since LFXV2-2665 their create paths record an `automatic` or `manual` choice — the campaign''s `bidding_strategy` — but that vocabulary is deliberately not mapped onto each platform''s strategy enum, for the reason given for Google above); Microsoft also reports `budget_explicitly_shared` upstream-only, Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the last two say where the budget lives, and explain a budget that reads `unknown` because the campaign-level amount is not the one the row recorded (Reddit with campaign budget optimization off, X under anything but `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged forward past UTC midnight (because the requested day had already begun at dispatch) is shown with both sides and an `unknown` verdict rather than a false `diverged`. On LinkedIn the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `start_date` and `end_date` (the start, like Meta''s and Reddit''s, may be nudged by the create path); `status`, `bidding_strategy_type` (LinkedIn''s optimizationTargetType), `cost_type`, `unit_cost` (the bid amount), `unit_cost_currency` (its ISO currency, from LinkedIn''s `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the currency is not reported, never a bare number) are upstream-only, and `objective_type` is compared against the objective the recorded bidding strategy implies (automatic WEBSITE_VISIT, manual WEBSITE_CONVERSION; `unknown` when none is recorded); a campaign reporting both a daily and a total budget, neither (as under a campaign group''s shared budget), or a non-USD amount reads both budget fields `unknown`. The vocabulary is per-platform and may grow, so a consumer must render an unrecognised field name rather than dropping it.'
+                description: 'The setting''s name in this service''s own stable vocabulary rather than the platform''s field names. Several names do coincide with a campaign-row column, but the vocabulary is NOT a column list and must not be read as one: `advertising_channel_type` has no column and is recovered from the campaign''s config snapshot, and the upstream-only names below have no recorded side at all. On Google Ads the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `advertising_channel_type`, `start_date` and `end_date`. `budget_delivery_method`, `budget_explicitly_shared` and `bidding_strategy_type` are reported UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an `unknown` verdict. For the two budget fields that is because nothing this service records expresses them. `bidding_strategy_type` IS recorded, and is left uncompared deliberately: the comparison would require mapping this service''s caller vocabulary onto Google''s OUTPUT_ONLY bidding-strategy enum, which is unverified exactly where it is ambiguous, and on an adopted campaign the recorded strategy was never pushed upstream, so a guessed mapping would report a false divergence on a campaign set exactly as asked. `status` is also reported with no `recorded` counterpart, but for a DIFFERENT reason: the campaign row DOES record a `status`, and it is deliberately never compared because the two are different axes. The column carries this service''s own lifecycle vocabulary — mostly provisioning state (`pending`, `created`, `created_degraded`, soft-deleted) and only sometimes a run state — while Google''s `ENABLED`/`PAUSED`/`REMOVED` is purely delivery state, so comparing them would report a permanent, meaningless divergence on nearly every campaign. The upstream value is still reported so an operator can see that a campaign is paused upstream. `advertising_channel_type` is compared rather than upstream-only because the dispatch config''s channel IS persisted in the campaign''s config snapshot; it still reads `unknown` on a legacy row that carries no snapshot, but for the ordinary reason that nothing was recorded there — not because the field has no recorded side. On Microsoft Advertising, Meta, Reddit and X the COMPARED settings are `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and `end_date` on Meta, Reddit and X (Microsoft keeps flight dates on the ad group, not the campaign, and this read does not read the ad group, so they are not reported there); `status` and `bidding_strategy_type` are upstream-only on all four (since LFXV2-2665 their create paths record an `automatic` or `manual` choice — the campaign''s `bidding_strategy` — but that vocabulary is deliberately not mapped onto each platform''s strategy enum, for the reason given for Google above); Microsoft also reports `budget_explicitly_shared` upstream-only, Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the last two say where the budget lives, and explain a budget that reads `unknown` because the campaign-level amount is not the one the row recorded (Reddit with campaign budget optimization off, X under anything but `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged forward past UTC midnight (because the requested day had already begun at dispatch) is shown with both sides and an `unknown` verdict rather than a false `diverged`. On LinkedIn the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `start_date` and `end_date` (the start, like Meta''s and Reddit''s, may be nudged by the create path); `status`, `bidding_strategy_type` (LinkedIn''s optimizationTargetType), `cost_type`, `unit_cost` (the bid amount), `unit_cost_currency` (its ISO currency, from LinkedIn''s `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the currency is not reported, never a bare number) are upstream-only, and `objective_type` is compared against the objective the recorded bidding strategy implies (automatic WEBSITE_VISIT, manual WEBSITE_CONVERSION; `unknown` when none is recorded); a campaign reporting both a daily and a total budget, neither (as under a campaign group''s shared budget), or a non-USD amount reads both budget fields `unknown`. The vocabulary is per-platform and may grow, so a consumer must render an unrecognised field name rather than dropping it.'
                 example: budget_amount
             recorded:
                 type: string
@@ -15937,6 +16175,124 @@ definitions:
             - client_id
             - client_secret
             - developer_token
+    GoogleAdsGeoTargetSuggestion:
+        title: GoogleAdsGeoTargetSuggestion
+        type: object
+        properties:
+            canonical_name:
+                type: string
+                description: Google's fully qualified name, which disambiguates same-named places
+                example: Austin,Texas,United States
+            country_code:
+                type: string
+                description: ISO 3166-1 alpha-2 country of the location, as Google reports it
+                example: US
+            id:
+                type: string
+                description: The numeric geo target constant id, in exactly the form googleAdsConfig.geoTargets and excludedGeoTargets accept. Send it as-is; the geoTargetConstants/{id} resource name is NOT accepted there.
+                example: "1026201"
+                pattern: ^[1-9][0-9]{0,18}$
+            name:
+                type: string
+                description: Google's display name for the location
+                example: Austin
+            reach:
+                type: integer
+                description: Google's approximate audience estimate. Absent when Google sent none.
+                example: 2100000
+                format: int64
+            status:
+                type: string
+                description: ENABLED, or REMOVAL_PLANNED for a location Google is retiring
+                example: ENABLED
+            target_type:
+                type: string
+                description: Google's location type label, verbatim (e.g. Country, State, City, Postal Code, DMA Region)
+                example: City
+        example:
+            canonical_name: Austin,Texas,United States
+            country_code: US
+            id: "1026201"
+            name: Austin
+            reach: 2100000
+            status: ENABLED
+            target_type: City
+        required:
+            - id
+            - name
+            - canonical_name
+            - country_code
+            - target_type
+            - status
+    GoogleAdsGeoTargetSuggestions:
+        title: GoogleAdsGeoTargetSuggestions
+        type: object
+        properties:
+            suggestion_count:
+                type: integer
+                description: How many suggestions are in `suggestions`
+                example: 1
+                format: int64
+            suggestions:
+                type: array
+                items:
+                    $ref: '#/definitions/GoogleAdsGeoTargetSuggestion'
+                description: Matching locations in Google's order, filtered to target_types when given, capped at limit
+                example:
+                    - canonical_name: Austin,Texas,United States
+                      country_code: US
+                      id: "1026201"
+                      name: Austin
+                      reach: 2100000
+                      status: ENABLED
+                      target_type: City
+                    - canonical_name: Austin,Texas,United States
+                      country_code: US
+                      id: "1026201"
+                      name: Austin
+                      reach: 2100000
+                      status: ENABLED
+                      target_type: City
+                    - canonical_name: Austin,Texas,United States
+                      country_code: US
+                      id: "1026201"
+                      name: Austin
+                      reach: 2100000
+                      status: ENABLED
+                      target_type: City
+            truncated:
+                type: boolean
+                description: True when more matching locations were available than `limit` allowed
+                example: false
+        example:
+            suggestion_count: 1
+            suggestions:
+                - canonical_name: Austin,Texas,United States
+                  country_code: US
+                  id: "1026201"
+                  name: Austin
+                  reach: 2100000
+                  status: ENABLED
+                  target_type: City
+                - canonical_name: Austin,Texas,United States
+                  country_code: US
+                  id: "1026201"
+                  name: Austin
+                  reach: 2100000
+                  status: ENABLED
+                  target_type: City
+                - canonical_name: Austin,Texas,United States
+                  country_code: US
+                  id: "1026201"
+                  name: Austin
+                  reach: 2100000
+                  status: ENABLED
+                  target_type: City
+            truncated: false
+        required:
+            - suggestions
+            - suggestion_count
+            - truncated
     GoogleAdsKeyword:
         title: GoogleAdsKeyword
         type: object
@@ -16140,6 +16496,170 @@ definitions:
             - window
             - rows
             - row_count
+            - truncated
+    GoogleAdsUserList:
+        title: GoogleAdsUserList
+        type: object
+        properties:
+            account_status:
+                type: string
+                description: The list's account_user_list_status (ENABLED or DISABLED), verbatim. Absent when Google sent none.
+                example: ENABLED
+            eligible_for_search:
+                type: boolean
+                description: Whether Google reports the list usable on Search. audienceSegments applies to Search campaigns, so an ineligible list will not serve there.
+                example: true
+            id:
+                type: string
+                description: The user list id
+                example: "7012345678"
+            membership_status:
+                type: string
+                description: OPEN (accepting members) or CLOSED, verbatim
+                example: OPEN
+            name:
+                type: string
+                description: The list's display name. Not an identifier.
+                example: KubeCon NA 2025 registrants
+            resource_name:
+                type: string
+                description: customers/{customerId}/userLists/{id}, in exactly the form googleAdsConfig.audienceSegments accepts (Search only). A list targets campaigns on its own customer.
+                example: customers/8666746580/userLists/7012345678
+                pattern: ^customers/[0-9]+/userLists/[1-9][0-9]{0,18}$
+            size_for_search:
+                type: integer
+                description: Google's estimated Search-network size. Absent when Google sent none, which is not a size of 0.
+                example: 12000
+                format: int64
+            size_range_for_search:
+                type: string
+                description: Google's bucketed Search-network size, verbatim. Absent when Google sent none.
+                example: TEN_THOUSAND_TO_FIFTY_THOUSAND
+            type:
+                type: string
+                description: Google's UserListType, verbatim (e.g. CRM_BASED, RULE_BASED, LOGICAL, SIMILAR)
+                example: CRM_BASED
+        example:
+            account_status: ENABLED
+            eligible_for_search: true
+            id: "7012345678"
+            membership_status: OPEN
+            name: KubeCon NA 2025 registrants
+            resource_name: customers/8666746580/userLists/7012345678
+            size_for_search: 12000
+            size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+            type: CRM_BASED
+        required:
+            - resource_name
+            - id
+            - name
+            - type
+            - membership_status
+            - eligible_for_search
+    GoogleAdsUserLists:
+        title: GoogleAdsUserLists
+        type: object
+        properties:
+            account_id:
+                type: string
+                description: The Google Ads customer the lists were read from
+                example: "8666746580"
+            truncated:
+                type: boolean
+                description: True when the customer holds more lists than were returned
+                example: false
+            user_list_count:
+                type: integer
+                description: How many lists are in `user_lists`
+                example: 1
+                format: int64
+            user_lists:
+                type: array
+                items:
+                    $ref: '#/definitions/GoogleAdsUserList'
+                description: User lists on the customer, sorted by name, capped at 500 (see `truncated`)
+                example:
+                    - account_status: ENABLED
+                      eligible_for_search: true
+                      id: "7012345678"
+                      membership_status: OPEN
+                      name: KubeCon NA 2025 registrants
+                      resource_name: customers/8666746580/userLists/7012345678
+                      size_for_search: 12000
+                      size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+                      type: CRM_BASED
+                    - account_status: ENABLED
+                      eligible_for_search: true
+                      id: "7012345678"
+                      membership_status: OPEN
+                      name: KubeCon NA 2025 registrants
+                      resource_name: customers/8666746580/userLists/7012345678
+                      size_for_search: 12000
+                      size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+                      type: CRM_BASED
+                    - account_status: ENABLED
+                      eligible_for_search: true
+                      id: "7012345678"
+                      membership_status: OPEN
+                      name: KubeCon NA 2025 registrants
+                      resource_name: customers/8666746580/userLists/7012345678
+                      size_for_search: 12000
+                      size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+                      type: CRM_BASED
+                    - account_status: ENABLED
+                      eligible_for_search: true
+                      id: "7012345678"
+                      membership_status: OPEN
+                      name: KubeCon NA 2025 registrants
+                      resource_name: customers/8666746580/userLists/7012345678
+                      size_for_search: 12000
+                      size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+                      type: CRM_BASED
+        example:
+            account_id: "8666746580"
+            truncated: false
+            user_list_count: 1
+            user_lists:
+                - account_status: ENABLED
+                  eligible_for_search: true
+                  id: "7012345678"
+                  membership_status: OPEN
+                  name: KubeCon NA 2025 registrants
+                  resource_name: customers/8666746580/userLists/7012345678
+                  size_for_search: 12000
+                  size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+                  type: CRM_BASED
+                - account_status: ENABLED
+                  eligible_for_search: true
+                  id: "7012345678"
+                  membership_status: OPEN
+                  name: KubeCon NA 2025 registrants
+                  resource_name: customers/8666746580/userLists/7012345678
+                  size_for_search: 12000
+                  size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+                  type: CRM_BASED
+                - account_status: ENABLED
+                  eligible_for_search: true
+                  id: "7012345678"
+                  membership_status: OPEN
+                  name: KubeCon NA 2025 registrants
+                  resource_name: customers/8666746580/userLists/7012345678
+                  size_for_search: 12000
+                  size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+                  type: CRM_BASED
+                - account_status: ENABLED
+                  eligible_for_search: true
+                  id: "7012345678"
+                  membership_status: OPEN
+                  name: KubeCon NA 2025 registrants
+                  resource_name: customers/8666746580/userLists/7012345678
+                  size_for_search: 12000
+                  size_range_for_search: TEN_THOUSAND_TO_FIFTY_THOUSAND
+                  type: CRM_BASED
+        required:
+            - account_id
+            - user_lists
+            - user_list_count
             - truncated
     HubspotCampaign:
         title: HubspotCampaign
@@ -17364,6 +17884,7 @@ definitions:
             compose:
                 brand_short: Qui voluptatem dolore.
                 brief_id: c32fcca9-7994-4925-b99f-3faa2c231afe
+                current_registrants_event: 0tk
                 event_dates:
                     - Temporibus nobis minus neque.
                     - Hic aut.
@@ -17568,36 +18089,47 @@ definitions:
                     $ref: '#/definitions/AudienceSuppressionList'
                 description: Suppression rows, standard first
                 example:
-                    - category: standard
+                    - category: current_registrants
                       hubspot_url: Consequuntur autem velit.
                       key: Et nisi voluptas est saepe vel.
                       label: Facere nulla minima consectetur explicabo iusto.
                       list_id: Ad quo.
                       name: Maxime recusandae velit.
                       size: 876045623713169027
-                    - category: standard
+                      will_create: true
+                    - category: current_registrants
                       hubspot_url: Consequuntur autem velit.
                       key: Et nisi voluptas est saepe vel.
                       label: Facere nulla minima consectetur explicabo iusto.
                       list_id: Ad quo.
                       name: Maxime recusandae velit.
                       size: 876045623713169027
+                      will_create: true
+            standard_list:
+                $ref: '#/definitions/AudienceComposedList'
         example:
             lists:
-                - category: standard
+                - category: current_registrants
                   hubspot_url: Consequuntur autem velit.
                   key: Et nisi voluptas est saepe vel.
                   label: Facere nulla minima consectetur explicabo iusto.
                   list_id: Ad quo.
                   name: Maxime recusandae velit.
                   size: 876045623713169027
-                - category: standard
+                  will_create: true
+                - category: current_registrants
                   hubspot_url: Consequuntur autem velit.
                   key: Et nisi voluptas est saepe vel.
                   label: Facere nulla minima consectetur explicabo iusto.
                   list_id: Ad quo.
                   name: Maxime recusandae velit.
                   size: 876045623713169027
+                  will_create: true
+            standard_list:
+                hubspot_url: Aliquam quis dicta voluptas odio quo.
+                list_id: Quia nihil qui ab accusamus tempora culpa.
+                name: Eaque dicta qui numquam.
+                size: 4504693386713616226
         required:
             - lists
     LfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsResponseBody:
@@ -21593,6 +22125,24 @@ definitions:
         example:
             code: "401"
             message: Unauthorized.
+        required:
+            - code
+            - message
+    UserListsConflictError:
+        title: UserListsConflictError
+        type: object
+        properties:
+            code:
+                type: string
+                description: HTTP status code
+                example: "409"
+            message:
+                type: string
+                description: Error message
+                example: user lists cannot be listed per project on an ad account shared across foundations; enter the user-list resource name directly
+        example:
+            code: "409"
+            message: user lists cannot be listed per project on an ad account shared across foundations; enter the user-list resource name directly
         required:
             - code
             - message

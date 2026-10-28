@@ -147,6 +147,10 @@ type msAdGroup struct {
 	AdGroupType string `json:"AdGroupType"`
 	Language    string `json:"Language"`
 	CpcBid      *msBid `json:"CpcBid,omitempty"`
+	// StartDate / EndDate are the ad group's flight dates (flight.go), OMITTED when not
+	// requested so Microsoft keeps its defaults (serve from today; no end).
+	StartDate *msDate `json:"StartDate,omitempty"`
+	EndDate   *msDate `json:"EndDate,omitempty"`
 }
 
 // createAdGroupsRequest is the POST /AdGroups body. The v13 AddAdGroups operation
@@ -265,6 +269,8 @@ type targeting struct {
 	keywords  []Keyword
 	cpcBid    float64
 	cpcBidSet bool
+	// flight is the validated ad-group flight window; its zero value sends no dates.
+	flight flight
 }
 
 // NOTE: geo targeting has no field here. The CAMPAIGN-level location criterion ids reach every
@@ -317,7 +323,7 @@ func (c *Client) createAdGroupAndAd(
 	// (idempotent), the create is a mutation (not retried on 429). A cancellation
 	// during the lookup is a clean abort (nothing new created), but the CAMPAIGN
 	// already exists, so it is surfaced as a reconcilable partial rather than (nil,err).
-	adGroupID, existed, err := c.findOrCreateAdGroup(ctx, campaignID, adGroupName, tgt.cpcBid, tgt.cpcBidSet)
+	adGroupID, existed, err := c.findOrCreateAdGroup(ctx, campaignID, adGroupName, tgt.cpcBid, tgt.cpcBidSet, tgt.flight)
 	if err != nil {
 		// ORDER MATTERS. createOutcomeAmbiguous catches a transportError FIRST — a ctx-cancel
 		// mid-HTTP-Do is wrapped as a transportError (whose Unwrap exposes context.Canceled),
@@ -339,6 +345,9 @@ func (c *Client) createAdGroupAndAd(
 	// bidApplied: the requested bidding reached Microsoft only when this run created BOTH the
 	// campaign (the BiddingScheme) and the ad group (the CpcBid). See CampaignResult.BidApplied.
 	bidApplied := !alreadyExisted && !adGroupExisted
+	// flightApplied: the requested flight dates reached Microsoft only when this run CREATED the
+	// ad group that carries them. See CampaignResult.FlightApplied.
+	flightApplied := tgt.flight.set() && !adGroupExisted
 	if in.BiddingScheme != "" && !bidApplied {
 		reused := fmt.Sprintf("campaign %s", campaignID)
 		if !alreadyExisted {
@@ -359,6 +368,16 @@ func (c *Client) createAdGroupAndAd(
 		// the account-currency minimum, and an operator reading these steps needs to know that
 		// the campaign has a real (if minimal) bid rather than none at all.
 		*steps = append(*steps, fmt.Sprintf("Ad group created: %s (PAUSED, no CpcBid set — Microsoft applies the account-currency minimum)", adGroupID))
+	}
+	// The flight window is reported on its own line, after the create/reuse line it qualifies.
+	// A REUSED ad group keeps its existing schedule, like its bid, so say so rather than let
+	// the row's recorded dates imply they were applied.
+	if tgt.flight.set() {
+		if existed {
+			*steps = append(*steps, fmt.Sprintf("Warning: flight dates NOT applied to reused ad group %s; its existing schedule is unchanged — verify the ad group dates in Microsoft Advertising", adGroupID))
+		} else {
+			*steps = append(*steps, fmt.Sprintf("Ad group flight dates set: %s", tgt.flight))
+		}
 	}
 
 	adGroupWithIDPartial := func() *CampaignResult {
@@ -511,6 +530,7 @@ func (c *Client) createAdGroupAndAd(
 				// This run created something only if at least one keyword was new.
 				r.AlreadyExisted = alreadyExisted && adGroupExisted && adExisted && len(keywordIDs) == 0
 				r.BidApplied = bidApplied
+				r.FlightApplied = flightApplied
 				r.Steps = *steps
 				return r, nil
 			case createOutcomeAmbiguous(kerr) || errors.Is(kerr, errNoID):
@@ -544,6 +564,7 @@ func (c *Client) createAdGroupAndAd(
 		*steps = append(*steps, fmt.Sprintf("Keywords attached: %d (PAUSED — enable them with the campaign)", len(keywordIDs)))
 		r.AlreadyExisted = false // this run created keywords, so the tree is not untouched
 		r.BidApplied = bidApplied
+		r.FlightApplied = flightApplied
 		r.Steps = *steps
 		return r, nil
 	}
@@ -559,6 +580,7 @@ func (c *Client) createAdGroupAndAd(
 	// run did produce something new, so the field must be false (its documented contract).
 	r.AlreadyExisted = alreadyExisted && adGroupExisted && adExisted
 	r.BidApplied = bidApplied
+	r.FlightApplied = flightApplied
 	r.Steps = *steps
 	return r, nil
 }
@@ -594,14 +616,15 @@ func unconfirmedLookupErr(ctx context.Context, ferr error) error {
 	return fmt.Errorf("idempotency lookup failed (cannot confirm the entity is absent; verify before retrying): %w: %w", ferr, errNoID)
 }
 
-func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name string, cpcBid float64, cpcBidSet bool) (id string, existed bool, err error) {
+func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name string, cpcBid float64, cpcBidSet bool, fl flight) (id string, existed bool, err error) {
 	if existingID, ferr := c.findAdGroupByName(ctx, campaignID, name); ferr != nil {
 		return "", false, unconfirmedLookupErr(ctx, ferr)
 	} else if existingID != "" {
 		// A REUSED ad group keeps whatever bid it already has. This create-only path is not the
 		// place to push a new CpcBid onto a group a previous run (or a human) already configured:
 		// silently re-bidding an existing ad group would change what a live campaign pays on what
-		// is meant to be an idempotent retry.
+		// is meant to be an idempotent retry. Its flight dates are left alone for the same
+		// reason; createAdGroupAndAd records that in a warning step.
 		return existingID, true, nil
 	}
 	adGroup := msAdGroup{
@@ -613,6 +636,8 @@ func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name strin
 	if cpcBidSet {
 		adGroup.CpcBid = &msBid{Amount: cpcBid}
 	}
+	adGroup.StartDate = fl.start
+	adGroup.EndDate = fl.end
 	req := createAdGroupsRequest{
 		CampaignId: json.Number(campaignID),
 		AdGroups:   []msAdGroup{adGroup},

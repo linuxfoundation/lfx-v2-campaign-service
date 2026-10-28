@@ -465,6 +465,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/google-ads/keywords", true},
 		{"/projects/p1/google-ads/audience", true},
 		{"/projects/p1/google-ads/campaign-ref", true},
+		{"/projects/p1/google-ads/geo-targets", true},
+		{"/projects/p1/google-ads/user-lists", true},
 		{"/projects/p1/microsoft-ads/keywords", true},
 		{"/projects/p1/microsoft-ads/audience", true},
 		{"/projects/p1/microsoft-ads/audience/x", false},

@@ -4552,9 +4552,10 @@ type CampaignSettingsFieldResponseBody struct {
 	// nothing was recorded there — not because the field has no recorded side. On
 	// Microsoft Advertising, Meta, Reddit and X the COMPARED settings are
 	// `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and
-	// `end_date` on Meta, Reddit and X (a Microsoft campaign carries no flight
-	// dates, so they are not reported there); `status` and `bidding_strategy_type`
-	// are upstream-only on all four (since LFXV2-2665 their create paths record an
+	// `end_date` on Meta, Reddit and X (Microsoft keeps flight dates on the ad
+	// group, not the campaign, and this read does not read the ad group, so they
+	// are not reported there); `status` and `bidding_strategy_type` are
+	// upstream-only on all four (since LFXV2-2665 their create paths record an
 	// `automatic` or `manual` choice — the campaign's `bidding_strategy` — but
 	// that vocabulary is deliberately not mapped onto each platform's strategy
 	// enum, for the reason given for Google above); Microsoft also reports
@@ -5041,7 +5042,22 @@ type CampaignCreateInputRequestBody struct {
 	// null` are refused), or a bid breaking these rules is refused synchronously
 	// with 400 "invalid campaign config: <configKey>.bidding: ..." before any job
 	// exists. googleAdsConfig.bidding is refused with 400 (use
-	// googleAdsConfig.biddingStrategy).
+	// googleAdsConfig.biddingStrategy). FLIGHT DATES: metaConfig (required) and
+	// microsoftConfig (optional) take `startDate` and `endDate` as YYYY-MM-DD
+	// strings that must be real calendar dates, with the start not before today
+	// and the end after the start. For metaConfig today is the UTC calendar day.
+	// For microsoftConfig it is the calendar day at UTC-12, with or without
+	// timeZone, so only a date already past in every time zone is refused up
+	// front; Microsoft reads the dates in the campaign's time zone and remains the
+	// final judge. Microsoft Advertising sets them on the campaign's AD GROUP
+	// (AdGroup.StartDate/EndDate), each independently optional: an omitted
+	// startDate leaves Microsoft's default (eligible from today, so an endDate
+	// alone must be after today) and an omitted endDate runs until stopped;
+	// omitting both creates the campaign exactly as before. An invalid Microsoft
+	// date fails the platform job before anything is created, as an invalid Meta
+	// date does. Microsoft dates are recorded on the campaign row only when this
+	// run created the ad group that carries them; a retry that reuses an existing
+	// ad group leaves its schedule unchanged and records no dates.
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
@@ -5051,10 +5067,9 @@ type CampaignCreateInputRequestBody struct {
 	// flight or needs reconciliation is reported exactly as a retry would be. The
 	// version is tracked by this service only and is never shown on the ad
 	// platform as a label. Supported on microsoft-ads only for now; any other
-	// platform in the request is refused with 400. Until the follow-up release
-	// removes the one-campaign-per-slot index, a request on a platform that
-	// already has a live campaign fails that platform with 'not available yet' and
-	// creates nothing.
+	// platform in the request is refused with 400. Two concurrent requests that
+	// both find the same complete campaign create one new campaign between them,
+	// not two: the second is reported as a reuse of (or skipped behind) the first.
 	NewVersion bool `form:"new_version" json:"new_version" xml:"new_version"`
 }
 

@@ -261,6 +261,15 @@ var AccountMonitorScopeConflictError = Type("account-monitor-scope-conflict-erro
 	Required("reason")
 })
 
+// UserListsConflictError is the 409 body of list-google-ads-user-lists: the platform's ad account
+// is shared across foundations, so its user lists cannot be listed per project. It has its own
+// type for the reason AccountMonitorConflictError does: ConflictError's published example is a
+// connection collision (`already_exists`) this method never returns. It carries no `reason`,
+// since the method has exactly one kind of conflict.
+var UserListsConflictError = Type("user-lists-conflict-error", func() {
+	errorAttrs("409", "user lists cannot be listed per project on an ad account shared across foundations; enter the user-list resource name directly")
+})
+
 var PreconditionFailedError = Type("precondition-failed-error", func() {
 	errorAttrs("412", "The supplied ETag does not match the current version.")
 })
@@ -1220,7 +1229,7 @@ var AccountMonitorCampaign = Type("account-monitor-campaign", func() {
 	Attribute("end_date", String, "The campaign's flight end date, RFC 3339 date-only (YYYY-MM-DD). Empty when the platform did not report one.", func() { Example("2026-11-30") })
 	Attribute("pacing_unknown", Boolean, "True when pacing could not be computed at all: either the flight dates needed for pacing_pct were unavailable, or the campaign has no usable budget to pace against. A renderer MUST NOT treat pacing_pct as meaningful when this is true.", func() { Example(false) })
 	Attribute("is_search_channel", Boolean, "Google Ads only: true when the campaign's advertising_channel_type is SEARCH. Always false for LinkedIn/Meta/Reddit rows.", func() { Example(true) })
-	Attribute("fetch_failed", Boolean, "True when some part of this row's upstream data could not be trusted: either its per-campaign metrics fetch failed outright (numeric fields left at their zero value), or, for Google Ads, its budget field was present but unparseable alongside otherwise-good metrics. A renderer MUST check this before treating any of this row's fields, zero or not, as a fully trusted reading.", func() { Example(false) })
+	Attribute("fetch_failed", Boolean, "True when some part of this row's upstream data could not be trusted. WHICH part is not conveyed, and it is NOT always the metrics. The shapes it takes include: a per-campaign metrics fetch that failed outright, leaving that read's delivery metrics (spend, impressions, clicks, ctr) at their zero value while fields sourced from a different call — a budget read from the campaign list, say — may still be real; a budget or flight value that was present but unparseable alongside metrics that were read fine; and a spend that could not be parsed while impressions and clicks are real. Read those as examples rather than a closed set — every platform sets this flag and each has its own partial cases. A renderer MUST NOT treat ANY of this row's fields, zero or not, as a fully trusted reading.", func() { Example(false) })
 	Attribute("pacing_pct", Float64, "spend / expected-spend * 100. Meaningless when pacing_unknown is true.", func() { Example(42) })
 	Attribute("pacing_label", String, "The pacing classification derived from pacing_pct. Meaningless when pacing_unknown is true — a fetch-failed row keeps the placeholder value \"normal\" rather than carrying no label at all, since the enum has no unknown member.", func() {
 		Enum("normal", "underspending", "constrained", "overspending")
@@ -1751,6 +1760,9 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
 	})
+
+	// Targeting lookups (design/google_ads_lookups.go): the geo target and user-list pickers.
+	googleAdsLookupMethods()
 
 	Method("get-meta-ads-audience", func() {
 		Description("Read Meta audience insights — age and gender (one combined breakdown) and placement " +

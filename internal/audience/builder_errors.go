@@ -102,3 +102,60 @@ func (e *ComposePartialError) Error() string {
 }
 
 func (e *ComposePartialError) Unwrap() []error { return []error{ErrComposePartial, e.Err} }
+
+// ErrStandingListConflict means a list already holds the name of one of the service's
+// standing suppression lists (the project's standard list, or an edition's current
+// registrants) but is not a list the service can safely reuse: not DYNAMIC, or selecting
+// something other than what the name promises. List names are unique per portal, so the
+// service can neither reuse it nor create its own beside it; an operator must rename or
+// remove the conflicting list in HubSpot.
+var ErrStandingListConflict = errors.New("audience: a list holding a standing suppression list's name cannot be reused")
+
+// StandingListConflictError names the conflicting list and why it cannot be reused. Name
+// and ListID are the portal's own; Reason is this service's text and never upstream
+// material.
+type StandingListConflictError struct {
+	Name   string
+	ListID string
+	Reason string
+}
+
+func (e *StandingListConflictError) Error() string {
+	return fmt.Sprintf("HubSpot list %q (id %s) %s; rename or remove it in HubSpot so the service can use its own list under that name", e.Name, e.ListID, e.Reason)
+}
+
+func (e *StandingListConflictError) Unwrap() error { return ErrStandingListConflict }
+
+// ExclusionOverlapError is a selection that would both send to and suppress one list, found
+// only once the suppressions were RESOLVED: the standing standard list stands in for the
+// selected standard lists, and current_registrants_event adds the edition's registrants list,
+// so a list the caller included can turn up among the exclusions without appearing in the
+// request's own suppression ids. Wraps ErrInvalidRequest: the request must change. Role says
+// how the list became an exclusion; Name is the portal's own and may be empty.
+type ExclusionOverlapError struct {
+	ListID string
+	Name   string
+	Role   string
+}
+
+func (e *ExclusionOverlapError) Error() string {
+	list := "list " + e.ListID
+	if e.Name != "" {
+		list = fmt.Sprintf("list %s (%q)", e.ListID, e.Name)
+	}
+	return fmt.Sprintf("%s is %s, and it is also a list this send goes to; a list cannot be both sent to and suppressed — remove it from the inclusion lists or drop the selection that suppresses it", list, e.Role)
+}
+
+func (e *ExclusionOverlapError) Unwrap() error { return ErrInvalidRequest }
+
+// FieldError is a request field whose value can never work, with the reason in the caller's
+// terms. Wraps ErrInvalidRequest; the handler answers 400 with Error(), which names the field,
+// instead of the generic invalid-request text that names neither.
+type FieldError struct {
+	Field  string
+	Reason string
+}
+
+func (e *FieldError) Error() string { return e.Field + ": " + e.Reason }
+
+func (e *FieldError) Unwrap() error { return ErrInvalidRequest }

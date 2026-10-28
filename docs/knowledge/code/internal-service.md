@@ -130,16 +130,31 @@ version/If-Match (`428` when missing, `412` on mismatch).
 operator who asks for another campaign on a platform the brief already has one on — the service
 used to hand back the first campaign as a success. `create-campaigns` now takes `new_version`,
 threaded as `StartOptions.NewVersion` (`Start` is `StartWithOptions` with the zero value). In
-`dispatchPlatform` the lookup returns the slot's LATEST campaign, and the claim takes a
-`slotVersion`: the latest one's for a retry, `latest+1` when `NewVersion` is set AND the latest
-is complete, and `1` on an empty slot. An UNFINISHED latest campaign is never built on — the
+`dispatchPlatform` the lookup returns the slot's LATEST live campaign, and the claim takes a
+`slotVersion`: the latest one's for a retry, and `1` on a slot never used. With `NewVersion` set
+it is numbered past every version the slot has EVER used, deleted rows included: `max(latest,
+maxUsed)+1` when the latest is complete, and `maxUsed+1` when every version was deleted (live 1
+plus deleted 2 gives 3, not 2). A deleted campaign keeps its upstream name, which its version
+composed, so reusing that version would let a name-based lookup hand the deleted campaign back.
+For `NewVersion` the lookup is `GetCampaignByPlatformWithMaxSlotVersion`: the latest live row
+and that maximum from ONE statement (one snapshot), falling back to the latest deleted row
+(flagged by `is_live`) so the maximum survives when no row is live. Two reads would let a
+concurrent request's claim land between them, and the two requests would pick different next
+versions that the claim could no longer dedupe. Every `new_version` claim (a fresh version, an
+unfinished latest one's, or slot 1 on a never-used slot) goes through `ClaimNewCampaignVersion`,
+which also refuses, under the slot lock, a version held by a soft-deleted row and no live one
+(`domain.ErrSlotVersionUsed`, reported as skipped): a concurrent request completed and deleted it
+between this request's read and its claim, and the live-row index alone would admit a second row
+there. A live row at the version is handed back as usual. `DeleteCampaign` takes the same slot
+lock, so no delete lands between that check and the INSERT. An UNFINISHED latest campaign is never built on — the
 claim targets its own slot version and gets the skip / reconciliation-required answer a retry
 gets, because a second campaign beside an unresolved one would spend twice. The slot version
-reaches the dispatcher on the context (`model.WithDispatchSlotVersion`). While `000022`'s
-three-column index still exists, the claim returns `domain.ErrSlotVersionUnavailable` and the
-platform result is a plain "not available yet" refusal; nothing is created. That index is
-dropped one release after the per-slot adopt/claim lock ships (see the postgres concept), so an
-image-only rollback never returns to a lock-free binary on a schema without it. `CreateCampaigns`
+reaches the dispatcher on the context (`model.WithDispatchSlotVersion`). Since `000051` dropped
+`000022`'s three-column index (one release after the per-slot adopt/claim lock shipped, so an
+image-only rollback never returns to a lock-free binary on a schema without it — see the postgres
+concept), the claim for the next version simply succeeds and the second campaign is created beside
+the first; the expand-phase "not available yet" refusal and `domain.ErrSlotVersionUnavailable` are
+gone. `CreateCampaigns`
 refuses `new_version` synchronously (400, before a job exists) for any platform outside
 `model.ProviderSupportsSlotVersions` — today Microsoft only, because the other providers reuse
 campaigns by a name that does not yet vary by slot version (see the dispatch concept).
@@ -2073,7 +2088,15 @@ desynchronise the column from the send set the dispatcher actually uses. `includ
 is response-only — no PATCH can set it. The email wizard's `SetWizardSendList` resolves the
 audience through `SendListIDs()` too, passes every list to `SetSendList`, and reports them as
 `to.ils_list_ids` beside the existing `ils_list_id` (the first). Its explicit `send_list_ids`
-override still refuses more than one id; that refusal predates multi-include and is unchanged.
+override still refuses more than one id; that refusal predates multi-include and is unchanged. Before
+`SetSendList`, `wizardStandingCoversSendList` runs `audience.StandingSendCheck`, as dispatch's
+`standingCoversSendList` does: it reads the DYNAMIC send lists' filters (at most 50; the rest, and
+static lists, by id only), finds the standing list among the supplied suppressions and the lists'
+own NOT_IN_LIST exclusions (by name search or, when that misses, by reading them, at most 50), and
+answers 409 naming the lists when it covers a send list (with the standing list among the
+suppressions) or an IN_LIST source in an OR alternative where it is in effect: everywhere when the
+email suppresses it, otherwise only in an alternative that excludes it itself. A failed read, or a
+DYNAMIC list read back without a filter tree, is a 503 with the draft untouched. No send is refused for its size.
 
 `GetAudienceBuilderCapabilities` returns no error on purpose — an unusable connection is this
 endpoint's ANSWER, not its failure, and it is what lets the UI render one explanatory banner
@@ -2085,22 +2108,48 @@ response header — which a proxying BFF does not see. So the BODY is the discri
 `ComposePartial` body carries whichever of three fields describes what actually happened, and the
 presence of ANY of them is the discriminator.
 
-**Five shapes are reachable, and only ONE carries `suppression`** — so keying on
-`suppression.list_id` alone silently rethrows the other three as ordinary failures. That is the
-worst available outcome here, because the fields it discards are the deterministic NAMES the
-operator needs to find lists that may already exist:
+**A current deployment produces two shapes.** Since 2026-10-19 compose creates no suppression list
+of its own (it excludes the project's standing lists, found by name and reused), so the only create
+that can be left unfinished is the master's:
 
-- `suppression` set — the suppression list definitely exists; the master create failed.
-- `suppression_name` set — the suppression create itself is UNCONFIRMED (no id came back).
-- `master_name` set — no exclusions requested, or suppression failed outright; master unconfirmed.
-- `suppression` + `master_name` — suppression exists, master unconfirmed.
-- `master` set — a RECORDING compose (one carrying `brief_id`) whose lists were both created and
-  whose attachment to the brief failed. The only shape with a CONFIRMED master object rather than
-  a name: the lists are usable, so the operator attaches one by hand instead of composing again.
+- `master_name` set — the master create is UNCONFIRMED (no id came back); search for it by name.
+- `master` set, nothing else — a RECORDING compose (one carrying `brief_id`) whose master was
+  created and whose attachment to the brief failed. `ComposeAudienceMaster` builds it as
+  `ComposePartialError{Master}` and deliberately leaves `Suppression` out, even when the master
+  excludes the project's STANDING standard list: that list is shared and reused, nothing of it is
+  to reconcile, and a client built for the legacy field (lfx-self-serve main's partial banner says
+  "orphaned ... delete it") would have the operator delete suppressions every other audience uses.
+  The only shape with a CONFIRMED master object rather than a name: the operator attaches it by
+  hand. Composing again is not the remedy, because a master created under its derived name is not
+  found by a repeat, which creates a second master under the fingerprinted name.
 
-`suppression` and `suppression_name` are never both set. See `docs/api-catalog.md` for the
-authoritative list. This is what lets a caller show the operator what WAS or MAY HAVE BEEN created
-rather than offering a retry that would duplicate it — compose is not idempotent.
+The shapes that carry `suppression` or `suppression_name` are LEGACY, from the combined suppression
+list compose used to create: they stay in the contract and `composePartialMessage` still words them
+(without "combined"), but no current path produces them.
+A caller must still key on the presence of ANY of the fields, never on `suppression.list_id`
+alone. See `docs/api-catalog.md` for the authoritative list.
+This is what lets a caller show the operator what WAS or MAY HAVE BEEN created rather than offering
+a retry that would duplicate it — compose is not idempotent.
+
+A successful compose returns `suppression_list_ids`: every list the master excludes, in the order
+`composedSuppressionIDs` gives both compose and attach-existing (the standing standard list first
+when used, then each other excluded list, the current-registrants list last, each list once in
+first-seen order: the standing list's own id selected beside the full standard set is recorded
+once, and `suppressionSummary` counts distinct lists), and the order the
+recorded row holds. `suppression` alone is set only for a full standard set, so without the ids a
+caller could not learn what else was excluded, including a current-registrants list compose just
+created. attach-existing returns the same ids from the recorded row, which are therefore NOT the ids
+it was sent, and it may itself CREATE up to two lists — the standing standard list and the
+edition's current-registrants list, each on first use.
+
+`audience.FieldError` (a request field that can never work, e.g. a yearless
+`current_registrants_event`) and `audience.ExclusionOverlapError` map to `400` with their own
+message, above the generic `ErrInvalidRequest` arm whose text names the event URL instead.
+`audience.ErrStandingListConflict` (a `StandingListConflictError` naming the list) maps to `409`
+`ConflictError` with that message in `audienceExploreErr`: a list already holds one of the standing
+names but cannot be reused (not a DYNAMIC contact list, a standing list that must grow but is not a
+plain union of lists, or a registrants list that does not select exactly that edition). A retry
+hits the same list; an operator must rename or remove it.
 
 There is no streaming variant: Goa v3 has no SSE encoding, so `discover` is a synchronous POST
 here and any progress feel is the caller's own concern.

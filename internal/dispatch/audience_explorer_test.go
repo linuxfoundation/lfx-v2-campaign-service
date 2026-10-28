@@ -347,77 +347,38 @@ func TestComposePartialError_CarriesTheOrphanForward(t *testing.T) {
 		"the orphan's id is what lets the UI link an operator straight to it in HubSpot")
 }
 
-// TestComposeMaster_SuppressionCreateUnconfirmed_ReturnsPartialWithNameOnly drives
-// the hubspot.IsUnconfirmed branch ComposeMaster takes on the suppression create,
-// through a real HTTP round trip rather than the ComposePartialError type alone
-// (TestComposePartialError_CarriesTheOrphanForward covers that in isolation). A
-// 2xx response with no listId is HubSpot's own signature for "may have created it,
-// verify before retrying" -- CreateList surfaces that as unconfirmed, and this
-// pins that ComposeMaster reports the orphan by NAME only: an unconfirmed create
-// has no id to give the operator, and inventing one (or a "555" left over from a
-// prior test) would send them to a list that may not exist.
-func TestComposeMaster_SuppressionCreateUnconfirmed_ReturnsPartialWithNameOnly(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/crm/v3/lists/search":
-			// The pre-create name check: no list holds either name yet.
-			_, _ = io.WriteString(w, `{"lists":[]}`)
-		case hubSpotTokenInfoPath:
-			_, _ = io.WriteString(w, `{"hubId":8112310}`)
-		default:
-			// 2xx with no listId: HubSpot may have created the list, but CreateList
-			// cannot confirm it, so this is the unconfirmed case under test.
-			_, _ = io.WriteString(w, `{}`)
-		}
-	}))
-	defer srv.Close()
+// TestComposeMaster_ExclusionsCreateNoSuppressionList: a compose whose exclusions are not the
+// standard set excludes them directly, so its only create is the master. There is no
+// per-compose suppression list left to orphan.
+func TestComposeMaster_ExclusionsCreateNoSuppressionList(t *testing.T) {
+	srv, created := composeNameServer(t, nil)
+	x := composeExplorer(srv.URL)
 
-	repo := &scopedConnReader{rows: map[string]*model.Connection{
-		"proj-1": activeHubSpotConn(goodHubSpotCreds),
-	}}
-	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
-	x := NewAudienceExplorer(builder, nil, nil, nil)
-
-	_, err := x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+	outcome, err := x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
 		ListIDs:        []string{"111"},
 		ExcludeListIDs: []string{"222"},
 		Name:           "KubeCon NA 2026 — master",
 	})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, audience.ErrComposePartial)
-
-	var partial *audience.ComposePartialError
-	require.ErrorAs(t, err, &partial)
-	assert.Empty(t, partial.Suppression.ListID,
-		"an unconfirmed create has no id to report; the deterministic name is the only reconcile key")
-	assert.NotEmpty(t, partial.Suppression.Name,
-		"the name is what lets an operator search HubSpot for a list that may already exist")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"KubeCon NA 2026 — master"}, created())
+	assert.Nil(t, outcome.Suppression)
+	assert.Equal(t, []string{"222"}, outcome.AttachedSuppressionIDs)
 }
 
-// TestComposeMaster_MasterCreateUnconfirmed_ReturnsPartialWithMasterName mirrors
-// TestComposeMaster_SuppressionCreateUnconfirmed_ReturnsPartialWithNameOnly for the
-// OTHER half of compose: the master create itself is the one that comes back
-// unconfirmed. Before this fix, ComposeMaster only checked hubspot.IsUnconfirmed on
-// the SUPPRESSION create -- an unconfirmed MASTER create fell through to a bare
-// wrapped error, silently dropping the one signal ("HubSpot may have created it
-// under this name") an operator needs before deciding whether to retry.
+// TestComposeMaster_MasterCreateUnconfirmed_ReturnsPartialWithMasterName: the master create
+// comes back unconfirmed, and ComposeMaster reports the one signal ("HubSpot may have created
+// it under this name") an operator needs before deciding whether to retry.
 func TestComposeMaster_MasterCreateUnconfirmed_ReturnsPartialWithMasterName(t *testing.T) {
-	var suppressionCreated atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.URL.Path == "/crm/v3/lists/search":
-			// The pre-create name check: no list holds either name yet.
+		switch r.URL.Path {
+		case "/crm/v3/lists/search":
+			// The pre-create name check, and no standard list resolves.
 			_, _ = io.WriteString(w, `{"lists":[]}`)
-		case r.URL.Path == hubSpotTokenInfoPath:
+		case hubSpotTokenInfoPath:
 			_, _ = io.WriteString(w, `{"hubId":8112310}`)
-		case r.URL.Path == "/crm/v3/lists" && r.Method == http.MethodPost && !suppressionCreated.Load():
-			// First create: the combined suppression list, which succeeds normally.
-			suppressionCreated.Store(true)
-			_, _ = io.WriteString(w, `{"list":{"listId":"999","name":"suppression","objectTypeId":"0-1","size":0}}`)
 		default:
-			// Second create: the master, which is unconfirmed -- a 2xx with no listId.
+			// The master create: a 2xx with no listId, so HubSpot may have created it.
 			_, _ = io.WriteString(w, `{}`)
 		}
 	}))
@@ -441,8 +402,7 @@ func TestComposeMaster_MasterCreateUnconfirmed_ReturnsPartialWithMasterName(t *t
 	require.ErrorAs(t, err, &partial)
 	assert.Equal(t, "KubeCon NA 2026 — master", partial.MasterName,
 		"the master's deterministic name is the only reconcile key an unconfirmed create can give")
-	assert.Equal(t, "999", partial.Suppression.ListID,
-		"the suppression list DID confirm-create, so its real id must still be reported alongside the unconfirmed master")
+	assert.Empty(t, partial.Suppression.ListID, "compose creates no suppression list of its own")
 }
 
 // TestRunQA_CheckFourRunsOnlyWhenTheEventIsNamed pins the present/omitted contract end to end,
@@ -701,7 +661,7 @@ func TestSuppressionLists_BestMatch_PrefersKnownSizeOverUnreported(t *testing.T)
 	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
 	x := NewAudienceExplorer(builder, nil, nil, nil)
 
-	rows, err := x.SuppressionLists(context.Background(), "proj-1", "CNCF", "")
+	rows, _, err := x.SuppressionLists(context.Background(), "proj-1", "CNCF", "", "")
 	require.NoError(t, err)
 
 	var brandRow *audience.SuppressionRow
@@ -981,7 +941,7 @@ func TestSuppressionLists_BestMatch_RanksAcrossProbesNotWithinOne(t *testing.T) 
 	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
 	x := NewAudienceExplorer(builder, nil, nil, nil)
 
-	rows, err := x.SuppressionLists(context.Background(), "proj-1", "", "Synthetic Summit")
+	rows, _, err := x.SuppressionLists(context.Background(), "proj-1", "", "Synthetic Summit", "")
 	require.NoError(t, err)
 
 	var eventRow *audience.SuppressionRow
@@ -1906,12 +1866,14 @@ func composeExplorer(srvURL string) *AudienceExplorer {
 	repo := &scopedConnReader{rows: map[string]*model.Connection{
 		"proj-1": activeHubSpotConn(goodHubSpotCreds),
 	}}
-	return NewAudienceExplorer(NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srvURL)), nil, nil, nil)
+	x := NewAudienceExplorer(NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srvURL)), nil, nil, nil)
+	x.sleep = func(context.Context, time.Duration) error { return nil }
+	return x
 }
 
 // TestComposeMaster_TakenName_CreatesUnderTheSelectionFingerprint is the "master lists are
 // not building" regression: a second compose for one event derived the same name as the
-// first, and HubSpot refused the duplicate. Both lists must move to the fingerprinted names.
+// first, and HubSpot refused the duplicate. The master must move to the fingerprinted name.
 func TestComposeMaster_TakenName_CreatesUnderTheSelectionFingerprint(t *testing.T) {
 	const base = "AGNTCon Japan"
 	srv, created := composeNameServer(t, map[string]string{base + " - Master": "31349"})
@@ -1923,22 +1885,18 @@ func TestComposeMaster_TakenName_CreatesUnderTheSelectionFingerprint(t *testing.
 	require.NoError(t, err)
 
 	tag := audience.SelectionFingerprint([]string{"111"}, []string{"222"})
-	assert.Equal(t, []string{
-		audience.WithFingerprint(base+" - Master - Combined Suppression", tag),
-		audience.WithFingerprint(base+" - Master", tag),
-	}, created())
+	assert.Equal(t, []string{audience.WithFingerprint(base+" - Master", tag)}, created())
 	assert.Equal(t, audience.WithFingerprint(base+" - Master", tag), outcome.Master.Name)
 }
 
-// TestComposeMaster_SameSelectionAgain_ReusesItsEarlierLists: re-running an identical
-// compose finds its own fingerprinted lists and returns them, creating nothing.
-func TestComposeMaster_SameSelectionAgain_ReusesItsEarlierLists(t *testing.T) {
+// TestComposeMaster_SameSelectionAgain_ReusesItsEarlierMaster: re-running an identical
+// compose finds its own fingerprinted master and returns it, creating nothing.
+func TestComposeMaster_SameSelectionAgain_ReusesItsEarlierMaster(t *testing.T) {
 	const name = "AGNTCon Japan - Master"
 	tag := audience.SelectionFingerprint([]string{"111"}, []string{"222"})
 	srv, created := composeNameServer(t, map[string]string{
 		name:                                "31349",
 		audience.WithFingerprint(name, tag): "40001",
-		audience.WithFingerprint(name+" - Combined Suppression", tag): "40000",
 	})
 	x := composeExplorer(srv.URL)
 
@@ -1948,44 +1906,9 @@ func TestComposeMaster_SameSelectionAgain_ReusesItsEarlierLists(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, created(), "an identical compose must not create a duplicate list")
 	assert.Equal(t, "40001", outcome.Master.ListID)
-	require.NotNil(t, outcome.Suppression)
-	assert.Equal(t, "40000", outcome.Suppression.ListID)
+	assert.Equal(t, []string{"222"}, outcome.AttachedSuppressionIDs, "a reused master still records its exclusions")
 	assert.Equal(t, "8112310", outcome.PortalID, "a reused list is still recorded with its portal")
 	assert.Contains(t, outcome.Master.HubSpotURL, "/objectLists/40001/filters")
-}
-
-// TestComposeMaster_ReuseRefusesWhenTheSuppressionListIsGone pins the fail-closed half of the
-// reuse path.
-//
-// Finding the fingerprinted master means this exact selection was composed before -- WITH its
-// suppression, since the fingerprint covers both the includes and the excludes. If that
-// suppression list has since been deleted or renamed in the portal, reusing the master alone
-// returned success with `Suppression == nil`, the audience was recorded with no suppression
-// ids, and the operator believed exclusions applied to a send that had none. For an exclusion
-// list that is an opt-out roster, that emails people who asked not to be.
-//
-// Falling through to create would be wrong too: the master already exists under this
-// fingerprint, so a create duplicates it. Refusing and naming the missing list is the only
-// answer that leaves the operator able to act.
-func TestComposeMaster_ReuseRefusesWhenTheSuppressionListIsGone(t *testing.T) {
-	const name = "AGNTCon Japan - Master"
-	tag := audience.SelectionFingerprint([]string{"111"}, []string{"222"})
-	// The tagged MASTER exists; its tagged suppression does NOT.
-	srv, created := composeNameServer(t, map[string]string{
-		name:                                "31349",
-		audience.WithFingerprint(name, tag): "40001",
-	})
-	x := composeExplorer(srv.URL)
-
-	outcome, err := x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
-		ListIDs: []string{"111"}, ExcludeListIDs: []string{"222"}, Name: name, RecordUnderBriefID: "brief-1",
-	})
-
-	require.Error(t, err, "a reuse that cannot reapply the exclusions must not report success")
-	assert.ErrorIs(t, err, audience.ErrListNotFound)
-	assert.Contains(t, err.Error(), "suppression", "the operator needs to know WHICH list is missing")
-	assert.Nil(t, outcome)
-	assert.Empty(t, created(), "refusing must not duplicate the master that already exists")
 }
 
 // TestAttachExisting_VerifiesEveryListAndCreatesNothing: reusing an earlier send's lists
@@ -2004,6 +1927,9 @@ func TestAttachExisting_VerifiesEveryListAndCreatesNothing(t *testing.T) {
 		case r.URL.Path == "/crm/v3/lists/404":
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = io.WriteString(w, `{"status":"error","message":"not found"}`)
+		case r.URL.Path == "/crm/v3/lists/search":
+			// No standard suppression list resolves, so none is substituted.
+			_, _ = io.WriteString(w, `{"lists":[],"hasMore":false}`)
 		case strings.HasPrefix(r.URL.Path, "/crm/v3/lists/") && r.Method == http.MethodGet:
 			id := strings.TrimPrefix(r.URL.Path, "/crm/v3/lists/")
 			_ = json.NewEncoder(w).Encode(map[string]any{"list": map[string]any{
@@ -2016,7 +1942,7 @@ func TestAttachExisting_VerifiesEveryListAndCreatesNothing(t *testing.T) {
 	defer srv.Close()
 	x := composeExplorer(srv.URL)
 
-	outcome, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, []string{"s1", "31027", "s1"})
+	outcome, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, []string{"s1", "31027", "s1"}, "")
 	require.NoError(t, err)
 	assert.Equal(t, "31027", outcome.Master.ListID)
 	assert.Equal(t, []string{"s1"}, outcome.AttachedSuppressionIDs,
@@ -2029,7 +1955,7 @@ func TestAttachExisting_VerifiesEveryListAndCreatesNothing(t *testing.T) {
 	}
 	mu.Unlock()
 
-	_, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, []string{"404"})
+	_, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, []string{"404"}, "")
 	assert.ErrorIs(t, err, audience.ErrListNotFound)
 
 	// Several include lists: every one is read back, the first is the Master, all are the
@@ -2037,7 +1963,7 @@ func TestAttachExisting_VerifiesEveryListAndCreatesNothing(t *testing.T) {
 	mu.Lock()
 	seq = nil
 	mu.Unlock()
-	outcome, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027", " 31028 ", "31027", "31029"}, []string{"s1"})
+	outcome, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027", " 31028 ", "31027", "31029"}, []string{"s1"}, "")
 	require.NoError(t, err)
 	assert.Equal(t, "31027", outcome.Master.ListID)
 	assert.Equal(t, []string{"31027", "31028", "31029"}, outcome.SourceListIDs)
@@ -2049,10 +1975,10 @@ func TestAttachExisting_VerifiesEveryListAndCreatesNothing(t *testing.T) {
 	mu.Unlock()
 
 	// A missing include list -- not just a missing master -- is the same not-found refusal.
-	_, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027", "404"}, nil)
+	_, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027", "404"}, nil, "")
 	assert.ErrorIs(t, err, audience.ErrListNotFound)
 
-	_, err = x.AttachExisting(context.Background(), "proj-1", []string{" ", ""}, nil)
+	_, err = x.AttachExisting(context.Background(), "proj-1", []string{" ", ""}, nil, "")
 	assert.ErrorIs(t, err, audience.ErrNoInclusionLists)
 }
 

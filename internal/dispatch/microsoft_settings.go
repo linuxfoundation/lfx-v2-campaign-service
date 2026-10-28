@@ -30,9 +30,10 @@ import (
 //     Google), budget_explicitly_shared (a BudgetId attaches a shared Budget, whose amount the
 //     campaign merely echoes) and bidding_strategy_type (BiddingScheme.Type; the create path
 //     sends no strategy and records none, so there is nothing to compare it to).
-//   - not reported: start_date / end_date. A Microsoft campaign carries no flight dates at all,
-//     and the create path records none (applyCampaignConfig is passed ""), so neither side
-//     exists to compare.
+//   - not reported: start_date / end_date. A Microsoft CAMPAIGN carries no flight dates: they
+//     live on the ad group (AdGroup.StartDate/EndDate), which this reader does not read. The
+//     create path does record microsoftConfig.startDate/endDate on the row when supplied, but
+//     with no upstream side read here there is nothing to compare them to.
 //
 // UNITS. DailyBudget is a plain decimal in the ad account's currency — the unit the create path
 // sends cfg.Budget in, unconverted — so it is rendered at the row's two decimal places when it is
