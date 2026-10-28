@@ -94,6 +94,13 @@ type microsoftConfig struct {
 	// ImageAltText is the extension's AlternativeText (at most 35 characters). Optional;
 	// defaults to the event name cut to 35 characters. Only meaningful with ImageAssetID.
 	ImageAltText string `json:"imageAltText"`
+	// StartDate and EndDate are the OPTIONAL flight dates, YYYY-MM-DD — the same keys and
+	// format metaConfig takes. Microsoft schedules delivery on the AD GROUP, so the client sends
+	// them as its StartDate/EndDate; validated (calendar date, start not in the past, end after
+	// start) before anything is created. Omitted, the ad group serves from when a human enables
+	// it and runs until stopped — exactly the behaviour before these fields existed.
+	StartDate string `json:"startDate"` // YYYY-MM-DD
+	EndDate   string `json:"endDate"`   // YYYY-MM-DD
 }
 
 // MicrosoftDispatcher creates Microsoft Advertising (Bing) campaigns for the orchestrator.
@@ -230,6 +237,8 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		CpcBid:          plan.amount,
 		BiddingScheme:   microsoftBiddingScheme(plan),
 		GeoTargets:      cfg.GeoTargets,
+		StartDate:       cfg.StartDate,
+		EndDate:         cfg.EndDate,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: Microsoft
 		// enforces case-insensitive campaign-name uniqueness, so a retry composes the SAME name
 		// and the client's find-first lookup cleanly REUSES the existing campaign
@@ -424,7 +433,8 @@ func microsoftKeywords(in []microsoftKeywordConfig) []microsoft.Keyword {
 // canonicalized, case-insensitive duplicates dropped).
 //
 // Also kept verbatim, because they cannot carry a URL by construction: Budget and CpcBid
-// (numbers), Keywords[].MatchType (only Exact/Phrase/Broad gets past the client, and a
+// (numbers), StartDate/EndDate (YYYY-MM-DD, validated by the client before anything is
+// created), Keywords[].MatchType (only Exact/Phrase/Broad gets past the client, and a
 // snapshot is only written once it has) and GeoTargets (ISO 3166-1 alpha-2 codes,
 // shape-checked by the client before anything is sent).
 //
@@ -459,7 +469,10 @@ func campaignFromMicrosoft(ctx context.Context, r *microsoft.CampaignResult, cfg
 	// SANITIZED COPY (microsoftSnapshotConfig), never cfg itself: config_snapshot is stored
 	// UNENCRYPTED, and the unvalidated free-text timeZone is scrubbed of any link it carries
 	// before it gets there.
-	applyCampaignConfig(ctx, c, cfg.Budget, false, "", "", microsoftSnapshotConfig(cfg))
+	// The flight dates are recorded as Meta's are, so the brief view paces the campaign over its
+	// flight. Absent dates record none, as before. They were validated by the client before
+	// anything was created, so every row that reaches here carries valid or empty dates.
+	applyCampaignConfig(ctx, c, cfg.Budget, false, cfg.StartDate, cfg.EndDate, microsoftSnapshotConfig(cfg))
 	if raw, err := json.Marshal(r); err != nil {
 		// Near-impossible for this plain struct, but do NOT swallow it: on an ambiguous-orphan
 		// path Result is the sole carrier of the reconcile-by-name payload (campaign/ad-group/ad

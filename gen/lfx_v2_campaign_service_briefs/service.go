@@ -182,11 +182,12 @@ type Service interface {
 	// Microsoft Advertising, Meta, Reddit, X (Twitter) Ads and LinkedIn are wired,
 	// and a campaign on any other platform returns 400. The field set is
 	// per-platform too — each platform reports only the settings it can answer
-	// honestly, normalised to the units its create path wrote (Microsoft carries
-	// no flight dates, so reports none) — and on every platform the provenance
-	// rules are the same: a campaign that does not record the account it was
-	// created under, or that belongs to a different account than the connection
-	// now resolves to, is refused 409 before anything is read.
+	// honestly, normalised to the units its create path wrote (Microsoft keeps
+	// flight dates on the ad group, which this read does not read, so reports
+	// none) — and on every platform the provenance rules are the same: a campaign
+	// that does not record the account it was created under, or that belongs to a
+	// different account than the connection now resolves to, is refused 409 before
+	// anything is read.
 	GetCampaignSettings(context.Context, *GetCampaignSettingsPayload) (res *CampaignSettingsReadback, err error)
 	// Read live performance metrics for EVERY campaign on a brief in one request,
 	// by calling each campaign's platform directly. A pure read — never persisted.
@@ -1027,7 +1028,17 @@ type CampaignCreateInput struct {
 	// null` are refused), or a bid breaking these rules is refused synchronously
 	// with 400 "invalid campaign config: <configKey>.bidding: ..." before any job
 	// exists. googleAdsConfig.bidding is refused with 400 (use
-	// googleAdsConfig.biddingStrategy).
+	// googleAdsConfig.biddingStrategy). FLIGHT DATES: metaConfig (required) and
+	// microsoftConfig (optional) take `startDate` and `endDate` as YYYY-MM-DD
+	// strings that must be real calendar dates, with the start not before today's
+	// UTC calendar day and the end after the start. Microsoft Advertising sets
+	// them on the campaign's AD GROUP (AdGroup.StartDate/EndDate), each
+	// independently optional: an omitted startDate leaves Microsoft's default
+	// (eligible from today, so an endDate alone must be after today) and an
+	// omitted endDate runs until stopped; omitting both creates the campaign
+	// exactly as before. An invalid Microsoft date fails the platform job before
+	// anything is created, as an invalid Meta date does. A retry that reuses an
+	// existing Microsoft ad group leaves its dates unchanged.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
@@ -1140,9 +1151,10 @@ type CampaignSettingsField struct {
 	// nothing was recorded there — not because the field has no recorded side. On
 	// Microsoft Advertising, Meta, Reddit and X the COMPARED settings are
 	// `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and
-	// `end_date` on Meta, Reddit and X (a Microsoft campaign carries no flight
-	// dates, so they are not reported there); `status` and `bidding_strategy_type`
-	// are upstream-only on all four (since LFXV2-2665 their create paths record an
+	// `end_date` on Meta, Reddit and X (Microsoft keeps flight dates on the ad
+	// group, not the campaign, and this read does not read the ad group, so they
+	// are not reported there); `status` and `bidding_strategy_type` are
+	// upstream-only on all four (since LFXV2-2665 their create paths record an
 	// `automatic` or `manual` choice — the campaign's `bidding_strategy` — but
 	// that vocabulary is deliberately not mapped onto each platform's strategy
 	// enum, for the reason given for Google above); Microsoft also reports

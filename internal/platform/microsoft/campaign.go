@@ -178,6 +178,12 @@ type CampaignInput struct {
 	// would produce a campaign that spends globally while reporting success — the exact
 	// defect this ticket fixes. See geo.go.
 	GeoTargets []string
+	// StartDate and EndDate are the OPTIONAL flight dates, YYYY-MM-DD, sent as the AD GROUP's
+	// StartDate/EndDate (Microsoft schedules delivery on the ad group; the campaign has no
+	// flight dates). Empty leaves Microsoft's default: serve from today, and run until stopped.
+	// Validated before anything is created — see validateFlightDates.
+	StartDate string
+	EndDate   string
 }
 
 // CampaignResult reports what CreateCampaign created (or found). The campaign NAME
@@ -589,6 +595,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign geo targets invalid: %w", err))
 	}
 
+	// Flight dates go on the ad group, which is created only AFTER the campaign, so they are
+	// checked here: a date Microsoft refused at AddAdGroups would leave a campaign with no ad
+	// group behind.
+	flightDates, err := validateFlightDates(in.StartDate, in.EndDate, c.now())
+	if err != nil {
+		return nil, err
+	}
+
 	var steps []string
 	microsoftAdsURL := "https://ads.microsoft.com/campaign/vnext/campaigns?aid=" + c.account.AccountID
 
@@ -858,7 +872,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// up-front check and the sent value drift apart, and the up-front check is the one that
 	// guarantees nothing is orphaned.
 	return c.createAdGroupAndAd(ctx, in, campaignID, alreadyExisted, &steps, campaignPartial,
-		targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet})
+		targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet, flight: flightDates})
 }
 
 // findCampaignByName returns the id of the campaign whose Name matches name, or "" if
@@ -1228,12 +1242,10 @@ func partialErrorCodes(items []msErrorItem) string {
 	return strings.Join(codes, ",")
 }
 
-// msDate is Microsoft's date object ({Month,Day,Year}), used by ad-group flight dates
-// (a later slice). Microsoft does NOT accept an ISO-8601 string for these fields — it
-// requires the object form — so a helper is provided now to keep the serialization in
-// one reviewed place. Not yet used by any slice — the flight-date work will be its first
-// caller, and naming a specific slice here only dates the comment (MS-4 turned out to be the
-// keyword/bid work, which does not touch it).
+// msDate is Microsoft's date object ({Month,Day,Year}), used by the ad-group flight dates
+// (AdGroup.StartDate / EndDate, see flight.go) and the report date ranges. Microsoft does
+// NOT accept an ISO-8601 string for these fields — it requires the object form — so the
+// serialization is kept in this one reviewed place.
 type msDate struct {
 	Month int `json:"Month"`
 	Day   int `json:"Day"`

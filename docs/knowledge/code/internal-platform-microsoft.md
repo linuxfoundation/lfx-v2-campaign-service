@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/microsoft"
-description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), campaign-level GEO targeting that resolves ISO-2 codes to Microsoft LocationIds through the ingested, cached geographical-locations file and fails closed before any mutating call rather than creating an untargeted campaign that spends everywhere (LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260), and a campaign DAILY-budget read+write (GetCampaignsByIds then UpdateCampaigns) that reports shared, experiment and budget-type facts for the dispatcher to refuse on before the one idempotent PUT (LFXV2-2665), and project-scoped keyword performance as a saved asynchronous KeywordPerformanceReportRequest — submit and single-poll check primitives whose scope is the project's own campaigns only, never AccountIds (LFXV2-2665), and an ad-group CpcBid write (UpdateAdGroups) made only after the same read shows the campaign's own EnhancedCpc or ManualCpc strategy (LFXV2-2665), and keyword levers on a live campaign — pause/remove via UpdateKeywords/DeleteKeywords behind a GetKeywordsByAdGroupId ownership read, and campaign-level negatives via AddNegativeKeywordsToEntities — reported per item, positionally, because neither is atomic (LFXV2-2665), and a campaign-level Image ad extension built from a stored creative asset — image validated against Microsoft's limits (76,800 bytes, 40x20..2592x2048, PNG/JPEG) before any request, an association read that skips the upload when the campaign already has one, then AddMedia, AddAdExtensions and SetAdExtensionsAssociations, each failure classified definite or UNCONFIRMED (LFXV2-2665)."
+description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), campaign-level GEO targeting that resolves ISO-2 codes to Microsoft LocationIds through the ingested, cached geographical-locations file and fails closed before any mutating call rather than creating an untargeted campaign that spends everywhere (LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260), and a campaign DAILY-budget read+write (GetCampaignsByIds then UpdateCampaigns) that reports shared, experiment and budget-type facts for the dispatcher to refuse on before the one idempotent PUT (LFXV2-2665), and project-scoped keyword performance as a saved asynchronous KeywordPerformanceReportRequest — submit and single-poll check primitives whose scope is the project's own campaigns only, never AccountIds (LFXV2-2665), and an ad-group CpcBid write (UpdateAdGroups) made only after the same read shows the campaign's own EnhancedCpc or ManualCpc strategy (LFXV2-2665), and keyword levers on a live campaign — pause/remove via UpdateKeywords/DeleteKeywords behind a GetKeywordsByAdGroupId ownership read, and campaign-level negatives via AddNegativeKeywordsToEntities — reported per item, positionally, because neither is atomic (LFXV2-2665), and a campaign-level Image ad extension built from a stored creative asset — image validated against Microsoft's limits (76,800 bytes, 40x20..2592x2048, PNG/JPEG) before any request, an association read that skips the upload when the campaign already has one, then AddMedia, AddAdExtensions and SetAdExtensionsAssociations, each failure classified definite or UNCONFIRMED (LFXV2-2665), and optional ad-group flight dates (AdGroup.StartDate/EndDate as {Month,Day,Year}) validated like Meta's before any request and omitted entirely when not supplied."
 resource: "internal/platform/microsoft"
 tags:
   - platform-client
@@ -191,8 +191,37 @@ conversion (Google Ads uses micros; Microsoft does not). Input is validated up f
 budget finite (NaN/Inf rejected) and > 0 and <= `maxBudget`; BOTH Project and EventName
 non-empty (on the SANITIZED value); the composed name (`LFX | Search Campaign | Project |
 Event | Suffix`, `|`-and-control-char sanitized) is length-capped in CHARACTERS.
-`toMSDate` renders Microsoft's `{Month,Day,Year}` date object, reserved for the ad-group
-flight dates a later slice needs.
+`toMSDate` renders Microsoft's `{Month,Day,Year}` date object, used by the ad-group flight
+dates (below) and the report date ranges.
+
+## Flight dates (ad group StartDate / EndDate)
+
+Microsoft schedules delivery on the **ad group**, not the campaign: the v13 `AdGroup` has
+optional `StartDate` and `EndDate`, each a Date object (`{Month,Day,Year}`, `msDate` — not an
+ISO string); the `Campaign` object has none. `CampaignInput.StartDate`/`EndDate` (YYYY-MM-DD,
+each independently optional) are validated by `validateFlightDates` (`flight.go`) in the
+`CreateCampaign` prologue, BEFORE the first request, because the ad group is created after
+the campaign and a date refused at AddAdGroups would leave a campaign without one. The rules
+mirror the Meta client's: `^\d{4}-\d{2}-\d{2}$` then a calendar parse (separate refusals for
+format and value), start not before the client clock's UTC calendar day, end strictly after
+the start — or after today when only an end is given, since Microsoft then starts the ad
+group today. Every refusal is a `PreflightRefusal` naming the caller value through
+`domain.CallerValue`.
+
+`findOrCreateAdGroup` sets the two `msAdGroup` fields (`omitempty` pointers), so a create
+with no dates sends exactly the body it sent before: Microsoft then serves from today and
+never ends. A REUSED ad group (found by name on a retry) keeps its existing schedule, like its
+bid; the step "Warning: flight dates NOT applied to reused ad group …" says so. A created
+one gets the step "Ad group flight dates set: start …, end …". `flight_test.go` pins the
+wire shape, the absent-date body, every refusal (with no request sent) and the reuse warning.
+
+Microsoft interprets the dates in the campaign's time zone (`defaultTimeZone`, Pacific,
+unless `TimeZone` is supplied), while "today" here is the UTC day, as in Meta. With the
+default zone, which is behind UTC, a start accepted here is never earlier than Microsoft's
+today; with a caller-supplied zone ahead of UTC, a start of the UTC day can already be
+yesterday there, and Microsoft may refuse it at AddAdGroups, after the campaign exists. That
+refusal has not been observed against the live API; it is the documented reason the rule is
+UTC-day rather than zone-aware, not a tested behaviour.
 
 ## Ad group + ad creation (MS-2.5)
 
