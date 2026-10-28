@@ -15,7 +15,8 @@ Each mode calls the `service.Orchestrator` method its endpoint handler calls, on
 read-only backend. Flags use the endpoint payload's names and rules: the window subset and
 default, `-account-id` and `-days` (7–90), and refusal of the system scope. The report-backed
 reads keep their saved reports in process memory and poll until the report finishes. A read
-that never contacted the platform (an empty scope) exits 3, not 0.
+that never contacted the platform (an empty scope) exits 3, not 0. The X reads take the
+service's stats-job lease, so a run never creates X stats jobs alongside a service pod.
 
 The transport allowlist is now per read and provider, and lists each POST by name. The new POSTs are
 Microsoft's `Campaigns/QueryByAccountId` and `Account/Query` for the account monitor, and X's

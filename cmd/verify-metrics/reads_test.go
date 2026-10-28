@@ -666,3 +666,69 @@ func TestRun_ServiceWarningsAreScrubbedOntoStderr(t *testing.T) {
 		}
 	}
 }
+
+// refusingLease is an X stats-job lease held elsewhere: the service's pod owns the account.
+type refusingLease struct{ asked atomic.Int32 }
+
+func (l *refusingLease) Own(context.Context, string) error {
+	l.asked.Add(1)
+	return domain.ErrStatsJobLeaseNotHeld
+}
+
+// The X dispatcher a run builds takes the backend's stats-job lease, so a run never creates X
+// stats jobs alongside a service pod (or another run) that owns the account: refused before
+// any request reaches X.
+func TestRun_TwitterAudienceTakesTheStatsJobLease(t *testing.T) {
+	t.Setenv(constants.EnvTwitterMetricsEnabled, "")
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	enc, err := crypto.NewAESGCM(bytes.Repeat([]byte{5}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext, err := enc.Encrypt([]byte(`{"ConsumerKey":"fake-consumer-key-0123","ConsumerSecret":"` + fakeClientSecret +
+		`","AccessToken":"` + fakeAccessToken + `","AccessTokenSecret":"` + fakeRefreshToken + `"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := &refusingLease{}
+	be := &backend{
+		conns: &fakeConns{conn: &model.Connection{
+			Provider: model.ProviderTwitterAds, AccountID: "18ce54d4x5t", EncryptedCredentials: ciphertext, Status: model.StatusActive,
+		}},
+		campaigns:  &fakeScopes{scopes: []model.ProjectCampaignScope{{PlatformCampaignID: "abc1", Result: json.RawMessage(`{"accountId":"18ce54d4x5t"}`)}}},
+		enc:        enc,
+		statsLease: lease,
+		close:      func() {},
+	}
+	var stdout, stderr bytes.Buffer
+	a := &app{stdout: &stdout, stderr: &stderr, openBackend: func(context.Context) (*backend, error) { return be, nil }, endpoints: endpoints{api: srv.URL}}
+	code := a.run(context.Background(), []string{"-read", "audience", "-provider", "twitter-ads", "-project", "my-project"})
+	if code != exitError {
+		t.Fatalf("exit = %d, want %d; output:\n%s%s", code, exitError, stdout.String(), stderr.String())
+	}
+	if lease.asked.Load() == 0 || hits.Load() != 0 {
+		t.Errorf("lease asked %d time(s), X saw %d request(s); want the lease consulted and X untouched", lease.asked.Load(), hits.Load())
+	}
+	assertNoSecrets(t, stdout.String()+stderr.String())
+}
+
+// get hands out copies: writing through a returned failure time cannot change the store.
+func TestMemReports_GetCopiesTheFailureTime(t *testing.T) {
+	ctx := context.Background()
+	s := newMemAccountReports()
+	key := model.AccountReportKey{ProjectID: "p", Platform: model.ProviderTwitterAds, AccountID: "a", Days: 7}
+	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	_, _ = s.MarkAccountReportPending(ctx, key, model.PendingAccountReport{ReportID: "r"})
+	_, _ = s.FailAccountReport(ctx, key, "r", "x", at)
+	snap, _ := s.GetAccountReport(ctx, key)
+	*snap.LastFailureAt = time.Time{}
+	again, _ := s.GetAccountReport(ctx, key)
+	if !again.LastFailureAt.Equal(at) {
+		t.Errorf("stored failure time = %v, want %v unchanged", again.LastFailureAt, at)
+	}
+}

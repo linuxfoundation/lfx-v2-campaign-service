@@ -47,7 +47,12 @@ type backend struct {
 	// the other reads' orchestrator resolves the project's campaign scope through it.
 	campaigns domain.CampaignReader
 	enc       domain.Encryptor
-	close     func()
+	// statsLease is the service's cross-process X stats-job lease (domain.StatsJobLease), so a
+	// run that creates X stats jobs (the X audience read and account monitor) takes the same
+	// per-account ownership the service's pods take, and never runs jobs alongside one of them
+	// or another run. nil only in tests that build a backend by hand.
+	statsLease domain.StatsJobLease
+	close      func()
 }
 
 // openLiveBackend loads the database and encryption key the way the service's
@@ -69,13 +74,25 @@ func openLiveBackend(ctx context.Context) (*backend, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The lease is a session-level advisory lock (pg_try_advisory_lock), which a READ ONLY
+	// session may take: it writes no row.
+	lease := postgres.NewStatsJobLease(pool)
 	return &backend{
-		conns:     postgres.NewConnectionRepo(pool),
-		campaigns: postgres.NewCampaignRepo(pool),
-		enc:       enc,
-		close:     pool.Close,
+		conns:      postgres.NewConnectionRepo(pool),
+		campaigns:  postgres.NewCampaignRepo(pool),
+		enc:        enc,
+		statsLease: lease,
+		close: func() {
+			closeCtx, cancel := context.WithTimeout(context.Background(), statsLeaseCloseTimeout)
+			lease.Close(closeCtx)
+			cancel()
+			pool.Close()
+		},
 	}, nil
 }
+
+// statsLeaseCloseTimeout bounds releasing the X stats-job lease at exit.
+const statsLeaseCloseTimeout = 5 * time.Second
 
 // dsnSourceVerifyMetrics names where this command's DSN came from, for an operator who has to
 // go and fix it. config.ResolveDatabaseURL reads DATABASE_URL first and otherwise composes one
@@ -104,7 +121,9 @@ func openReadOnlyPool(ctx context.Context, dsn string) (*postgres.Pool, error) {
 	if err != nil {
 		return nil, errors.New("parse database config: invalid database settings (redacted; check host/port/params)")
 	}
-	cfg.MaxConns = 2
+	// Three: the stats-job lease holds one dedicated session for its advisory locks, leaving
+	// two for the reads.
+	cfg.MaxConns = 3
 	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		_, err := conn.Exec(ctx, "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
 		return err
@@ -240,7 +259,11 @@ func newDispatcher(p model.Provider, be *backend, secrets *secretSet, hc *http.C
 		if ep.api != "" {
 			opts = append(opts, twitter.WithBaseURL(ep.api))
 		}
-		return dispatch.NewTwitterDispatcher(conns, enc, opts...), nil
+		d := dispatch.NewTwitterDispatcher(conns, enc, opts...)
+		if be.statsLease != nil {
+			d.SetStatsJobLease(be.statsLease)
+		}
+		return d, nil
 	case model.ProviderLinkedInAds:
 		opts := []linkedin.Option{linkedin.WithHTTPClient(hc)}
 		if ep.api != "" {

@@ -57,7 +57,11 @@ func (m *memReports[K, R, P]) get(key K) (ready *R, pending *P, failure string, 
 		p := *s.pending
 		pending = &p
 	}
-	return ready, pending, s.lastFailure, s.lastFailureAt, true
+	if s.lastFailureAt != nil {
+		at := *s.lastFailureAt
+		failureAt = &at
+	}
+	return ready, pending, s.lastFailure, failureAt, true
 }
 
 func (m *memReports[K, R, P]) markPending(key K, p P) bool {

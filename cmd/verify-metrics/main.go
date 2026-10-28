@@ -31,9 +31,10 @@
 //   - the encryptor it is handed refuses Encrypt;
 //   - a report-backed read's saved-report state is kept in process memory, never the database;
 //   - every upstream request passes a transport that refuses any method other than GET/HEAD,
-//     except the named POSTs the selected read on the selected provider is made of (postAllowlist
-//     in capture.go), before
-//     the request leaves the process;
+//     except the named POSTs the selected read on the selected provider is made of
+//     (postAllowlist in capture.go), before the request leaves the process;
+//   - the X stats jobs a run creates are taken under the service's own stats-job lease, so a run
+//     never creates them alongside a service pod that owns the account;
 //   - write selectors (keyword targeting, keyword actions, negative keywords) are refused.
 //
 // Nothing secret is printed: every decrypted credential value and every Authorization header
