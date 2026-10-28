@@ -244,23 +244,37 @@ rolling back is asking for, including whatever the new constraint existed to pre
 
 An image-only rollback is also why a contract migration waits for the code it relies on to
 be a release old, not just present. The campaigns slot index (`000022`'s
-`uq_campaigns_brief_platform_variant_live`) is dropped one release AFTER the per-slot
+`uq_campaigns_brief_platform_variant_live`) is dropped by `000051` one release AFTER the per-slot
 adopt/claim advisory lock ships (LFXV2-2023): the binary before the lock takes no slot lock, so
 if the drop shipped with the lock, rolling the image back would leave that binary's adopt free
 to race a slot-2 claim on a schema with nothing else to stop it. Staged a release apart, the
 binary a rollback returns to either still has the index or already takes the lock. That also
 means the lock release must BOOT on the contracted schema, not just behave on it: startup runs
 `postgres.Migrate`, and the pool is closed on any error from its required-index check. So the
-lock release lists the legacy index in `requiredIndexes` as `optional` — absent is a healthy boot,
-present is still validated in full — while the four-column
-`uq_campaigns_brief_platform_variant_slot_version_live` stays required and its absence still fails
-startup with `ErrMissingRequiredIndex`. Pinned live by `TestMigrateToleratesTheDroppedLegacySlotIndex`.
-The contract release also records a migration version this older image does not embed, which
-golang-migrate's `Up()` would otherwise refuse before any index check. `postgres.Migrate`
-therefore starts on a CLEAN schema exactly one version newer than the image without migrating it
-or rewriting its version, and still runs the invalid- and required-index checks; a DIRTY newer
-schema, or a clean one two or more versions ahead, is still refused. That leans on expand/contract — every release must stay compatible with the next
-release's schema — since nothing marks a newer migration as compatible. Pinned live by
+lock release lists the legacy index in `requiredIndexes` as `optional` — absent is a healthy boot —
+and the release that ships `000051` removes the entry (and the `optional` mechanism) altogether.
+The four-column `uq_campaigns_brief_platform_variant_slot_version_live` stays required throughout
+and its absence still fails startup with `ErrMissingRequiredIndex`. Pinned live by
+`TestMigrateRefusesADroppedDispatchIndex`. Rolling back `000051` itself (its down re-creates the
+index) fails once any slot holds two live campaigns; resolve the extra versions by hand first.
+The lock release reaches that check at all only because `postgres.Migrate` starts on a CLEAN
+schema recorded exactly one version newer than the image (here `000051`, so the image rolled
+back to must embed migrations through `000050`; #260's own release, which stops at `000046`, is
+too far behind and refuses to boot) without migrating it or
+rewriting its version — golang-migrate's `Up()` would otherwise refuse the unknown version first —
+while still running the invalid- and required-index checks; a DIRTY newer schema, or a clean one
+two or more versions ahead, is still refused. That leans on expand/contract — every release must
+stay compatible with the next release's schema — since nothing marks a newer migration as
+compatible. Pinned live by
 `TestMigrateStartsOnACleanSchemaNewerThanThisImage`.
+
+One limitation of that rollback is stated rather than engineered away. Dropping the index lets
+the N-1 binary's `new_version` succeed at slot 2 and above, and that binary predates `000051`'s
+allocation safeguards: it numbers from the latest LIVE row, claims without refusing a used
+deleted version, and deletes without the slot lock. So while the image is rolled back to the
+`000050` release, a `new_version` on a slot whose latest version was deleted reuses that version
+and its platform name (on Microsoft, the name lookup returns the deleted upstream campaign).
+Operators should not send `new_version` for such a slot until the image is rolled forward. First
+creates, re-dispatches, and `new_version` on slots with no deleted version are unaffected.
 
 See [charts/lfx-v2-campaign-service/templates/deployment.yaml](../../../charts/lfx-v2-campaign-service/templates/deployment.yaml).
