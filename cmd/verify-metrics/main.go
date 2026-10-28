@@ -19,8 +19,10 @@
 // the service's own constructor. -read selects the read: `metrics` (the default) calls the
 // dispatcher's ReadMetrics, the method the published metrics endpoint calls; `audience`,
 // `keywords` and `account-monitor` call the service.Orchestrator method the published endpoint
-// calls (gatedReads in reads.go names each), so what it prints is what the endpoint would answer
-// once the flag is on.
+// calls (gatedReads in reads.go names each). What it prints is that method's answer — the
+// service-layer model the endpoint renders into its wire shape, plus, for the account monitor,
+// the endpoint's rule-engine rows and action items — so it shows what the endpoint would serve
+// once the flag is on, though not in the wire's field names, and without the monitor's totals.
 //
 // It is read-only by construction rather than by convention:
 //   - the database session is opened READ ONLY (default_transaction_read_only), the dispatcher is
@@ -29,7 +31,8 @@
 //   - the encryptor it is handed refuses Encrypt;
 //   - a report-backed read's saved-report state is kept in process memory, never the database;
 //   - every upstream request passes a transport that refuses any method other than GET/HEAD,
-//     except the named POSTs the selected read is made of (postAllowlist in capture.go), before
+//     except the named POSTs the selected read on the selected provider is made of (postAllowlist
+//     in capture.go), before
 //     the request leaves the process;
 //   - write selectors (keyword targeting, keyword actions, negative keywords) are refused.
 //
@@ -78,6 +81,9 @@ const (
 	exitOK    = 0
 	exitError = 1
 	exitUsage = 2
+	// exitNothingVerified is a gated read that never contacted the platform (an empty project
+	// scope): the endpoint's answer, but no evidence about the contract, so not a pass.
+	exitNothingVerified = 3
 )
 
 // gateFlags names the deployment flag each supported provider's metrics read is gated on, or ""
@@ -328,6 +334,11 @@ func (a *app) run(ctx context.Context, args []string) int {
 	secrets := newSecretSet()
 	out := &scrubWriter{w: a.stdout, secrets: secrets}
 	errOut := &scrubWriter{w: a.stderr, secrets: secrets}
+	// Every slog line the service or a dispatcher writes in this run goes through the scrubber
+	// too, whichever read runs.
+	prev := slog.Default()
+	slog.SetDefault(scrubbedLogger(errOut))
+	defer slog.SetDefault(prev)
 
 	ctx, cancel := context.WithTimeout(ctx, opts.timeout)
 	defer cancel()
@@ -348,7 +359,7 @@ func (a *app) run(ctx context.Context, args []string) int {
 		}
 	}
 
-	rec := newRecorder(secrets, opts.read)
+	rec := newRecorder(secrets, opts.read, opts.provider)
 	d, err := newDispatcher(opts.provider, be, secrets, rec.client(), a.endpoints)
 	if err != nil {
 		errOut.printf("verify-metrics: %v\n", err)
@@ -407,12 +418,6 @@ func (a *app) run(ctx context.Context, args []string) int {
 // runGated runs an audience, keywords or account-monitor read through the orchestrator method
 // its endpoint calls, and prints the result.
 func (a *app) runGated(ctx context.Context, opts *options, be *backend, d service.PlatformDispatcher, rec *recorder, out, errOut *scrubWriter) int {
-	// The report-backed reads log a failed check or submission and carry on; those lines go
-	// through the scrubber like everything else this command prints.
-	prev := slog.Default()
-	slog.SetDefault(scrubbedLogger(errOut))
-	defer slog.SetDefault(prev)
-
 	out.printf("read:     %s\nprovider: %s\nproject:  %s\n", opts.read, opts.provider, opts.project)
 	if opts.read == readAccountMonitor {
 		out.printf("account:  %s\ndays:     %d\n", opts.accountID, opts.days)
@@ -441,15 +446,16 @@ func (a *app) runGated(ctx context.Context, opts *options, be *backend, d servic
 			return exitError
 		}
 	}
-	if rec.count() == 0 {
-		// Every read here answers an empty scope without contacting the platform, as the
-		// endpoint does; saying so keeps an empty result from passing for a verified one.
-		out.printf("note:     no upstream request was made: the project has no campaigns on %s in this service (an empty scope), "+
-			"so the endpoint answers empty without contacting the platform and nothing was verified\n", opts.provider)
-	}
 	if err := printGatedResult(out, res); err != nil {
 		errOut.printf("verify-metrics: %v\n", err)
 		return exitError
+	}
+	if rec.count() == 0 {
+		// Every read here answers an empty scope without contacting the platform, as the
+		// endpoint does. That is not evidence about the contract, so it is not exit 0.
+		errOut.printf("verify-metrics: no upstream request was made: the project has no campaigns on %s in this service (an empty scope), "+
+			"so the endpoint answers empty without contacting the platform and nothing was verified; pick a project that has some\n", opts.provider)
+		return exitNothingVerified
 	}
 	return exitOK
 }

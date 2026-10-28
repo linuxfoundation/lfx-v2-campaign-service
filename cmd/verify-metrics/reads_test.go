@@ -146,69 +146,90 @@ func TestRun_WriteSelectorRefusedBeforeAnyBackend(t *testing.T) {
 	}
 }
 
-// Each read admits only the POSTs it is made of: a POST another read needs is refused.
-func TestAllowedRequest_PerRead(t *testing.T) {
+// Each (read, provider) admits only the POSTs it is made of: a POST another read — or another
+// platform's client — needs is refused.
+func TestAllowedRequest_PerReadAndProvider(t *testing.T) {
 	const (
 		redditReport = "/api/v3/ad_accounts/t2_a/reports"
+		redditToken  = "/api/v1/access_token"
+		msToken      = "/common/oauth2/v2.0/token"
 		msSubmit     = "/Reporting/v13/GenerateReport/Submit"
 		msPoll       = "/Reporting/v13/GenerateReport/Poll"
 		msQuery      = "/CampaignManagement/v13/Campaigns/QueryByAccountId"
 		msAccount    = "/CustomerManagement/v13/Account/Query"
 		xStatsJob    = "/12/stats/jobs/accounts/18ce54d4x5t"
-		token        = "/api/v1/access_token"
 	)
+	rd, ms, x := model.ProviderRedditAds, model.ProviderMicrosoftAds, model.ProviderTwitterAds
 	type allowCase struct {
 		read         readMode
+		provider     model.Provider
 		method, path string
 		want         bool
 	}
 	cases := []allowCase{
-		// metrics: unchanged.
-		{readMetrics, http.MethodPost, redditReport, true},
-		{readMetrics, http.MethodPost, msSubmit, true},
-		{readMetrics, http.MethodPost, xStatsJob, false},
-		{readMetrics, http.MethodPost, msQuery, false},
-		// audience: Reddit's report, Microsoft Reporting, X stats jobs.
-		{readAudience, http.MethodPost, token, true},
-		{readAudience, http.MethodPost, redditReport, true},
-		{readAudience, http.MethodPost, msSubmit, true},
-		{readAudience, http.MethodPost, msPoll, true},
-		{readAudience, http.MethodPost, xStatsJob, true},
-		{readAudience, http.MethodPost, msQuery, false},
-		{readAudience, http.MethodPost, msAccount, false},
-		// keywords: Reddit's report, Microsoft Reporting — no X job, no campaign query.
-		{readKeywords, http.MethodPost, redditReport, true},
-		{readKeywords, http.MethodPost, msSubmit, true},
-		{readKeywords, http.MethodPost, xStatsJob, false},
-		{readKeywords, http.MethodPost, msQuery, false},
-		// account-monitor: Microsoft's campaign and account queries plus Reporting; X jobs.
-		{readAccountMonitor, http.MethodPost, msQuery, true},
-		{readAccountMonitor, http.MethodPost, msAccount, true},
-		{readAccountMonitor, http.MethodPost, msSubmit, true},
-		{readAccountMonitor, http.MethodPost, msPoll, true},
-		{readAccountMonitor, http.MethodPost, xStatsJob, true},
-		{readAccountMonitor, http.MethodPost, redditReport, false},
-		{readAccountMonitor, http.MethodGet, "/12/stats/jobs/accounts/18ce54d4x5t", true},
+		// metrics: each provider's own POSTs only.
+		{readMetrics, rd, http.MethodPost, redditReport, true},
+		{readMetrics, rd, http.MethodPost, redditToken, true},
+		{readMetrics, rd, http.MethodPost, msSubmit, false},
+		{readMetrics, ms, http.MethodPost, msSubmit, true},
+		{readMetrics, ms, http.MethodPost, redditReport, false},
+		{readMetrics, x, http.MethodPost, xStatsJob, false},
+		{readMetrics, x, http.MethodPost, redditToken, false},
+		{readMetrics, ms, http.MethodPost, msQuery, false},
+		// audience.
+		{readAudience, rd, http.MethodPost, redditReport, true},
+		{readAudience, rd, http.MethodPost, xStatsJob, false},
+		{readAudience, rd, http.MethodPost, msSubmit, false},
+		{readAudience, ms, http.MethodPost, msToken, true},
+		{readAudience, ms, http.MethodPost, msSubmit, true},
+		{readAudience, ms, http.MethodPost, msPoll, true},
+		{readAudience, ms, http.MethodPost, msQuery, false},
+		{readAudience, ms, http.MethodPost, xStatsJob, false},
+		{readAudience, x, http.MethodPost, xStatsJob, true},
+		{readAudience, x, http.MethodPost, msSubmit, false},
+		// keywords: no X job, no campaign query.
+		{readKeywords, rd, http.MethodPost, redditReport, true},
+		{readKeywords, ms, http.MethodPost, msSubmit, true},
+		{readKeywords, ms, http.MethodPost, xStatsJob, false},
+		{readKeywords, ms, http.MethodPost, msQuery, false},
+		{readKeywords, x, http.MethodPost, xStatsJob, false},
+		// account-monitor.
+		{readAccountMonitor, ms, http.MethodPost, msQuery, true},
+		{readAccountMonitor, ms, http.MethodPost, msAccount, true},
+		{readAccountMonitor, ms, http.MethodPost, msSubmit, true},
+		{readAccountMonitor, ms, http.MethodPost, msPoll, true},
+		{readAccountMonitor, ms, http.MethodPost, xStatsJob, false},
+		{readAccountMonitor, x, http.MethodPost, xStatsJob, true},
+		{readAccountMonitor, x, http.MethodPost, msQuery, false},
+		{readAccountMonitor, x, http.MethodGet, xStatsJob, true},
+		{readAccountMonitor, rd, http.MethodPost, redditReport, false},
 	}
-	// Writes every read refuses: creates, keyword-targeting and negative-keyword writes, deletes.
+	// Writes every pair refuses: creates, keyword-targeting and negative-keyword writes, deletes.
 	for _, r := range readModes {
-		cases = append(cases,
-			allowCase{r, http.MethodPost, "/CampaignManagement/v13/Campaigns", false},
-			allowCase{r, http.MethodPost, "/CampaignManagement/v13/Keywords", false},
-			allowCase{r, http.MethodPatch, "/api/v3/ad_groups/t4_g", false},
-			allowCase{r, http.MethodPost, "/12/accounts/abc/targeting_criteria", false},
-			allowCase{r, http.MethodDelete, "/12/stats/jobs/accounts/abc", false},
-			allowCase{r, http.MethodPut, "/12/accounts/abc/campaigns/x", false},
-		)
-	}
-	for _, tc := range cases {
-		if got := allowedRequest(tc.read, tc.method, tc.path); got != tc.want {
-			t.Errorf("allowedRequest(%s, %s %s) = %v, want %v", tc.read, tc.method, tc.path, got, tc.want)
+		for _, p := range supportedProviders {
+			for _, w := range [][2]string{
+				{http.MethodPost, "/CampaignManagement/v13/Campaigns"},
+				{http.MethodPost, "/CampaignManagement/v13/Keywords"},
+				{http.MethodPatch, "/api/v3/ad_groups/t4_g"},
+				{http.MethodPost, "/12/accounts/abc/targeting_criteria"},
+				{http.MethodDelete, "/12/stats/jobs/accounts/abc"},
+				{http.MethodPut, "/12/accounts/abc/campaigns/x"},
+			} {
+				cases = append(cases, allowCase{r, p, w[0], w[1], false})
+			}
 		}
 	}
-	for _, r := range readModes {
-		if len(postAllowlist[r]) == 0 {
-			t.Errorf("read %s has no POST allowlist entry; every read needs at least the token exchange", r)
+	for _, tc := range cases {
+		if got := allowedRequest(tc.read, tc.provider, tc.method, tc.path); got != tc.want {
+			t.Errorf("allowedRequest(%s, %s, %s %s) = %v, want %v", tc.read, tc.provider, tc.method, tc.path, got, tc.want)
+		}
+	}
+	// Every gated pair this command runs has an allowlist entry.
+	for read, byProvider := range gatedReads {
+		for p := range byProvider {
+			if _, ok := postAllowlist[read][p]; !ok {
+				t.Errorf("gated read %s/%s has no POST allowlist entry", read, p)
+			}
 		}
 	}
 }
@@ -425,8 +446,8 @@ func TestRun_RedditKeywordsAgainstFakePlatform(t *testing.T) {
 	}
 }
 
-// An empty scope is answered without contacting the platform, and the output says nothing was
-// verified rather than passing an empty result off as a verified one.
+// An empty scope is answered without contacting the platform; the run says nothing was verified
+// and exits 3 rather than passing an empty result off as a verified one.
 func TestRun_EmptyScopeSaysNothingWasVerified(t *testing.T) {
 	t.Setenv(constants.EnvRedditMetricsEnabled, "")
 	srv, _, reports := fakeRedditBreakdowns(t)
@@ -435,11 +456,12 @@ func TestRun_EmptyScopeSaysNothingWasVerified(t *testing.T) {
 	be, _ := a.openBackend(context.Background())
 	be.campaigns = &fakeScopes{}
 	code := a.run(context.Background(), []string{"-read", "audience", "-provider", "reddit-ads", "-project", "my-project"})
-	if code != exitOK {
-		t.Fatalf("exit = %d, output:\n%s%s", code, stdout.String(), stderr.String())
+	// Not exit 0: a wrapper script must not read "nothing was read" as a pass.
+	if code != exitNothingVerified {
+		t.Fatalf("exit = %d, want %d; output:\n%s%s", code, exitNothingVerified, stdout.String(), stderr.String())
 	}
-	if reports.Load() != 0 || !strings.Contains(stdout.String(), "nothing was verified") {
-		t.Errorf("reports=%d, stdout:\n%s", reports.Load(), stdout.String())
+	if reports.Load() != 0 || !strings.Contains(stderr.String(), "nothing was verified") {
+		t.Errorf("reports=%d, stderr:\n%s", reports.Load(), stderr.String())
 	}
 }
 
@@ -453,6 +475,17 @@ const (
 // fakeMicrosoftReporting answers Submit with a report id, the first Poll with Pending and every
 // later one with Success and a signed download URL, and serves the report zip.
 func fakeMicrosoftReporting(t *testing.T) (*httptest.Server, *atomic.Int32, *atomic.Int32) {
+	return fakeMicrosoftWith(t, fakeMSOptions{csvName: "AgeGenderAudienceReport.csv", csv: "\"CampaignId\",\"AgeGroup\",\"Gender\",\"Impressions\",\"Clicks\",\"Spend\"\n\"111\",\"25-34\",\"Female\",\"100\",\"5\",\"2.50\"\n"})
+}
+
+// fakeMSOptions shapes fakeMicrosoftWith: the report file, and whether Submit fails.
+type fakeMSOptions struct {
+	csvName, csv string
+	submitFails  bool // answer Submit with a 500 that echoes the client secret
+	monitorHits  *atomic.Int32
+}
+
+func fakeMicrosoftWith(t *testing.T, o fakeMSOptions) (*httptest.Server, *atomic.Int32, *atomic.Int32) {
 	t.Helper()
 	var polls, refused atomic.Int32
 	var srv *httptest.Server
@@ -462,7 +495,22 @@ func fakeMicrosoftReporting(t *testing.T) (*httptest.Server, *atomic.Int32, *ato
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"access_token":"`+fakeAccessToken+`","refresh_token":"`+fakeRefreshToken+`","expires_in":3600,"token_type":"Bearer"}`)
 		case strings.HasSuffix(r.URL.Path, "/GenerateReport/Submit"):
+			if o.submitFails {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = io.WriteString(w, `{"Message":"internal error for `+fakeClientSecret+`"}`)
+				return
+			}
 			_, _ = io.WriteString(w, `{"ReportRequestId":"r-1"}`)
+		case strings.HasSuffix(r.URL.Path, "/CampaignManagement/v13/Campaigns/QueryByAccountId"):
+			if o.monitorHits != nil {
+				o.monitorHits.Add(1)
+			}
+			_, _ = io.WriteString(w, `{"Campaigns":[{"Id":111,"Name":"Search A","Status":"Active","CampaignType":"Search","BudgetType":"DailyBudgetStandard","DailyBudget":50.5,"BudgetId":null}],"PartialErrors":null}`)
+		case strings.HasSuffix(r.URL.Path, "/CustomerManagement/v13/Account/Query"):
+			if o.monitorHits != nil {
+				o.monitorHits.Add(1)
+			}
+			_, _ = io.WriteString(w, `{"Account":{"Id":1234567,"Name":"Acct","CurrencyCode":"USD"}}`)
 		case strings.HasSuffix(r.URL.Path, "/GenerateReport/Poll"):
 			if polls.Add(1) == 1 {
 				_, _ = io.WriteString(w, `{"ReportRequestStatus":{"Status":"Pending"}}`)
@@ -472,8 +520,8 @@ func fakeMicrosoftReporting(t *testing.T) (*httptest.Server, *atomic.Int32, *ato
 		case r.URL.Path == "/download/r.zip":
 			var zbuf bytes.Buffer
 			zw := zip.NewWriter(&zbuf)
-			f, _ := zw.Create("AgeGenderAudienceReport.csv")
-			_, _ = io.WriteString(f, "\"CampaignId\",\"AgeGroup\",\"Gender\",\"Impressions\",\"Clicks\",\"Spend\"\n\"111\",\"25-34\",\"Female\",\"100\",\"5\",\"2.50\"\n")
+			f, _ := zw.Create(o.csvName)
+			_, _ = io.WriteString(f, o.csv)
 			_ = zw.Close()
 			_, _ = w.Write(zbuf.Bytes())
 		default:
@@ -545,5 +593,76 @@ func TestRun_MicrosoftAudiencePollsUntilTheReportFinishes(t *testing.T) {
 	}
 	if polls.Load() < 2 || refused.Load() != 0 {
 		t.Errorf("polls=%d refused=%d, want at least two polls and nothing unexpected", polls.Load(), refused.Load())
+	}
+}
+
+// The account monitor's POSTs that no other read needs (the campaign query and the currency
+// read) pass the recorder that run actually builds: a recorder left on another read's
+// allowlist would refuse them and fail the run.
+func TestRun_MicrosoftAccountMonitorSendsItsOwnPOSTs(t *testing.T) {
+	t.Setenv(constants.EnvMicrosoftMetricsEnabled, "")
+	var hits atomic.Int32
+	srv, _, refused := fakeMicrosoftWith(t, fakeMSOptions{
+		csvName:     "CampaignPerformanceReport.csv",
+		csv:         "\"CampaignId\",\"Impressions\",\"Clicks\",\"Spend\",\"ConversionsQualified\"\n\"111\",\"200\",\"8\",\"3.25\",\"1\"\n",
+		monitorHits: &hits,
+	})
+	var stdout, stderr bytes.Buffer
+	code := microsoftTestApp(t, srv, &stdout, &stderr).run(context.Background(),
+		[]string{"-read", "account-monitor", "-provider", "microsoft-ads", "-project", "my-project", "-account-id", "1234567", "-days", "7", "-poll-interval", "10ms"})
+	all := stdout.String() + stderr.String()
+	if code != exitOK {
+		t.Fatalf("exit = %d, output:\n%s", code, all)
+	}
+	assertNoSecrets(t, all)
+	if hits.Load() < 2 || refused.Load() != 0 {
+		t.Errorf("monitor POSTs reached the fake %d time(s), refused=%d; want the campaign query and the currency read", hits.Load(), refused.Load())
+	}
+	for _, want := range []string{`"PlatformCampaignID": "111"`, `"Impressions": 200`, `"Currency": "USD"`, `"MetricsPending": false`, "ActionItems"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("stdout missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+// The other direction: a read whose allowlist lacks a POST refuses it through the recorder run
+// builds. The X stats-job create is the audience and monitor reads'; keywords never needs it.
+func TestRecorder_KeywordsRefusesAnXStatsJob(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer srv.Close()
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/12/stats/jobs/accounts/abc123", strings.NewReader("entity=CAMPAIGN"))
+	if resp, err := newRecorder(newSecretSet(), readKeywords, model.ProviderMicrosoftAds).client().Do(req); err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("keywords must refuse an X stats-job create")
+	}
+	req, _ = http.NewRequest(http.MethodPost, srv.URL+"/12/stats/jobs/accounts/abc123", strings.NewReader("entity=CAMPAIGN"))
+	resp, err := newRecorder(newSecretSet(), readAccountMonitor, model.ProviderTwitterAds).client().Do(req)
+	if err != nil {
+		t.Fatalf("account-monitor must send an X stats-job create: %v", err)
+	}
+	_ = resp.Body.Close()
+	if hits.Load() != 1 {
+		t.Errorf("hits = %d, want exactly the account-monitor request", hits.Load())
+	}
+}
+
+// A failed submission is logged by the service and the run carries on to its verdict. The log
+// line must reach THIS command's stderr (the scrubbing logger run installs), not the process's
+// default slog handler, and must not carry the echoed secret.
+func TestRun_ServiceWarningsAreScrubbedOntoStderr(t *testing.T) {
+	t.Setenv(constants.EnvMicrosoftMetricsEnabled, "")
+	srv, _, _ := fakeMicrosoftWith(t, fakeMSOptions{submitFails: true})
+	var stdout, stderr bytes.Buffer
+	code := microsoftTestApp(t, srv, &stdout, &stderr).run(context.Background(),
+		[]string{"-read", "keywords", "-provider", "microsoft-ads", "-project", "my-project", "-poll-interval", "10ms"})
+	if code != exitError {
+		t.Fatalf("exit = %d, want %d; output:\n%s%s", code, exitError, stdout.String(), stderr.String())
+	}
+	assertNoSecrets(t, stdout.String()+stderr.String())
+	for _, want := range []string{"report submission failed", "no finished report was served"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr missing %q:\n%s", want, stderr.String())
+		}
 	}
 }

@@ -38,9 +38,14 @@ The report-backed reads (Microsoft keywords, audience and account monitor; X acc
 the platform to build a report, so a run prints `poll: attempt N: report still building` every
 `-poll-interval` (default 20s) until it finishes. Their default `-timeout` is 15m, not 3m.
 
-An output saying `no upstream request was made` means the project has no campaigns on the platform
-in this service: the endpoint answers empty without contacting the platform, so nothing was
-verified. Pick a project that has some.
+A run that exits 3 with `no upstream request was made` means the project has no campaigns on the
+platform in this service: the endpoint answers empty without contacting the platform, so nothing
+was verified. Pick a project that has some.
+
+The printed result is the service-layer model the method returns (Go field names), which the
+endpoint then renders into its wire shape. The account monitor also prints the endpoint's rule
+engine rows and action items, but not the totals the endpoint sums from them. Compare values, not
+field names.
 
 ## Flags
 
@@ -75,7 +80,8 @@ verified. Pick a project that has some.
 - `-poll-interval` (report-backed reads only), `-timeout`, `-raw`.
 
 A flag the selected read does not take is refused rather than ignored. Exit status: 0 success,
-1 a failed read or setup, 2 a usage error.
+1 a failed read or setup, 2 a usage error, 3 nothing verified (an empty scope: no upstream
+request was made).
 
 ## Same path as the service
 
@@ -109,18 +115,19 @@ to another host.
 - The dispatcher gets a connection reader with only `Get` and `Disconnected`, and an encryptor
   whose `Encrypt` is refused. The orchestrator gets a campaign repository whose every write
   returns `errReadOnly`, and in-memory report stores in place of the saved-report tables.
-- Every upstream request passes `allowedRequest(read, method, path)` before it is sent. GET and
-  HEAD are allowed. A POST is allowed only if it is on the selected read's own named list
-  (`postAllowlist` in `capture.go`), so a mode can never send a POST that only another mode needs:
+- Every upstream request passes `allowedRequest(read, provider, method, path)` before it is sent.
+  GET and HEAD are allowed. A POST is allowed only if it is on the named list for the selected
+  read on the selected provider (`postAllowlist` in `capture.go`), so a run can never send a POST
+  that only another read, or another platform's client, needs. X metrics admit no POST at all:
 
   | POST | Why it is a read | Reads |
   | --- | --- | --- |
-  | OAuth token exchange | mints an access token, as every service read does | all |
-  | Reddit `/ad_accounts/{id}/reports` | report query over delivery data | metrics, audience, keywords |
-  | Microsoft `GenerateReport/Submit`, `/Poll` | builds and fetches a report file | metrics, audience, keywords, account-monitor |
-  | Microsoft `Campaigns/QueryByAccountId` | Microsoft's REST API reads by POST; the monitor's campaign list | account-monitor |
-  | Microsoft `CustomerManagement/v13/Account/Query` | the monitor's currency read | account-monitor |
-  | X `/{version}/stats/jobs/accounts/{id}` | creates an analytics job that computes stats into a file; touches no campaign | audience, account-monitor |
+  | OAuth token exchange | mints an access token, as every service read does | every Reddit and Microsoft read; LinkedIn and Meta metrics |
+  | Reddit `/ad_accounts/{id}/reports` | report query over delivery data | Reddit metrics, audience, keywords |
+  | Microsoft `GenerateReport/Submit`, `/Poll` | builds and fetches a report file | Microsoft metrics, audience, keywords, account-monitor |
+  | Microsoft `Campaigns/QueryByAccountId` | Microsoft's REST API reads by POST; the monitor's campaign list | Microsoft account-monitor |
+  | Microsoft `CustomerManagement/v13/Account/Query` | the monitor's currency read | Microsoft account-monitor |
+  | X `/{version}/stats/jobs/accounts/{id}` | creates an analytics job that computes stats into a file; touches no campaign | X audience, account-monitor |
 
   Anything else (a campaign or keyword create, PATCH, PUT, DELETE) fails in-process, and the
   platform never sees it.
@@ -137,8 +144,9 @@ Every byte printed goes through a scrubber that holds every secret the run has o
 - the tokens a token exchange issued.
 
 Each is also recorded in its query-escaped and JSON-escaped forms. The service's own log lines go
-through the same scrubber: the report-backed reads log a failed check or submission and carry on,
-and their slog output is routed to a scrubbing handler. The audience, keywords and account-monitor
+through the same scrubber in every mode: the run installs a scrubbing slog handler before the
+backend or dispatcher is built (the report-backed reads, for one, log a failed check or
+submission and carry on). The audience, keywords and account-monitor
 results are printed through the `-raw` body redactor. That means secret-named keys are withheld,
 URLs are reduced by `pkg/redact.SnapshotText`, and int64 values keep full precision.
 

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
 const (
@@ -69,20 +71,38 @@ func suffixRule(suffix string) func(string) bool {
 	return func(p string) bool { return strings.HasSuffix(p, suffix) }
 }
 
-// postAllowlist is, per read, the POSTs that read is made of — and nothing more, so a mode can
-// never send a POST only another mode needs. Every read also allows GET and HEAD.
-var postAllowlist = map[readMode][]postRule{
-	readMetrics: {ruleTokenExchange, ruleRedditReport, ruleMicrosoftReportSubmit, ruleMicrosoftReportPoll},
-	// Reddit's audience read is the report query; Microsoft's is a Reporting submit/poll
-	// (AgeGenderAudienceReportRequest); X's is stats jobs (AGE, GENDER, PLATFORMS).
-	readAudience: {ruleTokenExchange, ruleRedditReport, ruleMicrosoftReportSubmit, ruleMicrosoftReportPoll, ruleTwitterStatsJob},
-	// Reddit's keyword read is the report query; Microsoft's is a Reporting submit/poll
-	// (KeywordPerformanceReportRequest).
-	readKeywords: {ruleTokenExchange, ruleRedditReport, ruleMicrosoftReportSubmit, ruleMicrosoftReportPoll},
-	// Microsoft's monitor lists campaigns, reads the currency and builds a Reporting report;
-	// X's lists campaigns by GET and builds stats jobs.
-	readAccountMonitor: {ruleTokenExchange, ruleMicrosoftReportSubmit, ruleMicrosoftReportPoll,
-		ruleMicrosoftCampaignQuery, ruleMicrosoftAccountQuery, ruleTwitterStatsJob},
+// postAllowlist is, per read AND provider, the POSTs that read is made of — and nothing more,
+// so a run can never send a POST only another read, or another platform's client, needs. Every
+// read also allows GET and HEAD. A (read, provider) pair absent here admits no POST at all.
+var postAllowlist = map[readMode]map[model.Provider][]postRule{
+	readMetrics: {
+		model.ProviderRedditAds:    {ruleTokenExchange, ruleRedditReport},
+		model.ProviderMicrosoftAds: {ruleTokenExchange, ruleMicrosoftReportSubmit, ruleMicrosoftReportPoll},
+		// X signs every request with OAuth 1.0a and reads stats by GET: no POST at all.
+		model.ProviderTwitterAds:  {},
+		model.ProviderLinkedInAds: {ruleTokenExchange},
+		model.ProviderMetaAds:     {ruleTokenExchange},
+	},
+	readAudience: {
+		// Reddit's audience read is the report query, one per breakdown.
+		model.ProviderRedditAds: {ruleTokenExchange, ruleRedditReport},
+		// Microsoft's is a Reporting submit/poll (AgeGenderAudienceReportRequest).
+		model.ProviderMicrosoftAds: {ruleTokenExchange, ruleMicrosoftReportSubmit, ruleMicrosoftReportPoll},
+		// X's is stats jobs (AGE, GENDER, PLATFORMS).
+		model.ProviderTwitterAds: {ruleTwitterStatsJob},
+	},
+	readKeywords: {
+		model.ProviderRedditAds: {ruleTokenExchange, ruleRedditReport},
+		// KeywordPerformanceReportRequest.
+		model.ProviderMicrosoftAds: {ruleTokenExchange, ruleMicrosoftReportSubmit, ruleMicrosoftReportPoll},
+	},
+	readAccountMonitor: {
+		// Microsoft's monitor lists campaigns, reads the currency and builds a Reporting report.
+		model.ProviderMicrosoftAds: {ruleTokenExchange, ruleMicrosoftReportSubmit, ruleMicrosoftReportPoll,
+			ruleMicrosoftCampaignQuery, ruleMicrosoftAccountQuery},
+		// X's lists campaigns by GET and builds stats jobs.
+		model.ProviderTwitterAds: {ruleTwitterStatsJob},
+	},
 }
 
 // isTokenEndpoint reports whether path is an OAuth token exchange: Reddit's /api/v1/access_token,
@@ -96,13 +116,13 @@ func isTokenEndpoint(path string) bool {
 // before it is sent. GET and HEAD are reads. A POST is admitted only where that read is made of
 // POSTs (postAllowlist). Every other method and path — any create, update, PATCH, PUT or
 // DELETE — is refused without contacting the platform.
-func allowedRequest(read readMode, method, path string) bool {
+func allowedRequest(read readMode, provider model.Provider, method, path string) bool {
 	switch method {
 	case http.MethodGet, http.MethodHead:
 		return true
 	case http.MethodPost:
 		p := strings.ToLower(strings.TrimRight(path, "/"))
-		for _, r := range postAllowlist[read] {
+		for _, r := range postAllowlist[read][provider] {
 			if r.match(p) {
 				return true
 			}
@@ -133,14 +153,16 @@ type exchange struct {
 type recorder struct {
 	base    http.RoundTripper
 	secrets *secretSet
-	read    readMode // whose POST allowlist applies
+	// read and provider select the POST allowlist that applies.
+	read     readMode
+	provider model.Provider
 
 	mu        sync.Mutex
 	exchanges []*exchange
 }
 
-func newRecorder(secrets *secretSet, read readMode) *recorder {
-	return &recorder{base: http.DefaultTransport, secrets: secrets, read: read}
+func newRecorder(secrets *secretSet, read readMode, provider model.Provider) *recorder {
+	return &recorder{base: http.DefaultTransport, secrets: secrets, read: read, provider: provider}
 }
 
 // client returns the *http.Client handed to the platform clients. They force their own
@@ -172,7 +194,7 @@ func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 		}
 	}
-	if !allowedRequest(r.read, req.Method, req.URL.Path) {
+	if !allowedRequest(r.read, r.provider, req.Method, req.URL.Path) {
 		r.update(func() { ex.refused, ex.done = true, true })
 		if req.Body != nil {
 			_ = req.Body.Close()
