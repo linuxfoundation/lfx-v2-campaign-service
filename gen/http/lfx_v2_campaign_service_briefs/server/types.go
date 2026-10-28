@@ -610,9 +610,13 @@ type CreateSendWorkflowResponseBody struct {
 	SendEmailSteps int `form:"send_email_steps" json:"send_email_steps" xml:"send_email_steps"`
 	// How many wait-until-date steps had their date replaced
 	DatedSteps int `form:"dated_steps" json:"dated_steps" xml:"dated_steps"`
-	// The audience the new workflow enrolls, or empty when the source workflow's
-	// own enrollment was kept
-	EnrollmentListID *string `form:"enrollment_list_id,omitempty" json:"enrollment_list_id,omitempty" xml:"enrollment_list_id,omitempty"`
+	// The HubSpot lists the new workflow enrolls: the series' shared audience (its
+	// master list, or every list it was attached from). A contact in any of them
+	// is enrolled. The source workflow's own enrollment is always replaced.
+	EnrollmentListIds []string `form:"enrollment_list_ids" json:"enrollment_list_ids" xml:"enrollment_list_ids"`
+	// The new workflow's whole suppression set: the source workflow's own
+	// suppression lists plus the audience's.
+	SuppressionListIds []string `form:"suppression_list_ids" json:"suppression_list_ids" xml:"suppression_list_ids"`
 }
 
 // AdoptCampaignResponseBody is the type of the
@@ -5641,15 +5645,30 @@ func NewCreateCampaignsResponseBody(res *lfxv2campaignservicebriefs.JobCreateRes
 // "lfx-v2-campaign-service-briefs" service.
 func NewCreateSendWorkflowResponseBody(res *lfxv2campaignservicebriefs.SendWorkflowResult) *CreateSendWorkflowResponseBody {
 	body := &CreateSendWorkflowResponseBody{
-		FlowID:           res.FlowID,
-		Name:             res.Name,
-		EditURL:          res.EditURL,
-		SourceFlowID:     res.SourceFlowID,
-		SourceFlowName:   res.SourceFlowName,
-		IsEnabled:        res.IsEnabled,
-		SendEmailSteps:   res.SendEmailSteps,
-		DatedSteps:       res.DatedSteps,
-		EnrollmentListID: res.EnrollmentListID,
+		FlowID:         res.FlowID,
+		Name:           res.Name,
+		EditURL:        res.EditURL,
+		SourceFlowID:   res.SourceFlowID,
+		SourceFlowName: res.SourceFlowName,
+		IsEnabled:      res.IsEnabled,
+		SendEmailSteps: res.SendEmailSteps,
+		DatedSteps:     res.DatedSteps,
+	}
+	if res.EnrollmentListIds != nil {
+		body.EnrollmentListIds = make([]string, len(res.EnrollmentListIds))
+		for i, val := range res.EnrollmentListIds {
+			body.EnrollmentListIds[i] = val
+		}
+	} else {
+		body.EnrollmentListIds = []string{}
+	}
+	if res.SuppressionListIds != nil {
+		body.SuppressionListIds = make([]string, len(res.SuppressionListIds))
+		for i, val := range res.SuppressionListIds {
+			body.SuppressionListIds[i] = val
+		}
+	} else {
+		body.SuppressionListIds = []string{}
 	}
 	return body
 }

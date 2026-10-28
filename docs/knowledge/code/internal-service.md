@@ -2587,8 +2587,9 @@ token that selects one of the five fixed sentences above.
 ### The survey delivery surface
 
 `emailstage` owns two stage taxonomies, not one. `Names()`/`Templates` are the event surface's six
-lifecycle stages; `SurveyNames()`/`SurveyTemplates` are the survey surface's two asset stages
-(`Survey Promo`, `Report Promo`), added with migration `000052`. They are deliberately separate
+lifecycle stages; `SurveyNames()`/`SurveyTemplates` are the survey surface's four stages
+(`Survey Promo`, `Survey Reminder`, `Survey Closing`, `Report Promo`), added with migrations
+`000052` and `000053`. They are deliberately separate
 maps: pooling them would admit `(email, "Survey Promo")` and `(survey, "Final Countdown")` — pairs
 that occupy a real slot in the brief's unique key while naming an identity no generator can serve.
 
@@ -2604,3 +2605,19 @@ the operator pasted — rendered into the prompt's facts block as `Source docume
 promoted asset, so it flows through `resolveRegistrationURL` unchanged. The prompts are ported from
 the LF Research survey/report tool and reproduce its specification verbatim, including the 100-word
 body cap and the anti-invention rule.
+
+### The send workflow (`CreateSendWorkflow`)
+
+`send_workflow.go` turns an already-staged series into ONE disabled HubSpot workflow by cloning a
+source workflow (`hubspot.Client.CloneFlowWithEmails`): each send step gets a brief's staged draft
+(the campaign row's platform id, in `brief_ids` order), each wait-until-date step optionally a new
+date. Enrolling a list in that workflow IS the send on this path — a workflow's send step does not
+use the draft's own recipient or suppression settings — so `seriesAudience` reads each brief's
+newest HubSpot audience exactly as the wizard does (`resolveWizardAudience`: newest decides, must
+be built, every include list counts) and refuses unless every brief carries the same send lists,
+suppressions and portal. The audience then runs the same send-time checks staging and
+`SetWizardSendList` run before `SetSendList`: `assertWizardPortal` and
+`wizardStandingCoversSendList` (the standing-suppression check, #396). The workflow enrolls every
+send list (an OR of IN_LIST branches, replacing the source's enrollment) and adds the audience's
+suppression lists to the source workflow's own. A brief with no built audience is refused rather
+than falling back to the source's enrollment, which would send to the SOURCE campaign's audience.

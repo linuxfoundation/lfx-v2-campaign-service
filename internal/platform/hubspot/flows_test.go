@@ -159,9 +159,9 @@ func TestCloneFlowWithEmails_EnrollsThisCampaignsAudience(t *testing.T) {
 	c, posted, _ := flowServer(t, map[string]any{"id": "99"})
 
 	ref, err := c.CloneFlowWithEmails(context.Background(), "1841232183", CloneFlowOptions{
-		Name:             "Survey 2026",
-		EmailIDs:         []string{"a", "b", "c"},
-		EnrollmentListID: "list-77",
+		Name:              "Survey 2026",
+		EmailIDs:          []string{"a", "b", "c"},
+		EnrollmentListIDs: []string{"list-77", "list-78", "list-77"},
 	})
 	if err != nil {
 		t.Fatalf("CloneFlowWithEmails: %v", err)
@@ -169,26 +169,73 @@ func TestCloneFlowWithEmails_EnrollsThisCampaignsAudience(t *testing.T) {
 
 	enrollment := (*posted)["enrollmentCriteria"].(map[string]any)
 	branch := enrollment["listFilterBranch"].(map[string]any)
+	if branch["filterBranchType"] != "OR" {
+		t.Errorf("outer branch = %v, want OR so a contact in any list is enrolled", branch["filterBranchType"])
+	}
 	inner := branch["filterBranches"].([]any)
-	if len(inner) != 1 {
-		t.Fatalf("expected exactly one enrollment branch, got %d -- the source's own list must be replaced, not joined", len(inner))
+	// One AND branch per DISTINCT list: the source's own list is replaced, not joined, and a
+	// repeated id is not a second branch.
+	if len(inner) != 2 {
+		t.Fatalf("expected one enrollment branch per list, got %d", len(inner))
 	}
-	filters := inner[0].(map[string]any)["filters"].([]any)
-	if len(filters) != 1 {
-		t.Fatalf("expected one membership filter, got %d", len(filters))
+	for i, want := range []string{"list-77", "list-78"} {
+		filters := inner[i].(map[string]any)["filters"].([]any)
+		if len(filters) != 1 {
+			t.Fatalf("branch %d: expected one membership filter, got %d", i, len(filters))
+		}
+		filter := filters[0].(map[string]any)
+		if filter["listId"] != want || filter["operator"] != "IN_LIST" || filter["filterType"] != "IN_LIST" {
+			t.Errorf("branch %d filter = %v, want an IN_LIST on %s", i, filter, want)
+		}
 	}
-	filter := filters[0].(map[string]any)
-	if filter["listId"] != "list-77" || filter["operator"] != "IN_LIST" || filter["filterType"] != "IN_LIST" {
-		t.Errorf("enrollment filter = %v, want an IN_LIST on list-77", filter)
+	if got := strings.Join(ref.EnrollmentListIDs, ","); got != "list-77,list-78" {
+		t.Errorf("EnrollmentListIDs = %q, want them reported so the operator can see who is enrolled", got)
 	}
-	if ref.EnrollmentListID != "list-77" {
-		t.Errorf("EnrollmentListID = %q, want it reported so the operator can see who is enrolled", ref.EnrollmentListID)
+}
+
+func TestCloneFlowWithEmails_AddsTheAudiencesSuppressionsToTheSources(t *testing.T) {
+	// A workflow's send step does not apply the suppression lists recorded on the draft, so the
+	// audience's must reach the workflow -- beside the source's own, which are portal policy.
+	c, posted, _ := flowServer(t, map[string]any{"id": "99"})
+
+	ref, err := c.CloneFlowWithEmails(context.Background(), "1841232183", CloneFlowOptions{
+		Name:               "Survey 2026",
+		EmailIDs:           []string{"a", "b", "c"},
+		SuppressionListIDs: []string{"9002", "900", " "},
+	})
+	if err != nil {
+		t.Fatalf("CloneFlowWithEmails: %v", err)
+	}
+	got := (*posted)["suppressionListIds"].([]any)
+	if len(got) != 2 || got[0] != "900" || got[1] != "9002" {
+		t.Errorf("suppressionListIds = %v, want the source's 900 kept and 9002 added once", got)
+	}
+	if strings.Join(ref.SuppressionListIDs, ",") != "900,9002" {
+		t.Errorf("SuppressionListIDs = %v, want the whole set reported", ref.SuppressionListIDs)
+	}
+}
+
+func TestMergeSuppressionListIDs_FollowsTheSourcesElementType(t *testing.T) {
+	// A flow that lists its suppressions as numbers gets numbers added, so the posted array is
+	// not a mix of the two.
+	got, err := mergeSuppressionListIDs([]any{float64(900)}, []string{"9002", "900"})
+	if err != nil {
+		t.Fatalf("mergeSuppressionListIDs: %v", err)
+	}
+	if len(got) != 2 || got[0] != float64(900) || got[1] != int64(9002) {
+		t.Errorf("merged = %#v, want [900 9002] as numbers", got)
+	}
+	if _, err := mergeSuppressionListIDs([]any{float64(900)}, []string{"not-a-number"}); err == nil {
+		t.Error("a non-numeric id was added to a numeric suppression array")
+	}
+	if _, err := mergeSuppressionListIDs("900", nil); err == nil {
+		t.Error("a suppressionListIds that is not an array was accepted")
 	}
 }
 
 func TestCloneFlowWithEmails_KeepsTheSourceEnrollmentWhenNoListIsGiven(t *testing.T) {
-	// No list means "this service could not tell who to enrol". Keeping the source's criteria is
-	// the honest outcome; writing an empty filter would enroll everyone or no one.
+	// No list means the caller asked for the source's own criteria. Writing an empty filter
+	// instead would enroll everyone or no one.
 	c, posted, _ := flowServer(t, map[string]any{"id": "99"})
 
 	ref, err := c.CloneFlowWithEmails(context.Background(), "1841232183", CloneFlowOptions{
@@ -205,8 +252,8 @@ func TestCloneFlowWithEmails_KeepsTheSourceEnrollmentWhenNoListIsGiven(t *testin
 	if enrollment["shouldReEnroll"] != false {
 		t.Errorf("the source's own enrollment fields were not preserved: %v", enrollment)
 	}
-	if ref.EnrollmentListID != "" {
-		t.Errorf("EnrollmentListID = %q, want empty to say the source's audience was kept", ref.EnrollmentListID)
+	if len(ref.EnrollmentListIDs) != 0 {
+		t.Errorf("EnrollmentListIDs = %v, want none to say the source's audience was kept", ref.EnrollmentListIDs)
 	}
 }
 

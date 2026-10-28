@@ -17339,7 +17339,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: create-send-workflow lfx-v2-campaign-service-briefs
-            description: 'Create ONE HubSpot workflow that sends an already-staged series of emails, and return it DISABLED. Each brief named in brief_ids must already have a staged HubSpot draft (its campaign row''s platform id is the email the workflow will send) and must belong to a send surface; a paid brief is refused. The source workflow is only ever read: its definition is fetched, each of its send steps is pointed at this campaign''s drafts in the order brief_ids gives, each wait-until-date step is optionally re-dated, and the result is created as a NEW workflow. 400 when the source URL names no workflow, when a brief has no staged draft yet, when a brief is on the paid surface, or when a date is not YYYY-MM-DD; 409 when the source workflow''s send-step count does not equal the number of briefs, or its dated-step count does not equal the number of send_dates, since a partial mapping would leave a send pointing at the SOURCE campaign''s email; 404 when a brief does not exist in this project. The workflow is always created disabled -- enabling it is left to the human who reviews the drafts, and is the only irreversible step on this path.'
+            description: 'Create ONE HubSpot workflow that sends an already-staged series of emails, and return it DISABLED. Each brief named in brief_ids must already have a staged HubSpot draft (its campaign row''s platform id is the email the workflow will send) and must belong to a send surface; a paid brief is refused. The source workflow is only ever read: its definition is fetched, each of its send steps is pointed at this campaign''s drafts in the order brief_ids gives, each wait-until-date step is optionally re-dated, and the result is created as a NEW workflow. 400 when the source URL names no workflow, when a brief has no staged draft yet, when a brief is on the paid surface, or when a date is not YYYY-MM-DD; 409 when the source workflow''s send-step count does not equal the number of briefs, or its dated-step count does not equal the number of send_dates, since a partial mapping would leave a send pointing at the SOURCE campaign''s email; 409 when a brief has no BUILT HubSpot audience, when the briefs were built against different audiences (a workflow enrolls ONE audience, so every brief must carry the same send lists, suppressions and portal), when that audience was built in a different HubSpot portal than this project''s credential reaches, or when the project''s standing standard suppression list now covers a list the series sends to (the same send-time check staging applies); 404 when a brief does not exist in this project. The workflow enrolls the series'' audience in place of the source workflow''s enrollment, and adds the audience''s suppression lists to the source''s own. The workflow is always created disabled -- enabling it is left to the human who reviews the drafts, and is the only irreversible step on this path.'
             operationId: lfx-v2-campaign-service-briefs#create-send-workflow
             parameters:
                 - name: project_id
@@ -17381,13 +17381,20 @@ paths:
                             example:
                                 dated_steps: 8476403701307200312
                                 edit_url: Qui est necessitatibus voluptas maxime.
-                                enrollment_list_id: Accusamus quia ea voluptatem veniam.
+                                enrollment_list_ids:
+                                    - Quidem quaerat cum modi temporibus.
+                                    - Et maiores sit autem ut et.
                                 flow_id: Dolor aut aut quia tempora tempora.
                                 is_enabled: true
                                 name: Quo accusamus aut.
                                 send_email_steps: 1275313078849356657
                                 source_flow_id: Unde eos facilis sit tempore perspiciatis voluptas.
                                 source_flow_name: Quo tenetur voluptate hic molestiae sequi.
+                                suppression_list_ids:
+                                    - Vel voluptatem et consequuntur.
+                                    - Fugiat deserunt eum.
+                                    - Voluptas possimus.
+                                    - In nihil accusamus ut cupiditate.
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -27127,10 +27134,15 @@ components:
                     type: string
                     description: Where to review and enable it
                     example: Qui est necessitatibus voluptas maxime.
-                enrollment_list_id:
-                    type: string
-                    description: The audience the new workflow enrolls, or empty when the source workflow's own enrollment was kept
-                    example: Accusamus quia ea voluptatem veniam.
+                enrollment_list_ids:
+                    type: array
+                    items:
+                        type: string
+                        example: Quidem quaerat cum modi temporibus.
+                    description: 'The HubSpot lists the new workflow enrolls: the series'' shared audience (its master list, or every list it was attached from). A contact in any of them is enrolled. The source workflow''s own enrollment is always replaced.'
+                    example:
+                        - Quidem quaerat cum modi temporibus.
+                        - Et maiores sit autem ut et.
                 flow_id:
                     type: string
                     description: HubSpot's id for the new workflow
@@ -27156,16 +27168,34 @@ components:
                     type: string
                     description: That workflow's name
                     example: Quo tenetur voluptate hic molestiae sequi.
+                suppression_list_ids:
+                    type: array
+                    items:
+                        type: string
+                        example: Vel voluptatem et consequuntur.
+                    description: 'The new workflow''s whole suppression set: the source workflow''s own suppression lists plus the audience''s.'
+                    example:
+                        - Vel voluptatem et consequuntur.
+                        - Fugiat deserunt eum.
+                        - Voluptas possimus.
+                        - In nihil accusamus ut cupiditate.
             example:
                 dated_steps: 8476403701307200312
                 edit_url: Qui est necessitatibus voluptas maxime.
-                enrollment_list_id: Accusamus quia ea voluptatem veniam.
+                enrollment_list_ids:
+                    - Quidem quaerat cum modi temporibus.
+                    - Et maiores sit autem ut et.
                 flow_id: Dolor aut aut quia tempora tempora.
                 is_enabled: true
                 name: Quo accusamus aut.
                 send_email_steps: 1275313078849356657
                 source_flow_id: Unde eos facilis sit tempore perspiciatis voluptas.
                 source_flow_name: Quo tenetur voluptate hic molestiae sequi.
+                suppression_list_ids:
+                    - Vel voluptatem et consequuntur.
+                    - Fugiat deserunt eum.
+                    - Voluptas possimus.
+                    - In nihil accusamus ut cupiditate.
             required:
                 - flow_id
                 - name
@@ -27174,6 +27204,8 @@ components:
                 - is_enabled
                 - send_email_steps
                 - dated_steps
+                - enrollment_list_ids
+                - suppression_list_ids
         SetCredentialGoogleAdsRequestBody:
             type: object
             properties:

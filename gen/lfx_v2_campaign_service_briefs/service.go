@@ -132,10 +132,18 @@ type Service interface {
 	// surface, or when a date is not YYYY-MM-DD; 409 when the source workflow's
 	// send-step count does not equal the number of briefs, or its dated-step count
 	// does not equal the number of send_dates, since a partial mapping would leave
-	// a send pointing at the SOURCE campaign's email; 404 when a brief does not
-	// exist in this project. The workflow is always created disabled -- enabling
-	// it is left to the human who reviews the drafts, and is the only irreversible
-	// step on this path.
+	// a send pointing at the SOURCE campaign's email; 409 when a brief has no
+	// BUILT HubSpot audience, when the briefs were built against different
+	// audiences (a workflow enrolls ONE audience, so every brief must carry the
+	// same send lists, suppressions and portal), when that audience was built in a
+	// different HubSpot portal than this project's credential reaches, or when the
+	// project's standing standard suppression list now covers a list the series
+	// sends to (the same send-time check staging applies); 404 when a brief does
+	// not exist in this project. The workflow enrolls the series' audience in
+	// place of the source workflow's enrollment, and adds the audience's
+	// suppression lists to the source's own. The workflow is always created
+	// disabled -- enabling it is left to the human who reviews the drafts, and is
+	// the only irreversible step on this path.
 	CreateSendWorkflow(context.Context, *CreateSendWorkflowPayload) (res *SendWorkflowResult, err error)
 	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
 	// platform is read, never written: the campaign must already exist under the
@@ -2424,9 +2432,13 @@ type SendWorkflowResult struct {
 	SendEmailSteps int
 	// How many wait-until-date steps had their date replaced
 	DatedSteps int
-	// The audience the new workflow enrolls, or empty when the source workflow's
-	// own enrollment was kept
-	EnrollmentListID *string
+	// The HubSpot lists the new workflow enrolls: the series' shared audience (its
+	// master list, or every list it was attached from). A contact in any of them
+	// is enrolled. The source workflow's own enrollment is always replaced.
+	EnrollmentListIds []string
+	// The new workflow's whole suppression set: the source workflow's own
+	// suppression lists plus the audience's.
+	SuppressionListIds []string
 }
 
 // SetWizardSendListPayload is the payload type of the

@@ -610,9 +610,13 @@ type CreateSendWorkflowResponseBody struct {
 	SendEmailSteps *int `form:"send_email_steps,omitempty" json:"send_email_steps,omitempty" xml:"send_email_steps,omitempty"`
 	// How many wait-until-date steps had their date replaced
 	DatedSteps *int `form:"dated_steps,omitempty" json:"dated_steps,omitempty" xml:"dated_steps,omitempty"`
-	// The audience the new workflow enrolls, or empty when the source workflow's
-	// own enrollment was kept
-	EnrollmentListID *string `form:"enrollment_list_id,omitempty" json:"enrollment_list_id,omitempty" xml:"enrollment_list_id,omitempty"`
+	// The HubSpot lists the new workflow enrolls: the series' shared audience (its
+	// master list, or every list it was attached from). A contact in any of them
+	// is enrolled. The source workflow's own enrollment is always replaced.
+	EnrollmentListIds []string `form:"enrollment_list_ids,omitempty" json:"enrollment_list_ids,omitempty" xml:"enrollment_list_ids,omitempty"`
+	// The new workflow's whole suppression set: the source workflow's own
+	// suppression lists plus the audience's.
+	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
 }
 
 // AdoptCampaignResponseBody is the type of the
@@ -7006,15 +7010,22 @@ func NewCreateCampaignsUnauthorized(body *CreateCampaignsUnauthorizedResponseBod
 // response.
 func NewCreateSendWorkflowResultCreated(body *CreateSendWorkflowResponseBody) *lfxv2campaignservicebriefs.SendWorkflowResult {
 	v := &lfxv2campaignservicebriefs.SendWorkflowResult{
-		FlowID:           *body.FlowID,
-		Name:             *body.Name,
-		EditURL:          *body.EditURL,
-		SourceFlowID:     *body.SourceFlowID,
-		SourceFlowName:   body.SourceFlowName,
-		IsEnabled:        *body.IsEnabled,
-		SendEmailSteps:   *body.SendEmailSteps,
-		DatedSteps:       *body.DatedSteps,
-		EnrollmentListID: body.EnrollmentListID,
+		FlowID:         *body.FlowID,
+		Name:           *body.Name,
+		EditURL:        *body.EditURL,
+		SourceFlowID:   *body.SourceFlowID,
+		SourceFlowName: body.SourceFlowName,
+		IsEnabled:      *body.IsEnabled,
+		SendEmailSteps: *body.SendEmailSteps,
+		DatedSteps:     *body.DatedSteps,
+	}
+	v.EnrollmentListIds = make([]string, len(body.EnrollmentListIds))
+	for i, val := range body.EnrollmentListIds {
+		v.EnrollmentListIds[i] = val
+	}
+	v.SuppressionListIds = make([]string, len(body.SuppressionListIds))
+	for i, val := range body.SuppressionListIds {
+		v.SuppressionListIds[i] = val
 	}
 
 	return v
@@ -10487,6 +10498,12 @@ func ValidateCreateSendWorkflowResponseBody(body *CreateSendWorkflowResponseBody
 	}
 	if body.DatedSteps == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("dated_steps", "body"))
+	}
+	if body.EnrollmentListIds == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("enrollment_list_ids", "body"))
+	}
+	if body.SuppressionListIds == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("suppression_list_ids", "body"))
 	}
 	return
 }

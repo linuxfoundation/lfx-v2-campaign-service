@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
@@ -79,7 +81,7 @@ func (s *BriefService) CreateSendWorkflow(ctx context.Context, p *briefs.CreateS
 	if configured := strings.TrimSpace(os.Getenv(constants.EnvSurveySequenceWorkflowID)); configured != "" {
 		flowID = configured
 	}
-	if named := strings.TrimSpace(derefString(p.Input.SourceWorkflowURL)); named != "" {
+	if named := strings.TrimSpace(strVal(p.Input.SourceWorkflowURL)); named != "" {
 		flowID = hubspot.ParseFlowID(named)
 		if flowID == "" {
 			return nil, &briefs.BadRequestError{
@@ -121,7 +123,7 @@ func (s *BriefService) CreateSendWorkflow(ctx context.Context, p *briefs.CreateS
 		return nil, eerr
 	}
 
-	enrollmentListID, aerr := s.seriesAudienceListID(ctx, p.ProjectID, p.Input.BriefIds)
+	series, aerr := s.seriesAudience(ctx, p.ProjectID, p.Input.BriefIds)
 	if aerr != nil {
 		return nil, aerr
 	}
@@ -134,29 +136,44 @@ func (s *BriefService) CreateSendWorkflow(ctx context.Context, p *briefs.CreateS
 		return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the HubSpot connection could not be resolved"}
 	}
 
+	// The same send-time checks staging and the wizard run before SetSendList, because enrolling
+	// a list in a workflow IS the send for this path: the drafts' own recipient settings are not
+	// what a workflow's send step uses. First the audience's lists must live in the portal this
+	// credential reaches, then the project's standing suppression list must not have grown to
+	// cover what the series sends to (#396). Both are read-only and run before anything exists.
+	if perr := assertWizardPortal(ctx, client, series.portalID); perr != nil {
+		return nil, perr
+	}
+	if cerr := wizardStandingCoversSendList(ctx, client, p.ProjectID, series.sendIDs, series.suppression); cerr != nil {
+		return nil, cerr
+	}
+
 	// The LF-wide fallback is NOT refused here, unlike the wizard's email search. The search
 	// refuses it because HubSpot's email namespace is portal-wide and a match there can be
 	// another project's email. This path names no stranger's asset: every email id came from
 	// this project's own campaign rows, and the workflow it copies is one the operator pasted.
 	ref, cerr := client.CloneFlowWithEmails(ctx, flowID, hubspot.CloneFlowOptions{
-		Name:             name,
-		EmailIDs:         emailIDs,
-		SendDates:        sendDates,
-		EnrollmentListID: enrollmentListID,
+		Name:               name,
+		EmailIDs:           emailIDs,
+		SendDates:          sendDates,
+		EnrollmentListIDs:  series.sendIDs,
+		SuppressionListIDs: series.suppression,
 	})
 	if cerr != nil {
 		return nil, mapFlowCloneErr(cerr)
 	}
 
 	return &briefs.SendWorkflowResult{
-		FlowID:         ref.FlowID,
-		Name:           ref.Name,
-		EditURL:        ref.EditURL,
-		SourceFlowID:   ref.SourceFlowID,
-		SourceFlowName: &ref.SourceFlowName,
-		IsEnabled:      ref.IsEnabled,
-		SendEmailSteps: ref.SendEmailSteps,
-		DatedSteps:     ref.DatedSteps,
+		FlowID:             ref.FlowID,
+		Name:               ref.Name,
+		EditURL:            ref.EditURL,
+		SourceFlowID:       ref.SourceFlowID,
+		SourceFlowName:     &ref.SourceFlowName,
+		IsEnabled:          ref.IsEnabled,
+		SendEmailSteps:     ref.SendEmailSteps,
+		DatedSteps:         ref.DatedSteps,
+		EnrollmentListIds:  ref.EnrollmentListIDs,
+		SuppressionListIds: ref.SuppressionListIDs,
 	}, nil
 }
 
@@ -231,87 +248,104 @@ func (s *BriefService) stagedEmailIDs(
 	return emailIDs, nil
 }
 
-// seriesAudienceListID is the HubSpot list the workflow enrolls: the audience the series shares.
+// seriesAudienceSet is the one audience a workflow enrolls: the lists it sends to, the lists it
+// suppresses, and the portal those ids belong to.
+type seriesAudienceSet struct {
+	sendIDs     []string
+	suppression []string
+	portalID    string
+}
+
+// seriesAudience is the audience the series shares, read from each brief's newest HubSpot
+// audience exactly as staging and the wizard read it (resolveWizardAudience): the newest one
+// decides, it must be BUILT, and it sends to every include list when it was attached from several.
 //
-// ONE list, because a workflow enrolls contacts once and then sends every step to them. The sends
-// are separate briefs with separate audiences in this service, so this is where that modelling
-// meets HubSpot's -- and the two only agree when the sends were built against the same audience.
+// ONE audience, because a workflow enrolls contacts once and then sends every step to them. The
+// sends are separate briefs with separate audiences in this service, so this is where that
+// modelling meets HubSpot's -- and the two only agree when every send was built against the same
+// lists, with the same suppressions, in the same portal.
 //
-// A disagreement is REFUSED rather than resolved by picking one. Either choice would send two of
-// the three emails to people the operator never selected for them, and nothing downstream would
+// A disagreement is REFUSED rather than resolved by picking one. Either choice would send some
+// of the emails to people the operator never selected for them, and nothing downstream would
 // show it: the workflow's enrollment step looks correctly filled in whichever list it names.
 //
-// An absent audience is not refused here. Staging already requires one, so a brief with a staged
-// draft has an audience; a brief without a draft is refused earlier, with a message that says to
-// stage it. Falling back to the source workflow's own enrollment keeps this from inventing a
-// second reason to fail for a state the earlier check already covers.
-func (s *BriefService) seriesAudienceListID(ctx context.Context, projectID string, briefIDs []string) (string, error) {
+// So is an absent or unreadable audience. Keeping the source workflow's own enrollment instead
+// would send this campaign's emails to the SOURCE campaign's audience -- the mistake this
+// rewrite exists to prevent -- and would skip the suppression checks the drafts were staged under.
+func (s *BriefService) seriesAudience(ctx context.Context, projectID string, briefIDs []string) (*seriesAudienceSet, error) {
 	_, _, audiences := s.wizardDeps()
 	if audiences == nil {
-		// The audience repository is an OPTIONAL capability (it binds with the wizard's
-		// collaborators). Without it the workflow still builds, enrolling the source's own
-		// audience, which the result reports -- better than refusing a build for a read that
-		// only narrows who it enrolls.
-		return "", nil
+		// Availability-neutral, like the resolver above: the audience repository binds with the
+		// wizard's collaborators, so on a cold start it can simply not be bound yet.
+		return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the audience store is unavailable; retry shortly"}
 	}
 
-	listID := ""
+	var series *seriesAudienceSet
 	for i, briefID := range briefIDs {
-		built, err := latestBuiltAudience(ctx, audiences, projectID, briefID)
-		if err != nil || built == nil {
-			// Unreadable is treated as absent, deliberately: the workflow still builds, enrolling
-			// the source's own audience, and the result says which list it used. Failing the whole
-			// build on a read this path can do without would be worse than saying what happened.
+		sendIDs, suppression, portalID, err := resolveWizardAudience(ctx, audiences, projectID, briefID)
+		if err != nil {
+			return nil, withSendPosition(err, i+1, briefID)
+		}
+		got := &seriesAudienceSet{
+			sendIDs:     audience.UniqueIDs(sendIDs),
+			suppression: audience.UniqueIDs(suppression),
+			portalID:    portalID,
+		}
+		for _, id := range got.suppression {
+			if slices.Contains(got.sendIDs, id) {
+				// Dispatch's pre-flight, restated: a list both sent to and suppressed is excluded
+				// whole, so the send would quietly reach nobody on it.
+				return nil, &briefs.ConflictError{
+					Code:    "409",
+					Message: fmt.Sprintf("send %d's audience lists %s as both a recipient and a suppression list; rebuild the audience", i+1, id),
+				}
+			}
+		}
+		if series == nil {
+			series = got
 			continue
 		}
-		masterListID := strings.TrimSpace(built.PlatformMasterListID)
-		if masterListID == "" {
-			continue
-		}
-		if listID == "" {
-			listID = masterListID
-			continue
-		}
-		if masterListID != listID {
-			return "", &briefs.ConflictError{
+		if !sameIDSet(series.sendIDs, got.sendIDs) || !sameIDSet(series.suppression, got.suppression) || series.portalID != got.portalID {
+			return nil, &briefs.ConflictError{
 				Code: "409",
 				Message: fmt.Sprintf(
-					"send %d is built against a different audience than the earlier sends; a workflow enrolls one audience for the whole series",
+					"send %d is built against a different audience than the earlier sends; a workflow enrolls one audience for the whole series, so attach the same lists to every send",
 					i+1),
 			}
 		}
 	}
-	return listID, nil
+	return series, nil
 }
 
-// latestBuiltAudience is the newest BUILT HubSpot audience under a brief, or nil.
-//
-// Newest, because composing again mints a second list and the latest one is what staging attached
-// to the draft -- enrolling an earlier one would send to an audience the drafts themselves do not
-// use. Only `built` counts: a building or failed audience has no usable list behind it.
-func latestBuiltAudience(ctx context.Context, audiences domain.AudienceRepository, projectID, briefID string) (*model.CampaignAudience, error) {
-	rows, err := audiences.ListAudiences(ctx, projectID, briefID)
-	if err != nil {
-		return nil, err
+// withSendPosition prefixes an audience refusal with the send it is about, so the operator knows
+// which of the series' briefs to fix. resolveWizardAudience's own wording names the wizard's
+// send_list_id override, which this endpoint does not take, so that remedy is dropped here.
+func withSendPosition(err error, position int, briefID string) error {
+	prefix := fmt.Sprintf("send %d (brief %s): ", position, briefID)
+	clean := func(msg string) string {
+		return prefix + strings.ReplaceAll(msg, " or supply send_list_id", "")
 	}
-	var newest *model.CampaignAudience
-	for _, row := range rows {
-		if row == nil || row.Platform != model.ProviderHubSpot || row.Status != model.AudienceBuilt {
-			continue
-		}
-		if newest == nil || row.CreatedAt.After(newest.CreatedAt) {
-			newest = row
-		}
+	var conflict *briefs.ConflictError
+	if errors.As(err, &conflict) {
+		return &briefs.ConflictError{Code: conflict.Code, Message: clean(conflict.Message)}
 	}
-	return newest, nil
+	var bad *briefs.BadRequestError
+	if errors.As(err, &bad) {
+		// A brief with no audience at all is a state of the series, not a malformed request.
+		return &briefs.ConflictError{Code: "409", Message: clean(bad.Message)}
+	}
+	return err
 }
 
-// derefString reads an optional request attribute, which Goa models as a pointer.
-func derefString(v *string) string {
-	if v == nil {
-		return ""
+// sameIDSet reports whether a and b hold the same ids, whatever their order.
+func sameIDSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
 	}
-	return *v
+	x, y := slices.Clone(a), slices.Clone(b)
+	slices.Sort(x)
+	slices.Sort(y)
+	return slices.Equal(x, y)
 }
 
 // parseSendDates turns the request's calendar dates into times, preserving order.

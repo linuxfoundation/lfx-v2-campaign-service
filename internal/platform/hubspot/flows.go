@@ -77,10 +77,13 @@ type FlowRef struct {
 	// what tells an operator whether the clone matched the shape they expected.
 	SendEmailSteps int `json:"send_email_steps"`
 	DatedSteps     int `json:"dated_steps"`
-	// EnrollmentListID is the audience the new workflow enrolls, or "" when the source's own
-	// enrollment was kept. Reported because it decides WHO receives the series, and an operator
+	// EnrollmentListIDs are the lists the new workflow enrolls, or none when the source's own
+	// enrollment was kept. Reported because they decide WHO receives the series, and an operator
 	// reading a success message has no other way to tell which of the two happened.
-	EnrollmentListID string `json:"enrollment_list_id"`
+	EnrollmentListIDs []string `json:"enrollment_list_ids"`
+	// SuppressionListIDs is the new workflow's whole suppression set: the source's own lists
+	// plus the ones the caller added.
+	SuppressionListIDs []string `json:"suppression_list_ids"`
 }
 
 // FlowEditURL is where a human reviews and enables a workflow.
@@ -122,15 +125,22 @@ type CloneFlowOptions struct {
 	// step. Only the DATE is replaced -- the step's time of day stays the source's,
 	// because that is a sending-hours decision its author made and a date carries no time.
 	SendDates []time.Time
-	// EnrollmentListID replaces WHO the workflow enrolls: the campaign's own audience, rather
-	// than whichever list the source workflow was built around. Empty keeps the source's
-	// enrollment criteria untouched.
+	// EnrollmentListIDs replace WHO the workflow enrolls: the campaign's own audience, rather
+	// than whichever list the source workflow was built around. A contact in ANY of them is
+	// enrolled, matching an email sent to several lists. Empty keeps the source's enrollment
+	// criteria untouched.
 	//
 	// This is the difference between a clone that is a template and a clone that is a campaign.
 	// Left alone, the new workflow would send this campaign's emails to the SOURCE campaign's
 	// audience -- a mistake that is invisible in the editor, because the enrollment step looks
 	// correctly filled in.
-	EnrollmentListID string
+	EnrollmentListIDs []string
+	// SuppressionListIDs are ADDED to the source workflow's own suppression lists, never put in
+	// their place. A workflow's send step ignores the suppression lists recorded on the draft,
+	// so the audience's suppressions have to be carried here or the series would send to
+	// contacts the staged drafts exclude. The source's lists are kept because they are the
+	// portal's own policy.
+	SuppressionListIDs []string
 }
 
 // CloneFlowWithEmails recreates a workflow with this campaign's emails in its send
@@ -193,7 +203,8 @@ func (c *Client) CloneFlowWithEmails(ctx context.Context, flowID string, opts Cl
 		}
 	}
 
-	if strings.TrimSpace(opts.EnrollmentListID) != "" {
+	enrollIDs := uniqueTrimmed(opts.EnrollmentListIDs)
+	if len(enrollIDs) > 0 {
 		enrollment, ok := flow["enrollmentCriteria"].(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("hubspot: workflow %s has no enrollment criteria to re-point", flowID)
@@ -203,23 +214,33 @@ func (c *Client) CloneFlowWithEmails(ctx context.Context, flowID string, opts Cl
 		// enroll both -- so the operator's list would be a widening of somebody else's, not the
 		// audience they built.
 		//
-		// The shape is HubSpot's: an OR branch holding one AND branch holding one IN_LIST filter.
-		// A flatter form is accepted by the create call and then read back by the editor as no
-		// enrollment at all.
+		// The shape is HubSpot's: an OR branch holding one AND branch per list, each holding one
+		// IN_LIST filter, so a contact in any of the lists is enrolled. A flatter form is
+		// accepted by the create call and then read back by the editor as no enrollment at all.
+		branches := make([]any, 0, len(enrollIDs))
+		for _, id := range enrollIDs {
+			branches = append(branches, map[string]any{
+				"filterBranches":       []any{},
+				"filters":              []any{map[string]any{"listId": id, "operator": "IN_LIST", "filterType": "IN_LIST"}},
+				"filterBranchType":     "AND",
+				"filterBranchOperator": "AND",
+			})
+		}
 		enrollment["listFilterBranch"] = map[string]any{
-			"filterBranches": []any{
-				map[string]any{
-					"filterBranches":       []any{},
-					"filters":              []any{map[string]any{"listId": opts.EnrollmentListID, "operator": "IN_LIST", "filterType": "IN_LIST"}},
-					"filterBranchType":     "AND",
-					"filterBranchOperator": "AND",
-				},
-			},
+			"filterBranches":       branches,
 			"filters":              []any{},
 			"filterBranchType":     "OR",
 			"filterBranchOperator": "OR",
 		}
 		flow["enrollmentCriteria"] = enrollment
+	}
+
+	suppression, serr := mergeSuppressionListIDs(flow["suppressionListIds"], opts.SuppressionListIDs)
+	if serr != nil {
+		return nil, fmt.Errorf("hubspot: workflow %s: %w", flowID, serr)
+	}
+	if len(suppression) > 0 {
+		flow["suppressionListIds"] = suppression
 	}
 
 	// Rebuilt field by field rather than posted back wholesale: the GET response carries
@@ -260,16 +281,96 @@ func (c *Client) CloneFlowWithEmails(ctx context.Context, flowID string, opts Cl
 	}
 
 	return &FlowRef{
-		FlowID:           created.ID,
-		Name:             orDefaultString(created.Name, name),
-		EditURL:          c.FlowEditURL(created.ID),
-		SourceFlowID:     flowID,
-		SourceFlowName:   stringField(flow, "name"),
-		IsEnabled:        created.IsEnabled,
-		SendEmailSteps:   len(sendSteps),
-		DatedSteps:       len(opts.SendDates),
-		EnrollmentListID: strings.TrimSpace(opts.EnrollmentListID),
+		FlowID:             created.ID,
+		Name:               orDefaultString(created.Name, name),
+		EditURL:            c.FlowEditURL(created.ID),
+		SourceFlowID:       flowID,
+		SourceFlowName:     stringField(flow, "name"),
+		IsEnabled:          created.IsEnabled,
+		SendEmailSteps:     len(sendSteps),
+		DatedSteps:         len(opts.SendDates),
+		EnrollmentListIDs:  enrollIDs,
+		SuppressionListIDs: flowIDStrings(suppression),
 	}, nil
+}
+
+// uniqueTrimmed is in with blanks and repeats dropped, order kept.
+func uniqueTrimmed(in []string) []string {
+	var out []string
+	seen := make(map[string]struct{}, len(in))
+	for _, v := range in {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if _, dup := seen[v]; dup {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+// mergeSuppressionListIDs is the source flow's suppressionListIds with add appended, each id
+// once. The source's own entries are kept exactly as read. An added id takes the source's
+// element type -- a number when the source lists numbers -- so the posted array is not a mix
+// the create call may refuse; with no source entries it stays a string, which is how every
+// other list id in a flow definition (the IN_LIST filter's listId) is written.
+func mergeSuppressionListIDs(source any, add []string) ([]any, error) {
+	var out []any
+	if source != nil {
+		existing, ok := source.([]any)
+		if !ok {
+			return nil, fmt.Errorf("suppressionListIds is not an array")
+		}
+		out = append(out, existing...)
+	}
+	numeric := false
+	if len(out) > 0 {
+		_, numeric = out[0].(float64)
+	}
+	have := make(map[string]struct{}, len(out)+len(add))
+	for _, v := range out {
+		have[flowIDString(v)] = struct{}{}
+	}
+	for _, id := range uniqueTrimmed(add) {
+		if _, dup := have[id]; dup {
+			continue
+		}
+		have[id] = struct{}{}
+		if !numeric {
+			out = append(out, id)
+			continue
+		}
+		n, err := strconv.ParseInt(id, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("suppression list id %q is not numeric, but the workflow lists its suppressions as numbers", id)
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+
+// flowIDString renders one id from a flow definition, which decodes a number as float64.
+func flowIDString(v any) string {
+	switch t := v.(type) {
+	case float64:
+		return strconv.FormatInt(int64(t), 10)
+	case int64:
+		return strconv.FormatInt(t, 10)
+	default:
+		return strings.TrimSpace(fmt.Sprint(t))
+	}
+}
+
+// flowIDStrings renders a flow id array for reporting.
+func flowIDStrings(in []any) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		out = append(out, flowIDString(v))
+	}
+	return out
 }
 
 // actionsOfType returns the actions of one type in FLOW ORDER.

@@ -236,6 +236,11 @@ openssl rand -base64 32
   exercised against a live ad account. The read
   (`GET .../keyword-targeting`) is not gated. The chart sets it to
   `"false"`.
+- `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
+  `POST /projects/{project_id}/send-workflows` copies when a request
+  names no `source_workflow_url`. Unset or empty selects the in-code
+  default `1841232183`, the LF Research survey-promo workflow, which
+  exists only in the LF portal. The chart sets it to `""`.
 - `MICROSOFT_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to Microsoft Advertising (Bing Ads) metrics reads.
   Only the exact value `true` enables them; unset or any other value
