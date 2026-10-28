@@ -5,13 +5,18 @@ package hubspot
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Hard-coded HubSpot drag-and-drop module ids. These are NOT arbitrary — they were
@@ -140,8 +145,11 @@ func (c *Client) RebuildEmailContent(ctx context.Context, id string, in RebuildE
 	// empty, so those requests do reach here with an empty body and lose the clone's body.
 	// Closing that needs a content path that edits widgets in place rather than replacing them;
 	// tracked with the rest of LFXV2-2775.
+	// bodyToken is THIS write's marker token, handed to verifyContentSaved as computed rather
+	// than re-read from the html, which is where an earlier staging's token could be found.
+	bodyToken := ""
 	if strings.TrimSpace(in.BodyHTML) != "" {
-		addBodySection(widgets, &sections, in.BodyHTML)
+		bodyToken = addBodySection(widgets, &sections, in.BodyHTML)
 	}
 
 	if strings.TrimSpace(in.ButtonURL) != "" {
@@ -178,7 +186,7 @@ func (c *Client) RebuildEmailContent(ctx context.Context, id string, in RebuildE
 		return nil, err
 	}
 
-	if verr := c.verifyContentSaved(ctx, id, widgets); verr != nil {
+	if verr := c.verifyContentSaved(ctx, id, widgets, bodyToken); verr != nil {
 		// Only a PROVEN revert carries the typed error. A verification READ that failed --
 		// timeout, malformed JSON -- leaves the outcome unknown and retryable, and tagging it
 		// ErrContentNotPersisted sent the caller's ERROR branch (which says "needs manual
@@ -244,7 +252,10 @@ func (c *Client) readDraftContent(ctx context.Context, id string) (rawEmailConte
 // Two distinct failures come out: a proven revert (wrapped as ErrContentNotPersisted by the
 // caller, unrecoverable) and a failed verification READ (errVerifyReadFailed, retryable, because
 // the write's outcome is then unknown rather than known-bad).
-func (c *Client) verifyContentSaved(ctx context.Context, id string, ourWidgets map[string]any) error {
+//
+// bodyToken is the marker token this write put in the body (addBodySection), or "" when it wrote
+// no body.
+func (c *Client) verifyContentSaved(ctx context.Context, id string, ourWidgets map[string]any, bodyToken string) error {
 	doc, err := c.readDraftContent(ctx, id)
 	if err != nil {
 		// NOT ErrContentNotPersisted. The verification READ failed -- timeout, malformed JSON --
@@ -296,6 +307,31 @@ func (c *Client) verifyContentSaved(ctx context.Context, id string, ourWidgets m
 		sort.Strings(missing) // deterministic message; map iteration order is not
 		return fmt.Errorf("hubspot: email %s content PATCH did not persist %d of the rebuilt widgets (%s) (HubSpot may have silently reverted it)",
 			id, len(missing), strings.Join(missing, ", "))
+	}
+
+	// The BODY's content, not only its key. The keys are fixed, so a template cloned from an
+	// email an earlier generation wrote already carries a `staging_body` placed in the layout: a
+	// reverted PATCH then passes the key check while the draft still holds that earlier body --
+	// and a caller recording the draft as carrying this campaign's copy would be wrong. The
+	// read-back body must carry THIS write's marker (stagedBodyMarker); an earlier body carries
+	// another one, or none. Not a comparison of the whole html, which HubSpot may re-serialise.
+	// The token is the one this write computed, never one found in the html: an operator's edited
+	// body can still carry an earlier staging's marker, which a reverted draft would also carry.
+	if token := bodyToken; token != "" {
+		var savedWidgets map[string]struct {
+			Body struct {
+				HTML string `json:"html"`
+			} `json:"body"`
+		}
+		if derr := json.Unmarshal(doc.Content["widgets"], &savedWidgets); derr != nil {
+			// An unreadable shape says nothing about whether the write landed: unknown and
+			// retryable, never a proven revert.
+			return fmt.Errorf("%w: email %s: decode widgets: %v", errVerifyReadFailed, id, derr)
+		}
+		if !strings.Contains(savedWidgets[bodyWidgetKey].Body.HTML, token) {
+			return fmt.Errorf("hubspot: email %s content PATCH left %s without this write's marker (HubSpot may have silently reverted it)",
+				id, bodyWidgetKey)
+		}
 	}
 	return nil
 }
@@ -404,18 +440,62 @@ func richTextWidget(html string, padTop, padRight, padBottom, padLeft string) ma
 	}
 }
 
+// stagedBodyMarker is the HTML comment written at the end of the rebuilt body: a token derived
+// from the body itself, which verifyContentSaved looks for in the read-back html. A token, not a
+// comparison of the whole html: HubSpot may re-serialise markup on save (`&` to `&amp;`, `<br>`
+// to `<br />`, attribute order), and reading that as a revert would refuse every draft. A comment
+// because it renders nothing and email HTML depends on comments surviving (MSO conditional
+// comments), so it is the form most likely to be kept.
+//
+// The token mixes a fresh random nonce into the body hash, so every rebuild writes a NEW token
+// even when the body is unchanged (a rebuild may change only the native button's destination).
+// Derived from the body alone, a silently reverted PATCH of such a rebuild would read back the
+// previous write's identical token and pass verification with the old button.
+func stagedBodyMarker(bodyHTML string) string {
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		// crypto/rand does not fail on supported platforms; fall back to the clock so the token
+		// still differs per rebuild rather than repeating the previous write's.
+		nonce = []byte(time.Now().UTC().Format(time.RFC3339Nano))
+	}
+	sum := sha256.Sum256(append([]byte(bodyHTML), nonce...))
+	return "<!-- " + stagedMarkerPrefix + hex.EncodeToString(sum[:8]) + " -->"
+}
+
+// stagedMarkerPrefix opens the token stagedBodyMarker writes.
+const stagedMarkerPrefix = "lfx-staged:"
+
+// stagedMarkerComment matches a marker comment an EARLIER staging wrote, which an operator's
+// edited body can carry forward; stagedMarkerToken matches a bare token left behind any other way.
+var (
+	stagedMarkerComment = regexp.MustCompile(`<!--\s*lfx-staged:[0-9a-f]{16}\s*-->`)
+	stagedMarkerToken   = regexp.MustCompile(`lfx-staged:[0-9a-f]{16}`)
+)
+
+// stripStagedMarkers removes every earlier staging's marker from a body before a new one is
+// written, so the draft carries exactly one token: this write's.
+func stripStagedMarkers(bodyHTML string) string {
+	return stagedMarkerToken.ReplaceAllString(stagedMarkerComment.ReplaceAllString(bodyHTML, ""), "")
+}
+
 // bodyWidgetKey names the rebuild's own body widget. Shared with the preserve path above, so
 // the two cannot drift onto different keys.
 const bodyWidgetKey = "staging_body"
 
-func addBodySection(widgets map[string]any, sections *[]map[string]any, bodyHTML string) {
+// addBodySection writes the body widget, ending in this write's marker, and returns the
+// marker's token for verifyContentSaved.
+func addBodySection(widgets map[string]any, sections *[]map[string]any, bodyHTML string) (token string) {
 	const key = bodyWidgetKey
-	widgets[key] = richTextWidget(bodyHTML, "15px", "20px", "10px", "20px")
+	bodyHTML = strings.TrimRight(stripStagedMarkers(bodyHTML), " \t\r\n")
+	marker := stagedBodyMarker(bodyHTML)
+	token = strings.TrimSuffix(strings.TrimPrefix(marker, "<!-- "), " -->")
+	widgets[key] = richTextWidget(bodyHTML+"\n"+marker, "15px", "20px", "10px", "20px")
 	*sections = append(*sections, makeSection(
 		"section-staging-body",
 		[]widgetColumn{{id: "col-body-0", widgets: []string{key}, width: 12}},
 		defaultSectionStyle,
 	))
+	return token
 }
 
 // addButtonSection renders a native, centered HubSpot CTA button module (module_id

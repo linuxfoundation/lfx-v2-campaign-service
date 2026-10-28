@@ -22,6 +22,15 @@ const (
 	// app.environment, so an override could otherwise ship a pod with authentication
 	// switched off. Nothing in the chart can set or clear this one.
 	EnvKubernetesServiceHost = "KUBERNETES_SERVICE_HOST"
+	// EnvSurveySequenceWorkflowID is the HubSpot workflow a survey series is cloned from: the
+	// one whose schedule, sending windows and suppression already embody marketing operations'
+	// own policy. A clone of it carries that policy; building a flow from scratch would mean
+	// re-deciding all of it in code.
+	//
+	// Configurable because the default names a workflow in ONE portal. A deployment pointed at a
+	// different HubSpot account has no workflow by that id, and the build fails there with a
+	// not-found rather than silently copying a stranger's flow.
+	EnvSurveySequenceWorkflowID = "SURVEY_SEQUENCE_WORKFLOW_ID"
 	// EnvNATSURL is the NATS server URL used to publish Query Service index updates.
 	// Empty DISABLES indexing: every endpoint still serves and campaigns still dispatch;
 	// only the search index stops being fed (the Query Service rebuilds a resource's

@@ -2014,14 +2014,15 @@ paths:
                     enum:
                         - paid-marketing
                         - email
+                        - survey
                   example: email
                 - name: stage
                   in: query
-                  description: Stage within an email series. Empty for paid, which has no series.
+                  description: Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.
                   allowEmptyValue: true
                   schema:
                     type: string
-                    description: Stage within an email series. Empty for paid, which has no series.
+                    description: Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.
                     default: ""
                     example: Registration Push
                     enum:
@@ -2032,6 +2033,10 @@ paths:
                         - Discount Offer
                         - Final Countdown
                         - Post-Event
+                        - Survey Promo
+                        - Survey Reminder
+                        - Survey Closing
+                        - Report Promo
                   example: Registration Push
                 - name: project_id
                   in: path
@@ -7036,11 +7041,11 @@ paths:
             parameters:
                 - name: stage
                   in: query
-                  description: 'Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
+                  description: 'Stage the email belongs to. Event stages: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Survey stages: Survey Promo, Survey Reminder, Survey Closing, Report Promo. Matching is CASE-SENSITIVE; an unrecognised value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
                   allowEmptyValue: true
                   schema:
                     type: string
-                    description: 'Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
+                    description: 'Stage the email belongs to. Event stages: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Survey stages: Survey Promo, Survey Reminder, Survey Closing, Report Promo. Matching is CASE-SENSITIVE; an unrecognised value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
                     example: Post-Event
                   example: Post-Event
                 - name: variant
@@ -17329,6 +17334,141 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/send-workflows:
+        post:
+            tags:
+                - lfx-v2-campaign-service-briefs
+            summary: create-send-workflow lfx-v2-campaign-service-briefs
+            description: 'Create ONE HubSpot workflow that sends an already-staged series of emails, and return it DISABLED. Each brief named in brief_ids must already have a fully staged HubSpot draft (its campaign row''s platform id is the email the workflow will send) and must belong to a send surface; a paid brief is refused. The source workflow (source_workflow_url, else the deployment''s SURVEY_SEQUENCE_WORKFLOW_ID, else the in-code default) is only ever read: its definition is fetched, its send steps -- walked from its start action, which must be one straight sequence -- are pointed at this campaign''s drafts in the order brief_ids gives, each wait-until-date step is re-dated from send_dates, its enrollment is replaced by the series'' audience, the audience''s suppression lists are added to its own, and the result is created as a NEW workflow. 400 when the source URL names no workflow (or names one HubSpot refuses), when a brief has no staged draft yet, when a brief is on the paid surface or appears twice, when there are fewer than two briefs, or when a date is not YYYY-MM-DD, not after today or not after the date before it. 409 when the source workflow''s send-step count does not equal the number of briefs or its dated-step count the number of send_dates, when it branches, has steps off its main path, does not enroll by list membership or still refers to its own emails elsewhere; when a draft is not fully staged or was staged in another portal; when a brief has no BUILT HubSpot audience, when the briefs were built against different audiences (a workflow enrolls ONE audience, so every brief must carry the same send lists, suppressions and portal), or that audience was built in a different HubSpot portal than this project''s credential reaches; when a list the series sends to is also suppressed, or the project''s standing standard suppression list now covers it (the same send-time check staging applies); when the project has no usable HubSpot connection, the credential lacks the automation scope, or the default workflow does not exist in the project''s portal. 404 when a brief does not exist in this project. 500 when HubSpot''s answer to the create could not be read, so a workflow may exist. 503 when the audience store or HubSpot is unavailable. The workflow is always created disabled -- enabling it is left to the human who reviews the drafts, and is the only irreversible step on this path.'
+            operationId: lfx-v2-campaign-service-briefs#create-send-workflow
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Canonical LFX project slug (NOT a UUID) that scopes the resource
+                  required: true
+                  schema:
+                    type: string
+                    description: Canonical LFX project slug (NOT a UUID) that scopes the resource
+                    example: cncf
+                    pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
+                    maxLength: 35
+                  example: cncf
+            requestBody:
+                description: Request body for create-send-workflow.
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CreateSendWorkflowRequestBody'
+                        example:
+                            input:
+                                brief_ids:
+                                    - Quod iure vero eum et ea magnam.
+                                    - Quo velit eos praesentium enim.
+                                name: 2026 Cloud Native Annual Survey - Workflow
+                                send_dates:
+                                    - "2026-10-09"
+                                    - "2026-10-19"
+                                    - "2026-10-23"
+                                source_workflow_url: https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit
+            responses:
+                "201":
+                    description: Created response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/SendWorkflowResult'
+                            example:
+                                dated_steps: 8476403701307200312
+                                edit_url: Qui est necessitatibus voluptas maxime.
+                                enrollment_list_ids:
+                                    - Quidem quaerat cum modi temporibus.
+                                    - Et maiores sit autem ut et.
+                                flow_id: Dolor aut aut quia tempora tempora.
+                                is_enabled: false
+                                name: Quo accusamus aut.
+                                send_email_steps: 1275313078849356657
+                                source_flow_id: Unde eos facilis sit tempore perspiciatis voluptas.
+                                source_flow_name: Quo tenetur voluptate hic molestiae sequi.
+                                suppression_list_ids:
+                                    - Vel voluptatem et consequuntur.
+                                    - Fugiat deserunt eum.
+                                    - Voluptas possimus.
+                                    - In nihil accusamus ut cupiditate.
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/twitter-ads/audience:
         get:
             tags:
@@ -20076,6 +20216,7 @@ components:
                     enum:
                         - paid-marketing
                         - email
+                        - survey
                 event_details:
                     description: Extracted event/course details
                     example: Sint eos perferendis neque.
@@ -20113,7 +20254,7 @@ components:
                     example: Aut eius dolorum temporibus tempore id repellat.
                 stage:
                     type: string
-                    description: Stage within an email series. Empty for paid, which has no series.
+                    description: Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.
                     example: Registration Push
                     enum:
                         - ""
@@ -20123,6 +20264,10 @@ components:
                         - Discount Offer
                         - Final Countdown
                         - Post-Event
+                        - Survey Promo
+                        - Survey Reminder
+                        - Survey Closing
+                        - Report Promo
                 status:
                     type: string
                     description: Lifecycle status
@@ -20182,6 +20327,7 @@ components:
                     enum:
                         - paid-marketing
                         - email
+                        - survey
                 event_details:
                     description: Extracted event/course details
                     example: Aut qui voluptatem omnis.
@@ -20212,7 +20358,7 @@ components:
                         - membership
                 stage:
                     type: string
-                    description: Stage within an email series. Empty for paid, which has no series.
+                    description: Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.
                     example: Registration Push
                     enum:
                         - ""
@@ -20222,6 +20368,10 @@ components:
                         - Discount Offer
                         - Final Countdown
                         - Post-Event
+                        - Survey Promo
+                        - Survey Reminder
+                        - Survey Closing
+                        - Report Promo
                 targeting:
                     description: Targeting recommendation
                     example: Minima itaque.
@@ -21348,6 +21498,25 @@ components:
             required:
                 - config
                 - credentials
+        CreateSendWorkflowRequestBody:
+            type: object
+            properties:
+                input:
+                    $ref: '#/components/schemas/SendWorkflowInput'
+            description: Request body for create-send-workflow.
+            example:
+                input:
+                    brief_ids:
+                        - Quod iure vero eum et ea magnam.
+                        - Quo velit eos praesentium enim.
+                    name: 2026 Cloud Native Annual Survey - Workflow
+                    send_dates:
+                        - "2026-10-09"
+                        - "2026-10-19"
+                        - "2026-10-23"
+                    source_workflow_url: https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit
+            required:
+                - input
         CreateTwitterAdsRequestBody:
             type: object
             properties:
@@ -26903,6 +27072,141 @@ components:
             required:
                 - campaigns
                 - capped
+        SendWorkflowInput:
+            type: object
+            properties:
+                brief_ids:
+                    type: array
+                    items:
+                        type: string
+                        example: Quod iure vero eum et ea magnam.
+                    description: The briefs whose staged drafts this workflow sends, in SEND ORDER. One per send step in the source workflow.
+                    example:
+                        - Quod iure vero eum et ea magnam.
+                        - Quo velit eos praesentium enim.
+                    minItems: 2
+                    maxItems: 10
+                name:
+                    type: string
+                    description: Name for the new workflow
+                    example: 2026 Cloud Native Annual Survey - Workflow
+                    minLength: 1
+                    maxLength: 200
+                send_dates:
+                    type: array
+                    items:
+                        type: string
+                        example: "2026-11-09"
+                        pattern: ^\d{4}-\d{2}-\d{2}$
+                    description: 'Calendar dates (YYYY-MM-DD), one per wait-until-date step of the source workflow, in the order a contact meets them. Each must be after today (UTC) and after the one before it. Required whenever the source workflow has dated steps: the source''s own dates belong to another campaign. Each step''s time of day is always the source''s.'
+                    example:
+                        - "2026-10-09"
+                        - "2026-10-19"
+                        - "2026-10-23"
+                    maxItems: 10
+                source_workflow_url:
+                    type: string
+                    description: 'The HubSpot workflow to copy: its steps, sending windows, blocked dates and suppression lists are kept, while its emails, dates and enrollment are replaced. Its editor URL, or its bare numeric id. OPTIONAL: omitted, the deployment''s configured survey-sequence workflow is used, which is the ordinary case. It is only ever READ.'
+                    example: https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit
+                    minLength: 1
+                    maxLength: 500
+            example:
+                brief_ids:
+                    - Quod iure vero eum et ea magnam.
+                    - Quo velit eos praesentium enim.
+                name: 2026 Cloud Native Annual Survey - Workflow
+                send_dates:
+                    - "2026-10-09"
+                    - "2026-10-19"
+                    - "2026-10-23"
+                source_workflow_url: https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit
+            required:
+                - name
+                - brief_ids
+        SendWorkflowResult:
+            type: object
+            properties:
+                dated_steps:
+                    type: integer
+                    description: How many wait-until-date steps had their date replaced
+                    example: 8476403701307200312
+                    format: int64
+                edit_url:
+                    type: string
+                    description: Where to review and enable it
+                    example: Qui est necessitatibus voluptas maxime.
+                enrollment_list_ids:
+                    type: array
+                    items:
+                        type: string
+                        example: Quidem quaerat cum modi temporibus.
+                    description: 'The HubSpot lists the new workflow enrolls: the series'' shared audience (its master list, or every list it was attached from). A contact in any of them is enrolled. The source workflow''s own enrollment is always replaced.'
+                    example:
+                        - Quidem quaerat cum modi temporibus.
+                        - Et maiores sit autem ut et.
+                flow_id:
+                    type: string
+                    description: HubSpot's id for the new workflow
+                    example: Dolor aut aut quia tempora tempora.
+                is_enabled:
+                    type: boolean
+                    description: 'Always false on create: the workflow sends nothing until a human enables it in HubSpot'
+                    example: false
+                name:
+                    type: string
+                    description: Name HubSpot recorded
+                    example: Quo accusamus aut.
+                send_email_steps:
+                    type: integer
+                    description: How many send steps were pointed at this campaign's drafts
+                    example: 1275313078849356657
+                    format: int64
+                source_flow_id:
+                    type: string
+                    description: The workflow it was copied from
+                    example: Unde eos facilis sit tempore perspiciatis voluptas.
+                source_flow_name:
+                    type: string
+                    description: That workflow's name
+                    example: Quo tenetur voluptate hic molestiae sequi.
+                suppression_list_ids:
+                    type: array
+                    items:
+                        type: string
+                        example: Vel voluptatem et consequuntur.
+                    description: 'The new workflow''s whole suppression set: the source workflow''s own suppression lists plus the audience''s.'
+                    example:
+                        - Vel voluptatem et consequuntur.
+                        - Fugiat deserunt eum.
+                        - Voluptas possimus.
+                        - In nihil accusamus ut cupiditate.
+            example:
+                dated_steps: 8476403701307200312
+                edit_url: Qui est necessitatibus voluptas maxime.
+                enrollment_list_ids:
+                    - Quidem quaerat cum modi temporibus.
+                    - Et maiores sit autem ut et.
+                flow_id: Dolor aut aut quia tempora tempora.
+                is_enabled: false
+                name: Quo accusamus aut.
+                send_email_steps: 1275313078849356657
+                source_flow_id: Unde eos facilis sit tempore perspiciatis voluptas.
+                source_flow_name: Quo tenetur voluptate hic molestiae sequi.
+                suppression_list_ids:
+                    - Vel voluptatem et consequuntur.
+                    - Fugiat deserunt eum.
+                    - Voluptas possimus.
+                    - In nihil accusamus ut cupiditate.
+            required:
+                - flow_id
+                - name
+                - edit_url
+                - source_flow_id
+                - is_enabled
+                - send_email_steps
+                - dated_steps
+                - enrollment_list_ids
+                - suppression_list_ids
         SetCredentialGoogleAdsRequestBody:
             type: object
             properties:

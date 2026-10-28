@@ -245,15 +245,15 @@ func DecodeFindBriefRequest(mux goahttp.Muxer, decoder func(*http.Request) goaht
 		} else {
 			deliveryType = "paid-marketing"
 		}
-		if !(deliveryType == "paid-marketing" || deliveryType == "email") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("delivery_type", deliveryType, []any{"paid-marketing", "email"}))
+		if !(deliveryType == "paid-marketing" || deliveryType == "email" || deliveryType == "survey") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("delivery_type", deliveryType, []any{"paid-marketing", "email", "survey"}))
 		}
 		stageRaw := qp.Get("stage")
 		if stageRaw != "" {
 			stage = stageRaw
 		}
-		if !(stage == "" || stage == "CFP Launch" || stage == "Schedule Announcement" || stage == "Registration Push" || stage == "Discount Offer" || stage == "Final Countdown" || stage == "Post-Event") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("stage", stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
+		if !(stage == "" || stage == "CFP Launch" || stage == "Schedule Announcement" || stage == "Registration Push" || stage == "Discount Offer" || stage == "Final Countdown" || stage == "Post-Event" || stage == "Survey Promo" || stage == "Survey Reminder" || stage == "Survey Closing" || stage == "Report Promo") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("stage", stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo"}))
 		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
@@ -2260,6 +2260,183 @@ func EncodeCreateCampaignsError(encoder func(context.Context, http.ResponseWrite
 				body = formatter(ctx, res)
 			} else {
 				body = NewCreateCampaignsUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeCreateSendWorkflowResponse returns an encoder for responses returned
+// by the lfx-v2-campaign-service-briefs create-send-workflow endpoint.
+func EncodeCreateSendWorkflowResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.SendWorkflowResult)
+		enc := encoder(ctx, w)
+		body := NewCreateSendWorkflowResponseBody(res)
+		w.WriteHeader(http.StatusCreated)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeCreateSendWorkflowRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-briefs create-send-workflow endpoint.
+func DecodeCreateSendWorkflowRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.CreateSendWorkflowPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.CreateSendWorkflowPayload, error) {
+		var payload *lfxv2campaignservicebriefs.CreateSendWorkflowPayload
+		var (
+			body CreateSendWorkflowRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateCreateSendWorkflowRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			projectID   string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewCreateSendWorkflowPayload(&body, projectID, bearerToken)
+		if payload.BearerToken != nil {
+			cred := *payload.BearerToken
+			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred = cred[index+1:]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeCreateSendWorkflowError returns an encoder for errors returned by the
+// create-send-workflow lfx-v2-campaign-service-briefs endpoint.
+func EncodeCreateSendWorkflowError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateSendWorkflowBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateSendWorkflowConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateSendWorkflowServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateSendWorkflowInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateSendWorkflowNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignservicebriefs.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateSendWorkflowPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignservicebriefs.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateSendWorkflowUnauthorizedResponseBody(res)
 			}
 			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
 			w.Header().Set("goa-error", res.GoaErrorName())
@@ -7239,6 +7416,28 @@ func unmarshalCampaignCreateInputRequestBodyToLfxv2campaignservicebriefsCampaign
 	}
 	if v.NewVersion == nil {
 		res.NewVersion = false
+	}
+
+	return res
+}
+
+// unmarshalSendWorkflowInputRequestBodyToLfxv2campaignservicebriefsSendWorkflowInput
+// builds a value of type *lfxv2campaignservicebriefs.SendWorkflowInput from a
+// value of type *SendWorkflowInputRequestBody.
+func unmarshalSendWorkflowInputRequestBodyToLfxv2campaignservicebriefsSendWorkflowInput(v *SendWorkflowInputRequestBody) *lfxv2campaignservicebriefs.SendWorkflowInput {
+	res := &lfxv2campaignservicebriefs.SendWorkflowInput{
+		SourceWorkflowURL: v.SourceWorkflowURL,
+		Name:              *v.Name,
+	}
+	res.BriefIds = make([]string, len(v.BriefIds))
+	for i, val := range v.BriefIds {
+		res.BriefIds[i] = val
+	}
+	if v.SendDates != nil {
+		res.SendDates = make([]string, len(v.SendDates))
+		for i, val := range v.SendDates {
+			res.SendDates[i] = val
+		}
 	}
 
 	return res

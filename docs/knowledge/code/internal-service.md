@@ -2584,3 +2584,66 @@ the one provider that says more than "could not be confirmed": its `*apiError` i
 `domain.UpstreamStatusCarrier` (see [internal/dispatch](internal-dispatch.md)), so the status
 sentence is reachable for it at all, and the dispatcher tags the failure with a create-outcome
 token that selects one of the five fixed sentences above.
+
+### The survey delivery surface
+
+`emailstage` owns two stage taxonomies, not one. `Names()`/`Templates` are the event surface's six
+lifecycle stages; `SurveyNames()`/`SurveyTemplates` are the survey surface's four stages
+(`Survey Promo`, `Survey Reminder`, `Survey Closing`, `Report Promo`), added with migrations
+`000052` and `000053`. They are deliberately separate
+maps: pooling them would admit `(email, "Survey Promo")` and `(survey, "Final Countdown")` — pairs
+that occupy a real slot in the brief's unique key while naming an identity no generator can serve.
+
+`briefIdentityPairProblem` is the HTTP-edge copy of the column's pair CHECK and judges the two
+together rather than each alone. `generate-email-copy` never learns a brief's delivery type, so the
+STAGE selects the map: `emailstage.IsSurveyStage` routes to `ResolveSurvey`, and without that a
+survey stage would resolve against the event templates and return Registration Push copy under
+a 200.
+
+A survey brief's facts come from `event_details.sourceText` — the survey instrument or report text
+the operator pasted — rendered into the prompt's facts block as `Source document` and bounded by
+`maxFactSourceTextRunes`. Its call-to-action destination is the brief's own `url`, which is the
+promoted asset, so it flows through `resolveRegistrationURL` unchanged. The prompts are ported from
+the LF Research survey/report tool and reproduce its specification verbatim, including the 100-word
+body cap and the anti-invention rule.
+
+### The send workflow (`CreateSendWorkflow`)
+
+`send_workflow.go` turns an already-staged series into ONE disabled HubSpot workflow by cloning a
+source workflow (`hubspot.Client.CloneFlowWithEmails`): each send step gets a brief's staged draft
+(the campaign row's platform id, in `brief_ids` order), each wait-until-date step optionally a new
+date. Enrolling a list in that workflow IS the send on this path — a workflow's send step does not
+use the draft's own recipient or suppression settings — so `seriesAudience` reads each brief's
+newest HubSpot audience exactly as the wizard does (`resolveWizardAudience`: newest decides, must
+be built, every include list counts) and refuses unless every brief carries the same send lists,
+suppressions and portal. The audience then runs the same send-time checks staging and
+`SetWizardSendList` run before `SetSendList`: `assertWizardPortal` and
+`wizardStandingCoversSendList` (the standing-suppression check, #396). The workflow enrolls every
+send list (an OR of IN_LIST branches, replacing the source's enrollment) and adds the audience's
+suppression lists to the source workflow's own. A brief with no built audience is refused rather
+than falling back to the source's enrollment, which would send to the SOURCE campaign's audience.
+The suppression and standing checks run in the clone's `BeforeCreate` hook, against the merged set
+the workflow will actually apply (the source workflow's own lists included). Each draft must be
+FULLY staged (`isReusableCampaign`) and its campaign result's `portalId` must equal the audience's
+portal. `send_dates` must be after today (`s.now()`, UTC) and strictly increasing, and are required
+for every dated step. `mapFlowCloneErr` maps `hubspot.ErrFlowStepCountMismatch` and
+`ErrFlowShapeUnsupported` to 409, and a 404 on the deployment's default workflow to a 409 naming
+`SURVEY_SEQUENCE_WORKFLOW_ID`.
+
+On the shared LF connection (`fromSystem`), `CreateSendWorkflow` copies only the deployment's own
+survey workflow (`SURVEY_SEQUENCE_WORKFLOW_ID`, or the in-code default): a workflow id is
+portal-wide there, so a caller-named one could be another project's, and is a 409 telling the
+caller to connect the project's own portal. This is the same boundary the wizard draws for
+cross-turn ids on the shared row.
+
+The email wizard resolves a brief's stage through `resolveStageTemplate` (`IsSurveyStage` →
+`ResolveSurvey`, else `Resolve`) at every turn that reads it — plan, generate (stage prompt) and
+clone (draft name) — as `generate-email-copy` does, and carries a survey brief's
+`event_details.sourceText` into its prompt facts as a fenced `Source document`, bounded by
+`maxFactSourceTextRunes`.
+
+A survey's `event_details.sourceText` is never cut silently: `sourceTextTooLong` refuses one past
+`maxFactSourceTextRunes` with a 400 naming the field and the limit, at brief create and replace
+(`eventDetailsSourceTextTooLong`) and again at `generate-email-copy` and the wizard's generate step.
+For a survey stage the wizard's reference variant also carries the stage's `ContentPrompt`, so
+both variants are written to the survey specification.

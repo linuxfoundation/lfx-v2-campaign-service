@@ -120,6 +120,40 @@ type Service interface {
 	// failure, including an imageAssetId that does not exist for this brief, still
 	// arrives later, as the job's own result.
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
+	// Create ONE HubSpot workflow that sends an already-staged series of emails,
+	// and return it DISABLED. Each brief named in brief_ids must already have a
+	// fully staged HubSpot draft (its campaign row's platform id is the email the
+	// workflow will send) and must belong to a send surface; a paid brief is
+	// refused. The source workflow (source_workflow_url, else the deployment's
+	// SURVEY_SEQUENCE_WORKFLOW_ID, else the in-code default) is only ever read:
+	// its definition is fetched, its send steps -- walked from its start action,
+	// which must be one straight sequence -- are pointed at this campaign's drafts
+	// in the order brief_ids gives, each wait-until-date step is re-dated from
+	// send_dates, its enrollment is replaced by the series' audience, the
+	// audience's suppression lists are added to its own, and the result is created
+	// as a NEW workflow. 400 when the source URL names no workflow (or names one
+	// HubSpot refuses), when a brief has no staged draft yet, when a brief is on
+	// the paid surface or appears twice, when there are fewer than two briefs, or
+	// when a date is not YYYY-MM-DD, not after today or not after the date before
+	// it. 409 when the source workflow's send-step count does not equal the number
+	// of briefs or its dated-step count the number of send_dates, when it
+	// branches, has steps off its main path, does not enroll by list membership or
+	// still refers to its own emails elsewhere; when a draft is not fully staged
+	// or was staged in another portal; when a brief has no BUILT HubSpot audience,
+	// when the briefs were built against different audiences (a workflow enrolls
+	// ONE audience, so every brief must carry the same send lists, suppressions
+	// and portal), or that audience was built in a different HubSpot portal than
+	// this project's credential reaches; when a list the series sends to is also
+	// suppressed, or the project's standing standard suppression list now covers
+	// it (the same send-time check staging applies); when the project has no
+	// usable HubSpot connection, the credential lacks the automation scope, or the
+	// default workflow does not exist in the project's portal. 404 when a brief
+	// does not exist in this project. 500 when HubSpot's answer to the create
+	// could not be read, so a workflow may exist. 503 when the audience store or
+	// HubSpot is unavailable. The workflow is always created disabled -- enabling
+	// it is left to the human who reviews the drafts, and is the only irreversible
+	// step on this path.
+	CreateSendWorkflow(context.Context, *CreateSendWorkflowPayload) (res *SendWorkflowResult, err error)
 	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
 	// platform is read, never written: the campaign must already exist under the
 	// project's connection, and nothing is created upstream. Supported platforms:
@@ -737,7 +771,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [40]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "list-creative-assets", "get-creative-asset", "get-asset-plan", "delete-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+var MethodNames = [41]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "list-creative-assets", "get-creative-asset", "get-asset-plan", "delete-creative-asset", "create-campaigns", "create-send-workflow", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
 
 // AddNegativeKeywordsPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service add-negative-keywords method.
@@ -827,7 +861,9 @@ type Brief struct {
 	EventSlug string
 	// Delivery surface this brief was authored for.
 	DeliveryType string
-	// Stage within an email series. Empty for paid, which has no series.
+	// Stage within a send series. Empty for paid, which has no series. An email
+	// brief's stage names one send in the event's series; a survey brief's names
+	// the asset it promotes.
 	Stage string
 	// Event/course page URL
 	URL *string
@@ -857,7 +893,9 @@ type BriefInput struct {
 	EventSlug string
 	// Delivery surface this brief was authored for.
 	DeliveryType *string
-	// Stage within an email series. Empty for paid, which has no series.
+	// Stage within a send series. Empty for paid, which has no series. An email
+	// brief's stage names one send in the event's series; a survey brief's names
+	// the asset it promotes.
 	Stage *string
 	// Event/course page URL
 	URL *string
@@ -1366,6 +1404,16 @@ type CreateCampaignsPayload struct {
 	Input   *CampaignCreateInput
 }
 
+// CreateSendWorkflowPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service create-send-workflow method.
+type CreateSendWorkflowPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Canonical LFX project slug (NOT a UUID) that scopes the resource
+	ProjectID string
+	Input     *SendWorkflowInput
+}
+
 // CreativeAsset is the result type of the lfx-v2-campaign-service-briefs
 // service upload-creative-asset method.
 type CreativeAsset struct {
@@ -1631,7 +1679,9 @@ type FindBriefPayload struct {
 	EventSlug string
 	// Delivery surface the brief was authored for.
 	DeliveryType string
-	// Stage within an email series. Empty for paid, which has no series.
+	// Stage within a send series. Empty for paid, which has no series. An email
+	// brief's stage names one send in the event's series; a survey brief's names
+	// the asset it promotes.
 	Stage string
 }
 
@@ -1644,11 +1694,12 @@ type GenerateEmailCopyPayload struct {
 	ProjectID string
 	// Brief UUID
 	BriefID string
-	// Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule
-	// Announcement, Registration Push, Discount Offer, Final Countdown,
-	// Post-Event. Matching is CASE-SENSITIVE and any other value resolves to
-	// Registration Push rather than failing, so a misspelling yields registration
-	// copy under a 200 rather than an error.
+	// Stage the email belongs to. Event stages: CFP Launch, Schedule Announcement,
+	// Registration Push, Discount Offer, Final Countdown, Post-Event. Survey
+	// stages: Survey Promo, Survey Reminder, Survey Closing, Report Promo.
+	// Matching is CASE-SENSITIVE; an unrecognised value resolves to Registration
+	// Push rather than failing, so a misspelling yields registration copy under a
+	// 200 rather than an error.
 	Stage *string
 	// Requests a differently-styled draft of the same stage's copy. Currently one
 	// value is recognised: 'urgency-fomo', which asks for an urgency/FOMO-forward
@@ -2359,6 +2410,55 @@ type RemoveKeywordTargetingPayload struct {
 	// Reddit: the revision get-keyword-targeting returned. Required on Reddit;
 	// must be absent on X.
 	Revision *string
+}
+
+type SendWorkflowInput struct {
+	// The HubSpot workflow to copy: its steps, sending windows, blocked dates and
+	// suppression lists are kept, while its emails, dates and enrollment are
+	// replaced. Its editor URL, or its bare numeric id. OPTIONAL: omitted, the
+	// deployment's configured survey-sequence workflow is used, which is the
+	// ordinary case. It is only ever READ.
+	SourceWorkflowURL *string
+	// Name for the new workflow
+	Name string
+	// The briefs whose staged drafts this workflow sends, in SEND ORDER. One per
+	// send step in the source workflow.
+	BriefIds []string
+	// Calendar dates (YYYY-MM-DD), one per wait-until-date step of the source
+	// workflow, in the order a contact meets them. Each must be after today (UTC)
+	// and after the one before it. Required whenever the source workflow has dated
+	// steps: the source's own dates belong to another campaign. Each step's time
+	// of day is always the source's.
+	SendDates []string
+}
+
+// SendWorkflowResult is the result type of the lfx-v2-campaign-service-briefs
+// service create-send-workflow method.
+type SendWorkflowResult struct {
+	// HubSpot's id for the new workflow
+	FlowID string
+	// Name HubSpot recorded
+	Name string
+	// Where to review and enable it
+	EditURL string
+	// The workflow it was copied from
+	SourceFlowID string
+	// That workflow's name
+	SourceFlowName *string
+	// Always false on create: the workflow sends nothing until a human enables it
+	// in HubSpot
+	IsEnabled bool
+	// How many send steps were pointed at this campaign's drafts
+	SendEmailSteps int
+	// How many wait-until-date steps had their date replaced
+	DatedSteps int
+	// The HubSpot lists the new workflow enrolls: the series' shared audience (its
+	// master list, or every list it was attached from). A contact in any of them
+	// is enrolled. The source workflow's own enrollment is always replaced.
+	EnrollmentListIds []string
+	// The new workflow's whole suppression set: the source workflow's own
+	// suppression lists plus the audience's.
+	SuppressionListIds []string
 }
 
 // SetWizardSendListPayload is the payload type of the

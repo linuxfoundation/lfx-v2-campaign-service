@@ -201,6 +201,10 @@ spec:
           # nothing, but it is NOT under /briefs/** — it is a sibling of it, so the
           # briefs rules above do not cover it and it needs its own entry.
           - path: /projects/:projectId/fetch-event-url
+          # Survey send series (POST, creates ONE disabled HubSpot workflow). Like
+          # fetch-event-url it is a sibling of /briefs, not under it, so it needs its own
+          # entry; it has no deeper paths.
+          - path: /projects/:projectId/send-workflows
           - path: /projects/:projectId/briefs
           - path: /projects/:projectId/briefs/**
           - path: /projects/:projectId/jobs

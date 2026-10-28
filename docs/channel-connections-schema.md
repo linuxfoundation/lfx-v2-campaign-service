@@ -178,8 +178,8 @@ CREATE TABLE campaign_briefs (
     program_type  TEXT        NOT NULL                 -- funnel context
                   CHECK (program_type IN ('events','education','membership')),
     event_slug    TEXT        NOT NULL,                -- part of the composite key, not unique alone
-    delivery_type TEXT        NOT NULL DEFAULT 'paid-marketing'   -- migration 000030
-                  CHECK (delivery_type IN ('paid-marketing','email')),
+    delivery_type TEXT        NOT NULL DEFAULT 'paid-marketing'   -- migration 000030, widened by 000052
+                  CHECK (delivery_type IN ('paid-marketing','email','survey')),
     stage         TEXT        NOT NULL DEFAULT '',     -- '' for paid; a stage name for an email send
     -- The identity COMBINATION, not just the two columns. Validating each alone still admits
     -- (paid-marketing, 'Registration Push') and (email, ''), neither of which is a brief the
@@ -189,6 +189,9 @@ CREATE TABLE campaign_briefs (
         OR (delivery_type = 'email' AND stage IN (
             'CFP Launch', 'Schedule Announcement', 'Registration Push',
             'Discount Offer', 'Final Countdown', 'Post-Event'
+        ))
+        OR (delivery_type = 'survey' AND stage IN (     -- 000052, widened by 000053
+            'Survey Promo', 'Survey Reminder', 'Survey Closing', 'Report Promo'
         ))
     ),
     url           TEXT,

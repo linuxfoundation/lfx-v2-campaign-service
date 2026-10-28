@@ -29,6 +29,7 @@ type Endpoints struct {
 	GetAssetPlan           goa.Endpoint
 	DeleteCreativeAsset    goa.Endpoint
 	CreateCampaigns        goa.Endpoint
+	CreateSendWorkflow     goa.Endpoint
 	AdoptCampaign          goa.Endpoint
 	GetCampaign            goa.Endpoint
 	GetCampaignMetrics     goa.Endpoint
@@ -77,6 +78,7 @@ func NewEndpoints(s Service) *Endpoints {
 		GetAssetPlan:           NewGetAssetPlanEndpoint(s, a.JWTAuth),
 		DeleteCreativeAsset:    NewDeleteCreativeAssetEndpoint(s, a.JWTAuth),
 		CreateCampaigns:        NewCreateCampaignsEndpoint(s, a.JWTAuth),
+		CreateSendWorkflow:     NewCreateSendWorkflowEndpoint(s, a.JWTAuth),
 		AdoptCampaign:          NewAdoptCampaignEndpoint(s, a.JWTAuth),
 		GetCampaign:            NewGetCampaignEndpoint(s, a.JWTAuth),
 		GetCampaignMetrics:     NewGetCampaignMetricsEndpoint(s, a.JWTAuth),
@@ -123,6 +125,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.GetAssetPlan = m(e.GetAssetPlan)
 	e.DeleteCreativeAsset = m(e.DeleteCreativeAsset)
 	e.CreateCampaigns = m(e.CreateCampaigns)
+	e.CreateSendWorkflow = m(e.CreateSendWorkflow)
 	e.AdoptCampaign = m(e.AdoptCampaign)
 	e.GetCampaign = m(e.GetCampaign)
 	e.GetCampaignMetrics = m(e.GetCampaignMetrics)
@@ -448,6 +451,29 @@ func NewCreateCampaignsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.E
 			return nil, err
 		}
 		return s.CreateCampaigns(ctx, p)
+	}
+}
+
+// NewCreateSendWorkflowEndpoint returns an endpoint function that calls the
+// method "create-send-workflow" of service "lfx-v2-campaign-service-briefs".
+func NewCreateSendWorkflowEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*CreateSendWorkflowPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.CreateSendWorkflow(ctx, p)
 	}
 }
 

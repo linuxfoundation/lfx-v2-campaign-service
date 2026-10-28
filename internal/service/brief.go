@@ -412,6 +412,9 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 		// least visible. See model.CampaignBrief.CreatedBy.
 		CreatedBy: attributedActor(ctx, "create brief"),
 	}
+	if serr := eventDetailsSourceTextTooLong(b.EventDetails); serr != nil {
+		return nil, serr
+	}
 	// The index message co-commits with the row (see briefIndexPayload); the relay delivers it.
 	created, err := briefRepo.CreateBrief(ctx, b, s.briefIndexPayload(indexer.ActionCreated))
 	if err != nil {
@@ -569,6 +572,9 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 		// Only updated_by moves on an edit; created_by is untouched by the UPDATE and
 		// keeps naming the original author.
 		UpdatedBy: attributedActor(ctx, "update brief"),
+	}
+	if serr := eventDetailsSourceTextTooLong(b.EventDetails); serr != nil {
+		return nil, serr
 	}
 	updated, uerr := briefRepo.ReplaceBrief(ctx, b, version, s.briefIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
@@ -2279,11 +2285,19 @@ func deliveryTypeOrPaid(v *string) model.DeliveryType {
 // surface maps to paid, matching every other "unsaid means paid" rule in this file; it is
 // unreachable in practice, since a brief's delivery type is constrained by both the design enum
 // and the column's CHECK.
+//
+// Survey rides the EMAIL channel. A survey or report promotion is an email send staged as a
+// HubSpot draft, so the surface differs from `email` in where its facts come from and which stages
+// it offers, not in where it is delivered. Left out of this switch it fell into the paid default
+// and `CreateCampaigns` refused the only channel it can use -- "platform hubspot is a email
+// channel, but this brief was authored for survey" -- after every earlier step had succeeded.
 func deliveryChannelKind(d model.DeliveryType) model.ChannelKind {
-	if d == model.DeliveryEmail {
+	switch d {
+	case model.DeliveryEmail, model.DeliverySurvey:
 		return model.ChannelEmail
+	default:
+		return model.ChannelPaidAds
 	}
-	return model.ChannelPaidAds
 }
 
 // briefIdentityPairProblem reports why a delivery_type/stage COMBINATION cannot exist, or nil.
@@ -2315,6 +2329,16 @@ func briefIdentityPairProblem(delivery model.DeliveryType, stage string) error {
 		}
 		return fmt.Errorf("%w: an email brief names one send in the series, so its stage must be one of %v, got %q",
 			domain.ErrBriefIdentityPairInvalid, emailstage.Names(), stage)
+	case model.DeliverySurvey:
+		// A SEPARATE list, not a widened one: a survey brief's stage names the asset being
+		// promoted, so `(survey, "Final Countdown")` is as wrong as `(email, "Survey Promo")`.
+		// The column's pair CHECK (000052) enforces the same split, and this is the HTTP-edge
+		// copy of it.
+		if slices.Contains(emailstage.SurveyNames(), stage) {
+			return nil
+		}
+		return fmt.Errorf("%w: a survey brief names the asset it promotes, so its stage must be one of %v, got %q",
+			domain.ErrBriefIdentityPairInvalid, emailstage.SurveyNames(), stage)
 	default:
 		// Anything else, INCLUDING the empty string. An earlier revision accepted `""` as paid, to
 		// spare a direct Go caller that leaves the field at its zero value -- but both call sites
