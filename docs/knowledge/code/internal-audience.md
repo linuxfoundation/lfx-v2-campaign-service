@@ -546,11 +546,14 @@ AND wrote the HubSpot filter JSON AND called the create. Here the model does onl
 - **Naming.** `CustomListName` follows the reference pattern
   (`<YYQN> - <Location> - Mailable Contacts - <Label>`, `<Event> Speakers - <Scope>`,
   `<YYQN> - <Event> - Event Registration`). A taken name is versioned `(v2)`, `(v3)` and never
-  reused: a matching name does not prove a matching audience. Every derived or versioned name is
-  cut (on a rune boundary) to `CustomNameMaxLen`, the input's 250-rune limit, so the name preview
-  returns is one create accepts back. More than three places are named as
-  `A, B, C and N more`, and any name over `MaxListNameLength` (200, HubSpot's list-search limit) is
-  refused as `ErrInvalidRequest` before the taken-name search, which would otherwise fail as a 500.
+  reused: a matching name does not prove a matching audience. A DERIVED or versioned name is cut
+  (on a rune boundary, `FitListName` / `VersionedName`) to `MaxListNameLength` (200, HubSpot's
+  list-search limit), so the name preview returns is one create accepts back. An EXPLICIT,
+  operator-typed name is never cut: one over 200 runes is refused by `CheckCustomListName` as a
+  `FieldError` (400) naming `name` and the limit, before any HubSpot call, so two typed names that
+  differ past the limit cannot collide into one list's `(v2)`. `CustomNameMaxLen` equals
+  `MaxListNameLength`, and the Goa design's `name` MaxLength is 200 to match. More than three places
+  are named as `A, B, C and N more`.
 - **Speakers-list auto-pick fails closed.** `SpeakerListFits` decides whether an existing list
   may stand in for a speaker restriction; a filled `ListID` REPLACES the scope and event-name
   filters, so it accepts a list only when its name provably fits: a speakers list discovery would

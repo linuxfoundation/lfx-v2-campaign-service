@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // ---------------------------------------------------------------------------
@@ -795,15 +796,29 @@ func speakerScopeLabel(s SpeakerScope) string {
 // VersionedName is the n-th version of a name that is already taken: "(v2)",
 // "(v3)" and so on. A taken name is never overwritten — matching a name does not
 // prove the existing list is the same audience. The base is cut so the result
-// stays within MaxListNameLength, which is below CustomNameMaxLen.
+// stays within MaxListNameLength (= CustomNameMaxLen).
 func VersionedName(name string, n int) string {
 	suffix := fmt.Sprintf(" (v%d)", n)
 	return cutName(strings.TrimSpace(name), MaxListNameLength-len(suffix)) + suffix
 }
 
 // CustomNameMaxLen is the custom input's name MaxLength (design/audience_builder.go),
-// counted in runes as the generated validator counts it.
-const CustomNameMaxLen = 250
+// counted in runes as the generated validator counts it. It is MaxListNameLength: a longer name
+// cannot be searched in HubSpot, so the taken-name check could never see it.
+const CustomNameMaxLen = MaxListNameLength
+
+// CheckCustomListName refuses an explicit custom list name longer than CustomNameMaxLen runes
+// (after its whitespace is collapsed, as the list will be named), as a FieldError naming the
+// field and the limit. The Goa design enforces the same MaxLength on the HTTP path; this covers
+// every other caller, and runs before any HubSpot call. An empty name is the derived one.
+func CheckCustomListName(name string) error {
+	n := utf8.RuneCountInString(strings.Join(strings.Fields(name), " "))
+	if n <= CustomNameMaxLen {
+		return nil
+	}
+	return &FieldError{Field: "name", Reason: fmt.Sprintf(
+		"is %d characters; a HubSpot list name can be at most %d (a longer one cannot be searched); choose a shorter name", n, CustomNameMaxLen)}
+}
 
 // CustomLabelMaxLen is the criteria label's MaxLength (design/audience_builder.go).
 const CustomLabelMaxLen = 200
@@ -812,8 +827,9 @@ const CustomLabelMaxLen = 200
 // event page title is one preview accepts unchanged.
 func FitLabel(label string) string { return cutName(strings.TrimSpace(label), CustomLabelMaxLen) }
 
-// FitListName cuts a list name to MaxListNameLength runes, so a name preview returns
-// is one create accepts back unchanged and HubSpot's list search can still find.
+// FitListName cuts a DERIVED list name to MaxListNameLength runes, so a name preview returns
+// is one create accepts back unchanged and HubSpot's list search can still find. An explicit,
+// operator-typed name is never cut: CheckCustomListName refuses one that is too long.
 func FitListName(name string) string { return cutName(name, MaxListNameLength) }
 
 // cutName cuts name to at most limit runes on a rune boundary, without a

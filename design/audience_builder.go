@@ -615,7 +615,9 @@ var AudienceCustomInterpretResult = Type("audience-custom-interpret-result", fun
 // AudienceCustomInput is the preview/create payload.
 var AudienceCustomInput = Type("audience-custom-input", func() {
 	Attribute("criteria", AudienceCustomCriteria, "The reviewed criteria")
-	Attribute("name", String, "Explicit list name; derived from the criteria when omitted. A taken name is versioned, never reused", func() { MaxLength(250) })
+	// 200, not 250: HubSpot's list search refuses a longer name, so the taken-name check could
+	// never see it (audience.CustomNameMaxLen).
+	Attribute("name", String, "Explicit list name, at most 200 characters (HubSpot cannot search a longer one); derived from the criteria when omitted. A taken name is versioned, never reused", func() { MaxLength(200) })
 	Required("criteria")
 	// An explicit example: the generated one filled page_view_urls with prose sentences, which
 	// the service refuses, so the CLI usage it produced was a request that returns a 400.

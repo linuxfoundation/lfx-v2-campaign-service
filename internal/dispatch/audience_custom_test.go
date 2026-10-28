@@ -229,19 +229,35 @@ func TestInterpretCustom_NeverGuessesBetweenTwoBrands(t *testing.T) {
 
 // A name HubSpot's list search cannot take (over 200 characters) is cut to fit, so the
 // taken-name check is a search HubSpot answers rather than a 500.
-func TestPreviewCustom_CutsANameHubSpotCannotSearch(t *testing.T) {
+// An EXPLICIT name HubSpot cannot search (over MaxListNameLength runes) is refused with a 400
+// naming the field and the limit, before any HubSpot call, on preview and create alike. It is
+// never cut: two typed names differing past the limit would collide into one list's "(v2)".
+// A name at the limit is kept unchanged.
+func TestPreviewCustom_RefusesAnExplicitNameHubSpotCannotSearch(t *testing.T) {
+	silent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no HubSpot call may be made for a name refused up front: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer silent.Close()
+	x := explorerOver(silent, nil)
+	tooLong := strings.Repeat("n", audience.MaxListNameLength) + "x"
+
+	_, err := x.PreviewCustom(context.Background(), "proj-1", seoulCriteria(), tooLong)
+	var field *audience.FieldError
+	require.ErrorAs(t, err, &field)
+	assert.Equal(t, "name", field.Field)
+	assert.ErrorIs(t, err, audience.ErrInvalidRequest)
+	assert.Contains(t, err.Error(), "at most 200")
+	_, err = x.CreateCustom(context.Background(), "proj-1", seoulCriteria(), tooLong)
+	require.ErrorAs(t, err, &field)
+
 	portal := seoulPortal()
 	srv := portal.serve(t)
 	defer srv.Close()
-	x := explorerOver(srv, nil)
-
-	cut, err := x.PreviewCustom(context.Background(), "proj-1", seoulCriteria(), strings.Repeat("n", audience.MaxListNameLength+1))
+	atLimit := strings.Repeat("n", audience.MaxListNameLength)
+	preview, err := explorerOver(srv, nil).PreviewCustom(context.Background(), "proj-1", seoulCriteria(), atLimit)
 	require.NoError(t, err)
-	assert.Len(t, cut.Name, audience.MaxListNameLength)
-
-	preview, err := x.PreviewCustom(context.Background(), "proj-1", seoulCriteria(), strings.Repeat("n", audience.MaxListNameLength))
-	require.NoError(t, err)
-	assert.Len(t, preview.Name, audience.MaxListNameLength)
+	assert.Equal(t, atLimit, preview.Name, "a name at the limit is kept unchanged")
 }
 
 func TestPreviewCustom_NamesEveryUnknownPropertyAndWritesNothing(t *testing.T) {

@@ -301,8 +301,9 @@ type AudienceCustomCriteria struct {
 type AudienceCustomInput struct {
 	// The reviewed criteria
 	Criteria *AudienceCustomCriteria
-	// Explicit list name; derived from the criteria when omitted. A taken name is
-	// versioned, never reused
+	// Explicit list name, at most 200 characters (HubSpot cannot search a longer
+	// one); derived from the criteria when omitted. A taken name is versioned,
+	// never reused
 	Name *string
 }
 

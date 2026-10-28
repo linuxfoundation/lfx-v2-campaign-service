@@ -1696,8 +1696,9 @@ type AudienceCustomAnswerRequestBody struct {
 type AudienceCustomInputRequestBody struct {
 	// The reviewed criteria
 	Criteria *AudienceCustomCriteriaRequestBody `form:"criteria,omitempty" json:"criteria,omitempty" xml:"criteria,omitempty"`
-	// Explicit list name; derived from the criteria when omitted. A taken name is
-	// versioned, never reused
+	// Explicit list name, at most 200 characters (HubSpot cannot search a longer
+	// one); derived from the criteria when omitted. A taken name is versioned,
+	// never reused
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 }
 
@@ -3626,8 +3627,8 @@ func ValidateAudienceCustomInputRequestBody(body *AudienceCustomInputRequestBody
 		}
 	}
 	if body.Name != nil {
-		if utf8.RuneCountInString(*body.Name) > 250 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", *body.Name, utf8.RuneCountInString(*body.Name), 250, false))
+		if utf8.RuneCountInString(*body.Name) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", *body.Name, utf8.RuneCountInString(*body.Name), 200, false))
 		}
 	}
 	return
@@ -3645,8 +3646,8 @@ func validateAudienceCustomInputRequestBody(body *AudienceCustomInputRequestBody
 		}
 	}
 	if body.Name != nil {
-		if utf8.RuneCountInString(*body.Name) > 250 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".name", *body.Name, utf8.RuneCountInString(*body.Name), 250, false))
+		if utf8.RuneCountInString(*body.Name) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".name", *body.Name, utf8.RuneCountInString(*body.Name), 200, false))
 		}
 	}
 	return

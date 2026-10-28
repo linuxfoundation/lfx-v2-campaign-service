@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
@@ -278,6 +277,9 @@ func (x *AudienceExplorer) listBrand(ctx context.Context, client *hubspot.Client
 // PreviewCustom validates criteria against the portal and returns what Create
 // would build. Writes nothing.
 func (x *AudienceExplorer) PreviewCustom(ctx context.Context, projectID string, criteria audience.CustomCriteria, name string) (preview *audience.CustomPreview, err error) {
+	if nerr := audience.CheckCustomListName(name); nerr != nil {
+		return nil, nerr
+	}
 	ctx = x.builder.BeginBuild(ctx)
 	client, fromSystem, cerr := x.builder.cachedClient(ctx, projectID)
 	if cerr != nil {
@@ -418,12 +420,13 @@ func (x *AudienceExplorer) previewCustom(ctx context.Context, client *hubspot.Cl
 		return nil, fmt.Errorf("audience custom: re-read built filter: %w", perr)
 	}
 
+	// An EXPLICIT name is the operator's: one too long was refused up front (CheckCustomListName),
+	// never cut, so two typed names that differ past the limit cannot collide. Only the DERIVED
+	// name is cut to fit, so the name preview returns is one create accepts back unchanged.
 	listName := strings.Join(strings.Fields(name), " ")
 	if listName == "" {
-		listName = audience.CustomListName(resolved, x.now())
+		listName = audience.FitListName(audience.CustomListName(resolved, x.now()))
 	}
-	// Create takes back the name preview returns, so it must fit the input's limit.
-	listName = audience.FitListName(listName)
 	listName, nerr := x.freeCustomName(ctx, client, listName)
 	if nerr != nil {
 		return nil, nerr
@@ -446,6 +449,9 @@ func (x *AudienceExplorer) previewCustom(ctx context.Context, client *hubspot.Cl
 
 // CreateCustom builds and creates the list. NOT idempotent.
 func (x *AudienceExplorer) CreateCustom(ctx context.Context, projectID string, criteria audience.CustomCriteria, name string) (created *audience.ComposedList, err error) {
+	if nerr := audience.CheckCustomListName(name); nerr != nil {
+		return nil, nerr
+	}
 	ctx = x.builder.BeginBuild(ctx)
 	client, fromSystem, cerr := x.builder.cachedClient(ctx, projectID)
 	if cerr != nil {
@@ -480,10 +486,6 @@ func (x *AudienceExplorer) CreateCustom(ctx context.Context, projectID string, c
 func (x *AudienceExplorer) freeCustomName(ctx context.Context, client *hubspot.Client, name string) (string, error) {
 	candidate := name
 	for n := 2; n <= customVersionLimit+1; n++ {
-		if size := utf8.RuneCountInString(candidate); size > audience.MaxListNameLength {
-			return "", fmt.Errorf("%w: the list name is %d characters and HubSpot allows at most %d; choose a shorter name",
-				audience.ErrInvalidRequest, size, audience.MaxListNameLength)
-		}
 		taken, err := exactList(ctx, client, candidate)
 		if err != nil {
 			return "", fmt.Errorf("audience custom: check list name: %w", err)
