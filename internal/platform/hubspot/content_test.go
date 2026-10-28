@@ -252,6 +252,41 @@ func TestRebuildEmailContent_DetectsARevertBehindIdenticalWidgetKeys(t *testing.
 	}
 }
 
+func TestRebuildEmailContent_IgnoresAnEarlierMarkerInTheInputBody(t *testing.T) {
+	// The operator edited a body that an earlier staging wrote, so the input still carries THAT
+	// staging's marker. A reverted draft carries it too; only this write's token proves the write.
+	earlier := "<p>last year's body</p>"
+	edited := earlier + "\n" + stagedBodyMarker(earlier) + "\n<p>one new line</p>"
+
+	t.Run("a revert to the earlier body is caught", func(t *testing.T) {
+		c := bodyReadBackServer(t, func(string) string { return earlier + "\n" + stagedBodyMarker(earlier) }, nil)
+		_, err := c.RebuildEmailContent(context.Background(), "email-1", RebuildEmailContentInput{BodyHTML: edited})
+		if !errors.Is(err, ErrContentNotPersisted) {
+			t.Fatalf("error = %v, want ErrContentNotPersisted: the read-back carries only the earlier marker", err)
+		}
+	})
+
+	t.Run("the body as written passes", func(t *testing.T) {
+		c := bodyReadBackServer(t, func(written string) string { return written }, nil)
+		if _, err := c.RebuildEmailContent(context.Background(), "email-1", RebuildEmailContentInput{BodyHTML: edited}); err != nil {
+			t.Fatalf("RebuildEmailContent: %v", err)
+		}
+	})
+
+	t.Run("the written body carries exactly one marker, this write's", func(t *testing.T) {
+		widgets := map[string]any{}
+		var sections []map[string]any
+		token := addBodySection(widgets, &sections, edited)
+		html := widgets[bodyWidgetKey].(map[string]any)["body"].(map[string]any)["html"].(string)
+		if n := strings.Count(html, stagedMarkerPrefix); n != 1 {
+			t.Errorf("written body carries %d markers, want exactly one:\n%s", n, html)
+		}
+		if !strings.Contains(html, token) || strings.Contains(html, stagedBodyMarker(earlier)) {
+			t.Errorf("written body = %q, want only this write's token %q", html, token)
+		}
+	})
+}
+
 func TestRebuildEmailContent_AnUndecodableWidgetsReadIsNotAProvenRevert(t *testing.T) {
 	// A widgets value of an unexpected shape says nothing about whether the write landed: it is
 	// the retryable unknown, never the "needs manual repair" revert.

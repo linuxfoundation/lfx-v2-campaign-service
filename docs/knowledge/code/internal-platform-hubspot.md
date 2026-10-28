@@ -637,7 +637,9 @@ marker, an HTML comment `<!-- lfx-staged:<16 hex of sha256(body)> -->` (`stagedB
 read-back body must CONTAIN it: a template cloned from an earlier generated email already carries a
 placed `staging_body`, so a reverted PATCH passed the key check while the draft held the earlier
 body. A marker rather than a comparison of the whole html, because HubSpot may re-serialise markup
-on save (`&amp;`, `<br />`, attribute order). A widgets value that does not decode is
+on save (`&amp;`, `<br />`, attribute order). Any earlier staging's marker is stripped from the
+input body first, and the token this write computed is passed to the check directly (never found
+in the html), so an edited body carrying an old marker cannot vouch for a reverted draft. A widgets value that does not decode is
 `errVerifyReadFailed`, not a revert. It distinguishes two
 outcomes — a proven revert (`ErrContentNotPersisted`, unrecoverable, logged at ERROR by the
 dispatcher as needing manual repair) and a failed verification read (`errVerifyReadFailed`,
