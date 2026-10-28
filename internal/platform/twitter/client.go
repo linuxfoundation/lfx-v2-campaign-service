@@ -3227,6 +3227,26 @@ type CampaignInput struct {
 	// silently promoting it without the requested image would spend on a creative nobody
 	// approved, so that combination is refused before any request.
 	Image *ImageInput
+	// MaxBid is the manual starting bid (LFXV2-2665), in the account currency like BudgetUsd.
+	// ZERO means AUTOMATIC bidding: the line item is created with bid_strategy AUTO exactly as
+	// before. A positive value creates it with bid_strategy MAX, pay_by LINK_CLICK and
+	// bid_amount_local_micro — a manual max cost per link click, the shape the bid lever accepts
+	// (LineItemBid.ManualCPC). The amount must be a whole number of micro-units, refused rather
+	// than rounded, before any request.
+	MaxBid float64
+}
+
+// manualMaxBidMicros encodes a create-time manual bid in micro-units, refusing (never rounding)
+// an amount that is not a whole number of them.
+func manualMaxBidMicros(amount float64) (int64, error) {
+	if math.IsNaN(amount) || math.IsInf(amount, 0) || amount <= 0 || amount > twitterMaxBid {
+		return 0, &bidAmountError{msg: fmt.Sprintf("the manual bid must be a finite number greater than zero and at most %s", strconv.FormatFloat(twitterMaxBid, 'f', -1, 64))}
+	}
+	micros := toMicroCurrency(amount)
+	if float64(micros)/1_000_000 != amount || micros < 1 {
+		return 0, &bidAmountError{msg: fmt.Sprintf("the manual bid %s is not a whole number of micro-units; it is refused rather than rounded", strconv.FormatFloat(amount, 'f', -1, 64))}
+	}
+	return micros, nil
 }
 
 // CampaignResult is the outcome of a campaign creation attempt, including a
@@ -3278,7 +3298,12 @@ type CampaignResult struct {
 	// in Steps. Consumers MUST NOT treat a reused result as an unqualified success:
 	// the campaign may be serving under a DIFFERENT budget/config, or an existing line
 	// item may already be ENABLED under different dates than this request expects.
-	Reused     bool
+	Reused bool
+	// BidApplied reports that THIS run created the line item, which carries the bid strategy,
+	// charge unit and bid (LFXV2-2665). A reused line item keeps its existing bidding, so the
+	// dispatcher records the strategy and starting bid only when this is true. Set only on the
+	// successful result.
+	BidApplied bool
 	TwitterURL string
 	Steps      []string
 }
@@ -3375,6 +3400,25 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	if toMicroCurrency(in.BudgetUsd) <= 0 {
 		return nil, domain.PreflightRefusalf("invalid budget: %g rounds to zero micro-units", in.BudgetUsd)
+	}
+	var maxBidMicros int64
+	if in.MaxBid != 0 {
+		micros, err := manualMaxBidMicros(in.MaxBid)
+		if err != nil {
+			// Service-authored, numeric-only, raised before verifyAccount: operator-safe (issue #208).
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+		// X: a line item's bid_amount_local_micro "should not exceed daily_budget_amount_local_micro
+		// or total_budget_amount_local_micro of the parent campaign" (Campaign Management reference,
+		// line items) — the rule UpdateLineItemBid reports as an amount refusal. Checked HERE, in
+		// the same micro-units the campaign's daily_budget_amount_local_micro is sent in, so a bid
+		// over the budget is refused before the campaign POST rather than by the line-item POST
+		// after the paid campaign exists (PR #332 review).
+		if micros > toMicroCurrency(in.BudgetUsd) {
+			return nil, domain.WrapPreflightRefusal(&bidAmountError{msg: fmt.Sprintf("the manual bid %s exceeds the campaign's daily budget %s; X does not accept a line item bid above its campaign's budget",
+				strconv.FormatFloat(in.MaxBid, 'f', -1, 64), strconv.FormatFloat(in.BudgetUsd, 'f', -1, 64))})
+		}
+		maxBidMicros = micros
 	}
 	// validateDate and validateImageInput (below) are pure, service-authored checks that
 	// render caller values through domain.CallerValue, so their refusals are operator-safe.
@@ -3508,7 +3552,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := validateEntityName("campaign", campaignName); err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
 	}
-	lineItemName := fmt.Sprintf("Events | %s | Promoted Tweets | AUTO", strings.ReplaceAll(in.EventName, "|", "-"))
+	// The last segment names the line item's bid strategy (LFXV2-2665): AUTO for automatic, MAX
+	// for a manual bid. A manual line item named AUTO would misstate its bidding, and the two
+	// strategies sharing a name would let a retry of one reuse the other's line item.
+	lineItemBid := "AUTO"
+	if in.MaxBid != 0 {
+		lineItemBid = BidStrategyMax
+	}
+	lineItemName := fmt.Sprintf("Events | %s | Promoted Tweets | %s", strings.ReplaceAll(in.EventName, "|", "-"), lineItemBid)
 	if err := validateEntityName("line item", lineItemName); err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
 	}
@@ -3679,6 +3730,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// knows delivery may not be gated as expected.
 		steps = append(steps, fmt.Sprintf("Reusing existing line item: %s", lineItemID))
 		steps = append(steps, fmt.Sprintf("Warning: reused existing line item %s by name; its entity_status/flight dates were NOT reset to the requested PAUSED/%s–%s — it may already be ENABLED and serving; verify in X Ads Manager", lineItemID, in.StartDate, in.EndDate))
+		steps = append(steps, fmt.Sprintf("Warning: bid NOT applied to reused line item %s; its existing bidding is unchanged — verify its bid strategy in X Ads Manager", lineItemID))
 	} else {
 		// X Ads v12 line_items: params go on the query string; start_time and
 		// end_time are REQUIRED; bid_strategy=AUTO selects automatic bidding
@@ -3694,6 +3746,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			"start_time":    toIso8601Utc(in.StartDate),
 			"end_time":      toIso8601Utc(in.EndDate),
 			"entity_status": "PAUSED",
+		}
+		// MANUAL bidding: a maximum bid charged per link click. X Ads API v12 line items
+		// (https://docs.x.com/x-ads-api/campaign-management/reference, POST
+		// accounts/:account_id/line_items): bid_strategy MAX is the manual maximum (AUTO is X's
+		// automatic bidding, TARGET a target average), pay_by names the charge unit (LINK_CLICK is
+		// X's CPLC for WEBSITE_CLICKS; IMPRESSION, the default, would make the amount a CPM), and
+		// bid_amount_local_micro carries the amount in micro-units of the account currency.
+		if maxBidMicros > 0 {
+			lineItemParams["bid_strategy"] = BidStrategyMax
+			lineItemParams["pay_by"] = PayByLinkClick
+			lineItemParams["bid_amount_local_micro"] = strconv.FormatInt(maxBidMicros, 10)
 		}
 		if err := c.pace(ctx); err != nil {
 			return partialResult(), fmt.Errorf("x line item creation aborted (%s): %w", campaignStatus(), err)
@@ -3718,7 +3781,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// handling.
 			return partialResult(), fmt.Errorf("x line item creation UNCONFIRMED (%s; X returned a 2xx with no line item ID — it may exist; verify in X Ads Manager before retrying)", campaignStatus())
 		}
-		steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, AUTO bid)", lineItemID))
+		if maxBidMicros > 0 {
+			steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, MAX bid %s per link click)", lineItemID, strconv.FormatFloat(in.MaxBid, 'f', -1, 64)))
+		} else {
+			steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, AUTO bid)", lineItemID))
+		}
 	}
 
 	// Step 4: promote a tweet — either the caller's existing TweetID, or (when
@@ -3978,6 +4045,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		PromotedTweetID:      promotedTweetID,
 		PromotedTweetWarning: promotedTweetWarning,
 		Reused:               campaignReused || lineItemReused,
+		BidApplied:           !lineItemReused,
 		AccountID:            c.account.AccountID,
 		TwitterURL:           AdsManagerURL,
 		Steps:                steps,

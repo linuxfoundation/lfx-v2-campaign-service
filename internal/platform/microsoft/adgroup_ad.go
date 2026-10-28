@@ -336,6 +336,16 @@ func (c *Client) createAdGroupAndAd(
 		}
 	}
 	adGroupExisted := existed
+	// bidApplied: the requested bidding reached Microsoft only when this run created BOTH the
+	// campaign (the BiddingScheme) and the ad group (the CpcBid). See CampaignResult.BidApplied.
+	bidApplied := !alreadyExisted && !adGroupExisted
+	if in.BiddingScheme != "" && !bidApplied {
+		reused := fmt.Sprintf("campaign %s", campaignID)
+		if !alreadyExisted {
+			reused = fmt.Sprintf("ad group %s", adGroupID)
+		}
+		*steps = append(*steps, fmt.Sprintf("Warning: bid NOT applied to reused %s; its existing bidding is unchanged — verify the bid strategy in Microsoft Advertising", reused))
+	}
 	// hierState renders the "campaign <id> <state> + ad group <id> <state>" prefix for the
 	// ad-step error text, so "created" vs "found" is accurate per entity on a retry against
 	// an existing hierarchy.
@@ -500,6 +510,7 @@ func (c *Client) createAdGroupAndAd(
 				}
 				// This run created something only if at least one keyword was new.
 				r.AlreadyExisted = alreadyExisted && adGroupExisted && adExisted && len(keywordIDs) == 0
+				r.BidApplied = bidApplied
 				r.Steps = *steps
 				return r, nil
 			case createOutcomeAmbiguous(kerr) || errors.Is(kerr, errNoID):
@@ -532,6 +543,7 @@ func (c *Client) createAdGroupAndAd(
 		// LFXV2-3279 closed, so the count is now a confirmed one rather than a hedged one.
 		*steps = append(*steps, fmt.Sprintf("Keywords attached: %d (PAUSED — enable them with the campaign)", len(keywordIDs)))
 		r.AlreadyExisted = false // this run created keywords, so the tree is not untouched
+		r.BidApplied = bidApplied
 		r.Steps = *steps
 		return r, nil
 	}
@@ -546,6 +558,7 @@ func (c *Client) createAdGroupAndAd(
 	// ad group, AND the ad were all pre-existing. If any level was created this run, the
 	// run did produce something new, so the field must be false (its documented contract).
 	r.AlreadyExisted = alreadyExisted && adGroupExisted && adExisted
+	r.BidApplied = bidApplied
 	r.Steps = *steps
 	return r, nil
 }
