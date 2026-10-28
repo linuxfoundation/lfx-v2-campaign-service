@@ -495,7 +495,7 @@ func (r *CampaignRepo) ClearDispatchClaim(ctx context.Context, briefID string, p
 
 const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, variant, slot_version, platform_campaign_id, campaign_name,
 	status, budget_amount, budget_type, start_date, end_date, config_snapshot, result, version,
-	created_by, updated_by, ran_on_system_account, created_at, updated_at, max_cpc_bid::float8`
+	created_by, updated_by, ran_on_system_account, created_at, updated_at, max_cpc_bid::float8, bidding_strategy`
 
 // getCampaignQuery and getCampaignByPlatformQuery both exclude soft-deleted rows;
 // pinned by TestCampaignRepo_ReadsExcludeSoftDeleted.
@@ -849,8 +849,8 @@ func (r *CampaignRepo) getCampaignBySlot(ctx context.Context, projectID, briefID
 const upsertCampaignQuery = `INSERT INTO campaigns
 	(project_id, brief_id, job_id, platform, variant, platform_campaign_id, campaign_name, status,
 	 budget_amount, budget_type, start_date, end_date, config_snapshot, result, created_by, updated_by,
-	 ran_on_system_account, slot_version, platform_bound_at)
-	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17,$18,
+	 ran_on_system_account, slot_version, max_cpc_bid, bidding_strategy, platform_bound_at)
+	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17,$18,$19,$20,
 	        CASE WHEN NULLIF($5::text, '') IS NOT NULL THEN clock_timestamp() END)
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO UPDATE SET
 		job_id=EXCLUDED.job_id, platform_campaign_id=EXCLUDED.platform_campaign_id,
@@ -871,6 +871,14 @@ const upsertCampaignQuery = `INSERT INTO campaigns
 		budget_amount=EXCLUDED.budget_amount, budget_type=EXCLUDED.budget_type,
 		start_date=EXCLUDED.start_date, end_date=EXCLUDED.end_date,
 		config_snapshot=EXCLUDED.config_snapshot, result=EXCLUDED.result,
+		-- The create path's bidding choice (000050) and its starting manual bid (000039), FILLED
+		-- ONLY WHILE EMPTY: the STORED value wins. On a normal dispatch this arm lands on the
+		-- claim row, whose two columns are still NULL, so the create's values are written. A
+		-- bid the update-campaign-bid endpoint set later lives in the same column, and an
+		-- upsert reaching this row afterwards (none does today; see created_by below) must not
+		-- put the create's starting bid back over it, nor a NULL over either value.
+		max_cpc_bid=COALESCE(campaigns.max_cpc_bid, EXCLUDED.max_cpc_bid),
+		bidding_strategy=COALESCE(campaigns.bidding_strategy, EXCLUDED.bidding_strategy),
 		-- created_by is NOT in the update list. What this arm does, on every path the
 		-- orchestrator actually takes, is FINALIZE THE CURRENT CLAIM: dispatchPlatform
 		-- reaches an upsert only when ClaimCampaignDispatch returned claimed=true, and
@@ -986,6 +994,8 @@ const replaceCampaignQuery = `UPDATE campaigns SET
 	-- max_cpc_bid (000039) is written from the loaded row, so every caller that does not
 	-- change the bid writes back exactly what it read. Only update-campaign-bid changes it.
 	max_cpc_bid=$14,
+	-- bidding_strategy (000050) likewise round-trips the loaded row: no update path changes it.
+	bidding_strategy=$15,
 	-- Same COALESCE reasoning as the upsert's conflict arm: an update whose caller had no
 	-- authenticated principal (attributedActor returned nil, having logged it) is an
 	-- ordinary unattributed write, not an instruction to forget the last actor we know.
@@ -1079,6 +1089,7 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 		// The slot version the claim took. It is part of the conflict target, so a wrong
 		// value here would land the result on a different campaign of the same slot.
 		model.NormalizeSlotVersion(c.SlotVersion),
+		c.MaxCPCBid, biddingStrategyArg(c.BiddingStrategy),
 	)
 	upserted, err := scanCampaign(row)
 	if err != nil {
@@ -1378,91 +1389,31 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Lock the parent brief FIRST, as the opening statement of this transaction, to order this
-	// write against a concurrent CreativeAssetRepo.DeleteAsset.
+	// write against a concurrent CreativeAssetRepo.DeleteAsset. This statement writes EVERY
+	// mutable column, config_snapshot included, so every caller -- the config edit, the budget
+	// and bid updates, the status toggle's persist -- rewrites the snapshot DeleteAsset reads to
+	// decide whether an asset is still referenced. Nothing else orders the two: this UPDATE
+	// touches `campaigns` only, and the advisory lock the caller may hold is
+	// ClaimCampaignVersion's, keyed on the CAMPAIGN.
 	//
-	// WHY THIS IS THE REPLACE'S PROBLEM AND NOT ONLY UpdateCampaign'S. This statement writes
-	// EVERY mutable column, config_snapshot included, so every caller -- the config edit, the
-	// budget and bid updates, the status toggle's persist -- rewrites the snapshot it read
-	// earlier in the request. DeleteAsset decides whether an asset is still referenced by
-	// reading that column under its own brief lock. Without this lock the two are not ordered
-	// at all: ReplaceCampaign's UPDATE touches `campaigns` only, and the advisory lock the caller
-	// may hold is ClaimCampaignVersion's, keyed on the CAMPAIGN, so neither one conflicts with the
-	// brief row DeleteAsset takes. A replace that commits just after the delete's reference check
-	// re-publishes a snapshot naming an asset whose bytes are already gone; a replace that commits
-	// just before it is correctly seen. Taking the brief lock makes which of those happened a
-	// decided question instead of a race.
-	//
-	// It is not free. The lock is held for the rest of this transaction, so a concurrent delete on
-	// the same brief waits for the replace to commit. ToggleCampaignStatus's persist runs under
-	// persistResultTimeout (orchestrator.go), a 5s budget on a context deliberately detached from
-	// the request's; a brief held long enough can time that persist out and leave the "platform and
-	// DB diverged" log the orchestrator writes for it. That is the intended trade -- a diverged
-	// status is recoverable by reconciliation, an asset whose bytes are gone while a snapshot still
-	// names it is not -- but it is a real cost, not a free ordering.
-	//
-	// The delete is not the only waiter, and is not the likeliest one. The lock is on the BRIEF
-	// row, so every ReplaceCampaign on a brief now serializes against every OTHER ReplaceCampaign
-	// on that same brief -- the budget edit, the bid edit, the name edit and the toggle's status
-	// persist, across all of that brief's campaigns. A bulk edit that previously ran its platforms
-	// concurrently now runs them one at a time, each waiter holding a pooled connection while it
-	// waits. On a busy brief that sibling contention, not a concurrent asset delete, is the
-	// realistic way the 5s persist budget above gets spent. There is no pool-level lock_timeout or
-	// statement_timeout (see the note in service/creative_asset.go), so the only bound on a wait
-	// here is the caller's context.
+	// Being the OPENING statement is load-bearing, not incidental: it is one of the two named
+	// claims that make the lock graph acyclic. Both live above lockBriefForAssetWriteQuery, which
+	// owns lock order for all three sites; the cost of holding this for the rest of the
+	// transaction is in the internal-infrastructure-postgres concept under ReplaceCampaign. Do not
+	// restate either here.
 	//
 	// It is taken unconditionally rather than only when config_snapshot changed, because this
 	// statement cannot tell: it writes the column either way, and a caller that "did not change"
 	// the config still re-writes the value it read, which is exactly how a concurrently-added
 	// reference gets dropped back out.
 	//
-	// NO CYCLE IS REACHABLE, for two independent reasons, neither of which is the slot -> brief
-	// order AdoptCampaign fixes -- that order is about the per-SLOT transaction lock, which this
-	// path never takes. First, this is the OPENING statement of the transaction, so the replace
-	// holds no row lock on `campaigns` while it waits here; a delete blocked behind a campaigns row
-	// is therefore never blocked behind this replace. Second, the only lock a caller may already
-	// hold is ClaimCampaignVersion's per-campaign advisory lock, taken with pg_try_advisory_lock --
-	// so nobody ever BLOCKS on it. The direction that matters is INTO the holder, not out of it:
-	// this replace does go on to wait, right here, for the brief. The scope of that claim is the
-	// LOCK, not the backend holding it: no wait-for cycle can route THROUGH the advisory lock,
-	// because no edge ever enters it. The backend does acquire in-edges once it holds the brief's
-	// FOR UPDATE -- a waiting DeleteAsset is exactly such an edge -- so the no-deadlock conclusion
-	// does not rest on the holder being edge-free. It rests on two NAMED claims: (1) the brief lock
-	// is the opening statement of this transaction, so the replace holds no `campaigns` row lock
-	// while waiting for it; and (2) nothing anywhere acquires a slot or per-campaign lock while
-	// already holding the brief's. Those two close the cycle, and they are named in these same
-	// words in the internal-infrastructure-postgres concept and in the dated log entry rather than
-	// pointed at by position -- a positional reference drifts the moment any of the three is
-	// re-flowed, which this branch has already paid for twice. DeleteAsset takes the brief lock
-	// and nothing else.
-	//
-	// IT IS KEYED ON brief_id ALONE, AND THE ERROR IS CHECKED. Both halves matter. "The error",
-	// not the scanned status: briefStatus below is read and deliberately never consulted. The
-	// asset-side callers of the sibling query DO act on it -- CreateAsset refuses an archived
-	// brief -- so the asymmetry is worth stating rather than leaving a reader to infer a status
-	// check from the variable's name. A replace under an archived brief stays allowed; that is
-	// pre-existing behaviour and this change does not alter it. The column is projected only
-	// because the lock is taken by a SELECT ... FOR UPDATE, which has to select something.
-	//
-	// The asset
-	// endpoints' version of this statement (lockBriefForAssetWriteQuery) also tests project_id,
-	// because they take a project from the request path and must refuse a brief owned by someone
-	// else; this call has already resolved and authorized its campaign, and a row lock on `id` is
-	// the same lock either way. Carrying project_id across would break it: `campaigns` has a
-	// brief_id foreign key on id ALONE (000002), never upgraded to the composite (brief_id,
-	// project_id) form its sibling tables got, so a row whose project_id disagreed with its
-	// brief's would match NO row, take NO lock and return NO error -- the one hazard this
-	// statement is here to remove, failing silently. The PREDICATE is what removes that hazard;
-	// be precise about what the scan adds on top of it. On id alone the FK guarantees a match, so
-	// an Exec would take the same lock in every reachable case and pgx.ErrNoRows is unreachable.
-	// That rests on TWO legs, not one: the FK constrains rows in `campaigns`, not the in-memory
-	// `c`, so it is only decisive because every caller passes a campaign LOADED from that table
-	// (brief.go, brief_bid.go, brief_budget.go and meta_ad_sets.go, the last via a copy of the
-	// loaded row). A future caller that synthesized a BriefID would make the miss reachable --
-	// and would land on the scan below rather than on silence. The scan is there for the
-	// predicate's next editor: it converts any future miss from a silent loss of the lock into
-	// ErrNotFound, which is the behaviour the sibling callers of the asset-side query already
-	// have (CreateAsset maps ErrNoRows the same way). Do not read it as evidence that the lock
-	// could fail today.
+	// THE ERROR IS CHECKED; THE STATUS IS NOT. briefStatus is read and deliberately never
+	// consulted -- the column is projected only because a SELECT ... FOR UPDATE has to select
+	// something. The asset-side callers of the sibling query DO act on it (CreateAsset refuses an
+	// archived brief), so the asymmetry is worth stating rather than leaving a reader to infer a
+	// status check from the variable's name. A replace under an archived brief stays allowed; that
+	// is pre-existing behaviour and this change does not alter it. Why the predicate is brief_id
+	// alone, and what this scan adds on top of it, are above lockBriefRowByIDQuery.
 	var briefStatus string
 	if lerr := tx.QueryRow(ctx, lockBriefRowByIDQuery, c.BriefID).Scan(&briefStatus); lerr != nil {
 		if errors.Is(lerr, pgx.ErrNoRows) {
@@ -1487,7 +1438,7 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	updated, err := scanCampaign(tx.QueryRow(ctx, q,
 		c.CampaignName, c.Status, c.BudgetAmount, budgetTypeArg(c.BudgetType), c.StartDate, c.EndDate,
 		nullJSON(c.ConfigSnapshot), nullJSON(c.Result), updatedBy, c.ID, c.BriefID, c.ProjectID, expectedVersion,
-		c.MaxCPCBid,
+		c.MaxCPCBid, biddingStrategyArg(c.BiddingStrategy),
 	))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("replace campaign: %w", err)
@@ -2308,14 +2259,16 @@ func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 		platform   string
 		pcID       *string
 		budgetType *string
-		createdBy  []byte
-		updatedBy  []byte
+		// bidding_strategy (000050): NULL on a legacy or adopted row.
+		biddingStrategy *string
+		createdBy       []byte
+		updatedBy       []byte
 	)
 	err := row.Scan(
 		&c.ID, &c.ProjectID, &c.BriefID, &c.JobID, &platform, &c.Variant, &c.SlotVersion, &pcID, &c.CampaignName,
 		&c.Status, &c.BudgetAmount, &budgetType, &c.StartDate, &c.EndDate,
 		&c.ConfigSnapshot, &c.Result, &c.Version, &createdBy, &updatedBy, &c.RanOnSystemAccount,
-		&c.CreatedAt, &c.UpdatedAt, &c.MaxCPCBid,
+		&c.CreatedAt, &c.UpdatedAt, &c.MaxCPCBid, &biddingStrategy,
 	)
 	if err != nil {
 		return nil, err
@@ -2334,7 +2287,20 @@ func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 		bt := model.BudgetType(*budgetType)
 		c.BudgetType = &bt
 	}
+	if biddingStrategy != nil {
+		bs := model.BiddingStrategy(*biddingStrategy)
+		c.BiddingStrategy = &bs
+	}
 	return &c, nil
+}
+
+// biddingStrategyArg passes a nil strategy as SQL NULL ("not recorded") rather than "".
+func biddingStrategyArg(bs *model.BiddingStrategy) *string {
+	if bs == nil {
+		return nil
+	}
+	v := string(*bs)
+	return &v
 }
 
 func budgetTypeArg(bt *model.BudgetType) any {

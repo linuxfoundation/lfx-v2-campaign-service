@@ -272,7 +272,10 @@ func (c *Client) UpdateAdGroupCpcBid(ctx context.Context, campaignID, adGroupID 
 	case has(bidFloorCodes):
 		return &bidAmountError{msg: fmt.Sprintf("Microsoft Advertising refused a max CPC bid of %s as below the minimum bid for this ad account's currency", formatBudgetAmount(amount))}
 	case has(bidCeilingCodes):
-		return &bidAmountError{msg: fmt.Sprintf("Microsoft Advertising refused a max CPC bid of %s as above the ceiling it allows — a bid may not exceed the campaign's daily budget", formatBudgetAmount(amount))}
+		// Not a budget rule: Microsoft documents that ad group and keyword bids "are validated
+		// independently of the campaign budget" (Budget and Bid Strategies guide). 1516 is the
+		// account currency's bid ceiling (PR #332 review corrected the earlier wording).
+		return &bidAmountError{msg: fmt.Sprintf("Microsoft Advertising refused a max CPC bid of %s as above the maximum bid it allows for this ad account's currency", formatBudgetAmount(amount))}
 	case has(bidInvalidCodes):
 		return &bidAmountError{msg: fmt.Sprintf("Microsoft Advertising refused a max CPC bid of %s as not valid for this ad account's currency", formatBudgetAmount(amount))}
 	}

@@ -217,8 +217,13 @@ const creativeAssetQuotaQuery = `SELECT count(*), COALESCE(sum(byte_size), 0),
 // in-edges once it holds this brief lock -- a waiting DeleteAsset is one -- so the no-deadlock
 // conclusion rests on the slot-lock claims here, not on that. It also takes this lock as the
 // opening statement of its transaction, so it holds no `campaigns` row lock while waiting here.
-// Nothing acquires a slot lock while holding this one, which is the direction that would close
-// the cycle.
+// Nothing anywhere acquires a slot or per-campaign lock while already holding this one, which is
+// the direction that would close the cycle.
+//
+// Those two claims -- the opening-statement one and this one -- are the whole acyclicity argument,
+// and this comment is where they live. The three call sites deliberately do NOT restate them: a
+// restated invariant is one that can be edited here and left stale there, which is exactly what
+// happened before this comment became their single home.
 const lockBriefForAssetWriteQuery = `SELECT status FROM campaign_briefs
 	WHERE id = $1 AND project_id = $2 FOR UPDATE`
 
@@ -238,6 +243,18 @@ const lockBriefForAssetWriteQuery = `SELECT status FROM campaign_briefs
 // disagreed would match nothing, take NO lock and return NO error: the one hazard this statement
 // exists to remove, failing silently. On id alone the FK makes a miss mean the brief is genuinely
 // gone, which the caller scans for and refuses.
+//
+// The PREDICATE is what removes that hazard; be precise about what the caller's scan adds on top
+// of it. On id alone the FK guarantees a match, so an Exec would take the same lock in every
+// reachable case and pgx.ErrNoRows is unreachable today. That rests on TWO legs, not one: the FK
+// constrains rows in `campaigns`, not the in-memory campaign the caller holds, so it is only
+// decisive because every caller passes a campaign LOADED from that table (brief.go, brief_bid.go,
+// brief_budget.go and meta_ad_sets.go, the last via a copy of the loaded row). A future caller
+// that synthesized a BriefID would make the miss reachable -- and would land on the scan rather
+// than on silence. So the scan is there for the predicate's next editor: it converts any future
+// miss from a silent loss of the lock into ErrNotFound, which is what the asset-side callers
+// already do (CreateAsset maps ErrNoRows the same way). Do not read it as evidence that the lock
+// could fail today.
 const lockBriefRowByIDQuery = `SELECT status FROM campaign_briefs
 	WHERE id = $1 FOR UPDATE`
 
