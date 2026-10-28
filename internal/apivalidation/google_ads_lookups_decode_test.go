@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	connserver "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/server"
@@ -35,8 +36,8 @@ func decodeGeoSuggest(t *testing.T, query url.Values) (q string, types []string,
 
 func TestGeoSuggestDecoder_AcceptsMultiByteWithinLimitsAndRepeatedTypes(t *testing.T) {
 	v := url.Values{}
-	v.Set("q", repeat("東", 50))
-	v.Add("target_types", repeat("市", 39)+"1")
+	v.Set("q", strings.Repeat("東", 50))
+	v.Add("target_types", strings.Repeat("市", 39)+"1")
 	v.Add("target_types", "Postal Code")
 	q, types, limit, err := decodeGeoSuggest(t, v)
 	if err != nil {
@@ -55,7 +56,7 @@ func TestGeoSuggestDecoder_RefusesWhatTheServiceWouldRefuse(t *testing.T) {
 		"blank q":          {"q": {"   "}},
 		"separator type":   {"q": {"a"}, "target_types": {" _ "}},
 		"limit 0":          {"q": {"a"}, "limit": {"0"}},
-		"101-character q":  {"q": {repeat("東", 101)}},
+		"101-character q":  {"q": {strings.Repeat("東", 101)}},
 		"three-letter iso": {"q": {"a"}, "country_code": {"USA"}},
 	}
 	for name, v := range cases {
@@ -65,12 +66,4 @@ func TestGeoSuggestDecoder_RefusesWhatTheServiceWouldRefuse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func repeat(s string, n int) string {
-	out := ""
-	for i := 0; i < n; i++ {
-		out += s
-	}
-	return out
 }

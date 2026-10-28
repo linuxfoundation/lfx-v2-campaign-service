@@ -395,11 +395,11 @@ func (d upstreamCapableDispatcher) ListAccounts(context.Context, string, model.P
 	return []model.AccessibleAccount{}, nil
 }
 
-func (d upstreamCapableDispatcher) SuggestGeoTargets(context.Context, string, model.Provider, model.GeoTargetQuery) ([]model.GeoTargetSuggestion, error) {
+func (d upstreamCapableDispatcher) SuggestGeoTargets(context.Context, string, model.Provider, model.GeoTargetQuery) ([]model.GeoTargetSuggestion, bool, error) {
 	if d.err != nil {
-		return nil, d.err
+		return nil, false, d.err
 	}
-	return []model.GeoTargetSuggestion{}, nil
+	return []model.GeoTargetSuggestion{}, false, nil
 }
 
 func (d upstreamCapableDispatcher) ListUserLists(context.Context, string, model.Provider, string) (*model.AudienceUserLists, error) {

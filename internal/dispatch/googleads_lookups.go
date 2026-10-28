@@ -24,22 +24,25 @@ import (
 // and it reveals nothing any ad account holds. The shared-account rule (monitor, probe,
 // adoption, user lists) exists because those reads return one foundation's data to another;
 // this one returns no foundation's data at all.
-func (d *GoogleAdsDispatcher) SuggestGeoTargets(ctx context.Context, projectID string, platform model.Provider, q model.GeoTargetQuery) ([]model.GeoTargetSuggestion, error) {
+//
+// cached reports that the answer came from the cache and Google was not contacted, so the
+// caller does not record an upstream call that never happened.
+func (d *GoogleAdsDispatcher) SuggestGeoTargets(ctx context.Context, projectID string, platform model.Provider, q model.GeoTargetQuery) (_ []model.GeoTargetSuggestion, cached bool, _ error) {
 	// One-shot client: its token refresh must end with this request, not outlive it.
 	client, err := d.resolveGoogleAdsDiscoveryClient(ctx, projectID, platform, googleads.WithCallerScopedTokenRefresh())
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// The cache is consulted AFTER resolution, so a project that can reach no credential still
 	// gets its 404 rather than another project's cached answer; resolution sends nothing to
 	// Google (the token is fetched on first request), so only the upstream call is saved.
 	key := geoSuggestKey(q)
 	if rows, ok := d.geo.get(key); ok {
-		return rows, nil
+		return rows, true, nil
 	}
 	rows, serr := client.SuggestGeoTargetConstants(ctx, q.Query, q.CountryCode)
 	if serr != nil {
-		return nil, serr
+		return nil, false, serr
 	}
 	// make, not var: an empty answer is a real answer and must stay distinguishable from none.
 	out := make([]model.GeoTargetSuggestion, 0, len(rows))
@@ -55,7 +58,7 @@ func (d *GoogleAdsDispatcher) SuggestGeoTargets(ctx context.Context, projectID s
 		})
 	}
 	d.geo.put(key, out)
-	return out, nil
+	return out, false, nil
 }
 
 // ListUserLists implements service.UserListReader for Google Ads: every user list on one
@@ -169,8 +172,10 @@ func (c *geoSuggestCache) get(key string) ([]model.GeoTargetSuggestion, bool) {
 		delete(c.entries, key)
 		return nil, false
 	}
-	// A copy, so a caller that edits its slice cannot corrupt the cached answer.
-	return append([]model.GeoTargetSuggestion(nil), e.rows...), true
+	// A copy, so a caller that edits its slice cannot corrupt the cached answer. Built with
+	// make so an empty answer stays a non-nil empty slice: nil is the contract violation
+	// ReadGeoTargetSuggestions refuses, and would turn a repeated no-match search into a 503.
+	return copyGeoRows(e.rows), true
 }
 
 func (c *geoSuggestCache) put(key string, rows []model.GeoTargetSuggestion) {
@@ -195,5 +200,12 @@ func (c *geoSuggestCache) put(key string, rows []model.GeoTargetSuggestion) {
 			delete(c.entries, k)
 		}
 	}
-	c.entries[key] = geoSuggestEntry{rows: append([]model.GeoTargetSuggestion(nil), rows...), expires: now.Add(geoSuggestTTL)}
+	c.entries[key] = geoSuggestEntry{rows: copyGeoRows(rows), expires: now.Add(geoSuggestTTL)}
+}
+
+// copyGeoRows copies rows into a NON-NIL slice, empty included.
+func copyGeoRows(rows []model.GeoTargetSuggestion) []model.GeoTargetSuggestion {
+	out := make([]model.GeoTargetSuggestion, len(rows))
+	copy(out, rows)
+	return out
 }

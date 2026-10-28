@@ -49,7 +49,7 @@ func TestGoogleAdsSuggestGeoTargets_UsesTheSystemFallback(t *testing.T) {
 	})
 	d := NewGoogleAdsDispatcher(ownOnlyConnReader{system: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 
-	rows, err := d.SuggestGeoTargets(context.Background(), "proj-1", model.ProviderGoogleAds, model.GeoTargetQuery{Query: "78701", CountryCode: "US"})
+	rows, _, err := d.SuggestGeoTargets(context.Background(), "proj-1", model.ProviderGoogleAds, model.GeoTargetQuery{Query: "78701", CountryCode: "US"})
 	if err != nil {
 		t.Fatalf("SuggestGeoTargets through the system fallback: %v", err)
 	}
@@ -190,10 +190,13 @@ func TestGoogleAdsSuggestGeoTargets_CachesRepeatedSearches(t *testing.T) {
 		_, _ = io.WriteString(w, geoSuggestBody)
 	})
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
-	for _, q := range []string{"78701", " 78701 ", "78701"} {
-		rows, err := d.SuggestGeoTargets(context.Background(), "proj-1", model.ProviderGoogleAds, model.GeoTargetQuery{Query: q, CountryCode: "US"})
+	for i, q := range []string{"78701", " 78701 ", "78701"} {
+		rows, cached, err := d.SuggestGeoTargets(context.Background(), "proj-1", model.ProviderGoogleAds, model.GeoTargetQuery{Query: q, CountryCode: "US"})
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("rows=%v err=%v", rows, err)
+		}
+		if cached != (i > 0) {
+			t.Errorf("call %d: cached=%v, want %v", i, cached, i > 0)
 		}
 		rows[0].ID = "mutated" // must not corrupt the cached copy
 	}
@@ -201,7 +204,7 @@ func TestGoogleAdsSuggestGeoTargets_CachesRepeatedSearches(t *testing.T) {
 		t.Errorf("Google was asked %d times, want 1", n)
 	}
 	// A different country is a different question.
-	if _, err := d.SuggestGeoTargets(context.Background(), "proj-1", model.ProviderGoogleAds, model.GeoTargetQuery{Query: "78701", CountryCode: "CA"}); err != nil {
+	if _, _, err := d.SuggestGeoTargets(context.Background(), "proj-1", model.ProviderGoogleAds, model.GeoTargetQuery{Query: "78701", CountryCode: "CA"}); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(rec.all()); n != 2 {
@@ -214,11 +217,11 @@ func TestGoogleAdsSuggestGeoTargets_CacheDoesNotMaskAMissingConnection(t *testin
 	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, geoSuggestBody) })
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 	q := model.GeoTargetQuery{Query: "78701"}
-	if _, err := d.SuggestGeoTargets(context.Background(), "proj-1", model.ProviderGoogleAds, q); err != nil {
+	if _, _, err := d.SuggestGeoTargets(context.Background(), "proj-1", model.ProviderGoogleAds, q); err != nil {
 		t.Fatal(err)
 	}
 	d.creds = newCredsSource(ownOnlyConnReader{}, identityEncryptor{})
-	if _, err := d.SuggestGeoTargets(context.Background(), "proj-2", model.ProviderGoogleAds, q); !errors.Is(err, domain.ErrNotFound) {
+	if _, _, err := d.SuggestGeoTargets(context.Background(), "proj-2", model.ProviderGoogleAds, q); !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound despite a cached answer", err)
 	}
 }
@@ -245,5 +248,29 @@ func TestGeoSuggestCache_ExpiresAndStaysBounded(t *testing.T) {
 	nilCache.put("k", nil)
 	if _, ok := nilCache.get("k"); ok {
 		t.Error("a nil cache must cache nothing")
+	}
+}
+
+// A no-match search is cached as an EMPTY slice, never nil: the repeat must still be a 200 with
+// [] through the orchestrator, not the nil-result 503.
+func TestGoogleAdsSuggestGeoTargets_RepeatedEmptySearchStaysEmpty(t *testing.T) {
+	rec := &pathRecorder{}
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		rec.add(r.URL.Path)
+		_, _ = io.WriteString(w, `{}`)
+	})
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	orch := service.NewOrchestrator(nil, nil, map[model.Provider]service.PlatformDispatcher{model.ProviderGoogleAds: d})
+	for i := 0; i < 2; i++ {
+		rows, err := orch.ReadGeoTargetSuggestions(context.Background(), "proj-1", model.ProviderGoogleAds, model.GeoTargetQuery{Query: "nowhere"})
+		if err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+		if rows == nil || len(rows) != 0 {
+			t.Fatalf("call %d: rows = %#v, want a non-nil empty slice", i, rows)
+		}
+	}
+	if n := len(rec.all()); n != 1 {
+		t.Errorf("Google was asked %d times, want 1 (the empty answer is cached)", n)
 	}
 }

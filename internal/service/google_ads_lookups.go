@@ -21,9 +21,11 @@ import (
 // table by place name or postal code. Type-asserted like AccountLister; a dispatcher without
 // it yields ErrTargetingLookupUnsupported (400) and the platform is never contacted.
 //
-// A successful call MUST return a NON-NIL slice, for the reason AccountLister gives.
+// A successful call MUST return a NON-NIL slice, for the reason AccountLister gives. cached
+// reports that the platform was not contacted (the answer came from a cache), so no upstream
+// call is recorded for it.
 type GeoTargetSuggester interface {
-	SuggestGeoTargets(ctx context.Context, projectID string, platform model.Provider, q model.GeoTargetQuery) ([]model.GeoTargetSuggestion, error)
+	SuggestGeoTargets(ctx context.Context, projectID string, platform model.Provider, q model.GeoTargetQuery) (rows []model.GeoTargetSuggestion, cached bool, err error)
 }
 
 // UserListReader is an OPTIONAL dispatcher capability: list the user lists (audiences) on one
@@ -57,8 +59,12 @@ func (o *Orchestrator) ReadGeoTargetSuggestions(ctx context.Context, projectID s
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
 	start := time.Now()
-	rows, err := s.SuggestGeoTargets(callCtx, projectID, platform, q)
-	o.recordUpstream(ctx, platform, opSuggestGeoTargets, start, err)
+	rows, cached, err := s.SuggestGeoTargets(callCtx, projectID, platform, q)
+	// A cache hit never reached the platform: recording it would overstate upstream traffic
+	// and drag the latency histogram toward zero, hiding whether the cache saves quota.
+	if !cached {
+		o.recordUpstream(ctx, platform, opSuggestGeoTargets, start, err)
+	}
 	if err != nil {
 		return nil, err
 	}

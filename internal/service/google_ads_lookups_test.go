@@ -19,6 +19,7 @@ import (
 // mockLookupDispatcher implements both targeting-lookup capabilities.
 type mockLookupDispatcher struct {
 	geo        []model.GeoTargetSuggestion
+	cached     bool
 	lists      *model.AudienceUserLists
 	err        error
 	gotQuery   model.GeoTargetQuery
@@ -30,10 +31,10 @@ func (m *mockLookupDispatcher) Dispatch(context.Context, *model.CampaignBrief, m
 	return nil, nil
 }
 
-func (m *mockLookupDispatcher) SuggestGeoTargets(_ context.Context, _ string, _ model.Provider, q model.GeoTargetQuery) ([]model.GeoTargetSuggestion, error) {
+func (m *mockLookupDispatcher) SuggestGeoTargets(_ context.Context, _ string, _ model.Provider, q model.GeoTargetQuery) ([]model.GeoTargetSuggestion, bool, error) {
 	m.calls++
 	m.gotQuery = q
-	return m.geo, m.err
+	return m.geo, m.cached, m.err
 }
 
 func (m *mockLookupDispatcher) ListUserLists(_ context.Context, _ string, _ model.Provider, accountID string) (*model.AudienceUserLists, error) {
@@ -292,6 +293,27 @@ func TestListGoogleAdsUserLists_SharedTenancyIsRefusedWith409(t *testing.T) {
 		}
 		if d.calls != 0 {
 			t.Error("the dispatcher was reached on a shared-tenancy platform")
+		}
+	}
+}
+
+// A cache hit never reached Google, so it records no upstream call; a miss records one.
+func TestReadGeoTargetSuggestions_CacheHitIsNotRecordedUpstream(t *testing.T) {
+	for _, cached := range []bool{true, false} {
+		rec := &recordingMetrics{}
+		o := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+			model.ProviderGoogleAds: &mockLookupDispatcher{geo: []model.GeoTargetSuggestion{}, cached: cached},
+		})
+		o.SetMetrics(rec)
+		if _, err := o.ReadGeoTargetSuggestions(context.Background(), "cncf", model.ProviderGoogleAds, model.GeoTargetQuery{Query: "a"}); err != nil {
+			t.Fatal(err)
+		}
+		want := 1
+		if cached {
+			want = 0
+		}
+		if got := len(rec.upstreamCalls()); got != want {
+			t.Errorf("cached=%v: %d upstream calls recorded, want %d", cached, got, want)
 		}
 	}
 }
