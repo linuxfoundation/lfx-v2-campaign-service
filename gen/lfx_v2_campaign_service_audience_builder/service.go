@@ -460,15 +460,22 @@ type AudienceLastSentEmail struct {
 type AudienceListBrief struct {
 	// HubSpot list id
 	ListID string
-	// HubSpot list name; empty when the list no longer resolves
+	// HubSpot list name; empty when the list could not be read
 	Name string
 	// Membership size, when HubSpot reported one
 	Size *int64
-	// True when the referenced list could not be resolved
+	// True when HubSpot reported no such list
 	Missing bool
+	// True when the list could not be read for a reason other than its absence, so
+	// whether it still exists is UNKNOWN. Never true together with missing.
+	Unresolved bool
 	// Legacy list id this row was translated from
 	ResolvedFromLegacyID *string
-	// Deep link to the list in the HubSpot UI; absent when it no longer resolves
+	// Deep link to the list in the HubSpot UI; absent when the list is missing.
+	// Present on an unresolved row, where checking the list by hand is the remedy
+	// — unless the row's list_id is still the legacy id it was resolved_from,
+	// which this link's route cannot open. Absence is never itself a statement
+	// about the list: read missing and unresolved for that
 	HubspotURL *string
 }
 

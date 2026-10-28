@@ -404,6 +404,18 @@ estimate, empty reason). `internal/service/audience_builder_examples_spec_test.g
 example in the four generated JSON specs and checks both invariants. Examples only; no behaviour
 change.
 
+`AudienceListBrief` carries a REQUIRED `unresolved` beside `missing` (#238). `missing` is HubSpot
+answering "no such list"; `unresolved` is the read failing for any other reason — a throttle, a
+401/403, a 5xx — so whether the list exists is unknown. They are never both true, and a resolved
+row carries neither. An unresolved row keeps its `hubspot_url` where there is one to build,
+because checking the list by hand is the remedy; a missing row has none, and so does any row whose
+`list_id` is still the legacy id it was `resolved_from` — the link's `objectLists` route takes v3
+(ILS) ids only, and a legacy id through it opens HubSpot on a "list not found" page, which reads
+as exactly the deletion an unresolved row is saying it cannot confirm. An absent `hubspot_url` is
+therefore never itself a statement about the list; `missing` and `unresolved` are. The shared
+resolved-list examples set both flags false, and the
+examples spec test checks the exclusion as a third invariant.
+
 `internal/service/meta_audience_wire_example_test.go` walks EVERY `example` in all four GENERATED
 specs (v2 and v3, `gen/` and the kodata copy), where the defects lived. It checks the following:
 

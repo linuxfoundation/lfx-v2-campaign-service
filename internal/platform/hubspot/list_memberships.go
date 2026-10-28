@@ -116,17 +116,18 @@ func (c *Client) ListMembershipIDs(ctx context.Context, listID string) (ids []st
 // when it does not exist there.
 //
 // A 404 is a NORMAL answer, not a failure: lists created through v3 are simply absent
-// from v1. So is any other error — this is a best-effort name lookup used to enrich a
-// QA report, and failing the whole report because one referenced list could not be
-// named would replace a partial answer with none. The caller distinguishes "" from a
-// name; it never sees why.
-func (c *Client) LegacyListName(ctx context.Context, listID string) string {
+// from v1. The error is returned anyway, so that a caller which must tell "HubSpot said
+// no such list" from "the lookup never reached an answer" can ask `IsNotFound`. Both
+// still yield "" — this stays a best-effort name lookup, and failing a whole QA report
+// because one referenced list could not be named would replace a partial answer with
+// none. A caller that only wants the name discards the error; see listName.
+func (c *Client) LegacyListName(ctx context.Context, listID string) (string, error) {
 	if listID = strings.TrimSpace(listID); listID == "" {
-		return ""
+		return "", fmt.Errorf("hubspot: LegacyListName requires a non-empty list id")
 	}
 	raw, err := c.doRequest(ctx, http.MethodGet, legacyListPath+"/"+url.PathEscape(listID), nil, true)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	var resp struct {
 		Name string `json:"name"`
@@ -135,12 +136,12 @@ func (c *Client) LegacyListName(ctx context.Context, listID string) string {
 		} `json:"list"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		return ""
+		return "", fmt.Errorf("hubspot: decode legacy list %q: %w", listID, err)
 	}
 	if resp.List != nil && strings.TrimSpace(resp.List.Name) != "" {
-		return strings.TrimSpace(resp.List.Name)
+		return strings.TrimSpace(resp.List.Name), nil
 	}
-	return strings.TrimSpace(resp.Name)
+	return strings.TrimSpace(resp.Name), nil
 }
 
 // ListIDForLegacy maps a legacy v1 list id to its ILS (v3) list id, or "" when HubSpot
@@ -148,25 +149,26 @@ func (c *Client) LegacyListName(ctx context.Context, listID string) string {
 //
 // A marketing email records the SAME list under both ids -- contactIlsLists and the legacy
 // contactLists -- so a caller that names both sides separately shows every list twice, the
-// legacy copy with no size. Like LegacyListName this is a best-effort enrichment: any
-// failure is "no mapping", and the caller falls back to the legacy name.
-func (c *Client) ListIDForLegacy(ctx context.Context, legacyID string) string {
+// legacy copy with no size. Like LegacyListName this returns "" for every failure and hands
+// back the error beside it: an absent mapping and a mapping call that was throttled or
+// rejected are both "no id", but only the first is evidence about the list's existence.
+func (c *Client) ListIDForLegacy(ctx context.Context, legacyID string) (string, error) {
 	if legacyID = strings.TrimSpace(legacyID); legacyID == "" {
-		return ""
+		return "", fmt.Errorf("hubspot: ListIDForLegacy requires a non-empty list id")
 	}
 	q := url.Values{}
 	q.Set("legacyListId", legacyID)
 	raw, err := c.doRequest(ctx, http.MethodGet, listsPath+"/idmapping?"+q.Encode(), nil, true)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	var resp struct {
 		ListID json.Number `json:"listId"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		return ""
+		return "", fmt.Errorf("hubspot: decode legacy id mapping %q: %w", legacyID, err)
 	}
-	return strings.TrimSpace(resp.ListID.String())
+	return strings.TrimSpace(resp.ListID.String()), nil
 }
 
 // IsNotFound reports whether err is a definite 404 from HubSpot.
