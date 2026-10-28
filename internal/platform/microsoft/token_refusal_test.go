@@ -110,7 +110,7 @@ func TestFetchToken_UnusableBodyKeepsTheStatusVerdict(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := NewClient(testCreds(), testAccount(), WithTokenURL(srv.URL), WithClock(fixedClock())).fetchToken(context.Background())
+	_, _, err := NewClient(testCreds(), testAccount(), WithTokenURL(srv.URL), WithClock(fixedClock())).fetchToken(context.Background())
 	if err == nil {
 		t.Fatal("fetchToken succeeded on a 401")
 	}

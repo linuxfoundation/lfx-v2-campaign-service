@@ -68,6 +68,18 @@ token expires, coalescing concurrent callers single-flight (`tokenMu` is never
 held across the network call) so N callers produce ONE exchange — the same
 discipline as the google-ads and microsoft clients.
 
+**A 401 that lands while a refresh is on the network poisons that flight (#180, fixed
+2026-10-28).** `invalidateAccessToken` is unconditional — the 401 arms do not say which token
+was refused — so it sets `tokenRefresh.poisoned` on any published flight as well as clearing
+the cache. The leader writes the cache, checks the flag, sets `inflight.token` and tears the
+flight down in ONE critical section (`fetchToken` returns the access token and expiry and no
+longer caches it; it still adopts a rotated refresh token itself). A poisoned result is
+neither cached nor handed out: waiters see a blank and re-lead exactly one fresh exchange.
+Before this, an exchange that came back holding the just-refused value re-cached it for its
+whole lifetime on the cached toggle/metrics clients. The price, pinned by
+`TestRefresh_MidFlight401CostsOneReexchange`, is one extra exchange per mid-flight 401, the
+same bound the unconditional clear already had for late 401s.
+
 **The coalescing test needs a BARRIER, not a sleep.** Its assertion is a server-side
 exchange COUNT of exactly 1, and that count has two possible causes: callers coalesced, or
 callers arrived one at a time and each found the CACHE the previous one populated. A

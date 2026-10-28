@@ -259,6 +259,12 @@ type tokenRefresh struct {
 	done  chan struct{}
 	token string
 	err   error
+	// poisoned is set when a 401 invalidated the cache while this flight was published and
+	// its fetch was still on the network (#180). LinkedIn's invalidation is unconditional --
+	// it does not name the token the 401 answered -- so the flight cannot tell whether its
+	// result is the rejected value and drops it: the leader neither caches nor publishes it,
+	// and every waiter re-leads one fresh exchange. Guarded by tokenMu.
+	poisoned bool
 }
 
 // tokenResponse is LinkedIn's documented token-endpoint response. Field names and
@@ -390,13 +396,25 @@ func (c *Client) accessTokenValue(ctx context.Context) (string, error) {
 		refreshValuesCtx := context.WithoutCancel(ctx)
 		go func() {
 			fetchCtx, cancel := context.WithTimeout(refreshValuesCtx, requestTimeout)
-			token, err := c.fetchToken(fetchCtx)
+			token, expiry, err := c.fetchToken(fetchCtx)
 			cancel()
 			// Tagged so the async create job can report "the token refresh failed" without
 			// rendering this error's text (issue #208). Error() and errors.Is are unchanged.
 			err = domain.MarkTokenRefreshFailure(err)
 
+			// Cache write, poison check, publication and teardown are ONE critical section
+			// (#180). A 401 that invalidated the cache while this fetch was on the network
+			// poisoned the flight; its result is then dropped here -- not cached, and
+			// published blank so every waiter re-leads -- before anyone can observe it.
 			c.tokenMu.Lock()
+			if err == nil {
+				if inflight.poisoned {
+					token = ""
+				} else {
+					c.accessToken = token
+					c.tokenExpiry = expiry
+				}
+			}
 			inflight.token = token
 			inflight.err = err
 			c.inflight = nil
@@ -410,14 +428,24 @@ func (c *Client) accessTokenValue(ctx context.Context) (string, error) {
 	case <-ctx.Done():
 		return "", ctx.Err()
 	case <-inflight.done:
+		if inflight.err == nil && inflight.token == "" {
+			// Poisoned by invalidateAccessToken while in flight (see tokenRefresh.poisoned).
+			// fetchToken never succeeds with an empty token, so this cannot fire on a healthy
+			// refresh. The leader cleared c.inflight before closing done, so this re-leads a
+			// NEW exchange rather than rejoining the poisoned one.
+			return c.accessTokenValue(ctx)
+		}
 		return inflight.token, inflight.err
 	}
 }
 
-// fetchToken performs the refresh_token -> access_token exchange and caches the
-// result under tokenMu. It is only ever invoked from the leader's detached refresh
-// goroutine, so at most one call is in flight at a time.
-func (c *Client) fetchToken(ctx context.Context) (string, error) {
+// fetchToken performs the refresh_token -> access_token exchange and returns the
+// access token with its expiry. It adopts a rotated refresh token itself, but does
+// NOT cache the access token: the leader does that in the same critical section that
+// checks the flight's poison flag and publishes the result (#180). It is only ever
+// invoked from the leader's detached refresh goroutine, so at most one call is in
+// flight at a time.
+func (c *Client) fetchToken(ctx context.Context) (string, time.Time, error) {
 	// Read the refresh token under tokenMu: a previous exchange may have rotated it
 	// (see the adoption below), and c.creds is otherwise read by callers on other
 	// goroutines. ClientID/ClientSecret are immutable after construction, so they are read
@@ -447,7 +475,7 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 	if err != nil {
 		// PERMANENT: the request was never sent, and nothing about a stored credential can
 		// make an unbuildable request buildable. Retrying repeats the same failure.
-		return "", permanentTokenExchangeFailure(fmt.Errorf("build linkedin token request: %w", err))
+		return "", time.Time{}, permanentTokenExchangeFailure(fmt.Errorf("build linkedin token request: %w", err))
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
@@ -465,7 +493,7 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// rebuilds the cause from its CLASSIFICATION alone, so no untrusted text survives
 		// while errors.Is/As still work. tokenRefreshError keeps Unwrap for classification
 		// without rendering the cause's text.
-		return "", &tokenRefreshError{err: redactHTTPDoError(err)}
+		return "", time.Time{}, &tokenRefreshError{err: redactHTTPDoError(err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -479,10 +507,10 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// Steps, so the leak would be durable. redactBodyReadError rebuilds the cause from
 		// its classification, preserving context.Canceled/DeadlineExceeded for errors.Is
 		// while rendering no untrusted text.
-		return "", tokenExchangeFailure(fmt.Errorf("read linkedin token response: %w", redactBodyReadError(err)))
+		return "", time.Time{}, tokenExchangeFailure(fmt.Errorf("read linkedin token response: %w", redactBodyReadError(err)))
 	}
 	if int64(buf.Len()) > maxResponseBytes {
-		return "", tokenExchangeFailure(fmt.Errorf("linkedin token response exceeds %d bytes", maxResponseBytes))
+		return "", time.Time{}, tokenExchangeFailure(fmt.Errorf("linkedin token response exceeds %d bytes", maxResponseBytes))
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -514,7 +542,7 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 				// unwraps to nothing carries neither this reason nor
 				// domain.ErrConnectionNotUsable and falls through to the generic retryable
 				// 503. Only the classification travels; no upstream byte is rendered.
-				return "", &tokenRequestRejectedError{
+				return "", time.Time{}, &tokenRequestRejectedError{
 					Connection: c.creds.ConnectionLabel(),
 					StatusCode: resp.StatusCode,
 				}
@@ -544,7 +572,7 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 				// neither this reason nor domain.ErrConnectionNotUsable and would fall
 				// through to the generic retryable arm — the opaque 503 this split exists
 				// to retire. Only the classification travels; no upstream byte is rendered.
-				return "", &applicationCredentialsError{
+				return "", time.Time{}, &applicationCredentialsError{
 					Connection: c.creds.ConnectionLabel(),
 					StatusCode: resp.StatusCode,
 					// Carried so the message can distinguish the two members of this map.
@@ -568,7 +596,7 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 			// failure is self-correcting. Note this is the OPPOSITE default from before the
 			// split, when every unclassified 400/401 landed here by construction rather than
 			// by choice.
-			return "", &credentialsExpiredError{
+			return "", time.Time{}, &credentialsExpiredError{
 				Connection: c.creds.ConnectionLabel(),
 				Reason: fmt.Sprintf("LinkedIn rejected the refresh token (HTTP %d: expired, revoked or invalid)",
 					resp.StatusCode),
@@ -587,9 +615,9 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		if resp.StatusCode != http.StatusTooManyRequests &&
 			resp.StatusCode != http.StatusRequestTimeout &&
 			resp.StatusCode < http.StatusInternalServerError {
-			return "", permanentTokenExchangeFailure(fmt.Errorf("linkedin token refresh -> %d", resp.StatusCode))
+			return "", time.Time{}, permanentTokenExchangeFailure(fmt.Errorf("linkedin token refresh -> %d", resp.StatusCode))
 		}
-		return "", tokenExchangeFailure(fmt.Errorf("linkedin token refresh -> %d", resp.StatusCode))
+		return "", time.Time{}, tokenExchangeFailure(fmt.Errorf("linkedin token refresh -> %d", resp.StatusCode))
 	}
 
 	var tok tokenResponse
@@ -610,14 +638,14 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// protocol violation, not a busy server; treating it as retryable is what reports the
 		// connection healthy. Over-escalating here is cheap — it answers a 500 that reaches
 		// THIS service's owners, and sends no operator to audit a configuration that is fine.
-		return "", permanentTokenExchangeFailure(fmt.Errorf("decode linkedin token response: malformed JSON (%d bytes)", buf.Len()))
+		return "", time.Time{}, permanentTokenExchangeFailure(fmt.Errorf("decode linkedin token response: malformed JSON (%d bytes)", buf.Len()))
 	}
 	if tok.AccessToken == "" {
 		// Fail closed: never fall back to the stale token on a malformed success. PERMANENT
 		// for the same reason as the decode failure above — a 200 with no access_token is a
 		// contract violation, and calling it inconclusive blames LinkedIn's availability for a
 		// connection that never actually obtained a token.
-		return "", permanentTokenExchangeFailure(errors.New("linkedin token refresh returned an empty access_token"))
+		return "", time.Time{}, permanentTokenExchangeFailure(errors.New("linkedin token refresh returned an empty access_token"))
 	}
 
 	// expires_in may be absent or non-positive; default so a missing value neither
@@ -627,9 +655,8 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		ttl = defaultTokenTTL
 	}
 
+	expiry := c.now().Add(ttl)
 	c.tokenMu.Lock()
-	c.accessToken = tok.AccessToken
-	c.tokenExpiry = c.now().Add(ttl)
 	// LinkedIn returns the refresh token again on every exchange. Adopt it in-memory
 	// so a rotated value is used for the NEXT refresh within this client's lifetime.
 	//
@@ -652,7 +679,7 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 	c.tokenMu.Unlock()
 
 	c.warnIfRefreshTokenNearExpiry(ctx, refreshDeadline)
-	return tok.AccessToken, nil
+	return tok.AccessToken, expiry, nil
 }
 
 // refreshExpiryWarned records which connections have already had their near-expiry
@@ -949,9 +976,17 @@ func (c *Client) expiredCredentialsError(statusCode int, body, method string) *c
 // for. Retrying only the idempotent methods would leave the create cascade — the
 // path this ticket was opened for — unchanged, so it would buy the least where it
 // is wanted most. One failed operation, then a clean one, is the cheaper trade.
+//
+// A refresh still on the network when the 401 lands is poisoned as well (#180): it may come
+// back holding the very value LinkedIn just refused, and caching that would undo this clear
+// for the token's whole lifetime. The leader drops a poisoned result atomically with caching
+// and publishing it; see tokenRefresh.poisoned.
 func (c *Client) invalidateAccessToken() {
 	c.tokenMu.Lock()
 	c.accessToken = ""
 	c.tokenExpiry = time.Time{}
+	if c.inflight != nil {
+		c.inflight.poisoned = true
+	}
 	c.tokenMu.Unlock()
 }

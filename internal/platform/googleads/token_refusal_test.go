@@ -111,7 +111,7 @@ func TestFetchToken_UnusableBodyKeepsTheStatusVerdict(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := NewClient(
+	_, _, err := NewClient(
 		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
 		AccountConfig{CustomerID: "1234567890"},
 		WithTokenURL(srv.URL),

@@ -247,16 +247,17 @@ func TestAttempt_401InvalidatesBeforeTheBodyIsRead(t *testing.T) {
 // c.inflight and closes done inside ONE unbroken critical section, so a published flight is
 // never observable carrying a non-empty token. A racing probe over ~7M observations of a
 // published flight saw this state zero times; it appeared ~74k times only once that critical
-// section was split in two. So this test does NOT reproduce a production interleaving, and it
-// does NOT cover the residual pre-publication window tracked by #180 (a 401 landing before
-// inflight.token is set matches nothing and the leader publishes the rejected token anyway).
+// section was split in two. So this test does NOT reproduce a production interleaving. The
+// pre-publication window of #180 (a 401 landing while the refresh is still on the network) is
+// covered by the rejection record on the flight and pinned by token_flight_race_test.go.
 //
 // What it DOES prove is still worth having: it is the executable specification of the poison
 // arm's contract. Neutering that arm in a provider fails this test in that provider and only
 // that provider, so the arm is enforced behaviour rather than dead weight. Its value is
 // defence-in-depth -- the arm's unreachability is a property of today's lock discipline, and
-// the single Unlock/Lock split that makes it reachable is exactly the shape an attempted #180
-// fix would introduce. This test is what would catch such a fix regressing the guard.
+// the single Unlock/Lock split that makes it reachable is the shape a future change to the
+// leader's critical section could introduce. This test is what would catch that regressing
+// the guard.
 //
 // The state is reconstructed directly rather than raced for, so the test is deterministic and
 // cannot pass by scheduling luck. The assertion goes through accessTokenValue -- the real

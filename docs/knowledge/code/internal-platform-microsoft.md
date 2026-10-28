@@ -89,9 +89,25 @@ on the CURRENT leader path it is NOT reachable. `accessTokenValue` sets `infligh
 `inflight` and closes `done` inside ONE unbroken critical section, so a published flight is
 never observable holding a non-empty token — by the time the token is set, the flight is
 already unpublished under the same lock hold. It is kept as defence-in-depth against that
-critical section being split, not as live coverage, and it does NOT close the residual
-pre-publication window tracked by #180: a 401 arriving BEFORE the leader sets `inflight.token`
-matches nothing, and the leader then publishes the already-rejected token. Blanking without
+critical section being split, not as live coverage.
+
+**A refresh still on the network when the 401 lands (#180, fixed 2026-10-28).** That flight
+carries no token yet, so the identity match above has nothing to compare. Instead the
+presented token is recorded on the flight (`tokenRefresh.rejected`), and the leader checks it
+in the SAME critical section that writes the cache, sets `inflight.token` and tears the
+flight down; `fetchToken` returns the token and expiry and no longer writes the cache itself.
+If the exchange comes back holding a rejected value (an authorization server may re-issue a
+still-unexpired access token), it is neither cached nor handed to waiters: the flight
+publishes a blank and every waiter re-leads one fresh exchange. The check is by identity, so a
+late 401 naming some other token costs the flight nothing (ABA preserved). Before this, the
+rejected value was re-cached with a fresh lifetime and a cached client re-presented it until
+it expired. `token_flight_race_test.go` drives the real leader with the 401 rendezvoused
+inside the token server's handler. The record is scoped to that one flight: a recovery
+exchange that re-issues the same value is served, and the next 401 clears it again
+(`TestRefresh_ReissuedRecoveryIsStillClearedByTheNext401`). Remembering rejections across
+flights would turn a transient 401 into a refusal of a token the endpoint still issues.
+
+For the poison arm, blanking without
 unpublishing would recurse without bound (a waiter re-leads, finds the same poisoned flight,
 and reads the blank again), and because invalidation can retract a flight early, the leader's
 own teardown compares identity before clearing so a stale leader cannot erase a newer flight.
