@@ -109,9 +109,10 @@ var BadRequestError = Type("bad-request-error", func() {
 	errorAttrs("400", "The request was invalid.")
 })
 
-// PayloadTooLargeError is the 413 body for a request whose payload exceeded
-// constants.MaxRequestBodyBytes and was refused by middleware.MaxBodyBytes before (or
-// part-way through) being read.
+// PayloadTooLargeError is the 413 body for a request whose payload exceeded its route's cap
+// (constants.MaxRequestBodyBytes for the creative-asset upload,
+// constants.MaxNonUploadRequestBodyBytes for every other route) and was refused by
+// middleware.MaxBodyBytesPerRoute before (or part-way through) being read.
 //
 // It is declared here even though no HANDLER ever returns it: the 413 is produced by
 // middleware that sits outside the mux, so it never passes through a Goa encoder. What
@@ -369,7 +370,7 @@ func commonConnectionRequired() {
 func authErrors() {
 	Error("BadRequest", BadRequestError, "Bad request")
 	Error("Unauthorized", UnauthorizedError, "Unauthorized")
-	// Declared on every method, not only the body-bearing ones: MaxBodyBytes is global
+	// Declared on every method, not only the body-bearing ones: MaxBodyBytesPerRoute is global
 	// middleware, so any route can answer 413 if a caller sends an oversized body to it.
 	Error("PayloadTooLarge", PayloadTooLargeError, "Payload too large")
 }
