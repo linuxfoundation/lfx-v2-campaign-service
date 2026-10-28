@@ -2381,7 +2381,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// the real floor and simply closes that sliver to HTTP callers before the handler
 			// sees it. Nothing a generated client can send is accepted here and refused
 			// there — the published contract is never the looser of the two.
-			Attribute("budget", Float64, "New budget amount, in the AD ACCOUNT's own currency (NOT USD). Must be strictly positive.", func() {
+			Attribute("budget", Float64, "New budget amount, in the AD ACCOUNT's own currency (NOT USD). Must be strictly positive. On Meta it must also be a whole number of the account currency's minor unit — whole units for a zero-decimal currency such as JPY or KRW, cents for USD — and an amount finer than that is refused with 400, never rounded, so the budget this service records is the one Meta was sent.", func() {
 				Minimum(0.000001)
 				Maximum(1000000000)
 				Example(2500.00)

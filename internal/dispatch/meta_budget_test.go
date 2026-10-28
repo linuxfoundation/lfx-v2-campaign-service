@@ -155,6 +155,36 @@ func TestMeta_WriteBudget_ZeroDecimalCurrency(t *testing.T) {
 	}
 }
 
+// TestMeta_WriteBudget_SentAmountIsTheRequestedAmount (#235): the service persists the requested
+// amount once WriteBudget returns nil, so an accepted amount must reach Meta exactly — amount x
+// the account currency's offset, unrounded — for the row to equal what Meta holds. JPY and KRW
+// are zero-decimal (offset 1); USD is two-decimal (offset 100).
+func TestMeta_WriteBudget_SentAmountIsTheRequestedAmount(t *testing.T) {
+	cases := []struct {
+		currency string
+		amount   float64
+		wantBody string
+	}{
+		{"JPY", 4200, `"daily_budget":"4200"`},
+		{"KRW", 55000, `"daily_budget":"55000"`},
+		{"USD", 42.75, `"daily_budget":"4275"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.currency, func(t *testing.T) {
+			d, calls := metaBudgetDispatcher(t, metaAdSetHead+`,"daily_budget":"3000"}`, tc.currency, http.StatusOK)
+			err := d.WriteBudget(context.Background(), "proj", model.ProviderMetaAds, metaBudgetCampaign(),
+				model.BudgetChange{Amount: tc.amount, Type: model.BudgetDaily})
+			if err != nil {
+				t.Fatalf("WriteBudget: %v", err)
+			}
+			writes := metaWrites(calls())
+			if len(writes) != 1 || !strings.Contains(writes[0].Body, tc.wantBody) {
+				t.Fatalf("want one write carrying %s, got %+v", tc.wantBody, writes)
+			}
+		})
+	}
+}
+
 // TestMeta_WriteBudget_Guards is the refusal table. Every case must return the named sentinel
 // AND leave the platform untouched.
 func TestMeta_WriteBudget_Guards(t *testing.T) {
@@ -258,6 +288,15 @@ func TestMeta_WriteBudget_Guards(t *testing.T) {
 			adSetJSON: metaAdSetHead + `,"daily_budget":"5000"}`,
 			currency:  "JPY",
 			change:    model.BudgetChange{Amount: 1.4, Type: model.BudgetDaily},
+			wantErr:   domain.ErrBudgetAmountRejected,
+			wantText:  "enter whole amounts for this currency",
+		},
+		{
+			// #235, the other zero-decimal currency the issue names.
+			name:      "a fraction of a won is refused, not rounded",
+			adSetJSON: metaAdSetHead + `,"daily_budget":"30000"}`,
+			currency:  "KRW",
+			change:    model.BudgetChange{Amount: 30000.5, Type: model.BudgetDaily},
 			wantErr:   domain.ErrBudgetAmountRejected,
 			wantText:  "enter whole amounts for this currency",
 		},
