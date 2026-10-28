@@ -853,8 +853,9 @@ differential diff, since fixed:
 `totals.unmeasured_campaigns` (required, `Int`, minimum 0; #218) is how many of the
 `campaign_count` rows carry `fetch_failed=true`, counted in `monitorTotals` over the same
 post-`evaluate` rows the sums cover. The sums still include those rows at whatever they carry —
-zero, or partial delivery, for a row whose metrics could not be fully read (Google Ads sums
-several GAQL rows per campaign, so one bad row leaves the others' contribution in place) — so a
+zero, or partial delivery, for a row whose metrics could not be fully read (the Google Ads
+client sums any repeated GAQL rows for a campaign, so if one of several fails, the others'
+contribution stays) — so a
 non-zero count means the totals may UNDERSTATE the returned campaigns by up to that many
 campaigns' delivery. Decisions:
 

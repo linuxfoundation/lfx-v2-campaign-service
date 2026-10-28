@@ -86,10 +86,10 @@ func unknownPacingRow(m model.AccountCampaignMetrics) model.AccountMonitorRow {
 // internal/platform/googleads/monitor_test.go, which pin both causes.
 //
 // A metrics-fetch-failed row's numeric metrics fields are left at a zero placeholder or, where a
-// platform sums several upstream rows per campaign (Google Ads), at partial delivery (see
-// AccountCampaignMetrics.FetchFailed's doc comment) — running the pacing/action-item calc
-// against either would fabricate a bogus "underspending" label and a
-// HIGH-priority action item for a campaign this port never actually measured. A row whose
+// platform sums repeated upstream rows for one campaign (Google Ads, should it return more than
+// one), at partial delivery (see AccountCampaignMetrics.FetchFailed's doc comment) — running the
+// pacing/action-item calc against either would produce an unreliable pacing label or action
+// item for a campaign this port never fully measured. A row whose
 // budget alone failed to parse is different — on ANY platform that reports a budget, not just
 // Google Ads: its impressions/clicks/spend may be genuinely non-zero and only BudgetDay (or
 // TotalBudget) is untrusted, but those are exactly what the pacing calc divides by, so the

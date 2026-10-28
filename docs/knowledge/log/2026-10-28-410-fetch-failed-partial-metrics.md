@@ -4,19 +4,27 @@
 behaviour changes and no code path moves.
 
 1. **A metrics failure does not always leave zeroes.** `internal/platform/googleads/monitor.go`
-   sums the GAQL rows per campaign (`segments.date` returns several rows for one campaign). A row
-   whose `impressions`, `clicks` or `cost_micros` fails `parseMetricInt` marks the campaign
-   `FetchFailed` and is skipped, but the rows that did parse keep their `+=` contribution. So a
-   flagged Google row can carry real but incomplete delivery, not zero. The `fetch_failed` and
+   expects one aggregated GAQL row per campaign (`segments.date` is filtered but not selected),
+   but it does not rely on that: it sums any repeated rows for a campaign. If one of several rows
+   has an `impressions`, `clicks` or `cost_micros` value that fails `parseMetricInt`, the
+   campaign is marked `FetchFailed` and that row is skipped, but the rows that did parse keep
+   their `+=` contribution. So a flagged Google row can carry real but incomplete delivery. If
+   the campaign's only row fails, its metrics stay zero. The `fetch_failed` and
    `unmeasured_campaigns` design attributes (regenerated through `make apigen` into `gen/**` and
    the kodata OpenAPI copies), `model.AccountCampaignMetrics.FetchFailed`,
-   `model.AccountMonitorTotals.UnmeasuredCampaigns`, `rules.fetchFailedRow`, `monitorTotals`,
+   `model.AccountMonitorTotals.UnmeasuredCampaigns`, `rules.fetchFailedRow` (which also no longer
+   promises an "underspending" label and a HIGH-priority action item: partial spend could as well
+   read as overspending, so it now says an unreliable label or action item), `monitorTotals`,
    `docs/api-catalog.md` and `architecture/account-monitor-endpoints.md` now say "zero or
    partial". Both are unsuitable for pacing and action-item evaluation.
 2. **Meta has no per-campaign insights call.** Meta makes one account-level
-   `/insights?level=campaign` read. If that read fails, the whole monitor read errors. A Meta row
-   is flagged only when its own insights row will not parse, and its budget, set from the
-   campaign list first, is still real. `model.AccountCampaignMetrics.FetchFailed` no longer gives
+   `/insights?level=campaign` read. If that read fails, the whole monitor read errors. So a Meta
+   metrics failure is per row: its insights row will not parse and its metrics stay zero. A
+   campaign-level budget from the campaign list stays real, but the ad-set budget fallback is
+   skipped for such a row, so a budget held on ad sets is not read. That is not Meta's only
+   cause: an
+   unreadable or negative campaign budget also sets `FetchFailed`, with its insights read fine
+   (the budget shape, already listed). `model.AccountCampaignMetrics.FetchFailed` no longer gives
    Meta as an example of an outright per-campaign call failure. Reddit stays as that example,
    and Meta is described as a per-row parse failure.
 3. **Orphaned short line.** The paragraph in `internal/service/rules/monitor_google.go` that #402

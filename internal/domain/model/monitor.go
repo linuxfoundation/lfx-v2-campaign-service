@@ -175,29 +175,30 @@ type AccountCampaignMetrics struct {
 	// avoids depending on an unported string-parsing helper for a boolean that GAQL already
 	// answers authoritatively. Always false for LinkedIn/Meta/Reddit rows.
 	IsSearchChannel bool
-	// FetchFailed marks a row some part of whose upstream data could not be trusted. WHICH part
-	// is not recorded, and it is NOT always the metrics. The shapes it takes include: a
-	// per-campaign metrics call that failed outright (Reddit's per-campaign report fetch), in
-	// which case the numeric metrics fields are left at their zero value; a metrics row that
-	// came back but would not parse — Meta's row in its one account-level insights read, whose
-	// metrics are then zero while the budget set earlier from the campaign list is real, and a
-	// Google Ads GAQL row, which is summed per campaign across segments.date so a failed row
-	// leaves the accumulator holding what the campaign's other rows contributed: real but
-	// incomplete delivery, not zero. Zero or partial, those metrics are unsuitable for pacing
-	// and action-item evaluation. Further shapes: a present-but-unparseable budget read
-	// alongside otherwise-good metrics (Google Ads'
-	// campaign_budget.amount_micros, LinkedIn's dailyBudget/totalBudget, Meta's daily_budget/
-	// lifetime_budget, Microsoft Ads' and X's budget fields), in which case Impressions/Clicks/
-	// Spend may be genuinely non-zero while only BudgetDay/TotalBudget is untrusted; an
-	// unreadable flight (X); and an unparseable spend alone while impressions and clicks are
-	// real (LinkedIn's costInLocalCurrency). Treat that as examples, not a closed set: every
-	// platform client sets this flag and each has its own partial cases, so a text that
-	// enumerates them by platform goes stale — which is what #219 is about. Whatever the
-	// cause, this is the status marker the migration spec calls for: a consumer can tell "the
-	// platform authoritatively reported zero" from "this service could not read this row's
-	// data" — the same distinguishability
-	// CampaignSettingsReadback's `unknown` verdict exists to preserve. Renderers MUST check
-	// this before treating any of this row's fields, zero or not, as a fully trusted reading.
+	// FetchFailed marks a row some part of whose upstream data could not be trusted. WHICH part is
+	// not recorded, and it is NOT always the metrics. The shapes it takes include: a per-campaign
+	// metrics call that failed outright (Reddit's per-campaign report fetch), in which case the
+	// numeric metrics fields are left at their zero value; a metrics row that came back but would
+	// not parse — Meta's row in its one account-level insights read, whose metrics are then zero
+	// while a campaign-level budget set earlier from the campaign list is real (the ad-set budget
+	// fallback is skipped for such a row, so a budget held on ad sets is not read), and a Google
+	// Ads GAQL row. Google is expected to return one aggregated row per campaign, but the client
+	// sums any repeated rows for a campaign rather than rely on that, so if one of several rows
+	// fails, the others' contribution stays: real but incomplete delivery. If the campaign's only
+	// row fails, its metrics stay zero. Zero or partial, those metrics are unsuitable for pacing
+	// and action-item evaluation. Further shapes: a present-but-unparseable budget read alongside
+	// otherwise-good metrics (Google Ads' campaign_budget.amount_micros, LinkedIn's
+	// dailyBudget/totalBudget, Meta's daily_budget/ lifetime_budget, Microsoft Ads' and X's budget
+	// fields), in which case Impressions/Clicks/ Spend may be genuinely non-zero while only
+	// BudgetDay/TotalBudget is untrusted; an unreadable flight (X); and an unparseable spend alone
+	// while impressions and clicks are real (LinkedIn's costInLocalCurrency). Treat that as
+	// examples, not a closed set: every platform client sets this flag and each has its own partial
+	// cases, so a text that enumerates them by platform goes stale — which is what #219 is about.
+	// Whatever the cause, this is the status marker the migration spec calls for: a consumer can
+	// tell "the platform authoritatively reported zero" from "this service could not read this
+	// row's data" — the same distinguishability CampaignSettingsReadback's `unknown` verdict exists
+	// to preserve. Renderers MUST check this before treating any of this row's fields, zero or not,
+	// as a fully trusted reading.
 	FetchFailed bool
 	// FailureClass is why FetchFailed is set, from the platform client that saw the failure;
 	// empty when FetchFailed is false, and empty on a Google Ads row (see MonitorFailureClass).
