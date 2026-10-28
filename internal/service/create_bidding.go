@@ -22,7 +22,8 @@ var biddingUnsupportedConfigKeys = map[model.Provider]string{
 }
 
 // refuseUnsupportedBidding answers 400 when a selected platform without bidding support carries a
-// `bidding` object in its config. Only the key's PRESENCE is read, so a config that does not decode
+// `bidding` object in its config. The message names both Google fields that replace it,
+// biddingStrategy and cpcBid, so a caller after a manual bid finds the bid field too (#156). Only the key's PRESENCE is read, so a config that does not decode
 // is left to the dispatcher, which reports it as the job failure exactly as before.
 func refuseUnsupportedBidding(platforms []model.Provider, config json.RawMessage) error {
 	if len(config) == 0 {
@@ -43,7 +44,7 @@ func refuseUnsupportedBidding(platforms []model.Provider, config json.RawMessage
 		}
 		if _, present := platformCfg["bidding"]; present {
 			return &briefs.BadRequestError{Code: "400", Message: fmt.Sprintf(
-				"invalid campaign config: %s.bidding is not supported for %s; set its bid strategy with %s.biddingStrategy instead", key, p, key)}
+				"invalid campaign config: %s.bidding is not supported for %s; set its bid strategy with %s.biddingStrategy and a manual max CPC bid with %s.cpcBid instead", key, p, key, key)}
 		}
 	}
 	return nil
