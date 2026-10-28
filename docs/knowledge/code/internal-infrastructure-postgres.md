@@ -180,49 +180,45 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   and every upsert/replace bumps it. Claim, upsert and adopt all name the four-column
   `uq_campaigns_brief_platform_variant_slot_version_live` as their `ON CONFLICT` arbiter;
   `GetCampaignByPlatform` returns the slot's LATEST live row (`ORDER BY slot_version DESC
-  LIMIT 1`), and the claim reads back its own slot version. `000022`'s three-column index
-  stays for one release (expand/contract), and while it does a claim for `slot_version` 2
-  violates it — not the arbiter, so `DO NOTHING` does not apply — and `ClaimCampaignDispatch`
-  classifies that `23505` as `domain.ErrSlotVersionUnavailable` — for slot versions above 1
-  only. Postgres pre-checks only the arbiter, so CONCURRENT slot-1 claims that do not hold the
-  slot lock (a previous binary's, during a rollout) can all pass it and the losers then hit
-  `23505` on the legacy index; at slot 1 that is a lost race and is answered like the arbiter
-  conflict (not claimed, winner's row), pinned live by
-  `TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError`. `AdoptCampaign` classifies `23505` by
-  index name for the same reason: the legacy slot index means `ErrConflict`, only
-  `uq_campaigns_platform_campaign_live` means `ErrPlatformCampaignAlreadyBound`. Both indexes are in
-  `requiredIndexes`, but the narrower one is marked `optional`: its ABSENCE is a healthy boot, while
-  a PRESENT one is still checked in full (invalid, or the name on the wrong definition, is still
-  refused). This release is the image-only rollback target for the release that drops it, and
-  `container.go` closes the pool on any `Migrate` error — so a hard requirement would turn that
-  rollback into a boot loop on `ErrMissingRequiredIndex`. The four-column slot-version index stays
-  required. Pinned live by `TestMigrateToleratesTheDroppedLegacySlotIndex` (drop the legacy index,
-  run `Migrate`, boot succeeds; drop the slot-version index too, `ErrMissingRequiredIndex` naming
-  only it; a non-unique impostor under the legacy name is `ErrRequiredIndexMismatch`), and
-  `contractedSchemaRepo` re-runs `Migrate` after its drop. `RequiredIndexIsOptional` lets the
-  drop-each-index tests tell the two kinds apart off the real list.
-  The optional index alone does not get a rollback that far: the release that drops it also
-  advances `schema_migrations.version` past every version this image embeds, and golang-migrate
-  v4.19.1's `Up()` refuses a recorded version its source does not contain ("no migration found
-  for version N") before any index check runs. So `Migrate` first reads the recorded version
-  (`schemaIsNewerThanImage`): when it is CLEAN and exactly one above the highest embedded version (read from
-  the migration source, exported as `LatestMigrationVersion`, never hard-coded) it skips `Up()`,
-  leaves the recorded version untouched, logs a warning, and runs `checkNoInvalidIndexes` as usual
-  — so an invalid index, an impostor, or a missing REQUIRED index on the newer schema still
-  refuses boot. A DIRTY newer version, and every other state, takes `Up()` exactly as before (a
-  dirty one is still `migrate.ErrDirty`). The assumption is expand/contract, one release apart
-  (`migrations/README.md`): a release's schema stays compatible with the previous release's
-  binary. Nothing in the chain marks a version as compatible, so the tolerance is bounded to that
-  one hop (PR #260 review): a clean version two or more ahead takes `Up()` and its loud "no
-  migration found" refusal. Within the hop it trusts that discipline, and the required-index check
-  is the part of it that is verified. Pinned live by
-  `TestMigrateStartsOnACleanSchemaNewerThanThisImage` (scratch database at head, legacy index
-  dropped, version set to latest+1 clean → boot succeeds and the version is unchanged; dirty →
-  `ErrDirty`; latest+2 clean → refused; an invalid index → `ErrInvalidIndex`; slot-version index
-  dropped → `ErrMissingRequiredIndex`).
+  LIMIT 1`), and the claim reads back its own slot version. Since `000051` dropped `000022`'s
+  three-column `uq_campaigns_brief_platform_variant_live` (the contract step, LFXV2-2023), the
+  four-column index is the ONLY unique index on the slot: a claim for the next slot version
+  simply inserts beside the earlier ones, and a retry of an existing slot version conflicts on
+  the arbiter and is swallowed (`DO NOTHING`). `domain.ErrSlotVersionUnavailable`, the
+  orchestrator's "not available yet" branch and every legacy-index `23505` classification (the
+  claim's lost-race/refusal, the adopt's `ErrConflict`, the upsert's INSERT-arm lost claim) went
+  with it — that `23505` can no longer happen. `AdoptCampaign` still classifies `23505` by index
+  name, so only a provider binding index means `ErrPlatformCampaignAlreadyBound`. The four-column
+  index is a hard `requiredIndexes` entry and the three-column one is no longer listed at all (the
+  lock release had already made it `optional`; with nothing optional left, the `optional` flag and
+  `RequiredIndexIsOptional` were removed). Pinned live by `TestMigrateRefusesADroppedDispatchIndex`
+  (scratch database: after `Migrate` the legacy index is absent and a re-run boots; drop the
+  slot-version index and `Migrate` is `ErrMissingRequiredIndex` naming only it, with its rebuild
+  statement).
+  Rolling the image back past `000051` still boots, provided the image rolled back to embeds
+  migrations through `000050` — the release immediately before this one, which already carries
+  #260's lock and the newer-schema tolerance below. An older image (#260's own release embeds
+  only through `000046`) is two or more versions behind schema `51` and refuses to boot, so it is
+  not a valid rollback target. The image before this release records no version above `000050`, and `golang-migrate` v4.19.1's `Up()` refuses a recorded version its source does
+  not contain ("no migration found for version N") before any index check runs. So `Migrate` first
+  reads the recorded version (`schemaIsNewerThanImage`, from #260): when it is CLEAN and exactly
+  one above the highest embedded version (read from the migration source, exported as `LatestMigrationVersion`,
+  never hard-coded) it skips `Up()`, leaves the recorded version untouched, logs a warning, and
+  runs `checkNoInvalidIndexes` as usual — so an invalid index, an impostor, or a missing REQUIRED
+  index on the newer schema still refuses boot. A DIRTY newer version, and every other state,
+  takes `Up()` exactly as before (a dirty one is still `migrate.ErrDirty`). The assumption is
+  expand/contract, one release apart (`migrations/README.md`): a release's schema stays compatible
+  with the previous release's binary. Nothing in the chain marks a version as compatible, so the
+  tolerance is bounded to that one hop (PR #260 review): a clean version two or more ahead takes
+  `Up()` and its loud "no migration found" refusal. Within the hop it trusts that discipline, and
+  the required-index check is the part of it that is verified. This release keeps the tolerance too, as the rollback
+  target for whatever ships after it. Pinned live by
+  `TestMigrateStartsOnACleanSchemaNewerThanThisImage` (version set to latest+1 clean → boot
+  succeeds and the version is unchanged; dirty → `ErrDirty`; latest+2 clean → refused; an invalid
+  index → `ErrInvalidIndex`; slot-version index dropped → `ErrMissingRequiredIndex`).
 
-  **Per-slot advisory lock, staged one release BEFORE the index drop.** Once the three-column
-  index is gone, nothing in the schema says "an adopt binds only an EMPTY slot": adopt always
+  **Per-slot advisory lock, staged one release BEFORE the index drop.** With the three-column
+  index gone, nothing in the schema says "an adopt binds only an EMPTY slot": adopt always
   writes `slot_version` 1, so its `ON CONFLICT` arm cannot see a live version 2, and an adopt
   racing a `new_version` claim would conflict on no index. So `ClaimCampaignDispatch` (now a
   short transaction), `UpsertCampaign` and `AdoptCampaign` each take
@@ -251,23 +247,19 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   own finalized row). Strict `=`, so a write with no job id never updates an existing row. Zero
   rows back is `domain.ErrDispatchClaimLost` (error text names the upstream id, slot version and
   job); nothing is written. Pinned by `TestLiveStaleDispatchUpsertNeverOverwritesAnAdoption` and
-  `TestLiveStaleDispatchUpsertNeverFinalizesAnotherJobsClaim`. A unique violation on 000022's
-  three-column index during the upsert is the same loss: it can only fire on the INSERT arm, which
-  runs only when this slot version has no live row, so another live row holds the slot at a
-  different version (a cleared slot-2 claim, then an adopt at slot 1). It is also
-  `ErrDispatchClaimLost` (`TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim`).
+  `TestLiveStaleDispatchUpsertNeverFinalizesAnotherJobsClaim`.
 
-  Both of those are statement-level backstops. The rule itself is an ownership check
-  `UpsertCampaign` runs under the slot lock before writing (`slotOwnershipQuery`): pass when this
-  job's own claim is the live row at its slot version (other live versions are expected — a
-  `new_version` claim of slot N is made only while slot N-1 is live and complete); otherwise
-  pass only when the slot has NO live row at any version (the INSERT arm into an empty slot);
-  anything else is `ErrDispatchClaimLost`. It restates 000022's one-live-row-per-slot rule for
-  the INSERT arm so it survives that index's drop: without it the advisory lock would only
-  ORDER a stale slot-2 INSERT after an adopted slot 1, not refuse it. Pinned against the
-  contracted schema (index dropped in a scratch database) by
-  `TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex`, which also checks a new-version
-  slot 2 beside a live slot 1 still finalizes.
+  The conflict arm's guard is the statement-level backstop for the same slot version. The rule
+  itself is an ownership check `UpsertCampaign` runs under the slot lock before writing
+  (`slotOwnershipQuery`): pass when this job's own claim is the live row at its slot version
+  (other live versions are expected — a `new_version` claim of slot N is made only while slot
+  N-1 is live and complete); otherwise pass only when the slot has NO live row at any version
+  (the INSERT arm into an empty slot); anything else is `ErrDispatchClaimLost`. It restates
+  000022's one-live-row-per-slot rule for the INSERT arm, and since `000051` it is the ONLY thing
+  enforcing it: without it the advisory lock would only ORDER a stale slot-2 INSERT after an
+  adopted slot 1, not refuse it. Pinned by `TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim`
+  and `TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex`, which also checks a
+  new-version slot 2 beside a live slot 1 still finalizes.
 
   The same job id keys the RELEASE. `DeleteDispatchClaim(..., slotVersion, jobID)` deletes only a
   `pending` row whose `job_id` is that job's, so the orchestrator's pre-create release and the
@@ -278,35 +270,33 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `TestLiveStaleClaimReleaseNeverDeletesASuccessorsClaim`.
 
   The comments inside migrations `000036` and `000037` still say the old index is dropped "a
-  release later". That timeline is superseded by the staging below; the files are applied (shipped
-  in v1.0.17) and the migrations README forbids editing an applied migration, so they are left
-  as written and this concept, with `domain.ErrSlotVersionUnavailable`'s comment, is the
-  authority.
+  release later" and describe the expand-phase `ErrSlotVersionUnavailable` refusal. Both are
+  superseded by the staging below; the files are applied (shipped in v1.0.17) and the migrations
+  README forbids editing an applied migration, so they are left as written and `000051`'s header
+  and this concept are the authority.
 
-  The lock ships FIRST and the index drop (the contract migration, plus removing
-  `uq_campaigns_brief_platform_variant_live` from `requiredIndexes` — already only `optional`
-  there, so the lock release boots without it — plus retiring
-  `ErrSlotVersionUnavailable` and the legacy-index `23505` handling) ships **one release after
-  this lock is deployed**. That ordering is what makes an image-only rollback safe: reverting the
-  image does not revert the schema (see the deployment concept), and the binary before this one
-  takes no slot lock — so if the drop shipped alongside the lock, a rollback would leave that
-  lock-free binary's adopt preflight free to race a slot-2 claim and bind slot 1 beside it. With
-  the drop a release later, every binary that can run against the contracted schema, including
-  the one a rollback returns to, already takes the lock; and rolling back THIS release leaves the
-  three-column index in place, which enforces the empty-slot rule by itself. Until the drop, the
-  lock is redundant with that index for correctness, which is why it can ship alone. Residual,
-  by design, once the index is gone: an adopt that commits FIRST on a slot whose only campaign
-  was just deleted, followed by a `new_version` claim computed from the pre-delete read, leaves
-  the adopted version 1 plus version 2 — ordered, distinct versions, which is what
-  `new_version` asks for. Pinned live (against the schema this release ships, with the legacy
-  index present) by `TestLiveSlotVersionDuringExpandPhase`,
-  `TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError`,
-  `TestLiveConcurrentNewVersionClaimsHaveOneWinner` (catches a missing lock, race-dependently:
-  unserialized, a loser can hit the legacy index and return `ErrSlotVersionUnavailable`),
-  `TestLiveConcurrentClaimAndAdoptLeaveOneLiveRow`,
-  `TestLiveAdoptRefusesASlotWhoseOnlyLiveCampaignIsALaterVersion` and
-  `TestLiveClaimAndAdoptWaitForTheSlotLock` (deterministic: with the adopt's lock removed the
-  adopt inserts slot 1 while the lock is held and the test fails).
+  Staging (expand → lock → contract, each one release apart): `000036`/`000037` (#247) added the
+  four-column index beside the old one; the per-slot lock and the upsert's ownership check (#260)
+  shipped next, with the legacy index made `optional` at boot; `000051` drops it **one release
+  after that lock is deployed** and must not merge before then. That ordering is what makes an
+  image-only rollback safe: reverting the image does not revert the schema (see the deployment
+  concept), and the binary before the lock release takes no slot lock — had the drop shipped
+  alongside the lock, a rollback would have left that lock-free binary's adopt preflight free to
+  race a slot-2 claim and bind slot 1 beside it. With the drop a release later, every binary that
+  can run against the contracted schema, including the one a rollback returns to, already takes
+  the lock and boots without the index. `000051`'s down re-creates the index with `000022`'s name,
+  keys and predicate (no `IF NOT EXISTS`, for `000024`'s down reason) and FAILS, correctly, once a
+  slot holds two live campaigns — which campaign stays live is a data decision. Residual, by
+  design: an adopt that commits FIRST on a slot whose only campaign was just deleted, followed by
+  a `new_version` claim computed from the pre-delete read, leaves the adopted version 1 plus
+  version 2 — ordered, distinct versions, which is what `new_version` asks for. Pinned live by
+  `TestLiveNewVersionCreatesSlotVersion2` (slot 2 beside slot 1; the latest is what
+  `GetCampaignByPlatform` returns), `TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError`,
+  `TestLiveConcurrentNewVersionClaims` (a same-version race has one winner and no error; slots
+  3–8 claimed at once each land exactly once), `TestLiveConcurrentClaimAndAdoptLeaveOneLiveRow`,
+  `TestLiveAdoptRefusesASlotWhoseOnlyLiveCampaignIsALaterVersion` (now binding on the adopt's
+  occupancy check alone) and `TestLiveClaimAndAdoptWaitForTheSlotLock` (deterministic: with the
+  adopt's lock removed the adopt inserts slot 1 while the lock is held and the test fails).
 
   `max_cpc_bid` (added by `000039`, `NUMERIC(18,6)`, nullable, `CHECK > 0`) records the manual
   max CPC bid most recently set through `update-campaign-bid` — a confirmed REQUEST, like
@@ -606,6 +596,15 @@ creates" produces that class of answer; the migrations are the only set that is 
 narrowness is not incidental either: `requiredIndexes` grows only when an index's absence
 would be silent, and the invalid-index scan must keep annotating correctly for every index
 it does not list, both today's and the ones added after this code was written.
+
+An index a LATER migration drops is not a recovery target either. `migrationIndexDrops` reads
+the same files for `DROP INDEX` statements, and when a name's highest drop is above its highest
+create (`uq_campaigns_brief_platform_live`: 000013 → 000024; `uq_campaigns_brief_platform_variant_live`:
+000022 → 000051) `indexRecovery` answers "migration N drops this; drop it, leave the schema
+version alone" instead of forcing back to the creator — which would replay every migration up to
+the one that removes the index again. The case that reaches it: a `000051` down that fails on two
+live slot versions leaves an INVALID copy, and an operator who abandons the rollback and forces 51
+then boots into the invalid-index scan. Pinned by `TestIndexRecovery_ADroppedIndexIsNotForcedBack`.
 
 **Narrow is not the same as short, and the first draft of the list confused the two.** It
 held one entry — the index the change at hand created — while the rule it stated ("a unique
