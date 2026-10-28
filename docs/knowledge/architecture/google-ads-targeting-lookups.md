@@ -34,8 +34,9 @@ operator type them (self-serve #4455, #4456). Neither persists anything.
 - **Cached** per dispatcher (`geoSuggestCache`: 6h TTL, 2048 entries, keyed by country + folded
   query) so a typeahead does not spend the shared developer token's quota on repeated searches.
   The cache is consulted after credential resolution, so a project with no reachable credential
-  still gets its 404. A hit is reported as `cached` and records no `suggest_geo_targets` upstream
-  call; an empty answer is cached as a non-nil empty slice. The one-shot client uses
+  still gets its 404. The dispatcher reports whether Google was reached (`called`), and only a
+  request that went out records a `suggest_geo_targets` upstream call, never a cache hit or a
+  local refusal; an empty answer is cached as a non-nil empty slice. The one-shot client uses
   `WithCallerScopedTokenRefresh`.
 
 ## User lists

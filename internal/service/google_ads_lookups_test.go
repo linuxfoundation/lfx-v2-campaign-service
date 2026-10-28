@@ -19,7 +19,7 @@ import (
 // mockLookupDispatcher implements both targeting-lookup capabilities.
 type mockLookupDispatcher struct {
 	geo        []model.GeoTargetSuggestion
-	cached     bool
+	notCalled  bool // SuggestGeoTargets reports Google was not reached
 	lists      *model.AudienceUserLists
 	err        error
 	gotQuery   model.GeoTargetQuery
@@ -34,7 +34,7 @@ func (m *mockLookupDispatcher) Dispatch(context.Context, *model.CampaignBrief, m
 func (m *mockLookupDispatcher) SuggestGeoTargets(_ context.Context, _ string, _ model.Provider, q model.GeoTargetQuery) ([]model.GeoTargetSuggestion, bool, error) {
 	m.calls++
 	m.gotQuery = q
-	return m.geo, m.cached, m.err
+	return m.geo, !m.notCalled, m.err
 }
 
 func (m *mockLookupDispatcher) ListUserLists(_ context.Context, _ string, _ model.Provider, accountID string) (*model.AudienceUserLists, error) {
@@ -297,23 +297,29 @@ func TestListGoogleAdsUserLists_SharedTenancyIsRefusedWith409(t *testing.T) {
 	}
 }
 
-// A cache hit never reached Google, so it records no upstream call; a miss records one.
-func TestReadGeoTargetSuggestions_CacheHitIsNotRecordedUpstream(t *testing.T) {
-	for _, cached := range []bool{true, false} {
-		rec := &recordingMetrics{}
-		o := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
-			model.ProviderGoogleAds: &mockLookupDispatcher{geo: []model.GeoTargetSuggestion{}, cached: cached},
+// Only a request that reached Google is recorded: a cache hit and a local refusal (no or an
+// unusable connection) record nothing; a miss, successful or failed upstream, records one.
+func TestReadGeoTargetSuggestions_RecordsOnlyCallsThatReachedGoogle(t *testing.T) {
+	cases := []struct {
+		name string
+		d    *mockLookupDispatcher
+		want int
+	}{
+		{"cache hit", &mockLookupDispatcher{geo: []model.GeoTargetSuggestion{}, notCalled: true}, 0},
+		{"no connection", &mockLookupDispatcher{err: domain.ErrNotFound, notCalled: true}, 0},
+		{"unusable connection", &mockLookupDispatcher{err: fmt.Errorf("%w: x", domain.ErrConnectionNotUsable), notCalled: true}, 0},
+		{"miss", &mockLookupDispatcher{geo: []model.GeoTargetSuggestion{}}, 1},
+		{"upstream failure", &mockLookupDispatcher{err: errors.New("google 500")}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingMetrics{}
+			o := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: tc.d})
+			o.SetMetrics(rec)
+			_, _ = o.ReadGeoTargetSuggestions(context.Background(), "cncf", model.ProviderGoogleAds, model.GeoTargetQuery{Query: "a"})
+			if got := len(rec.upstreamCalls()); got != tc.want {
+				t.Errorf("%d upstream calls recorded, want %d", got, tc.want)
+			}
 		})
-		o.SetMetrics(rec)
-		if _, err := o.ReadGeoTargetSuggestions(context.Background(), "cncf", model.ProviderGoogleAds, model.GeoTargetQuery{Query: "a"}); err != nil {
-			t.Fatal(err)
-		}
-		want := 1
-		if cached {
-			want = 0
-		}
-		if got := len(rec.upstreamCalls()); got != want {
-			t.Errorf("cached=%v: %d upstream calls recorded, want %d", cached, got, want)
-		}
 	}
 }

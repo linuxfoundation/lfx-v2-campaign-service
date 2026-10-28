@@ -25,9 +25,10 @@ import (
 // adoption, user lists) exists because those reads return one foundation's data to another;
 // this one returns no foundation's data at all.
 //
-// cached reports that the answer came from the cache and Google was not contacted, so the
-// caller does not record an upstream call that never happened.
-func (d *GoogleAdsDispatcher) SuggestGeoTargets(ctx context.Context, projectID string, platform model.Provider, q model.GeoTargetQuery) (_ []model.GeoTargetSuggestion, cached bool, _ error) {
+// called reports whether Google was actually contacted. It is false for a cache hit AND for a
+// local refusal before any request (no connection, an unusable one), so the caller records an
+// upstream call only for a request that really went out — success or failure.
+func (d *GoogleAdsDispatcher) SuggestGeoTargets(ctx context.Context, projectID string, platform model.Provider, q model.GeoTargetQuery) (_ []model.GeoTargetSuggestion, called bool, _ error) {
 	// One-shot client: its token refresh must end with this request, not outlive it.
 	client, err := d.resolveGoogleAdsDiscoveryClient(ctx, projectID, platform, googleads.WithCallerScopedTokenRefresh())
 	if err != nil {
@@ -38,11 +39,11 @@ func (d *GoogleAdsDispatcher) SuggestGeoTargets(ctx context.Context, projectID s
 	// Google (the token is fetched on first request), so only the upstream call is saved.
 	key := geoSuggestKey(q)
 	if rows, ok := d.geo.get(key); ok {
-		return rows, true, nil
+		return rows, false, nil
 	}
 	rows, serr := client.SuggestGeoTargetConstants(ctx, q.Query, q.CountryCode)
 	if serr != nil {
-		return nil, false, serr
+		return nil, true, serr
 	}
 	// make, not var: an empty answer is a real answer and must stay distinguishable from none.
 	out := make([]model.GeoTargetSuggestion, 0, len(rows))
@@ -58,7 +59,7 @@ func (d *GoogleAdsDispatcher) SuggestGeoTargets(ctx context.Context, projectID s
 		})
 	}
 	d.geo.put(key, out)
-	return out, false, nil
+	return out, true, nil
 }
 
 // ListUserLists implements service.UserListReader for Google Ads: every user list on one

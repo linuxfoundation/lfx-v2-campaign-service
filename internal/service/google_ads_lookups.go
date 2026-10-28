@@ -21,11 +21,12 @@ import (
 // table by place name or postal code. Type-asserted like AccountLister; a dispatcher without
 // it yields ErrTargetingLookupUnsupported (400) and the platform is never contacted.
 //
-// A successful call MUST return a NON-NIL slice, for the reason AccountLister gives. cached
-// reports that the platform was not contacted (the answer came from a cache), so no upstream
-// call is recorded for it.
+// A successful call MUST return a NON-NIL slice, for the reason AccountLister gives. called
+// reports whether the platform was actually contacted: false for a cache hit and for a local
+// refusal before any request (no connection, an unusable one), so only real upstream calls
+// are recorded.
 type GeoTargetSuggester interface {
-	SuggestGeoTargets(ctx context.Context, projectID string, platform model.Provider, q model.GeoTargetQuery) (rows []model.GeoTargetSuggestion, cached bool, err error)
+	SuggestGeoTargets(ctx context.Context, projectID string, platform model.Provider, q model.GeoTargetQuery) (rows []model.GeoTargetSuggestion, called bool, err error)
 }
 
 // UserListReader is an OPTIONAL dispatcher capability: list the user lists (audiences) on one
@@ -59,10 +60,11 @@ func (o *Orchestrator) ReadGeoTargetSuggestions(ctx context.Context, projectID s
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
 	start := time.Now()
-	rows, cached, err := s.SuggestGeoTargets(callCtx, projectID, platform, q)
-	// A cache hit never reached the platform: recording it would overstate upstream traffic
-	// and drag the latency histogram toward zero, hiding whether the cache saves quota.
-	if !cached {
+	rows, called, err := s.SuggestGeoTargets(callCtx, projectID, platform, q)
+	// Recorded only when the platform was reached. A cache hit or a local refusal (no or an
+	// unusable connection) sent nothing: recording it would overstate upstream traffic, skew
+	// the latency histogram toward zero and count local faults as platform errors.
+	if called {
 		o.recordUpstream(ctx, platform, opSuggestGeoTargets, start, err)
 	}
 	if err != nil {

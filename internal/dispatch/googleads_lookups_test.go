@@ -191,12 +191,12 @@ func TestGoogleAdsSuggestGeoTargets_CachesRepeatedSearches(t *testing.T) {
 	})
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 	for i, q := range []string{"78701", " 78701 ", "78701"} {
-		rows, cached, err := d.SuggestGeoTargets(context.Background(), "proj-1", model.ProviderGoogleAds, model.GeoTargetQuery{Query: q, CountryCode: "US"})
+		rows, called, err := d.SuggestGeoTargets(context.Background(), "proj-1", model.ProviderGoogleAds, model.GeoTargetQuery{Query: q, CountryCode: "US"})
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("rows=%v err=%v", rows, err)
 		}
-		if cached != (i > 0) {
-			t.Errorf("call %d: cached=%v, want %v", i, cached, i > 0)
+		if called != (i == 0) {
+			t.Errorf("call %d: called=%v, want %v (only the first reaches Google)", i, called, i == 0)
 		}
 		rows[0].ID = "mutated" // must not corrupt the cached copy
 	}
@@ -272,5 +272,26 @@ func TestGoogleAdsSuggestGeoTargets_RepeatedEmptySearchStaysEmpty(t *testing.T) 
 	}
 	if n := len(rec.all()); n != 1 {
 		t.Errorf("Google was asked %d times, want 1 (the empty answer is cached)", n)
+	}
+}
+
+// A missing or unusable connection is refused locally: Google is not reached, and the
+// dispatcher says so, so no upstream call is recorded for it.
+func TestGoogleAdsSuggestGeoTargets_LocalRefusalReportsNotCalled(t *testing.T) {
+	opts, reached := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, geoSuggestBody) })
+	inactive := activeGoogleAdsConn(goodGoogleAdsCreds)
+	inactive.Status = model.StatusInactive
+	for name, repo := range map[string]connReader{
+		"no connection":       ownOnlyConnReader{},
+		"unusable connection": fakeConnReader{conn: inactive},
+	} {
+		d := NewGoogleAdsDispatcher(repo, identityEncryptor{}, opts...)
+		_, called, err := d.SuggestGeoTargets(context.Background(), "proj-1", model.ProviderGoogleAds, model.GeoTargetQuery{Query: "78701"})
+		if err == nil || called {
+			t.Errorf("%s: err=%v called=%v, want a local error and called=false", name, err, called)
+		}
+	}
+	if reached.Load() {
+		t.Error("Google was contacted for a locally refused search")
 	}
 }

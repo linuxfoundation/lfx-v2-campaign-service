@@ -397,9 +397,9 @@ func (d upstreamCapableDispatcher) ListAccounts(context.Context, string, model.P
 
 func (d upstreamCapableDispatcher) SuggestGeoTargets(context.Context, string, model.Provider, model.GeoTargetQuery) ([]model.GeoTargetSuggestion, bool, error) {
 	if d.err != nil {
-		return nil, false, d.err
+		return nil, true, d.err
 	}
-	return []model.GeoTargetSuggestion{}, false, nil
+	return []model.GeoTargetSuggestion{}, true, nil
 }
 
 func (d upstreamCapableDispatcher) ListUserLists(context.Context, string, model.Provider, string) (*model.AudienceUserLists, error) {
