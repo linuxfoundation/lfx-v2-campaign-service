@@ -2780,18 +2780,20 @@ type CampaignInput struct {
 	EndDate        string // YYYY-MM-DD
 	Placements     Placement
 	PixelID        string
-	// InstagramUserID is the Instagram account (IGSID) bound to the ad creative. It
-	// is REQUIRED for an ad set that requests any Instagram placement (the default
+	// InstagramUserID is the Instagram account (IGSID) bound to the ad creative. Meta
+	// needs it to publish an ad set that requests any Instagram placement (the default
 	// placements include Instagram Feed): without it Meta flags the ad "Please add
 	// Instagram account" and refuses to publish, even though the Page's connected
-	// Instagram account shows pre-selected in the editor. Sent only when supplied, so
-	// Facebook-only flows are unchanged. (Legacy Graph field name: instagram_actor_id.)
+	// Instagram account shows pre-selected in the editor. Sent only when supplied AND an
+	// Instagram placement is enabled (CreateCampaign clears it otherwise), so Facebook-only
+	// creatives are unchanged. An absent value is not refused (CheckPublishIdentity).
+	// (Legacy Graph field name: instagram_actor_id.)
 	InstagramUserID string
 	// DSABeneficiary and DSAPayor are the EU Digital Services Act "advertiser" and
 	// "payer" disclosures set on the ad set. Meta holds the ad set unpublishable
-	// ("Please add Advertiser" / "Please add Payer") for regulated locations until both
-	// are present. Both are sent only when supplied, so flows that target no regulated
-	// location are unchanged.
+	// ("Please add Advertiser" / "Please add Payer") for EU targets until both are
+	// present, so CheckPublishIdentity refuses an EU target without them. Both are sent
+	// only when supplied.
 	DSABeneficiary string
 	DSAPayor       string
 	HSToken        string

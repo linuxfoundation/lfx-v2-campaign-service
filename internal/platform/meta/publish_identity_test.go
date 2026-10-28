@@ -74,6 +74,8 @@ func TestUsesInstagram(t *testing.T) {
 		{"Facebook only", Placement{InstagramFeed: &f}, false},
 		{"Stories run on Instagram", Placement{InstagramFeed: &f, Stories: &tr}, true},
 		{"Reels run on Instagram", Placement{InstagramFeed: &f, Reels: &tr}, true},
+		{"Facebook only, Stories and Reels explicitly off", Placement{FacebookFeed: &tr, InstagramFeed: &f, Stories: &f, Reels: &f}, false},
+		{"Audience Network only", Placement{FacebookFeed: &f, InstagramFeed: &f, AudienceNetwork: &tr}, false},
 	}
 	for _, tc := range cases {
 		if got := UsesInstagram(tc.p); got != tc.want {

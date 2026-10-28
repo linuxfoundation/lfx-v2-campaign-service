@@ -7,9 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -81,5 +83,66 @@ func TestCreateCampaigns_MetaEUWithoutDSAIsSynchronous400(t *testing.T) {
 	}
 	if n := jobs.count(); n != 0 {
 		t.Fatalf("%d job creation attempts for a refused create, want 0", n)
+	}
+}
+
+// TestMeta_DispatchEUCreateCarriesTrimmedDisclosures: an accepted EU create, through Dispatch, puts
+// the caller's padded disclosures on the ad set trimmed, and the Instagram id on the creative —
+// the hand-off checkMetaPublishIdentity's copy relies on the client to normalize.
+func TestMeta_DispatchEUCreateCarriesTrimmedDisclosures(t *testing.T) {
+	var (
+		mu                      sync.Mutex
+		adSetBody, creativeBody map[string]any
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		decode := func() map[string]any {
+			var m map[string]any
+			b, _ := io.ReadAll(r.Body)
+			if err := json.Unmarshal(b, &m); err != nil {
+				// Form-encoded bodies are not expected on these paths; fail loudly if one appears.
+				t.Errorf("decode %s body: %v", r.URL.Path, err)
+			}
+			return m
+		}
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			mu.Lock()
+			adSetBody = decode()
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			mu.Lock()
+			creativeBody = decode()
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }))
+	cfg := json.RawMessage(`{"metaConfig":{"budget":100,"currencyOffset":100,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"geoTargets":["DE"],"dsaBeneficiary":"  CNCF  ","dsaPayor":" The Linux Foundation ","instagramUserId":" 17841400000000000 ",
+		"variants":[{"primaryText":"Join us","headline":"KubeCon"}]}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if adSetBody["dsa_beneficiary"] != "CNCF" || adSetBody["dsa_payor"] != "The Linux Foundation" {
+		t.Fatalf("ad set disclosures = %v / %v, want trimmed CNCF / The Linux Foundation", adSetBody["dsa_beneficiary"], adSetBody["dsa_payor"])
+	}
+	if creativeBody["instagram_user_id"] != "17841400000000000" {
+		t.Fatalf("creative instagram_user_id = %v, want the trimmed IGSID", creativeBody["instagram_user_id"])
 	}
 }

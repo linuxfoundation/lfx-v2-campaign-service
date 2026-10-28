@@ -45,14 +45,14 @@ type metaConfig struct {
 	GeoTargets     []string       `json:"geoTargets"`
 	Placements     meta.Placement `json:"placements"`
 	PixelID        string         `json:"pixelId"`
-	// InstagramUserID (IGSID) binds the ad creative to an Instagram account. REQUIRED
-	// when any Instagram placement is used (the default placements include Instagram
-	// Feed) — without it Meta refuses to publish the ad with "Please add Instagram
-	// account". Left empty for Facebook-only campaigns.
+	// InstagramUserID (IGSID) binds the ad creative to an Instagram account. Meta needs it to
+	// PUBLISH an Instagram placement (the default placements include Instagram Feed), but an
+	// absent value is not refused here; a non-numeric one is (checkMetaPublishIdentity). The
+	// client sends it only when an Instagram placement is enabled (meta.UsesInstagram).
 	InstagramUserID string `json:"instagramUserId"`
-	// DSABeneficiary and DSAPayor are the EU DSA advertiser/payer disclosures. Required
-	// for a launch-ready ad set that targets a regulated location; Meta blocks publish
-	// ("Please add Advertiser" / "Please add Payer") until both are set.
+	// DSABeneficiary and DSAPayor are the EU DSA advertiser/payer disclosures, set on the ad
+	// set. Both are REQUIRED, and refused with a 400 when missing, whenever geoTargets include
+	// an EU territory (meta.DSATargets); a one-sided pair is always refused.
 	DSABeneficiary string           `json:"dsaBeneficiary"`
 	DSAPayor       string           `json:"dsaPayor"`
 	Variants       []meta.AdVariant `json:"variants"`
@@ -1512,9 +1512,11 @@ func metaAccountLabel(a meta.AdAccount) string {
 
 // PreflightCreate refuses, before the create job exists, a metaConfig whose bidding cannot be
 // created as asked (see metaBidPlan) or whose ads could not be published for want of the EU DSA
-// disclosures or a well-formed Instagram id (checkMetaPublishIdentity). It never calls Meta, so every other outcome is
-// ErrPreflightNotApplicable; a config that does not decode is left to Dispatch — except a wrong-typed
-// `bidding`, refused here by checkBiddingShape.
+// disclosures or a well-formed Instagram id (checkMetaPublishIdentity). It never calls Meta, so
+// every other outcome is ErrPreflightNotApplicable. A config that does not decode is otherwise left
+// to Dispatch, except a wrong-typed `bidding` (checkBiddingShape). The bid plan and the identity
+// check both run on a best-effort decode, so an unrelated wrong-typed field cannot let an EU target
+// without disclosures, or an invalid bid, fail open into a 202.
 func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
 	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
 	if err := checkBiddingShape(config, "metaConfig"); err != nil {
