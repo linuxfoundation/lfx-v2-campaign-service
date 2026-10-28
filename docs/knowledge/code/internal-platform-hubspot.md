@@ -633,8 +633,10 @@ clears it at ~5.17:1.
 content PATCH with a 2xx and silently reverted it. It requires EVERY widget it wrote to be
 referenced from `flexAreas`, not merely one: the keys are fixed, so a single surviving key from
 an earlier generation used to confirm a rebuild whose new content was lost. The body also carries a
-marker, an HTML comment `<!-- lfx-staged:<16 hex of sha256(body)> -->` (`stagedBodyMarker`), and the
-read-back body must CONTAIN it: a template cloned from an earlier generated email already carries a
+marker, an HTML comment `<!-- lfx-staged:<16 hex of sha256(body + per-rebuild nonce)> -->`
+(`stagedBodyMarker`), and the read-back body must CONTAIN it. The fresh `crypto/rand` nonce makes
+the token differ on every rebuild, so a rebuild that changes only the button cannot reuse the
+earlier write's token and pass a silent revert. The marker exists because a template cloned from an earlier generated email already carries a
 placed `staging_body`, so a reverted PATCH passed the key check while the draft held the earlier
 body. A marker rather than a comparison of the whole html, because HubSpot may re-serialise markup
 on save (`&amp;`, `<br />`, attribute order). Any earlier staging's marker is stripped from the

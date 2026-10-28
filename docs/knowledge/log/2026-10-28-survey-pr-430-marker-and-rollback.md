@@ -3,7 +3,8 @@
 **Fix** — two follow-ups from the #430 review.
 
 - **`verifyContentSaved` checks a marker, not the whole body.** The rebuilt body now ends with an
-  HTML comment carrying a hash of itself (`<!-- lfx-staged:… -->`, `stagedBodyMarker`), and the
+  HTML comment carrying a per-write token (`<!-- lfx-staged:… -->`, `stagedBodyMarker`; see the
+  marker-nonce entry), and the
   read-back body must contain it. The whole-html comparison added earlier the same day would have
   read HubSpot's own re-serialisation (`&` to `&amp;`, `<br>` to `<br />`, attribute order) as a
   revert, logging every staged draft at ERROR and refusing every send workflow. A comment because
