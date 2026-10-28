@@ -34,11 +34,11 @@ type PublishIdentity struct {
 const maxDSANameRunes = 256
 
 // dsaTerritories are the ISO 3166-1 alpha-2 codes Meta treats as "the EU and associated
-// territories" for the DSA disclosure requirement: the 27 member states plus the parts of the EU
-// that carry their own ISO code (Åland and France's outermost regions). Over-inclusion costs a
-// caller one disclosure Meta may not have insisted on; under-inclusion lets an unpublishable ad
-// set be created, so the list errs inclusive. Non-EU EEA states (IS, LI, NO) are not listed:
-// the DSA is an EU regulation and Meta's requirement is worded for the EU.
+// territories" for the DSA disclosure requirement: the 27 member states, the parts of the EU that
+// carry their own ISO code (Åland and France's outermost regions), and the non-EU EEA states (IS,
+// LI, NO), where the DSA is marked EEA-relevant. Over-inclusion costs a caller one disclosure Meta
+// may not have insisted on; under-inclusion lets an unpublishable ad set be created, so the list
+// errs inclusive. Switzerland and the United Kingdom are outside both and are not listed.
 var dsaTerritories = map[string]bool{
 	"AT": true, "BE": true, "BG": true, "HR": true, "CY": true, "CZ": true, "DK": true,
 	"EE": true, "FI": true, "FR": true, "DE": true, "GR": true, "HU": true, "IE": true,
@@ -52,6 +52,10 @@ var dsaTerritories = map[string]bool{
 	"RE": true, // Réunion
 	"YT": true, // Mayotte
 	"MF": true, // Saint Martin (French part)
+	// Non-EU EEA states.
+	"IS": true, // Iceland
+	"LI": true, // Liechtenstein
+	"NO": true, // Norway
 }
 
 // DSATargets returns, in the order given, the targeted countries that make Meta require the DSA
@@ -107,8 +111,8 @@ func CheckPublishIdentity(id *PublishIdentity) error {
 		if n := len([]rune(f.val)); n > maxDSANameRunes {
 			return publishIdentityInvalid("%s is %d characters; an EU DSA disclosure is the name of the advertiser or payer and must be at most %d", f.key, n, maxDSANameRunes)
 		}
-		if strings.IndexFunc(f.val, unicode.IsControl) >= 0 {
-			return publishIdentityInvalid("%s contains a control character (such as a line break); supply the name on one line", f.key)
+		if strings.IndexFunc(f.val, isLineBreakingOrControl) >= 0 {
+			return publishIdentityInvalid("%s contains a control, line-separator or text-direction character (such as a line break); supply the name on one line", f.key)
 		}
 	}
 	if (id.DSABeneficiary == "") != (id.DSAPayor == "") {
@@ -124,6 +128,20 @@ func CheckPublishIdentity(id *PublishIdentity) error {
 		}
 	}
 	return nil
+}
+
+// isLineBreakingOrControl reports a rune that has no place in a one-line legal name: a C0/C1
+// control (category Cc), a Unicode line or paragraph separator (Zl, Zp: U+2028, U+2029), or a
+// bidirectional-text control (U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069), which could
+// make the name shown in Meta's Ad Library read differently from what was typed.
+func isLineBreakingOrControl(r rune) bool {
+	switch {
+	case unicode.IsControl(r), unicode.In(r, unicode.Zl, unicode.Zp):
+		return true
+	case r == 0x061C, r == 0x200E, r == 0x200F, r >= 0x202A && r <= 0x202E, r >= 0x2066 && r <= 0x2069:
+		return true
+	}
+	return false
 }
 
 // publishIdentityInvalid builds a refusal the create path answers 400 (ErrCreateConfigInvalid),

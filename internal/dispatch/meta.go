@@ -669,8 +669,9 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	if err != nil {
 		return nil, notCreated(err)
 	}
-	// The Instagram identity / EU DSA rules (meta.CheckPublishIdentity), before the credential is
-	// used for anything: PreflightCreate refused these synchronously already, this covers any path
+	// The Instagram identity / EU DSA rules (meta.CheckPublishIdentity), validated before any Meta
+	// request (the credential is already resolved by this point, as for the asset checks below).
+	// PreflightCreate refused these synchronously already; this covers any path
 	// that skipped it. The client runs the same check again as its own backstop.
 	if err := checkMetaPublishIdentity(cfg); err != nil {
 		return nil, notCreated(err)

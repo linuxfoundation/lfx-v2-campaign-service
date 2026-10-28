@@ -705,11 +705,13 @@ Meta's Marketing API reference (ad creative; ad set):
   Digital Services Act advertiser/payer disclosures set on the ad set as
   `dsa_beneficiary` / `dsa_payor`. Meta: "For ad sets targeting the EU and/or
   associated territories, the dsa_payor and dsa_beneficiary fields are required."
-  Refused: a one-sided pair; a value over 256 runes or with a control character; and
+  Refused: a one-sided pair; a value over 256 runes, or with a control character, a Unicode
+  line/paragraph separator or a bidi control (`isLineBreakingOrControl`); and
   NEITHER value when `DSATargets(geoTargets)` is non-empty — any targeted country in
-  `dsaTerritories` (the 27 member states plus AX, GF, GP, MQ, RE, YT, MF), read from the
-  same `validateGeoTargets` list the ad set is built from. Non-EU EEA states (IS, LI, NO)
-  are not listed. Both absent with no EU target is the ordinary flow.
+  `dsaTerritories` (the 27 member states, AX, GF, GP, MQ, RE, YT, MF, and the non-EU EEA
+  states IS, LI, NO, so the list errs inclusive), read from the same `validateGeoTargets`
+  list the ad set is built from. GB and CH are not listed. Both absent with no EU target is
+  the ordinary flow.
 
 These live in the per-campaign config (like `pixelId`) rather than the connection's
 persisted `providerConfig`, so no new stored column is required.

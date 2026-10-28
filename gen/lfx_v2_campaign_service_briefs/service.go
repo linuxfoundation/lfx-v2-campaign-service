@@ -1049,13 +1049,14 @@ type CampaignCreateInput struct {
 	// Instagram placement is enabled — the default placements include Instagram
 	// Feed) and `dsaBeneficiary` / `dsaPayor` (the EU Digital Services Act
 	// advertiser and payer, set on the ad set as `dsa_beneficiary` / `dsa_payor`).
-	// Supply both disclosures or neither; when geoTargets include any EU country
-	// (the 27 member states, Åland and France's outermost regions) both are
-	// required, because Meta will not publish an EU-targeted ad set without them.
-	// A missing or one-sided pair, a disclosure over 256 characters or with a
-	// control character, and a non-numeric instagramUserId are refused here with a
-	// 400, before any job exists. An absent instagramUserId is not refused, but
-	// Meta will not publish an Instagram placement without it.
+	// Supply both disclosures or neither; when geoTargets include any EU or EEA
+	// country (the 27 member states, Åland, France's outermost regions, Iceland,
+	// Liechtenstein and Norway) both are required, because Meta will not publish
+	// an EU-targeted ad set without them. A missing or one-sided pair, a
+	// disclosure over 256 characters or with a control, line-separator or bidi
+	// character, and a non-numeric instagramUserId are refused here with a 400,
+	// before any job exists. An absent instagramUserId is not refused, but Meta
+	// will not publish an Instagram placement without it.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

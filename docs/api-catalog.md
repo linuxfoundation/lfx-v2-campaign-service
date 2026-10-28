@@ -1776,11 +1776,12 @@ instagramUserId?: string        — Instagram account id (IGSID, numeric) bound 
                                   An ABSENT value is NOT refused (Facebook-only callers, and callers
                                   not yet collecting it, keep working). Blank/whitespace = absent.
 dsaBeneficiary?: string         — EU Digital Services Act "advertiser" (who the ads benefit), set on
-                                  the ad set as `dsa_beneficiary`. At most 256 characters, one line.
+                                  the ad set as `dsa_beneficiary`. At most 256 characters, one line: no control,
+                                  line/paragraph-separator or bidi-control characters.
 dsaPayor?: string               — EU DSA "payer" (who pays for the ads), set on the ad set as
                                   `dsa_payor`. Same limits. Supply BOTH or NEITHER — a one-sided pair
                                   is a 400. When `geoTargets` include ANY EU country (the 27 member
-                                  states, plus AX, GF, GP, MQ, RE, YT, MF; not IS/LI/NO/GB/CH), BOTH are
+                                  states, plus AX, GF, GP, MQ, RE, YT, MF and the EEA's IS, LI, NO; not GB/CH), BOTH are
                                   REQUIRED — Meta: "For ad sets targeting the EU and/or associated
                                   territories, the dsa_payor and dsa_beneficiary fields are required" —
                                   and a create without them is refused with a synchronous 400 naming
