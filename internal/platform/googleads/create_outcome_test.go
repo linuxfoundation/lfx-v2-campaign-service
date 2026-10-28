@@ -78,9 +78,9 @@ func TestCreateOutcome_ClassifiesEveryPartialShape(t *testing.T) {
 		// detail: an unreadable or over-maxResponseBytes body (client.go), and equally a
 		// readable envelope that carries no such detail, which is what a 401, a 403 or a
 		// frontend INVALID_ARGUMENT looks like. The duplicate-campaign-name arm above cannot
-		// fire on any of them, so an earlier attempt's campaign could be standing while this one reports
-		// "no campaign exists" and sends the operator to delete the budget. The claim needs
-		// codes it could read, not merely a status it could see.
+		// fire on any of them, so an earlier attempt's campaign could be standing while this
+		// one reports "no campaign exists" and sends the operator to delete the budget. The
+		// claim needs codes it could read, not merely a status it could see.
 		{"definite 4xx whose codes did not parse is unconfirmed, not refused", budgetPartial, definite4xx,
 			domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed, true},
 
