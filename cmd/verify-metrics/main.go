@@ -1,35 +1,45 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-// Command verify-metrics is a local, read-only operator tool for verifying a GATED campaign
-// metrics contract against a live ad account before the deployment flag is flipped:
+// Command verify-metrics is a local, read-only operator tool for verifying a GATED read against
+// a live ad account before the deployment flag that gates it is flipped:
 //
 //	go run ./cmd/verify-metrics -provider reddit-ads -project <slug|lf-system> \
 //	    -campaign <platform campaign id> -window last_7_days [-raw]
+//	go run ./cmd/verify-metrics -read audience -provider reddit-ads -project <slug> [-window last_30_days]
+//	go run ./cmd/verify-metrics -read keywords -provider microsoft-ads -project <slug>
+//	go run ./cmd/verify-metrics -read account-monitor -provider twitter-ads -project <slug> \
+//	    -account-id <id> -days 30
 //
-// The Reddit and Microsoft metrics reads stay behind REDDIT_METRICS_ENABLED and
-// MICROSOFT_METRICS_ENABLED (and X's reporting features behind TWITTER_METRICS_ENABLED) until
-// someone has exercised the contract on a real account. This command is that exercise. It
-// resolves the connection exactly as the service does (the connection repository, the system
-// fallback, the AES-GCM decrypt), builds the dispatcher with the service's own constructor, and
-// calls the dispatcher's ReadMetrics — the method the published metrics endpoint calls — so what
-// it prints is what the endpoint would answer once the flag is on.
+// The Reddit and Microsoft reporting reads stay behind REDDIT_METRICS_ENABLED and
+// MICROSOFT_METRICS_ENABLED, and X's account monitor and audience read behind
+// TWITTER_METRICS_ENABLED, until someone has exercised the contract on a real account. This
+// command is that exercise. It resolves the connection exactly as the service does (the
+// connection repository, the system fallback, the AES-GCM decrypt) and builds the dispatcher with
+// the service's own constructor. -read selects the read: `metrics` (the default) calls the
+// dispatcher's ReadMetrics, the method the published metrics endpoint calls; `audience`,
+// `keywords` and `account-monitor` call the service.Orchestrator method the published endpoint
+// calls (gatedReads in reads.go names each), so what it prints is what the endpoint would answer
+// once the flag is on.
 //
 // It is read-only by construction rather than by convention:
-//   - the database session is opened READ ONLY (default_transaction_read_only), and the
-//     dispatcher is handed a connection reader exposing only Get and Disconnected;
+//   - the database session is opened READ ONLY (default_transaction_read_only), the dispatcher is
+//     handed a connection reader exposing only Get and Disconnected, and the orchestrator a
+//     campaign repository whose writes are refused;
 //   - the encryptor it is handed refuses Encrypt;
+//   - a report-backed read's saved-report state is kept in process memory, never the database;
 //   - every upstream request passes a transport that refuses any method other than GET/HEAD,
-//     except the POSTs a metrics read is made of (OAuth token exchanges, Reddit's report query,
-//     Microsoft's report submit/poll), before the request leaves the process.
+//     except the named POSTs the selected read is made of (postAllowlist in capture.go), before
+//     the request leaves the process;
+//   - write selectors (keyword targeting, keyword actions, negative keywords) are refused.
 //
 // Nothing secret is printed: every decrypted credential value and every Authorization header
-// and token-exchange value it observes is scrubbed from all output, token exchange bodies are
-// withheld entirely, and URLs and JSON bodies are passed through pkg/redact plus a key-name
-// redactor (see redact.go).
+// and token-exchange value it observes is scrubbed from all output, the service's own log lines
+// included; token exchange bodies are withheld entirely, and URLs and JSON bodies are passed
+// through pkg/redact plus a key-name redactor (see redact.go).
 //
 // The feature flag is forced on in THIS PROCESS's environment only; the deployment is untouched.
-// Google Ads is refused: its metrics read is not gated, and its client is out of scope here.
+// Google Ads is refused: its reads are not gated, and its client is out of scope here.
 package main
 
 import (
@@ -39,12 +49,18 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -54,6 +70,10 @@ const (
 	systemProjectAlias = "lf-system"
 
 	defaultTimeout = 3 * time.Minute
+	// defaultReportTimeout is a report-backed read's default deadline: Microsoft documents its
+	// reports as completing "within minutes", and X's stats jobs likewise take minutes.
+	defaultReportTimeout = 15 * time.Minute
+	defaultPollInterval  = 20 * time.Second
 
 	exitOK    = 0
 	exitError = 1
@@ -80,12 +100,19 @@ var supportedProviders = []model.Provider{
 
 // options are the parsed command-line flags.
 type options struct {
+	read     readMode
 	provider model.Provider
 	project  string // the connection scope key, alias already resolved
-	campaign string // the PLATFORM's campaign id
+	campaign string // the PLATFORM's campaign id (metrics only)
 	window   model.MetricsWindow
-	raw      bool
-	timeout  time.Duration
+	// accountID and days are the account monitor's payload (account_id, days).
+	accountID string
+	days      int
+	raw       bool
+	timeout   time.Duration
+	// pollInterval is the wait between checks of a report-backed read's report.
+	pollInterval time.Duration
+	gated        gatedRead // the non-metrics read's description; zero for metrics
 }
 
 // usageError marks a flag problem, which exits 2 rather than 1.
@@ -95,17 +122,32 @@ func (e *usageError) Error() string { return e.msg }
 
 func usagef(format string, a ...any) error { return &usageError{msg: fmt.Sprintf(format, a...)} }
 
+// readFlagUsage is the -read flag's help. It says why writes are absent, so an operator looking
+// for a keyword-targeting check learns it is deliberate.
+var readFlagUsage = fmt.Sprintf("which gated read to run (one of %v). metrics needs -campaign; audience and keywords read the "+
+	"project's own campaigns over -window; account-monitor needs -account-id and -days. Writes — keyword targeting, "+
+	"keyword actions, negative keywords — are NOT supported: this tool is read-only by construction (read-only database "+
+	"session, encrypt-refusing encryptor, a transport that refuses every non-read request), so it verifies a read "+
+	"contract without changing the live ad account", readModes)
+
 // parseArgs parses and validates the flags. It never touches the database or the network.
 func parseArgs(args []string, stderr io.Writer) (*options, error) {
 	fs := flag.NewFlagSet("verify-metrics", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	read := fs.String("read", string(readMetrics), readFlagUsage)
 	provider := fs.String("provider", "", fmt.Sprintf("provider to read (one of %v)", supportedProviders))
 	project := fs.String("project", "", "project slug or UUID whose connection to use, exactly as the service keys it; "+
-		systemProjectAlias+" selects the LF system account ("+model.SystemProjectID+")")
-	campaign := fs.String("campaign", "", "the PLATFORM's campaign id (not this service's campaign UUID)")
-	window := fs.String("window", string(model.MetricsWindowLast7Days), "metrics window (today, yesterday, last_7_days, last_14_days, last_30_days, this_month, last_month)")
+		systemProjectAlias+" selects the LF system account ("+model.SystemProjectID+"), for -read metrics only")
+	campaign := fs.String("campaign", "", "-read metrics: the PLATFORM's campaign id (not this service's campaign UUID)")
+	window := fs.String("window", "", "reporting window. -read metrics: any metrics window, default last_7_days; "+
+		"audience/keywords: the endpoint's subset and default (last_30_days; last_7_days on twitter-ads)")
+	accountID := fs.String("account-id", "", "-read account-monitor: the ad account to read (the endpoint's account_id)")
+	days := fs.Int("days", 0, fmt.Sprintf("-read account-monitor: trailing days to read metrics over (%d-%d; the endpoint's days)",
+		domain.MonitorDaysMin, domain.MonitorDaysMax))
 	raw := fs.Bool("raw", false, "also print every upstream request/response exchange, redacted")
-	timeout := fs.Duration("timeout", defaultTimeout, "overall deadline for the read")
+	timeout := fs.Duration("timeout", 0, fmt.Sprintf("overall deadline for the read (default %s; %s for a report-backed read)",
+		defaultTimeout, defaultReportTimeout))
+	pollInterval := fs.Duration("poll-interval", defaultPollInterval, "report-backed reads only: wait between checks of the platform's report")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil, err
@@ -116,6 +158,17 @@ func parseArgs(args []string, stderr io.Writer) (*options, error) {
 	// stray word would run against a different campaign or window than the operator typed.
 	if rest := fs.Args(); len(rest) > 0 {
 		return nil, usagef("unexpected argument %q: this command takes flags only, and every flag after the first non-flag word is ignored", rest[0])
+	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+
+	sel := strings.TrimSpace(*read)
+	if _, isWrite := refusedWrites[sel]; isWrite {
+		return nil, usagef("%s", writeRefusal(sel))
+	}
+	rm := readMode(sel)
+	if !slices.Contains(readModes, rm) {
+		return nil, usagef("-read %q is not supported (one of %v)", sel, readModes)
 	}
 
 	p := model.Provider(strings.TrimSpace(*provider))
@@ -130,28 +183,120 @@ func parseArgs(args []string, stderr io.Writer) (*options, error) {
 	if _, ok := gateFlags[p]; !ok {
 		return nil, usagef("-provider %q is not supported (one of %v)", p, supportedProviders)
 	}
+	o := &options{read: rm, provider: p, raw: *raw, pollInterval: *pollInterval}
+	if rm != readMetrics {
+		g, err := lookupGatedRead(rm, p)
+		if err != nil {
+			return nil, err
+		}
+		o.gated = g
+	}
 
 	proj := strings.TrimSpace(*project)
 	if proj == "" {
 		return nil, usagef("-project is required (a project slug or UUID, or %s for the LF system account)", systemProjectAlias)
 	}
-	if proj == systemProjectAlias {
+	if proj == systemProjectAlias || proj == model.SystemProjectID {
+		if rm != readMetrics {
+			// The endpoint refuses the reserved scope (rejectSystemScope, a 404) before any read.
+			return nil, usagef("-project %s is refused for -read %s: the endpoint refuses the LF system scope; name the project whose own campaigns to read", proj, rm)
+		}
 		proj = model.SystemProjectID
 	}
+	o.project = proj
 
-	camp := strings.TrimSpace(*campaign)
-	if camp == "" {
-		return nil, usagef("-campaign is required (the platform's campaign id)")
+	if err := o.parseReadFlags(set, *campaign, *window, *accountID, *days); err != nil {
+		return nil, err
 	}
 
-	w := model.MetricsWindow(strings.TrimSpace(*window))
-	if !model.IsValidMetricsWindow(w) {
-		return nil, usagef("-window %q is not a metrics window", *window)
+	o.timeout = *timeout
+	if !set["timeout"] {
+		o.timeout = defaultTimeout
+		if o.gated.reportBacked {
+			o.timeout = defaultReportTimeout
+		}
 	}
-	if *timeout <= 0 {
+	if o.timeout <= 0 {
 		return nil, usagef("-timeout must be positive")
 	}
-	return &options{provider: p, project: proj, campaign: camp, window: w, raw: *raw, timeout: *timeout}, nil
+	if set["poll-interval"] && !o.gated.reportBacked {
+		return nil, usagef("-poll-interval applies only to a report-backed read (microsoft-ads audience, keywords and account-monitor; twitter-ads account-monitor)")
+	}
+	if o.pollInterval <= 0 {
+		return nil, usagef("-poll-interval must be positive")
+	}
+	return o, nil
+}
+
+// parseReadFlags validates the flags that depend on -read, each with the endpoint payload's rule.
+// A flag the selected read does not take is refused rather than ignored: silently dropping it
+// would run a different read than the operator typed.
+func (o *options) parseReadFlags(set map[string]bool, campaign, window, accountID string, days int) error {
+	// refuse rejects each named flag the operator set; pairs are flag name, reason.
+	refuse := func(pairs ...string) error {
+		for i := 0; i+1 < len(pairs); i += 2 {
+			if set[pairs[i]] {
+				return usagef("-%s does not apply to -read %s: %s", pairs[i], o.read, pairs[i+1])
+			}
+		}
+		return nil
+	}
+	const monitorOnly = "it is the account monitor's"
+	switch o.read {
+	case readMetrics:
+		if err := refuse("account-id", monitorOnly, "days", monitorOnly); err != nil {
+			return err
+		}
+		o.campaign = strings.TrimSpace(campaign)
+		if o.campaign == "" {
+			return usagef("-campaign is required (the platform's campaign id)")
+		}
+		o.window = model.MetricsWindowLast7Days
+		if set["window"] {
+			o.window = model.MetricsWindow(strings.TrimSpace(window))
+		}
+		if !model.IsValidMetricsWindow(o.window) {
+			return usagef("-window %q is not a metrics window", window)
+		}
+	case readAudience, readKeywords:
+		across := "it reads across the project's own campaigns, as the endpoint does"
+		if err := refuse("campaign", across, "account-id", monitorOnly, "days", monitorOnly); err != nil {
+			return err
+		}
+		o.window = o.gated.defaultWindow
+		if set["window"] {
+			o.window = model.MetricsWindow(strings.TrimSpace(window))
+		}
+		if ok, allowed := windowAllowed(o.gated, o.window); !ok {
+			return usagef("-window %q is refused by %s: window must be one of: %s", window, o.gated.endpoint, allowed)
+		}
+	case readAccountMonitor:
+		if err := refuse("campaign", "the monitor reads every campaign on -account-id", "window", "the monitor takes -days"); err != nil {
+			return err
+		}
+		o.accountID = accountID // not trimmed: the endpoint's pattern admits no whitespace
+		if o.accountID == "" {
+			return usagef("-account-id is required (the endpoint's account_id)")
+		}
+		var verr error
+		switch o.provider {
+		case model.ProviderMicrosoftAds:
+			verr = microsoft.ValidateMonitorAccountID(o.accountID)
+		case model.ProviderTwitterAds:
+			verr = twitter.ValidateMonitorAccountID(o.accountID)
+		}
+		if verr != nil {
+			return usagef("-account-id: %v", verr)
+		}
+		if !set["days"] {
+			return usagef("-days is required (%d-%d, the endpoint's days)", domain.MonitorDaysMin, domain.MonitorDaysMax)
+		}
+		if days < domain.MonitorDaysMin || days > domain.MonitorDaysMax {
+			return usagef("-days: %v", domain.ErrMonitorDaysInvalid)
+		}
+		o.days = days
+	}
+	return nil
 }
 
 // app carries the injectable seams: production opens the real database, tests hand in fakes and
@@ -203,10 +348,18 @@ func (a *app) run(ctx context.Context, args []string) int {
 		}
 	}
 
-	rec := newRecorder(secrets)
-	reader, err := newMetricsReader(opts.provider, be, secrets, rec.client(), a.endpoints)
+	rec := newRecorder(secrets, opts.read)
+	d, err := newDispatcher(opts.provider, be, secrets, rec.client(), a.endpoints)
 	if err != nil {
 		errOut.printf("verify-metrics: %v\n", err)
+		return exitError
+	}
+	if opts.read != readMetrics {
+		return a.runGated(ctx, opts, be, d, rec, out, errOut)
+	}
+	reader, ok := d.(metricsReader)
+	if !ok {
+		errOut.printf("verify-metrics: %s has no metrics read\n", opts.provider)
 		return exitError
 	}
 
@@ -248,6 +401,56 @@ func (a *app) run(ctx context.Context, args []string) int {
 		return exitError
 	}
 	out.printf("result:\n%s\n", body)
+	return exitOK
+}
+
+// runGated runs an audience, keywords or account-monitor read through the orchestrator method
+// its endpoint calls, and prints the result.
+func (a *app) runGated(ctx context.Context, opts *options, be *backend, d service.PlatformDispatcher, rec *recorder, out, errOut *scrubWriter) int {
+	// The report-backed reads log a failed check or submission and carry on; those lines go
+	// through the scrubber like everything else this command prints.
+	prev := slog.Default()
+	slog.SetDefault(scrubbedLogger(errOut))
+	defer slog.SetDefault(prev)
+
+	out.printf("read:     %s\nprovider: %s\nproject:  %s\n", opts.read, opts.provider, opts.project)
+	if opts.read == readAccountMonitor {
+		out.printf("account:  %s\ndays:     %d\n", opts.accountID, opts.days)
+	} else {
+		out.printf("window:   %s\n", opts.window)
+	}
+	out.printf("endpoint: %s\nmethod:   %s (the method that endpoint calls)\n", opts.gated.endpoint, opts.gated.method)
+	if flagName := gateFlags[opts.provider]; flagName != "" {
+		out.printf("gate:     %s forced to \"true\" in this process only; the deployment's value is unchanged\n", flagName)
+	}
+	if opts.gated.reportBacked {
+		out.printf("report:   kept in process memory, not the service's saved-report table; checked every %s until it finishes or -timeout\n", opts.pollInterval)
+	}
+
+	res, st, readErr := runGatedRead(ctx, opts, newReadOrchestrator(be, opts.provider, d), out)
+	if opts.raw {
+		rec.print(out)
+	}
+	if readErr != nil {
+		errOut.printf("verify-metrics: read failed: %v\n", readErr)
+		return exitError
+	}
+	if opts.gated.reportBacked && !st.served {
+		if rec.count() > 0 {
+			errOut.printf("verify-metrics: read failed: %v\n", errReportNeverServed)
+			return exitError
+		}
+	}
+	if rec.count() == 0 {
+		// Every read here answers an empty scope without contacting the platform, as the
+		// endpoint does; saying so keeps an empty result from passing for a verified one.
+		out.printf("note:     no upstream request was made: the project has no campaigns on %s in this service (an empty scope), "+
+			"so the endpoint answers empty without contacting the platform and nothing was verified\n", opts.provider)
+	}
+	if err := printGatedResult(out, res); err != nil {
+		errOut.printf("verify-metrics: %v\n", err)
+		return exitError
+	}
 	return exitOK
 }
 

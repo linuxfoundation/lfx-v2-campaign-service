@@ -170,6 +170,15 @@ func (w *scrubWriter) printf(format string, a ...any) {
 	_, _ = io.WriteString(w.w, w.secrets.scrub(fmt.Sprintf(format, a...)))
 }
 
+// Write makes a scrubWriter an io.Writer for the service's slog output (scrubbedLogger). A log
+// handler writes each record in one call, so a secret cannot straddle two writes.
+func (w *scrubWriter) Write(p []byte) (int, error) {
+	if _, err := io.WriteString(w.w, w.secrets.scrub(string(p))); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
 // displayURL renders a request URL for output: pkg/redact.URL (userinfo, query and fragment
 // dropped), then the query re-attached parameter by parameter with any secret-named value
 // withheld. The query is worth keeping — X sends its whole stats request there — but a signed

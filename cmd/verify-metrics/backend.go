@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -24,6 +25,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -38,15 +40,12 @@ type connLookup interface {
 	Disconnected(ctx context.Context, projectID string, provider model.Provider) (bool, error)
 }
 
-// campaignScopes is the one campaign read this command makes.
-type campaignScopes interface {
-	ListProjectPlatformCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error)
-}
-
 // backend is the database side of a run.
 type backend struct {
-	conns     connLookup
-	campaigns campaignScopes
+	conns connLookup
+	// campaigns is the campaign repository's READ half: the metrics read looks its row up, and
+	// the other reads' orchestrator resolves the project's campaign scope through it.
+	campaigns domain.CampaignReader
 	enc       domain.Encryptor
 	close     func()
 }
@@ -132,6 +131,46 @@ func (c *readOnlyConns) Disconnected(ctx context.Context, projectID string, prov
 	return c.r.Disconnected(ctx, projectID, provider)
 }
 
+// readOnlyCampaigns is the domain.CampaignRepository the orchestrator is built on: the reader's
+// methods, and every write refused. NewOrchestrator takes the whole repository; none of the reads
+// this command runs writes a campaign, and if one ever did it would fail here, before the READ
+// ONLY session refused it too.
+type readOnlyCampaigns struct{ domain.CampaignReader }
+
+var _ domain.CampaignRepository = (*readOnlyCampaigns)(nil)
+
+func (*readOnlyCampaigns) UpsertCampaign(context.Context, *model.Campaign, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	return nil, errReadOnly
+}
+
+func (*readOnlyCampaigns) AdoptCampaign(context.Context, *model.Campaign, int64, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	return nil, errReadOnly
+}
+
+func (*readOnlyCampaigns) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignLockToken, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	return nil, errReadOnly
+}
+
+func (*readOnlyCampaigns) VerifyClaimedVersion(context.Context, string, string, string, int64, domain.CampaignLockToken) (*model.Campaign, error) {
+	return nil, errReadOnly
+}
+
+func (*readOnlyCampaigns) ClaimCampaignVersion(context.Context, string, string, string, int64) (*model.Campaign, domain.CampaignLockToken, error) {
+	var none domain.CampaignLockToken
+	return nil, none, errReadOnly
+}
+
+func (*readOnlyCampaigns) ReleaseCampaignLock(context.Context, domain.CampaignLockToken) error {
+	return errReadOnly
+}
+
+// ReleaseCampaignLockAfterCooldown has no error to return; a read never holds a lock to release.
+func (*readOnlyCampaigns) ReleaseCampaignLockAfterCooldown(domain.CampaignLockToken, time.Duration) {}
+
+func (*readOnlyCampaigns) DeleteCampaign(context.Context, string, string, string, int64, *model.Actor, domain.CampaignIndexPayloadFunc) error {
+	return errReadOnly
+}
+
 // recordingDecryptor decrypts exactly as the wrapped encryptor does and records every value of
 // the plaintext in the secret set, so whatever credential the dispatcher actually used is
 // scrubbed from all output. Encrypt is refused: nothing in a read needs it.
@@ -163,11 +202,12 @@ type endpoints struct {
 	api       string
 	token     string
 	reporting string
+	customer  string // Microsoft Customer Management (the account monitor's currency read)
 }
 
-// newMetricsReader builds the provider's dispatcher with the service's own constructor, wired to
+// newDispatcher builds the provider's dispatcher with the service's own constructor, wired to
 // the read-only connection reader, the recording decryptor and the guarded HTTP client.
-func newMetricsReader(p model.Provider, be *backend, secrets *secretSet, hc *http.Client, ep endpoints) (metricsReader, error) {
+func newDispatcher(p model.Provider, be *backend, secrets *secretSet, hc *http.Client, ep endpoints) (service.PlatformDispatcher, error) {
 	conns := &readOnlyConns{r: be.conns}
 	enc := &recordingDecryptor{inner: be.enc, secrets: secrets}
 	switch p {
@@ -190,6 +230,9 @@ func newMetricsReader(p model.Provider, be *backend, secrets *secretSet, hc *htt
 		}
 		if ep.reporting != "" {
 			opts = append(opts, microsoft.WithReportingBaseURL(ep.reporting))
+		}
+		if ep.customer != "" {
+			opts = append(opts, microsoft.WithCustomerBaseURL(ep.customer))
 		}
 		return dispatch.NewMicrosoftDispatcher(conns, enc, opts...), nil
 	case model.ProviderTwitterAds:

@@ -25,8 +25,65 @@ const (
 	clientTimeout = 2 * time.Minute
 )
 
-// redditReportPathRe is Reddit's report query, the one non-token POST a Reddit metrics read makes.
-var redditReportPathRe = regexp.MustCompile(`(?i)/ad_accounts/[^/]+/reports$`)
+// postRule is one POST a read is allowed to make: a name for the policy's documentation and
+// tests, and the path it matches (lower-cased, trailing slash trimmed).
+type postRule struct {
+	name  string
+	match func(path string) bool
+}
+
+var (
+	// redditReportPathRe is Reddit's report query (POST /ad_accounts/{id}/reports): the one
+	// non-token POST of the Reddit campaign metrics, audience and keyword reads. It builds a
+	// report from delivery data and changes nothing in the account.
+	redditReportPathRe = regexp.MustCompile(`(?i)/ad_accounts/[^/]+/reports$`)
+	// twitterStatsJobPathRe is X's asynchronous stats job create (POST
+	// /{version}/stats/jobs/accounts/{id}). It is a write only in that it creates an analytics
+	// JOB — a request to X to compute delivery statistics into a results file; it changes no
+	// campaign, line item, budget or targeting, and X expires the job on its own. The X account
+	// monitor and the X audience read are both made of these (internal/platform/twitter
+	// monitor.go and audience.go), so verifying either needs it. The job STATUS read on the same
+	// path is a GET.
+	twitterStatsJobPathRe = regexp.MustCompile(`(?i)^(/[^/]+)*/[0-9]+/stats/jobs/accounts/[a-z0-9]+$`)
+)
+
+// The named POST rules. Each one is a read in a platform's own dialect; nothing here creates,
+// updates or deletes a campaign, ad, budget, targeting or keyword.
+var (
+	ruleTokenExchange = postRule{"oauth token exchange", isTokenEndpoint}
+	ruleRedditReport  = postRule{"reddit report query", redditReportPathRe.MatchString}
+	// Microsoft Reporting's submit and poll build and fetch a report file.
+	ruleMicrosoftReportSubmit = postRule{"microsoft reporting submit", suffixRule("/generatereport/submit")}
+	ruleMicrosoftReportPoll   = postRule{"microsoft reporting poll", suffixRule("/generatereport/poll")}
+	// Microsoft's v13 REST API reads by POST: Campaigns/QueryByAccountId is the account
+	// monitor's live campaign list (microsoft.Client.ListAccountCampaigns), a query by account
+	// id. The create endpoint is POST .../Campaigns, which this rule does not match.
+	ruleMicrosoftCampaignQuery = postRule{"microsoft campaign query by account", suffixRule("/campaignmanagement/v13/campaigns/querybyaccountid")}
+	// CustomerManagement Account/Query is the account monitor's currency read
+	// (microsoft.Client.AccountCurrency): one account looked up by id.
+	ruleMicrosoftAccountQuery = postRule{"microsoft account query", suffixRule("/customermanagement/v13/account/query")}
+	ruleTwitterStatsJob       = postRule{"x stats job create", twitterStatsJobPathRe.MatchString}
+)
+
+func suffixRule(suffix string) func(string) bool {
+	return func(p string) bool { return strings.HasSuffix(p, suffix) }
+}
+
+// postAllowlist is, per read, the POSTs that read is made of — and nothing more, so a mode can
+// never send a POST only another mode needs. Every read also allows GET and HEAD.
+var postAllowlist = map[readMode][]postRule{
+	readMetrics: {ruleTokenExchange, ruleRedditReport, ruleMicrosoftReportSubmit, ruleMicrosoftReportPoll},
+	// Reddit's audience read is the report query; Microsoft's is a Reporting submit/poll
+	// (AgeGenderAudienceReportRequest); X's is stats jobs (AGE, GENDER, PLATFORMS).
+	readAudience: {ruleTokenExchange, ruleRedditReport, ruleMicrosoftReportSubmit, ruleMicrosoftReportPoll, ruleTwitterStatsJob},
+	// Reddit's keyword read is the report query; Microsoft's is a Reporting submit/poll
+	// (KeywordPerformanceReportRequest).
+	readKeywords: {ruleTokenExchange, ruleRedditReport, ruleMicrosoftReportSubmit, ruleMicrosoftReportPoll},
+	// Microsoft's monitor lists campaigns, reads the currency and builds a Reporting report;
+	// X's lists campaigns by GET and builds stats jobs.
+	readAccountMonitor: {ruleTokenExchange, ruleMicrosoftReportSubmit, ruleMicrosoftReportPoll,
+		ruleMicrosoftCampaignQuery, ruleMicrosoftAccountQuery, ruleTwitterStatsJob},
+}
 
 // isTokenEndpoint reports whether path is an OAuth token exchange: Reddit's /api/v1/access_token,
 // Microsoft's /oauth2/v2.0/token, LinkedIn's /oauth/v2/accessToken.
@@ -35,21 +92,21 @@ func isTokenEndpoint(path string) bool {
 	return strings.HasSuffix(p, "/access_token") || strings.HasSuffix(p, "/token") || strings.HasSuffix(p, "/accesstoken")
 }
 
-// allowedRequest is the read-only policy every upstream request must pass before it is sent.
-// GET and HEAD are reads. A POST is admitted only where a metrics read is made of POSTs: a token
-// exchange, Reddit's report query, and Microsoft Reporting's submit and poll (which build a
-// report file; they change nothing in the account). Every other method and path — any create,
-// update, PATCH, PUT or DELETE — is refused without contacting the platform.
-func allowedRequest(method, path string) bool {
+// allowedRequest is the read-only policy every upstream request of a `read` run must pass
+// before it is sent. GET and HEAD are reads. A POST is admitted only where that read is made of
+// POSTs (postAllowlist). Every other method and path — any create, update, PATCH, PUT or
+// DELETE — is refused without contacting the platform.
+func allowedRequest(read readMode, method, path string) bool {
 	switch method {
 	case http.MethodGet, http.MethodHead:
 		return true
 	case http.MethodPost:
 		p := strings.ToLower(strings.TrimRight(path, "/"))
-		return isTokenEndpoint(p) ||
-			redditReportPathRe.MatchString(p) ||
-			strings.HasSuffix(p, "/generatereport/submit") ||
-			strings.HasSuffix(p, "/generatereport/poll")
+		for _, r := range postAllowlist[read] {
+			if r.match(p) {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -76,13 +133,14 @@ type exchange struct {
 type recorder struct {
 	base    http.RoundTripper
 	secrets *secretSet
+	read    readMode // whose POST allowlist applies
 
 	mu        sync.Mutex
 	exchanges []*exchange
 }
 
-func newRecorder(secrets *secretSet) *recorder {
-	return &recorder{base: http.DefaultTransport, secrets: secrets}
+func newRecorder(secrets *secretSet, read readMode) *recorder {
+	return &recorder{base: http.DefaultTransport, secrets: secrets, read: read}
 }
 
 // client returns the *http.Client handed to the platform clients. They force their own
@@ -114,7 +172,7 @@ func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 		}
 	}
-	if !allowedRequest(req.Method, req.URL.Path) {
+	if !allowedRequest(r.read, req.Method, req.URL.Path) {
 		r.update(func() { ex.refused, ex.done = true, true })
 		if req.Body != nil {
 			_ = req.Body.Close()
@@ -282,4 +340,11 @@ func (t *teeBody) Read(p []byte) (int, error) {
 		t.copy.write(p[:n])
 	}
 	return n, err
+}
+
+// count is how many upstream requests the run attempted, refused ones included.
+func (r *recorder) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.exchanges)
 }
