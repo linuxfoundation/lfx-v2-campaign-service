@@ -14,7 +14,7 @@ Package middleware provides HTTP middleware for the service.
 `MaxBodyBytes(limit)` bounds how much of a request body the server will read.
 `cmd/campaign-service` applies it per route through `MaxBodyBytesPerRoute(uploadLimit, otherLimit)`:
 `constants.MaxRequestBodyBytes` (42 MiB) for the creative-asset upload (`isUploadRequest`, the
-same predicate `UploadAdmission` gates on) and `constants.MaxNonUploadRequestBodyBytes` (1 MiB)
+same predicate `UploadAdmission` gates on) and `constants.MaxNonUploadRequestBodyBytes` (2 MiB)
 for every other route.
 
 **Why per route (#177).** Goa decodes a body before the endpoint authenticates the caller, and
@@ -22,9 +22,11 @@ only the upload is gated by `UploadAdmission`, so on every other route the per-r
 ONLY pre-auth bound. While all routes shared the upload's 42 MiB cap, one request to create-brief
 (whose `Any` attributes accept arbitrary JSON) could make the decoder allocate tens of MiB, and
 several times that once boxed into interface values, before any token was checked. The smaller
-cap runs at the same point and through the same two arms as the upload's. The largest declared
-string on a non-upload route is 8000 characters, so 1 MiB leaves an order of magnitude of
-headroom. What it does not bound is concurrency: many sub-cap unauthenticated bodies at once is
+cap runs at the same point and through the same two arms as the upload's. It is sized from the
+largest legitimate body, the email wizard's `update-sections` (`ArrayOf(Any)`, bounded only in
+the service at 120 blocks and a 200,000-rune assembled body): JSON-escaped at the worst case that
+is ~1.2 MB, which 1 MiB would refuse. `TestNonUploadRoutes_AdmitMaximalWizardSections` pins that
+body under the cap. What it does not bound is concurrency: many sub-cap unauthenticated bodies at once is
 the gateway's to own, since only it can authenticate before reading.
 `TestNonUploadRoutes_RejectOversizeBodyBeforeDecoding` drives every body-bearing route in the
 served OpenAPI document (both the declared and chunked arms) through the real chain.

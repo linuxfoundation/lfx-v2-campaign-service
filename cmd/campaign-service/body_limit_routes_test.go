@@ -20,8 +20,9 @@ import (
 
 // bodyRoute is one body-bearing operation read from the OpenAPI document the service serves.
 type bodyRoute struct {
-	method string
-	path   string // concrete: every {param} replaced with the spec's own example value
+	method   string
+	template string // as published, e.g. /projects/{project_id}/briefs
+	path     string // concrete: every {param} replaced with the spec's own example value
 }
 
 // bodyBearingRoutes returns every operation in kodata's openapi3.json that declares a request
@@ -76,7 +77,7 @@ func bodyBearingRoutes(t *testing.T) []bodyRoute {
 				}
 				return v
 			})
-			out = append(out, bodyRoute{method: strings.ToUpper(method), path: concrete})
+			out = append(out, bodyRoute{method: strings.ToUpper(method), template: path, path: concrete})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].method+out[i].path < out[j].method+out[j].path })
@@ -114,9 +115,18 @@ func TestNonUploadRoutes_RejectOversizeBodyBeforeDecoding(t *testing.T) {
 		)
 	}
 
-	covered := 0
+	covered, skipped := 0, 0
 	for _, rt := range routes {
+		// isUploadRequest grants the 42 MiB cap to any POST whose path ENDS in /creative-assets.
+		// That is safe only while no POST route ends in a path parameter: one that did would let
+		// a caller set the parameter to "creative-assets" and buy the upload's cap on a route that
+		// is not the upload. Fail here the moment such a route is published.
+		if rt.method == http.MethodPost && strings.HasSuffix(rt.template, "}") {
+			t.Errorf("POST %s ends in a path parameter, so a caller could make it match the upload "+
+				"predicate's /creative-assets suffix; match the upload by full template instead", rt.template)
+		}
 		if strings.HasSuffix(rt.path, "/creative-assets") && rt.method == http.MethodPost {
+			skipped++
 			continue // the upload keeps its own, larger cap: see TestUploadRoute_AdmitsMaximumLegalUpload
 		}
 		covered++
@@ -143,6 +153,52 @@ func TestNonUploadRoutes_RejectOversizeBodyBeforeDecoding(t *testing.T) {
 	}
 	if covered == 0 {
 		t.Fatal("no non-upload body-bearing routes found in openapi3.json; the test is asserting nothing")
+	}
+	// Exactly the one upload route is exempt. More would mean the skip condition is wider than
+	// the upload, silently leaving a route unasserted.
+	if skipped != 1 {
+		t.Errorf("skipped %d routes as the upload, want exactly 1", skipped)
+	}
+}
+
+// TestNonUploadRoutes_AdmitMaximalWizardSections pins the SIZING of the non-upload cap to the
+// largest legitimate body, so the cap cannot be tightened past what the service itself accepts.
+//
+// update-sections takes `sections` as ArrayOf(Any): Goa declares no bound, and the real one is
+// in the service — 120 blocks, 20,000 runes per rich_text block and a 200,000-rune assembled
+// body (internal/service/email_wizard_sections.go). This sends a body at that limit, encoded at
+// the worst case a client can produce (encoding/json writes `<` as the 6-byte \u003c), and
+// requires it to pass the size gate. It is over 1 MiB, which is why the cap is 2 MiB.
+func TestNonUploadRoutes_AdmitMaximalWizardSections(t *testing.T) {
+	const blocks, richBlocks, runesPerRich = 120, 10, 19900 // 10 x 19,900 + wrappers stays within 200,000
+	sections := make([]map[string]string, 0, blocks)
+	for i := 0; i < blocks; i++ {
+		if i < richBlocks {
+			sections = append(sections, map[string]string{"type": "rich_text", "html": strings.Repeat("<", runesPerRich)})
+		} else {
+			sections = append(sections, map[string]string{"type": "divider"})
+		}
+	}
+	body, err := json.Marshal(map[string]any{"session_id": "48b76cd3-4f8f-4644-9310-a6c9548e5726", "sections": sections})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if int64(len(body)) <= 1<<20 {
+		t.Fatalf("premise: fixture is %d bytes; it must exceed 1 MiB to show why the cap is not 1 MiB", len(body))
+	}
+	if int64(len(body)) > constants.MaxNonUploadRequestBodyBytes {
+		t.Fatalf("a maximal legitimate update-sections body (%d bytes) exceeds MaxNonUploadRequestBodyBytes (%d)",
+			len(body), constants.MaxNonUploadRequestBodyBytes)
+	}
+
+	h := realChain(t)
+	req := httptest.NewRequest(http.MethodPost,
+		"/projects/cncf/briefs/6ba7b810-9dad-11d1-80b4-00c04fd430c8/wizard/update-sections", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code == http.StatusRequestEntityTooLarge {
+		t.Fatalf("a maximal legitimate update-sections body (%d bytes) was refused with 413", len(body))
 	}
 }
 

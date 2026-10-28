@@ -43,10 +43,12 @@ or maximum-size uploads begin failing with `413`. Note the chart parity test doe
 it — that test extracts only `Env…` constants from `constants.go` — so this documentation is
 the only place the lockstep obligation is recorded outside the constant's own comment.
 
-`MaxNonUploadRequestBodyBytes` (1 MiB, also `http.go`) is the cap for every OTHER route (#177).
+`MaxNonUploadRequestBodyBytes` (2 MiB, also `http.go`) is the cap for every OTHER route (#177).
 Those routes are decoded before authentication and are not gated by upload admission, so a
-generous cap there is pre-auth allocation for nothing. It is sized from the contract: the largest
-declared string on a non-upload route is 8000 characters and realistic bodies are tens of KiB.
+generous cap there is pre-auth allocation for nothing. It is sized from the largest legitimate
+body, the email wizard's `update-sections`: 120 blocks and a 200,000-rune assembled body
+(`internal/service/email_wizard_sections.go`), ~1.2 MB JSON-escaped at worst. Raising those
+wizard limits requires revisiting this cap.
 
 `PodMemoryLimitBytes`, `UploadAdmissionBudgetBytes`, `UploadAdmissionWeightBytes` and
 `UploadAdmissionWait` (also in `http.go`) size the concurrent-upload admission bound applied by

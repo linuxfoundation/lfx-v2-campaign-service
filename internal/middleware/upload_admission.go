@@ -83,7 +83,7 @@ import (
 // It does NOT account bodies sent to OTHER routes. isUploadRequest gates this middleware to the
 // creative-asset POST, so every other body-bearing endpoint decodes without taking a permit.
 // Those routes are bounded instead by MaxBodyBytesPerRoute's much smaller per-request cap,
-// constants.MaxNonUploadRequestBodyBytes (1 MiB), which applies before the decoder runs (#177).
+// constants.MaxNonUploadRequestBodyBytes (2 MiB), which applies before the decoder runs (#177).
 // Before that change they shared the upload's 42 MiB cap, so one request to a route whose
 // largest declared field is 8000 characters could still make the decoder hold ~42 MiB pre-auth.
 //

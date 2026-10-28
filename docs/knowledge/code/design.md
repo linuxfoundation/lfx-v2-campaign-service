@@ -132,7 +132,7 @@ and, for writers that never reach the handler, as a table CHECK on `byte_size`
 validator sees the string only after the JSON decoder has read the entire body, so it alone
 leaves the server buffering whatever a caller chooses to send. The inbound bound is
 `constants.MaxRequestBodyBytes` (42 MiB), applied to this route by `middleware.MaxBodyBytesPerRoute`
-(every other route gets the 1 MiB `constants.MaxNonUploadRequestBodyBytes`, #177) and sized from
+(every other route gets the 2 MiB `constants.MaxNonUploadRequestBodyBytes`, #177) and sized from
 this ceiling: base64 expands by 4/3, so a maximum-size 30-MiB image is 40 MiB of
 base64 exactly, plus the JSON envelope — which is why the cap is not 40 MiB, and why raising
 `MaxLength` requires raising it in step. Every brief and connection method also declares a

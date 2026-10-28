@@ -18,8 +18,9 @@ const (
 	DefaultIdleTimeout  = 90 * time.Second
 )
 
-// MaxRequestBodyBytes caps how many bytes the server will read from any request
-// body before refusing it with 413.
+// MaxRequestBodyBytes caps how many bytes the server will read from the creative-asset
+// upload's request body before refusing it with 413; every other route is held to
+// MaxNonUploadRequestBodyBytes.
 //
 // It exists because the size bounds declared in design/ do NOT bound the wire. The
 // creative-asset upload declares MaxLength(41943040) on a base64 `String` attribute --
@@ -59,14 +60,19 @@ const MaxRequestBodyBytes int64 = 42 << 20 // 42 MiB
 // boxed interface values several times the size of the JSON it came from. At 42 MiB a single
 // request could approach the pod's 512 MiB limit on its own.
 //
-// Sized from the contract, with headroom. The largest DECLARED string on any non-upload route is
-// 8000 characters (an email-copy section's html), and a realistic brief, campaign or section
-// list is tens of KiB. 1 MiB is an order of magnitude above that, so no legitimate request is
-// refused, while cutting the pre-auth allocation one request can force by a factor of 42.
+// Sized from the largest LEGITIMATE body, which is the email wizard's update-sections, not a
+// Goa-declared field: its `sections` is ArrayOf(Any), and the bound lives in the service
+// (internal/service/email_wizard_sections.go): at most maxWizardSections (120) blocks and an
+// assembled body of maxWizardBodyHTML (200,000) runes. JSON-escaped at the worst case of 6 bytes
+// per rune (\u003c for `<`, as Go's encoder writes it) that body is ~1.2 MB before the section
+// envelopes, so a 1 MiB cap would refuse an email the service renders in full.
+// TestNonUploadRoutes_AdmitMaximalWizardSections sends exactly that body and pins it under this
+// cap. 2 MiB clears it with headroom while cutting the pre-auth allocation one request can force
+// by a factor of 21. Raising the wizard limits requires revisiting this in step.
 //
 // What it does NOT do: bound how many such requests run at once. Concurrency of unauthenticated
 // bodies belongs at the gateway, which can authenticate before reading (see #177).
-const MaxNonUploadRequestBodyBytes int64 = 1 << 20 // 1 MiB
+const MaxNonUploadRequestBodyBytes int64 = 2 << 20 // 2 MiB
 
 // PodMemoryLimitBytes mirrors resources.limits.memory in
 // charts/lfx-v2-campaign-service/values.yaml (512Mi).
