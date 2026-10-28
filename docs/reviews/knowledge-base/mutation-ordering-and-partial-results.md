@@ -116,8 +116,8 @@ so the next retry creates a *second* paid campaign and reports success.
 
 **Status on main:** the contract is written into the code —
 the `CreateCampaign` doc comments in `internal/platform/meta/client.go` and
-`internal/platform/reddit/client.go` both open with `PARTIAL-RESULT
-CONTRACT:`, and `CreateCampaign` in `internal/platform/googleads/campaign.go` implements the
+`internal/platform/reddit/client.go` both carry a `PARTIAL-RESULT
+CONTRACT:` paragraph, and `CreateCampaign` in `internal/platform/googleads/campaign.go` implements the
 two-stage `campaignNamePartial` / `budgetPartial` closures. The knowledge bundle
 states the orchestrator half at
 `docs/knowledge/code/internal-dispatch.md` § "The claim contract (release vs retain)": "The decision keys on

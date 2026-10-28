@@ -105,8 +105,14 @@ vendor fields are not the raw body.
 **But `Message` is only parsed vendor data in one of its two branches.**
 `(*Client).do` in `internal/platform/meta/client.go` assigns `env.Error.Message` when
 `env.Error != nil && env.Error.Message != ""`; otherwise — a non-Graph or
-malformed error body — it falls back to `truncate(strings.TrimSpace(string(raw)),
-300)`, which is the **raw HTTP response body**, shortened and unparsed. The
+malformed error body — it falls back to `truncate(c.redactSecrets(snippet), 300)`,
+where `snippet` is the trimmed **raw HTTP response body**. *(Updated 2026-10-28,
+#425: this entry previously quoted the fallback as
+`truncate(strings.TrimSpace(string(raw)), 300)`; the client now runs
+`redactSecrets` over the snippet first.)* Redaction removes only what `redactSecrets`
+recognises (the client's own access token, and the `Bearer` and `key=value`
+credential shapes via `redactCredentials`); the rest is
+still upstream text, shortened and unparsed. The
 exemption covers the envelope branch only. `Message` reaching a log, error or
 response sink from the fallback branch is a genuine instance of this entry's
 detect condition, not something already covered.

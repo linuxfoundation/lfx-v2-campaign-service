@@ -23,4 +23,14 @@ quoted reviewer comments, and the KB README forbids editing a path inside quoted
 
 The KB README's Maintenance section now asks for symbol anchors, so new entries don't
 bring the problem back. No pattern's detect condition, severity or false-positive floor
-changed. Only where each entry points changed.
+changed.
+
+Re-reading each cited location turned up two sentences that no longer matched the code.
+Both are corrected:
+
+- The Meta raw-body fallback in `credentials-and-untrusted-text.md` used to be quoted
+  as `truncate(strings.TrimSpace(string(raw)), 300)`. The client now calls
+  `redactSecrets` before it truncates. The entry says so with a dated note, rather than
+  dropping the old quote.
+- The meta and reddit `CreateCampaign` doc comments do not *open with*
+  `PARTIAL-RESULT CONTRACT:`. They carry it as a later paragraph.
