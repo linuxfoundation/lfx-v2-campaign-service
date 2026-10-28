@@ -2047,3 +2047,22 @@ func TestFactText_CollapsesWhitespaceWithoutEatingContent(t *testing.T) {
 		t.Fatalf("factText = %q; a whitespace run must become one space, not vanish", got)
 	}
 }
+
+// TestEventFactsBlockKeepsTheSourceDocument: a survey brief's source document at its own bound,
+// beside a description and other facts at theirs, sums past the block bound. The backstop must cut
+// the event facts, never the document -- the only place a survey email's facts may come from.
+func TestEventFactsBlockKeepsTheSourceDocument(t *testing.T) {
+	source := strings.Repeat("s", maxFactSourceTextRunes)
+	details := emailCopyEventDetails{
+		SourceText:  source + "tail past the bound",
+		Description: strings.Repeat("d", maxFactDescriptionRunes*2),
+		Audience:    strings.Repeat("a", maxFactTextRunes*2),
+	}
+	block := details.eventFactsBlock()
+	if n := len([]rune(block)); n > maxEventFactsBlockRunes {
+		t.Fatalf("block is %d runes, over its bound of %d", n, maxEventFactsBlockRunes)
+	}
+	if !strings.Contains(block, "Source document: "+source) {
+		t.Error("the source document was cut; the backstop must cut the event facts after it")
+	}
+}

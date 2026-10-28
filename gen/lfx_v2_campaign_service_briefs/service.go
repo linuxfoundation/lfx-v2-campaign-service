@@ -122,28 +122,37 @@ type Service interface {
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Create ONE HubSpot workflow that sends an already-staged series of emails,
 	// and return it DISABLED. Each brief named in brief_ids must already have a
-	// staged HubSpot draft (its campaign row's platform id is the email the
+	// fully staged HubSpot draft (its campaign row's platform id is the email the
 	// workflow will send) and must belong to a send surface; a paid brief is
-	// refused. The source workflow is only ever read: its definition is fetched,
-	// each of its send steps is pointed at this campaign's drafts in the order
-	// brief_ids gives, each wait-until-date step is optionally re-dated, and the
-	// result is created as a NEW workflow. 400 when the source URL names no
-	// workflow, when a brief has no staged draft yet, when a brief is on the paid
-	// surface, or when a date is not YYYY-MM-DD; 409 when the source workflow's
-	// send-step count does not equal the number of briefs, or its dated-step count
-	// does not equal the number of send_dates, since a partial mapping would leave
-	// a send pointing at the SOURCE campaign's email; 409 when a brief has no
-	// BUILT HubSpot audience, when the briefs were built against different
-	// audiences (a workflow enrolls ONE audience, so every brief must carry the
-	// same send lists, suppressions and portal), when that audience was built in a
-	// different HubSpot portal than this project's credential reaches, or when the
-	// project's standing standard suppression list now covers a list the series
-	// sends to (the same send-time check staging applies); 404 when a brief does
-	// not exist in this project. The workflow enrolls the series' audience in
-	// place of the source workflow's enrollment, and adds the audience's
-	// suppression lists to the source's own. The workflow is always created
-	// disabled -- enabling it is left to the human who reviews the drafts, and is
-	// the only irreversible step on this path.
+	// refused. The source workflow (source_workflow_url, else the deployment's
+	// SURVEY_SEQUENCE_WORKFLOW_ID, else the in-code default) is only ever read:
+	// its definition is fetched, its send steps -- walked from its start action,
+	// which must be one straight sequence -- are pointed at this campaign's drafts
+	// in the order brief_ids gives, each wait-until-date step is re-dated from
+	// send_dates, its enrollment is replaced by the series' audience, the
+	// audience's suppression lists are added to its own, and the result is created
+	// as a NEW workflow. 400 when the source URL names no workflow (or names one
+	// HubSpot refuses), when a brief has no staged draft yet, when a brief is on
+	// the paid surface or appears twice, when there are fewer than two briefs, or
+	// when a date is not YYYY-MM-DD, not after today or not after the date before
+	// it. 409 when the source workflow's send-step count does not equal the number
+	// of briefs or its dated-step count the number of send_dates, when it
+	// branches, has steps off its main path, does not enroll by list membership or
+	// still refers to its own emails elsewhere; when a draft is not fully staged
+	// or was staged in another portal; when a brief has no BUILT HubSpot audience,
+	// when the briefs were built against different audiences (a workflow enrolls
+	// ONE audience, so every brief must carry the same send lists, suppressions
+	// and portal), or that audience was built in a different HubSpot portal than
+	// this project's credential reaches; when a list the series sends to is also
+	// suppressed, or the project's standing standard suppression list now covers
+	// it (the same send-time check staging applies); when the project has no
+	// usable HubSpot connection, the credential lacks the automation scope, or the
+	// default workflow does not exist in the project's portal. 404 when a brief
+	// does not exist in this project. 500 when HubSpot's answer to the create
+	// could not be read, so a workflow may exist. 503 when the audience store or
+	// HubSpot is unavailable. The workflow is always created disabled -- enabling
+	// it is left to the human who reviews the drafts, and is the only irreversible
+	// step on this path.
 	CreateSendWorkflow(context.Context, *CreateSendWorkflowPayload) (res *SendWorkflowResult, err error)
 	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
 	// platform is read, never written: the campaign must already exist under the
@@ -2396,19 +2405,22 @@ type RemoveKeywordTargetingPayload struct {
 }
 
 type SendWorkflowInput struct {
-	// The HubSpot workflow to copy the schedule, enrollment and suppression from.
-	// Its editor URL, or its bare numeric id. OPTIONAL: omitted, the deployment's
-	// configured survey-sequence workflow is used, which is the ordinary case. It
-	// is only ever READ.
+	// The HubSpot workflow to copy: its steps, sending windows, blocked dates and
+	// suppression lists are kept, while its emails, dates and enrollment are
+	// replaced. Its editor URL, or its bare numeric id. OPTIONAL: omitted, the
+	// deployment's configured survey-sequence workflow is used, which is the
+	// ordinary case. It is only ever READ.
 	SourceWorkflowURL *string
 	// Name for the new workflow
 	Name string
 	// The briefs whose staged drafts this workflow sends, in SEND ORDER. One per
 	// send step in the source workflow.
 	BriefIds []string
-	// Calendar dates (YYYY-MM-DD) for the source workflow's wait-until-date steps,
-	// in flow order. Omit to keep the source's own dates. Each step's time of day
-	// is always the source's.
+	// Calendar dates (YYYY-MM-DD), one per wait-until-date step of the source
+	// workflow, in the order a contact meets them. Each must be after today (UTC)
+	// and after the one before it. Required whenever the source workflow has dated
+	// steps: the source's own dates belong to another campaign. Each step's time
+	// of day is always the source's.
 	SendDates []string
 }
 

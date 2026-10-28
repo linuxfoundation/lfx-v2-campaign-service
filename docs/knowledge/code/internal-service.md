@@ -2621,3 +2621,10 @@ suppressions and portal. The audience then runs the same send-time checks stagin
 send list (an OR of IN_LIST branches, replacing the source's enrollment) and adds the audience's
 suppression lists to the source workflow's own. A brief with no built audience is refused rather
 than falling back to the source's enrollment, which would send to the SOURCE campaign's audience.
+The suppression and standing checks run in the clone's `BeforeCreate` hook, against the merged set
+the workflow will actually apply (the source workflow's own lists included). Each draft must be
+FULLY staged (`isReusableCampaign`) and its campaign result's `portalId` must equal the audience's
+portal. `send_dates` must be after today (`s.now()`, UTC) and strictly increasing, and are required
+for every dated step. `mapFlowCloneErr` maps `hubspot.ErrFlowStepCountMismatch` and
+`ErrFlowShapeUnsupported` to 409, and a 404 on the deployment's default workflow to a 409 naming
+`SURVEY_SEQUENCE_WORKFLOW_ID`.

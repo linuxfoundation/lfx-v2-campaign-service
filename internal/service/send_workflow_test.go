@@ -7,6 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // fakeFlowHubSpot records the one call this path makes to HubSpot, so a test can assert
@@ -33,6 +37,8 @@ type fakeFlowHubSpot struct {
 	portal    string
 	lists     map[string]*hubspot.List
 	listReads int
+	// sourceSuppressionID is the source workflow's own suppression list ("900" when unset).
+	sourceSuppressionID string
 }
 
 func (f *fakeFlowHubSpot) AuthenticatedPortalID(context.Context) (string, error) {
@@ -58,12 +64,19 @@ func (f *fakeFlowHubSpot) GetList(_ context.Context, id string) (*hubspot.List, 
 }
 
 func (f *fakeFlowHubSpot) CloneFlowWithEmails(_ context.Context, flowID string, opts hubspot.CloneFlowOptions) (*hubspot.FlowRef, error) {
-	f.calls++
 	f.flowID = flowID
 	f.opts = opts
 	if f.cloneErr != nil {
 		return nil, f.cloneErr
 	}
+	// The source workflow's own suppression list, as CloneFlowWithEmails would merge it.
+	suppression := append([]string{f.sourceSuppression()}, opts.SuppressionListIDs...)
+	if opts.BeforeCreate != nil {
+		if err := opts.BeforeCreate(suppression); err != nil {
+			return nil, err
+		}
+	}
+	f.calls++
 	return &hubspot.FlowRef{
 		FlowID:             "new-flow-1",
 		Name:               opts.Name,
@@ -74,8 +87,15 @@ func (f *fakeFlowHubSpot) CloneFlowWithEmails(_ context.Context, flowID string, 
 		SendEmailSteps:     len(opts.EmailIDs),
 		DatedSteps:         len(opts.SendDates),
 		EnrollmentListIDs:  opts.EnrollmentListIDs,
-		SuppressionListIDs: append([]string{"900"}, opts.SuppressionListIDs...),
+		SuppressionListIDs: suppression,
 	}, nil
+}
+
+func (f *fakeFlowHubSpot) sourceSuppression() string {
+	if f.sourceSuppressionID != "" {
+		return f.sourceSuppressionID
+	}
+	return "900"
 }
 
 type fakeFlowResolver struct {
@@ -97,6 +117,8 @@ func sendWorkflowHarness(t *testing.T) (*BriefService, *fakeCampaignRepo, *fakeF
 	camps := &fakeCampaignRepo{}
 	jobs := newFakeJobRepo()
 	s := NewBriefService(repo, camps, jobs, NewOrchestrator(camps, jobs, nil))
+	// Before every date the tests send, so the dates are in the future.
+	s.SetClock(func() time.Time { return time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC) })
 
 	hs := &fakeFlowHubSpot{portal: "8112310"}
 	// Every send built against the same audience: the ordinary, enrollable series.
@@ -120,13 +142,21 @@ func sendWorkflowHarness(t *testing.T) (*BriefService, *fakeCampaignRepo, *fakeF
 		}
 		camps.storeRow(&model.Campaign{
 			BriefID: b.id, Platform: model.ProviderHubSpot, Variant: model.VariantDefault,
-			PlatformCampaignID: b.emailID,
+			PlatformCampaignID: b.emailID, Status: model.CampaignStatusCreated,
+			Result: json.RawMessage(`{"id":"` + b.emailID + `","portalId":"8112310"}`),
 		})
 	}
 	return s, camps, hs
 }
 
+// sendWorkflowPayload builds a request. dates nil means one valid date per brief, since the fake
+// source has one dated step per send; pass []string{} to send none.
 func sendWorkflowPayload(briefIDs []string, dates []string) *briefs.CreateSendWorkflowPayload {
+	if dates == nil {
+		for i := range briefIDs {
+			dates = append(dates, fmt.Sprintf("2026-10-%02d", 9+i*5))
+		}
+	}
 	sourceURL := "https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit"
 	return &briefs.CreateSendWorkflowPayload{
 		ProjectID: "tlf",
@@ -216,18 +246,152 @@ func seriesAudiences(s *BriefService, hs *fakeFlowHubSpot, byBrief map[string]*m
 	s.SetWizardBackend(newFakeWizardSessionRepo(), fakeFlowResolver{client: hs}, &fakeSeriesAudienceRepo{byBrief: byBrief})
 }
 
-func TestCreateSendWorkflow_UsesTheConfiguredWorkflowWhenNoneIsNamed(t *testing.T) {
-	// The ordinary case. Making an operator paste a workflow URL to do the usual thing would be a
-	// step with no decision in it, so an absent source falls back to the deployment's own.
+func TestCreateSendWorkflow_ChoosesTheSourceWorkflow(t *testing.T) {
+	// The ordinary case names no source: making an operator paste a workflow URL to do the usual
+	// thing would be a step with no decision in it. The deployment's setting wins over the in-code
+	// default, and a URL on the request wins over both.
+	named := "https://app.hubspot.com/workflows/8112310/platform/flow/777/edit"
+	cases := []struct {
+		name, env string
+		url       *string
+		want      string
+	}{
+		{name: "nothing configured", env: "", want: defaultSurveySequenceWorkflowID},
+		{name: "blank setting", env: "  ", want: defaultSurveySequenceWorkflowID},
+		{name: "deployment setting", env: "555", want: "555"},
+		{name: "request URL", env: "555", url: &named, want: "777"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(constants.EnvSurveySequenceWorkflowID, tc.env)
+			s, _, hs := sendWorkflowHarness(t)
+			p := sendWorkflowPayload([]string{"b-promo", "b-reminder"}, nil)
+			p.Input.SourceWorkflowURL = tc.url
+
+			if _, err := s.CreateSendWorkflow(context.Background(), p); err != nil {
+				t.Fatalf("CreateSendWorkflow: %v", err)
+			}
+			if hs.flowID != tc.want {
+				t.Errorf("flow id = %q, want %q", hs.flowID, tc.want)
+			}
+		})
+	}
+}
+
+func TestCreateSendWorkflow_RefusesDatesThatWouldSendOutOfTurn(t *testing.T) {
+	// A wait-until-date step whose date has passed moves a contact straight on, so a past date
+	// sends two emails back to back, and a descending pair sends the closing push first.
+	cases := map[string][]string{
+		"today":         {"2026-10-01", "2026-10-09"},
+		"in the past":   {"2026-09-30", "2026-10-09"},
+		"out of order":  {"2026-10-19", "2026-10-09"},
+		"the same date": {"2026-10-09", "2026-10-09"},
+	}
+	for name, dates := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, _, hs := sendWorkflowHarness(t)
+			_, err := s.CreateSendWorkflow(context.Background(), sendWorkflowPayload([]string{"b-promo", "b-reminder"}, dates))
+			var bad *briefs.BadRequestError
+			if !errors.As(err, &bad) || !strings.Contains(bad.Message, "is not after") {
+				t.Fatalf("error = %T (%v), want a 400 naming the date", err, err)
+			}
+			if hs.calls != 0 {
+				t.Error("a workflow was created with dates that send out of turn")
+			}
+		})
+	}
+}
+
+func TestCreateSendWorkflow_RefusesADraftThatIsNotFullyStaged(t *testing.T) {
+	// A pending row can carry the draft's id while its content step never ran, so the draft still
+	// holds the TEMPLATE's copy; an unconfirmed one is the orchestrator's to reconcile.
+	for _, status := range []string{model.CampaignStatusPending, model.CampaignStatusUnconfirmed} {
+		t.Run(status, func(t *testing.T) {
+			s, camps, hs := sendWorkflowHarness(t)
+			row, err := camps.GetCampaignByPlatform(context.Background(), "tlf", "b-reminder", model.ProviderHubSpot, model.VariantDefault)
+			if err != nil {
+				t.Fatal(err)
+			}
+			row.Status = status
+
+			_, err = s.CreateSendWorkflow(context.Background(), sendWorkflowPayload([]string{"b-promo", "b-reminder"}, nil))
+			var conflict *briefs.ConflictError
+			if !errors.As(err, &conflict) || !strings.Contains(conflict.Message, "send 2") || !strings.Contains(conflict.Message, status) {
+				t.Fatalf("error = %T (%v), want a 409 naming send 2 and its status", err, err)
+			}
+			if hs.calls != 0 {
+				t.Error("a workflow was created around a draft that is not fully staged")
+			}
+		})
+	}
+}
+
+func TestCreateSendWorkflow_RefusesADraftStagedInAnotherPortal(t *testing.T) {
+	// The audience was rebuilt in the project's own portal after this draft was staged in the LF
+	// one: the audience's portal check passes, but the send step would name an email the new
+	// portal cannot see. A row that never recorded its portal is unproven, and refused the same.
+	for name, result := range map[string]string{
+		"another portal":     `{"portalId":"1"}`,
+		"no recorded portal": `{"id":"email-2"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, camps, hs := sendWorkflowHarness(t)
+			row, err := camps.GetCampaignByPlatform(context.Background(), "tlf", "b-reminder", model.ProviderHubSpot, model.VariantDefault)
+			if err != nil {
+				t.Fatal(err)
+			}
+			row.Result = json.RawMessage(result)
+
+			_, err = s.CreateSendWorkflow(context.Background(), sendWorkflowPayload([]string{"b-promo", "b-reminder"}, nil))
+			var conflict *briefs.ConflictError
+			if !errors.As(err, &conflict) || !strings.Contains(conflict.Message, "send 2") {
+				t.Fatalf("error = %T (%v), want a 409 naming send 2", err, err)
+			}
+			if hs.calls != 0 {
+				t.Error("a workflow was created around a draft from another portal")
+			}
+		})
+	}
+}
+
+func TestCreateSendWorkflow_RefusesASendListTheSourceWorkflowSuppresses(t *testing.T) {
+	// The check runs against the suppressions the workflow will ACTUALLY apply, which include the
+	// source workflow's own -- known only once the source is read.
 	s, _, hs := sendWorkflowHarness(t)
+	hs.sourceSuppressionID = "4477"
+
+	_, err := s.CreateSendWorkflow(context.Background(), sendWorkflowPayload([]string{"b-promo", "b-reminder"}, nil))
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) || !strings.Contains(conflict.Message, "source workflow suppresses") {
+		t.Fatalf("error = %T (%v), want a 409 naming the source's suppression", err, err)
+	}
+	if hs.calls != 0 {
+		t.Error("a workflow was created that would reach nobody on its own audience")
+	}
+}
+
+func TestCreateSendWorkflow_MissingDefaultWorkflowNamesTheSetting(t *testing.T) {
+	// The request named no source, so a 404 is the deployment's to fix, not the caller's.
+	t.Setenv(constants.EnvSurveySequenceWorkflowID, "")
+	s, _, hs := sendWorkflowHarness(t)
+	// A real client's 404, so the mapping is tested against the error HubSpot actually yields.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	real := hubspot.NewClient(hubspot.Credentials{PrivateAppToken: "t"}, hubspot.AccountConfig{PortalID: "8112310"}, hubspot.WithBaseURL(srv.URL))
+	_, notFound := real.GetFlow(context.Background(), defaultSurveySequenceWorkflowID)
+	if !hubspot.IsNotFound(notFound) {
+		t.Fatalf("precondition: want a HubSpot 404, got %v", notFound)
+	}
+	hs.cloneErr = notFound
 	p := sendWorkflowPayload([]string{"b-promo", "b-reminder"}, nil)
 	p.Input.SourceWorkflowURL = nil
 
-	if _, err := s.CreateSendWorkflow(context.Background(), p); err != nil {
-		t.Fatalf("CreateSendWorkflow: %v", err)
-	}
-	if hs.flowID != defaultSurveySequenceWorkflowID {
-		t.Errorf("flow id = %q, want the configured default %q", hs.flowID, defaultSurveySequenceWorkflowID)
+	_, err := s.CreateSendWorkflow(context.Background(), p)
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) || !strings.Contains(conflict.Message, constants.EnvSurveySequenceWorkflowID) {
+		t.Fatalf("error = %T (%v), want a 409 naming the deployment setting", err, err)
 	}
 }
 
@@ -514,7 +678,8 @@ func TestCreateSendWorkflow_ShapeMismatchIsAConflict(t *testing.T) {
 	// the workflow the operator chose. A 400 would tell them to fix their request, when the
 	// fix is to pick a workflow with one send step per email.
 	s, _, hs := sendWorkflowHarness(t)
-	hs.cloneErr = errors.New("hubspot: workflow 1841232183 has 2 send-email step(s) but 3 email(s) were built; point at a workflow with one send step per email")
+	hs.cloneErr = fmt.Errorf("%w: workflow 1841232183 has 2 send-email step(s) but 3 email(s) were built; point at a workflow with one send step per email",
+		hubspot.ErrFlowStepCountMismatch)
 
 	_, err := s.CreateSendWorkflow(context.Background(),
 		sendWorkflowPayload([]string{"b-promo", "b-reminder", "b-closing"}, nil))
@@ -528,20 +693,5 @@ func TestCreateSendWorkflow_ShapeMismatchIsAConflict(t *testing.T) {
 	// The counts are what make the message actionable, so they survive the mapping.
 	if !strings.Contains(conflict.Message, "2 send-email step(s) but 3 email(s)") {
 		t.Errorf("message = %q, want it to keep both counts", conflict.Message)
-	}
-}
-
-func TestCreateSendWorkflow_KeepsTheSourceDatesWhenNoneAreGiven(t *testing.T) {
-	// Omitting dates is how an operator says "the source workflow's schedule is already
-	// right". Sending an empty slice downstream would be the same request; sending today's
-	// date three times would not.
-	s, _, hs := sendWorkflowHarness(t)
-
-	if _, err := s.CreateSendWorkflow(context.Background(),
-		sendWorkflowPayload([]string{"b-promo", "b-reminder"}, nil)); err != nil {
-		t.Fatalf("CreateSendWorkflow: %v", err)
-	}
-	if len(hs.opts.SendDates) != 0 {
-		t.Errorf("send dates = %v, want none so the source's own dates stand", hs.opts.SendDates)
 	}
 }

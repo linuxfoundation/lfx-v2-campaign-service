@@ -207,15 +207,16 @@ const maxReferenceBlockRunes = 1800 // runes
 // maxPromptSize. eventFactsBlock explains why counting a scraped description as caller input would
 // reject legitimate briefs with a 400 that names the wrong field.
 const (
-	// maxEventFactsBlockRunes bounds the whole rendered block. It is a BACKSTOP: the per-field
-	// bounds below already sum under it, which TestEventFactsBlockHonoursItsBound measures rather
-	// than taking on faith from this comment.
+	// maxEventFactsBlockRunes bounds the whole rendered block. It is a BACKSTOP: on an event brief
+	// the per-field bounds below already sum under it, which TestEventFactsBlockHonoursItsBound
+	// measures rather than taking on faith from this comment. A survey brief's source document
+	// (maxFactSourceTextRunes) can meet it alongside event facts, so it is rendered first and the
+	// backstop cuts those facts, never the document -- TestEventFactsBlockKeepsTheSourceDocument.
 	maxEventFactsBlockRunes = 3600 // runes
 	// maxFactSourceTextRunes bounds the survey surface's source document. Generous relative to the
 	// other per-field bounds because it is the whole factual basis of a survey email, and sized
-	// under maxEventFactsBlockRunes so the block backstop is not what cuts it: a survey brief
-	// carries none of the event fields (no speakers, sponsors or venue), so this is effectively
-	// the block's whole budget on that surface.
+	// under maxEventFactsBlockRunes and rendered first so the block backstop is never what cuts
+	// it.
 	maxFactSourceTextRunes = 3000 // runes
 	// maxFactDescriptionRunes bounds the event's own description of itself -- the one genuinely long
 	// fact, and most of the reason this block exists. 900 runes is roughly 150 words: more than any
@@ -382,6 +383,12 @@ func (d emailCopyEventDetails) eventFactsBlock() string {
 			lines = append(lines, label+": "+value)
 		}
 	}
+	// FIRST, ahead of every event fact: on the survey surface this is the only factual source the
+	// copy may use, and it is the one value large enough to meet the block bound alongside a
+	// description. Rendered first, a backstop truncation cuts the event facts after it, never the
+	// document. Empty on every event brief, so their block is unchanged. Labelled as the source
+	// DOCUMENT, not as a fact about an event: the survey stage prompts refer to it by that name.
+	add("Source document", factText(d.SourceText, maxFactSourceTextRunes))
 	// URLs first, each through the same validator the registration URL goes through. The UI already
 	// verified that the event page literally links to each of these, but event_details is an opaque
 	// blob this service does not own, so it validates rather than trusts -- see factURL.
@@ -394,13 +401,9 @@ func (d emailCopyEventDetails) eventFactsBlock() string {
 	add("Topics", factText(joinFactList(d.topicList()), maxFactTextRunes))
 	add("Speakers", factText(joinFactList(d.Speakers), maxFactTextRunes))
 	add("Sponsors", factText(joinFactList(d.sponsorNames()), maxFactTextRunes))
-	// Last deliberately: the two unbounded-at-source values, and so the only ones the block-level
-	// backstop below could ever cut.
+	// Last deliberately: the unbounded-at-source value, and so on an event brief the only one the
+	// block-level backstop below could ever cut.
 	add("About this event", factText(d.Description, maxFactDescriptionRunes))
-	// Labelled as the source DOCUMENT, not as a fact about an event: on the survey surface this is
-	// the instrument or report the copy is written from, and the stage prompt refers to it by that
-	// name.
-	add("Source document", factText(d.SourceText, maxFactSourceTextRunes))
 	if len(lines) == 0 {
 		return ""
 	}

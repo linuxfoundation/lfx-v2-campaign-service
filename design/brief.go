@@ -220,19 +220,13 @@ var JobCreateResponse = Type("job-create-response", func() {
 	Required("job_id", "status", "platforms")
 })
 
-// PlatformResult is one platform's outcome within a terminal job result. It
-// mirrors exactly what the orchestrator emits so the OpenAPI can describe the
-// result array instead of an opaque Any.
-// ReconcileIdentifier is one identifying field of what a dispatch created, carried on a
-// PlatformResult when its claim was lost and the campaign row that would have recorded it was
-// never written. Only identifiers (ids, names, urns) are carried — never platform text or URLs.
 // SendWorkflowInput asks for ONE HubSpot workflow that sends an already-staged series.
 //
 // It carries brief ids rather than HubSpot email ids: which draft a brief produced is this
 // service's own record (the campaign row's platform id), and a client that had to look that
 // up could pair a brief with somebody else's email.
 var SendWorkflowInput = Type("send-workflow-input", func() {
-	Attribute("source_workflow_url", String, "The HubSpot workflow to copy the schedule, enrollment and suppression from. Its editor URL, or its bare numeric id. OPTIONAL: omitted, the deployment's configured survey-sequence workflow is used, which is the ordinary case. It is only ever READ.", func() {
+	Attribute("source_workflow_url", String, "The HubSpot workflow to copy: its steps, sending windows, blocked dates and suppression lists are kept, while its emails, dates and enrollment are replaced. Its editor URL, or its bare numeric id. OPTIONAL: omitted, the deployment's configured survey-sequence workflow is used, which is the ordinary case. It is only ever READ.", func() {
 		MinLength(1)
 		MaxLength(500)
 		Example("https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit")
@@ -249,7 +243,9 @@ var SendWorkflowInput = Type("send-workflow-input", func() {
 		MinLength(2)
 		MaxLength(10)
 	})
-	Attribute("send_dates", ArrayOf(String), "Calendar dates (YYYY-MM-DD) for the source workflow's wait-until-date steps, in flow order. Omit to keep the source's own dates. Each step's time of day is always the source's.", func() {
+	Attribute("send_dates", ArrayOf(String, func() {
+		Pattern(`^\d{4}-\d{2}-\d{2}$`)
+	}), "Calendar dates (YYYY-MM-DD), one per wait-until-date step of the source workflow, in the order a contact meets them. Each must be after today (UTC) and after the one before it. Required whenever the source workflow has dated steps: the source's own dates belong to another campaign. Each step's time of day is always the source's.", func() {
 		MaxLength(10)
 		Example([]string{"2026-10-09", "2026-10-19", "2026-10-23"})
 	})
@@ -274,6 +270,12 @@ var SendWorkflowResult = Type("send-workflow-result", func() {
 	Required("flow_id", "name", "edit_url", "source_flow_id", "is_enabled", "send_email_steps", "dated_steps", "enrollment_list_ids", "suppression_list_ids")
 })
 
+// PlatformResult is one platform's outcome within a terminal job result. It
+// mirrors exactly what the orchestrator emits so the OpenAPI can describe the
+// result array instead of an opaque Any.
+// ReconcileIdentifier is one identifying field of what a dispatch created, carried on a
+// PlatformResult when its claim was lost and the campaign row that would have recorded it was
+// never written. Only identifiers (ids, names, urns) are carried — never platform text or URLs.
 var ReconcileIdentifier = Type("reconcile-identifier", func() {
 	Attribute("key", String, "Field name in the platform's result, e.g. campaignGroupId, creativeAssetIds, imageUrns; a dotted path for one found in a nested object or list, e.g. abTestVariant.id, adGroups[0].adIds")
 	Attribute("values", ArrayOf(String), "The identifier(s): one element for a single id or name, several for a list such as creativeAssetIds. Absent when entries is set.")
@@ -2120,7 +2122,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("create-send-workflow", func() {
-		Description("Create ONE HubSpot workflow that sends an already-staged series of emails, and return it DISABLED. Each brief named in brief_ids must already have a staged HubSpot draft (its campaign row's platform id is the email the workflow will send) and must belong to a send surface; a paid brief is refused. The source workflow is only ever read: its definition is fetched, each of its send steps is pointed at this campaign's drafts in the order brief_ids gives, each wait-until-date step is optionally re-dated, and the result is created as a NEW workflow. 400 when the source URL names no workflow, when a brief has no staged draft yet, when a brief is on the paid surface, or when a date is not YYYY-MM-DD; 409 when the source workflow's send-step count does not equal the number of briefs, or its dated-step count does not equal the number of send_dates, since a partial mapping would leave a send pointing at the SOURCE campaign's email; 409 when a brief has no BUILT HubSpot audience, when the briefs were built against different audiences (a workflow enrolls ONE audience, so every brief must carry the same send lists, suppressions and portal), when that audience was built in a different HubSpot portal than this project's credential reaches, or when the project's standing standard suppression list now covers a list the series sends to (the same send-time check staging applies); 404 when a brief does not exist in this project. The workflow enrolls the series' audience in place of the source workflow's enrollment, and adds the audience's suppression lists to the source's own. The workflow is always created disabled -- enabling it is left to the human who reviews the drafts, and is the only irreversible step on this path.")
+		Description("Create ONE HubSpot workflow that sends an already-staged series of emails, and return it DISABLED. Each brief named in brief_ids must already have a fully staged HubSpot draft (its campaign row's platform id is the email the workflow will send) and must belong to a send surface; a paid brief is refused. The source workflow (source_workflow_url, else the deployment's SURVEY_SEQUENCE_WORKFLOW_ID, else the in-code default) is only ever read: its definition is fetched, its send steps -- walked from its start action, which must be one straight sequence -- are pointed at this campaign's drafts in the order brief_ids gives, each wait-until-date step is re-dated from send_dates, its enrollment is replaced by the series' audience, the audience's suppression lists are added to its own, and the result is created as a NEW workflow. 400 when the source URL names no workflow (or names one HubSpot refuses), when a brief has no staged draft yet, when a brief is on the paid surface or appears twice, when there are fewer than two briefs, or when a date is not YYYY-MM-DD, not after today or not after the date before it. 409 when the source workflow's send-step count does not equal the number of briefs or its dated-step count the number of send_dates, when it branches, has steps off its main path, does not enroll by list membership or still refers to its own emails elsewhere; when a draft is not fully staged or was staged in another portal; when a brief has no BUILT HubSpot audience, when the briefs were built against different audiences (a workflow enrolls ONE audience, so every brief must carry the same send lists, suppressions and portal), or that audience was built in a different HubSpot portal than this project's credential reaches; when a list the series sends to is also suppressed, or the project's standing standard suppression list now covers it (the same send-time check staging applies); when the project has no usable HubSpot connection, the credential lacks the automation scope, or the default workflow does not exist in the project's portal. 404 when a brief does not exist in this project. 500 when HubSpot's answer to the create could not be read, so a workflow may exist. 503 when the audience store or HubSpot is unavailable. The workflow is always created disabled -- enabling it is left to the human who reviews the drafts, and is the only irreversible step on this path.")
 		Payload(func() {
 			bearerToken()
 			// Slug-only, matching create-campaigns: project_id is the exact-match key for the

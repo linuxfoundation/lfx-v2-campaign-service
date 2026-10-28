@@ -47,7 +47,9 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
    `account-monitor` only, until LFXV2-2665) — because folding them together would rule
    `/accounts` for hubspot and `/emails` for google-ads, neither of which is served. `parity_test` fails if the
    RuleSet and the regex ever disagree, in either direction —
-   `briefs` [+ nested campaigns], `jobs`, `google-ads/keywords|audience|campaign-ref|geo-targets|user-lists`, `microsoft-ads/keywords|audience|campaign-ref` (LFXV2-2665), `(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience` and `reddit-ads/keywords` (LFXV2-2665), `(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref` (LFXV2-2665), `hubspot`, and the thirteen
+   `briefs` [+ nested campaigns], `jobs`, `google-ads/keywords|audience|campaign-ref|geo-targets|user-lists`, `microsoft-ads/keywords|audience|campaign-ref` (LFXV2-2665), `(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience` and `reddit-ads/keywords` (LFXV2-2665), `(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref` (LFXV2-2665), `hubspot`, the single-path siblings of `briefs` (`fetch-event-url`, and `send-workflows`
+   for a survey send series, each its own entry because `/briefs/**` does not cover a sibling),
+   and the thirteen
    `audience-builder/*` leaves). The audience-builder family (LFXV2-2770) is enumerated
    entry by entry rather than covered by an `audience-builder/**` wildcard: five of its
    leaves are two segments deep (`lists/search`, `qa/run`, `custom/interpret`,

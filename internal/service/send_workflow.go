@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -78,10 +79,12 @@ func (s *BriefService) CreateSendWorkflow(ctx context.Context, p *briefs.CreateS
 	// what a survey series is normally built from. Only a request that NAMES something unusable
 	// is refused, so a blank field falls back rather than failing.
 	flowID := defaultSurveySequenceWorkflowID
+	sourceNamed := false
 	if configured := strings.TrimSpace(os.Getenv(constants.EnvSurveySequenceWorkflowID)); configured != "" {
 		flowID = configured
 	}
 	if named := strings.TrimSpace(strVal(p.Input.SourceWorkflowURL)); named != "" {
+		sourceNamed = true
 		flowID = hubspot.ParseFlowID(named)
 		if flowID == "" {
 			return nil, &briefs.BadRequestError{
@@ -113,12 +116,12 @@ func (s *BriefService) CreateSendWorkflow(ctx context.Context, p *briefs.CreateS
 		}
 	}
 
-	sendDates, derr := parseSendDates(p.Input.SendDates)
+	sendDates, derr := parseSendDates(p.Input.SendDates, s.now())
 	if derr != nil {
 		return nil, derr
 	}
 
-	emailIDs, eerr := s.stagedEmailIDs(ctx, briefRepo, campaignRepo, p.ProjectID, p.Input.BriefIds)
+	drafts, eerr := s.stagedDrafts(ctx, briefRepo, campaignRepo, p.ProjectID, p.Input.BriefIds)
 	if eerr != nil {
 		return nil, eerr
 	}
@@ -126,6 +129,21 @@ func (s *BriefService) CreateSendWorkflow(ctx context.Context, p *briefs.CreateS
 	series, aerr := s.seriesAudience(ctx, p.ProjectID, p.Input.BriefIds)
 	if aerr != nil {
 		return nil, aerr
+	}
+	// The drafts and the audience must live in one portal: a brief staged against the LF portal
+	// whose audience was later rebuilt in the project's own would pass the audience's portal
+	// check below while its send step pointed at an email the new portal cannot see.
+	emailIDs := make([]string, 0, len(drafts))
+	for i, d := range drafts {
+		if d.portalID == "" || d.portalID != series.portalID {
+			return nil, &briefs.ConflictError{
+				Code: "409",
+				Message: fmt.Sprintf(
+					"send %d (brief %s)'s draft does not record being staged in HubSpot portal %s, where the series' audience was built; re-stage it",
+					i+1, p.Input.BriefIds[i], series.portalID),
+			}
+		}
+		emailIDs = append(emailIDs, d.emailID)
 	}
 
 	client, _, rerr := resolver.ResolveHubSpotClient(ctx, p.ProjectID)
@@ -138,29 +156,44 @@ func (s *BriefService) CreateSendWorkflow(ctx context.Context, p *briefs.CreateS
 
 	// The same send-time checks staging and the wizard run before SetSendList, because enrolling
 	// a list in a workflow IS the send for this path: the drafts' own recipient settings are not
-	// what a workflow's send step uses. First the audience's lists must live in the portal this
-	// credential reaches, then the project's standing suppression list must not have grown to
-	// cover what the series sends to (#396). Both are read-only and run before anything exists.
+	// what a workflow's send step uses. The audience's lists must live in the portal this
+	// credential reaches; then, against the suppressions the workflow will ACTUALLY apply (the
+	// source workflow's own plus the audience's, known only once the source is read), no send
+	// list may also be suppressed and the project's standing suppression list must not have grown
+	// to cover what the series sends to (#396). All read-only, and all before anything exists.
 	if perr := assertWizardPortal(ctx, client, series.portalID); perr != nil {
 		return nil, perr
 	}
-	if cerr := wizardStandingCoversSendList(ctx, client, p.ProjectID, series.sendIDs, series.suppression); cerr != nil {
-		return nil, cerr
+	beforeCreate := func(suppression []string) error {
+		for _, id := range suppression {
+			if slices.Contains(series.sendIDs, id) {
+				return &briefs.ConflictError{
+					Code:    "409",
+					Message: fmt.Sprintf("list %s is one the series sends to, but the source workflow suppresses it, so the workflow would reach nobody on it; choose another source workflow", id),
+				}
+			}
+		}
+		return wizardStandingCoversSendList(ctx, client, p.ProjectID, series.sendIDs, suppression)
 	}
 
 	// The LF-wide fallback is NOT refused here, unlike the wizard's email search. The search
 	// refuses it because HubSpot's email namespace is portal-wide and a match there can be
-	// another project's email. This path names no stranger's asset: every email id came from
-	// this project's own campaign rows, and the workflow it copies is one the operator pasted.
+	// another project's email. Here every email id and list id came from this project's own
+	// rows and is checked against the portal above. The SOURCE workflow is the one trust gap:
+	// it is the deployment's configured workflow or one a campaign manager pasted, and on the
+	// shared LF portal that can be any workflow in it. Only its schedule, time windows and
+	// suppression lists are inherited -- its emails, dates and enrollment are replaced, and a
+	// source still referring to its own emails anywhere else is refused.
 	ref, cerr := client.CloneFlowWithEmails(ctx, flowID, hubspot.CloneFlowOptions{
 		Name:               name,
 		EmailIDs:           emailIDs,
 		SendDates:          sendDates,
 		EnrollmentListIDs:  series.sendIDs,
 		SuppressionListIDs: series.suppression,
+		BeforeCreate:       beforeCreate,
 	})
 	if cerr != nil {
-		return nil, mapFlowCloneErr(cerr)
+		return nil, mapFlowCloneErr(cerr, flowID, sourceNamed)
 	}
 
 	return &briefs.SendWorkflowResult{
@@ -177,22 +210,22 @@ func (s *BriefService) CreateSendWorkflow(ctx context.Context, p *briefs.CreateS
 	}, nil
 }
 
-// stagedEmailIDs resolves each brief to the HubSpot draft its staging produced, IN THE ORDER
+// stagedDrafts resolves each brief to the HubSpot draft its staging produced, IN THE ORDER
 // the caller gave, which is the order the workflow will send them in.
 //
 // Resolved here rather than taken from the client because which draft a brief produced is this
 // service's own record: the campaign row's platform id. A client that had to look that up could
 // pair a brief with an email belonging to another campaign -- and a workflow is exactly where
 // that would not be noticed, since every step looks filled in.
-func (s *BriefService) stagedEmailIDs(
+func (s *BriefService) stagedDrafts(
 	ctx context.Context,
 	briefRepo domain.BriefRepository,
 	campaignRepo domain.CampaignRepository,
 	projectID string,
 	briefIDs []string,
-) ([]string, error) {
+) ([]stagedDraft, error) {
 	seen := make(map[string]struct{}, len(briefIDs))
-	emailIDs := make([]string, 0, len(briefIDs))
+	drafts := make([]stagedDraft, 0, len(briefIDs))
 
 	for i, briefID := range briefIDs {
 		position := i + 1
@@ -243,9 +276,40 @@ func (s *BriefService) stagedEmailIDs(
 					briefID, position),
 			}
 		}
-		emailIDs = append(emailIDs, emailID)
+		// Only a FINISHED staging. A pending row can carry the draft's id while its content step
+		// never ran -- it still holds the template email's copy -- and an unconfirmed or partial
+		// one is the orchestrator's to reconcile; isReusableCampaign is the same rule the create
+		// path uses to decide a row is safe to put in front of an audience.
+		if !isReusableCampaign(campaign) {
+			return nil, &briefs.ConflictError{
+				Code: "409",
+				Message: fmt.Sprintf(
+					"brief %s (send %d)'s draft is %s, not fully staged; finish or re-stage it before building the workflow",
+					briefID, position, campaign.Status),
+			}
+		}
+		drafts = append(drafts, stagedDraft{emailID: emailID, portalID: draftPortalID(campaign.Result)})
 	}
-	return emailIDs, nil
+	return drafts, nil
+}
+
+// stagedDraft is one staged HubSpot draft and the portal its staging verified it in.
+type stagedDraft struct {
+	emailID  string
+	portalID string
+}
+
+// draftPortalID is the portal HubSpot dispatch recorded in the campaign's result blob after
+// proving the audience's lists live there. Empty when the row predates that record or the blob
+// is unreadable, which the caller treats as unproven.
+func draftPortalID(result json.RawMessage) string {
+	var blob struct {
+		PortalID string `json:"portalId"`
+	}
+	if len(result) == 0 || json.Unmarshal(result, &blob) != nil {
+		return ""
+	}
+	return strings.TrimSpace(blob.PortalID)
 }
 
 // seriesAudienceSet is the one audience a workflow enrolls: the lists it sends to, the lists it
@@ -350,13 +414,16 @@ func sameIDSet(a, b []string) bool {
 
 // parseSendDates turns the request's calendar dates into times, preserving order.
 //
-// Rejects anything that is not exactly YYYY-MM-DD, including a date Go would otherwise
-// normalise: "2026-02-30" parses as 2 March, and silently moving an operator's send by two
-// days is worse than refusing the request.
-func parseSendDates(in []string) ([]time.Time, error) {
+// Rejects anything that is not exactly YYYY-MM-DD (time.Parse already refuses an impossible
+// date such as 2026-02-30; the round trip also refuses a non-padded one such as 2026-2-3). Each
+// date must be after today (UTC) and after the one before it: a wait-until-date step whose date
+// has passed moves an enrolled contact straight on, so a past or out-of-order date would send
+// two emails back to back, or the closing push before the reminder.
+func parseSendDates(in []string, now time.Time) ([]time.Time, error) {
 	if len(in) == 0 {
 		return nil, nil
 	}
+	today := now.UTC().Format(sendDateLayout)
 	out := make([]time.Time, 0, len(in))
 	for i, raw := range in {
 		s := strings.TrimSpace(raw)
@@ -367,6 +434,18 @@ func parseSendDates(in []string) ([]time.Time, error) {
 				Message: fmt.Sprintf("send_dates[%d] (%q) is not a calendar date in YYYY-MM-DD form", i, raw),
 			}
 		}
+		if s <= today {
+			return nil, &briefs.BadRequestError{
+				Code:    "400",
+				Message: fmt.Sprintf("send_dates[%d] (%s) is not after today (%s, UTC)", i, s, today),
+			}
+		}
+		if i > 0 && !t.After(out[i-1]) {
+			return nil, &briefs.BadRequestError{
+				Code:    "400",
+				Message: fmt.Sprintf("send_dates[%d] (%s) is not after send_dates[%d]; dates are in send order", i, s, i-1),
+			}
+		}
 		out = append(out, t)
 	}
 	return out, nil
@@ -374,26 +453,39 @@ func parseSendDates(in []string) ([]time.Time, error) {
 
 // mapFlowCloneErr turns a clone failure into the status that describes it.
 //
-// A count mismatch is a 409 rather than a 400: the request is well-formed and the briefs are
-// staged, and what conflicts is the SHAPE of the workflow the operator chose -- a different
-// workflow, or a different set of briefs, resolves it. The message already names both counts,
-// so it is passed through rather than replaced with a generic one.
-func mapFlowCloneErr(err error) error {
-	msg := err.Error()
+// A refusal from the caller's own BeforeCreate checks is already a contract error and passes
+// through. A step-count mismatch or an unsupported source shape is a 409 rather than a 400: the
+// request is well-formed and the briefs are staged, and what conflicts is the workflow the
+// operator chose -- a different workflow, or a different set of briefs, resolves it. Those
+// messages already name the counts or the shape, so they are passed through.
+func mapFlowCloneErr(err error, flowID string, sourceNamed bool) error {
+	var conflict *briefs.ConflictError
+	var unavailable *briefs.ConnServiceUnavailableError
+	if errors.As(err, &conflict) || errors.As(err, &unavailable) {
+		return err
+	}
+	msg := strings.TrimPrefix(err.Error(), "hubspot: ")
 	switch {
-	case strings.Contains(msg, "send-email step(s) but"), strings.Contains(msg, "wait-until-date step(s) but"):
-		return &briefs.ConflictError{Code: "409", Message: strings.TrimPrefix(msg, "hubspot: ")}
+	case errors.Is(err, hubspot.ErrFlowStepCountMismatch), errors.Is(err, hubspot.ErrFlowShapeUnsupported):
+		return &briefs.ConflictError{Code: "409", Message: msg}
 	case hubspot.IsUnconfirmed(err):
 		// The workflow MAY exist. Reported as a server error with that said plainly, because a
 		// client that retried would enroll the same contacts in a second workflow.
-		return &briefs.InternalServerError{Code: "500", Message: strings.TrimPrefix(msg, "hubspot: ")}
+		return &briefs.InternalServerError{Code: "500", Message: msg}
 	case hubspot.IsPermissionRejection(err):
 		return &briefs.ConflictError{
 			Code:    "409",
 			Message: "the HubSpot credential may not read or create workflows; it needs the automation scope",
 		}
+	case hubspot.IsNotFound(err) && !sourceNamed:
+		// The request named nothing; the deployment chose a workflow this portal does not have.
+		return &briefs.ConflictError{
+			Code: "409",
+			Message: fmt.Sprintf("the default survey workflow %s does not exist in this project's HubSpot portal; pass source_workflow_url, or set %s for this deployment",
+				flowID, constants.EnvSurveySequenceWorkflowID),
+		}
 	case hubspot.IsDefiniteRejection(err):
-		return &briefs.BadRequestError{Code: "400", Message: strings.TrimPrefix(msg, "hubspot: ")}
+		return &briefs.BadRequestError{Code: "400", Message: msg}
 	default:
 		return &briefs.ConnServiceUnavailableError{Code: "503", Message: "the workflow could not be created in HubSpot"}
 	}

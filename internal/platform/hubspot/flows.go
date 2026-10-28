@@ -6,10 +6,11 @@ package hubspot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -141,7 +142,23 @@ type CloneFlowOptions struct {
 	// contacts the staged drafts exclude. The source's lists are kept because they are the
 	// portal's own policy.
 	SuppressionListIDs []string
+	// BeforeCreate, when set, is called with the new workflow's whole suppression set (the
+	// source's own lists plus SuppressionListIDs) after every rewrite and before the create
+	// call. A non-nil error stops the clone with nothing created. It is how a caller runs its
+	// send-time checks against the suppressions the workflow will ACTUALLY apply, which include
+	// lists only the source definition names.
+	BeforeCreate func(suppressionListIDs []string) error
 }
+
+// ErrFlowStepCountMismatch is returned, wrapped, when the source workflow's send or
+// wait-until-date steps do not pair one-to-one with the emails or dates given. Nothing is
+// created. The message names both counts.
+var ErrFlowStepCountMismatch = errors.New("hubspot: workflow step count does not match")
+
+// ErrFlowShapeUnsupported is returned, wrapped, when the source workflow cannot be cloned
+// safely: it branches, has steps off its main path, enrolls by something other than list
+// membership, or would keep pointing at the source campaign's emails. Nothing is created.
+var ErrFlowShapeUnsupported = errors.New("hubspot: workflow shape is not supported for a send series")
 
 // CloneFlowWithEmails recreates a workflow with this campaign's emails in its send
 // steps, and returns the new, DISABLED workflow.
@@ -171,35 +188,46 @@ func (c *Client) CloneFlowWithEmails(ctx context.Context, flowID string, opts Cl
 
 	actions, ok := flow["actions"].([]any)
 	if !ok {
-		return nil, fmt.Errorf("hubspot: workflow %s has no actions to rewrite", flowID)
+		return nil, fmt.Errorf("%w: workflow %s has no actions to rewrite", ErrFlowShapeUnsupported, flowID)
+	}
+	path, perr := flowMainPath(flow, actions)
+	if perr != nil {
+		return nil, fmt.Errorf("%w: workflow %s: %v", ErrFlowShapeUnsupported, flowID, perr)
 	}
 
-	sendSteps := actionsOfType(actions, sendEmailActionTypeID)
+	sendSteps := actionsOfType(path, sendEmailActionTypeID)
 	if len(sendSteps) != len(opts.EmailIDs) {
 		return nil, fmt.Errorf(
-			"hubspot: workflow %s has %d send-email step(s) but %d email(s) were built; "+
+			"%w: workflow %s has %d send-email step(s) but %d email(s) were built; "+
 				"point at a workflow with one send step per email",
-			flowID, len(sendSteps), len(opts.EmailIDs))
+			ErrFlowStepCountMismatch, flowID, len(sendSteps), len(opts.EmailIDs))
 	}
+	// The source campaign's own email ids, read before they are overwritten, so the rewritten
+	// definition can be checked for any reference to them that survived.
+	sourceContentIDs := make([]string, 0, len(sendSteps))
 	for i, step := range sendSteps {
 		fields, ferr := actionFields(step)
 		if ferr != nil {
-			return nil, fmt.Errorf("hubspot: workflow %s send step %d: %w", flowID, i+1, ferr)
+			return nil, fmt.Errorf("%w: workflow %s send step %d: %v", ErrFlowShapeUnsupported, flowID, i+1, ferr)
+		}
+		if old := flowIDString(fields["content_id"]); old != "" {
+			sourceContentIDs = append(sourceContentIDs, old)
 		}
 		fields["content_id"] = opts.EmailIDs[i]
 	}
 
-	datedSteps := actionsOfType(actions, waitUntilDateActionTypeID)
-	if len(opts.SendDates) > 0 {
-		if len(datedSteps) != len(opts.SendDates) {
-			return nil, fmt.Errorf(
-				"hubspot: workflow %s has %d wait-until-date step(s) but %d send date(s) were given",
-				flowID, len(datedSteps), len(opts.SendDates))
-		}
-		for i, step := range datedSteps {
-			if derr := setStepDate(step, opts.SendDates[i]); derr != nil {
-				return nil, fmt.Errorf("hubspot: workflow %s dated step %d: %w", flowID, i+1, derr)
-			}
+	// Every dated step needs a date from the caller. Keeping the source's would schedule this
+	// series on ANOTHER campaign's calendar -- usually in the past, where HubSpot moves an
+	// enrolled contact straight on, so the whole series would go out back to back on enable.
+	datedSteps := actionsOfType(path, waitUntilDateActionTypeID)
+	if len(datedSteps) != len(opts.SendDates) {
+		return nil, fmt.Errorf(
+			"%w: workflow %s has %d wait-until-date step(s) but %d send date(s) were given; give one date per step",
+			ErrFlowStepCountMismatch, flowID, len(datedSteps), len(opts.SendDates))
+	}
+	for i, step := range datedSteps {
+		if derr := setStepDate(step, opts.SendDates[i]); derr != nil {
+			return nil, fmt.Errorf("%w: workflow %s dated step %d: %v", ErrFlowShapeUnsupported, flowID, i+1, derr)
 		}
 	}
 
@@ -207,7 +235,14 @@ func (c *Client) CloneFlowWithEmails(ctx context.Context, flowID string, opts Cl
 	if len(enrollIDs) > 0 {
 		enrollment, ok := flow["enrollmentCriteria"].(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("hubspot: workflow %s has no enrollment criteria to re-point", flowID)
+			return nil, fmt.Errorf("%w: workflow %s has no enrollment criteria to re-point", ErrFlowShapeUnsupported, flowID)
+		}
+		// Only a LIST_BASED workflow enrolls through listFilterBranch. On an event-based or
+		// manual one, rewriting that branch would leave the source's own triggers in charge --
+		// enrolling the source campaign's audience, the mistake this rewrite exists to prevent.
+		if t := stringField(enrollment, "type"); t != "LIST_BASED" {
+			return nil, fmt.Errorf("%w: workflow %s enrolls by %q, not by list membership (LIST_BASED)",
+				ErrFlowShapeUnsupported, flowID, t)
 		}
 		// REPLACES the list branch rather than merging into it. The source's own membership
 		// filters name the source campaign's audience, and keeping them alongside this one would
@@ -232,12 +267,15 @@ func (c *Client) CloneFlowWithEmails(ctx context.Context, flowID string, opts Cl
 			"filterBranchType":     "OR",
 			"filterBranchOperator": "OR",
 		}
+		// Re-enrollment triggers name the SOURCE's lists, and a series sends once per contact.
+		delete(enrollment, "reEnrollmentTriggersFilterBranches")
+		enrollment["shouldReEnroll"] = false
 		flow["enrollmentCriteria"] = enrollment
 	}
 
 	suppression, serr := mergeSuppressionListIDs(flow["suppressionListIds"], opts.SuppressionListIDs)
 	if serr != nil {
-		return nil, fmt.Errorf("hubspot: workflow %s: %w", flowID, serr)
+		return nil, fmt.Errorf("%w: workflow %s: %v", ErrFlowShapeUnsupported, flowID, serr)
 	}
 	if len(suppression) > 0 {
 		flow["suppressionListIds"] = suppression
@@ -263,9 +301,23 @@ func (c *Client) CloneFlowWithEmails(ctx context.Context, flowID string, opts Cl
 		}
 	}
 
-	raw, perr := c.doRequest(ctx, http.MethodPost, flowsPath, newFlow, false)
-	if perr != nil {
-		return nil, fmt.Errorf("hubspot: create workflow %q: %w", name, perr)
+	// Anything still naming the source campaign's emails -- a goal, a custom property, an
+	// action this service does not rewrite -- would decide who gets later sends by what they
+	// did with ANOTHER campaign's email, and would look correctly filled in.
+	if lerr := refuseLeftoverContentIDs(newFlow, sourceContentIDs, opts.EmailIDs); lerr != nil {
+		return nil, fmt.Errorf("%w: workflow %s: %v", ErrFlowShapeUnsupported, flowID, lerr)
+	}
+
+	suppressionIDs := flowIDStrings(suppression)
+	if opts.BeforeCreate != nil {
+		if berr := opts.BeforeCreate(suppressionIDs); berr != nil {
+			return nil, berr
+		}
+	}
+
+	raw, perr2 := c.doRequest(ctx, http.MethodPost, flowsPath, newFlow, false)
+	if perr2 != nil {
+		return nil, fmt.Errorf("hubspot: create workflow %q: %w", name, perr2)
 	}
 	var created struct {
 		ID        string `json:"id"`
@@ -290,8 +342,49 @@ func (c *Client) CloneFlowWithEmails(ctx context.Context, flowID string, opts Cl
 		SendEmailSteps:     len(sendSteps),
 		DatedSteps:         len(opts.SendDates),
 		EnrollmentListIDs:  enrollIDs,
-		SuppressionListIDs: flowIDStrings(suppression),
+		SuppressionListIDs: suppressionIDs,
 	}, nil
+}
+
+// refuseLeftoverContentIDs fails when the rewritten definition still carries one of the source's
+// email ids as a value anywhere, unless that id is also one of this series' own emails.
+func refuseLeftoverContentIDs(flow map[string]any, sourceIDs, ownIDs []string) error {
+	stale := make(map[string]struct{}, len(sourceIDs))
+	for _, id := range sourceIDs {
+		if !slices.Contains(ownIDs, id) {
+			stale[id] = struct{}{}
+		}
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+	var found string
+	var walk func(v any)
+	walk = func(v any) {
+		if found != "" {
+			return
+		}
+		switch t := v.(type) {
+		case map[string]any:
+			for _, child := range t {
+				walk(child)
+			}
+		case []any:
+			for _, child := range t {
+				walk(child)
+			}
+		case string, float64:
+			if _, hit := stale[flowIDString(t)]; hit {
+				found = flowIDString(t)
+			}
+		}
+	}
+	walk(flow)
+	if found != "" {
+		return fmt.Errorf("it still refers to the source campaign's email %s outside its send steps "+
+			"(a branch, goal or other step); point at a workflow whose only email references are its send steps", found)
+	}
+	return nil
 }
 
 // uniqueTrimmed is in with blanks and repeats dropped, order kept.
@@ -359,6 +452,8 @@ func flowIDString(v any) string {
 		return strconv.FormatInt(int64(t), 10)
 	case int64:
 		return strconv.FormatInt(t, 10)
+	case nil:
+		return ""
 	default:
 		return strings.TrimSpace(fmt.Sprint(t))
 	}
@@ -373,41 +468,76 @@ func flowIDStrings(in []any) []string {
 	return out
 }
 
-// actionsOfType returns the actions of one type in FLOW ORDER.
+// flowMainPath returns the workflow's actions in the order a contact meets them: from
+// startActionId, along each action's single STANDARD connection.
 //
-// Ordered by numeric action id, which is the order the editor creates steps in and so
-// the order they read down the canvas. Sorted NUMERICALLY rather than as strings, or
-// action 10 would sort between 1 and 2 and a workflow with ten or more steps would map
-// its emails to the wrong sends -- in an order that still looks plausible.
-func actionsOfType(actions []any, actionTypeID string) []map[string]any {
-	var out []map[string]any
+// Not by action id. A step inserted later gets the next free id, so an id sort puts it last
+// while it sits earlier on the canvas -- and the emails would be mapped to the wrong sends in an
+// order that still looks plausible. A branching workflow is refused: its send steps are not one
+// sequence, so there is no order to map a series onto. So is one with a send or dated step the
+// walk does not reach, which would otherwise keep the SOURCE campaign's email.
+func flowMainPath(flow map[string]any, actions []any) ([]map[string]any, error) {
+	byID := make(map[string]map[string]any, len(actions))
 	for _, a := range actions {
 		action, ok := a.(map[string]any)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("an action is not an object")
 		}
-		if stringField(action, "actionTypeId") != actionTypeID {
-			continue
-		}
-		out = append(out, action)
+		byID[flowIDString(action["actionId"])] = action
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		return actionIDOrder(out[i]) < actionIDOrder(out[j])
-	})
-	return out
+	next := flowIDString(flow["startActionId"])
+	if next == "" {
+		return nil, fmt.Errorf("it names no startActionId")
+	}
+	var path []map[string]any
+	seen := make(map[string]struct{}, len(actions))
+	for next != "" {
+		if _, loop := seen[next]; loop {
+			return nil, fmt.Errorf("action %s is reached twice", next)
+		}
+		seen[next] = struct{}{}
+		action, ok := byID[next]
+		if !ok {
+			return nil, fmt.Errorf("action %s is referenced but not defined", next)
+		}
+		for _, key := range []string{"staticBranches", "listBranches", "defaultBranch"} {
+			if _, branches := action[key]; branches {
+				return nil, fmt.Errorf("action %s branches; a send series must be one straight sequence", next)
+			}
+		}
+		path = append(path, action)
+		conn, _ := action["connection"].(map[string]any)
+		if conn == nil {
+			break
+		}
+		if et := stringField(conn, "edgeType"); et != "" && et != "STANDARD" {
+			return nil, fmt.Errorf("action %s continues by a %s edge, not a standard one", next, et)
+		}
+		next = flowIDString(conn["nextActionId"])
+	}
+	for _, typeID := range []string{sendEmailActionTypeID, waitUntilDateActionTypeID} {
+		total := 0
+		for _, a := range byID {
+			if stringField(a, "actionTypeId") == typeID {
+				total++
+			}
+		}
+		if reached := len(actionsOfType(path, typeID)); reached != total {
+			return nil, fmt.Errorf("%d of its %d %s step(s) are not on its main path", total-reached, total, typeID)
+		}
+	}
+	return path, nil
 }
 
-// actionIDOrder is an action's id as a number, for ordering.
-//
-// An id that is not numeric sorts last rather than failing the clone: ordering is a
-// property of the source workflow, and refusing an entire build over one odd id would
-// be worse than putting that step at the end, where a reviewer sees it.
-func actionIDOrder(action map[string]any) int64 {
-	n, err := strconv.ParseInt(strings.TrimSpace(stringField(action, "actionId")), 10, 64)
-	if err != nil {
-		return 1<<62 - 1
+// actionsOfType returns the actions of one type, in the order given.
+func actionsOfType(actions []map[string]any, actionTypeID string) []map[string]any {
+	var out []map[string]any
+	for _, action := range actions {
+		if stringField(action, "actionTypeId") == actionTypeID {
+			out = append(out, action)
+		}
 	}
-	return n
+	return out
 }
 
 // actionFields returns an action's mutable fields map.

@@ -50,6 +50,12 @@ diagnosed — whether a proxy and key are configured at all.
 exercised against a live ad account. Only exactly `"true"` enables them; the keyword-targeting
 read is not gated.
 
+`SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
+default `1841232183`: the LF Research survey-promo workflow a survey send series
+(`send-workflows`) is copied from when a request names none. That id exists only in the LF
+portal, so a deployment whose projects connect other portals should set its own; a request
+naming `source_workflow_url` overrides it either way.
+
 `REDDIT_METRICS_ENABLED` is likewise a plain (non-secret) value, defaulting to
 `"false"`. It is a feature gate rather than a credential: the Reddit reporting
 contract this service implements follows Reddit's official public OpenAPI document

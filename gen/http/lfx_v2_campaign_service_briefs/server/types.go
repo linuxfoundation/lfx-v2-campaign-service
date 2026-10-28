@@ -5269,19 +5269,22 @@ type CampaignCreateInputRequestBody struct {
 
 // SendWorkflowInputRequestBody is used to define fields on request body types.
 type SendWorkflowInputRequestBody struct {
-	// The HubSpot workflow to copy the schedule, enrollment and suppression from.
-	// Its editor URL, or its bare numeric id. OPTIONAL: omitted, the deployment's
-	// configured survey-sequence workflow is used, which is the ordinary case. It
-	// is only ever READ.
+	// The HubSpot workflow to copy: its steps, sending windows, blocked dates and
+	// suppression lists are kept, while its emails, dates and enrollment are
+	// replaced. Its editor URL, or its bare numeric id. OPTIONAL: omitted, the
+	// deployment's configured survey-sequence workflow is used, which is the
+	// ordinary case. It is only ever READ.
 	SourceWorkflowURL *string `form:"source_workflow_url,omitempty" json:"source_workflow_url,omitempty" xml:"source_workflow_url,omitempty"`
 	// Name for the new workflow
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 	// The briefs whose staged drafts this workflow sends, in SEND ORDER. One per
 	// send step in the source workflow.
 	BriefIds []string `form:"brief_ids,omitempty" json:"brief_ids,omitempty" xml:"brief_ids,omitempty"`
-	// Calendar dates (YYYY-MM-DD) for the source workflow's wait-until-date steps,
-	// in flow order. Omit to keep the source's own dates. Each step's time of day
-	// is always the source's.
+	// Calendar dates (YYYY-MM-DD), one per wait-until-date step of the source
+	// workflow, in the order a contact meets them. Each must be after today (UTC)
+	// and after the one before it. Required whenever the source workflow has dated
+	// steps: the source's own dates belong to another campaign. Each step's time
+	// of day is always the source's.
 	SendDates []string `form:"send_dates,omitempty" json:"send_dates,omitempty" xml:"send_dates,omitempty"`
 }
 
@@ -10692,6 +10695,9 @@ func ValidateSendWorkflowInputRequestBody(body *SendWorkflowInputRequestBody) (e
 	if len(body.SendDates) > 10 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.send_dates", body.SendDates, len(body.SendDates), 10, false))
 	}
+	for _, e := range body.SendDates {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.send_dates[*]", e, "^\\d{4}-\\d{2}-\\d{2}$"))
+	}
 	return
 }
 
@@ -10728,6 +10734,9 @@ func validateSendWorkflowInputRequestBody(body *SendWorkflowInputRequestBody, pa
 	}
 	if len(body.SendDates) > 10 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".send_dates", body.SendDates, len(body.SendDates), 10, false))
+	}
+	for _, e := range body.SendDates {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".send_dates[*]", e, "^\\d{4}-\\d{2}-\\d{2}$"))
 	}
 	return
 }

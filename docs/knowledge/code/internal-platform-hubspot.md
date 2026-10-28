@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/hubspot"
-description: "HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def + marketing-campaign operations, and marketing-email statistics reads — a UTC calendar range selects which emails are in scope BY SEND DATE and the counters returned are that email's totals to date, behind fail-closed guards for untrustworthy bytes (identityjson), a dishonoured filter, an unrecognized or partially renamed counter vocabulary, a negative or explicitly null counter, and an empty match set (no SENT email with that id in the span — a send outside it, a draft, and a nonexistent id are indistinguishable). Also reads list MEMBERSHIPS (paged, with truncation reported rather than swallowed), the legacy v1 NAME of a list v3 can no longer see, and the lists a prior marketing email actually targeted. The same statistics read also serves the email account monitor over an explicit send-date span."
+description: "HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def + marketing-campaign operations, and marketing-email statistics reads — a UTC calendar range selects which emails are in scope BY SEND DATE and the counters returned are that email's totals to date, behind fail-closed guards for untrustworthy bytes (identityjson), a dishonoured filter, an unrecognized or partially renamed counter vocabulary, a negative or explicitly null counter, and an empty match set (no SENT email with that id in the span — a send outside it, a draft, and a nonexistent id are indistinguishable). Also reads list MEMBERSHIPS (paged, with truncation reported rather than swallowed), the legacy v1 NAME of a list v3 can no longer see, and the lists a prior marketing email actually targeted. The same statistics read also serves the email account monitor over an explicit send-date span. It also clones an Automation v4 workflow into a disabled send series (CloneFlowWithEmails): read-only on the source, steps walked from its start action, emails, dates and enrollment replaced, suppressions merged, and a branching or unrecognised source refused before anything is created."
 resource: "internal/platform/hubspot"
 tags:
   - platform-client
@@ -753,3 +753,32 @@ only part of an error body that leaves this client (see "Typed body-free errors"
 `EventTypeProperties` pages `/events/v3/event-definitions?includeProperties=true` (50 per page) and
 returns the properties of the definition whose `objectTypeId` matches, or `(nil, nil)` when none
 does.
+
+## Workflows (Automation v4 flows) — `flows.go`
+
+`CloneFlowWithEmails` turns a source workflow into a NEW, always-disabled workflow that sends one
+survey series. The v4 Flows API has no clone endpoint, so it is read-then-recreate: `GetFlow`
+reads the definition as an opaque map (a struct would drop fields it does not declare), the
+rewrite happens in memory, and the result is POSTed field by field without the source's
+server-owned fields. The source is never PATCHed.
+
+- **Order is the canvas, not the id.** `flowMainPath` walks from `startActionId` along each
+  action's single STANDARD `connection`. A step inserted later has the highest id while running
+  earlier, so an id sort would map emails to the wrong sends. A branching action, a non-STANDARD
+  edge, a loop, or a send (`0-4`) or wait-until-date (`0-35`) step the walk does not reach is
+  `ErrFlowShapeUnsupported`.
+- **Counts pair exactly** (`ErrFlowStepCountMismatch`): one email per send step and one date per
+  dated step. The source's own dates are never kept — they belong to another campaign and are
+  usually past, where HubSpot moves a contact straight on. Only the date is replaced; each step's
+  `time_of_day` stays the source's.
+- **Enrollment is replaced** when list ids are given, as an OR of one IN_LIST branch per list, and
+  only on a `LIST_BASED` source (an event-based one would keep its own triggers). Re-enrollment
+  triggers are dropped and `shouldReEnroll` forced false.
+- **Suppressions are merged**, never replaced: the source's `suppressionListIds` are portal policy
+  and the caller's are appended once each, in the source's element type (numbers stay numbers).
+- **No leftover references.** After the rewrite, any remaining value equal to one of the source's
+  original email ids (a goal, a branch, another step) is `ErrFlowShapeUnsupported`.
+- **`BeforeCreate`** receives the merged suppression set just before the POST, so the caller can
+  run its send-time checks against what the workflow will actually apply.
+- A 2xx create with no readable id is UNCONFIRMED: a workflow may exist, and a blind retry would
+  enrol the same contacts twice.

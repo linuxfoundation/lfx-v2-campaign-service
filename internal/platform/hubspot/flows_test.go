@@ -6,8 +6,10 @@ package hubspot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -29,15 +31,20 @@ func TestParseFlowID(t *testing.T) {
 	}
 }
 
-// sourceFlow is a workflow shaped like one an operator would point at: three sends,
-// each gated by its own wait-until-date, plus a step this service knows nothing about.
+// sourceFlow is a workflow shaped like one an operator would point at: three sends, each
+// gated by its own wait-until-date, plus a step this service knows nothing about.
 //
-// The action ids are deliberately NOT in ascending textual order and cross ten, which
-// is what catches a string sort: "10" sorts before "2", so a lexical ordering would map
-// the second email to the third send while still producing a complete-looking workflow.
+// The canvas order (startActionId, then each step's connection) is deliberately NOT the
+// action-id order: step 20 was inserted at the top after the rest were built, so it has the
+// highest id while running first. An id sort would put it last and map every email and date to
+// the wrong step while still producing a complete-looking workflow.
 func sourceFlow() map[string]any {
-	action := func(id, typeID string, fields map[string]any) map[string]any {
-		return map[string]any{"actionId": id, "actionTypeId": typeID, "fields": fields}
+	action := func(id, typeID, next string, fields map[string]any) map[string]any {
+		a := map[string]any{"actionId": id, "actionTypeId": typeID, "fields": fields}
+		if next != "" {
+			a["connection"] = map[string]any{"edgeType": "STANDARD", "nextActionId": next}
+		}
+		return a
 	}
 	dateField := func(ms string) map[string]any {
 		return map[string]any{
@@ -46,75 +53,112 @@ func sourceFlow() map[string]any {
 		}
 	}
 	return map[string]any{
-		"id":                 "1841232183",
-		"name":               "26Q2 - LF Research - Survey Promo",
-		"flowType":           "WORKFLOW",
-		"isEnabled":          true,
-		"revisionId":         "7",
-		"enrollmentCriteria": map[string]any{"shouldReEnroll": false},
+		"id":            "1841232183",
+		"name":          "26Q2 - LF Research - Survey Promo",
+		"flowType":      "WORKFLOW",
+		"isEnabled":     true,
+		"revisionId":    "7",
+		"startActionId": "20",
+		"enrollmentCriteria": map[string]any{
+			"type":                               "LIST_BASED",
+			"shouldReEnroll":                     true,
+			"reEnrollmentTriggersFilterBranches": []any{map[string]any{"listId": "555"}},
+			"listFilterBranch":                   map[string]any{"filters": []any{map[string]any{"listId": "555"}}},
+		},
 		"suppressionListIds": []any{"900"},
 		"actions": []any{
-			action("2", sendEmailActionTypeID, map[string]any{"content_id": "old-invite"}),
-			action("4", waitUntilDateActionTypeID, dateField("1000")),
-			action("10", sendEmailActionTypeID, map[string]any{"content_id": "old-deadline"}),
-			action("9", waitUntilDateActionTypeID, dateField("3000")),
-			action("8", sendEmailActionTypeID, map[string]any{"content_id": "old-reminder"}),
-			action("13", waitUntilDateActionTypeID, dateField("2000")),
-			action("15", "0-1", map[string]any{"unknown": "preserved"}),
+			action("2", sendEmailActionTypeID, "9", map[string]any{"content_id": "old-invite"}),
+			action("20", waitUntilDateActionTypeID, "2", dateField("1000")),
+			action("10", sendEmailActionTypeID, "15", map[string]any{"content_id": "old-deadline"}),
+			action("9", waitUntilDateActionTypeID, "8", dateField("3000")),
+			action("8", sendEmailActionTypeID, "13", map[string]any{"content_id": "old-reminder"}),
+			action("13", waitUntilDateActionTypeID, "10", dateField("2000")),
+			action("15", "0-1", "", map[string]any{"unknown": "preserved"}),
 		},
 	}
 }
 
-// flowServer serves the source flow and captures what a create POSTs.
-func flowServer(t *testing.T, created map[string]any) (*Client, *map[string]any, *[]string) {
+// threeDates is one date per dated step in sourceFlow.
+func threeDates() []time.Time {
+	return []time.Time{
+		time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC),
+	}
+}
+
+// capturedFlow is what flowServer's handler saw. httptest runs each handler in its own
+// goroutine, so every read goes through the mutex.
+type capturedFlow struct {
+	mu      sync.Mutex
+	posted  map[string]any
+	methods []string
+}
+
+func (c *capturedFlow) Posted() map[string]any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.posted
+}
+
+func (c *capturedFlow) Methods() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.methods...)
+}
+
+// flowServer serves source (sourceFlow when nil) and captures what a create POSTs.
+func flowServer(t *testing.T, created map[string]any, source ...map[string]any) (*Client, *capturedFlow) {
 	t.Helper()
-	var posted map[string]any
-	var methods []string
+	got := &capturedFlow{}
+	flow := sourceFlow()
+	if len(source) > 0 {
+		flow = source[0]
+	}
 
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		methods = append(methods, r.Method+" "+r.URL.Path)
+		got.mu.Lock()
+		defer got.mu.Unlock()
+		got.methods = append(got.methods, r.Method+" "+r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, flowsPath+"/"):
-			_ = json.NewEncoder(w).Encode(sourceFlow())
+			_ = json.NewEncoder(w).Encode(flow)
 		case r.Method == http.MethodPost && r.URL.Path == flowsPath:
-			_ = json.NewDecoder(r.Body).Decode(&posted)
+			_ = json.NewDecoder(r.Body).Decode(&got.posted)
 			_ = json.NewEncoder(w).Encode(created)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	})
-	return c, &posted, &methods
+	return c, got
 }
 
-func TestCloneFlowWithEmails_MapsEmailsAndDatesInFlowOrder(t *testing.T) {
-	c, posted, methods := flowServer(t, map[string]any{"id": "99", "name": "Survey 2026", "isEnabled": false})
+func TestCloneFlowWithEmails_MapsEmailsAndDatesInCanvasOrder(t *testing.T) {
+	c, got := flowServer(t, map[string]any{"id": "99", "name": "Survey 2026", "isEnabled": false})
 
+	dates := threeDates()
+	dates[1] = time.Date(2026, 11, 19, 23, 45, 0, 0, time.UTC)
 	ref, err := c.CloneFlowWithEmails(context.Background(), "1841232183", CloneFlowOptions{
-		Name:     "Survey 2026",
-		EmailIDs: []string{"e-invite", "e-reminder", "e-deadline"},
-		SendDates: []time.Time{
-			time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC),
-			time.Date(2026, 10, 19, 23, 45, 0, 0, time.UTC),
-			time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC),
-		},
+		Name:      "Survey 2026",
+		EmailIDs:  []string{"e-invite", "e-reminder", "e-deadline"},
+		SendDates: dates,
 	})
 	if err != nil {
 		t.Fatalf("CloneFlowWithEmails: %v", err)
 	}
 
-	// Send steps 2, 8, 10 take the emails in that order. A lexical sort would put 10
-	// second and hand the reminder's email to the closing send.
+	// The canvas runs 20 -> 2 -> 9 -> 8 -> 13 -> 10 -> 15. Send steps 2, 8, 10 take the emails in
+	// that order and dated steps 20, 9, 13 the dates, as midnight-UTC epoch millis. Step 9's input
+	// carries a time of day, which must NOT reach the stored date.
 	wantContent := map[string]string{"2": "e-invite", "8": "e-reminder", "10": "e-deadline"}
-	// Dated steps 4, 9, 13 take the dates in that order, as midnight-UTC epoch millis.
-	// Step 9's input carries a time of day, which must NOT reach the stored date.
 	wantDates := map[string]string{
-		"4":  "1791504000000",
-		"9":  "1792368000000",
-		"13": "1792713600000",
+		"20": "1794182400000",
+		"9":  "1795046400000",
+		"13": "1795392000000",
 	}
 
-	for _, raw := range (*posted)["actions"].([]any) {
+	for _, raw := range got.Posted()["actions"].([]any) {
 		a := raw.(map[string]any)
 		id := a["actionId"].(string)
 		fields := a["fields"].(map[string]any)
@@ -146,7 +190,7 @@ func TestCloneFlowWithEmails_MapsEmailsAndDatesInFlowOrder(t *testing.T) {
 
 	// The source is only ever READ. Any write to /flows/{id} would mean this edited the
 	// operator's live workflow instead of creating a new one.
-	for _, m := range *methods {
+	for _, m := range got.Methods() {
 		if m != "GET "+flowsPath+"/1841232183" && m != "POST "+flowsPath {
 			t.Errorf("unexpected request %q: the source workflow must only be read", m)
 		}
@@ -156,18 +200,19 @@ func TestCloneFlowWithEmails_MapsEmailsAndDatesInFlowOrder(t *testing.T) {
 func TestCloneFlowWithEmails_EnrollsThisCampaignsAudience(t *testing.T) {
 	// Left alone, the clone would send this campaign's emails to the SOURCE campaign's audience.
 	// That is invisible in the editor, where the enrollment step looks correctly filled in.
-	c, posted, _ := flowServer(t, map[string]any{"id": "99"})
+	c, got := flowServer(t, map[string]any{"id": "99"})
 
 	ref, err := c.CloneFlowWithEmails(context.Background(), "1841232183", CloneFlowOptions{
 		Name:              "Survey 2026",
 		EmailIDs:          []string{"a", "b", "c"},
+		SendDates:         threeDates(),
 		EnrollmentListIDs: []string{"list-77", "list-78", "list-77"},
 	})
 	if err != nil {
 		t.Fatalf("CloneFlowWithEmails: %v", err)
 	}
 
-	enrollment := (*posted)["enrollmentCriteria"].(map[string]any)
+	enrollment := got.Posted()["enrollmentCriteria"].(map[string]any)
 	branch := enrollment["listFilterBranch"].(map[string]any)
 	if branch["filterBranchType"] != "OR" {
 		t.Errorf("outer branch = %v, want OR so a contact in any list is enrolled", branch["filterBranchType"])
@@ -188,6 +233,13 @@ func TestCloneFlowWithEmails_EnrollsThisCampaignsAudience(t *testing.T) {
 			t.Errorf("branch %d filter = %v, want an IN_LIST on %s", i, filter, want)
 		}
 	}
+	// Re-enrollment triggers name the SOURCE's lists; a series sends once per contact.
+	if _, kept := enrollment["reEnrollmentTriggersFilterBranches"]; kept {
+		t.Error("the source's re-enrollment triggers were kept")
+	}
+	if enrollment["shouldReEnroll"] != false {
+		t.Errorf("shouldReEnroll = %v, want false", enrollment["shouldReEnroll"])
+	}
 	if got := strings.Join(ref.EnrollmentListIDs, ","); got != "list-77,list-78" {
 		t.Errorf("EnrollmentListIDs = %q, want them reported so the operator can see who is enrolled", got)
 	}
@@ -195,23 +247,48 @@ func TestCloneFlowWithEmails_EnrollsThisCampaignsAudience(t *testing.T) {
 
 func TestCloneFlowWithEmails_AddsTheAudiencesSuppressionsToTheSources(t *testing.T) {
 	// A workflow's send step does not apply the suppression lists recorded on the draft, so the
-	// audience's must reach the workflow -- beside the source's own, which are portal policy.
-	c, posted, _ := flowServer(t, map[string]any{"id": "99"})
+	// audience's must reach the workflow -- beside the source's own, which are portal policy. The
+	// BeforeCreate hook sees exactly that merged set, before anything is created.
+	c, got := flowServer(t, map[string]any{"id": "99"})
 
+	var seen []string
 	ref, err := c.CloneFlowWithEmails(context.Background(), "1841232183", CloneFlowOptions{
 		Name:               "Survey 2026",
 		EmailIDs:           []string{"a", "b", "c"},
+		SendDates:          threeDates(),
 		SuppressionListIDs: []string{"9002", "900", " "},
+		BeforeCreate: func(ids []string) error {
+			seen = ids
+			return nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("CloneFlowWithEmails: %v", err)
 	}
-	got := (*posted)["suppressionListIds"].([]any)
-	if len(got) != 2 || got[0] != "900" || got[1] != "9002" {
-		t.Errorf("suppressionListIds = %v, want the source's 900 kept and 9002 added once", got)
+	posted := got.Posted()["suppressionListIds"].([]any)
+	if len(posted) != 2 || posted[0] != "900" || posted[1] != "9002" {
+		t.Errorf("suppressionListIds = %v, want the source's 900 kept and 9002 added once", posted)
 	}
-	if strings.Join(ref.SuppressionListIDs, ",") != "900,9002" {
-		t.Errorf("SuppressionListIDs = %v, want the whole set reported", ref.SuppressionListIDs)
+	if strings.Join(ref.SuppressionListIDs, ",") != "900,9002" || strings.Join(seen, ",") != "900,9002" {
+		t.Errorf("reported %v / hook saw %v, want the whole set [900 9002]", ref.SuppressionListIDs, seen)
+	}
+}
+
+func TestCloneFlowWithEmails_BeforeCreateRefusalCreatesNothing(t *testing.T) {
+	c, got := flowServer(t, map[string]any{"id": "99"})
+	refusal := errors.New("the standing list covers a send list")
+
+	_, err := c.CloneFlowWithEmails(context.Background(), "1841232183", CloneFlowOptions{
+		Name:         "Survey 2026",
+		EmailIDs:     []string{"a", "b", "c"},
+		SendDates:    threeDates(),
+		BeforeCreate: func([]string) error { return refusal },
+	})
+	if !errors.Is(err, refusal) {
+		t.Fatalf("error = %v, want the hook's refusal passed through", err)
+	}
+	if got.Posted() != nil {
+		t.Error("a workflow was created although the caller's check refused it")
 	}
 }
 
@@ -236,21 +313,19 @@ func TestMergeSuppressionListIDs_FollowsTheSourcesElementType(t *testing.T) {
 func TestCloneFlowWithEmails_KeepsTheSourceEnrollmentWhenNoListIsGiven(t *testing.T) {
 	// No list means the caller asked for the source's own criteria. Writing an empty filter
 	// instead would enroll everyone or no one.
-	c, posted, _ := flowServer(t, map[string]any{"id": "99"})
+	c, got := flowServer(t, map[string]any{"id": "99"})
 
 	ref, err := c.CloneFlowWithEmails(context.Background(), "1841232183", CloneFlowOptions{
-		Name:     "Survey 2026",
-		EmailIDs: []string{"a", "b", "c"},
+		Name:      "Survey 2026",
+		EmailIDs:  []string{"a", "b", "c"},
+		SendDates: threeDates(),
 	})
 	if err != nil {
 		t.Fatalf("CloneFlowWithEmails: %v", err)
 	}
-	enrollment := (*posted)["enrollmentCriteria"].(map[string]any)
-	if _, rewritten := enrollment["listFilterBranch"]; rewritten {
-		t.Error("the source's enrollment was rewritten although no audience was given")
-	}
-	if enrollment["shouldReEnroll"] != false {
-		t.Errorf("the source's own enrollment fields were not preserved: %v", enrollment)
+	enrollment := got.Posted()["enrollmentCriteria"].(map[string]any)
+	if lfb := enrollment["listFilterBranch"].(map[string]any); lfb["filters"].([]any)[0].(map[string]any)["listId"] != "555" {
+		t.Errorf("the source's enrollment was rewritten although no audience was given: %v", lfb)
 	}
 	if len(ref.EnrollmentListIDs) != 0 {
 		t.Errorf("EnrollmentListIDs = %v, want none to say the source's audience was kept", ref.EnrollmentListIDs)
@@ -261,17 +336,18 @@ func TestCloneFlowWithEmails_IsAlwaysCreatedDisabled(t *testing.T) {
 	// The source is enabled, and HubSpot is made to answer with isEnabled true, which is
 	// the shape that would matter most: a clone that inherited "on" would start enrolling
 	// contacts and sending live email from drafts nobody has reviewed.
-	c, posted, _ := flowServer(t, map[string]any{"id": "99", "isEnabled": true})
+	c, got := flowServer(t, map[string]any{"id": "99", "isEnabled": true})
 
 	ref, err := c.CloneFlowWithEmails(context.Background(), "1841232183", CloneFlowOptions{
-		Name:     "Survey 2026",
-		EmailIDs: []string{"a", "b", "c"},
+		Name:      "Survey 2026",
+		EmailIDs:  []string{"a", "b", "c"},
+		SendDates: threeDates(),
 	})
 	if err != nil {
 		t.Fatalf("CloneFlowWithEmails: %v", err)
 	}
-	if enabled, ok := (*posted)["isEnabled"].(bool); !ok || enabled {
-		t.Errorf("posted isEnabled = %v, want false", (*posted)["isEnabled"])
+	if enabled, ok := got.Posted()["isEnabled"].(bool); !ok || enabled {
+		t.Errorf("posted isEnabled = %v, want false", got.Posted()["isEnabled"])
 	}
 	// Reported, not assumed: the caller is told what HubSpot said, so a portal that
 	// ignored the flag is visible rather than papered over.
@@ -280,46 +356,92 @@ func TestCloneFlowWithEmails_IsAlwaysCreatedDisabled(t *testing.T) {
 	}
 }
 
-func TestCloneFlowWithEmails_RefusesACountMismatchBeforeCreating(t *testing.T) {
+func TestCloneFlowWithEmails_RefusesBeforeCreating(t *testing.T) {
+	branching := sourceFlow()
+	branching["actions"].([]any)[6].(map[string]any)["staticBranches"] = []any{}
+	offPath := sourceFlow()
+	offPath["actions"] = append(offPath["actions"].([]any),
+		map[string]any{"actionId": "30", "actionTypeId": sendEmailActionTypeID, "fields": map[string]any{"content_id": "old-orphan"}})
+	eventBased := sourceFlow()
+	eventBased["enrollmentCriteria"].(map[string]any)["type"] = "EVENT_BASED"
+	goalOnSource := sourceFlow()
+	goalOnSource["goalFilterBranch"] = map[string]any{"filters": []any{map[string]any{"emailId": "old-reminder"}}}
+	noStart := sourceFlow()
+	delete(noStart, "startActionId")
+
 	cases := []struct {
-		name string
-		opts CloneFlowOptions
-		want string
+		name   string
+		source map[string]any
+		opts   CloneFlowOptions
+		is     error
+		want   string
 	}{
 		{
 			name: "fewer emails than send steps",
-			opts: CloneFlowOptions{Name: "n", EmailIDs: []string{"a", "b"}},
-			want: "3 send-email step(s) but 2 email(s)",
+			opts: CloneFlowOptions{Name: "n", EmailIDs: []string{"a", "b"}, SendDates: threeDates()},
+			is:   ErrFlowStepCountMismatch, want: "3 send-email step(s) but 2 email(s)",
 		},
 		{
 			name: "fewer dates than dated steps",
-			opts: CloneFlowOptions{
-				Name:      "n",
-				EmailIDs:  []string{"a", "b", "c"},
-				SendDates: []time.Time{time.Now()},
-			},
-			want: "3 wait-until-date step(s) but 1 send date(s)",
+			opts: CloneFlowOptions{Name: "n", EmailIDs: []string{"a", "b", "c"}, SendDates: threeDates()[:1]},
+			is:   ErrFlowStepCountMismatch, want: "3 wait-until-date step(s) but 1 send date(s)",
+		},
+		{
+			// The source's own dates belong to another campaign and are usually past, where the
+			// whole series would go out back to back the moment it is enabled.
+			name: "no dates for a dated workflow",
+			opts: CloneFlowOptions{Name: "n", EmailIDs: []string{"a", "b", "c"}},
+			is:   ErrFlowStepCountMismatch, want: "3 wait-until-date step(s) but 0 send date(s)",
+		},
+		{
+			name: "a branching workflow", source: branching,
+			opts: CloneFlowOptions{Name: "n", EmailIDs: []string{"a", "b", "c"}, SendDates: threeDates()},
+			is:   ErrFlowShapeUnsupported, want: "branches",
+		},
+		{
+			name: "a send step off the main path", source: offPath,
+			opts: CloneFlowOptions{Name: "n", EmailIDs: []string{"a", "b", "c"}, SendDates: threeDates()},
+			is:   ErrFlowShapeUnsupported, want: "not on its main path",
+		},
+		{
+			name: "no start action", source: noStart,
+			opts: CloneFlowOptions{Name: "n", EmailIDs: []string{"a", "b", "c"}, SendDates: threeDates()},
+			is:   ErrFlowShapeUnsupported, want: "startActionId",
+		},
+		{
+			name: "an event-based enrollment", source: eventBased,
+			opts: CloneFlowOptions{Name: "n", EmailIDs: []string{"a", "b", "c"}, SendDates: threeDates(), EnrollmentListIDs: []string{"77"}},
+			is:   ErrFlowShapeUnsupported, want: `"EVENT_BASED"`,
+		},
+		{
+			name: "a goal naming a source email", source: goalOnSource,
+			opts: CloneFlowOptions{Name: "n", EmailIDs: []string{"a", "b", "c"}, SendDates: threeDates()},
+			is:   ErrFlowShapeUnsupported, want: "old-reminder",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c, posted, methods := flowServer(t, map[string]any{"id": "99"})
+			var source []map[string]any
+			if tc.source != nil {
+				source = append(source, tc.source)
+			}
+			c, got := flowServer(t, map[string]any{"id": "99"}, source...)
 			_, err := c.CloneFlowWithEmails(context.Background(), "1841232183", tc.opts)
-			if err == nil {
-				t.Fatal("expected a refusal")
+			if !errors.Is(err, tc.is) {
+				t.Fatalf("error = %v, want %v", err, tc.is)
 			}
 			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("error = %v, want it to name the mismatch (%q)", err, tc.want)
+				t.Errorf("error = %v, want it to name the problem (%q)", err, tc.want)
 			}
 			// Refused BEFORE the create: a partially-mapped workflow whose remaining send
 			// still points at the source campaign's email is worse than no workflow, and
 			// reads as a filled-in step rather than a missing one.
-			if *posted != nil {
-				t.Error("a workflow was created despite the mismatch")
+			if got.Posted() != nil {
+				t.Error("a workflow was created despite the refusal")
 			}
-			for _, m := range *methods {
+			for _, m := range got.Methods() {
 				if strings.HasPrefix(m, http.MethodPost) {
-					t.Errorf("unexpected %q before the counts were checked", m)
+					t.Errorf("unexpected %q before the shape was checked", m)
 				}
 			}
 		})
@@ -330,30 +452,31 @@ func TestCloneFlowWithEmails_KeepsFieldsItDoesNotUnderstand(t *testing.T) {
 	// A flow definition carries far more than this service models. Anything dropped here
 	// is silently deleted from the operator's cloned workflow, so the fields that are
 	// carried over are pinned, and the server-owned ones are pinned as NOT carried.
-	c, posted, _ := flowServer(t, map[string]any{"id": "99"})
+	c, got := flowServer(t, map[string]any{"id": "99"})
 
 	if _, err := c.CloneFlowWithEmails(context.Background(), "1841232183", CloneFlowOptions{
-		Name:     "Survey 2026",
-		EmailIDs: []string{"a", "b", "c"},
+		Name:      "Survey 2026",
+		EmailIDs:  []string{"a", "b", "c"},
+		SendDates: threeDates(),
 	}); err != nil {
 		t.Fatalf("CloneFlowWithEmails: %v", err)
 	}
-
-	for _, key := range []string{"flowType", "enrollmentCriteria", "suppressionListIds"} {
-		if _, ok := (*posted)[key]; !ok {
+	posted := got.Posted()
+	for _, key := range []string{"flowType", "enrollmentCriteria", "suppressionListIds", "startActionId"} {
+		if _, ok := posted[key]; !ok {
 			t.Errorf("%q was dropped from the clone", key)
 		}
 	}
 	// id and revisionId belong to the SOURCE. Posting them would at best be ignored and
 	// at worst be read as a claim about the new flow.
 	for _, key := range []string{"id", "revisionId"} {
-		if _, ok := (*posted)[key]; ok {
+		if _, ok := posted[key]; ok {
 			t.Errorf("%q was copied onto the new flow", key)
 		}
 	}
 	// The step this service has no opinion about survives untouched.
 	var found bool
-	for _, raw := range (*posted)["actions"].([]any) {
+	for _, raw := range posted["actions"].([]any) {
 		if a := raw.(map[string]any); a["actionId"] == "15" {
 			found = true
 			if a["fields"].(map[string]any)["unknown"] != "preserved" {
@@ -369,11 +492,12 @@ func TestCloneFlowWithEmails_KeepsFieldsItDoesNotUnderstand(t *testing.T) {
 func TestCloneFlowWithEmails_UnreadableCreateIsUnconfirmed(t *testing.T) {
 	// A 2xx whose id cannot be read means the workflow MAY exist. Reported as
 	// unconfirmed so a caller does not blind-retry and enroll the same contacts twice.
-	c, _, _ := flowServer(t, map[string]any{"name": "no id here"})
+	c, _ := flowServer(t, map[string]any{"name": "no id here"})
 
 	_, err := c.CloneFlowWithEmails(context.Background(), "1841232183", CloneFlowOptions{
-		Name:     "Survey 2026",
-		EmailIDs: []string{"a", "b", "c"},
+		Name:      "Survey 2026",
+		EmailIDs:  []string{"a", "b", "c"},
+		SendDates: threeDates(),
 	})
 	if err == nil {
 		t.Fatal("expected an error")
