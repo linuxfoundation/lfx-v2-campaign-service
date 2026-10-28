@@ -92,6 +92,9 @@ func TestReddit_DispatchStampsProvenanceEndToEnd(t *testing.T) {
 	}
 
 	successAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "cmp_123"}})
@@ -105,6 +108,9 @@ func TestReddit_DispatchStampsProvenanceEndToEnd(t *testing.T) {
 
 	// A 5xx on the campaign POST makes the client return a name-only partial plus an error.
 	ambiguousAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		if r.Method == http.MethodGet {
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{}})
 			return
@@ -523,6 +529,9 @@ func TestHubSpot_FallbackBuildAndDispatchAgreeOnThePortal(t *testing.T) {
 	// One server per portal, each reporting its own hub id from token-info.
 	portalSrv := func(hub string) *httptest.Server {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if answerStandingListReads(w, r) {
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			switch {
 			case r.URL.Path == hubSpotTokenInfoPath:

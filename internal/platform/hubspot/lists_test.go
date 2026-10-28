@@ -412,3 +412,23 @@ func TestListEventDefinitions_StuckCursorErrors(t *testing.T) {
 		t.Errorf("stuck-cursor guard should stop after ~2 calls, got %d", n)
 	}
 }
+
+// SearchListsAnyType answers "is this name taken" across object types: it sends no
+// objectTypeId and keeps a non-contact hit, with its type, instead of dropping it.
+func TestSearchListsAnyType_KeepsNonContactLists(t *testing.T) {
+	var body map[string]any
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body = decodeBody(t, r)
+		_, _ = io.WriteString(w, `{"lists":[{"listId":"1","name":"Taken","objectTypeId":"0-2"},{"listId":"2","name":"Taken too","objectTypeId":"0-1"}]}`)
+	})
+	got, err := c.SearchListsAnyType(context.Background(), "Taken")
+	if err != nil {
+		t.Fatalf("SearchListsAnyType: %v", err)
+	}
+	if _, sent := body["objectTypeId"]; sent {
+		t.Errorf("an any-type search must not constrain objectTypeId, sent %v", body["objectTypeId"])
+	}
+	if len(got) != 2 || got[0].ObjectTypeID != "0-2" {
+		t.Fatalf("the non-contact hit must be kept with its type, got %+v", got)
+	}
+}

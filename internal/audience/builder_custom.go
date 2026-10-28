@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // ---------------------------------------------------------------------------
@@ -568,7 +569,7 @@ func customBaseBranches(c CustomCriteria) []filterBranch {
 			Filters:          []filter{{FilterType: "PAGE_VIEW", Operator: "HAS_PAGEVIEW_CONTAINS", PageURL: u, EnableTracking: &noTracking}},
 		})
 	}
-	if names := cleanValues(c.RegisteredFor); len(names) > 0 {
+	if names := exactValues(c.RegisteredFor); len(names) > 0 {
 		b := filterBranch{
 			FilterBranchType: "AND",
 			FilterBranches:   []filterBranch{eventWith(registrationEventTypeID, valueFilter("event_name", "IS_EQUAL_TO", names, false))},
@@ -704,6 +705,37 @@ func cleanValues(values []string) []string {
 	return out
 }
 
+// exactValues is cleanValues for EXACT filter values (registered_for's event_name equality):
+// blanks and exact repeats dropped, every other value kept verbatim (not even its ends trimmed). cleanValues collapses
+// internal whitespace and de-duplicates case-insensitively, which is right for CONTAINS values
+// but would rewrite a warehouse edition spelled with a double space into one that matches nobody.
+func exactValues(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		// Trimmed only to recognise a blank: a non-blank value is kept VERBATIM, padding
+		// included, because the warehouse's past editions are exact event_name values and a
+		// padded one ("  KubeCon Korea 2025  ") matches only as spelled.
+		if strings.TrimSpace(v) == "" {
+			continue
+		}
+		if _, dup := seen[v]; dup {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+// MaxListNameLength is the longest name HubSpot's list search accepts, measured
+// against the live portal: at 201 characters the taken-name check fails, so no
+// longer name can be previewed or created.
+const MaxListNameLength = 200
+
+// maxNamedPlaces is how many places a generated name spells out before "and N more".
+const maxNamedPlaces = 3
+
 // CustomListName is the name a custom list is created under.
 //
 // Speaker-only lists follow the speaker naming ("<Event> Speakers - Current");
@@ -725,7 +757,12 @@ func CustomListName(c CustomCriteria, now time.Time) string {
 			return QuarterCode(now) + " - " + label + " - Web Visitors"
 		}
 	}
-	location := strings.Join(append(cleanValues(c.Cities), cleanValues(c.Countries)...), " and ")
+	places := append(cleanValues(c.Cities), cleanValues(c.Countries)...)
+	location := strings.Join(places, " and ")
+	if len(places) > maxNamedPlaces {
+		// Every spelling of a metro area pushes the name past MaxListNameLength.
+		location = fmt.Sprintf("%s and %d more", strings.Join(places[:maxNamedPlaces], ", "), len(places)-maxNamedPlaces)
+	}
 	parts := []string{QuarterCode(now)}
 	if location != "" {
 		parts = append(parts, location)
@@ -759,15 +796,29 @@ func speakerScopeLabel(s SpeakerScope) string {
 // VersionedName is the n-th version of a name that is already taken: "(v2)",
 // "(v3)" and so on. A taken name is never overwritten — matching a name does not
 // prove the existing list is the same audience. The base is cut so the result
-// stays within CustomNameMaxLen.
+// stays within MaxListNameLength (= CustomNameMaxLen).
 func VersionedName(name string, n int) string {
 	suffix := fmt.Sprintf(" (v%d)", n)
-	return cutName(strings.TrimSpace(name), CustomNameMaxLen-len(suffix)) + suffix
+	return cutName(strings.TrimSpace(name), MaxListNameLength-len(suffix)) + suffix
 }
 
 // CustomNameMaxLen is the custom input's name MaxLength (design/audience_builder.go),
-// counted in runes as the generated validator counts it.
-const CustomNameMaxLen = 250
+// counted in runes as the generated validator counts it. It is MaxListNameLength: a longer name
+// cannot be searched in HubSpot, so the taken-name check could never see it.
+const CustomNameMaxLen = MaxListNameLength
+
+// CheckCustomListName refuses an explicit custom list name longer than CustomNameMaxLen runes
+// (after its whitespace is collapsed, as the list will be named), as a FieldError naming the
+// field and the limit. The Goa design enforces the same MaxLength on the HTTP path; this covers
+// every other caller, and runs before any HubSpot call. An empty name is the derived one.
+func CheckCustomListName(name string) error {
+	n := utf8.RuneCountInString(strings.Join(strings.Fields(name), " "))
+	if n <= CustomNameMaxLen {
+		return nil
+	}
+	return &FieldError{Field: "name", Reason: fmt.Sprintf(
+		"is %d characters; a HubSpot list name can be at most %d (a longer one cannot be searched); choose a shorter name", n, CustomNameMaxLen)}
+}
 
 // CustomLabelMaxLen is the criteria label's MaxLength (design/audience_builder.go).
 const CustomLabelMaxLen = 200
@@ -776,9 +827,10 @@ const CustomLabelMaxLen = 200
 // event page title is one preview accepts unchanged.
 func FitLabel(label string) string { return cutName(strings.TrimSpace(label), CustomLabelMaxLen) }
 
-// FitListName cuts a list name to CustomNameMaxLen runes, so a name preview returns
-// is one create accepts back unchanged.
-func FitListName(name string) string { return cutName(name, CustomNameMaxLen) }
+// FitListName cuts a DERIVED list name to MaxListNameLength runes, so a name preview returns
+// is one create accepts back unchanged and HubSpot's list search can still find. An explicit,
+// operator-typed name is never cut: CheckCustomListName refuses one that is too long.
+func FitListName(name string) string { return cutName(name, MaxListNameLength) }
 
 // cutName cuts name to at most limit runes on a rune boundary, without a
 // trailing space.

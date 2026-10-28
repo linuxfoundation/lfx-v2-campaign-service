@@ -376,12 +376,23 @@ func audienceFromInput(projectID, briefID string, in *audiences.AudienceInput) *
 // later PATCH (which would be refused anyway). And nothing here is caller-supplied except
 // the summary: a client cannot nominate a master list id, a suppression id or a portal it
 // did not just compose.
-func audienceFromCompose(projectID, briefID string, outcome *audience.ComposeOutcome, inclusionSummary string) *model.CampaignAudience {
-	suppression := []string{}
+// composedSuppressionIDs are the lists a compose or attach outcome excludes, in the one order
+// both record and return them: the standing standard list first (when used), then every other
+// excluded list, the current-registrants list last. Never nil.
+//
+// De-duplicated in first-seen order: an operator can select the standing list's own id beside
+// the full standard set, which leaves it both as the outcome's Suppression and among the
+// attached ids, and recording it twice would forward it to HubSpot twice.
+func composedSuppressionIDs(outcome *audience.ComposeOutcome) []string {
+	ids := make([]string, 0, 1+len(outcome.AttachedSuppressionIDs))
 	if outcome.Suppression != nil {
-		suppression = append(suppression, outcome.Suppression.ListID)
+		ids = append(ids, outcome.Suppression.ListID)
 	}
-	suppression = append(suppression, outcome.AttachedSuppressionIDs...)
+	return audience.UniqueIDs(append(ids, outcome.AttachedSuppressionIDs...))
+}
+
+func audienceFromCompose(projectID, briefID string, outcome *audience.ComposeOutcome, inclusionSummary string) *model.CampaignAudience {
+	suppression := composedSuppressionIDs(outcome)
 	summary := inclusionSummary
 	if summary == "" {
 		summary = composedInclusionSummary(outcome)
@@ -410,16 +421,28 @@ func composedInclusionSummary(outcome *audience.ComposeOutcome) string {
 		if n := len(outcome.SourceListIDs); n > 1 {
 			summary = fmt.Sprintf("Reused %d existing lists (first: %s)", n, outcome.Master.Name)
 		}
-		if n := len(outcome.AttachedSuppressionIDs); n > 0 {
-			summary += fmt.Sprintf(" with %d suppression list(s)", n)
-		}
-		return summary
+		return summary + suppressionSummary(outcome)
 	}
-	summary := fmt.Sprintf("Composed from %d source list(s)", len(outcome.SourceListIDs))
+	return fmt.Sprintf("Composed from %d source list(s)", len(outcome.SourceListIDs)) + suppressionSummary(outcome)
+}
+
+// suppressionSummary describes the suppressions an outcome records, or "" when none.
+func suppressionSummary(outcome *audience.ComposeOutcome) string {
+	// Distinct exclusions only, the standing list counted once (composedSuppressionIDs puts it
+	// first when used).
+	n := len(composedSuppressionIDs(outcome))
 	if outcome.Suppression != nil {
-		summary += " with a combined suppression list"
+		n--
 	}
-	return summary
+	switch {
+	case outcome.Suppression != nil && n > 0:
+		return fmt.Sprintf(" with the standard suppression list and %d more suppression list(s)", n)
+	case outcome.Suppression != nil:
+		return " with the standard suppression list"
+	case n > 0:
+		return fmt.Sprintf(" with %d suppression list(s)", n)
+	}
+	return ""
 }
 
 // audienceResult maps the domain model to the API response view (ETag mirrors version).
