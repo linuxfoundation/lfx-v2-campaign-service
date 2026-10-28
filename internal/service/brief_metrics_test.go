@@ -1004,3 +1004,32 @@ func TestGetBriefMetrics_ConversionsSurfaceOnTheRow(t *testing.T) {
 			"cannot distinguish absent from a measured zero", *got.Conversions)
 	}
 }
+
+// The brief-wide route maps CampaignMetrics a second time, separately from the campaign-scoped
+// one, so it gets its own pass-through check: a row must carry conversion_value and roas as
+// the adapter reported them, and a withheld roas must stay absent beside a measured value.
+func TestGetBriefMetrics_RowCarriesConversionValueAndRoas(t *testing.T) {
+	spent := campaignOn("c1", model.ProviderGoogleAds)
+	idle := campaignOn("c2", model.ProviderGoogleAds)
+	value, roas, zero := 60.0, 2.4, 0.0
+	disp := newPerCampaignDispatcher()
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 100, Clicks: 10, CostMicros: 25_000_000, Ctr: 0.1, ConversionValue: &value, Roas: &roas}
+	disp.results["c2"] = &model.CampaignMetrics{ConversionValue: &zero}
+
+	s := newBriefMetricsService(t, disp, spent, idle)
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+	if m := rowByCampaign(t, res, "c1").Metrics; m == nil || m.ConversionValue == nil || *m.ConversionValue != 60 ||
+		m.Roas == nil || *m.Roas != 2.4 {
+		t.Errorf("spending row metrics = %+v, want conversion_value 60 and roas 2.4", m)
+	}
+	m := rowByCampaign(t, res, "c2").Metrics
+	if m == nil || m.ConversionValue == nil || *m.ConversionValue != 0 {
+		t.Fatalf("idle row metrics = %+v, want a measured zero conversion_value", m)
+	}
+	if m.Roas != nil {
+		t.Errorf("idle row roas = %v, want absent: a return on zero spend is undefined, not %v", *m.Roas, *m.Roas)
+	}
+}

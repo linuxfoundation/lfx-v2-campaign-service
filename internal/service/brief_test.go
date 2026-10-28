@@ -5855,3 +5855,49 @@ func TestBriefService_GetJob_ReconcileTruncatedIsPolled(t *testing.T) {
 		t.Errorf("reconcile = %+v, want the one stored identifier", pr.Reconcile)
 	}
 }
+
+// conversion_value and roas are carried through the campaign-scoped route as the adapter's
+// POINTERS. The case that matters most is a zero-spend window, where the adapter withholds
+// roas while still reporting a MEASURED zero value: the response must keep those two states
+// apart rather than flattening the absent roas into a 0 that reads as "earned nothing".
+func TestBriefService_GetCampaignMetrics_ConversionValueAndRoasPassThrough(t *testing.T) {
+	row := func(t *testing.T, value, roas *float64) *briefs.CampaignMetrics {
+		t.Helper()
+		camp := &model.Campaign{
+			ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+			PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+		}
+		disp := &metricsOnlyDispatcher{metrics: &model.CampaignMetrics{
+			CampaignID: "ga-1", Window: model.MetricsWindowLast30Days,
+			Impressions: 100, Clicks: 10, CostMicros: 25_000_000, Ctr: 0.1,
+			ConversionValue: value, Roas: roas,
+		}}
+		res, err := newMetricsService(camp, disp).GetCampaignMetrics(context.Background(),
+			&briefs.GetCampaignMetricsPayload{ProjectID: "cncf", BriefID: "b1", CampaignID: "c1"})
+		if err != nil {
+			t.Fatalf("GetCampaignMetrics: %v", err)
+		}
+		return res
+	}
+
+	value, roas := 60.0, 2.4
+	if got := row(t, &value, &roas); got.ConversionValue == nil || *got.ConversionValue != 60 ||
+		got.Roas == nil || *got.Roas != 2.4 {
+		t.Errorf("conversion_value=%v roas=%v, want 60 and 2.4 carried through unchanged",
+			got.ConversionValue, got.Roas)
+	}
+
+	zero := 0.0
+	got := row(t, &zero, nil)
+	if got.ConversionValue == nil || *got.ConversionValue != 0 {
+		t.Errorf("conversion_value = %v, want a MEASURED 0, not an absence", got.ConversionValue)
+	}
+	if got.Roas != nil {
+		t.Errorf("roas = %v for a withheld return; an undefined ratio became a measurement", *got.Roas)
+	}
+
+	if got := row(t, nil, nil); got.ConversionValue != nil || got.Roas != nil {
+		t.Errorf("conversion_value=%v roas=%v for a platform that reports neither, want both absent",
+			got.ConversionValue, got.Roas)
+	}
+}

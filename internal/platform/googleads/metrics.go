@@ -102,6 +102,37 @@ type CampaignMetrics struct {
 	// metrics.conversions is always selected, and proto3 JSON omits default values, so an
 	// absent member is a measured 0.0 and is reported as a non-nil zero.
 	Conversions *float64 `json:"conversions,omitempty"`
+	// ConversionValue is metrics.conversions_value: the summed value of those conversions, in
+	// WHOLE units of the account's currency — not micros, and deliberately not converted to
+	// them. The field reference types it DOUBLE and Google reports it in currency units, so
+	// scaling it here would invent a precision the upstream number does not have and would
+	// need its own overflow guard to do it. The asymmetry with CostMicros is real and is why
+	// Roas below exists: no caller should have to reconcile the two units itself.
+	//
+	// A POINTER on the same contract as Conversions: nil means no complete measurement. This
+	// adapter never leaves it nil — conversions_value is always selected, and proto3 JSON
+	// omits default values, so an absent member is a measured 0.0.
+	ConversionValue *float64 `json:"conversionValue,omitempty"`
+	// Roas is ConversionValue divided by cost in the same currency — conversions_value over
+	// cost_micros/1e6 — and is nil whenever that division would not be a measurement.
+	//
+	// The contract (model.CampaignMetrics.Roas, and the `roas` attribute in design/brief.go)
+	// names three cases that reach nil, because the alternative in each is a fabricated
+	// figure. An unmeasured numerator cannot arise in THIS adapter, which always populates
+	// ConversionValue, so the guard here is on cost alone. CostMicros == 0 is a window with
+	// no spend, where the ratio is either 0/0 or a division by zero: a campaign that earned
+	// value without spending has an undefined return on ad spend, not an infinite one, and
+	// reporting 0 there would say the opposite of what happened. CostMicros < 0 is upstream
+	// corruption (parseMetricInt accepts a leading minus), and dividing by it would report a
+	// negative return as if it were real.
+	//
+	// A ratio, not a percentage — 2.4 is 240% — on the same scale as the TargetROAS this
+	// package sends in bidding.go, so a read can be compared against the target directly.
+	//
+	// Derived HERE rather than left to each consumer, for the reason the repo keeps relearning
+	// on keys: two call sites dividing the same pair of fields will eventually disagree about
+	// the zero-cost case, and the disagreement surfaces as a dashboard number nobody can trace.
+	Roas *float64 `json:"roas,omitempty"`
 }
 
 // gaqlMetricsRow is the shape of one googleAds:search result row for the
@@ -127,6 +158,19 @@ type gaqlMetricsRow struct {
 		//
 		// The pointer distinguishes an omitted field from a present 0.0.
 		Conversions *float64 `json:"conversions"`
+		// ConversionsValue is metrics.conversions_value and is a bare JSON number for the same
+		// reason Conversions is: the field reference declares it DOUBLE, so REST does not
+		// string-encode it. Named for the GAQL column it decodes rather than for the domain
+		// field it feeds, because this struct's only job is to match the wire.
+		//
+		// UNVERIFIED ASSUMPTION (flag before relying on this in production, same convention
+		// as the segments.date aggregation note on GetCampaignMetrics): the REST member name
+		// is the lowerCamelCase of the GAQL column, i.e. conversions_value -> conversionsValue,
+		// as cost_micros -> costMicros already is two fields above. If that is wrong the field
+		// never decodes, and because an absent member is deliberately read as a MEASURED 0.0,
+		// the failure is silent — every campaign would report conversionValue 0 and roas 0
+		// rather than erroring. No fixture can catch it; only a live response can.
+		ConversionsValue *float64 `json:"conversionsValue"`
 	} `json:"metrics"`
 }
 
@@ -138,6 +182,28 @@ func parseMetricInt(s string) (int64, error) {
 		return 0, nil
 	}
 	return strconv.ParseInt(s, 10, 64)
+}
+
+// isUsableMetricDouble reports whether v is a magnitude this package is willing to
+// report as a measurement. It exists so every double this package reports is held to
+// one standard by construction rather than by inline tests a later edit can drift
+// apart. Three call sites share it: the campaign conversion COUNT and conversion
+// VALUE in GetCampaignMetrics, and the keyword-row conversion count in keywords.go,
+// which carried a fourth copy of the same four conditions and a comment saying it
+// matched this one. Each caller keeps its own error sentence — the fields fail for
+// the same reason but are not the same field.
+//
+// NaN and ±Inf both survive JSON decoding of a bare number in some encoders, and a
+// negative figure is upstream corruption rather than a small number — the same guard
+// meta/metrics.go and reddit/metrics.go apply to spend.
+//
+// The bound is float64(math.MaxInt64) compared with '>=', not '>': MaxInt64 is not
+// exactly representable as a float64, so float64(math.MaxInt64) rounds UP to 2^63,
+// one more than MaxInt64. A value of exactly 2^63 would pass a '>' guard and then
+// wrap to MinInt64 wherever such a value is later narrowed. Same reasoning as
+// meta/metrics.go's spend-scaling guard.
+func isUsableMetricDouble(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 && v < float64(math.MaxInt64)
 }
 
 // GetCampaignMetrics reads impressions/clicks/cost for one campaign over window
@@ -171,7 +237,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 
 	query := fmt.Sprintf(
 		"SELECT campaign.id, metrics.impressions, metrics.clicks, metrics.cost_micros, "+
-			"metrics.conversions "+
+			"metrics.conversions, metrics.conversions_value "+
 			"FROM campaign WHERE campaign.id = %s AND segments.date DURING %s",
 		id, w,
 	)
@@ -195,8 +261,20 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		// every consumer of this struct — the metrics response, a conversion total, anything
 		// reading the pointer — sees "measured, and the answer was none" rather than
 		// "unmeasured", which is the true state of a window Google did answer.
-		zero := 0.0
-		return &CampaignMetrics{CampaignID: id, Window: w, Conversions: &zero}, nil
+		// The same reasoning applies to the conversion VALUE, which is selected on the same
+		// query and so was answered by the same no-rows result: measured, and the answer was
+		// none. Roas stays nil here and is the one field that must — this window spent nothing,
+		// and a return on zero ad spend is undefined, not zero.
+		//
+		// Two separate variables, not one taken twice: a single &zero would alias both pointers
+		// to the same float64, so anything writing through one would silently move the other.
+		zeroConversions, zeroValue := 0.0, 0.0
+		return &CampaignMetrics{
+			CampaignID:      id,
+			Window:          w,
+			Conversions:     &zeroConversions,
+			ConversionValue: &zeroValue,
+		}, nil
 	}
 	// Enforce the single-row assumption documented above rather than trusting it.
 	// Reading rows[0] alone is only correct while the query segments by nothing; a
@@ -275,18 +353,11 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		conv = *row.Metrics.Conversions
 	}
 	{
-		// Reject malformed magnitudes rather than folding them into a count. NaN and ±Inf
-		// both survive JSON decoding of a bare number in some encoders, a negative
-		// conversion count is upstream corruption rather than a small number, and a value
-		// beyond int64 would wrap into a negative on conversion. Each would otherwise become
-		// a figure the dashboard renders as a measurement — the same guard meta/metrics.go
-		// and reddit/metrics.go apply to spend.
-		//
-		// The bound is float64(math.MaxInt64) compared with '>=', not '>': MaxInt64 is not
-		// exactly representable as a float64, so float64(math.MaxInt64) rounds UP to 2^63,
-		// one more than MaxInt64. A value of exactly 2^63 would pass a '>' guard and then
-		// wrap to MinInt64. Same reasoning as meta/metrics.go's spend-scaling guard.
-		if math.IsNaN(conv) || math.IsInf(conv, 0) || conv < 0 || conv >= float64(math.MaxInt64) {
+		// Reject malformed magnitudes rather than folding them into a count: each would
+		// otherwise become a figure the dashboard renders as a measurement. See
+		// isUsableMetricDouble for what the four rejected shapes are and why the bound sits
+		// where it does.
+		if !isUsableMetricDouble(conv) {
 			return nil, &transportError{
 				Method: http.MethodPost,
 				Path:   c.customerPath("googleAds:search"),
@@ -300,6 +371,42 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		// exactly this number — so the rounding would manufacture the very finding the rule
 		// exists to report honestly. Only an upstream value of exactly zero may fire it.
 		m.Conversions = &conv
+	}
+	// metrics.conversions_value rides the same SELECT list and the same proto3-JSON omission
+	// rule, so an absent member is again a measured 0.0 rather than an unmeasured one.
+	convValue := 0.0
+	if row.Metrics.ConversionsValue != nil {
+		convValue = *row.Metrics.ConversionsValue
+	}
+	{
+		// The same predicate the conversion COUNT gets, deliberately. A negative total is
+		// upstream corruption rather than a small number here too: conversion adjustments
+		// (retractions and restatements) subtract from this figure, but they subtract value
+		// that was credited, so the aggregate Google reports does not go below zero.
+		//
+		// The shared ceiling binds this field even though it is never narrowed to an int64 —
+		// it stays a float64 all the way out. A conversion value that large is corruption on
+		// any currency, and letting it through while rejecting the same magnitude one field
+		// above would be an inconsistency a reader has to litigate.
+		if !isUsableMetricDouble(convValue) {
+			return nil, &transportError{
+				Method: http.MethodPost,
+				Path:   c.customerPath("googleAds:search"),
+				Err:    fmt.Errorf("decode campaign metrics row: conversions value is not a usable amount"),
+			}
+		}
+		m.ConversionValue = &convValue
+	}
+	// ROAS is derived here, once, so no consumer has to decide what a zero-cost window means.
+	// The test is '> 0', which excludes two cases at once. Zero cost is the documented one —
+	// see the Roas field comment for why an undefined return must stay nil rather than become
+	// 0. Negative cost is the undocumented one: parseMetricInt uses strconv.ParseInt, which
+	// accepts a leading minus, so a corrupt upstream cost reaches here intact, and dividing by
+	// it would produce a negative ROAS that reads as a real (terrible) result. Withholding the
+	// number is the honest answer to a cost that cannot be true.
+	if costMicros > 0 {
+		roas := convValue / (float64(costMicros) / 1e6)
+		m.Roas = &roas
 	}
 	return m, nil
 }
