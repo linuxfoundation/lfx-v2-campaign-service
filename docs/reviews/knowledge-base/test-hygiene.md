@@ -56,7 +56,7 @@ goes stale on the next edit above it, and all three of these had already drifted
 In `internal/dispatch/*_test.go` the clock is an inline literal pinned to 2098 or
 2099 rather than a named helper.
 
-**Time-sensitive note recorded 2026-07-29, re-counted 2026-10-28:**
+**Time-sensitive note recorded 2026-07-29, re-counted 2026-10-27:**
 `internal/platform/meta/client_test.go` carries **80** `2026-08-01` fixture
 literals — it was 61 when this note was first written — against a
 `fixedMetaClock()` pinned to `2026-07-15T12:00:00Z`. The pin is what keeps the
@@ -150,7 +150,7 @@ commonest undoing but not the only one, and the entry's own instances include th
 other two: PR #160's call site reverted to direct construction, and PR #205's guard
 moved below `CloneEmail`. So read "undone" as any bounded edit that still compiles —
 deleting the line, replacing it with what stood there before, or reordering it past
-a neighbouring statement. Three shapes, each decidable from the diff plus a bounded
+a neighbouring statement. Four shapes, each decidable from the diff plus a bounded
 look at the target:
 
 1. **The test calls the helper, the diff adds the call site.** The test invokes
@@ -172,13 +172,25 @@ look at the target:
    `mapErr` renders that one as a 404 and the validator's as a 400, which an
    error-shape-blind assertion never separates), or the case name says
    *omitted field* / *zero status* while the fixture sets the field.
+4. **The assertions stop at the return value and never reach the side effect.**
+   The fixture is fine and the branch does run; what is missing is any assertion
+   on what the code *did* before it returned. The test checks the returned error
+   or sentinel and discards the recorder, fake or output argument that would show
+   whether a write, publish or upstream create happened first. A returned refusal
+   is equally produced by a guard that refuses before the side effect and by one
+   that refuses after it, so the assertion cannot see the guard move — which is
+   the ordering regression, not the refusal. This is the shape that survives
+   *reordering* rather than deletion, so shape 1's deletion test will not find it.
 
 The confirming question, and the one the fixes below all answer in their reply:
-**which single line of the production diff could be deleted, reverted to its
+**which single statement of the production diff could be deleted, reverted to its
 predecessor, or moved past its neighbour — the package still compiling — with this
-test still passing?** If that line is the one the change adds, it is a match. Keep
-the edit to one line and to something that compiles; a mutation that needs several
-coordinated edits is not evidence that this test is non-binding.
+test still passing?** If that statement is the one the change adds, it is a match.
+Keep the edit to **one logical statement** and to something that compiles: one
+line, or one `if` block, loop or call expression moved or removed as a unit — a
+guard is a three-line `if` and still counts as one. What does not count is a
+mutation needing several *coordinated* edits in different places; that is not
+evidence this test is non-binding.
 
 **Why it matters:** this repo has no mutation testing and `make lint` runs bare
 `golangci-lint` with no config (see *Why review-only*), so nothing mechanical
@@ -218,9 +230,13 @@ a partial credential trio persisted behind a 400, or a double-create.
   bind the client-cache tests to what they assert") — "the cache was well tested
   and simply unused by the create path it exists for".
 - [`r3963631870`](https://github.com/linuxfoundation/lfx-v2-campaign-service/pull/205#discussion_r3963631870)
-  (PR #205), shape 3: "both subtests discard `hubspotRec` and only inspect the
+  (PR #205), shape 4: "both subtests discard `hubspotRec` and only inspect the
   returned sentinel", so moving the guard below `CloneEmail` would have kept them
-  green while orphaning a draft. Fixed in `fc275f25`.
+  green while orphaning a draft. Fixed in `fc275f25`, which left the fixtures
+  untouched and added recorder assertions — the fixtures were never the problem,
+  which is what separates this from shape 3. The mutation is the guard's
+  three-line `if` moved as a unit, which is why the confirming question is bounded
+  to one logical statement rather than one line.
 - **Recurrence: 17 Copilot comments of this core shape across 16 pull requests**
   since 2026-08-01 — #59, #64, #87, #96, #102, #107, #125, #147, #148, #153,
   #160, #186, #205, #217 (×2), #268, #272. All but #125 are on merged PRs; #125
