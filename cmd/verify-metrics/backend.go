@@ -82,7 +82,7 @@ func openLiveBackend(ctx context.Context) (*backend, error) {
 		conns:      postgres.NewConnectionRepo(pool),
 		campaigns:  postgres.NewCampaignRepo(pool),
 		enc:        enc,
-		statsLease: lease,
+		statsLease: &safeLease{inner: lease, dsn: dsn},
 		close: func() {
 			closeCtx, cancel := context.WithTimeout(context.Background(), statsLeaseCloseTimeout)
 			lease.Close(closeCtx)
@@ -90,6 +90,30 @@ func openLiveBackend(ctx context.Context) (*backend, error) {
 			pool.Close()
 		},
 	}, nil
+}
+
+// safeLease is the X stats-job lease as this command hands it to the dispatcher: the same
+// ownership answers, with the driver's text withheld whenever it could name a DSN identifier.
+// The lease opens its own session outside the pool, so a connect failure there (after the
+// pool's ping succeeded) carries pgconn's `user=… database=…` fragment; the dispatcher prints
+// or logs that error, and the secret scrubber knows nothing of DSN identifiers. The sentinels
+// are re-wrapped, so errors.Is still classifies the refusal; the raw error is not kept in the
+// chain, for openReadOnlyPool's reason.
+type safeLease struct {
+	inner domain.StatsJobLease
+	dsn   string
+}
+
+func (l *safeLease) Own(ctx context.Context, accountID string) error {
+	err := l.inner.Own(ctx, accountID)
+	if err == nil {
+		return nil
+	}
+	safe := postgres.SafeDSNErr(l.dsn, dsnSourceVerifyMetrics, err)
+	if errors.Is(err, domain.ErrStatsJobLeaseNotHeld) {
+		return fmt.Errorf("%w: %s", domain.ErrStatsJobLeaseNotHeld, safe)
+	}
+	return fmt.Errorf("%w: %s", domain.ErrStatsJobLeaseUnavailable, safe)
 }
 
 // statsLeaseCloseTimeout bounds releasing the X stats-job lease at exit.

@@ -118,7 +118,8 @@ to another host.
 - The X dispatcher is bound to the service's own stats-job lease (`postgres.NewStatsJobLease`,
   a session-level advisory lock that a READ ONLY session may take). A run therefore creates X
   stats jobs only when no service pod, and no other run, owns the account, and fails before
-  contacting X otherwise. The lease is released at exit.
+  contacting X otherwise. The lease is released at exit. Its errors pass through `postgres.SafeDSNErr`,
+  so a failure on the lease's own session cannot print a DSN identifier.
 - The dispatcher gets a connection reader with only `Get` and `Disconnected`, and an encryptor
   whose `Encrypt` is refused. The orchestrator gets a campaign repository whose every write
   returns `errReadOnly`, and in-memory report stores in place of the saved-report tables.

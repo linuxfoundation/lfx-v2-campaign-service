@@ -802,3 +802,31 @@ func TestReadOnlyPoolConfig_CoversSessionsOutsideThePool(t *testing.T) {
 		t.Error("the pooled sessions' AfterConnect guard is gone")
 	}
 }
+
+// errLease answers Own with a fixed error.
+type errLease struct{ err error }
+
+func (l errLease) Own(context.Context, string) error { return l.err }
+
+// A lease connect failure carries pgconn's identifier fragment; safeLease withholds it and
+// keeps the sentinel, so the dispatcher's classification still works.
+func TestSafeLease_WithholdsDSNIdentifiers(t *testing.T) {
+	const dsn = "postgres://leakuser:s3cretpw@127.0.0.1:1/leakdb?sslmode=disable" // secretlint-disable-line -- synthetic DSN
+	raw := fmt.Errorf("%w: failed to connect to `user=leakuser database=leakdb`: dial error", domain.ErrStatsJobLeaseUnavailable)
+	err := (&safeLease{inner: errLease{raw}, dsn: dsn}).Own(context.Background(), "abc")
+	if !errors.Is(err, domain.ErrStatsJobLeaseUnavailable) {
+		t.Errorf("err = %v, want ErrStatsJobLeaseUnavailable kept", err)
+	}
+	for _, leak := range []string{"leakuser", "leakdb", "s3cretpw"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("lease error leaked %q: %v", leak, err)
+		}
+	}
+	held := (&safeLease{inner: errLease{fmt.Errorf("%w: account abc", domain.ErrStatsJobLeaseNotHeld)}, dsn: dsn}).Own(context.Background(), "abc")
+	if !errors.Is(held, domain.ErrStatsJobLeaseNotHeld) || errors.Is(held, domain.ErrStatsJobLeaseUnavailable) {
+		t.Errorf("held elsewhere = %v, want ErrStatsJobLeaseNotHeld only", held)
+	}
+	if err := (&safeLease{inner: errLease{nil}, dsn: dsn}).Own(context.Background(), "abc"); err != nil {
+		t.Errorf("owned lease = %v, want nil", err)
+	}
+}
