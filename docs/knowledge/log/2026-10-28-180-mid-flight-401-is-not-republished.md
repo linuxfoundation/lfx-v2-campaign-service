@@ -25,6 +25,13 @@ marks it:
 A marked result is neither cached nor handed out. The flight publishes a blank, and every
 waiter re-leads one fresh exchange.
 
+The record is scoped to the flight the 401 raced. If the recovery exchange re-issues the same
+value, that value is served and cached: it is the endpoint's answer after the 401. The next
+401 for it clears the cache again, so nothing is stuck until expiry. Carrying rejections
+across flights would turn one transient 401 into a refusal of a token the endpoint still
+issues. `TestRefresh_ReissuedRecoveryIsStillClearedByTheNext401` pins this for Google Ads,
+Microsoft and Reddit.
+
 **Not affected:** X/Twitter (OAuth 1.0a with static, signed credentials), Meta (static bearer)
 and HubSpot (static private-app token). They have no refreshed-token cache. HubSpot's
 `linkPortalLookups` single-flight caches a portal id, not a credential.

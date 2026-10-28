@@ -102,7 +102,10 @@ publishes a blank and every waiter re-leads one fresh exchange. The check is by 
 late 401 naming some other token costs the flight nothing (ABA preserved). Before this, the
 rejected value was re-cached with a fresh lifetime and a cached client re-presented it until
 it expired. `token_flight_race_test.go` drives the real leader with the 401 rendezvoused
-inside the token server's handler.
+inside the token server's handler. The record is scoped to that one flight: a recovery
+exchange that re-issues the same value is served, and the next 401 clears it again
+(`TestRefresh_ReissuedRecoveryIsStillClearedByTheNext401`). Remembering rejections across
+flights would turn a transient 401 into a refusal of a token the endpoint still issues.
 
 For the poison arm, blanking without
 unpublishing would recurse without bound (a waiter re-leads, finds the same poisoned flight,
