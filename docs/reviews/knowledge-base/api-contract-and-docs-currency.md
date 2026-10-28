@@ -51,7 +51,7 @@ that exercise the generated validators from outside the generated tree — its
 `internal/apivalidation/doc.go` explains that this "avoids hand-editing anything under gen/ (DO NOT
 EDIT)". A datastore `CHECK` constraint is the belt-and-braces companion where a
 `design/` enum guards only request time:
-`docs/knowledge/code/internal-infrastructure-postgres.md:46-48` notes that "the
+`docs/knowledge/code/internal-infrastructure-postgres.md` § "Migrations" notes that "the
 DSL `Enum(\"hubspot\")` guards it only at request time, so a direct/worker write
 could otherwise persist an unsupported platform."
 

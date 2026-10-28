@@ -49,10 +49,10 @@ create.
 
 **Status on main:** uniform across all seven platform packages, each with its own
 cap: googleads `8<<20`, hubspot/linkedin/meta/reddit `10<<20`, twitter `1<<20`.
-Named helpers are `readResponseBody` (`internal/platform/reddit/client.go:137`)
-and `readAll` (`internal/platform/twitter/client.go:901`); linkedin and googleads
+Named helpers are `readResponseBody` (`internal/platform/reddit/client.go`)
+and `readAll` (`internal/platform/twitter/client.go`); linkedin and googleads
 use `buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1))`.
-`docs/knowledge/code/internal-platform-googleads.md:41-44` names it as "the
+`docs/knowledge/code/internal-platform-googleads.md` § "Request layer" names it as "the
 repo's standard discipline … bounded response reads (`maxResponseBytes+1`)".
 
 **Not a finding when:** the read is a deliberate bounded *drain* whose content is
@@ -93,8 +93,8 @@ platform asked us to back off.
   `7784fc6` on **#22**; `cd8a8f388` on **#35**, which introduced the named
   `drainAndClose` helper and cites the reddit client in its message.
 
-**Status on main:** `drainAndClose` is a named helper at
-`internal/platform/hubspot/client.go:568`, used at `:510,517,526`. googleads,
+**Status on main:** `drainAndClose` is a named helper in
+`internal/platform/hubspot/client.go`, used on `doRequest`'s retry and error paths. googleads,
 linkedin and reddit inline the same bounded discard.
 **Known gap:** `internal/platform/twitter/client.go` still closes the 429
 response body undrained on the retry path (`_ = resp.Body.Close()` at both the
