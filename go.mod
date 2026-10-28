@@ -17,6 +17,7 @@ require (
 	github.com/remychantenay/slog-otel v1.3.4
 	github.com/snowflakedb/gosnowflake/v2 v2.3.0
 	github.com/stretchr/testify v1.12.1
+	github.com/yuin/goldmark v1.8.6
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0
 	go.opentelemetry.io/contrib/propagators/jaeger v1.40.0
 	go.opentelemetry.io/otel v1.45.0
