@@ -178,6 +178,12 @@ type CampaignInput struct {
 	// would produce a campaign that spends globally while reporting success — the exact
 	// defect this ticket fixes. See geo.go.
 	GeoTargets []string
+	// StartDate and EndDate are the OPTIONAL flight dates, YYYY-MM-DD, sent as the AD GROUP's
+	// StartDate/EndDate (Microsoft schedules delivery on the ad group; the campaign has no
+	// flight dates). Empty leaves Microsoft's default: serve from today, and run until stopped.
+	// Validated before anything is created — see validateFlightDates.
+	StartDate string
+	EndDate   string
 }
 
 // CampaignResult reports what CreateCampaign created (or found). The campaign NAME
@@ -249,6 +255,11 @@ type CampaignResult struct {
 	// dispatcher records the strategy and starting bid ONLY when this is true. Set only on a
 	// successful result; a partial never carries it.
 	BidApplied bool `json:"bidApplied,omitempty"`
+	// FlightApplied reports that THIS run created the ad group with the requested flight dates
+	// (CampaignInput.StartDate/EndDate). A reused ad group keeps its existing schedule, so the
+	// dispatcher records the dates on the row ONLY when this is true. Set only on a successful
+	// result; a partial never carries it.
+	FlightApplied bool `json:"flightApplied,omitempty"`
 	// ImageMediaID / ImageAdExtensionID record the campaign image extension (LFXV2-2665),
 	// set by the DISPATCHER after AttachCampaignImage — CreateCampaign never sets them. They
 	// are the persisted record of the upload, mirroring the Meta result's per-ad ImageHash:
@@ -589,6 +600,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign geo targets invalid: %w", err))
 	}
 
+	// Flight dates go on the ad group, which is created only AFTER the campaign, so a date that
+	// is malformed or out of order is refused here, before anything exists. Whether it is already
+	// past is checked just before a NEW campaign is created, below; see flight.go.
+	flightDates, err := validateFlightDates(in.StartDate, in.EndDate)
+	if err != nil {
+		return nil, err
+	}
+
 	var steps []string
 	microsoftAdsURL := "https://ads.microsoft.com/campaign/vnext/campaigns?aid=" + c.account.AccountID
 
@@ -662,6 +681,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		campaignID = existingID
 		alreadyExisted = true
 	} else {
+		// A flight window already past everywhere is refused before the campaign create, while
+		// nothing exists yet. Not on the reuse branch above: refusing there would report "nothing
+		// created" for a campaign a previous attempt did create (see flight.checkNotPast).
+		if perr := flightDates.checkNotPast(c.now()); perr != nil {
+			return nil, perr
+		}
 		// Step 2: create the campaign (PAUSED). Non-idempotent — NOT retried on 429.
 		timeZone := in.TimeZone
 		if timeZone == "" {
@@ -858,7 +883,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// up-front check and the sent value drift apart, and the up-front check is the one that
 	// guarantees nothing is orphaned.
 	return c.createAdGroupAndAd(ctx, in, campaignID, alreadyExisted, &steps, campaignPartial,
-		targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet})
+		targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet, flight: flightDates})
 }
 
 // findCampaignByName returns the id of the campaign whose Name matches name, or "" if
@@ -1228,12 +1253,10 @@ func partialErrorCodes(items []msErrorItem) string {
 	return strings.Join(codes, ",")
 }
 
-// msDate is Microsoft's date object ({Month,Day,Year}), used by ad-group flight dates
-// (a later slice). Microsoft does NOT accept an ISO-8601 string for these fields — it
-// requires the object form — so a helper is provided now to keep the serialization in
-// one reviewed place. Not yet used by any slice — the flight-date work will be its first
-// caller, and naming a specific slice here only dates the comment (MS-4 turned out to be the
-// keyword/bid work, which does not touch it).
+// msDate is Microsoft's date object ({Month,Day,Year}), used by the ad-group flight dates
+// (AdGroup.StartDate / EndDate, see flight.go) and the report date ranges. Microsoft does
+// NOT accept an ISO-8601 string for these fields — it requires the object form — so the
+// serialization is kept in this one reviewed place.
 type msDate struct {
 	Month int `json:"Month"`
 	Day   int `json:"Day"`

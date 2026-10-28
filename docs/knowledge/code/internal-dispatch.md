@@ -420,10 +420,23 @@ snapshot-redacted — only the client's own validation applies (trim, canonical 
 case-insensitive de-duplication); only the stored copy is redacted. The keyword slice is
 reallocated first, so the snapshot redaction never reaches the config sent to Microsoft.
 `budget`, `cpcBid`, `matchType` (only Exact/Phrase/Broad gets past
-the client before a snapshot can be written) and `geoTargets` (ISO-2 codes, shape-checked by
-the client) cannot carry a URL. The persisted `result` (`microsoft.CampaignResult`) carries no
-caller URL: its `Steps` interpolate only ids, counts and geo codes, and its `microsoftAdsUrl`
-is a deep link the client composes from the account id.
+the client before a snapshot can be written), `geoTargets` (ISO-2 codes, shape-checked by
+the client) and `startDate`/`endDate` (YYYY-MM-DD, validated by the client before anything is
+created) cannot carry a URL. The persisted `result` (`microsoft.CampaignResult`) carries no
+caller URL: its `Steps` interpolate only ids, counts, geo codes and the validated flight dates,
+and its `microsoftAdsUrl` is a deep link the client composes from the account id.
+
+**Microsoft flight dates.** `microsoftConfig.startDate`/`endDate` are optional, YYYY-MM-DD —
+the keys and format `metaConfig` uses. The dispatcher passes them to the client as
+`CampaignInput.StartDate`/`EndDate`, which validates them before any request and sends them
+as the AD GROUP's `StartDate`/`EndDate` (see [microsoft](internal-platform-microsoft.md),
+"Flight dates"). `campaignFromMicrosoft` records them on the row through `applyCampaignConfig`,
+as Meta's are, so the brief view paces the campaign over its flight — but only when the result
+says `FlightApplied` (this run created the ad group with them), the same rule `BidApplied`
+sets for the recorded bid. A reused ad group or an UNCONFIRMED partial records no dates; the
+config snapshot still keeps what was asked for. Absent dates record none, as before. An invalid date is a `PreflightRefusal` from the client, so `Dispatch` returns it
+wrapped in `notCreated` and the claim is released — the same job-time (not synchronous 400)
+failure an invalid Meta date gives; `PreflightCreate` does not check dates.
 
 ## The claim contract (release vs retain)
 
@@ -1047,7 +1060,8 @@ so all five platforms report in one vocabulary and render amounts one way.
 wrote.** Microsoft: one campaign read; `budget_amount` (DailyBudget, account-currency decimal,
 read only under a daily `BudgetType`), `budget_type`, `campaign_name` compared;
 `status`, `budget_explicitly_shared`, `bidding_strategy_type` upstream-only; no flight dates
-(Microsoft campaigns have none and the create path records none). Meta: campaign + the
+(Microsoft campaigns have none — `microsoftConfig.startDate`/`endDate` go on the ad group, which
+this reader does not read, so the dates the create path records have no upstream side). Meta: campaign + the
 recorded ad set (budget, flight and bid strategy live on the ad set) + the account currency
 when there is an amount; minor units are compared through the account's own offset with the
 recorded side encoded exactly as `budgetToMinorUnits` sends it (`meta.MinorUnitsExact`, exact
