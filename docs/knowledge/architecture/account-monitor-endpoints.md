@@ -825,6 +825,28 @@ differential diff, since fixed:
     so both fixes reject the whole analytics/insights read instead of
     dropping just the one row. See
     [2026-09-21-215-monitor-account-endpoints-round32-unattributable-rows.md](../log/2026-09-21-215-monitor-account-endpoints-round32-unattributable-rows.md).
+13. The widenings in items 6 and 7 each fixed the texts by naming the one
+    platform that had the partial case at the time — "(Google Ads only) a
+    present-but-unparseable budget". That binding is what went stale: LinkedIn,
+    Meta, Microsoft Ads and X have since grown the same budget case, X a flight
+    case, and LinkedIn an unparseable `costInLocalCurrency` that leaves spend
+    unknown beside real impressions and clicks — a shape none of the texts
+    described at all. So the `fetch_failed` contract was back to overstating
+    what a set flag says about the numerics (#219). Fixed in every text that
+    describes the field: the `fetch_failed` design attribute, its
+    `docs/api-catalog.md` sentence, `model.AccountCampaignMetrics.FetchFailed`,
+    `rules.fetchFailedRow` and `monitorTotals`. Each now states the general rule
+    — which part failed is not conveyed, and it is not always the metrics — and
+    gives the shapes as **examples rather than a closed set**, so a seventh
+    platform's own partial case cannot make them false again. The
+    per-platform-client doc comments (for example
+    `googleads.AccountCampaignRow.FetchFailed`) keep their specific wording:
+    they describe one client, where an exhaustive list is correct and stays so.
+    One more overstatement sits inside the first example and was fixed with it:
+    a failed per-campaign metrics fetch zeroes that read's delivery metrics, not
+    *every* numeric field — Reddit fills `TotalBudget`/`DailyBudget` from the
+    account-level campaign list before the per-campaign report call, so the
+    budget on a report-failed Reddit row is real.
 
 ## Unmeasured rows: the totals signal and the failure-class summary
 
