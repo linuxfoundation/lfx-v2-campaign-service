@@ -2589,7 +2589,10 @@ type UpdateCampaignBudgetPayload struct {
 	// If-Match header carrying the current ETag/version
 	IfMatch *string
 	// New budget amount, in the AD ACCOUNT's own currency (NOT USD). Must be
-	// strictly positive.
+	// strictly positive. On Meta it must also be a whole number of the account
+	// currency's minor unit — whole units for a zero-decimal currency such as JPY
+	// or KRW, cents for USD — and an amount finer than that is refused with 400,
+	// never rounded, so the budget this service records is the one Meta was sent.
 	Budget float64
 	// The pacing the amount is expressed in. MUST match the campaign's current
 	// upstream pacing — this endpoint changes the amount, never the pacing.

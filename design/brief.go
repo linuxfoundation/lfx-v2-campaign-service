@@ -1968,8 +1968,8 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 				// MaxLength does not bound what the server reads off the WIRE either: the
 				// validator sees the string only after the JSON decoder has read the whole
 				// body. The inbound cap that does is constants.MaxRequestBodyBytes (42 MiB),
-				// applied by middleware.MaxBodyBytes; it is sized from the 30 MiB ceiling and
-				// must be raised alongside any increase here.
+				// applied to this route by middleware.MaxBodyBytesPerRoute; it is sized from the
+				// 30 MiB ceiling and must be raised alongside any increase here.
 				MaxLength(41943040)
 				Example("aVZCT1J3MEtHZ29BQUFBTlNVaEVVZ0FBQUFFQUFBQUJDQUFBQUFDNnBLcmVBQUFBREVsRVFWUUlIV05nWUdBQUFBQUVBQUdiQTNvSkFBQUFBRWxGVGtTdVFtQ0M=")
 			})
@@ -2455,7 +2455,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// the real floor and simply closes that sliver to HTTP callers before the handler
 			// sees it. Nothing a generated client can send is accepted here and refused
 			// there — the published contract is never the looser of the two.
-			Attribute("budget", Float64, "New budget amount, in the AD ACCOUNT's own currency (NOT USD). Must be strictly positive.", func() {
+			Attribute("budget", Float64, "New budget amount, in the AD ACCOUNT's own currency (NOT USD). Must be strictly positive. On Meta it must also be a whole number of the account currency's minor unit — whole units for a zero-decimal currency such as JPY or KRW, cents for USD — and an amount finer than that is refused with 400, never rounded, so the budget this service records is the one Meta was sent.", func() {
 				Minimum(0.000001)
 				Maximum(1000000000)
 				Example(2500.00)
@@ -3097,7 +3097,7 @@ func commonBriefErrors() {
 	Error("Conflict", ConflictError, "Conflict")
 	Error("InternalServerError", InternalServerError, "Internal server error")
 	Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
-	// PayloadTooLarge is produced by middleware.MaxBodyBytes, which sits outside the mux
+	// PayloadTooLarge is produced by middleware.MaxBodyBytesPerRoute, which sits outside the mux
 	// and so never reaches a Goa encoder — declaring it here is what gives the generated
 	// CLIENT a decode case for 413 (otherwise an oversized upload surfaces as
 	// ErrInvalidResponse) and what puts the status in the OpenAPI documents. It is on
