@@ -20,7 +20,7 @@ const (
 
 // DeliveryType is the surface a brief was authored for. Paid, email and survey are PARALLEL
 // channels rather than alternatives, which is why it participates in the brief's unique key
-// (000030, widened by 000047) instead of merely describing it.
+// (000030, widened by 000052) instead of merely describing it.
 type DeliveryType string
 
 // Delivery types.

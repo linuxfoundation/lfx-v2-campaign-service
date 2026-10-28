@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over whichever serving resources the campaign actually has — the ad group/ad on Search, Demand Gen, Video and Display, the asset group on Performance Max — behind a channel-specific activation gate (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); project-scoped keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641); and a read-only campaign settings readback via GAQL with campaign_budget attributed from campaign, whose every field is optional so a setting Google did not return stays ABSENT rather than defaulting to zero (LFXV2-3067); and Search serving readiness — an optional manual CPC bid on the ad group (0 means unset, no default invented), an optional campaign flight window rendered into the v23 startDateTime/endDateTime request fields on both channels, and optional campaign-level negative keywords batched into one atomic campaignCriteria:mutate with negative:true, all three validated before the first paid mutate and each a no-op when absent; and Search campaign completeness — geo exclusions on both channels, raw geo target constant ids alongside country codes so a caller can target a city, region or postal code, Search-only proximity radius targeting, campaign-level language/ad-schedule/device/demographic criteria whose bid modifier is pointer-typed so an explicit 0 stays Google's -100% opt-out, sitelink/callout/structured-snippet extension assets linked by the resource name the create returned, and multiple themed ad groups each carrying multiple responsive search ads that inherit the campaign-level fields PER FIELD, every one of them optional, refused on Demand Gen where it is a Search capability, and validated before the first paid mutate (LFXV2-2665); and Demand Gen ad creation — an optional caller-supplied creative (marketing/square/portrait/tall-portrait/logo image URLs, 1-5 headlines and 1-5 descriptions refused rather than truncated, business name, call to action) whose locally-decidable half validates in the PURE preflight while its images are fetched by this service over a hardened credential-free transport (https only, no redirects, public-IP dial guard, 5 MiB cap, decoder-set format allowlist, geometry checked against the decoded image) and uploaded as base64 image assets still BEFORE the first budget mutate, then assembled into a PAUSED DemandGenMultiAssetAd whose asset ids are reported even when the ad create fails, refused on Search as the mirror of every Search-only field (LFXV2-2665); and selectable bidding with create-time conversion selection — one of six UI-vocabulary strategies (manual-cpc, maximize-clicks, maximize-conversions, target-cpa, maximize-conversion-value, target-roas) resolved in the pure preflight into a single proto oneof carried by an anonymously-embedded biddingFields on both channel payloads, defaulting byte-identically to the legacy per-channel payloads, with a target CPA in micros and a target ROAS as a RATIO inside Google's own documented bounds, a CPC bid refused under any automated strategy at campaign or ad-group level, Demand Gen fenced to maximize-clicks on recorded live-API evidence, and conversion actions attached at create time via campaign.selective_optimization (bare ids qualified to the campaign's account, foreign-account names refused, duplicates deduplicated) alongside a strictly read-only ListConversionActions for building a picker (LFXV2-2665); and Performance Max campaign creation — a third channel whose creative is an ASSET GROUP rather than an ad (assets, then the group, then assetGroupAssets links carrying an AssetFieldType) created over three mutates against a positional response, with both marketing image shapes and a square logo required rather than reciprocal, headlines/long headlines/descriptions kept as three distinct asset field types, a PERFORMANCE_MAX shell that opts out of URL expansion, sends no networkSettings and bids maximize-conversions by default, campaign-level geo as on Search, a PAUSED asset group, and an empty creative supported as a campaign that says NO ASSET GROUP rather than one that silently cannot serve (LFXV2-2665); and creative-URL containment across the three channels that carry caller-supplied URLs — Video is the exception, referencing a YouTube video by id and fetching nothing — every image-fetch error renders the URL through redactURLForError and wraps its cause in redactedCause so a signed query string reaches neither the message nor the *url.Error underneath it, Performance Max image assets carry NO caller-derived name so the URL is not exported to Google as a permanent asset label, a 64 MiB running total caps the whole creative rather than only each image, and a 5xx on the Demand Gen assets:mutate reports UNCONFIRMED rather than failed (LFXV2-2665); and Video (YouTube) — CREATION IS REFUSED, because the Google Ads API cannot create or mutate a Video campaign at all: CreateVideoCampaign returns the ErrVideoCreateUnsupported sentinel in its FIRST statement, before any request, so not one orphaned budget is stranded, while fetching, reporting, ADOPTION, the activation gate, the variant slot and monitoring are untouched — only creation is impossible; the cascade is RETAINED unexported, unreachable and still fully tested, preserving the channel's shape against the day Google supports it: a fourth channel whose shell is VIDEO/VIDEO_ACTION bidding maximize-conversions by default and accepting only that strategy or target-cpa, the narrowest set VIDEO_ACTION documents and one this client has NOT verified against the live API, whose creative is a VIDEO_RESPONSIVE ad built from YouTube video ids the caller already owns — no URL, no fetch phase and no network at all before the budget mutate, which is what lets the whole Video preflight stay pure — with 1-5 YouTube videos, 1-5 headlines (15), long headlines (90) and descriptions (70) each kept as its own asset field type and 0-5 call-to-action texts (10) where ABSENT means Google's default and empty means no text, campaign-level geo including proximity and the whole un-narrowed campaign-criteria set exactly as on Search, conversion actions accepted, keywords/audience segments/CPC bid/negative keywords refused, an ENABLED ad group as on Demand Gen and a PAUSED ad over two mutates whose ids are reported even when the ad create fails, under a PAUSED campaign, and its own adoption slot so a VIDEO campaign is never filed as the default one (LFXV2-2665); and Display campaign creation — a fifth channel whose shell is DISPLAY with NO advertisingChannelSubType at all (the deliberate contrast with Video's pinned VIDEO_ACTION), an ENABLED DISPLAY_STANDARD ad group and a PAUSED responsive display ad whose longHeadline is a SCALAR rather than a list — the one place this channel's shape departs from its siblings — built from marketing, square marketing, logo and square logo images this service fetches over the same hardened transport BEFORE the first budget mutate, with a marketing or square marketing image RECIPROCALLY required, 1-5 headlines (30), 1-5 descriptions (90), a required long headline (90) and business name (25) and an optional call to action, campaign-level geo including proximity and the whole campaign-criteria set as on Video, conversion actions accepted, keywords/audience segments/CPC bid/negative keywords/extensions/multiple ad groups refused, five automated bidding strategies that are NOT live-verified, manual CPC and CONNECTED_TV refused as named limitations of this client rather than of Google, and its own adoption slot (LFXV2-2665); and the remaining extension types — call, promotion and price assets created and linked by the same two-mutate account-asset shape as sitelinks, with vanity phone numbers refused because Google rejects them, both of a promotion's Google oneofs enforced locally (exactly one discount arm, at most one eligibility arm), a percentage sent as micros of a FRACTION so 25% is 250,000, the serving and redemption windows ordered INDEPENDENTLY because an offer may outlive the ad, 3..8 price offerings each carrying its own tagged and bounded destination, and the occasion/type/qualifier/unit enums checked for SHAPE only on the structured-snippet-header precedent — all SEARCH only, and image and location extensions left as NAMED gaps because the first would give the Search preflight a fetch phase and the second cannot be created through this API at all (LFXV2-2665); and lead form extensions — the seventh asset type and the only one that changes WHERE THE LEAD GOES, collecting the user's details inside Google rather than at the registration URL, at most ONE per campaign because Google links a single form and a second would be created as an asset and then refused at the link, with business name/headline/description/call-to-action description required and rune-bounded, at least one de-duplicated input-type field because a form collecting nothing cannot generate a lead, a post-submit headline and description that are ALL-OR-NOTHING while the post-submit button stands alone, the call-to-action/intent/field enums SHAPE-checked on the same precedent, and a REQUIRED privacy-policy URL run through validateServableURL — split out of buildTaggedFinalURL so one implementation decides what this client will send — validated and snapshot-reduced like every other caller URL but deliberately NOT UTM-tagged, since a policy read is not an ad click (LFXV2-2665). Plus the two post-create levers this client exposes without a create: an ad group max CPC bid write through adGroups:mutate carrying cpc_bid_micros under the create path's own 0.01-100,000 bound, sent retry-safe because re-applying the same amount converges, and confirmed by checking that the returned resource name is an adGroups name in this account and names the ad group that was asked for; and campaign-level negative KEYWORD criteria through campaignCriteria:mutate, which is ATOMIC with no partialFailure, so a GAQL read of the campaign's live negatives (REMOVED is excluded by default) runs first and a negative already present is reported as such rather than failing the whole batch (LFXV2-2665)."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over whichever serving resources the campaign actually has — the ad group/ad on Search, Demand Gen, Video and Display, the asset group on Performance Max — behind a channel-specific activation gate (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); project-scoped keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641); and a read-only campaign settings readback via GAQL with campaign_budget attributed from campaign, whose every field is optional so a setting Google did not return stays ABSENT rather than defaulting to zero (LFXV2-3067); and Search serving readiness — an optional manual CPC bid on the ad group (0 means unset, no default invented), an optional campaign flight window rendered into the v23 startDateTime/endDateTime request fields on both channels, and optional campaign-level negative keywords batched into one atomic campaignCriteria:mutate with negative:true, all three validated before the first paid mutate and each a no-op when absent; and Search campaign completeness — geo exclusions on both channels, raw geo target constant ids alongside country codes so a caller can target a city, region or postal code, Search-only proximity radius targeting, campaign-level language/ad-schedule/device/demographic criteria whose bid modifier is pointer-typed so an explicit 0 stays Google's -100% opt-out, sitelink/callout/structured-snippet extension assets linked by the resource name the create returned, and multiple themed ad groups each carrying multiple responsive search ads that inherit the campaign-level fields PER FIELD, every one of them optional, refused on Demand Gen where it is a Search capability, and validated before the first paid mutate (LFXV2-2665); and Demand Gen ad creation — an optional caller-supplied creative (marketing/square/portrait/tall-portrait/logo image URLs, 1-5 headlines and 1-5 descriptions refused rather than truncated, business name, call to action) whose locally-decidable half validates in the PURE preflight while its images are fetched by this service over a hardened credential-free transport (https only, no redirects, public-IP dial guard, 5 MiB cap, decoder-set format allowlist, geometry checked against the decoded image) and uploaded as base64 image assets still BEFORE the first budget mutate, then assembled into a PAUSED DemandGenMultiAssetAd whose asset ids are reported even when the ad create fails, refused on Search as the mirror of every Search-only field (LFXV2-2665); and selectable bidding with create-time conversion selection — one of six UI-vocabulary strategies (manual-cpc, maximize-clicks, maximize-conversions, target-cpa, maximize-conversion-value, target-roas) resolved in the pure preflight into a single proto oneof carried by an anonymously-embedded biddingFields on both channel payloads, defaulting byte-identically to the legacy per-channel payloads, with a target CPA in micros and a target ROAS as a RATIO inside Google's own documented bounds, a CPC bid refused under any automated strategy at campaign or ad-group level, Demand Gen fenced to maximize-clicks on recorded live-API evidence, and conversion actions attached at create time via campaign.selective_optimization (bare ids qualified to the campaign's account, foreign-account names refused, duplicates deduplicated) alongside a strictly read-only ListConversionActions for building a picker (LFXV2-2665); and Performance Max campaign creation — a third channel whose creative is an ASSET GROUP rather than an ad (assets, then the group, then assetGroupAssets links carrying an AssetFieldType) created over three mutates against a positional response, with both marketing image shapes and a square logo required rather than reciprocal, headlines/long headlines/descriptions kept as three distinct asset field types, a PERFORMANCE_MAX shell that sends brandGuidelinesEnabled false explicitly so an account with Brand Guidelines on does not reject the create for unlinked business-name and logo assets after the budget has already been paid for, sends no networkSettings and bids maximize-conversions by default, with v23's removal of url_expansion_opt_out answered by opting out of FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION through campaign.asset_automation_settings at create, so the opt-out ships with the campaign rather than waiting on a manual per-campaign toggle in the Google Ads UI, campaign-level geo as on Search, a PAUSED asset group, and an empty creative supported as a campaign that says NO ASSET GROUP rather than one that silently cannot serve (LFXV2-2665); and creative-URL containment across the three channels that carry caller-supplied URLs — Video is the exception, referencing a YouTube video by id and fetching nothing — every image-fetch error renders the URL through redactURLForError and wraps its cause in redactedCause so a signed query string reaches neither the message nor the *url.Error underneath it, Performance Max image assets carry NO caller-derived name so the URL is not exported to Google as a permanent asset label, a 64 MiB running total caps the whole creative rather than only each image, and a 5xx on the Demand Gen assets:mutate reports UNCONFIRMED rather than failed (LFXV2-2665); and Video (YouTube) — CREATION IS REFUSED, because the Google Ads API cannot create or mutate a Video campaign at all: CreateVideoCampaign returns the ErrVideoCreateUnsupported sentinel in its FIRST statement, before any request, so not one orphaned budget is stranded, while fetching, reporting, ADOPTION, the activation gate, the variant slot and monitoring are untouched — only creation is impossible; the cascade is RETAINED unexported, unreachable and still fully tested, preserving the channel's shape against the day Google supports it: a fourth channel whose shell is VIDEO/VIDEO_ACTION bidding maximize-conversions by default and accepting only that strategy or target-cpa, the narrowest set VIDEO_ACTION documents and one this client has NOT verified against the live API, whose creative is a VIDEO_RESPONSIVE ad built from YouTube video ids the caller already owns — no URL, no fetch phase and no network at all before the budget mutate, which is what lets the whole Video preflight stay pure — with 1-5 YouTube videos, 1-5 headlines (15), long headlines (90) and descriptions (70) each kept as its own asset field type and 0-5 call-to-action texts (10) where ABSENT means Google's default and empty means no text, campaign-level geo including proximity and the whole un-narrowed campaign-criteria set exactly as on Search, conversion actions accepted, keywords/audience segments/CPC bid/negative keywords refused, an ENABLED ad group as on Demand Gen and a PAUSED ad over two mutates whose ids are reported even when the ad create fails, under a PAUSED campaign, and its own adoption slot so a VIDEO campaign is never filed as the default one (LFXV2-2665); and Display campaign creation — a fifth channel whose shell is DISPLAY with NO advertisingChannelSubType at all (the deliberate contrast with Video's pinned VIDEO_ACTION), an ENABLED DISPLAY_STANDARD ad group and a PAUSED responsive display ad whose longHeadline is a SCALAR rather than a list — the one place this channel's shape departs from its siblings — built from marketing, square marketing, logo and square logo images this service fetches over the same hardened transport BEFORE the first budget mutate, with a marketing or square marketing image RECIPROCALLY required, 1-5 headlines (30), 1-5 descriptions (90), a required long headline (90) and business name (25) and an optional call to action, campaign-level geo including proximity and the whole campaign-criteria set as on Video, conversion actions accepted, keywords/audience segments/CPC bid/negative keywords/extensions/multiple ad groups refused, five automated bidding strategies that are NOT live-verified, manual CPC and CONNECTED_TV refused as named limitations of this client rather than of Google, and its own adoption slot (LFXV2-2665); and the remaining extension types — call, promotion and price assets created and linked by the same two-mutate account-asset shape as sitelinks, with vanity phone numbers refused because Google rejects them, both of a promotion's Google oneofs enforced locally (exactly one discount arm, at most one eligibility arm), a percentage sent as micros of a FRACTION so 25% is 250,000, the serving and redemption windows ordered INDEPENDENTLY because an offer may outlive the ad, 3..8 price offerings each carrying its own tagged and bounded destination, and the occasion/type/qualifier/unit enums checked for SHAPE only on the structured-snippet-header precedent — all SEARCH only, and image and location extensions left as NAMED gaps because the first would give the Search preflight a fetch phase and the second cannot be created through this API at all (LFXV2-2665); and lead form extensions — the seventh asset type and the only one that changes WHERE THE LEAD GOES, collecting the user's details inside Google rather than at the registration URL, at most ONE per campaign because Google links a single form and a second would be created as an asset and then refused at the link, with business name/headline/description/call-to-action description required and rune-bounded, at least one de-duplicated input-type field because a form collecting nothing cannot generate a lead, a post-submit headline and description that are ALL-OR-NOTHING while the post-submit button stands alone, the call-to-action/intent/field enums SHAPE-checked on the same precedent, and a REQUIRED privacy-policy URL run through validateServableURL — split out of buildTaggedFinalURL so one implementation decides what this client will send — validated and snapshot-reduced like every other caller URL but deliberately NOT UTM-tagged, since a policy read is not an ad click (LFXV2-2665). Plus the two post-create levers this client exposes without a create: an ad group max CPC bid write through adGroups:mutate carrying cpc_bid_micros under the create path's own 0.01-100,000 bound, sent retry-safe because re-applying the same amount converges, and confirmed by checking that the returned resource name is an adGroups name in this account and names the ad group that was asked for; and campaign-level negative KEYWORD criteria through campaignCriteria:mutate, which is ATOMIC with no partialFailure, so a GAQL read of the campaign's live negatives (REMOVED is excluded by default) runs first and a negative already present is reported as such rather than failing the whole batch (LFXV2-2665); and budget-name ADOPTION on all five creating channels — a CampaignBudgetError DUPLICATE_NAME at campaignBudgets:mutate no longer dead-ends the brief, because a non-shared budget left behind by a failed attempt has no Google Ads UI surface to delete it from and the composed name is deterministic, so the name would block that brief forever; instead the budget holding the name is looked up by GAQL and reused only after every scoping gate passes — it is in this customer, live, explicitly non-shared with an OMITTED sharing flag refused rather than read as false, DAILY/STANDARD/STANDARD so its amount means what the create meant, carries a positive amount, has reference_count 0, is confirmed unattached a second time from the campaign side because reference_count counts campaigns ACTIVELY using a budget and this client creates every campaign PAUSED, and is the only live budget of that name — with zero rows treated as a CONTRADICTION of Google's own refusal rather than a clean absence, an amount differing from the brief aligned through UpdateCampaignBudget and recorded in the steps rather than silently inherited, and a declined reuse leaving the previous already-exists refusal, its partial result and Performance Max's final-URL-expansion hedge exactly as they were (LFXV2-2665). ImageSlotCatalog() republishes the same per-channel image geometry the create path enforces -- built from the existing slot tables, never re-typed -- as a platform-agnostic creative.Catalog, including the shared marketing-image ceilings and the reciprocal landscape-or-square requirement no per-slot minimum can express (LFXV2-2665)."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -93,6 +93,46 @@ classification. A rate-limited (429) **idempotent** call is retried up to
 is an explicit parameter (not the HTTP method) because GAQL `:search` is
 POST-but-read-only — a `:mutate` create must NOT be retried (double-create risk).
 `customer_id`/`login_customer_id` are validated as digits-only before any request.
+
+### A retried mutate's failure is UNCONFIRMED (#347)
+
+`doRequest` returns only `(body, err)`, so its caller cannot tell a first-attempt
+failure from one that followed a retry. That distinction is the whole outcome on a
+mutate: a 429 is Google acknowledging **receipt**, and a `:mutate` carries no
+idempotency key, so the rate-limited attempt may still have been applied. A later
+definite refusal — including the `400` a second attempt can earn *precisely because*
+the first one already took effect — proves only that the **last** attempt changed
+nothing. Reporting it as "the platform was not modified" is then false, and on the
+budget and bid levers it is false about money.
+
+`doRequestCounted` is `doRequest` additionally returning how many attempts were
+**retried** — the loop's `attempt` index at the point of return, so `0` means the
+outcome answers the one and only request that was sent. `doRequest` and
+`doRequestValidated` are thin delegations to the counted forms, so no existing caller
+changed. `retriedUnconfirmed(what, retries, err)` is the single place the rule is
+applied, and it wraps in `retriedUnconfirmedError` (`Unconfirmed() bool` → true,
+`Unwrap()` keeping the final `*apiError` reachable) only when **all three** hold:
+`err != nil` (a success is confirmed however many 429s preceded it), `retries > 0`
+(an unretried `400` stays exactly as definite as it was), and
+`!IsOutcomeUnconfirmed(err)` (an error already ambiguous by shape — 5xx, exhausted
+429, transport timeout — or already carrying one of this package's explicit markers
+needs no second layer).
+
+One consequence of the third clause reads wrong at a glance and is deliberate: an
+`errRequestNotTransmitted` failure on a **later** attempt reports `NotAttempted()`,
+which makes `IsOutcomeUnconfirmed` return false, so it **is** wrapped. "Not attempted"
+is true of the attempt that failed; attempt 0 was transmitted and answered 429. That
+marker is already gated on `attempt == 0` for exactly this reason.
+
+Five of the six idempotent mutating call sites are routed through the counted form —
+`assetGroups:mutate` (`pmax_creative.go`), `adGroups:mutate` in the status cascade
+(`adgroup_ad.go`), `campaignBudgets:mutate` (`budget_update.go`), `adGroups:mutate` for
+the CPC bid (`bid_update.go`) and `campaigns:mutate` (`campaign.go`). The sixth,
+`adGroupAds:mutate`, is deliberately left on `doRequest`: every failure there is already
+wrapped in `partialCascadeError`, which reports `Unconfirmed()`, so the wrap would be a
+guaranteed no-op. Every CREATE passes `idempotent=false` and is never retried, and reads
+have no commit to be ambiguous about. This mirrors the `reddit`, `twitter` and
+`microsoft` clients, which already carry the same type and gate.
 
 ## GAQL search
 
@@ -415,6 +455,233 @@ budget's name syncs to the campaign name once attached; Google does NOT document
 that the original budget name is then freed for reuse, so for at-most-once retries
 callers should pass a stable-per-logical-campaign `NameSuffix` (which makes the
 retry collide on `DUPLICATE_NAME`) rather than relying on name reuse.
+
+### Budget-name adoption on DUPLICATE_NAME (`budget_lookup.go`)
+
+`DUPLICATE_NAME` used to be terminal for a brief. The budget name is this client's
+idempotency key and `ComposeName` is deterministic, so every later dispatch of the same
+brief recomposes the same name and is refused again — and a budget created with
+`explicitlyShared=false` and no campaign on it appears in **no** Google Ads UI surface
+(Shared Library → Budgets lists only explicitly-shared budgets; with no campaign there is
+no campaign row to open it from; change history is read-only). There is no manual cleanup
+path, so the name stays taken forever. That is the state the 2026-10-16 and 2026-10-20
+Performance Max dispatches left behind.
+
+`reuseBudgetAfterDuplicateName` is the single entry point all five creating channels
+(`campaign.go`, `pmax.go`, `display.go`, `demandgen.go`, `video.go`) call from that arm.
+It ADOPTS the budget holding the name instead of failing — but only after
+`findReusableBudget` proves, from the account rather than from the argument, that the
+budget is one this brief may spend from.
+
+The search and the gates live in `findBudgetByName`, which has three exits —
+`(budget, true, nil)`, a clean `(nil, false, nil)` for zero rows, and `(nil, false, err)`
+for everything else. `findReusableBudget` is a thin wrapper over it that owns the one
+judgement that belongs to the DUPLICATE_NAME caller alone: zero rows there is a
+CONTRADICTION (Google says the name is taken and the account says it is not; both cannot
+be true), so the wrapper turns the clean absence into an error. Every OTHER gate failure
+is reported as an error by the core itself — a budget that exists but is shared, attached,
+wrong-shaped or unreadable is never `(nil, false, nil)`. That is what makes the clean
+absence safe for the second caller below: absence means the account was read successfully
+and held no such budget, never that a gate was quietly skipped.
+
+| gate | why refusing is the only safe answer |
+|---|---|
+| exactly one live row of that name | two live budgets sharing a name is anomalous — the worst moment to guess |
+| identity before status | a cross-customer, self-disagreeing or non-canonical row identifies no budget here; the returned `resourceName` is REBUILT from our customer id, never echoed |
+| `explicitly_shared` present **and** false | an OMITTED field is refused rather than read as false — a shared budget is a Shared Library object other campaigns draw on |
+| `period`/`delivery_method`/`type` all `DAILY`/`STANDARD`/`STANDARD` | the create sends no `Period`, so only this shape means what the create meant; a `CUSTOM_PERIOD` budget holds a whole-flight cap in a different field |
+| `reference_count` parses and is 0 | a budget with a campaign on it is being spent from |
+| a second, campaign-side check (`campaign.campaign_budget = <ours>`) finds no live campaign | `reference_count` counts campaigns ACTIVELY using the budget and this client creates every campaign PAUSED — the shape that phrase is least clear about is the one most likely to exist. `REMOVED` campaigns are skipped; a row for a DIFFERENT budget means the filter was not honoured and invalidates the response |
+
+A budget whose amount differs from the brief's is ALIGNED through `UpdateCampaignBudget`
+(idempotent, and its non-shared precondition is exactly what the gates just established)
+and the change is recorded in `Steps`; a failed alignment fails the create rather than
+attaching a campaign to an amount nobody asked for. Refusing on a mismatch instead would
+re-impose the dead end, and the end state after adoption equals a clean first-time create:
+one non-shared daily budget at the brief's amount, one PAUSED campaign on it.
+
+**An AMBIGUOUS alignment failure is marked at this call site, not inside
+`UpdateCampaignBudget`** (#384). The method marks only the three 2xx exits where Google
+ACCEPTED the mutate and answered untrustworthily; its ordinary ambiguous failures — a 5xx,
+an exhausted 429, a mid-flight transport timeout on `campaignBudgets:mutate` — return a
+plain wrapped error, because ambiguity of that SHAPE is what `createOutcomeAmbiguous`
+reads and what the method's other caller, `dispatch/googleads_budget.go`, already asks for
+via `IsOutcomeUnconfirmed`. Marking inside would be redundant there and would change the
+error type that path returns. The create path cannot reach the same answer by shape —
+`carriesUnconfirmedWrite` reads the explicit marker only, for the reason in the bullet
+below — so the write that may have landed has to say so itself. The wrap is therefore
+gated on `createOutcomeAmbiguous(err) && !carriesUnconfirmedWrite(err)`, which leaves the
+DEFINITE failures unmarked: a 4xx Google rejected, and the pre-send unsupported-period
+refusal that never left the process. Those changed nothing, so `budget_name_taken` stays
+true of them and the operator keeps the precise token.
+
+A DECLINED reuse changes nothing: the original already-exists error is returned, the
+partial result still carries the names, and Performance Max still appends
+`expansionActionRequiredIfExists`. That hedge is deliberately absent on the ACCEPTED path —
+a successful reuse has just proved from the campaign side that no campaign references the
+budget, so there is nothing to warn about.
+
+Two details of that declined-reuse error are load-bearing for `CreateOutcome`, which reads
+it to classify what the account now holds:
+
+- **Both errors are wrapped with `%w`, the DUPLICATE_NAME refusal FIRST.** Every predicate
+  in `create_outcome.go` reaches its target with `errors.As`, which stops at the FIRST
+  `*apiError` in the chain — so wrapping the reuse verdict ahead of the refusal would let
+  an `apiError` from the lookup READ shadow the duplicate code, and the failure would lose
+  `budget_name_taken` for the generic `create_unconfirmed`.
+- **The `budget_name_taken` arm is additionally gated on `!carriesUnconfirmedWrite(err)`.**
+  That token's operator sentence says nothing new was created, and one reason a reuse
+  declines is an amount alignment Google ACCEPTED without a usable acknowledgement
+  (`*unconfirmedBudgetMutateError`): the budget create did fail, but the EXISTING budget's
+  amount may have moved. The guard consults only that explicit marker and deliberately not
+  `IsOutcomeUnconfirmed`, which also shape-infers ambiguity from a 5xx or transport error —
+  on this path usually the lookup read failing, which wrote nothing, and weakening a clean
+  `budget_name_taken` would cost the operator the one token that says exactly what to
+  look for. That narrowness is why an ambiguous alignment failure has to be marked
+  explicitly where it happens (above): until #384 the marker existed only on the three
+  2xx exits, so a 5xx on `campaignBudgets:mutate` reached this arm unmarked and was
+  reported as "nothing new was created" when the existing budget's amount may have moved.
+
+### Resolving an AMBIGUOUS budget create (`budget_lookup.go`, #385)
+
+The DUPLICATE_NAME arm above handles a budget Google admits exists. The sibling arm is
+the one where Google says nothing at all: `campaignBudgets:mutate` failed with a 5xx, an
+exhausted 429, or a transport error after the request was on the wire, so whether the
+write landed is unknown. That arm used to return a partial carrying NO budget id — which
+is how the 2026-10-16/2026-10-20 orphans were created and never reported: a committed
+budget became invisible (non-shared and unattached, so it appears in no Google Ads UI
+surface) and silently blocked the next retry by name one call later.
+
+`ambiguousBudgetCreateOutcome(ctx, channel, budgetName, namePartial, createErr)` is now
+the WHOLE of that arm for all five channels — resolution, partial, and sentence — so the
+five cannot drift on a failure none of them can exercise against the live account.
+`channel` is the channel word the existing messages already use ("campaign",
+"performance max", "demand gen", "display", "video"); `namePartial` is the caller's own
+pre-budget partial builder.
+
+**Reading the account is licensed here, and more strongly than in the DUPLICATE_NAME
+arm.** This is Step 1: `campaigns:mutate` has not been issued on this attempt or on any
+attempt that reached this arm. A non-shared budget's name synchronises to its campaign's
+name on attach, so no campaign can have taken this name and renamed its budget — a live
+budget found under `budgetName` is this client's own, and so is an absence. And unlike
+the DUPLICATE_NAME arm, Google refused nothing, so nothing can contradict the answer.
+
+`resolveBudgetAfterAmbiguousCreate` is the three-outcome adapter over `findBudgetByName`,
+and `ambiguousBudgetCreateOutcome` switches on it:
+
+| account says | partial | sentence | `CreateOutcome` |
+|---|---|---|---|
+| budget found | caller's partial **plus `CampaignBudgetID`** | "...budget `<id>` (`<name>`) **WAS created** despite an unconfirmed create response, and the campaign was never attempted; the budget is unattached so it accrues no spend, and a retry of this brief will reuse it" | `CreateOutcomeBudgetCreatedCampaignUnconfirmed` |
+| not visible after the re-reads | caller's partial (names only) | "...budget creation **UNCONFIRMED** (…)" plus "no budget of that name is live in the account, checked `N` times, so most likely nothing was created" | `CreateOutcomeUnconfirmed` |
+| the account did not settle it | caller's partial (names only) | "...budget creation **UNCONFIRMED** (…)" plus "and the account did not settle it" — the read failed, OR a budget of the name exists and failed a gate | `CreateOutcomeUnconfirmed` |
+
+Four details are load-bearing:
+
+- **`CreateOutcome` is driven by the partial's ids, not by a per-arm annotation.** Row one
+  differs from rows two and three only because `CampaignBudgetID` is set on it; nothing in
+  the error text is parsed. So the id on the partial IS the classification.
+- **The create error is wrapped FIRST in all three sentences**, for the reason the
+  DUPLICATE_NAME bullets above spell out: `errors.As` stops at the first `*apiError`, so
+  an `apiError` from the lookup READ must not shadow the create's and cost the failure its
+  outcome token.
+- **An absence is reported, never claimed.** Every arm returns a partial and keeps the
+  brief's claim; none returns `nil`. The temptation is row two — campaigns:mutate was
+  never issued and the account shows nothing, so a nil result would release the claim for
+  a clean retry — but an absence is a property of the READ, and this same file refuses to
+  act on a zero-row answer from this same query where it can be contradicted, naming a
+  stale read replica, the wrong account, and a name that does not round-trip. The repo's
+  rule is explicit: an ambiguous mutating create must produce a partial and retain the
+  claim (`docs/reviews/knowledge-base/context-and-cancellation.md`,
+  `presend-clean-inflight-unconfirmed`). A nil there would report a budget that committed
+  but was briefly invisible as never created — the exact orphan the arm exists to close.
+  What DID change for the operator is the sentence: "no budget of that name is live in the
+  account" is a far better starting point than "it may exist".
+- **Only the no-row outcome is retried, on a detached, bounded context.** A budget
+  committed moments before is exactly the one a single immediate read misses, and it is
+  the one that most needs reporting, so the re-reads run on a 250ms→1s schedule (4
+  attempts, 1750ms of sleep) under a 20s ceiling, mirroring
+  `reconcileAmbiguousAudienceCommit`'s precedent in `audience_repo.go`. A found budget or
+  any gate error settles the question immediately and is never retried. The schedule itself
+  lives in `retryFindBudgetByName`, shared with the unreadable-2xx recovery below. The
+  two delays are `Client` fields defaulting to those consts, which tests shrink via the
+  unexported `withBudgetResolveDelays` exactly as they shrink `retryBaseDelay`; the
+  **attempt cap is not overridable**, because tests assert on how many reads the account
+  was given before an absence is reported. Meanwhile,
+  `resolveBudgetAfterAmbiguousCreate` adds only the **detachment**
+  (`context.WithoutCancel`), which belongs to this arm alone, because one of the three
+  shapes that reach it is a transport error — which a cancelled caller context produces —
+  and reusing `ctx` would make the feature inert in exactly the shape most likely to leave
+  an orphan.
+
+The cost is up to four `googleAds:search` calls on the ambiguous path, plus one more when
+a budget IS found (`assertBudgetUnattached` asks the campaign side independently), paid
+only on a failure that was previously unresolvable.
+
+### Recovering a budget from an UNREADABLE 2xx (`budget_lookup.go`, #387)
+
+The third dead end at Step 1, and the only one of the three where Google answered
+**success**. `campaignBudgets:mutate` returns 2xx, but the response carries no
+`results[0].resourceName`, or one with no id segment, so `firstResourceName` can hand back
+nothing to attach a campaign to. Before #387 all five channels failed on the spot with a
+sentence saying the budget was "UNCONFIRMED (may exist)" — leaving the same orphan class the
+DUPLICATE_NAME arm closes, arrived at from the opposite direction: a non-shared, unattached
+budget that appears in no Google Ads UI surface and holds the composed name that blocks
+every later retry of the same brief.
+
+`budgetFromCreateResponse(ctx, channel, budgetName, amountMicros, body)` is now the WHOLE of every
+channel's "read the budget out of a 2xx" step, returning `(resourceName, budgetID,
+recoveryStep, err)`. On the ordinary path it is `firstResourceName` and nothing else — no
+search is issued, which the tests pin. Only when the parse fails does it call
+`recoverBudgetAfterUnreadableCreate`. The `recoveryStep` is returned separately rather than
+appended inside, because the five channels word their own "Campaign budget created" line
+differently and a readback deserves its own sentence in `Steps`.
+
+Three things distinguish this arm from the ambiguous one above:
+
+- **An absence here is a CONTRADICTION, not an answer.** There, Google said nothing, so
+  "no such budget" is evidence that nothing was created and the arm reports it as such.
+  Here Google said 2xx, so a budget of this name provably exists; an account that shows none
+  has returned two answers that cannot both be true, and `recoverBudgetAfterUnreadableCreate`
+  refuses rather than classifying. That is why it is modelled on `findReusableBudget`'s thin
+  wrapper and not on `ambiguousBudgetCreateOutcome`'s three-outcome adapter.
+- **The re-reads matter MORE here, not less.** The commit is confirmed, so a first read that
+  misses can only be replica lag. It shares `retryFindBudgetByName` — the same 4 attempts and
+  20s ceiling — but **not** the detachment: nothing on this path is reached by way of a
+  cancelled caller context, and the caller's own deadline is a legitimate bound on a readback
+  that is holding up a campaign mutate.
+- **The gates are still checked**, even though "Google committed this moments ago" predicts
+  they will pass. The argument is an argument; the row is the evidence. A shared or
+  already-attached budget is refused by `findBudgetByName` exactly as on the DUPLICATE_NAME
+  path, and the resource name handed back is the one `reusableBudget` rebuilds from this
+  client's customer id and the canonical budget id — never the string the unreadable response
+  happened to carry. **The amount is a gate here too**, and this is the one place it refuses
+  instead of aligning: the create that just succeeded set the amount, so a row carrying a
+  different one is not this create's budget. The realistic shape is a same-named budget
+  removed shortly before, still served as ENABLED and unattached by a lagging replica —
+  every other gate passes on it, and `assertBudgetUnattached` reads the campaign side, which
+  lags with it, so the amount is the only field separating the two. On the DUPLICATE_NAME
+  path the budget pre-dates the brief, which is why `reuseBudgetAfterDuplicateName` aligns
+  it there instead.
+
+When recovery fails, both errors are wrapped with the parse failure first — the order they
+happened in, and the order the two arms above read in. Here that order is **not** an
+`errors.As` guard as it is there: `firstResourceName` returns only a `json.Unmarshal` wrap
+or a plain `fmt.Errorf`, never an `*apiError`, so the chain's first `apiError` is the
+lookup's whichever way the two `%w` are written. What this arm does newly admit is the
+lookup READ's `*apiError` into a chain that previously carried none, which makes
+`domain.UpstreamStatus` resolvable and lets `DispatchFailureMessage` say "the platform
+answered HTTP N" about a create that answered 200 — accepted because the read's status is
+the only upstream signal this path has, and the sentence it decorates already names which
+call succeeded and which did not. The partial still carries no `CampaignBudgetID`, so
+`CreateOutcome` is `CreateOutcomeUnconfirmed` and the campaign is never attempted — the
+behaviour before #387, minus the false sentence. The refusal now says
+the budget **WAS** created and only its identity is unsettled: telling an operator it "may
+exist" sends them looking for something that is definitely there.
+
+Out of scope, deliberately: the campaign-side arms where a 2xx **campaign** resource name
+fails to parse (`pmax.go` and siblings, plus `validateCampaignResource`). A billable campaign
+is already running by then, and recovering its identity is a harder problem than recovering a
+budget's.
 
 ## Responsive Search Ad copy + final URL (GA-3a)
 
@@ -1025,8 +1292,9 @@ would claim Google refused keywords it was never sent.
 ## Metrics reads (GA-5)
 
 `GetCampaignMetrics` (in `metrics.go`) reads live impressions, clicks, cost,
-CTR and CONVERSIONS for one campaign over a predefined date-range window (e.g.
-`LAST_30_DAYS`) via a single GAQL `googleAds:search` query.
+CTR, CONVERSIONS and CONVERSION VALUE for one campaign over a predefined
+date-range window (e.g. `LAST_30_DAYS`) via a single GAQL `googleAds:search`
+query, and derives ROAS from the last two.
 
 `metrics.conversions` is handled differently from the other metrics in two ways,
 both of which are properties of the upstream encoding. It is declared **DOUBLE**
@@ -1051,6 +1319,41 @@ rather than parse errors. CTR is computed client-side (Clicks/Impressions, 0
 when Impressions is 0 — never divides by zero). The return type `CampaignMetrics`
 is distinct from the domain type `model.CampaignMetrics` (an application-level
 neutral staging area), converted at the dispatcher boundary.
+
+`metrics.conversions_value` follows the conversions encoding exactly — DOUBLE, a
+bare JSON number, always selected, so an absent member is a measured 0.0 — and
+differs from it in one way that matters to every consumer: it is reported in
+**WHOLE units of the account's currency, not micros**, so it is deliberately
+asymmetric with `cost_micros` beside it. It is not scaled to micros here,
+because scaling would invent precision the upstream figure does not carry.
+**ROAS is therefore derived in the adapter**, `conversions_value` over
+`cost_micros/1e6`, so that no caller ever has to reconcile the two units or
+decide for itself what a zero-cost window means. ROAS is a POINTER and is
+WITHHELD — nil — whenever the division would not be a measurement: no conversion
+value, or no spend. A window that earned value without spending has an UNDEFINED
+return on ad spend, and both available substitutions state something false (0
+says the campaign earned nothing; an infinity says it earned without limit). A
+negative `cost_micros` withholds it too: `parseMetricInt` wraps
+`strconv.ParseInt`, which accepts a leading minus, so a corrupt cost would
+otherwise divide into a negative ROAS that renders as a real, terrible result.
+Google Ads is currently the only adapter that populates either field, and that
+is a scope boundary rather than a finding about the other six platforms — the
+doc comment on `model.CampaignMetrics.ConversionValue` says so explicitly, so
+that a nil there is never read as the kind of claim a nil `Conversions` carries.
+`Conversions` states its nil over the read as well, but backs it with a
+vendor-by-vendor audit — four channels cannot report a campaign-level count,
+and two more withdraw a total on an incomplete response. `ConversionValue` was
+audited for neither, so its nil asserts nothing about any platform. Neither field is consumed by `internal/service/rules`:
+no rule evaluates a return on ad spend, so nothing fires or fails to fire on
+them. They are reporting surface only, on the `campaign-metrics` response.
+
+ROAS is a RATIO, not a percentage (2.4 is 240%), on the same scale as the
+`TargetROAS` `bidding.go` sends, so a read compares against the target
+directly. Its nil adds no new meaning to the response: which of the three
+cases withheld it is read off the sibling fields (`conversion_value` absent,
+`cost_micros` 0, `cost_micros` below 0), so it does not repeat the overloaded
+nil #175 records for `conversions`, and a PRESENT 0 is always a measurement —
+the campaign spent and earned no conversion value.
 
 `WindowFor` maps the platform-agnostic `model.MetricsWindow` (`last_30_days`, …)
 onto this package's GAQL literals. It lives HERE, not in the dispatcher, so
@@ -1612,8 +1915,17 @@ fails with `result == nil` and nothing created, which
 
 **The service fetches the images; Google never sees the URL.** Google Ads takes
 image assets as base64 bytes, so a caller-supplied https URL is downloaded here
-and uploaded as an `imageAsset`. That makes this the one place the service
-fetches a caller-controlled address, and the transport is hardened accordingly:
+and uploaded as an `imageAsset`. A slot entry carrying `ResolvedImageRefPrefix` is
+the one exception and is never fetched at all: its bytes come from this service's
+own creative-asset store, loaded before the dispatch began, and
+`validateImageEntries` takes them from `CampaignInput.ResolvedImages` — see
+[Google Ads Creative Image Assets](../architecture/google-creative-assets.md).
+Everything in this list is therefore about the URL path; the checks that are a
+property of the BYTES rather than of the download — the per-image cap, the decode
+and the geometry — run on both, in the shared `validateImageBytes`.
+
+A downloaded URL makes this the one place the service fetches a caller-controlled
+address, and that transport is hardened accordingly:
 
 - **https only**, refused at validation. A plaintext fetch is one an on-path
   attacker can replace with an image of their choosing, which then becomes a real
@@ -1828,18 +2140,60 @@ mandatory, `logoImages` (1:1) is 1–5 with at least one, and `portraitImages` (
 cap of 20. Headlines (3–15), long headlines (1–5) and descriptions (2–5, at least one
 inside the short slot's display width) are **three distinct asset field types**, not one
 list bucketed by length, and a business name is required. Everything above is validated
-in the PURE preflight; the image bytes are fetched by `fetchSlotImages` through the same
-hardened credential-free transport Demand Gen uses, still BEFORE the first budget
-mutate, so a bad image fails with `result == nil` and nothing created.
+in the PURE preflight; the image bytes are supplied by `fetchSlotImages` — downloaded
+through the same hardened credential-free transport Demand Gen uses, or, for an entry
+carrying `ResolvedImageRefPrefix`, read from `CampaignInput.ResolvedImages` with no
+fetch at all — still BEFORE the first budget mutate, so a bad image fails with
+`result == nil` and nothing created.
 
-**The campaign shell differs from Search's in four ways that all matter.**
-`advertisingChannelType: PERFORMANCE_MAX`; `urlExpansionOptOut: true`, so the campaign
-serves the final URL it was given rather than URLs Google picks off the site; no
-`networkSettings`, which Performance Max does not take; and `maximizeConversions` by
-default — `defaultBiddingStrategy` answers a different strategy per channel, and manual
-CPC and maximize-clicks are both REFUSED here because Performance Max does not offer
-them. Geo is attached at CAMPAIGN level, as on Search, which is why proximity stays
-allowed on this channel while every other Search-only field is refused.
+**The campaign shell differs from Search's in five ways that all matter.**
+`advertisingChannelType: PERFORMANCE_MAX`; `brandGuidelinesEnabled: false`, sent
+explicitly and never omitted, because the account has Brand Guidelines on and a
+Performance Max campaign created under it must link a BUSINESS_NAME and a square LOGO
+as CAMPAIGN assets, so the create would 400 with
+`REQUIRED_BUSINESS_NAME_ASSET_NOT_LINKED` AFTER the budget mutate had already committed
+and been paid for. The gap is not that the client cannot build those two assets —
+`pmax_creative.go` builds both — but that it links them as ASSET-GROUP assets at Step 5,
+after the Step 2 campaign create, so satisfying Brand Guidelines needs a campaign-level
+`campaignAssets:mutate` link AND a reordering of the cascade; `assetAutomationSettings`,
+which only this channel carries and which the next paragraph covers on its own because
+the field it replaced is gone from v23 entirely; no `networkSettings`, which Performance
+Max does not take; and `maximizeConversions` by default — `defaultBiddingStrategy`
+answers a different strategy per channel, and manual CPC and maximize-clicks are both
+REFUSED here because Performance Max does not offer them. Geo is attached at CAMPAIGN
+level, as on Search, which is why proximity stays allowed on this channel while every
+other Search-only field is refused.
+
+**`urlExpansionOptOut` is GONE; the control it carried moved.** This shell used to send
+`urlExpansionOptOut: true` so the campaign served the final URL it was given rather than
+URLs Google picks off the site. Google Ads API v23 removed that FIELD outright, on the
+campaign and the asset group alike — `googleAdsFields:search` for `%url_expansion%`
+returns only the reporting view `final_url_expansion_asset_view`. It did not remove the
+control: that lives in `campaign.asset_automation_settings`, which is settable at CREATE
+and supported on this channel, verified against the live API on 2026-10-19 with a
+`validateOnly` mutate. So the shell sends `assetAutomationSettings` with one entry,
+`FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION` / `OPTED_OUT`. What guarantees the opt-out
+ships is that one-element slice LITERAL, pinned by
+`TestCreatePerformanceMaxCampaign_CampaignShape` — not the absence of `omitempty` on the
+field, which on a repeated field decides nothing: a nil slice (`null`), an empty slice
+(`[]`) and an omitted key are all read identically by proto3 JSON, and all three mean "no
+opt-out", which is the bug `urlExpansionOptOut: true` existed to prevent. The tag is
+dropped for consistency with `brandGuidelinesEnabled`, where it genuinely does decide an
+outcome. This is not a like-for-like rename: the entry opts out of ONE
+asset-automation type, and Google may add others this payload then leaves at their
+default.
+
+The `Steps` still carry a final-URL-expansion sentence on EVERY path that hands back a
+campaign that exists, but there are two of them and the difference is whose campaign the
+path is describing. Paths where THIS request created the campaign — the confirmed create
+and every later return, plus the unconfirmed return where `campaigns:mutate` answered 2xx
+but the resource name came back unusable and no `CampaignID` is carried — get an
+informational step recording that the opt-out went out at create. The three arms that send
+the operator to the Google Ads UI to check — a duplicate campaign name, an ambiguous
+campaign create, and a duplicate BUDGET name, which fails one mutate earlier, before
+`campaigns:mutate` is attempted — keep a hedged `ACTION REQUIRED:`, because the campaign
+they describe was created by an earlier attempt that may predate this service ever sending
+the setting.
 
 **Asset groups are created PAUSED**, matching the campaign — the same intent every
 other create in this client has: nothing serves until a human enables it.
@@ -1995,7 +2349,11 @@ budget.** `fetchDisplayImages` runs over `displayImageSlots` through the same ha
 transport Demand Gen and Performance Max use (https only, no redirects, public-IP dial
 guard, 5 MiB per image and 64 MiB across the creative, decoder-set format allowlist,
 geometry checked against the decoded image within Google's documented ±1%), and it runs
-BEFORE the first budget mutate, so a refused image strands nothing. The four slots are
+BEFORE the first budget mutate, so a refused image strands nothing. An entry carrying
+`ResolvedImageRefPrefix` is read from `CampaignInput.ResolvedImages` instead of fetched,
+so the first three of those — https, no redirects and the dial guard — do not apply to
+it; the rest are properties of the bytes and run on both, through the shared
+`validateImageBytes` and the same running creative total. The four slots are
 marketing 1.91:1 ≥600x314, square marketing 1:1 ≥300x300, logo 4:1 ≥512x128 and square
 logo 1:1 ≥128x128; at most 15 marketing images COMBINED across the two marketing arrays
 and 5 logos per array. A marketing image **or** a square marketing image is required and
@@ -2639,3 +2997,35 @@ all three packages, and `linkedin/token.go` carries the same arm.
 Reddit and Microsoft carry the same pair and the same classifier, duplicated rather than shared
 because each platform package owns its own error vocabulary and the sentinel sets are not
 interchangeable.
+
+## `ImageSlotCatalog()`: publishing the image rules the create path already enforces (LFXV2-2665)
+
+`slot_catalog.go` republishes the same geometry the campaign-creation code validates against,
+in the platform-agnostic vocabulary of [internal/creative](internal-creative.md), so a brief's
+stored library can be matched against it BEFORE anything is dispatched.
+
+**It is built from the existing tables, never re-typed.** `performanceMaxImageSlots`,
+`demandGenImageSlots` and `displayImageSlots` stay the single source of every ratio, floor and
+wire key; `shapeOf`/`slotFrom` convert a row, and the counts come from the channels' own
+`max*` constants. A drift between what the catalog publishes and what the create path enforces
+is a test failure (`slot_catalog_test.go`), which is the only reason it is safe to have the
+rules readable in two places at all.
+
+The direction of the dependency is `googleads → creative`, never the reverse: the classifier
+imports no platform package, and the registry that names them all lives in
+[internal/service](internal-service.md).
+
+Three details the conversion has to get right:
+
+- **A shared ceiling, not a per-slot one.** Google caps the marketing shapes at twenty images
+  *between them* on Performance Max and Demand Gen, fifteen on Display. They carry one
+  `Group` name and a per-channel `GroupMax`; the classifier scopes a group by platform AND
+  channel, so one name cannot leak one channel's budget into another's.
+- **Demand Gen and Display state a RECIPROCAL requirement** — landscape marketing image or
+  square, each required only if the other is absent — which no per-slot `MinCount` can carry.
+  Both channels publish an `AnyOfRule` over the two keys. Performance Max requires both
+  outright and so carries two per-slot minimums and no rule, which is the contrast proving the
+  distinction is real rather than bookkeeping.
+- **The shape carries no label.** Every Google slot has exactly one shape and the slot's label
+  already names its channel, so labelling both renders the operator's sentence with its subject
+  twice over. `TestImageSlotCatalog_DescribesEachSlotOnce` pins it.

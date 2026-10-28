@@ -70,12 +70,24 @@ func TestPublishedAudienceBuilderExamplesArePossible(t *testing.T) {
 
 func checkListBriefExample(t *testing.T, x map[string]any) {
 	t.Helper()
-	if missing, _ := x["missing"].(bool); missing {
+	missing, _ := x["missing"].(bool)
+	unresolved, _ := x["unresolved"].(bool)
+	if missing {
 		if name, _ := x["name"].(string); name != "" {
 			t.Errorf("list-brief example %v: missing=true with a non-empty name", x)
 		}
 		if _, ok := x["hubspot_url"]; ok {
 			t.Errorf("list-brief example %v: missing=true with a hubspot_url", x)
+		}
+	}
+	// The type defines the two as alternatives -- "no such list" against "the read failed" --
+	// so an example asserting both is one no response can produce (#238).
+	if missing && unresolved {
+		t.Errorf("list-brief example %v: missing and unresolved both true", x)
+	}
+	if unresolved {
+		if name, _ := x["name"].(string); name != "" {
+			t.Errorf("list-brief example %v: unresolved=true with a non-empty name", x)
 		}
 	}
 }

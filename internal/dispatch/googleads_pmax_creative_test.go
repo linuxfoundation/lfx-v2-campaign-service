@@ -13,11 +13,11 @@ import (
 
 func fullPMaxCreativeConfig() *googleAdsPerformanceMaxCreativeConfig {
 	return &googleAdsPerformanceMaxCreativeConfig{
-		MarketingImages:       []string{signedCreativeURL},
-		SquareMarketingImages: []string{"https://cdn.example.org/s.png?sig=square-secret"},
-		PortraitImages:        []string{"https://cdn.example.org/p.png?sig=portrait-secret"},
-		LogoImages:            []string{"https://cdn.example.org/l.png?sig=logo-secret"},
-		LandscapeLogoImages:   []string{"https://cdn.example.org/ll.png?sig=landscape-secret"},
+		MarketingImages:       googleAdsImageRefsFromURLs([]string{signedCreativeURL}),
+		SquareMarketingImages: googleAdsImageRefsFromURLs([]string{"https://cdn.example.org/s.png?sig=square-secret"}),
+		PortraitImages:        googleAdsImageRefsFromURLs([]string{"https://cdn.example.org/p.png?sig=portrait-secret"}),
+		LogoImages:            googleAdsImageRefsFromURLs([]string{"https://cdn.example.org/l.png?sig=logo-secret"}),
+		LandscapeLogoImages:   googleAdsImageRefsFromURLs([]string{"https://cdn.example.org/ll.png?sig=landscape-secret"}),
 		Headlines:             []string{"Join us at KubeCon", "Three days in Amsterdam", "Meet the maintainers"},
 		LongHeadlines:         []string{"KubeCon + CloudNativeCon Europe 2026"},
 		Descriptions:          []string{"Talks, workshops and hallway track.", "Register now and save."},
@@ -36,7 +36,7 @@ func TestGoogleAdsSnapshotConfig_SanitizesEveryPerformanceMaxURLList(t *testing.
 	if snapshot.PerformanceMaxCreative == nil {
 		t.Fatal("the snapshot dropped the asset group entirely")
 	}
-	lists := map[string][]string{
+	lists := map[string]googleAdsImageRefs{
 		"marketingImages":       snapshot.PerformanceMaxCreative.MarketingImages,
 		"squareMarketingImages": snapshot.PerformanceMaxCreative.SquareMarketingImages,
 		"portraitImages":        snapshot.PerformanceMaxCreative.PortraitImages,
@@ -48,11 +48,11 @@ func TestGoogleAdsSnapshotConfig_SanitizesEveryPerformanceMaxURLList(t *testing.
 			t.Errorf("%s: snapshot has %d entries, want 1", name, len(got))
 			continue
 		}
-		if strings.Contains(got[0], "secret") || strings.Contains(got[0], "s3cr3t") {
-			t.Errorf("%s: snapshot still carries the signing query: %q", name, got[0])
+		if strings.Contains(got[0].URL, "secret") || strings.Contains(got[0].URL, "s3cr3t") {
+			t.Errorf("%s: snapshot still carries the signing query: %q", name, got[0].URL)
 		}
-		if !strings.HasPrefix(got[0], "https://cdn.example.org") {
-			t.Errorf("%s: snapshot lost the host: %q", name, got[0])
+		if !strings.HasPrefix(got[0].URL, "https://cdn.example.org") {
+			t.Errorf("%s: snapshot lost the host: %q", name, got[0].URL)
 		}
 	}
 }
@@ -64,13 +64,13 @@ func TestGoogleAdsSnapshotConfig_DoesNotMutateTheCallersAssetGroup(t *testing.T)
 	cfg := googleAdsConfig{PerformanceMaxCreative: creative}
 
 	snapshot := googleAdsSnapshotConfig(cfg)
-	if creative.MarketingImages[0] != signedCreativeURL {
-		t.Errorf("the caller's asset group was mutated to %q; the signed url must still be fetchable", creative.MarketingImages[0])
+	if creative.MarketingImages[0].URL != signedCreativeURL {
+		t.Errorf("the caller's asset group was mutated to %q; the signed url must still be fetchable", creative.MarketingImages[0].URL)
 	}
 	if snapshot.PerformanceMaxCreative == creative {
 		t.Error("the snapshot points at the caller's asset group; a later edit to either would change both")
 	}
-	if strings.Contains(snapshot.PerformanceMaxCreative.MarketingImages[0], "s3cr3t") {
+	if strings.Contains(snapshot.PerformanceMaxCreative.MarketingImages[0].URL, "s3cr3t") {
 		t.Error("the snapshot asset group was not sanitized")
 	}
 }
@@ -80,14 +80,14 @@ func TestGoogleAdsSnapshotConfig_DoesNotMutateTheCallersAssetGroup(t *testing.T)
 // condition was added to prevent.
 func TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone(t *testing.T) {
 	cfg := googleAdsConfig{PerformanceMaxCreative: &googleAdsPerformanceMaxCreativeConfig{
-		MarketingImages: []string{signedCreativeURL},
+		MarketingImages: googleAdsImageRefsFromURLs([]string{signedCreativeURL}),
 	}}
 	snapshot := googleAdsSnapshotConfig(cfg)
 	if snapshot.PerformanceMaxCreative == nil {
 		t.Fatal("an asset group with no sitelinks and no Demand Gen creative was dropped")
 	}
-	if strings.Contains(snapshot.PerformanceMaxCreative.MarketingImages[0], "s3cr3t") {
-		t.Errorf("not sanitized: %q", snapshot.PerformanceMaxCreative.MarketingImages[0])
+	if strings.Contains(snapshot.PerformanceMaxCreative.MarketingImages[0].URL, "s3cr3t") {
+		t.Errorf("not sanitized: %q", snapshot.PerformanceMaxCreative.MarketingImages[0].URL)
 	}
 }
 
@@ -103,11 +103,11 @@ func TestGoogleAdsSnapshotConfig_NoAssetGroupStaysAbsent(t *testing.T) {
 // creates — with the wrong field type on assets Google renders differently.
 func TestGoogleAdsPerformanceMaxCreative_MapsEachListToItsOwnSlot(t *testing.T) {
 	in := &googleAdsPerformanceMaxCreativeConfig{
-		MarketingImages:       []string{"m"},
-		SquareMarketingImages: []string{"s"},
-		PortraitImages:        []string{"p"},
-		LogoImages:            []string{"l"},
-		LandscapeLogoImages:   []string{"ll"},
+		MarketingImages:       googleAdsImageRefsFromURLs([]string{"m"}),
+		SquareMarketingImages: googleAdsImageRefsFromURLs([]string{"s"}),
+		PortraitImages:        googleAdsImageRefsFromURLs([]string{"p"}),
+		LogoImages:            googleAdsImageRefsFromURLs([]string{"l"}),
+		LandscapeLogoImages:   googleAdsImageRefsFromURLs([]string{"ll"}),
 		Headlines:             []string{"h"},
 		LongHeadlines:         []string{"lh"},
 		Descriptions:          []string{"d"},

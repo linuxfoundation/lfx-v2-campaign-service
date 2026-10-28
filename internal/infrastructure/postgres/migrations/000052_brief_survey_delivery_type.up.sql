@@ -3,6 +3,10 @@
 
 -- Admit `survey` as a third delivery surface, alongside paid-marketing and email.
 --
+-- 000052: first numbered 000047 on its branch; main claimed 000047-000051 while it was open, so
+-- it moved above them. golang-migrate never applies a version lower than the highest applied one,
+-- so a branch migration must always sit above main's.
+--
 -- 000030 enumerated the two surfaces that existed then and paired each with the stages it may
 -- carry. Survey/report promotion is a THIRD surface, not a seventh email stage: its brief is
 -- authored from a free-text source document and a promoted URL rather than from a scraped event

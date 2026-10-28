@@ -395,6 +395,20 @@ func (d upstreamCapableDispatcher) ListAccounts(context.Context, string, model.P
 	return []model.AccessibleAccount{}, nil
 }
 
+func (d upstreamCapableDispatcher) SuggestGeoTargets(context.Context, string, model.Provider, model.GeoTargetQuery) ([]model.GeoTargetSuggestion, bool, error) {
+	if d.err != nil {
+		return nil, true, d.err
+	}
+	return []model.GeoTargetSuggestion{}, true, nil
+}
+
+func (d upstreamCapableDispatcher) ListUserLists(context.Context, string, model.Provider, string) (*model.AudienceUserLists, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.AudienceUserLists{Lists: []model.AudienceUserList{}}, nil
+}
+
 func (d upstreamCapableDispatcher) SearchEmails(context.Context, string, model.Provider, string) ([]model.MarketingEmail, error) {
 	if d.err != nil {
 		return nil, d.err
@@ -619,6 +633,22 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opListAccounts,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ReadAccounts(ctx, "p1", platform)
+				return err
+			},
+		},
+		{
+			name: "suggest geo targets",
+			op:   opSuggestGeoTargets,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadGeoTargetSuggestions(ctx, "p1", platform, model.GeoTargetQuery{Query: "q"})
+				return err
+			},
+		},
+		{
+			name: "list user lists",
+			op:   opListUserLists,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadUserLists(ctx, "p1", platform, "")
 				return err
 			},
 		},
@@ -1508,15 +1538,21 @@ func recordUpstreamOperations(t *testing.T) []string {
 	var ops []string
 	for _, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
+			// recordLockedUpstream forwards its own operation parameter to recordUpstream; the
+			// tokens are the ones ITS callers pass, which this scan collects below.
+			if fn, ok := n.(*ast.FuncDecl); ok && fn.Name.Name == "recordLockedUpstream" {
+				return false
+			}
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
 			}
 			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || sel.Sel.Name != "recordUpstream" {
+			if !ok || (sel.Sel.Name != "recordUpstream" && sel.Sel.Name != "recordLockedUpstream") {
 				return true
 			}
-			// recordUpstream(ctx, platform, operation, start, err) — operation is 3rd.
+			// recordUpstream(ctx, platform, operation, start, err) and recordLockedUpstream(ctx,
+			// platform, operation, start, lockWait, err) — operation is 3rd in both.
 			if len(call.Args) < 3 {
 				t.Fatalf("recordUpstream call with %d args: the operation argument position "+
 					"this scan relies on has changed", len(call.Args))
@@ -1545,4 +1581,86 @@ func recordUpstreamOperations(t *testing.T) []string {
 	}
 	sort.Strings(ops)
 	return ops
+}
+
+// lockingKeywordDispatcher stands in for a dispatcher whose keyword-targeting writes wait on this
+// service's own write lock: it reports wait as lock wait (and spends it), then answers err.
+type lockingKeywordDispatcher struct {
+	upstreamCapableDispatcher
+	wait time.Duration
+}
+
+func (d lockingKeywordDispatcher) lockThen(ctx context.Context) error {
+	time.Sleep(d.wait)
+	domain.RecordLockWait(ctx, d.wait)
+	return d.err
+}
+
+func (d lockingKeywordDispatcher) RemoveKeywordTargeting(ctx context.Context, p string, pl model.Provider, c *model.Campaign, removals []model.KeywordTargetingRemoval, rev string) ([]model.KeywordTargetingOutcome, error) {
+	if err := d.lockThen(ctx); err != nil {
+		return nil, err
+	}
+	return upstreamCapableDispatcher{}.RemoveKeywordTargeting(ctx, p, pl, c, removals, rev)
+}
+
+func (d lockingKeywordDispatcher) AddNegativeKeywords(ctx context.Context, p string, pl model.Provider, c *model.Campaign, keywords []model.NegativeKeyword, rev string) ([]model.NegativeKeywordOutcome, error) {
+	if err := d.lockThen(ctx); err != nil {
+		return nil, err
+	}
+	return upstreamCapableDispatcher{}.AddNegativeKeywords(ctx, p, pl, c, keywords, rev)
+}
+
+// A refusal at this service's own keyword-targeting write lock — a timeout or an unavailable lock
+// — made no platform call, so it records NO upstream call; a write that waited for the lock and
+// then reached the platform records the call WITHOUT the wait. A stale revision is still recorded:
+// its fresh read was a platform call.
+func TestKeywordTargetingLockIsNotUpstream(t *testing.T) {
+	const platform = model.ProviderRedditAds
+	campaign := &model.Campaign{PlatformCampaignID: "pc-1", CampaignName: "n"}
+	calls := map[string]func(context.Context, *Orchestrator) error{
+		opRemoveKeywordTargeting: func(ctx context.Context, o *Orchestrator) error {
+			_, err := o.RemoveKeywordTargeting(ctx, "p1", platform, campaign, []model.KeywordTargetingRemoval{{Keyword: "k"}}, "rev")
+			return err
+		},
+		opNegativeKeywords: func(ctx context.Context, o *Orchestrator) error {
+			_, err := o.AddNegativeKeywords(ctx, "p1", platform, campaign, []model.NegativeKeyword{{Text: "free", MatchType: "Broad"}}, "rev")
+			return err
+		},
+	}
+	run := func(t *testing.T, d PlatformDispatcher, call func(context.Context, *Orchestrator) error) ([]upstreamRecord, error) {
+		t.Helper()
+		rec := &recordingMetrics{}
+		orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{platform: d})
+		orch.SetMetrics(rec)
+		err := call(context.Background(), orch)
+		return rec.upstreamCalls(), err
+	}
+	for op, call := range calls {
+		for _, refusal := range []error{
+			fmt.Errorf("x: %w", domain.ErrKeywordTargetingWriteInProgress),
+			fmt.Errorf("x: %w: db down", domain.ErrKeywordTargetingLockUnavailable),
+		} {
+			got, err := run(t, lockingKeywordDispatcher{upstreamCapableDispatcher: upstreamCapableDispatcher{err: refusal}}, call)
+			if !errors.Is(err, refusal) {
+				t.Fatalf("%s: err = %v, want the lock refusal", op, err)
+			}
+			if len(got) != 0 {
+				t.Errorf("%s: a lock refusal (%v) recorded %+v; it made no platform call", op, refusal, got)
+			}
+		}
+
+		got, err := run(t, lockingKeywordDispatcher{upstreamCapableDispatcher: upstreamCapableDispatcher{err: domain.ErrKeywordTargetingChanged}}, call)
+		if !errors.Is(err, domain.ErrKeywordTargetingChanged) || len(got) != 1 || got[0].outcome != callOutcomeError {
+			t.Errorf("%s: a stale revision must still be recorded as an upstream error: %v, %+v", op, err, got)
+		}
+
+		const wait = 200 * time.Millisecond
+		got, err = run(t, lockingKeywordDispatcher{wait: wait}, call)
+		if err != nil || len(got) != 1 || got[0].operation != op || got[0].outcome != callOutcomeOK {
+			t.Fatalf("%s: a write that waited then succeeded: %v, %+v", op, err, got)
+		}
+		if got[0].seconds < 0 || got[0].seconds >= (wait/2).Seconds() {
+			t.Errorf("%s: recorded %.3fs; the %s lock wait must not count as platform latency", op, got[0].seconds, wait)
+		}
+	}
 }

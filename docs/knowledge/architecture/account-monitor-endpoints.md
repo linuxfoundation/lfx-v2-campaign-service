@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Account-Monitor Endpoints"
-description: "Seven monitor endpoints: six account-scoped ones, one per ad platform (four ported from the LFX One BFF's rule engines and read live, Microsoft Ads and X served from saved asynchronous reports because their metrics cannot be read inside one request), and a project-scoped HubSpot email monitor that reads only the marketing emails this service recorded for the project."
+description: "Seven monitor endpoints: six ad-platform ones, one per ad platform (four ported from the LFX One BFF's rule engines and read live, Microsoft Ads and X served from saved asynchronous reports because their metrics cannot be read inside one request), of which Google Ads, Meta, Reddit and X return only the campaigns this service recorded for the project because their ad account is shared across foundations while LinkedIn and Microsoft stay account-scoped, and a project-scoped HubSpot email monitor that reads only the marketing emails this service recorded for the project."
 resource: "internal/service/connection_monitor.go"
 ---
 
@@ -12,8 +12,8 @@ resource: "internal/service/connection_monitor.go"
 Microsoft Ads and X joined later and are the two REPORT-BACKED monitors — see
 [Microsoft: a report-backed monitor](#microsoft-a-report-backed-monitor) and
 [X: a second report-backed monitor](#x-a-second-report-backed-monitor). HubSpot's
-`GET /projects/{project_id}/connection-hubspot/account-monitor?days=` is the seventh and the
-only PROJECT-scoped one — see
+`GET /projects/{project_id}/connection-hubspot/account-monitor?days=` is the seventh, the only
+one with no `account_id`, and project-scoped — see
 [HubSpot: a project-scoped email monitor](#hubspot-a-project-scoped-email-monitor). Everything
 below that is not in those sections describes the four live reads.
 
@@ -21,8 +21,11 @@ Ports the LFX One BFF's `/api/campaigns/monitor` family (Google, LinkedIn,
 Meta, Reddit — Meta ships with a pagination fix, not a verbatim port; see
 below). `{project_id}` means "whose credential do I resolve," the same way
 it already does for the existing `connection-*-ads/accounts` discovery
-endpoints — these are *account*-scoped reads (every campaign the credential
-reaches), not project-scoped ones.
+endpoints. On LinkedIn and Microsoft these are *account*-scoped reads (every
+campaign the credential reaches). On Google Ads, Meta, Reddit and X, whose
+one ad account every foundation shares, `{project_id}` also limits the
+response to the campaigns this service recorded for the project — see
+[Project scoping on shared accounts](#project-scoping-on-shared-accounts-lfx-self-serve-ops897).
 
 ## Shape
 
@@ -139,7 +142,7 @@ renderer formats with a symbol when it is present and without one otherwise.
 
 | Platform | Source | Extra call? |
 | -------- | ------ | ----------- |
-| Meta | `account_currency` on each row of the insights read (`meta.Client.ListAccountCampaignsWithCurrency`); every row must agree; withheld unless its minor-unit offset is 100 | No |
+| Meta | `account_currency` on each row of the insights read (`meta.Client.ListAccountCampaignsWithCurrency`); every row must agree; withheld unless it is the ad account's currency the budgets were converted in, with a known minor-unit offset. With no insights rows in the window (no delivery yet) the budgets' own `?fields=currency` read is published, under the same offset rule | No |
 | LinkedIn | `currencyCode` on every `dailyBudget`/`totalBudget` in the campaign list (`linkedin.Client.ListAccountCampaignsWithCurrency`); spend is `costInLocalCurrency`, in the same currency | No |
 | Reddit | `GET /ad_accounts/{id}` (`reddit.Client.readMonitorAccountCurrency`), beside the report fan-out, 3s budget, no 429 retry | One |
 | X | the `GET accounts/:account_id` the monitor already makes for the timezone, cached with it (`twitter.Client.AccountCurrency`) | No (within the cache's minute) |
@@ -186,10 +189,17 @@ renderer formats with a symbol when it is present and without one otherwise.
   `PacingUnknown` (`linkedin.AccountCampaignRow.PacingUnknown`, honoured by
   `rules.EvaluateLinkedInMonitor`): which budgets are in the spend's currency cannot be told. The
   single-campaign metrics read and the audience read still report `costInUsd`.
-- **Meta withholds zero-decimal currencies.** The Meta monitor converts budgets from minor units by
-  dividing by 100 (`minorUnitsToWhole`), so a JPY/KRW/… account's budgets are wrong by that factor;
-  `monitorPublishableCurrency` publishes the code only when `currencyOffsetFor` gives 100, and logs
-  the rest. #316 makes the conversion currency-aware; the restriction goes when it merges.
+- **Meta publishes the currency its budgets were converted in.** Budgets are converted with the
+  account currency's own offset (one `?fields=currency` read per request, `minorToWhole`), so
+  `monitorPublishableCurrency` publishes the insights code for every currency `currencyOffsetFor`
+  knows — offset 1 (JPY, KRW, …) as well as 100 — when it equals that read's currency. It
+  withholds, and logs, a code outside `currencyMinorUnitOffset` (budgets left unconverted; no
+  three-decimal currency is in the map) and one the two reads disagree on, which would label
+  budgets converted at another currency's scale. That disagreement — any row's readable code
+  other than the account read, even when the rows also disagree among themselves — also leaves every budget
+  unknown — no campaign budget converted, no ad-set fallback read — so pacing is unknown while
+  delivery is kept: spend is in the insights currency (PR #316 review). The offset-100-only
+  restriction of #338 is gone.
 - **Identity and failure.** The two new reads (Reddit, Microsoft) and X's currency are taken only
   from a body `identityjson` trusts that names the requested account. Any failure — transport,
   status, untrusted body, another account's id — leaves `currency` absent and never fails the
@@ -278,6 +288,52 @@ N-1 days. It now renders through `reportRange`, the same renderer
 `GetCampaignMetrics` uses, ending at today's 23:00 hour — see the Reddit
 scope audit below.) See `fetchAccountCampaignInsights`'s doc comment in
 `internal/platform/meta/monitor.go` for the same note next to the code.
+
+A fifth and sixth, both pacing-correctness bugs inherited from the BFF and fixed on
+2026-10-13 (LFXV2-2665). **Ad-set budgets**: the BFF read only the CAMPAIGN's
+`daily_budget`/`lifetime_budget`, but `CreateCampaign` puts the budget on the AD SET, so
+every campaign this service creates had no budget, read `pacing_unknown`, and could never
+raise an under- or overspend item. When an admitted campaign has neither campaign-level
+budget, the read now makes ONE account-level paged call,
+`GET /act_{id}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time,created_time`,
+and sums the ad sets' budgets per campaign when every one of them is `ACTIVE` (a CBO campaign
+keeps its own budget). Any ad set in another `effective_status` — paused, under a paused campaign,
+archived, in review — makes its campaign `pacing_unknown`: the campaign's Insights spend still
+includes what that ad set spent in the window before it stopped, and when it stopped is not on the
+read, so summing only the active budgets compared spend from more ad sets than the expectation
+covered (a false overspend). It fails closed: daily and
+lifetime ad sets mixed under one campaign, an active ad set with no budget or an explicit
+`null` one, and any answer that cannot be trusted whole — the 20 × 500 page cap hit, a body
+that fails `identityjson`, an unattributable or repeated row — leave the campaigns that
+needed it `pacing_unknown`, never paced against a partial sum — a syntax-invalid 2xx body
+included, which the client hands back undecoded (`rawBody`) so it lands here rather than as a
+transport error; only a failed request fails the endpoint. **Account currency**: the BFF divided every minor-unit budget by 100, so a
+JPY/KRW budget read 100x too small (and its campaign as wildly overspending). One
+`?fields=currency` read per request now supplies the offset the create path uses (1 for
+zero-decimal currencies); a currency outside the supported map leaves budgets unknown.
+The FLIGHT is on the ad set too, so the same read supplies it: when every active ad set
+shares one `start_time`/`end_time` window it becomes the row's flight and a lifetime budget is
+paced on it; differing or unreadable windows leave the budget `pacing_unknown`, daily or
+lifetime, since both are paced against the flight's days. An unknown budget arrives as 0/0, which the rules already report
+as not computable, and a negative campaign-level budget is unreadable rather than "no budget".
+Meta's action-item text now prints money as "N.NN in account currency", like X's, instead of `$`.
+**Lifetime pacing paces the window** (CBO and ABO alike): spend is the last `days` only, so the
+expectation is now the lifetime budget spread over the flight (end date inclusive — a Meta
+`stop_time`/`end_time` at exactly midnight ends the flight on the day before, `endDateOnly`) times the
+window's flight days — LinkedIn's proration — instead of the plan since the flight started, which
+read a 9,000 / 90-day campaign on day 60 with `days=7` at ~12% when it was on plan. A window the
+flight does not overlap is `pacing_unknown`, and so is an open-ended lifetime flight (no end date:
+no length to spread the budget over — reading it as "ends today" expected the whole budget at
+once). **Daily pacing counts the flight's days too**: `BudgetDay` times the days of the window the
+flight ran on (start and end inclusive; an unreported date is the window's own edge), not
+`BudgetDay × days` — a campaign started 7 days ago at full budget read ~23% on `days=30`. **One
+window**: the read stamps the Insights `since`/`until` it SENT on every row
+(`MetricsWindowStart`/`MetricsWindowEnd`), and `EvaluateMetaMonitor` takes no clock and paces
+against exactly those days; it used to take a `now` captured before the read, which a request
+crossing UTC midnight put one day away from the spend. A row with no window is
+`pacing_unknown`. Flight timestamps are parsed whole (Graph's `-0700` layout or RFC 3339) and
+anything else — `"2026-10-01garbage"` included — is an unreadable date. See
+[2026-10-13-LFXV2-2665-meta-monitor-budget-currency.md](../log/2026-10-13-LFXV2-2665-meta-monitor-budget-currency.md).
 
 ## Correctness bugs found during local differential verification
 
@@ -482,9 +538,115 @@ shared credential has no "own" account to monitor, the same way it has no
 residual even for a project WITH its own connection — see
 `resolveOwnedGoogleAdsDiscoveryClient`'s doc comment
 (`internal/dispatch/googleads.go`): Google Ads is one shared customer across
-every foundation, so the fix closes the system-fallback gap but cannot make
-the endpoint project-scoped in the way LinkedIn/Meta/Reddit's per-project ad
-accounts are.
+every foundation, so the fix closes the system-fallback gap but cannot by
+itself make the endpoint project-scoped. Project scoping, below, is what
+closes that residual.
+
+### Project scoping on shared accounts (lfx-self-serve-ops#897)
+
+Resolving the project's own credential decides whose credential reads the
+account; it does not decide which campaigns come back. On Google Ads, Meta,
+Reddit and X every foundation's connection points at the same upstream
+account, so an account-wide read handed a `campaign_manager` of one project
+every other foundation's campaigns, budgets and spend. That was true through
+the BFF and on a direct call alike: the gateway check is `campaign_manager`
+on `project:{project_id}` and nothing else, and this service only verified
+identity.
+
+The four monitors are now project-scoped inside the service, for every
+caller (ROOT included), at one choke point mirroring
+`Orchestrator.ReadKeywordPerformance`:
+
+1. `scopeAccountMonitor` first runs the dispatcher's `MonitorScopePrecheck`:
+   the credential-free refusals its own read would answer with 400 — every
+   platform's `account_id` shape check, and on X the `TWITTER_METRICS_ENABLED`
+   gate (`twitterMonitorPrecheck`, shared with `resolveTwitterMonitorClient`).
+   Without it a disabled X monitor answered 200 empty or 409 depending on what
+   the project had recorded. Then it reads the project's campaign scope from
+   SQL (`projectCampaignScope` → `ListProjectPlatformCampaignIDs`, filtered on
+   `project_id`). The requested-account guards on Meta, Reddit and X need the
+   stored connection, so they still run after the scope: a wrong `account_id`
+   there gets 200 empty or 409 before it can reach their 400.
+2. An empty scope answers 200 with an empty monitor before any upstream call
+   and before the connection is resolved — so a project with no campaigns and
+   no connection gets 200, not 404, as the insight reads already do. On X it
+   also skips the saved-report read, the campaign list and any submission.
+3. The dispatcher's `MonitorScopeForAccount` checks each entry's recorded
+   creation account against `account_id` with the same provenance helpers the
+   insight reads use (`googleAdsScopeForCustomer`, `metaScopeForAccount`,
+   `redditScopeForAccount`, `twitterScopeForAccount`). On Google Ads and X the
+   monitor is stricter than those reads: `requireRecordedMonitorProvenance`
+   also refuses a row that records no creating account, as Reddit's helper
+   does, because their ids are unique only within an account and the monitor
+   may read an account the row was never created under. ANY mismatch fails the
+   read closed — a partly matching scope is never reduced to the matching ids,
+   because the response has no field that could disclose the omission.
+   The project's SOFT-DELETED campaigns (`ListProjectPlatformDeletedCampaignIDs`)
+   join the set too, because a local delete does not stop the upstream campaign
+   and the monitor is where one still spending shows up. Each is checked on its
+   own, by the same helper and the same rule as the live rows: it is kept
+   unless it does not fit `account_id` — a recorded account that differs (on
+   Google Ads, Reddit and X, also none recorded; Meta treats an unrecorded
+   account as unknown and proceeds), or an id the platform cannot read — and
+   then it is dropped and logged, never a 409: a deleted row cannot be
+   re-dispatched or reconciled, so that refusal would have no remedy. A
+   deleted campaign another project has taken over is left out in SQL (the
+   query's `NOT EXISTS`): the per-platform binding indexes cover live rows only,
+   so another project can adopt a campaign after this one deleted it, and from
+   then on it is that project's. Another project's row takes it over when it is
+   live OR bound the id later whatever its status, so the adopter deleting its
+   own row too does not hand the campaign back. "Bound later" compares
+   `platform_bound_at` (migration `000048`), falling back to `created_at` for
+   rows with no stamp; `created_at` alone is the dispatch CLAIM time, and a
+   dispatch that binds an existing upstream campaign can claim before another
+   project's adopt-then-delete and bind after it. The empty-scope answer in step 2 therefore needs both lists empty.
+4. The unchanged account read runs. After ALL upstream work (including the
+   report-backed monitor's best-effort currency read), `revalidateAccountMonitorScope`
+   reads live and eligible deleted bindings together with
+   `ListProjectPlatformMonitorCampaignIDs`: one SQL statement, hence one database
+   snapshot, with the same latest-owner predicate as the deleted precheck. Repeating
+   the two precheck queries would keep an originally live id if a delete/adopt
+   committed between them. A lookup error fails closed, without returning rows.
+   Revalidation also returns an error, rather than panicking, if the dispatcher is
+   missing or does not implement `AccountMonitorScoper`; it never authorizes ids
+   without a scoper, even if a caller bypasses the normal `scoped` guard.
+   The dispatcher rechecks each candidate's account provenance; an entry it now
+   refuses is omitted. The final set is intersected with the initial authorization,
+   never widened to campaigns acquired during the read. Only rows in that
+   intersection are kept, BEFORE the rule engine and `monitorTotals`, so action
+   items and totals describe the same rows. Regression coverage blocks both monitor
+   paths during the upstream read, transfers ownership, then completes the read;
+   it also covers a transfer between precheck queries and during X's currency read.
+   This catches transfers committed before the final snapshot; it does not lock
+   ownership until response delivery or claim to serialize reads with transfers.
+5. Migration `000049` adds the non-unique, all-status
+   `idx_campaigns_platform_campaign_history (platform, platform_campaign_id)`
+   concurrently. The existing live-only binding indexes cannot support the
+   historical takeover lookup. Binding uniqueness and soft-delete semantics stay
+   unchanged.
+
+The 409s are mapped by `classifyMonitorError` (`connection_monitor.go`), with
+`classifyInsightsErrorFor`'s arm order and remedies: provenance mixed, then
+unknown (Google Ads, Reddit and X — they refuse a row that records no creating
+account), then mismatch, then an unreadable stored id. Google, Meta and Reddit
+answer `AccountMonitorScopeConflictError` and X its own
+`AccountMonitorConflictError`, each with a required `reason`
+`campaign_account_mismatch` or `campaign_scope_invalid`. Neither is the shared
+`ConflictError`, whose published example (`already_exists`, a connection
+collision) is a response no monitor returns. The arms apply only
+to those four platforms, so LinkedIn and Microsoft can never produce a 409
+their designs do not declare.
+
+The shared-tenancy marker is the OPTIONAL capability
+`service.AccountMonitorScoper`, implemented in
+`internal/dispatch/account_monitor_scope.go` by the four shared-tenancy
+dispatchers and by no others. LinkedIn runs an account per foundation and
+Microsoft's tenancy is not yet recorded
+([architecture.md § Account Tenancy](../../architecture.md#account-tenancy)),
+so both keep the account-wide read. X's saved report
+(`account_monitor_reports`) still stores the account-wide rows; only the
+response is filtered, and the report's `metrics_as_of`, window and
+`metrics_pending` are returned unchanged.
 
 ### Expected interaction with `LFX_FORCE_SYSTEM_ADS_ACCOUNT`
 
@@ -663,6 +825,28 @@ differential diff, since fixed:
     so both fixes reject the whole analytics/insights read instead of
     dropping just the one row. See
     [2026-09-21-215-monitor-account-endpoints-round32-unattributable-rows.md](../log/2026-09-21-215-monitor-account-endpoints-round32-unattributable-rows.md).
+13. The widenings in items 6 and 7 each fixed the texts by naming the one
+    platform that had the partial case at the time — "(Google Ads only) a
+    present-but-unparseable budget". That binding is what went stale: LinkedIn,
+    Meta, Microsoft Ads and X have since grown the same budget case, X a flight
+    case, and LinkedIn an unparseable `costInLocalCurrency` that leaves spend
+    unknown beside real impressions and clicks — a shape none of the texts
+    described at all. So the `fetch_failed` contract was back to overstating
+    what a set flag says about the numerics (#219). Fixed in every text that
+    describes the field: the `fetch_failed` design attribute, its
+    `docs/api-catalog.md` sentence, `model.AccountCampaignMetrics.FetchFailed`,
+    `rules.fetchFailedRow` and `monitorTotals`. Each now states the general rule
+    — which part failed is not conveyed, and it is not always the metrics — and
+    gives the shapes as **examples rather than a closed set**, so a seventh
+    platform's own partial case cannot make them false again. The
+    per-platform-client doc comments (for example
+    `googleads.AccountCampaignRow.FetchFailed`) keep their specific wording:
+    they describe one client, where an exhaustive list is correct and stays so.
+    One more overstatement sits inside the first example and was fixed with it:
+    a failed per-campaign metrics fetch zeroes that read's delivery metrics, not
+    *every* numeric field — Reddit fills `TotalBudget`/`DailyBudget` from the
+    account-level campaign list before the per-campaign report call, so the
+    budget on a report-failed Reddit row is real.
 
 ## Unmeasured rows: the totals signal and the failure-class summary
 
@@ -670,7 +854,7 @@ differential diff, since fixed:
 `campaign_count` rows carry `fetch_failed=true`, counted in `monitorTotals` over the same
 post-`evaluate` rows the sums cover. The sums still include those rows at whatever they carry —
 zero for a row whose metrics could not be read — so a non-zero count means the totals may
-UNDERSTATE the account by up to that many campaigns' delivery. Decisions:
+UNDERSTATE the returned campaigns by up to that many campaigns' delivery. Decisions:
 
 - **An upper bound, not an exact count.** `fetch_failed` also marks a row whose budget or flight
   alone was unreadable while its metrics were read and summed (Google, LinkedIn, Meta, Microsoft,
@@ -825,7 +1009,8 @@ with `TwitterDispatcher` as a second implementation. Nothing was forked.
   comma-joined (≤10 jobs, ~210 bytes in a TEXT column). No active campaign gives the sentinel
   `none`, which Check answers as a finished empty report without calling X. An account with
   more than 200 campaigns active in the window (`twitter.MaxMonitorActiveCampaigns`, ten jobs
-  of 20) is refused before any job is created rather than half-reported
+  of 20) — counted on the whole shared account, every project's campaigns included, because the
+  report is read account-wide and only the response is scoped — is refused before any job is created rather than half-reported
   (`twitter.ErrTooManyActiveCampaigns` → `domain.ErrAccountTooManyActiveCampaigns` → **409**,
   reason `account_too_many_active_campaigns`).
 - **Permanent refusals fail the read.** Unlike a transient submit failure (logged, retried on

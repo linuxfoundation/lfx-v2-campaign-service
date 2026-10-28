@@ -487,10 +487,94 @@ type UploadCreativeAssetOKResponseBody struct {
 	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
 	// brief
 	Checksum string `form:"checksum" json:"checksum" xml:"checksum"`
+	// Pixel width, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Width *int `form:"width,omitempty" json:"width,omitempty" xml:"width,omitempty"`
+	// Pixel height, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Height *int `form:"height,omitempty" json:"height,omitempty" xml:"height,omitempty"`
 	// "true" when this request stored the asset; "false" when an identical upload
 	// already existed. Set only on the upload response, where it selects 201 vs
 	// 200.
 	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
+}
+
+// ListCreativeAssetsResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint
+// HTTP response body.
+type ListCreativeAssetsResponseBody struct {
+	// Every asset stored for this brief, oldest first. Each carries metadata only
+	// — the image bytes are served by the signed creative-asset URL, never inline
+	// here.
+	Assets []*CreativeAssetResponseBody `form:"assets" json:"assets" xml:"assets"`
+	// Number of assets stored for this brief.
+	Count int `form:"count" json:"count" xml:"count"`
+	// Maximum assets one brief may hold. An upload that would exceed it is refused
+	// with 409 reason=creative_asset_quota_exceeded.
+	CountLimit int `form:"count_limit" json:"count_limit" xml:"count_limit"`
+	// Total stored bytes across those assets.
+	BytesUsed int64 `form:"bytes_used" json:"bytes_used" xml:"bytes_used"`
+	// Maximum total stored bytes one brief may hold. Enforced alongside
+	// count_limit; either one alone bounds the wrong thing — a count cap still
+	// admits that many maximum-sized images, and a byte cap alone still admits
+	// unboundedly many tiny ones.
+	BytesLimit int64 `form:"bytes_limit" json:"bytes_limit" xml:"bytes_limit"`
+}
+
+// GetCreativeAssetResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
+// response body.
+type GetCreativeAssetResponseBody struct {
+	// Creative asset UUID
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Parent brief
+	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
+	// Stored image MIME type, as verified from the bytes (not merely the declared
+	// header)
+	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
+	// Size of the stored image in bytes
+	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
+	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
+	// brief
+	Checksum string `form:"checksum" json:"checksum" xml:"checksum"`
+	// Pixel width, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Width *int `form:"width,omitempty" json:"width,omitempty" xml:"width,omitempty"`
+	// Pixel height, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Height *int `form:"height,omitempty" json:"height,omitempty" xml:"height,omitempty"`
+	// "true" when this request stored the asset; "false" when an identical upload
+	// already existed. Set only on the upload response, where it selects 201 vs
+	// 200.
+	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
+}
+
+// GetAssetPlanResponseBody is the type of the "lfx-v2-campaign-service-briefs"
+// service "get-asset-plan" endpoint HTTP response body.
+type GetAssetPlanResponseBody struct {
+	// The platforms this plan covers, after defaulting — echoed so a caller who
+	// sent no filter knows what was actually evaluated.
+	Platforms []string `form:"platforms" json:"platforms" xml:"platforms"`
+	// Every slot that received at least one asset, in platform catalog order.
+	Assignments []*CreativeSlotAssignmentResponseBody `form:"assignments" json:"assignments" xml:"assignments"`
+	// Every required slot or cross-slot rule the library leaves short. Empty means
+	// this library can fill every requested platform.
+	Gaps []*CreativeSlotGapResponseBody `form:"gaps" json:"gaps" xml:"gaps"`
+	// Assets whose dimensions were never recorded, so their shape is unknown. They
+	// are NOT counted against any slot and NOT reported as failing one: unknown is
+	// a different answer from wrong, and a dimension backfill makes them
+	// classifiable without the operator doing anything.
+	Unclassified []string `form:"unclassified" json:"unclassified" xml:"unclassified"`
+	// Assets whose dimensions are known and which this plan did not place in any
+	// slot. Wider than "nothing would accept them": an asset also appears here
+	// when every slot that would take it was already filled to its minimum, or
+	// when a sibling slot had already spent a shared group ceiling. The mirror of
+	// gaps: not only "what am I missing" but "which of the files I just dropped is
+	// this plan not using" — with no gaps reported, what is listed here is surplus
+	// rather than unusable.
+	Unused []string `form:"unused" json:"unused" xml:"unused"`
 }
 
 // CreateCampaignsResponseBody is the type of the
@@ -553,6 +637,26 @@ type AdoptCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
+	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
+	// The manual max cost-per-click bid this service most recently set, in the
+	// currency the provider expects: the ad account's own currency for Microsoft
+	// Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the
+	// starting bid of a campaign created with manual bidding, then whatever
+	// update-campaign-bid set. A request the platform confirmed, never an
+	// observation — a bid changed in the platform's own UI is not reflected.
+	// ABSENT when this service never set one.
+	MaxCpcBid *float64 `form:"max_cpc_bid,omitempty" json:"max_cpc_bid,omitempty" xml:"max_cpc_bid,omitempty"`
 	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
 	// existing campaign on the ad platform by adopt-campaign) rather than created
 	// by this service. An adopted campaign records none of its serving children,
@@ -588,6 +692,26 @@ type GetCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
+	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
+	// The manual max cost-per-click bid this service most recently set, in the
+	// currency the provider expects: the ad account's own currency for Microsoft
+	// Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the
+	// starting bid of a campaign created with manual bidding, then whatever
+	// update-campaign-bid set. A request the platform confirmed, never an
+	// observation — a bid changed in the platform's own UI is not reflected.
+	// ABSENT when this service never set one.
+	MaxCpcBid *float64 `form:"max_cpc_bid,omitempty" json:"max_cpc_bid,omitempty" xml:"max_cpc_bid,omitempty"`
 	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
 	// existing campaign on the ad platform by adopt-campaign) rather than created
 	// by this service. An adopted campaign records none of its serving children,
@@ -625,8 +749,10 @@ type GetCampaignMetricsResponseBody struct {
 	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
 	// Cost over the window, in micro-units of the platform's native currency
 	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
-	// etc.). Always 0 on the email channel, which bills no per-send cost — do not
-	// blend that 0 into a cross-channel cost-per-acquisition.
+	// the ad account's own currency for Google Ads — the same currency
+	// conversion_value is reported in — etc.). Always 0 on the email channel,
+	// which bills no per-send cost — do not blend that 0 into a cross-channel
+	// cost-per-acquisition.
 	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
@@ -651,6 +777,33 @@ type GetCampaignMetricsResponseBody struct {
 	// same as a measured 0: a consumer must not render it as zero or fold it into
 	// a conversion total.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
+	// Summed monetary value of the conversions above, over the window, in WHOLE
+	// units of the ad account's currency — NOT micros, deliberately unlike
+	// cost_micros, because the platforms report it as a decimal amount and scaling
+	// it would invent precision. The currency is the ad account's and is NOT
+	// carried in this response, so a figure rendered with a currency symbol is
+	// asserting something this contract does not say. Reported by Google Ads only
+	// at present; ABSENT on every other channel, and absent means "not measured
+	// here", never a measured 0. Use `roas` rather than dividing this by
+	// cost_micros — the units differ, and the zero-cost case has one right answer,
+	// given below.
+	ConversionValue *float64 `form:"conversion_value,omitempty" json:"conversion_value,omitempty" xml:"conversion_value,omitempty"`
+	// Return on ad spend: conversion_value divided by cost over the same window
+	// and in the same currency, so it is DIMENSIONLESS and is the only figure here
+	// comparable across accounts in different currencies. Derived upstream so
+	// every consumer gets the same answer. ABSENT whenever that division would not
+	// be a measurement — no conversion value, no spend in the window, or a
+	// reported cost below zero. A campaign that earned value without spending has
+	// an UNDEFINED return on ad spend, not an infinite one and not a zero one;
+	// rendering absent as 0 would state the opposite of what happened. A RATIO,
+	// not a percentage: 2.41 means 2.41 units of value per unit spent (241%), the
+	// scale Google's own target ROAS uses. Absence carries no meaning of its own
+	// beyond "not computed": which of the three cases applies is read from the
+	// sibling fields (conversion_value absent; cost_micros 0; cost_micros below
+	// 0), so a consumer never has to interpret it, and it says nothing about
+	// whether the channel can report a return. A PRESENT 0 is a real measurement:
+	// the campaign spent and earned no conversion value.
+	Roas *float64 `form:"roas,omitempty" json:"roas,omitempty" xml:"roas,omitempty"`
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
 	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
@@ -745,6 +898,26 @@ type UpdateCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
+	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
+	// The manual max cost-per-click bid this service most recently set, in the
+	// currency the provider expects: the ad account's own currency for Microsoft
+	// Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the
+	// starting bid of a campaign created with manual bidding, then whatever
+	// update-campaign-bid set. A request the platform confirmed, never an
+	// observation — a bid changed in the platform's own UI is not reflected.
+	// ABSENT when this service never set one.
+	MaxCpcBid *float64 `form:"max_cpc_bid,omitempty" json:"max_cpc_bid,omitempty" xml:"max_cpc_bid,omitempty"`
 	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
 	// existing campaign on the ad platform by adopt-campaign) rather than created
 	// by this service. An adopted campaign records none of its serving children,
@@ -781,6 +954,26 @@ type ToggleCampaignStatusResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
+	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
+	// The manual max cost-per-click bid this service most recently set, in the
+	// currency the provider expects: the ad account's own currency for Microsoft
+	// Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the
+	// starting bid of a campaign created with manual bidding, then whatever
+	// update-campaign-bid set. A request the platform confirmed, never an
+	// observation — a bid changed in the platform's own UI is not reflected.
+	// ABSENT when this service never set one.
+	MaxCpcBid *float64 `form:"max_cpc_bid,omitempty" json:"max_cpc_bid,omitempty" xml:"max_cpc_bid,omitempty"`
 	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
 	// existing campaign on the ad platform by adopt-campaign) rather than created
 	// by this service. An adopted campaign records none of its serving children,
@@ -817,6 +1010,26 @@ type UpdateCampaignBudgetResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
+	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
+	// The manual max cost-per-click bid this service most recently set, in the
+	// currency the provider expects: the ad account's own currency for Microsoft
+	// Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the
+	// starting bid of a campaign created with manual bidding, then whatever
+	// update-campaign-bid set. A request the platform confirmed, never an
+	// observation — a bid changed in the platform's own UI is not reflected.
+	// ABSENT when this service never set one.
+	MaxCpcBid *float64 `form:"max_cpc_bid,omitempty" json:"max_cpc_bid,omitempty" xml:"max_cpc_bid,omitempty"`
 	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
 	// existing campaign on the ad platform by adopt-campaign) rather than created
 	// by this service. An adopted campaign records none of its serving children,
@@ -853,6 +1066,26 @@ type UpdateCampaignBidResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
+	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
+	// The manual max cost-per-click bid this service most recently set, in the
+	// currency the provider expects: the ad account's own currency for Microsoft
+	// Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the
+	// starting bid of a campaign created with manual bidding, then whatever
+	// update-campaign-bid set. A request the platform confirmed, never an
+	// observation — a bid changed in the platform's own UI is not reflected.
+	// ABSENT when this service never set one.
+	MaxCpcBid *float64 `form:"max_cpc_bid,omitempty" json:"max_cpc_bid,omitempty" xml:"max_cpc_bid,omitempty"`
 	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
 	// existing campaign on the ad platform by adopt-campaign) rather than created
 	// by this service. An adopted campaign records none of its serving children,
@@ -1791,6 +2024,298 @@ type UploadCreativeAssetPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
 // HTTP response body for the "Unauthorized" error.
 type UploadCreativeAssetUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListCreativeAssetsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint
+// HTTP response body for the "BadRequest" error.
+type ListCreativeAssetsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListCreativeAssetsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint
+// HTTP response body for the "Conflict" error.
+type ListCreativeAssetsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// ListCreativeAssetsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type ListCreativeAssetsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListCreativeAssetsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint
+// HTTP response body for the "InternalServerError" error.
+type ListCreativeAssetsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListCreativeAssetsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint
+// HTTP response body for the "NotFound" error.
+type ListCreativeAssetsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListCreativeAssetsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type ListCreativeAssetsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListCreativeAssetsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-creative-assets" endpoint
+// HTTP response body for the "Unauthorized" error.
+type ListCreativeAssetsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCreativeAssetBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
+// response body for the "BadRequest" error.
+type GetCreativeAssetBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCreativeAssetConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
+// response body for the "Conflict" error.
+type GetCreativeAssetConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetCreativeAssetServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type GetCreativeAssetServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCreativeAssetInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
+// response body for the "InternalServerError" error.
+type GetCreativeAssetInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCreativeAssetNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
+// response body for the "NotFound" error.
+type GetCreativeAssetNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCreativeAssetPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetCreativeAssetPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCreativeAssetUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-creative-asset" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetCreativeAssetUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "BadRequest" error.
+type GetAssetPlanBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "Conflict" error.
+type GetAssetPlanConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetAssetPlanServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type GetAssetPlanServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "InternalServerError" error.
+type GetAssetPlanInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "NotFound" error.
+type GetAssetPlanNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetAssetPlanPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAssetPlanUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-asset-plan" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetAssetPlanUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCreativeAssetBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-creative-asset" endpoint
+// HTTP response body for the "BadRequest" error.
+type DeleteCreativeAssetBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCreativeAssetConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-creative-asset" endpoint
+// HTTP response body for the "Conflict" error.
+type DeleteCreativeAssetConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// DeleteCreativeAssetServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-creative-asset" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type DeleteCreativeAssetServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCreativeAssetInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-creative-asset" endpoint
+// HTTP response body for the "InternalServerError" error.
+type DeleteCreativeAssetInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCreativeAssetNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-creative-asset" endpoint
+// HTTP response body for the "NotFound" error.
+type DeleteCreativeAssetNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCreativeAssetPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-creative-asset" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type DeleteCreativeAssetPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCreativeAssetUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-creative-asset" endpoint
+// HTTP response body for the "Unauthorized" error.
+type DeleteCreativeAssetUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -4050,10 +4575,75 @@ type CreativeAssetResponseBody struct {
 	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
 	// brief
 	Checksum string `form:"checksum" json:"checksum" xml:"checksum"`
+	// Pixel width, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Width *int `form:"width,omitempty" json:"width,omitempty" xml:"width,omitempty"`
+	// Pixel height, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Height *int `form:"height,omitempty" json:"height,omitempty" xml:"height,omitempty"`
 	// "true" when this request stored the asset; "false" when an identical upload
 	// already existed. Set only on the upload response, where it selects 201 vs
 	// 200.
 	Created *string `form:"created,omitempty" json:"created,omitempty" xml:"created,omitempty"`
+}
+
+// CreativeSlotAssignmentResponseBody is used to define fields on response body
+// types.
+type CreativeSlotAssignmentResponseBody struct {
+	// Stable identifier for this slot: platform/channel/slot, or platform/slot
+	// where the platform has a single ad shape. It is the join key between a plan
+	// row and an operator override, so it survives a round trip through a client
+	// unchanged.
+	SlotKey string `form:"slot_key" json:"slot_key" xml:"slot_key"`
+	// Campaign platform this slot belongs to, using the same identifier a campaign
+	// config carries ("google-ads").
+	Platform string `form:"platform" json:"platform" xml:"platform"`
+	// Ad channel within the platform whose rules differ from its siblings
+	// ("PERFORMANCE_MAX", "DEMAND_GEN", "DISPLAY"). Absent where the platform has
+	// a single ad shape.
+	Channel *string `form:"channel,omitempty" json:"channel,omitempty" xml:"channel,omitempty"`
+	// Wire name of the slot within its channel — the asset field type or payload
+	// array key a campaign config puts this image under.
+	Slot string `form:"slot" json:"slot" xml:"slot"`
+	// Operator-facing name of the slot. It NAMES ITS CHANNEL, because three Google
+	// channels each have a slot called "logo image" under different rules and a
+	// bare "logo image" would not say which creative is meant.
+	Label string `form:"label" json:"label" xml:"label"`
+	// The slot's rule as a sentence an operator can act on — ratio, tolerance and
+	// pixel floor, plus the byte cap where one applies.
+	Requirement string `form:"requirement" json:"requirement" xml:"requirement"`
+	// Assets assigned to this slot, best fit first. An asset may appear in several
+	// slots: one library feeds every platform, and the same square image
+	// legitimately serves a 1:1 slot on each. It never appears twice within one
+	// slot.
+	AssetIds []string `form:"asset_ids" json:"asset_ids" xml:"asset_ids"`
+	// Images the platform requires in this slot. 0 marks the slot optional.
+	MinCount int `form:"min_count" json:"min_count" xml:"min_count"`
+	// Images the platform will accept in this slot. 0 means the platform states no
+	// per-slot ceiling; a shared ceiling across sibling slots may still apply.
+	MaxCount int `form:"max_count" json:"max_count" xml:"max_count"`
+}
+
+// CreativeSlotGapResponseBody is used to define fields on response body types.
+type CreativeSlotGapResponseBody struct {
+	// Campaign platform whose rule is unmet.
+	Platform string `form:"platform" json:"platform" xml:"platform"`
+	// Ad channel whose rule is unmet. Absent where the platform has a single ad
+	// shape.
+	Channel *string `form:"channel,omitempty" json:"channel,omitempty" xml:"channel,omitempty"`
+	// The slot this shortfall belongs to. ABSENT when the requirement spans
+	// several slots and no single one of them is required on its own.
+	SlotKey *string `form:"slot_key,omitempty" json:"slot_key,omitempty" xml:"slot_key,omitempty"`
+	// Operator-facing name of the unmet requirement.
+	Label string `form:"label" json:"label" xml:"label"`
+	// How many more images the requirement needs beyond what the plan could
+	// assign. Always at least 1.
+	Need int `form:"need" json:"need" xml:"need"`
+	// What is missing and what would satisfy it, as the sentence an operator takes
+	// back to their designer. It names every shape that would close the gap, not
+	// just one, so an either-or requirement does not send someone to produce an
+	// image they did not need.
+	Reason string `form:"reason" json:"reason" xml:"reason"`
 }
 
 // EmailMetricsResponseBody is used to define fields on response body types.
@@ -4107,28 +4697,35 @@ type CampaignSettingsFieldResponseBody struct {
 	// nothing was recorded there — not because the field has no recorded side. On
 	// Microsoft Advertising, Meta, Reddit and X the COMPARED settings are
 	// `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and
-	// `end_date` on Meta, Reddit and X (a Microsoft campaign carries no flight
-	// dates, so they are not reported there); `status` and `bidding_strategy_type`
-	// are upstream-only on all four (none of their create paths records a
-	// strategy); Microsoft also reports `budget_explicitly_shared` upstream-only,
-	// Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the
-	// last two say where the budget lives, and explain a budget that reads
-	// `unknown` because the campaign-level amount is not the one the row recorded
-	// (Reddit with campaign budget optimization off, X under anything but
-	// `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged
-	// forward past UTC midnight (because the requested day had already begun at
-	// dispatch) is shown with both sides and an `unknown` verdict rather than a
-	// false `diverged`. On LinkedIn the COMPARED settings are `budget_amount`,
-	// `budget_type`, `campaign_name`, `start_date` and `end_date` (the start, like
-	// Meta's and Reddit's, may be nudged by the create path); `status`,
+	// `end_date` on Meta, Reddit and X (Microsoft keeps flight dates on the ad
+	// group, not the campaign, and this read does not read the ad group, so they
+	// are not reported there); `status` and `bidding_strategy_type` are
+	// upstream-only on all four (since LFXV2-2665 their create paths record an
+	// `automatic` or `manual` choice — the campaign's `bidding_strategy` — but
+	// that vocabulary is deliberately not mapped onto each platform's strategy
+	// enum, for the reason given for Google above); Microsoft also reports
+	// `budget_explicitly_shared` upstream-only, Reddit
+	// `is_campaign_budget_optimization` and X `budget_optimization` — the last two
+	// say where the budget lives, and explain a budget that reads `unknown`
+	// because the campaign-level amount is not the one the row recorded (Reddit
+	// with campaign budget optimization off, X under anything but `CAMPAIGN`). A
+	// Meta or Reddit start that the create path itself nudged forward past UTC
+	// midnight (because the requested day had already begun at dispatch) is shown
+	// with both sides and an `unknown` verdict rather than a false `diverged`. On
+	// LinkedIn the COMPARED settings are `budget_amount`, `budget_type`,
+	// `campaign_name`, `start_date` and `end_date` (the start, like Meta's and
+	// Reddit's, may be nudged by the create path); `status`,
 	// `bidding_strategy_type` (LinkedIn's optimizationTargetType), `cost_type`,
 	// `unit_cost` (the bid amount), `unit_cost_currency` (its ISO currency, from
 	// LinkedIn's `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the
-	// currency is not reported, never a bare number) and `objective_type` are
-	// upstream-only; a campaign reporting both a daily and a total budget, neither
-	// (as under a campaign group's shared budget), or a non-USD amount reads both
-	// budget fields `unknown`. The vocabulary is per-platform and may grow, so a
-	// consumer must render an unrecognised field name rather than dropping it.
+	// currency is not reported, never a bare number) are upstream-only, and
+	// `objective_type` is compared against the objective the recorded bidding
+	// strategy implies (automatic WEBSITE_VISIT, manual WEBSITE_CONVERSION;
+	// `unknown` when none is recorded); a campaign reporting both a daily and a
+	// total budget, neither (as under a campaign group's shared budget), or a
+	// non-USD amount reads both budget fields `unknown`. The vocabulary is
+	// per-platform and may grow, so a consumer must render an unrecognised field
+	// name rather than dropping it.
 	Field string `form:"field" json:"field" xml:"field"`
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.
@@ -4184,8 +4781,10 @@ type CampaignMetricsResponseBody struct {
 	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
 	// Cost over the window, in micro-units of the platform's native currency
 	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
-	// etc.). Always 0 on the email channel, which bills no per-send cost — do not
-	// blend that 0 into a cross-channel cost-per-acquisition.
+	// the ad account's own currency for Google Ads — the same currency
+	// conversion_value is reported in — etc.). Always 0 on the email channel,
+	// which bills no per-send cost — do not blend that 0 into a cross-channel
+	// cost-per-acquisition.
 	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
@@ -4210,6 +4809,33 @@ type CampaignMetricsResponseBody struct {
 	// same as a measured 0: a consumer must not render it as zero or fold it into
 	// a conversion total.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
+	// Summed monetary value of the conversions above, over the window, in WHOLE
+	// units of the ad account's currency — NOT micros, deliberately unlike
+	// cost_micros, because the platforms report it as a decimal amount and scaling
+	// it would invent precision. The currency is the ad account's and is NOT
+	// carried in this response, so a figure rendered with a currency symbol is
+	// asserting something this contract does not say. Reported by Google Ads only
+	// at present; ABSENT on every other channel, and absent means "not measured
+	// here", never a measured 0. Use `roas` rather than dividing this by
+	// cost_micros — the units differ, and the zero-cost case has one right answer,
+	// given below.
+	ConversionValue *float64 `form:"conversion_value,omitempty" json:"conversion_value,omitempty" xml:"conversion_value,omitempty"`
+	// Return on ad spend: conversion_value divided by cost over the same window
+	// and in the same currency, so it is DIMENSIONLESS and is the only figure here
+	// comparable across accounts in different currencies. Derived upstream so
+	// every consumer gets the same answer. ABSENT whenever that division would not
+	// be a measurement — no conversion value, no spend in the window, or a
+	// reported cost below zero. A campaign that earned value without spending has
+	// an UNDEFINED return on ad spend, not an infinite one and not a zero one;
+	// rendering absent as 0 would state the opposite of what happened. A RATIO,
+	// not a percentage: 2.41 means 2.41 units of value per unit spent (241%), the
+	// scale Google's own target ROAS uses. Absence carries no meaning of its own
+	// beyond "not computed": which of the three cases applies is read from the
+	// sibling fields (conversion_value absent; cost_micros 0; cost_micros below
+	// 0), so a consumer never has to interpret it, and it says nothing about
+	// whether the channel can report a return. A PRESENT 0 is a real measurement:
+	// the campaign spent and earned no conversion value.
+	Roas *float64 `form:"roas,omitempty" json:"roas,omitempty" xml:"roas,omitempty"`
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
 	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
@@ -4452,13 +5078,27 @@ type PlatformResultResponseBody struct {
 	// the platform before anything was created (HTTP status only), or could not be
 	// confirmed (something may have been created; verify before retrying). An
 	// unclassified failure reads "platform campaign creation failed". Never
-	// contains a platform response body, URL, query or token. Google Ads dispatch
-	// failures are not yet classified beyond the connection classes.
+	// contains a platform response body, URL, query or token. A Google Ads
+	// dispatch failure the dispatcher could classify replaces the
+	// could-not-be-confirmed sentence with one naming what is in the ad account: a
+	// budget of the name this service composes already exists and nothing new was
+	// created, a campaign of that name already exists, a budget was created or
+	// reused and the campaign was then refused or left unconfirmed, or the
+	// campaign was created and its setup could not be confirmed. Each is a fixed
+	// sentence chosen by a service-authored token and never built from it, so it
+	// too carries no platform text. No other provider is classified beyond the
+	// classes above.
 	Error *string `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`
 	// Deep link to this campaign's email in the HubSpot editor. Present only for
 	// the email (HubSpot) channel, and only once the portal that created it is
 	// known.
 	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
+	// Best-effort steps of a successful create that did not apply, in
+	// operator-readable sentences. For the email channel this reports a requested
+	// hero image that could not be added; the draft exists, and its banner needs
+	// checking in the HubSpot editor (it may have none, or still carry the
+	// template's).
+	Warnings []string `form:"warnings,omitempty" json:"warnings,omitempty" xml:"warnings,omitempty"`
 	// Present only when this dispatch's claim was lost before its result was
 	// recorded: the identifiers of what it created upstream (ids, names, urns,
 	// image hashes, X media keys — never state, platform text, URLs or other
@@ -4542,7 +5182,72 @@ type BriefInputRequestBody struct {
 type CampaignCreateInputRequestBody struct {
 	// Platforms to create campaigns on (binding selection)
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
-	// Per-platform campaign configuration
+	// Per-platform campaign configuration: an object keyed by platform config name
+	// (microsoftConfig, metaConfig, redditConfig, twitterConfig, linkedInConfig,
+	// googleAdsConfig, hubspotConfig) plus the top-level hsToken. BIDDING
+	// (LFXV2-2665): microsoftConfig, metaConfig, redditConfig, twitterConfig and
+	// linkedInConfig each accept an optional `bidding` object, {"strategy":
+	// "automatic" | "manual", "bidAmount": number}. Omitted means automatic
+	// (Microsoft MaxClicks; Meta LOWEST_COST_WITHOUT_CAP; Reddit BIDLESS; X AUTO).
+	// DEFAULT CHANGES: a Microsoft campaign created with no bidding and no cpcBid
+	// used to get Microsoft's EnhancedCpc default and is now MaxClicks, so
+	// update-campaign-bid answers 409 for it; a LinkedIn campaign created with no
+	// bidding is now WEBSITE_VISIT / MAX_CLICK / CPM with a Traffic name segment.
+	// Manual-created campaigns are immediately eligible for the bid lever;
+	// eligibility follows the platform's current strategy. LinkedIn automatic
+	// creates an objectiveType WEBSITE_VISIT campaign bidding MAX_CLICK with
+	// costType CPM (decision 2026-10-13: automatic LinkedIn campaigns optimise for
+	// clicks because MAX_CONVERSION, the only automated target of
+	// WEBSITE_CONVERSION, needs a conversion association this service doesn't
+	// create); LinkedIn manual keeps objectiveType WEBSITE_CONVERSION. `manual`
+	// requires `bidAmount`, the starting max cost-per-click bid in the ad
+	// account's own currency (LinkedIn: USD), greater than zero, at most 1,000,000
+	// and a whole number of micro-units; it creates the campaign in the shape
+	// update-campaign-bid accepts. Per platform, a manual bid must also be:
+	// Microsoft within 0.01–1,000 (a legacy microsoftConfig.cpcBid without
+	// `bidding` still means a manual bid at that amount; with `bidding` it must be
+	// omitted or equal bidAmount); Meta at most two decimals, a whole minor unit
+	// of the account currency (checked against the currency at dispatch), and only
+	// for the traffic or leads objective; Reddit only for the traffic objective;
+	// LinkedIn whole cents; X at most the campaign's daily budget (X does not
+	// accept a line item bid above it). Keys are exact: `bidding`, `strategy` and
+	// `bidAmount`; a case variant (`Bidding`, `Strategy`) or an unknown key inside
+	// `bidding` is refused. `automatic` with a `bidAmount`, an unknown strategy, a
+	// wrong JSON type, an explicit null or empty value (only an ABSENT field
+	// defaults: `"strategy": null` or `""`, `"bidAmount": null` and `"bidding":
+	// null` are refused), or a bid breaking these rules is refused synchronously
+	// with 400 "invalid campaign config: <configKey>.bidding: ..." before any job
+	// exists. googleAdsConfig.bidding is refused with 400 (use
+	// googleAdsConfig.biddingStrategy). FLIGHT DATES: metaConfig (required) and
+	// microsoftConfig (optional) take `startDate` and `endDate` as YYYY-MM-DD
+	// strings that must be real calendar dates, with the start not before today
+	// and the end after the start. For metaConfig today is the UTC calendar day.
+	// For microsoftConfig it is the calendar day at UTC-12, with or without
+	// timeZone, so only a date already past in every time zone is refused up
+	// front; Microsoft reads the dates in the campaign's time zone and remains the
+	// final judge. Microsoft Advertising sets them on the campaign's AD GROUP
+	// (AdGroup.StartDate/EndDate), each independently optional: an omitted
+	// startDate leaves Microsoft's default (eligible from today, so an endDate
+	// alone must be after today) and an omitted endDate runs until stopped;
+	// omitting both creates the campaign exactly as before. An invalid Microsoft
+	// date fails the platform job before anything is created, as an invalid Meta
+	// date does. Microsoft dates are recorded on the campaign row only when this
+	// run created the ad group that carries them; a retry that reuses an existing
+	// ad group leaves its schedule unchanged and records no dates. META LAUNCH
+	// READINESS: metaConfig takes `instagramUserId` (the numeric Instagram account
+	// id, IGSID, bound to each ad creative as `instagram_user_id` when an
+	// Instagram placement is enabled — the default placements include Instagram
+	// Feed) and `dsaBeneficiary` / `dsaPayor` (the EU Digital Services Act
+	// advertiser and payer, set on the ad set as `dsa_beneficiary` / `dsa_payor`).
+	// Supply both disclosures or neither; when geoTargets include any EU or EEA
+	// country (the 27 member states, Åland, France's outermost regions, Iceland,
+	// Liechtenstein and Norway) both are required, because Meta will not publish
+	// an EU-targeted ad set without them. A missing or one-sided pair, a
+	// disclosure over 256 characters or with a control, line-separator or bidi
+	// character, a non-numeric instagramUserId, and any of the three with a
+	// non-string JSON type (null counts as absent) are refused here with a 400,
+	// before any job exists. An absent instagramUserId is not refused, but Meta
+	// will not publish an Instagram placement without it.
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
@@ -4552,10 +5257,9 @@ type CampaignCreateInputRequestBody struct {
 	// flight or needs reconciliation is reported exactly as a retry would be. The
 	// version is tracked by this service only and is never shown on the ad
 	// platform as a label. Supported on microsoft-ads only for now; any other
-	// platform in the request is refused with 400. Until the follow-up release
-	// removes the one-campaign-per-slot index, a request on a platform that
-	// already has a live campaign fails that platform with 'not available yet' and
-	// creates nothing.
+	// platform in the request is refused with 400. Two concurrent requests that
+	// both find the same complete campaign create one new campaign between them,
+	// not two: the second is reported as a reuse of (or skipped behind) the first.
 	NewVersion *bool `form:"new_version,omitempty" json:"new_version,omitempty" xml:"new_version,omitempty"`
 }
 
@@ -4789,6 +5493,8 @@ func NewUploadCreativeAssetCreatedResponseBody(res *lfxv2campaignservicebriefs.C
 		MimeType:  res.MimeType,
 		ByteSize:  res.ByteSize,
 		Checksum:  res.Checksum,
+		Width:     res.Width,
+		Height:    res.Height,
 		Created:   res.Created,
 	}
 	return body
@@ -4805,7 +5511,108 @@ func NewUploadCreativeAssetOKResponseBody(res *lfxv2campaignservicebriefs.Creati
 		MimeType:  res.MimeType,
 		ByteSize:  res.ByteSize,
 		Checksum:  res.Checksum,
+		Width:     res.Width,
+		Height:    res.Height,
 		Created:   res.Created,
+	}
+	return body
+}
+
+// NewListCreativeAssetsResponseBody builds the HTTP response body from the
+// result of the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCreativeAssetsResponseBody(res *lfxv2campaignservicebriefs.CreativeAssetList) *ListCreativeAssetsResponseBody {
+	body := &ListCreativeAssetsResponseBody{
+		Count:      res.Count,
+		CountLimit: res.CountLimit,
+		BytesUsed:  res.BytesUsed,
+		BytesLimit: res.BytesLimit,
+	}
+	if res.Assets != nil {
+		body.Assets = make([]*CreativeAssetResponseBody, len(res.Assets))
+		for i, val := range res.Assets {
+			if val == nil {
+				body.Assets[i] = nil
+				continue
+			}
+			body.Assets[i] = marshalLfxv2campaignservicebriefsCreativeAssetToCreativeAssetResponseBody(val)
+		}
+	} else {
+		body.Assets = []*CreativeAssetResponseBody{}
+	}
+	return body
+}
+
+// NewGetCreativeAssetResponseBody builds the HTTP response body from the
+// result of the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCreativeAssetResponseBody(res *lfxv2campaignservicebriefs.CreativeAsset) *GetCreativeAssetResponseBody {
+	body := &GetCreativeAssetResponseBody{
+		ID:        res.ID,
+		ProjectID: res.ProjectID,
+		BriefID:   res.BriefID,
+		MimeType:  res.MimeType,
+		ByteSize:  res.ByteSize,
+		Checksum:  res.Checksum,
+		Width:     res.Width,
+		Height:    res.Height,
+		Created:   res.Created,
+	}
+	return body
+}
+
+// NewGetAssetPlanResponseBody builds the HTTP response body from the result of
+// the "get-asset-plan" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewGetAssetPlanResponseBody(res *lfxv2campaignservicebriefs.CreativeAssetPlan) *GetAssetPlanResponseBody {
+	body := &GetAssetPlanResponseBody{}
+	if res.Platforms != nil {
+		body.Platforms = make([]string, len(res.Platforms))
+		for i, val := range res.Platforms {
+			body.Platforms[i] = val
+		}
+	} else {
+		body.Platforms = []string{}
+	}
+	if res.Assignments != nil {
+		body.Assignments = make([]*CreativeSlotAssignmentResponseBody, len(res.Assignments))
+		for i, val := range res.Assignments {
+			if val == nil {
+				body.Assignments[i] = nil
+				continue
+			}
+			body.Assignments[i] = marshalLfxv2campaignservicebriefsCreativeSlotAssignmentToCreativeSlotAssignmentResponseBody(val)
+		}
+	} else {
+		body.Assignments = []*CreativeSlotAssignmentResponseBody{}
+	}
+	if res.Gaps != nil {
+		body.Gaps = make([]*CreativeSlotGapResponseBody, len(res.Gaps))
+		for i, val := range res.Gaps {
+			if val == nil {
+				body.Gaps[i] = nil
+				continue
+			}
+			body.Gaps[i] = marshalLfxv2campaignservicebriefsCreativeSlotGapToCreativeSlotGapResponseBody(val)
+		}
+	} else {
+		body.Gaps = []*CreativeSlotGapResponseBody{}
+	}
+	if res.Unclassified != nil {
+		body.Unclassified = make([]string, len(res.Unclassified))
+		for i, val := range res.Unclassified {
+			body.Unclassified[i] = val
+		}
+	} else {
+		body.Unclassified = []string{}
+	}
+	if res.Unused != nil {
+		body.Unused = make([]string, len(res.Unused))
+		for i, val := range res.Unused {
+			body.Unused[i] = val
+		}
+	} else {
+		body.Unused = []string{}
 	}
 	return body
 }
@@ -4860,6 +5667,8 @@ func NewAdoptCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *Ado
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		BiddingStrategy:    res.BiddingStrategy,
+		MaxCpcBid:          res.MaxCpcBid,
 		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
@@ -4878,6 +5687,8 @@ func NewGetCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *GetCa
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		BiddingStrategy:    res.BiddingStrategy,
+		MaxCpcBid:          res.MaxCpcBid,
 		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
@@ -4897,6 +5708,8 @@ func NewGetCampaignMetricsResponseBody(res *lfxv2campaignservicebriefs.CampaignM
 		CostMicros:         res.CostMicros,
 		Ctr:                res.Ctr,
 		Conversions:        res.Conversions,
+		ConversionValue:    res.ConversionValue,
+		Roas:               res.Roas,
 	}
 	if res.Email != nil {
 		body.Email = marshalLfxv2campaignservicebriefsEmailMetricsToEmailMetricsResponseBody(res.Email)
@@ -5003,6 +5816,8 @@ func NewUpdateCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *Up
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		BiddingStrategy:    res.BiddingStrategy,
+		MaxCpcBid:          res.MaxCpcBid,
 		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
@@ -5022,6 +5837,8 @@ func NewToggleCampaignStatusResponseBody(res *lfxv2campaignservicebriefs.Campaig
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		BiddingStrategy:    res.BiddingStrategy,
+		MaxCpcBid:          res.MaxCpcBid,
 		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
@@ -5041,6 +5858,8 @@ func NewUpdateCampaignBudgetResponseBody(res *lfxv2campaignservicebriefs.Campaig
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		BiddingStrategy:    res.BiddingStrategy,
+		MaxCpcBid:          res.MaxCpcBid,
 		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
@@ -5060,6 +5879,8 @@ func NewUpdateCampaignBidResponseBody(res *lfxv2campaignservicebriefs.Campaign) 
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		BiddingStrategy:    res.BiddingStrategy,
+		MaxCpcBid:          res.MaxCpcBid,
 		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
@@ -6067,6 +6888,318 @@ func NewUploadCreativeAssetPayloadTooLargeResponseBody(res *lfxv2campaignservice
 // "lfx-v2-campaign-service-briefs" service.
 func NewUploadCreativeAssetUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *UploadCreativeAssetUnauthorizedResponseBody {
 	body := &UploadCreativeAssetUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListCreativeAssetsBadRequestResponseBody builds the HTTP response body
+// from the result of the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCreativeAssetsBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *ListCreativeAssetsBadRequestResponseBody {
+	body := &ListCreativeAssetsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListCreativeAssetsConflictResponseBody builds the HTTP response body from
+// the result of the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCreativeAssetsConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *ListCreativeAssetsConflictResponseBody {
+	body := &ListCreativeAssetsConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewListCreativeAssetsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCreativeAssetsServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *ListCreativeAssetsServiceUnavailableResponseBody {
+	body := &ListCreativeAssetsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListCreativeAssetsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCreativeAssetsInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *ListCreativeAssetsInternalServerErrorResponseBody {
+	body := &ListCreativeAssetsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListCreativeAssetsNotFoundResponseBody builds the HTTP response body from
+// the result of the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCreativeAssetsNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *ListCreativeAssetsNotFoundResponseBody {
+	body := &ListCreativeAssetsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListCreativeAssetsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCreativeAssetsPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *ListCreativeAssetsPayloadTooLargeResponseBody {
+	body := &ListCreativeAssetsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListCreativeAssetsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "list-creative-assets" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCreativeAssetsUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *ListCreativeAssetsUnauthorizedResponseBody {
+	body := &ListCreativeAssetsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCreativeAssetBadRequestResponseBody builds the HTTP response body from
+// the result of the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCreativeAssetBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *GetCreativeAssetBadRequestResponseBody {
+	body := &GetCreativeAssetBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCreativeAssetConflictResponseBody builds the HTTP response body from
+// the result of the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCreativeAssetConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *GetCreativeAssetConflictResponseBody {
+	body := &GetCreativeAssetConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetCreativeAssetServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCreativeAssetServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *GetCreativeAssetServiceUnavailableResponseBody {
+	body := &GetCreativeAssetServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCreativeAssetInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCreativeAssetInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *GetCreativeAssetInternalServerErrorResponseBody {
+	body := &GetCreativeAssetInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCreativeAssetNotFoundResponseBody builds the HTTP response body from
+// the result of the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCreativeAssetNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GetCreativeAssetNotFoundResponseBody {
+	body := &GetCreativeAssetNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCreativeAssetPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCreativeAssetPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *GetCreativeAssetPayloadTooLargeResponseBody {
+	body := &GetCreativeAssetPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCreativeAssetUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "get-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCreativeAssetUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *GetCreativeAssetUnauthorizedResponseBody {
+	body := &GetCreativeAssetUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanBadRequestResponseBody builds the HTTP response body from the
+// result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *GetAssetPlanBadRequestResponseBody {
+	body := &GetAssetPlanBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanConflictResponseBody builds the HTTP response body from the
+// result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *GetAssetPlanConflictResponseBody {
+	body := &GetAssetPlanConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetAssetPlanServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *GetAssetPlanServiceUnavailableResponseBody {
+	body := &GetAssetPlanServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanInternalServerErrorResponseBody builds the HTTP response body
+// from the result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *GetAssetPlanInternalServerErrorResponseBody {
+	body := &GetAssetPlanInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanNotFoundResponseBody builds the HTTP response body from the
+// result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GetAssetPlanNotFoundResponseBody {
+	body := &GetAssetPlanNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *GetAssetPlanPayloadTooLargeResponseBody {
+	body := &GetAssetPlanPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAssetPlanUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "get-asset-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetAssetPlanUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *GetAssetPlanUnauthorizedResponseBody {
+	body := &GetAssetPlanUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCreativeAssetBadRequestResponseBody builds the HTTP response body
+// from the result of the "delete-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCreativeAssetBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *DeleteCreativeAssetBadRequestResponseBody {
+	body := &DeleteCreativeAssetBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCreativeAssetConflictResponseBody builds the HTTP response body
+// from the result of the "delete-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCreativeAssetConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *DeleteCreativeAssetConflictResponseBody {
+	body := &DeleteCreativeAssetConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewDeleteCreativeAssetServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "delete-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCreativeAssetServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *DeleteCreativeAssetServiceUnavailableResponseBody {
+	body := &DeleteCreativeAssetServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCreativeAssetInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "delete-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCreativeAssetInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *DeleteCreativeAssetInternalServerErrorResponseBody {
+	body := &DeleteCreativeAssetInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCreativeAssetNotFoundResponseBody builds the HTTP response body
+// from the result of the "delete-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCreativeAssetNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *DeleteCreativeAssetNotFoundResponseBody {
+	body := &DeleteCreativeAssetNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCreativeAssetPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "delete-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCreativeAssetPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *DeleteCreativeAssetPayloadTooLargeResponseBody {
+	body := &DeleteCreativeAssetPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCreativeAssetUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "delete-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCreativeAssetUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *DeleteCreativeAssetUnauthorizedResponseBody {
+	body := &DeleteCreativeAssetUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -8557,6 +9690,53 @@ func NewUploadCreativeAssetPayload(body *UploadCreativeAssetRequestBody, project
 	}
 	v.ProjectID = projectID
 	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListCreativeAssetsPayload builds a lfx-v2-campaign-service-briefs service
+// list-creative-assets endpoint payload.
+func NewListCreativeAssetsPayload(projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.ListCreativeAssetsPayload {
+	v := &lfxv2campaignservicebriefs.ListCreativeAssetsPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetCreativeAssetPayload builds a lfx-v2-campaign-service-briefs service
+// get-creative-asset endpoint payload.
+func NewGetCreativeAssetPayload(projectID string, briefID string, assetID string, bearerToken *string) *lfxv2campaignservicebriefs.GetCreativeAssetPayload {
+	v := &lfxv2campaignservicebriefs.GetCreativeAssetPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.AssetID = assetID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetAssetPlanPayload builds a lfx-v2-campaign-service-briefs service
+// get-asset-plan endpoint payload.
+func NewGetAssetPlanPayload(projectID string, briefID string, platforms []string, bearerToken *string) *lfxv2campaignservicebriefs.GetAssetPlanPayload {
+	v := &lfxv2campaignservicebriefs.GetAssetPlanPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.Platforms = platforms
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewDeleteCreativeAssetPayload builds a lfx-v2-campaign-service-briefs
+// service delete-creative-asset endpoint payload.
+func NewDeleteCreativeAssetPayload(projectID string, briefID string, assetID string, bearerToken *string) *lfxv2campaignservicebriefs.DeleteCreativeAssetPayload {
+	v := &lfxv2campaignservicebriefs.DeleteCreativeAssetPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.AssetID = assetID
 	v.BearerToken = bearerToken
 
 	return v

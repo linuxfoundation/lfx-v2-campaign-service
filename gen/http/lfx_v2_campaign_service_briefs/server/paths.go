@@ -49,6 +49,26 @@ func UploadCreativeAssetLfxV2CampaignServiceBriefsPath(projectID string, briefID
 	return fmt.Sprintf("/projects/%v/briefs/%v/creative-assets", projectID, briefID)
 }
 
+// ListCreativeAssetsLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service list-creative-assets HTTP endpoint.
+func ListCreativeAssetsLfxV2CampaignServiceBriefsPath(projectID string, briefID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/creative-assets", projectID, briefID)
+}
+
+// GetCreativeAssetLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service get-creative-asset HTTP endpoint.
+func GetCreativeAssetLfxV2CampaignServiceBriefsPath(projectID string, briefID string, assetID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/creative-assets/%v", projectID, briefID, assetID)
+}
+
+// GetAssetPlanLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service get-asset-plan HTTP endpoint.
+func GetAssetPlanLfxV2CampaignServiceBriefsPath(projectID string, briefID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/creative-assets/plan", projectID, briefID)
+}
+
+// DeleteCreativeAssetLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service delete-creative-asset HTTP endpoint.
+func DeleteCreativeAssetLfxV2CampaignServiceBriefsPath(projectID string, briefID string, assetID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/creative-assets/%v", projectID, briefID, assetID)
+}
+
 // CreateCampaignsLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service create-campaigns HTTP endpoint.
 func CreateCampaignsLfxV2CampaignServiceBriefsPath(projectID string, briefID string) string {
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns", projectID, briefID)

@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
@@ -184,6 +185,45 @@ type fakeWizardHubSpot struct {
 	// A COUNT, not a flag: a guard that skipped one read and made another would still
 	// satisfy a boolean.
 	getEmailCalls int
+
+	// lists are the contact lists SearchLists and GetList answer from, by id.
+	lists       map[string]*hubspot.List
+	listReadErr error
+	listReads   map[string]int
+	// listSearchMisses makes SearchLists find nothing.
+	listSearchMisses bool
+}
+
+func (f *fakeWizardHubSpot) SearchLists(_ context.Context, query string) ([]hubspot.List, error) {
+	if f.listReadErr != nil {
+		return nil, f.listReadErr
+	}
+	if f.listSearchMisses {
+		return nil, nil // index lag right after a create, or a renamed list
+	}
+	var out []hubspot.List
+	for _, l := range f.lists {
+		if strings.EqualFold(l.Name, query) {
+			out = append(out, *l)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeWizardHubSpot) GetList(_ context.Context, id string) (*hubspot.List, error) {
+	if f.listReads == nil {
+		f.listReads = map[string]int{}
+	}
+	f.listReads[id]++
+	if f.listReadErr != nil {
+		return nil, f.listReadErr
+	}
+	if l, ok := f.lists[id]; ok {
+		return l, nil
+	}
+	// Any other list exists, named for its id, with an empty union filter: what an ordinary
+	// list the wizard did not set up looks like to the standing check.
+	return &hubspot.List{ListID: id, Name: "list " + id, ProcessingType: "DYNAMIC", FilterBranch: json.RawMessage(`{"filterBranchType":"OR","filterBranches":[],"filters":[]}`)}, nil
 }
 
 func newFakeWizardHubSpot() *fakeWizardHubSpot {
@@ -1968,5 +2008,266 @@ func TestWizardSendListUsesEveryIncludeListOfTheAudience(t *testing.T) {
 	to, _ := out.To.(map[string]any)
 	if got, _ := to["ils_list_ids"].([]string); !slices.Equal(got, []string{"ils-77", "ils-78"}) {
 		t.Errorf("to.ils_list_ids = %v, want [ils-77 ils-78]", to["ils_list_ids"])
+	}
+}
+
+// The project's standing standard list grew, after the audience was recorded, to cover the list
+// the audience sends to (HubSpot list ids are numeric, as the filter reader requires). The wizard reads it back before touching the draft and refuses with a
+// 409 naming both lists; the draft's recipients are not changed.
+func TestSetWizardSendList_RefusesASendListTheStandingListNowCovers(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "KubeCon EU 2025 - Registration Open"}}
+	covering, err := audience.MasterListFilter([]string{"7001", "4477"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	standingName := audience.StandardSuppressionName(wizardTestProject)
+	h.hubspot.lists = map[string]*hubspot.List{"77": {ListID: "77", Name: standingName, FilterBranch: covering}}
+	suppression, _ := json.Marshal([]string{"77", "9002"})
+	h.audiences.newestFirst = []*model.CampaignAudience{{
+		ID: "aud-1", ProjectID: wizardTestProject, BriefID: wizardTestBrief,
+		Platform: model.ProviderHubSpot, Status: model.AudienceBuilt,
+		PlatformMasterListID: "4477", BuiltInPortalID: "portal-1", SuppressionListIDs: suppression,
+	}}
+	started := h.start(t)
+	if _, err := h.svc.PlanEmailWizard(context.Background(), &briefs.PlanEmailWizardPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("PlanEmailWizard: %v", err)
+	}
+	if _, err := h.svc.GenerateWizardContent(context.Background(), &briefs.GenerateWizardContentPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("GenerateWizardContent: %v", err)
+	}
+	if _, err := h.svc.CloneWizardEmail(context.Background(), &briefs.CloneWizardEmailPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID, Approved: true,
+	}); err != nil {
+		t.Fatalf("CloneWizardEmail: %v", err)
+	}
+	h.hubspot.sendListID, h.hubspot.sendListIDs = "", nil
+
+	_, err = h.svc.SetWizardSendList(context.Background(), &briefs.SetWizardSendListPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want a 409 naming the covered list, got %T: %v", err, err)
+	}
+	if !strings.Contains(conflict.Message, "4477") || !strings.Contains(conflict.Message, "standing standard suppression list 77") {
+		t.Errorf("the refusal must name both lists; got %q", conflict.Message)
+	}
+	if len(h.hubspot.sendListIDs) > 0 || h.hubspot.sendListID != "" {
+		t.Error("the draft's recipients must not change when the send would exclude its own inclusion")
+	}
+
+	// Covering only other lists is no obstacle.
+	fine, _ := audience.MasterListFilter([]string{"7001"})
+	h.hubspot.lists["77"].FilterBranch = fine
+	masterOf, _ := audience.MasterListFilter([]string{"500"})
+	h.hubspot.lists["4477"] = &hubspot.List{ListID: "4477", Name: "master", FilterBranch: masterOf}
+	if _, err := h.svc.SetWizardSendList(context.Background(), &briefs.SetWizardSendListPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("SetWizardSendList: %v", err)
+	}
+}
+
+// The wizard applies the same source check: the standing list covers the master's only source
+// list, so the 409 names the master and the covered source; a source it does not cover proceeds.
+func TestSetWizardSendList_RefusesAMasterWhoseSourceTheStandingListNowCovers(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "KubeCon EU 2025 - Registration Open"}}
+	standing, _ := audience.MasterListFilter([]string{"7001", "500"})
+	master, err := audience.MasterListWithSuppressionsFilter([]string{"500"}, []string{"9002"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.hubspot.lists = map[string]*hubspot.List{
+		"77":   {ListID: "77", Name: audience.StandardSuppressionName(wizardTestProject), FilterBranch: standing},
+		"4477": {ListID: "4477", Name: "KubeCon EU - Master", FilterBranch: master},
+	}
+	suppression, _ := json.Marshal([]string{"77", "9002"})
+	h.audiences.newestFirst = []*model.CampaignAudience{{
+		ID: "aud-1", ProjectID: wizardTestProject, BriefID: wizardTestBrief,
+		Platform: model.ProviderHubSpot, Status: model.AudienceBuilt,
+		PlatformMasterListID: "4477", BuiltInPortalID: "portal-1", SuppressionListIDs: suppression,
+	}}
+	started := h.start(t)
+	for _, step := range []func() error{
+		func() error {
+			_, e := h.svc.PlanEmailWizard(context.Background(), &briefs.PlanEmailWizardPayload{ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID})
+			return e
+		},
+		func() error {
+			_, e := h.svc.GenerateWizardContent(context.Background(), &briefs.GenerateWizardContentPayload{ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID})
+			return e
+		},
+		func() error {
+			_, e := h.svc.CloneWizardEmail(context.Background(), &briefs.CloneWizardEmailPayload{ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID, Approved: true})
+			return e
+		},
+	} {
+		if err := step(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.hubspot.sendListID, h.hubspot.sendListIDs = "", nil
+
+	_, err = h.svc.SetWizardSendList(context.Background(), &briefs.SetWizardSendListPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want a 409, got %T: %v", err, err)
+	}
+	if !strings.Contains(conflict.Message, "recipient list 4477 includes list 500") {
+		t.Errorf("the refusal must name the master and its covered source; got %q", conflict.Message)
+	}
+	if len(h.hubspot.sendListIDs) > 0 || h.hubspot.sendListID != "" {
+		t.Error("the draft's recipients must not change")
+	}
+
+	notCovering, _ := audience.MasterListFilter([]string{"7001", "9002"}) // covers the master's EXCLUSION only
+	h.hubspot.lists["77"].FilterBranch = notCovering
+	if _, err := h.svc.SetWizardSendList(context.Background(), &briefs.SetWizardSendListPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("SetWizardSendList: %v", err)
+	}
+}
+
+// An explicit send-list override with NO suppressions: the composed master excludes the standing
+// list in its own filter, whatever suppressions the email carries, and the standing list now
+// covers the master's only source. Refused with a 409.
+func TestSetWizardSendList_OverrideWithoutSuppressionsStillChecksTheMastersOwnExclusions(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "KubeCon EU 2025 - Registration Open"}}
+	standing, _ := audience.MasterListFilter([]string{"7001", "500"})
+	master, err := audience.MasterListWithSuppressionsFilter([]string{"500"}, []string{"77"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.hubspot.lists = map[string]*hubspot.List{
+		"77":   {ListID: "77", Name: audience.StandardSuppressionName(wizardTestProject), FilterBranch: standing},
+		"4477": {ListID: "4477", Name: "KubeCon EU - Master", FilterBranch: master},
+	}
+	started := h.start(t)
+	for _, step := range []func() error{
+		func() error {
+			_, e := h.svc.PlanEmailWizard(context.Background(), &briefs.PlanEmailWizardPayload{ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID})
+			return e
+		},
+		func() error {
+			_, e := h.svc.GenerateWizardContent(context.Background(), &briefs.GenerateWizardContentPayload{ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID})
+			return e
+		},
+		func() error {
+			_, e := h.svc.CloneWizardEmail(context.Background(), &briefs.CloneWizardEmailPayload{ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID, Approved: true})
+			return e
+		},
+	} {
+		if err := step(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.hubspot.sendListID, h.hubspot.sendListIDs = "", nil
+
+	override := "4477"
+	_, err = h.svc.SetWizardSendList(context.Background(), &briefs.SetWizardSendListPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID, SendListID: &override,
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want a 409, got %T: %v", err, err)
+	}
+	if !strings.Contains(conflict.Message, "recipient list 4477 includes list 500") {
+		t.Errorf("got %q", conflict.Message)
+	}
+	if len(h.hubspot.sendListIDs) > 0 || h.hubspot.sendListID != "" {
+		t.Error("the draft's recipients must not change")
+	}
+}
+
+// wizardToSendList walks a wizard session up to the send-list turn, over an audience whose
+// master is 4477 and whose suppressions are suppression.
+func wizardToSendList(t *testing.T, h *wizardHarness, suppression []string) string {
+	t.Helper()
+	raw, _ := json.Marshal(suppression)
+	h.audiences.newestFirst = []*model.CampaignAudience{{
+		ID: "aud-1", ProjectID: wizardTestProject, BriefID: wizardTestBrief,
+		Platform: model.ProviderHubSpot, Status: model.AudienceBuilt,
+		PlatformMasterListID: "4477", BuiltInPortalID: "portal-1", SuppressionListIDs: raw,
+	}}
+	started := h.start(t)
+	if _, err := h.svc.PlanEmailWizard(context.Background(), &briefs.PlanEmailWizardPayload{ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.GenerateWizardContent(context.Background(), &briefs.GenerateWizardContentPayload{ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.CloneWizardEmail(context.Background(), &briefs.CloneWizardEmailPayload{ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID, Approved: true}); err != nil {
+		t.Fatal(err)
+	}
+	h.hubspot.sendListID, h.hubspot.sendListIDs = "", nil
+	return started.SessionID
+}
+
+// The list search MISSES the standing list (index lag, a rename), but the audience records it as
+// a suppression: the wizard finds it among the exclusions by reading them, and refuses.
+func TestSetWizardSendList_FindsTheStandingListWhenTheSearchMisses(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "KubeCon EU 2025 - Registration Open"}}
+	standing, _ := audience.MasterListFilter([]string{"7001", "500"})
+	master, _ := audience.MasterListFilter([]string{"500"})
+	h.hubspot.lists = map[string]*hubspot.List{
+		"77":   {ListID: "77", Name: audience.StandardSuppressionName(wizardTestProject), FilterBranch: standing},
+		"4477": {ListID: "4477", Name: "master", FilterBranch: master},
+	}
+	h.hubspot.listSearchMisses = true
+	session := wizardToSendList(t, h, []string{"9002", "77"})
+
+	_, err := h.svc.SetWizardSendList(context.Background(), &briefs.SetWizardSendListPayload{ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: session})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) || !strings.Contains(conflict.Message, "includes list 500") {
+		t.Fatalf("want a 409 naming the covered source, got %T: %v", err, err)
+	}
+}
+
+// The standing list read back with no filterBranch is unknown, not "covers nothing": a 503 and
+// the draft untouched.
+func TestSetWizardSendList_AStandingListReadWithoutAFilterIs503(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "KubeCon EU 2025 - Registration Open"}}
+	master, _ := audience.MasterListFilter([]string{"500"})
+	h.hubspot.lists = map[string]*hubspot.List{
+		"77":   {ListID: "77", Name: audience.StandardSuppressionName(wizardTestProject)},
+		"4477": {ListID: "4477", Name: "master", FilterBranch: master},
+	}
+	session := wizardToSendList(t, h, []string{"77"})
+
+	_, err := h.svc.SetWizardSendList(context.Background(), &briefs.SetWizardSendListPayload{ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: session})
+	var unavailable *briefs.ConnServiceUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("want a 503, got %T: %v", err, err)
+	}
+	if len(h.hubspot.sendListIDs) > 0 || h.hubspot.sendListID != "" {
+		t.Error("the draft's recipients must not change")
+	}
+}
+
+// A static (MANUAL) send list has no filterBranch: the wizard applies it, with no suppressions,
+// rather than refusing it as unreadable.
+func TestSetWizardSendList_AppliesAStaticSendList(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "KubeCon EU 2025 - Registration Open"}}
+	h.hubspot.lists = map[string]*hubspot.List{"4477": {ListID: "4477", Name: "uploaded attendees", ProcessingType: "MANUAL"}}
+	session := wizardToSendList(t, h, nil)
+
+	if _, err := h.svc.SetWizardSendList(context.Background(), &briefs.SetWizardSendListPayload{ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: session}); err != nil {
+		t.Fatalf("SetWizardSendList: %v", err)
+	}
+	if len(h.hubspot.sendListIDs) == 0 && h.hubspot.sendListID == "" {
+		t.Error("the static list must be applied")
 	}
 }

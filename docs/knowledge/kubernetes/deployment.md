@@ -103,23 +103,30 @@ name's LAST occurrence: the last `app.extraEnv` entry wins, an `app.environment`
 `value` when the key is present and its `valueFrom` otherwise, and a `valueFrom` on the effective
 entry (unreadable at render time) counts as on (`TestDeploymentRefusesXStatsJobsOnMultipleReplicas`).
 
-A second render-time guard refuses more than one replica UNCONDITIONALLY — `replicaCount` > 1 or
-`autoscaling.enabled` with `maxReplicas` > 1, whatever any flag says
-(`TestDeploymentRefusesRedditReportsOnMultipleReplicas`). The Reddit reporting budget
+That X guard is the chart's ONLY replica guard. A second one, refusing more than one replica
+unconditionally over the Reddit reporting budget, was added and then retired; the chart now pins
+the opposite (`TestDeploymentAllowsMultipleReplicasForReddit`), because a render-time `fail`
+stopped ArgoCD generating the manifest at all for a production deployment that runs three
+replicas, holding up every unrelated change to this service.
+
+The constraint it was protecting is still real. The Reddit reporting budget
 (`internal/platform/reddit/report_budget.go`, 45 of an ad account's 60 report requests a minute)
-is a per-process ledger, so N replicas could send N × 45. It is not keyed on
-`REDDIT_METRICS_ENABLED` because that flag gates only the Reddit metrics and audience reads: the
-Reddit account monitor (`connection-reddit-ads/account-monitor` →
-`RedditDispatcher.ListAccountCampaignMetrics` → `reddit.Client.ListAccountCampaigns`) is ungated,
-always routed, and spends the same reports quota. (X differs: `TWITTER_METRICS_ENABLED` gates the
-X monitor too, and a runtime lease confines its stats jobs to one pod.) Gating the monitor behind
-the flag instead was rejected: it is a shipped, flag-free feature (with its own alert rules, `internal/service/rules/monitor_reddit.go`),
-and gating it would turn its working answer into a 400. The default deploy is unaffected — the chart ships
-`replicaCount: 1` and no HPA, and the Recreate rollout's migration ordering
-(`TestDeploymentUsesRecreateStrategy`) already rests on one replica. There is no runtime lease
-behind this guard, so it cannot see an out-of-band scale or an external HPA; a shared ledger is
-what would lift it. Because it refuses every multi-replica render, the X guard's test now judges
-each case by WHICH guard's message appears.
+is a per-process ledger, so N replicas each carry a separate 45. `REDDIT_METRICS_ENABLED` does not
+bound it: that flag gates only the Reddit metrics and audience reads, while the Reddit account
+monitor (`connection-reddit-ads/account-monitor` → `ConnectionService.MonitorRedditAdsAccount` →
+`RedditDispatcher.readAccountMonitor`) is ungated and always routed. (Gating the monitor behind
+the flag was rejected: it is a shipped, flag-free feature with its own alert rules,
+`internal/service/rules/monitor_reddit.go`, and gating it would turn its working answer into a
+400.) But always *routed* is not always *polling* — no ticker, cron or subscriber in `internal/`
+or `cmd/` invokes the monitor or the insight reads, so N × 45 is a ceiling concurrent user traffic
+could reach, not a sustained rate, and reaching it costs a 429 on a Monitoring-tab read.
+
+The fix that lifts the ceiling is a SHARED ledger — a token bucket keyed by ad account in
+Postgres. Two shortcuts do not work and should not be proposed: a lease like the X stats jobs'
+makes non-owner pods REFUSE (`domain.ErrStatsJobLeaseNotHeld`), tolerable for flag-gated
+background jobs but not for a user-facing monitor endpoint; and dividing the 45 by the replica
+count leaves 15 at three replicas, below the 24 a single audience read
+(`MaxReportCampaigns` 8 × 3 breakdowns) already needs.
 
 The pod template carries the Prometheus scrape annotations by default (LFXV2-3221):
 `prometheus.io/scrape` and `prometheus.io/path` come from `values.yaml`, while
@@ -144,7 +151,19 @@ deployable.** The Deployment sets `strategy.type: Recreate` (not the RollingUpda
 default) because this service runs its own schema migrations at boot and a
 backward-incompatible one — `000014` dropping `UNIQUE (brief_id, platform)` — must not go
 live while the previous pod still serves writes; RollingUpdate surges the new pod before
-terminating the old, Recreate orders it the other way. The catch is the cutover: flipping
+terminating the old, Recreate orders it the other way.
+
+That ordering holds at ANY replica count — the controller scales the old ReplicaSet to zero
+and waits for every pod to terminate before scaling up the new one — so the guarantee does not
+rest on running a single replica. What DOES scale with replica count is the cost: at the three
+replicas deployments run, every rollout takes the service to zero pods for the migration
+window, a full restart rather than a brief gap on the only pod. The `podDisruptionBudget`
+(`minAvailable: 2` in production) does not soften this: the Deployment controller DELETES those
+pods rather than evicting them, and a PDB constrains only evictions. `/readyz` gates traffic
+until migrations finish, so the window is a hard outage, not a period of errors. Moving
+migrations to a PreSync Job is what retires this and lets RollingUpdate return.
+
+The catch is the cutover: flipping
 an EXISTING Deployment from RollingUpdate to Recreate is rejected by the API server with
 `spec.strategy.rollingUpdate: Forbidden: may not be specified when strategy type is
 'Recreate'`. The old object carries a `strategy.rollingUpdate` block the API server
@@ -180,8 +199,9 @@ so a value another controller owns is overwritten rather than flagged. `spec.rep
 the concrete case here — the chart pins it AND the ArgoCD Application sets
 `ignoreDifferences: /spec/replicas` with `RespectIgnoreDifferences=true`, so an ordinary sync
 leaves an out-of-band `kubectl scale` or an external HPA's value alone, but a full replace
-overwrites it back to `replicaCount`. That is low risk today
-(no HPA in the chart, `replicaCount: 1`), but nothing reminds anyone to remove it. It is
+overwrites it back to `replicaCount` — which, since deployments set their own (production sets
+three), is the value their own values file carries, not the chart default. That is low risk today
+(no HPA in the chart), but nothing reminds anyone to remove it. It is
 retired once schema migrations move out of pod boot into a PreSync Job, after which the
 Deployment returns to RollingUpdate and both the strategy override and the annotation are
 dropped — the cutover hazard the pairing exists to prevent no longer exists once no pod
@@ -224,23 +244,37 @@ rolling back is asking for, including whatever the new constraint existed to pre
 
 An image-only rollback is also why a contract migration waits for the code it relies on to
 be a release old, not just present. The campaigns slot index (`000022`'s
-`uq_campaigns_brief_platform_variant_live`) is dropped one release AFTER the per-slot
+`uq_campaigns_brief_platform_variant_live`) is dropped by `000051` one release AFTER the per-slot
 adopt/claim advisory lock ships (LFXV2-2023): the binary before the lock takes no slot lock, so
 if the drop shipped with the lock, rolling the image back would leave that binary's adopt free
 to race a slot-2 claim on a schema with nothing else to stop it. Staged a release apart, the
 binary a rollback returns to either still has the index or already takes the lock. That also
 means the lock release must BOOT on the contracted schema, not just behave on it: startup runs
 `postgres.Migrate`, and the pool is closed on any error from its required-index check. So the
-lock release lists the legacy index in `requiredIndexes` as `optional` — absent is a healthy boot,
-present is still validated in full — while the four-column
-`uq_campaigns_brief_platform_variant_slot_version_live` stays required and its absence still fails
-startup with `ErrMissingRequiredIndex`. Pinned live by `TestMigrateToleratesTheDroppedLegacySlotIndex`.
-The contract release also records a migration version this older image does not embed, which
-golang-migrate's `Up()` would otherwise refuse before any index check. `postgres.Migrate`
-therefore starts on a CLEAN schema exactly one version newer than the image without migrating it
-or rewriting its version, and still runs the invalid- and required-index checks; a DIRTY newer
-schema, or a clean one two or more versions ahead, is still refused. That leans on expand/contract — every release must stay compatible with the next
-release's schema — since nothing marks a newer migration as compatible. Pinned live by
+lock release lists the legacy index in `requiredIndexes` as `optional` — absent is a healthy boot —
+and the release that ships `000051` removes the entry (and the `optional` mechanism) altogether.
+The four-column `uq_campaigns_brief_platform_variant_slot_version_live` stays required throughout
+and its absence still fails startup with `ErrMissingRequiredIndex`. Pinned live by
+`TestMigrateRefusesADroppedDispatchIndex`. Rolling back `000051` itself (its down re-creates the
+index) fails once any slot holds two live campaigns; resolve the extra versions by hand first.
+The lock release reaches that check at all only because `postgres.Migrate` starts on a CLEAN
+schema recorded exactly one version newer than the image (here `000051`, so the image rolled
+back to must embed migrations through `000050`; #260's own release, which stops at `000046`, is
+too far behind and refuses to boot) without migrating it or
+rewriting its version — golang-migrate's `Up()` would otherwise refuse the unknown version first —
+while still running the invalid- and required-index checks; a DIRTY newer schema, or a clean one
+two or more versions ahead, is still refused. That leans on expand/contract — every release must
+stay compatible with the next release's schema — since nothing marks a newer migration as
+compatible. Pinned live by
 `TestMigrateStartsOnACleanSchemaNewerThanThisImage`.
+
+One limitation of that rollback is stated rather than engineered away. Dropping the index lets
+the N-1 binary's `new_version` succeed at slot 2 and above, and that binary predates `000051`'s
+allocation safeguards: it numbers from the latest LIVE row, claims without refusing a used
+deleted version, and deletes without the slot lock. So while the image is rolled back to the
+`000050` release, a `new_version` on a slot whose latest version was deleted reuses that version
+and its platform name (on Microsoft, the name lookup returns the deleted upstream campaign).
+Operators should not send `new_version` for such a slot until the image is rolled forward. First
+creates, re-dispatches, and `new_version` on slots with no deleted version are unaffected.
 
 See [charts/lfx-v2-campaign-service/templates/deployment.yaml](../../../charts/lfx-v2-campaign-service/templates/deployment.yaml).

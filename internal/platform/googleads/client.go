@@ -151,6 +151,18 @@ type Client struct {
 	// fast.
 	retryBaseDelay time.Duration
 
+	// budgetResolveMinDelay and budgetResolveMaxDelay are the backoff bounds for
+	// retryFindBudgetByName's no-row re-reads. They default to the
+	// ambiguousBudgetResolveMinDelay/MaxDelay consts; tests shrink them (via
+	// withBudgetResolveDelays) to keep runs fast, exactly as they do retryBaseDelay.
+	//
+	// Only the SLEEPS are overridable. The attempt count and the wall-clock ceiling
+	// stay on their consts, because tests assert on how many reads the account was
+	// given before an absence is called a contradiction — shrinking that would make
+	// those assertions describe the test rig rather than the schedule.
+	budgetResolveMinDelay time.Duration
+	budgetResolveMaxDelay time.Duration
+
 	// imageDialGuard decides whether the Demand Gen creative fetch may connect to a
 	// resolved address. Defaults to checkPublicIP, which refuses every non-public
 	// range; only tests override it (via withImageDialGuard), because httptest
@@ -296,6 +308,22 @@ func withRetryBaseDelay(d time.Duration) Option {
 	}
 }
 
+// withBudgetResolveDelays overrides the backoff bounds for retryFindBudgetByName's
+// no-row re-reads. Unexported: only tests use it, to keep budget-recovery runs fast.
+//
+// It does NOT touch ambiguousBudgetResolveAttempts or the wall-clock ceiling — a test
+// that shrinks the sleeps still walks the real number of reads.
+func withBudgetResolveDelays(minDelay, maxDelay time.Duration) Option {
+	return func(c *Client) {
+		if minDelay > 0 {
+			c.budgetResolveMinDelay = minDelay
+		}
+		if maxDelay > 0 {
+			c.budgetResolveMaxDelay = maxDelay
+		}
+	}
+}
+
 // WithNAT64Prefixes supplies the deployment's operator-specific NAT64 prefixes to the
 // creative-fetch address guard, matching what the event-URL fetcher and the HubSpot image
 // download are given.
@@ -354,6 +382,9 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		now:            time.Now,
 		retryBaseDelay: retryBaseDelay,
 		imageDialGuard: checkPublicIP,
+
+		budgetResolveMinDelay: ambiguousBudgetResolveMinDelay,
+		budgetResolveMaxDelay: ambiguousBudgetResolveMaxDelay,
 	}
 	for _, o := range opts {
 		o(c)
@@ -392,6 +423,20 @@ type apiError struct {
 func (e *apiError) Error() string {
 	return fmt.Sprintf("google-ads %s %s -> %d", e.Method, e.Path, e.StatusCode)
 }
+
+// UpstreamStatus implements domain.UpstreamStatusCarrier, as the twitter, microsoft, hubspot,
+// meta, reddit and linkedin clients' HTTP error types already do. Without it a Google Ads
+// dispatch failure reached service.DispatchFailureMessage carrying no status at all, so every
+// outcome — a definite 400 refusal, an ambiguous 503 — rendered as the same status-less
+// sentence even though StatusCode was sitting on this struct the whole time.
+//
+// The STATUS ONLY, and the carrier adds no second way in: *apiError is an unexported TYPE, so
+// no caller outside this package can name it in an errors.As to reach Method, Path or Body.
+// Those remain exported STRUCT FIELDS — reflection- or JSON-based logging of this error would
+// still serialise Body — so this method widens nothing, and keeping the body out of what the
+// service REPORTS stays where it already was: Error(), and the fixed sentences in
+// service.DispatchFailureMessage (#208).
+func (e *apiError) UpstreamStatus() int { return e.StatusCode }
 
 // transportError wraps a round-trip failure that happened AFTER the request was
 // plausibly sent (mid-flight timeout, EOF, reset), OR a failure to read/decode a
@@ -897,11 +942,87 @@ func (c *Client) customerPath(action string) string {
 // as "may exist"). Note: GAQL :search is POST-but-read-only, so the caller passes
 // idempotent explicitly rather than inferring it from the HTTP method.
 func (c *Client) doRequest(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
-	if err := c.validateAccountIDs(); err != nil {
-		return nil, err
-	}
-	return c.doRequestValidated(ctx, method, path, body, idempotent)
+	raw, _, err := c.doRequestCounted(ctx, method, path, body, idempotent)
+	return raw, err
 }
+
+// doRequestCounted is doRequest for a caller that must know whether the request was RETRIED
+// — whether at least one EARLIER attempt was answered with a 429 before the returned
+// outcome. 0 means the outcome is the answer to the one and only request that was sent.
+//
+// It exists because the returned error alone cannot carry that fact, and without it an
+// idempotent MUTATION reports a retried failure as a definite one. A 429 is Google
+// acknowledging receipt, and a mutate has no idempotency key: the attempt that was
+// rate-limited may still have been applied. So a LATER definite refusal — the 400 a second
+// attempt earns precisely because the first one already took effect — proves only that the
+// last attempt changed nothing, not that none of them did. Telling the operator the
+// mutation did not apply is then false, and on the budget and bid levers it is false about
+// money.
+//
+// Only the six IDEMPOTENT mutating call sites need this; reads have no commit to be
+// ambiguous about, and the creates pass idempotent=false and are never retried at all.
+// Mirrors internal/platform/microsoft's doRequestCounted, which solves the same problem
+// with the same shape.
+func (c *Client) doRequestCounted(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, int, error) {
+	if err := c.validateAccountIDs(); err != nil {
+		// Pre-send: nothing was transmitted, so no attempt was retried.
+		return nil, 0, err
+	}
+	return c.doRequestValidatedCounted(ctx, method, path, body, idempotent)
+}
+
+// retriedUnconfirmed is the ONE place the retry-ambiguity rule is applied, so the six
+// idempotent mutating call sites each spend a single line on it and none of them can get the
+// condition subtly different.
+//
+// It wraps only when all three hold:
+//
+//   - err != nil — a successful mutate is confirmed however many 429s preceded it, because the
+//     attempt that finally succeeded is the one being reported on;
+//   - retries > 0 — an UNRETRIED failure is the answer to the only request that was sent, so it
+//     stays exactly as definite as it was. This is what keeps an ordinary 400 a 400;
+//   - !IsOutcomeUnconfirmed(err) — an error that ALREADY reports itself ambiguous (a 5xx, an
+//     exhausted 429, a transport timeout, or one of this package's explicit Unconfirmed()
+//     markers) needs no second layer, and wrapping it would only bury the error a caller
+//     actually logs.
+//
+// The third clause has one consequence worth stating, because it looks wrong at a glance: an
+// errRequestNotTransmitted failure on a LATER attempt — the token refresh or request build that
+// fails on attempt 2 — reports NotAttempted(), which makes IsOutcomeUnconfirmed return FALSE,
+// so this wraps it. That is correct and deliberate. "Not attempted" is true of the attempt that
+// failed, and attempt 0 was transmitted and answered 429; the mutate may be applied. The marker
+// is already gated on attempt == 0 for exactly this reason — see errRequestNotTransmitted.
+func retriedUnconfirmed(what string, retries int, err error) error {
+	if err == nil || retries == 0 || IsOutcomeUnconfirmed(err) {
+		return err
+	}
+	return &retriedUnconfirmedError{what: what, retries: retries, err: err}
+}
+
+// retriedUnconfirmedError marks an idempotent MUTATE whose final attempt failed definitely after
+// at least one earlier attempt had been answered with a 429 and retried.
+//
+// A 429 is Google acknowledging receipt, and a mutate carries no idempotency key, so the
+// rate-limited attempt may still have been applied. The later refusal — including the 400 a
+// second attempt can earn precisely BECAUSE the first one already took effect — proves only that
+// the last attempt changed nothing. Unconfirmed() therefore makes IsOutcomeUnconfirmed report
+// true, which every definite-refusal mapping checks first; the final error stays reachable
+// through Unwrap for logging and for errors.Is/As on the underlying apiError.
+//
+// Mirrors internal/platform/microsoft's type of the same name.
+type retriedUnconfirmedError struct {
+	what    string
+	retries int
+	err     error
+}
+
+func (e *retriedUnconfirmedError) Error() string {
+	return fmt.Sprintf("google-ads %s unconfirmed: %d earlier attempt(s) were rate-limited with an unknown outcome before this failure: %s", e.what, e.retries, e.err.Error())
+}
+func (e *retriedUnconfirmedError) Unwrap() error { return e.err }
+
+// Unconfirmed marks the outcome as ambiguous-applied for IsOutcomeUnconfirmed.
+func (e *retriedUnconfirmedError) Unconfirmed() bool { return true }
 
 // doRequestValidated is doRequest with the account-id precondition already discharged by
 // the caller. It exists ONLY so the account-agnostic endpoints — the ones whose whole job
@@ -910,12 +1031,21 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 // and apiError/transportError classification. Every caller must have validated whatever
 // ids its path actually embeds first.
 func (c *Client) doRequestValidated(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
+	raw, _, err := c.doRequestValidatedCounted(ctx, method, path, body, idempotent)
+	return raw, err
+}
+
+// doRequestValidatedCounted is doRequestValidated additionally returning how many attempts
+// were RETRIED — each of which was answered with a 429, the only status this loop retries.
+// The count is the loop's `attempt` index at the point of return, which is exactly the
+// number of attempts that preceded the one being reported on.
+func (c *Client) doRequestValidatedCounted(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, int, error) {
 	var encoded []byte
 	if body != nil {
 		b, mErr := json.Marshal(body)
 		if mErr != nil {
 			// Before the loop, so unconditionally the first attempt: nothing was sent.
-			return nil, fmt.Errorf("%w: marshal request body: %w", errRequestNotTransmitted, mErr)
+			return nil, 0, fmt.Errorf("%w: marshal request body: %w", errRequestNotTransmitted, mErr)
 		}
 		encoded = b
 	}
@@ -938,9 +1068,9 @@ func (c *Client) doRequestValidated(ctx context.Context, method, path string, bo
 			// already transmitted, and "not sent" would then be false. The wrap preserves the
 			// chain, so ProbeCredentialRejected and ProbeInconclusive answer exactly as before.
 			if attempt == 0 {
-				return nil, fmt.Errorf("%w: %w", errRequestNotTransmitted, err)
+				return nil, attempt, fmt.Errorf("%w: %w", errRequestNotTransmitted, err)
 			}
-			return nil, err
+			return nil, attempt, err
 		}
 
 		// Bound EACH attempt with its own deadline (the caller ctx is the parent so
@@ -951,9 +1081,9 @@ func (c *Client) doRequestValidated(ctx context.Context, method, path string, bo
 		if err != nil {
 			cancel()
 			if attempt == 0 {
-				return nil, fmt.Errorf("%w: build request: %w", errRequestNotTransmitted, err)
+				return nil, attempt, fmt.Errorf("%w: build request: %w", errRequestNotTransmitted, err)
 			}
-			return nil, fmt.Errorf("build request: %w", err)
+			return nil, attempt, fmt.Errorf("build request: %w", err)
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("developer-token", c.creds.DeveloperToken)
@@ -968,9 +1098,9 @@ func (c *Client) doRequestValidated(ctx context.Context, method, path string, bo
 		if err != nil {
 			cancel()
 			if isPreSendDialError(err) {
-				return nil, fmt.Errorf("google-ads %s %s: %w", method, path, err)
+				return nil, attempt, fmt.Errorf("google-ads %s %s: %w", method, path, err)
 			}
-			return nil, &transportError{Method: method, Path: path, Err: err}
+			return nil, attempt, &transportError{Method: method, Path: path, Err: err}
 		}
 
 		// Retry a 429 only for idempotent calls with attempts remaining.
@@ -986,7 +1116,7 @@ func (c *Client) doRequestValidated(ctx context.Context, method, path string, bo
 			// would just 429 again and stall the caller (mirrors the meta/reddit/
 			// twitter clients). Report the RAW header as authoritative.
 			if wait >= overCapRetryAfter {
-				return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path, Body: fmt.Sprintf("rate-limit reset (Retry-After: %q) exceeds max wait %s; aborting", rawRetryAfter, maxRetryWait)}
+				return nil, attempt, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path, Body: fmt.Sprintf("rate-limit reset (Retry-After: %q) exceeds max wait %s; aborting", rawRetryAfter, maxRetryWait)}
 			}
 			if wait <= 0 {
 				wait = c.retryBaseDelay * time.Duration(1<<uint(attempt))
@@ -1002,7 +1132,7 @@ func (c *Client) doRequestValidated(ctx context.Context, method, path string, bo
 				// and the caller would be told the mutation definitely did not apply. Wrap it
 				// so the ambiguity survives. (Harmless on the idempotent GAQL :search path —
 				// a read has no commit to be ambiguous about.)
-				return nil, &transportError{Method: method, Path: path, Err: err}
+				return nil, attempt, &transportError{Method: method, Path: path, Err: err}
 			}
 			continue
 		}
@@ -1028,18 +1158,18 @@ func (c *Client) doRequestValidated(ctx context.Context, method, path string, bo
 			// A read failure on a 2xx is ambiguous (the mutation may have committed but
 			// we can't read the result); a non-2xx read failure carries the status.
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", err)}
+				return nil, attempt, &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", err)}
 			}
-			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("read response body: %v", err)}
+			return nil, attempt, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("read response body: %v", err)}
 		}
 		_ = resp.Body.Close()
 		cancel()
 
 		if int64(buf.Len()) > maxResponseBytes {
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
+				return nil, attempt, &transportError{Method: method, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
 			}
-			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("response exceeds %d bytes", maxResponseBytes)}
+			return nil, attempt, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: fmt.Sprintf("response exceeds %d bytes", maxResponseBytes)}
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -1059,15 +1189,15 @@ func (c *Client) doRequestValidated(ctx context.Context, method, path string, bo
 				snap = snap[:maxErrorBodyChars]
 			}
 			text := string(snap)
-			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text, ErrorCodes: codes}
+			return nil, attempt, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text, ErrorCodes: codes}
 		}
 
-		return buf.Bytes(), nil
+		return buf.Bytes(), attempt, nil
 	}
 
 	// Exhausted retryMax retries, all 429 (idempotent path). Surface as a 429
 	// apiError so the caller sees the rate-limit cause.
-	return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path, Body: "rate limited: exhausted retries"}
+	return nil, retryMax, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path, Body: "rate limited: exhausted retries"}
 }
 
 // overCapRetryAfter is a sentinel (> maxRetryWait) that parseRetryAfter returns

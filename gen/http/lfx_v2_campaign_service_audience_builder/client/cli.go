@@ -120,7 +120,8 @@ func BuildSearchAudienceListsPayload(lfxV2CampaignServiceAudienceBuilderSearchAu
 // BuildGetAudienceSuppressionListsPayload builds the payload for the
 // lfx-v2-campaign-service-audience-builder get-audience-suppression-lists
 // endpoint from CLI flags.
-func BuildGetAudienceSuppressionListsPayload(lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsProjectID *string, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBrandShort *string, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsEventName *string, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBearerToken *string) (*lfxv2campaignserviceaudiencebuilder.GetAudienceSuppressionListsPayload, error) {
+func BuildGetAudienceSuppressionListsPayload(lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsProjectID *string, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBrandShort *string, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsEventName *string, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsRegistrantsEvent *string, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBearerToken *string) (*lfxv2campaignserviceaudiencebuilder.GetAudienceSuppressionListsPayload, error) {
+	var err error
 	var projectID string
 	{
 		if lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsProjectID == nil {
@@ -140,6 +141,18 @@ func BuildGetAudienceSuppressionListsPayload(lfxV2CampaignServiceAudienceBuilder
 			eventName = lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsEventName
 		}
 	}
+	var registrantsEvent *string
+	{
+		if lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsRegistrantsEvent != nil {
+			registrantsEvent = lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsRegistrantsEvent
+			if utf8.RuneCountInString(*lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsRegistrantsEvent) > 200 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("registrants_event", *lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsRegistrantsEvent, utf8.RuneCountInString(*lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsRegistrantsEvent), 200, false))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	var bearerToken *string
 	{
 		if lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBearerToken != nil {
@@ -150,6 +163,7 @@ func BuildGetAudienceSuppressionListsPayload(lfxV2CampaignServiceAudienceBuilder
 	v.ProjectID = projectID
 	v.BrandShort = brandShort
 	v.EventName = eventName
+	v.RegistrantsEvent = registrantsEvent
 	v.BearerToken = bearerToken
 
 	return v, nil
@@ -333,7 +347,7 @@ func BuildComposeAudienceMasterPayload(lfxV2CampaignServiceAudienceBuilderCompos
 		}
 		err = json.Unmarshal([]byte(*lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"compose\": {\n         \"brand_short\": \"Qui voluptatem dolore.\",\n         \"brief_id\": \"c32fcca9-7994-4925-b99f-3faa2c231afe\",\n         \"event_dates\": [\n            \"Temporibus nobis minus neque.\",\n            \"Hic aut.\"\n         ],\n         \"event_name\": \"Et et dolor recusandae unde similique at.\",\n         \"exclude_list_ids\": [\n            \"Repudiandae ut.\",\n            \"Minima sit voluptatem labore nihil quo.\",\n            \"Molestiae at nesciunt.\"\n         ],\n         \"inclusion_summary\": \"Odit qui voluptas illo dolore quisquam.\",\n         \"list_ids\": [\n            \"Nam architecto.\"\n         ],\n         \"name\": \"Qui placeat aut.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"compose\": {\n         \"brand_short\": \"Qui voluptatem dolore.\",\n         \"brief_id\": \"c32fcca9-7994-4925-b99f-3faa2c231afe\",\n         \"current_registrants_event\": \"0tk\",\n         \"event_dates\": [\n            \"Temporibus nobis minus neque.\",\n            \"Hic aut.\"\n         ],\n         \"event_name\": \"Et et dolor recusandae unde similique at.\",\n         \"exclude_list_ids\": [\n            \"Repudiandae ut.\",\n            \"Minima sit voluptatem labore nihil quo.\",\n            \"Molestiae at nesciunt.\"\n         ],\n         \"inclusion_summary\": \"Odit qui voluptas illo dolore quisquam.\",\n         \"list_ids\": [\n            \"Nam architecto.\"\n         ],\n         \"name\": \"Qui placeat aut.\"\n      }\n   }'")
 		}
 		if body.Compose == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("compose", "body"))
@@ -431,10 +445,13 @@ func BuildRunAudienceQaPayload(lfxV2CampaignServiceAudienceBuilderRunAudienceQaB
 		}
 		err = json.Unmarshal([]byte(*lfxV2CampaignServiceAudienceBuilderRunAudienceQaBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"event_name\": \"ki\",\n      \"list_ref\": \"e\",\n      \"targets_ca\": true,\n      \"targets_eu\": true\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"event_name\": \"ki\",\n      \"list_ref\": \"e\",\n      \"send_suppression_list_ids\": [\n         \"Nihil incidunt omnis.\",\n         \"Et dolor placeat vel.\",\n         \"Qui non eos veritatis.\"\n      ],\n      \"targets_ca\": true,\n      \"targets_eu\": true\n   }'")
 		}
 		if utf8.RuneCountInString(body.ListRef) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ref", body.ListRef, utf8.RuneCountInString(body.ListRef), 1, true))
+		}
+		if len(body.SendSuppressionListIds) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.send_suppression_list_ids", body.SendSuppressionListIds, len(body.SendSuppressionListIds), 200, false))
 		}
 		if body.EventName != nil {
 			if utf8.RuneCountInString(*body.EventName) < 1 {
@@ -463,6 +480,182 @@ func BuildRunAudienceQaPayload(lfxV2CampaignServiceAudienceBuilderRunAudienceQaB
 		TargetsEu: body.TargetsEu,
 		TargetsCa: body.TargetsCa,
 		EventName: body.EventName,
+	}
+	if body.SendSuppressionListIds != nil {
+		v.SendSuppressionListIds = make([]string, len(body.SendSuppressionListIds))
+		for i, val := range body.SendSuppressionListIds {
+			v.SendSuppressionListIds[i] = val
+		}
+	}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildInterpretCustomAudiencePayload builds the payload for the
+// lfx-v2-campaign-service-audience-builder interpret-custom-audience endpoint
+// from CLI flags.
+func BuildInterpretCustomAudiencePayload(lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBody *string, lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceProjectID *string, lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBearerToken *string) (*lfxv2campaignserviceaudiencebuilder.InterpretCustomAudiencePayload, error) {
+	var err error
+	var body InterpretCustomAudienceRequestBody
+	{
+		if lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"answers\": [\n         {\n            \"answer\": \"yuv\",\n            \"question\": \"Dolorum corrupti enim eos.\",\n            \"question_id\": \"Saepe quis eum.\"\n         },\n         {\n            \"answer\": \"yuv\",\n            \"question\": \"Dolorum corrupti enim eos.\",\n            \"question_id\": \"Saepe quis eum.\"\n         },\n         {\n            \"answer\": \"yuv\",\n            \"question\": \"Dolorum corrupti enim eos.\",\n            \"question_id\": \"Saepe quis eum.\"\n         }\n      ],\n      \"event_url\": \"ww5\",\n      \"request\": \"b\"\n   }'")
+		}
+		if utf8.RuneCountInString(body.Request) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.request", body.Request, utf8.RuneCountInString(body.Request), 1, true))
+		}
+		if utf8.RuneCountInString(body.Request) > 2000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.request", body.Request, utf8.RuneCountInString(body.Request), 2000, false))
+		}
+		if len(body.Answers) > 12 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.answers", body.Answers, len(body.Answers), 12, false))
+		}
+		for _, e := range body.Answers {
+			if e != nil {
+				if err2 := validateAudienceCustomAnswerRequestBody(e, "body.answers[*]"); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+		if body.EventURL != nil {
+			if utf8.RuneCountInString(*body.EventURL) > 2048 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_url", *body.EventURL, utf8.RuneCountInString(*body.EventURL), 2048, false))
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		if lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceaudiencebuilder.InterpretCustomAudiencePayload{
+		Request:  body.Request,
+		EventURL: body.EventURL,
+	}
+	if body.Answers != nil {
+		v.Answers = make([]*lfxv2campaignserviceaudiencebuilder.AudienceCustomAnswer, len(body.Answers))
+		for i, val := range body.Answers {
+			if val == nil {
+				v.Answers[i] = nil
+				continue
+			}
+			v.Answers[i] = marshalAudienceCustomAnswerRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomAnswer(val)
+		}
+	}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildPreviewCustomAudiencePayload builds the payload for the
+// lfx-v2-campaign-service-audience-builder preview-custom-audience endpoint
+// from CLI flags.
+func BuildPreviewCustomAudiencePayload(lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBody *string, lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceProjectID *string, lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBearerToken *string) (*lfxv2campaignserviceaudiencebuilder.PreviewCustomAudiencePayload, error) {
+	var err error
+	var body PreviewCustomAudienceRequestBody
+	{
+		if lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"custom\": {\n         \"criteria\": {\n            \"cities\": [\n               \"Seoul\"\n            ],\n            \"contact_location\": true,\n            \"countries\": [\n               \"South Korea\"\n            ],\n            \"gate_list_id\": \"26716\",\n            \"label\": \"OSS Korea\"\n         }\n      }\n   }'")
+		}
+		if body.Custom == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("custom", "body"))
+		}
+		if body.Custom != nil {
+			if err2 := validateAudienceCustomInputRequestBody(body.Custom, "body.custom"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		if lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceaudiencebuilder.PreviewCustomAudiencePayload{}
+	if body.Custom != nil {
+		v.Custom = marshalAudienceCustomInputRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomInput(body.Custom)
+	}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildCreateCustomAudiencePayload builds the payload for the
+// lfx-v2-campaign-service-audience-builder create-custom-audience endpoint
+// from CLI flags.
+func BuildCreateCustomAudiencePayload(lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBody *string, lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceProjectID *string, lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBearerToken *string) (*lfxv2campaignserviceaudiencebuilder.CreateCustomAudiencePayload, error) {
+	var err error
+	var body CreateCustomAudienceRequestBody
+	{
+		if lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"custom\": {\n         \"criteria\": {\n            \"cities\": [\n               \"Seoul\"\n            ],\n            \"contact_location\": true,\n            \"countries\": [\n               \"South Korea\"\n            ],\n            \"gate_list_id\": \"26716\",\n            \"label\": \"OSS Korea\"\n         }\n      }\n   }'")
+		}
+		if body.Custom == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("custom", "body"))
+		}
+		if body.Custom != nil {
+			if err2 := validateAudienceCustomInputRequestBody(body.Custom, "body.custom"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		if lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceaudiencebuilder.CreateCustomAudiencePayload{}
+	if body.Custom != nil {
+		v.Custom = marshalAudienceCustomInputRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomInput(body.Custom)
 	}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken

@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -99,9 +100,12 @@ func validateMonitorDays(days int) error {
 //
 // A row is never specially excluded from the sum: a metrics-fetch-failed row contributes its
 // zero-value numeric fields, which is a no-op, since there is no correct non-zero contribution
-// to substitute; a Google row whose budget alone was unparseable (round-24/25 review)
-// contributes its genuinely non-zero spend/impressions/clicks, which is correct because only
-// its budget field — not summed here — was untrusted.
+// to substitute; a row whose budget alone was unparseable — on any platform that reports a
+// budget, not only Google Ads — contributes its genuinely non-zero spend/impressions/clicks,
+// which is correct because only its budget field, not summed here, was untrusted. LinkedIn is
+// the case that does contribute a wrong figure: a row whose costInLocalCurrency was unreadable
+// carries Spend=0 with real impressions/clicks, so the spend sum understates it — which is
+// exactly what UnmeasuredCampaigns exists to flag below.
 //
 // What the sum cannot say by itself is that some of it was not measured: UnmeasuredCampaigns
 // counts the FetchFailed rows so the response does (#218). It counts every FetchFailed row,
@@ -207,12 +211,66 @@ func toConnAccountMonitorTotals(t *model.AccountMonitorTotals) *conn.AccountMoni
 	}
 }
 
+// monitorScopeConflictPlatforms are the monitor methods that declare a 409 for a campaign-scope
+// conflict: the shared-tenancy platforms whose dispatchers implement AccountMonitorScoper. Only
+// they may receive the scope arms in classifyMonitorError; a method that declares no 409 could not
+// encode one.
+var monitorScopeConflictPlatforms = map[model.Provider]bool{
+	model.ProviderGoogleAds:  true,
+	model.ProviderMetaAds:    true,
+	model.ProviderRedditAds:  true,
+	model.ProviderTwitterAds: true,
+}
+
+// classifyMonitorError is classifyDiscoveryError plus the campaign-scope refusals of a
+// project-scoped monitor (lfx-self-serve-ops#897): the project's campaigns could not all be proven
+// to belong to the monitored account, so the read fails closed rather than reporting part of them
+// as the whole. Arm order and wording follow classifyInsightsErrorFor, which answers the same
+// refusals on the insight reads; every other error is delegated unchanged.
+//
+// Every 409 here carries its reason: X's monitor declares AccountMonitorConflictError and the
+// other three AccountMonitorScopeConflictError, both of which require one. Neither is the shared
+// ConflictError, whose published example is a connection collision no monitor returns. The
+// account ids stay in the log.
+func (s *ConnectionService) classifyMonitorError(ctx context.Context, projectID string, platform model.Provider, d accountDiscovery, err error) error {
+	if !monitorScopeConflictPlatforms[platform] {
+		return s.classifyDiscoveryError(ctx, projectID, d, err)
+	}
+	var reason, message string
+	switch {
+	case errors.Is(err, domain.ErrCampaignProvenanceMixed):
+		// Before the two arms it is always joined with, so both remedies are named.
+		reason = "campaign_account_mismatch"
+		message = "some of this project's campaigns were created under a different ad account than the one being monitored, and others do not record which ad account they were created under — re-dispatch the unrecorded campaigns onto this account, and re-dispatch or reconcile the others onto it (or monitor the account that owns them), to monitor this account"
+	case errors.Is(err, domain.ErrCampaignProvenanceUnknown):
+		// Before the mismatch arm it is joined with: only re-dispatch repairs an unrecorded row.
+		reason = "campaign_account_mismatch"
+		message = "some of this project's campaigns do not record which ad account they were created under, so they cannot be read safely — re-dispatch those campaigns onto the connected account to monitor this account"
+	case errors.Is(err, ErrCampaignAccountMismatch):
+		reason = "campaign_account_mismatch"
+		message = "some of this project's campaigns were created under a different ad account than the one being monitored — monitor the account that owns them, or re-dispatch or reconcile those campaigns onto this one, to monitor this account"
+	case errors.Is(err, domain.ErrAudienceScopeInvalid):
+		reason = "campaign_scope_invalid"
+		message = "a campaign recorded for this project has an id the platform cannot read — re-dispatch it to monitor this account"
+	default:
+		return s.classifyDiscoveryError(ctx, projectID, d, err)
+	}
+	slog.WarnContext(ctx, "account monitor blocked: the project's campaign scope does not fit the monitored account",
+		"project_id", projectID, "platform", string(platform), "reason", reason, "error", safeErrSummary(err))
+	if platform == model.ProviderTwitterAds {
+		return &conn.AccountMonitorConflictError{Code: "409", Reason: reason, Message: message}
+	}
+	return &conn.AccountMonitorScopeConflictError{Code: "409", Reason: reason, Message: message}
+}
+
 // monitorAccount is the shared body of the four live-read monitor-*-ads-account handlers: validate,
 // fetch, evaluate, total, and assemble the response. evaluate is the one thing that cannot be
-// shared uniformly — Google's EvaluateGoogleMonitor takes no `now` (its pacing formula has no
-// current-time dependency: expected spend is budget_day*days, not derived from flight dates),
-// while LinkedIn/Meta/Reddit's take one — so each caller closes over its own platform's
-// Evaluate*Monitor call.
+// shared uniformly, so each caller passes its own platform's Evaluate*Monitor. Google's
+// EvaluateGoogleMonitor takes `days` but no `now` (expected spend is budget_day*days, with no
+// flight-date dependency). LinkedIn's and Reddit's take a `now`, which their callers close over.
+// Meta's EvaluateMetaMonitor takes neither a clock nor a closure: each row carries the exact
+// Insights window the read used (MetricsWindowStart/End), so its pacing never consults a clock
+// of its own and the method value is passed directly.
 func (s *ConnectionService) monitorAccount(
 	ctx context.Context,
 	projectID, accountID string,
@@ -233,7 +291,7 @@ func (s *ConnectionService) monitorAccount(
 	}
 	read, merr := orch.ReadAccountCampaignMetrics(ctx, projectID, platform, accountID, days)
 	if merr != nil {
-		return nil, s.classifyDiscoveryError(ctx, projectID, discovery, merr)
+		return nil, s.classifyMonitorError(ctx, projectID, platform, discovery, merr)
 	}
 
 	rows, actionItems := evaluate(read.Rows)
@@ -361,7 +419,7 @@ func (s *ConnectionService) monitorReportedAccount(
 	}
 	read, rerr := orch.ReadReportedAccountCampaigns(ctx, projectID, platform, accountID, days)
 	if rerr != nil {
-		return nil, s.classifyDiscoveryError(ctx, projectID, discovery, rerr)
+		return nil, s.classifyMonitorError(ctx, projectID, platform, discovery, rerr)
 	}
 	rows, actionItems := evaluate(read)
 	reportUnmeasuredRows(ctx, orch.dispatchMetrics(), projectID, platform, rows)
@@ -385,8 +443,10 @@ func (s *ConnectionService) monitorReportedAccount(
 	return out, nil
 }
 
-// MonitorGoogleAdsAccount reads every campaign visible on a Google Ads account, live from the
-// platform, with pacing and action items derived by the ported rule engine.
+// MonitorGoogleAdsAccount reads this project's own campaigns on a Google Ads account, live from
+// the platform, with pacing and action items derived by the ported rule engine. The customer is
+// shared across foundations, so the read is scoped to the campaigns this service recorded for the
+// project (Orchestrator.ReadAccountCampaignMetrics).
 func (s *ConnectionService) MonitorGoogleAdsAccount(ctx context.Context, p *conn.MonitorGoogleAdsAccountPayload) (*conn.AccountMonitor, error) {
 	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderGoogleAds, googleAdsMonitorDiscovery,
 		func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
@@ -404,14 +464,15 @@ func (s *ConnectionService) MonitorLinkedinAdsAccount(ctx context.Context, p *co
 		})
 }
 
-// MonitorMetaAdsAccount reads every campaign visible on a Meta Ads account, live from the
-// platform, with pacing and action items derived by the ported rule engine.
+// MonitorMetaAdsAccount reads this project's own campaigns on a Meta Ads account, live from the
+// platform, with pacing and action items derived by the ported rule engine. The ad account is
+// shared across foundations, so the read is scoped to the campaigns this service recorded for the
+// project.
 func (s *ConnectionService) MonitorMetaAdsAccount(ctx context.Context, p *conn.MonitorMetaAdsAccountPayload) (*conn.AccountMonitor, error) {
-	now := time.Now()
+	// No clock here: each row carries the Insights window its spend covers, and the rules pace
+	// against exactly those days (see rules.EvaluateMetaMonitor).
 	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderMetaAds, metaAdsMonitorDiscovery,
-		func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
-			return rules.EvaluateMetaMonitor(rows, p.Days, now)
-		})
+		rules.EvaluateMetaMonitor)
 }
 
 // MonitorMicrosoftAdsAccount reads every live campaign on a Microsoft Advertising account, with
@@ -424,8 +485,8 @@ func (s *ConnectionService) MonitorMicrosoftAdsAccount(ctx context.Context, p *c
 		})
 }
 
-// MonitorTwitterAdsAccount reads every live campaign on an X Ads account, with metrics from the
-// last finished set of X stats jobs — report-backed for every `days` value, see
+// MonitorTwitterAdsAccount reads this project's own live campaigns on an X Ads account (the account
+// is shared across foundations), with metrics from the last finished set of X stats jobs — report-backed for every `days` value, see
 // Orchestrator.ReadReportedAccountCampaigns and internal/platform/twitter/monitor.go for why.
 //
 // The rules are evaluated on the saved report's own window — the account-local calendar days X's
@@ -439,8 +500,10 @@ func (s *ConnectionService) MonitorTwitterAdsAccount(ctx context.Context, p *con
 		})
 }
 
-// MonitorRedditAdsAccount reads every campaign visible on a Reddit Ads account, live from the
-// platform, with pacing and action items derived by the ported rule engine. Totals are the sum
+// MonitorRedditAdsAccount reads this project's own campaigns on a Reddit Ads account, live from
+// the platform, with pacing and action items derived by the ported rule engine. The ad account is
+// shared across foundations, so the read is scoped to the campaigns this service recorded for the
+// project. Totals are the sum
 // of the returned rows, the same as every other platform — see model.AccountMonitorTotals' own
 // doc comment for why the BFF's separate account-level call was not carried over.
 func (s *ConnectionService) MonitorRedditAdsAccount(ctx context.Context, p *conn.MonitorRedditAdsAccountPayload) (*conn.AccountMonitor, error) {

@@ -26,7 +26,7 @@ rather than as prose about the rule.
 
 ## Evidence base
 
-All entries derive from the LFXV2-2896 read-only evidence scout (epic
+Most entries derive from the LFXV2-2896 read-only evidence scout (epic
 LFXV2-2889, 2026-07-29), which mined **all 50 pull requests** of this repository
 — created 2026-06-29, so the window is effectively its whole history — and
 collected **1,603 Copilot inline review comments**, of which 1,040 of 1,552
@@ -41,13 +41,27 @@ reply threads cite a fixing commit SHA.
 - `cursor[bot]` (`user.id 206951365`) is also active on PRs #27–#50 and is
   **excluded** from this evidence base. No CodeRabbit and no Greptile activity
   exists on this repo.
-- **All present-day claims were read at `origin/main` =
+- **Every present-day claim in a scout-derived entry was read at `origin/main` =
   `588cce6cd8a7fbee0f06d0672bff593e4512be18`** ("feat(platform): add microsoft
   ads campaign creation (MS-2) (LFXV2-2804) (#49)", 2026-07-28), confirmed
-  through the GitHub API. `main` has since advanced; entries state where a
-  referenced path lives today rather than assuming that SHA is current. When an
-  entry's "Status on main" and the code disagree, the code wins and the entry
-  needs updating.
+  through the GitHub API. A later sweep reads at its own SHA and says so below.
+  `main` has since advanced; entries state where a referenced path lives today
+  rather than assuming the SHA they were read at is current. When an entry's
+  "Status on main" and the code disagree, the code wins and the entry needs
+  updating.
+
+**Second sweep, 2026-10-27 (#162).** The scout's window closed at PR #50, so a
+pattern whose evidence accumulated afterwards could not be promoted from it. One
+entry — `a-test-that-cannot-fail-against-the-code-it-names` in
+[test-hygiene.md](test-hygiene.md) — derives instead from a sweep of the
+**2,154 Copilot inline review comments authored since 2026-08-01**, read through
+the same `pulls/comments` endpoint and filtered on the same verified `Copilot`
+identity above. The promotion gate is unchanged and was applied to it in full;
+only the corpus differs. Its present-day claims were read at `origin/main` =
+`16fe888c` ("fix(googleads): mark a retried mutate's failure unconfirmed
+(#404)", 2026-10-27) — not at the scout's SHA above, which is three months
+stale. A later candidate may be sourced the same way, and should say so here
+with the SHA it was read at.
 
 ## Promotion gate
 
@@ -101,7 +115,7 @@ race detector exists.
 | [context-and-cancellation.md](context-and-cancellation.md) | `ctx.Err()` as the caller-cancel gate; clean pre-send vs uncertain in-flight |
 | [credentials-and-untrusted-text.md](credentials-and-untrusted-text.md) | untrusted or credential text in errors; caller-URL redaction |
 | [platform-http-client-hygiene.md](platform-http-client-hygiene.md) | bounded reads of `cap+1`; drain before close |
-| [test-hygiene.md](test-hygiene.md) | pinned injected clocks; synchronised handler-goroutine handoff |
+| [test-hygiene.md](test-hygiene.md) | pinned injected clocks; synchronised handler-goroutine handoff; a test that cannot fail against the code it names |
 | [api-contract-and-docs-currency.md](api-contract-and-docs-currency.md) | design stricter than runtime; docs must not advertise what the code rejects; opaque platform config |
 | [knowledge-bundle-upkeep.md](knowledge-bundle-upkeep.md) | concept + dated log entry with a package change, and the index bullet only when a concept is added, renamed or re-described |
 | [known-false-positives.md](known-false-positives.md) | the floor, applied last |

@@ -417,6 +417,184 @@ func BuildUploadCreativeAssetPayload(lfxV2CampaignServiceBriefsUploadCreativeAss
 	return v, nil
 }
 
+// BuildListCreativeAssetsPayload builds the payload for the
+// lfx-v2-campaign-service-briefs list-creative-assets endpoint from CLI flags.
+func BuildListCreativeAssetsPayload(lfxV2CampaignServiceBriefsListCreativeAssetsProjectID *string, lfxV2CampaignServiceBriefsListCreativeAssetsBriefID *string, lfxV2CampaignServiceBriefsListCreativeAssetsBearerToken *string) (*lfxv2campaignservicebriefs.ListCreativeAssetsPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceBriefsListCreativeAssetsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceBriefsListCreativeAssetsProjectID
+	}
+	var briefID string
+	{
+		if lfxV2CampaignServiceBriefsListCreativeAssetsBriefID == nil {
+			return nil, fmt.Errorf("missing required flag --brief-id")
+		}
+		briefID = *lfxV2CampaignServiceBriefsListCreativeAssetsBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsListCreativeAssetsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceBriefsListCreativeAssetsBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.ListCreativeAssetsPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildGetCreativeAssetPayload builds the payload for the
+// lfx-v2-campaign-service-briefs get-creative-asset endpoint from CLI flags.
+func BuildGetCreativeAssetPayload(lfxV2CampaignServiceBriefsGetCreativeAssetProjectID *string, lfxV2CampaignServiceBriefsGetCreativeAssetBriefID *string, lfxV2CampaignServiceBriefsGetCreativeAssetAssetID *string, lfxV2CampaignServiceBriefsGetCreativeAssetBearerToken *string) (*lfxv2campaignservicebriefs.GetCreativeAssetPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceBriefsGetCreativeAssetProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceBriefsGetCreativeAssetProjectID
+	}
+	var briefID string
+	{
+		if lfxV2CampaignServiceBriefsGetCreativeAssetBriefID == nil {
+			return nil, fmt.Errorf("missing required flag --brief-id")
+		}
+		briefID = *lfxV2CampaignServiceBriefsGetCreativeAssetBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var assetID string
+	{
+		if lfxV2CampaignServiceBriefsGetCreativeAssetAssetID == nil {
+			return nil, fmt.Errorf("missing required flag --asset-id")
+		}
+		assetID = *lfxV2CampaignServiceBriefsGetCreativeAssetAssetID
+		err = goa.MergeErrors(err, goa.ValidateFormat("asset_id", assetID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsGetCreativeAssetBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceBriefsGetCreativeAssetBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.GetCreativeAssetPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.AssetID = assetID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildGetAssetPlanPayload builds the payload for the
+// lfx-v2-campaign-service-briefs get-asset-plan endpoint from CLI flags.
+func BuildGetAssetPlanPayload(lfxV2CampaignServiceBriefsGetAssetPlanProjectID *string, lfxV2CampaignServiceBriefsGetAssetPlanBriefID *string, lfxV2CampaignServiceBriefsGetAssetPlanPlatforms *string, lfxV2CampaignServiceBriefsGetAssetPlanBearerToken *string) (*lfxv2campaignservicebriefs.GetAssetPlanPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceBriefsGetAssetPlanProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceBriefsGetAssetPlanProjectID
+	}
+	var briefID string
+	{
+		if lfxV2CampaignServiceBriefsGetAssetPlanBriefID == nil {
+			return nil, fmt.Errorf("missing required flag --brief-id")
+		}
+		briefID = *lfxV2CampaignServiceBriefsGetAssetPlanBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var platforms []string
+	{
+		if lfxV2CampaignServiceBriefsGetAssetPlanPlatforms != nil {
+			err = json.Unmarshal([]byte(*lfxV2CampaignServiceBriefsGetAssetPlanPlatforms), &platforms)
+			if err != nil {
+				return nil, fmt.Errorf("invalid JSON for platforms, \nerror: %s, \nexample of valid JSON:\n%s", err, "'[\n      \"google-ads\"\n   ]'")
+			}
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsGetAssetPlanBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceBriefsGetAssetPlanBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.GetAssetPlanPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.Platforms = platforms
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildDeleteCreativeAssetPayload builds the payload for the
+// lfx-v2-campaign-service-briefs delete-creative-asset endpoint from CLI flags.
+func BuildDeleteCreativeAssetPayload(lfxV2CampaignServiceBriefsDeleteCreativeAssetProjectID *string, lfxV2CampaignServiceBriefsDeleteCreativeAssetBriefID *string, lfxV2CampaignServiceBriefsDeleteCreativeAssetAssetID *string, lfxV2CampaignServiceBriefsDeleteCreativeAssetBearerToken *string) (*lfxv2campaignservicebriefs.DeleteCreativeAssetPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceBriefsDeleteCreativeAssetProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceBriefsDeleteCreativeAssetProjectID
+	}
+	var briefID string
+	{
+		if lfxV2CampaignServiceBriefsDeleteCreativeAssetBriefID == nil {
+			return nil, fmt.Errorf("missing required flag --brief-id")
+		}
+		briefID = *lfxV2CampaignServiceBriefsDeleteCreativeAssetBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var assetID string
+	{
+		if lfxV2CampaignServiceBriefsDeleteCreativeAssetAssetID == nil {
+			return nil, fmt.Errorf("missing required flag --asset-id")
+		}
+		assetID = *lfxV2CampaignServiceBriefsDeleteCreativeAssetAssetID
+		err = goa.MergeErrors(err, goa.ValidateFormat("asset_id", assetID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsDeleteCreativeAssetBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceBriefsDeleteCreativeAssetBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.DeleteCreativeAssetPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.AssetID = assetID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildCreateCampaignsPayload builds the payload for the
 // lfx-v2-campaign-service-briefs create-campaigns endpoint from CLI flags.
 func BuildCreateCampaignsPayload(lfxV2CampaignServiceBriefsCreateCampaignsBody *string, lfxV2CampaignServiceBriefsCreateCampaignsProjectID *string, lfxV2CampaignServiceBriefsCreateCampaignsBriefID *string, lfxV2CampaignServiceBriefsCreateCampaignsBearerToken *string) (*lfxv2campaignservicebriefs.CreateCampaignsPayload, error) {
@@ -428,7 +606,7 @@ func BuildCreateCampaignsPayload(lfxV2CampaignServiceBriefsCreateCampaignsBody *
 		}
 		err = json.Unmarshal([]byte(*lfxV2CampaignServiceBriefsCreateCampaignsBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"input\": {\n         \"config\": {\n            \"hsToken\": \"hs-abc123\",\n            \"metaConfig\": {\n               \"budget\": 2500,\n               \"endDate\": \"2099-08-31\",\n               \"geoTargets\": [\n                  \"US\"\n               ],\n               \"objective\": \"traffic\",\n               \"startDate\": \"2099-08-01\",\n               \"variants\": [\n                  {\n                     \"headline\": \"KubeCon 2099\",\n                     \"primaryText\": \"Join us at KubeCon\"\n                  }\n               ]\n            },\n            \"redditConfig\": {\n               \"budgetUsd\": 50,\n               \"endDate\": \"2099-08-31\",\n               \"objective\": \"traffic\",\n               \"postUrl\": \"t3_abc123\",\n               \"startDate\": \"2099-08-01\",\n               \"subreddits\": [\n                  \"kubernetes\"\n               ],\n               \"variants\": [\n                  {\n                     \"headline\": \"Join us\"\n                  }\n               ]\n            }\n         },\n         \"new_version\": false,\n         \"platforms\": [\n            \"reddit-ads\",\n            \"meta-ads\"\n         ]\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"input\": {\n         \"config\": {\n            \"hsToken\": \"hs-abc123\",\n            \"metaConfig\": {\n               \"budget\": 2500,\n               \"dsaBeneficiary\": \"Cloud Native Computing Foundation\",\n               \"dsaPayor\": \"The Linux Foundation\",\n               \"endDate\": \"2099-08-31\",\n               \"geoTargets\": [\n                  \"US\",\n                  \"DE\"\n               ],\n               \"instagramUserId\": \"17841400000000000\",\n               \"objective\": \"traffic\",\n               \"startDate\": \"2099-08-01\",\n               \"variants\": [\n                  {\n                     \"headline\": \"KubeCon 2099\",\n                     \"primaryText\": \"Join us at KubeCon\"\n                  }\n               ]\n            },\n            \"redditConfig\": {\n               \"budgetUsd\": 50,\n               \"endDate\": \"2099-08-31\",\n               \"objective\": \"traffic\",\n               \"postUrl\": \"t3_abc123\",\n               \"startDate\": \"2099-08-01\",\n               \"subreddits\": [\n                  \"kubernetes\"\n               ],\n               \"variants\": [\n                  {\n                     \"headline\": \"Join us\"\n                  }\n               ]\n            }\n         },\n         \"new_version\": false,\n         \"platforms\": [\n            \"reddit-ads\",\n            \"meta-ads\"\n         ]\n      }\n   }'")
 		}
 		if body.Input == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("input", "body"))

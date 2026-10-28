@@ -369,12 +369,64 @@ func TestComposeAudienceMasterReportsARecordFailureAsAPartialCarryingTheMaster(t
 	assert.Equal(t, "500", partial.Code)
 	require.NotNil(t, partial.Master, "the operator can only attach the master by hand if they are told its id")
 	assert.Equal(t, "master-1", partial.Master.ListID)
-	require.NotNil(t, partial.Suppression)
-	assert.Equal(t, "supp-1", partial.Suppression.ListID)
+	assert.Nil(t, partial.Suppression,
+		"the standing list is shared and reused: a client built for the legacy field would tell the operator to delete it")
 	assert.Nil(t, partial.MasterName, "MasterName is for an UNCONFIRMED master; this one is confirmed")
-	assert.Contains(t, partial.Message, "do not compose again")
+	assert.Contains(t, partial.Message, "attach the master list to the campaign's audience manually")
+	assert.Contains(t, partial.Message, "composing again can create a second master list")
+	assert.NotContains(t, partial.Message, "combined")
 
 	assert.Equal(t, composeRecordAttempts, repo.calls,
 		"the irreversible half already succeeded, so a transient blip gets one bounded retry")
 	assert.Equal(t, 1, explorer.composeCalls, "the retry is of the INSERT, never of the list creates")
+}
+
+// The compose result names every list the master excludes, in the order the recorded row holds
+// them: `suppression` alone is set only for a full standard set, and would leave the other
+// exclusions -- a current-registrants list this compose created among them -- unreported.
+func TestComposeAudienceMasterReturnsEveryExcludedListID(t *testing.T) {
+	outcome := composedOutcome()
+	outcome.AttachedSuppressionIDs = []string{"brand-1", "registrants-1"}
+	explorer := &fakeExplorer{outcome: outcome}
+	repo := newCountingAudienceRepo()
+	briefs := newFakeBriefRepo()
+	seedBrief(t, briefs, "proj-1", "brief-1")
+	svc := NewAudienceExploreService(explorer)
+	svc.SetAudienceRepo(repo)
+	svc.SetBriefRepo(briefs)
+
+	res, err := svc.ComposeAudienceMaster(context.Background(), composePayload("brief-1"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"supp-1", "brand-1", "registrants-1"}, res.SuppressionListIds)
+	rows := repo.rows()
+	require.Len(t, rows, 1)
+	var recorded []string
+	require.NoError(t, json.Unmarshal(rows[0].SuppressionListIDs, &recorded))
+	assert.Equal(t, recorded, res.SuppressionListIds, "the response and the recorded row agree")
+
+	outcome = composedOutcome()
+	outcome.Suppression = nil
+	outcome.AttachedSuppressionIDs = []string{"registrants-1"}
+	svc = NewAudienceExploreService(&fakeExplorer{outcome: outcome})
+	res, err = svc.ComposeAudienceMaster(context.Background(), composePayload(""))
+	require.NoError(t, err)
+	assert.Nil(t, res.Suppression)
+	assert.Equal(t, []string{"registrants-1"}, res.SuppressionListIds, "a partial standard selection still names what is excluded")
+}
+
+// The standing list's own id selected beside the full standard set lands both as the outcome's
+// Suppression and among its attached ids. It is recorded, returned and summarised ONCE.
+func TestComposedSuppressionIDs_StandingListSelectedTwiceIsRecordedOnce(t *testing.T) {
+	outcome := composedOutcome()
+	outcome.Attached = true
+	outcome.AttachedSuppressionIDs = []string{"brand-1", "supp-1", "brand-1", "registrants-1"}
+
+	assert.Equal(t, []string{"supp-1", "brand-1", "registrants-1"}, composedSuppressionIDs(outcome),
+		"first-seen order, each list once")
+	row := audienceFromCompose("proj-1", "brief-1", outcome, "")
+	var recorded []string
+	require.NoError(t, json.Unmarshal(row.SuppressionListIDs, &recorded))
+	assert.Equal(t, []string{"supp-1", "brand-1", "registrants-1"}, recorded)
+	assert.Contains(t, row.InclusionSummary, "with the standard suppression list and 2 more suppression list(s)",
+		"the standing list is counted once, the repeated brand list once")
 }

@@ -61,6 +61,8 @@ type Endpoints struct {
 	ListGoogleAdsAccounts       goa.Endpoint
 	GetGoogleAdsKeywords        goa.Endpoint
 	GetGoogleAdsAudience        goa.Endpoint
+	SuggestGoogleAdsGeoTargets  goa.Endpoint
+	ListGoogleAdsUserLists      goa.Endpoint
 	GetMetaAdsAudience          goa.Endpoint
 	GetTwitterAdsAudience       goa.Endpoint
 	GetLinkedinAdsAudience      goa.Endpoint
@@ -142,6 +144,8 @@ func NewEndpoints(s Service) *Endpoints {
 		ListGoogleAdsAccounts:       NewListGoogleAdsAccountsEndpoint(s, a.JWTAuth),
 		GetGoogleAdsKeywords:        NewGetGoogleAdsKeywordsEndpoint(s, a.JWTAuth),
 		GetGoogleAdsAudience:        NewGetGoogleAdsAudienceEndpoint(s, a.JWTAuth),
+		SuggestGoogleAdsGeoTargets:  NewSuggestGoogleAdsGeoTargetsEndpoint(s, a.JWTAuth),
+		ListGoogleAdsUserLists:      NewListGoogleAdsUserListsEndpoint(s, a.JWTAuth),
 		GetMetaAdsAudience:          NewGetMetaAdsAudienceEndpoint(s, a.JWTAuth),
 		GetTwitterAdsAudience:       NewGetTwitterAdsAudienceEndpoint(s, a.JWTAuth),
 		GetLinkedinAdsAudience:      NewGetLinkedinAdsAudienceEndpoint(s, a.JWTAuth),
@@ -221,6 +225,8 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ListGoogleAdsAccounts = m(e.ListGoogleAdsAccounts)
 	e.GetGoogleAdsKeywords = m(e.GetGoogleAdsKeywords)
 	e.GetGoogleAdsAudience = m(e.GetGoogleAdsAudience)
+	e.SuggestGoogleAdsGeoTargets = m(e.SuggestGoogleAdsGeoTargets)
+	e.ListGoogleAdsUserLists = m(e.ListGoogleAdsUserLists)
 	e.GetMetaAdsAudience = m(e.GetMetaAdsAudience)
 	e.GetTwitterAdsAudience = m(e.GetTwitterAdsAudience)
 	e.GetLinkedinAdsAudience = m(e.GetLinkedinAdsAudience)
@@ -1299,6 +1305,54 @@ func NewGetGoogleAdsAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc) 
 			return nil, err
 		}
 		return s.GetGoogleAdsAudience(ctx, p)
+	}
+}
+
+// NewSuggestGoogleAdsGeoTargetsEndpoint returns an endpoint function that
+// calls the method "suggest-google-ads-geo-targets" of service
+// "lfx-v2-campaign-service-connections".
+func NewSuggestGoogleAdsGeoTargetsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*SuggestGoogleAdsGeoTargetsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.SuggestGoogleAdsGeoTargets(ctx, p)
+	}
+}
+
+// NewListGoogleAdsUserListsEndpoint returns an endpoint function that calls
+// the method "list-google-ads-user-lists" of service
+// "lfx-v2-campaign-service-connections".
+func NewListGoogleAdsUserListsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListGoogleAdsUserListsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListGoogleAdsUserLists(ctx, p)
 	}
 }
 

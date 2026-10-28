@@ -69,6 +69,16 @@ func (e *dsnParseError) Unwrap() error { return e.err }
 
 // NewPool opens an instrumented pgx connection pool for the given DSN and
 // verifies connectivity with a ping.
+//
+// Every arm is DSN-free by construction, the same guarantee Migrate makes and for
+// the same reason: NewContainer wraps this error and main logs it. The connect and
+// ping arms go through newSafeDSNError because pgx renders a *pgconn.ConnectError
+// as "failed to connect to `user=%s database=%s`" — verified against pgx v5.9.2 —
+// so the commonest startup failure in k8s, a database that is not up yet, would
+// otherwise put the user and database name in every restart's logs. The ParseConfig
+// arm keeps its pre-existing dsnParseError instead: that wrapper already renders a
+// static message, and routing an already-redacted error through the redaction a
+// second time would replace a precise diagnostic with a generic one.
 func NewPool(ctx context.Context, dsn string) (*Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -78,14 +88,14 @@ func NewPool(ctx context.Context, dsn string) (*Pool, error) {
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("open pgx pool: %w", err)
+		return nil, fmt.Errorf("open pgx pool: %w", newSafeDSNError(dsn, err))
 	}
 	if err := pool.Ping(ctx); err != nil {
 		// Close in the background so a failed ping returns immediately rather
 		// than blocking startup while the pool drains (an unreachable DB in k8s
 		// can otherwise wedge boot until the liveness probe restarts the pod).
 		go pool.Close()
-		return nil, fmt.Errorf("ping database: %w", err)
+		return nil, fmt.Errorf("ping database: %w", newSafeDSNError(dsn, err))
 	}
 	return &Pool{Pool: pool}, nil
 }
@@ -128,7 +138,22 @@ func (p *Pool) checkReady(ctx context.Context, ping func(context.Context) error)
 //
 // On success it verifies the schema carries no INVALID index (checkNoInvalidIndexes) —
 // the one failure a migration can leave behind that a re-run reports as success.
+//
+// Every error it returns has been through redactMigrateErr, so no caller can print the DSN
+// by printing the error. The redaction is HERE, at the boundary, rather than at each of the
+// failing sites inside, because the leak is not one site: a malformed URL leaks the whole DSN
+// out of migrate.NewWithSourceInstance, and every failure to CONNECT — from Up() and from
+// checkNoInvalidIndexes alike — leaks the user and database out of pgx's own message, at
+// startup and again on every retry. A site-by-site fix leaves the next site to be added
+// unguarded; wrapping the one exported entry point makes every path safe by construction and
+// keeps the DSN, which only this function is given, from needing to reach a logging caller.
+// errors.Is/As still see through it — see safeDSNError for why that matters to
+// IsPermanentMigrationErr.
 func Migrate(dsn string) error {
+	return redactMigrateErr(dsn, runMigrations(dsn))
+}
+
+func runMigrations(dsn string) error {
 	src, err := iofs.New(migrations.FS, ".")
 	if err != nil {
 		return fmt.Errorf("open migration source: %w", err)
@@ -200,8 +225,8 @@ func Migrate(dsn string) error {
 // migration chain marks a version as compatible or not, so this does not — and cannot —
 // verify that the newer migrations kept that rule; it trusts it. What it does keep is the
 // part that IS checkable: the newer schema must be clean, and checkNoInvalidIndexes still
-// runs, so a newer release that dropped an index this image REQUIRES (as opposed to one it
-// lists as optional) still refuses boot with ErrMissingRequiredIndex.
+// runs, so a newer release that dropped an index this image REQUIRES still refuses boot with
+// ErrMissingRequiredIndex.
 //
 // The trust is bounded to that one hop (PR #260 review): only recorded == latest+1 takes this
 // path. A clean version further ahead is a schema this release was never shown compatible
@@ -420,53 +445,25 @@ var requiredIndexes = []requiredIndex{{
 	// false alarm, on the same reasoning as 000014's guard.
 	predicate: "(status = 'building'::text)",
 }, {
-	// at most one live campaign per (brief, platform) — the arbiter of
-	// ClaimCampaignDispatch, and since 000014 dropped campaigns_brief_id_platform_key,
-	// the ONLY one. 000014's guard pins this same definition before it drops the
-	// constraint, but that guard runs once, at migration time. Nothing re-checked it
-	// afterwards, so an index dropped or replaced later — including by an operator
-	// clearing invalid-index debris and rebuilding from 000013 with IF NOT EXISTS
-	// silently no-opping against a same-named leftover — left uniqueness unenforced with
-	// a clean boot and duplicate PAID campaigns as the first symptom. Two guards on one
-	// definition is the point: a migration-time check cannot speak for the schema a year
-	// of operations later.
-	name:   "uq_campaigns_brief_platform_variant_live",
-	table:  "campaigns",
-	unique: true,
-	// (brief, platform, VARIANT) since 000022. Google's UI offers Search and Demand Gen
-	// as simultaneous checkboxes, so a brief legitimately holds several google-ads
-	// campaigns; keying on (brief, platform) alone made the second dispatch read the
-	// first's row and report a false success. Every other provider writes 'default', so
-	// the invariant is unchanged for them — one live campaign per pair, now spelled with
-	// a third column.
-	keys: []string{"brief_id", "platform", "variant"},
-	// Deparsed, and character-identical to the form 000023's guard compares against.
-	predicate: "(status <> 'deleted'::text)",
-	// OPTIONAL from the lock release on (LFXV2-2023, PR #260): absent is a healthy boot,
-	// present is still checked in full. This image is the image-only rollback target for
-	// the later release that drops the index, so it must start on the schema that release
-	// leaves behind — staging the drop a release after the lock promises exactly that, and
-	// a hard requirement here would turn the rollback into a boot loop on
-	// ErrMissingRequiredIndex. The N-1 binary that still relies on the index for its claims
-	// is not this one: its own boot check keeps it required, and a rollback to it happens
-	// only before the drop.
-	optional: true,
-}, {
 	// at most one live campaign per (brief, platform, variant, slot_version) — 000037. The
-	// four-column successor to the entry above, widening the slot so a DELIBERATE second
-	// campaign on one slot is distinguishable from a RETRY of the first.
+	// arbiter of ClaimCampaignDispatch, UpsertCampaign and AdoptCampaign, and since 000051
+	// dropped 000022's three-column uq_campaigns_brief_platform_variant_live, the ONLY index
+	// standing between two concurrent claims of one slot version and two paid campaigns.
+	// Membership here is what re-checks it at every boot. A migration-time guard (000014's,
+	// 000023's) runs once, and an index lost afterwards — an operator clearing invalid-index
+	// debris, a rebuild whose IF NOT EXISTS no-opped against a same-named leftover — leaves a
+	// schema that boots clean with duplicate PAID campaigns as the first symptom.
 	//
-	// Both entries are listed on purpose while expand/contract runs. The three-column
-	// index is what the N-1 binary's claims key on; the four-column one is what this
-	// release's claim, upsert and adopt name as their ON CONFLICT arbiter. Only THIS one is
-	// required: the entry above is optional (see its comment) so this image still boots
-	// once the follow-up release drops the narrower index, and a missing four-column index
-	// is still a boot failure.
+	// The slot_version column is what lets a DELIBERATE second campaign on one
+	// (brief, platform, variant) slot coexist with the first. "An adopt binds only an empty
+	// slot", which the three-column index used to enforce, is now enforced by the per-slot
+	// advisory lock in campaign_repo.go — not by any index, so not by this check.
 	name:   "uq_campaigns_brief_platform_variant_slot_version_live",
 	table:  "campaigns",
 	unique: true,
 	keys:   []string{"brief_id", "platform", "variant", "slot_version"},
-	// Deparsed form, matching the sibling entry above.
+	// Deparsed form of `WHERE status <> 'deleted'`, character-identical to what 000023's
+	// guard compared for the three-column index this one replaced.
 	predicate: "(status <> 'deleted'::text)",
 }, {
 	// at most one live campaign per (platform, platform_campaign_id) — the guard that keeps
@@ -642,9 +639,8 @@ func (r requiredIndex) createSQL() string {
 	return b.String()
 }
 
-// RequiredIndexNames returns the names of every index Migrate validates, in the order the
-// error reports them. Migrate refuses to boot without each one except those
-// RequiredIndexIsOptional reports, whose absence it tolerates.
+// RequiredIndexNames returns the names of every index Migrate refuses to boot without, in
+// the order the error reports them.
 //
 // It is exported for the live-database tests in the dbtest package, which are in a
 // different package and so cannot reach the unexported list — and driving them off the real
@@ -657,15 +653,6 @@ func RequiredIndexNames() []string {
 		out = append(out, r.name)
 	}
 	return out
-}
-
-// RequiredIndexIsOptional reports whether Migrate tolerates the named index's ABSENCE (it is
-// still validated when present). False for a name not in the list. Exported, like
-// RequiredIndexNames, so the dbtest drop-each-index tests can tell the two kinds apart off
-// the real list instead of a hand-written copy.
-func RequiredIndexIsOptional(name string) bool {
-	i := slices.IndexFunc(requiredIndexes, func(r requiredIndex) bool { return r.name == name })
-	return i >= 0 && requiredIndexes[i].optional
 }
 
 // LatestMigrationVersion returns the highest migration version embedded in this image — the
@@ -723,11 +710,6 @@ type requiredIndex struct {
 	// renders it: a bare column name, or the deparsed text of an expression key.
 	keys      []string
 	predicate string // deparsed; "" means the index must NOT be partial
-	// optional tolerates the index's ABSENCE — an index a contract migration is scheduled to
-	// drop, which this image must still boot without (see the entry that sets it). A
-	// PRESENT optional index is checked exactly like a required one: invalid, not ready, or
-	// carrying the name with the wrong definition is still refused.
-	optional bool
 }
 
 // createIndexRe matches the CREATE statement for a named index in a migration file.
@@ -738,6 +720,11 @@ type requiredIndex struct {
 // a rebuild), the HIGHEST wins — that is the definition currently in force.
 var createIndexRe = regexp.MustCompile(
 	`(?is)CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"?([a-zA-Z0-9_]+)"?`)
+
+// dropIndexRe matches a DROP INDEX statement in a migration file, read from the same
+// executable SQL as createIndexRe (prose and dollar-quoted bodies stripped).
+var dropIndexRe = regexp.MustCompile(
+	`(?is)DROP\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+EXISTS\s+)?"?([a-zA-Z0-9_]+)"?`)
 
 // lineCommentRe matches a `--` comment to end of line. Comments are stripped before the
 // CREATE scan because these migrations DISCUSS the statements they are avoiding: 000009's
@@ -832,6 +819,37 @@ var migrationIndexOwners = sync.OnceValue(func() map[string]int {
 	return owners
 })
 
+// migrationIndexDrops maps an index name to the highest migration version whose up-file DROPs
+// it unconditionally, read like migrationIndexOwners. indexRecovery compares the two: an index
+// dropped after its last CREATE is not part of the schema the migrations build.
+var migrationIndexDrops = sync.OnceValue(func() map[string]int {
+	drops := map[string]int{}
+	entries, err := migrations.FS.ReadDir(".")
+	if err != nil {
+		return drops // feeds an error MESSAGE only; see migrationIndexOwners
+	}
+	for _, e := range entries {
+		base := e.Name()
+		if !strings.HasSuffix(base, ".up.sql") {
+			continue
+		}
+		v, cerr := strconv.Atoi(strings.SplitN(base, "_", 2)[0])
+		if cerr != nil {
+			continue
+		}
+		body, rerr := migrations.FS.ReadFile(base)
+		if rerr != nil {
+			continue
+		}
+		for _, m := range dropIndexRe.FindAllStringSubmatch(executableSQL(string(body)), -1) {
+			if v > drops[m[1]] {
+				drops[m[1]] = v
+			}
+		}
+	}
+	return drops
+})
+
 // describeInvalid renders the invalid index names, annotating each one this repo's
 // migrations create with the version to force back to.
 //
@@ -868,7 +886,7 @@ func describeInvalid(names []string) string {
 //
 // It is per-name and not per-message because more than one index can be reported at once
 // and they need not share an owner: `uq_campaign_audiences_brief_platform_building` comes
-// from 000018 and `uq_campaigns_brief_platform_variant_live` from 000022. A single
+// from 000018 and `uq_campaigns_platform_campaign_live` from 000020. A single
 // `force <version-1>` sentence covering both is wrong for at least one of them — an
 // operator who forces 17 replays 000018 and the campaigns index is still absent, with the
 // error now silent because the message they followed said this was the remedy. Advice
@@ -887,6 +905,13 @@ func indexRecovery(name string) string {
 		return "rebuild with: " + requiredIndexes[i].createSQL()
 	}
 	if v, ok := migrationIndexOwners()[name]; ok {
+		// An index a LATER migration drops is no recovery target either: forcing back to its
+		// creator replays every migration up to the one that removes it again (000022's slot
+		// index, dropped by 000051 — an invalid copy is what a failed 000051 down leaves), and
+		// the distance makes the replay unsafe as described above.
+		if d := migrationIndexDrops()[name]; d > v {
+			return fmt.Sprintf("migration %06d drops this; drop it, leave the schema version alone", d)
+		}
 		return fmt.Sprintf("migration %06d: force %d", v, v-1)
 	}
 	return "no migration creates this; drop it, leave the schema version alone"
@@ -927,9 +952,6 @@ func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn, expected map[st
 		var keys []string
 		row := conn.QueryRow(ctx, requiredIndexQuery, want.name, want.table)
 		switch scanErr := row.Scan(&unique, &live, &rightTable, &predicate, &keys); {
-		case errors.Is(scanErr, pgxv5.ErrNoRows) && want.optional:
-			// Dropped on schedule by a contract migration: nothing to enforce, nothing to report.
-			continue
 		case errors.Is(scanErr, pgxv5.ErrNoRows), scanErr == nil && !live:
 			missing = append(missing, want.name)
 			continue
@@ -1030,8 +1052,23 @@ func pgxURL(dsn string) (string, error) {
 			return "pgx5://" + strings.TrimPrefix(dsn, prefix), nil
 		}
 	}
-	return "", fmt.Errorf("DATABASE_URL must be a postgres:// or postgresql:// URL; keyword DSNs and the internal pgx5:// scheme are not supported")
+	return "", errDSNNotURLScheme
 }
+
+// errDSNNotURLScheme is pgxURL's rejection, a sentinel rather than a fmt.Errorf literal so
+// that redactMigrateErr can let it through untouched.
+//
+// It needs that exemption for the same reason the index sentinels have one, and more
+// urgently. The text is a package constant — it names DATABASE_URL and the two schemes that
+// are accepted, and nothing in it comes from the DSN — so the no-echo rule has nothing to
+// say about it. But the DSN that provokes it is a keyword DSN, and a keyword DSN's user and
+// database are exactly what pgconn.ParseConfig extracts: on the commonest one of all,
+// `user=postgres dbname=postgres`, the literal "postgres://" in this message is a bounded
+// match for cfg.User, so the identifier comparison replaced it with the withhold sentinel.
+// The one error that tells an operator their DSN is the wrong SHAPE was the one most
+// certain to censor itself.
+var errDSNNotURLScheme = errors.New("DATABASE_URL must be a postgres:// or postgresql:// URL; " +
+	"keyword DSNs and the internal pgx5:// scheme are not supported")
 
 // ensure the pgx5 migrate driver is linked.
 var _ = pgx.Postgres{}

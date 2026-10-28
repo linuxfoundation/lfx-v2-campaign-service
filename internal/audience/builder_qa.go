@@ -4,6 +4,7 @@
 package audience
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -18,9 +19,14 @@ import (
 // ---------------------------------------------------------------------------
 // Pre-send QA on a HubSpot contact list (LFXV2-2770)
 //
-// Three checks, each answering a question that has cost a real send: does this
+// Four checks, each answering a question that has cost a real send: does this
 // list select on anything a contact actually DID, are the consent suppressions
-// genuinely applied as exclusions, and does it exclude anything at all.
+// genuinely applied as exclusions, does it exclude anything at all, and (check 4,
+// current_registrants) does it leave out the event's own current registrants.
+// Check 4 reads registration evidence from the filter trees themselves:
+// RegistrationEvidence for the editions a list's registration branches include,
+// CoveredEditions for those a suppression excludes whole, and
+// ExcludedOnEveryPathIDs for the exclusions a list applies on every path.
 //
 // Everything is inferred from the list's own filterBranch plus the NAMES of the
 // lists it references, because this portal has no machine-readable marker for
@@ -157,6 +163,396 @@ func PickNameMatches(ref string, hits []ListCandidate) (chosen *ListCandidate, a
 	default:
 		best := matches[0]
 		return &best, nil
+	}
+}
+
+// RegistrationEvidence reads a list's filter tree for the editions whose
+// registrants it explicitly includes: every completed-registration branch with an
+// exact event_name equality is POSITIVE evidence for its editions, wherever it sits
+// ("Seoul location OR registered for KubeCon 2026" includes 2026's registrants).
+// Negated, negative-comparison or substring branches add nothing: they name no edition
+// the list provably includes.
+//
+// exclusive says those editions are the WHOLE membership: every path runs through an
+// exact completed-registration branch, and no registration branch is inexact. Only
+// then may a caller set the list's display name aside as evidence; otherwise an
+// unrestricted or membership branch can hold any edition's registrants, and the name
+// stays in play beside the editions.
+func RegistrationEvidence(raw json.RawMessage) (editions []string, exclusive bool) {
+	var root qaBranch
+	if len(raw) == 0 || json.Unmarshal(raw, &root) != nil {
+		return nil, false
+	}
+	allExact := true
+	sawRegistration := false
+	root.walk(func(b qaBranch) {
+		if !strings.EqualFold(b.FilterBranchType, "UNIFIED_EVENTS") || b.EventTypeID != registrationEventTypeID {
+			return
+		}
+		sawRegistration = true
+		found, exact := b.exactEditions()
+		if !exact {
+			allExact = false
+			return
+		}
+		editions = append(editions, found...)
+	})
+	editions = UniqueIDs(editions)
+	exclusive = sawRegistration && allExact && len(editions) > 0 && root.everyPathRegistered()
+	return editions, exclusive
+}
+
+// RegisteredEditions are the editions a list's tree selects when they are its WHOLE
+// membership (RegistrationEvidence's exclusive case), or nil otherwise.
+func RegisteredEditions(raw json.RawMessage) []string {
+	editions, exclusive := RegistrationEvidence(raw)
+	if !exclusive {
+		return nil
+	}
+	return editions
+}
+
+// CoveredEditions are the editions whose registrants a list's tree includes whole: a
+// completed-registration branch with an exact event_name equality and NO other
+// condition, standing alone as one OR alternative. A suppression with that shape
+// excludes every registrant of those editions; one narrowed by anything else covers
+// none of them.
+func CoveredEditions(raw json.RawMessage) []string {
+	var root qaBranch
+	if len(raw) == 0 || json.Unmarshal(raw, &root) != nil {
+		return nil
+	}
+	return UniqueIDs(root.coveredEditions())
+}
+
+// ExcludedOnEveryPathIDs are the lists EVERY path through a list's filter tree
+// excludes (a NOT_IN_LIST on each path), as a composed master excludes its combined
+// suppression. Such an exclusion applies to the whole list, like a send-time
+// suppression; a NOT_IN_LIST on only one branch does not.
+func ExcludedOnEveryPathIDs(raw json.RawMessage) []string {
+	var root qaBranch
+	if len(raw) == 0 || json.Unmarshal(raw, &root) != nil {
+		return nil
+	}
+	set := root.requiredOp("NOT_IN_LIST")
+	out := make([]string, 0, len(set))
+	for id := range set {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// RequiredInListIDs are the lists EVERY contact of a list's filter tree must be a
+// member of: an IN_LIST filter on every path through it (AND accumulates, OR keeps
+// only what all its alternatives require). A flattened reference proves nothing
+// about this. For "A OR B", suppressing A still leaves B minus A, so A is a real
+// exclusion; only a list the whole audience is inside would exclude the audience
+// itself. An unreadable tree requires nothing.
+func RequiredInListIDs(raw json.RawMessage) []string {
+	var root qaBranch
+	if len(raw) == 0 || json.Unmarshal(raw, &root) != nil {
+		return nil
+	}
+	set := root.required()
+	out := make([]string, 0, len(set))
+	for id := range set {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// CoveredListIDs are the lists whose WHOLE membership a list's filter tree includes:
+// a list that is, alone, one alternative of an OR ("R OR OptOut" covers R and OptOut).
+// An AND of several conditions covers nothing ("R AND OptOut" is only part of R). It
+// is how a suppression wrapper proves its children are excluded at send time.
+func CoveredListIDs(raw json.RawMessage) []string {
+	var root qaBranch
+	if len(raw) == 0 || json.Unmarshal(raw, &root) != nil {
+		return nil
+	}
+	set := root.covered()
+	out := make([]string, 0, len(set))
+	for id := range set {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TreeCoveredBy reports whether excluding the lists in covered leaves nobody in the
+// filter tree: every path through it requires membership of one of them (an AND
+// branch is gone when any one of its conditions is a covered list; an OR is gone
+// only when every alternative is). An unreadable or empty tree is not covered.
+func TreeCoveredBy(raw json.RawMessage, covered []string) bool {
+	var root qaBranch
+	if len(raw) == 0 || len(covered) == 0 || json.Unmarshal(raw, &root) != nil {
+		return false
+	}
+	set := make(map[string]struct{}, len(covered))
+	for _, id := range covered {
+		set[id] = struct{}{}
+	}
+	return root.coveredBy(set)
+}
+
+type qaBranch struct {
+	FilterBranchType string     `json:"filterBranchType"`
+	EventTypeID      string     `json:"eventTypeId"`
+	Operator         string     `json:"operator"`
+	FilterBranches   []qaBranch `json:"filterBranches"`
+	Filters          []struct {
+		FilterType string      `json:"filterType"`
+		Operator   string      `json:"operator"`
+		ListID     json.Number `json:"listId"`
+		Property   string      `json:"property"`
+		Operation  struct {
+			Operator string   `json:"operator"`
+			Values   []string `json:"values"`
+		} `json:"operation"`
+	} `json:"filters"`
+}
+
+func (b qaBranch) walk(visit func(qaBranch)) {
+	visit(b)
+	for _, c := range b.FilterBranches {
+		c.walk(visit)
+	}
+}
+
+// exactEditions reads a registration event branch: its editions, and whether it is a
+// completed registration constrained by an exact event_name equality and nothing
+// that could widen or negate it.
+func (b qaBranch) exactEditions() ([]string, bool) {
+	if !strings.EqualFold(strings.TrimSpace(b.Operator), "HAS_COMPLETED") {
+		return nil, false
+	}
+	// The branch's conditions ALL hold, so several event_name equalities narrow each
+	// other: the editions are what every one of them allows, never their union.
+	var editions []string
+	seen := false
+	for _, f := range b.Filters {
+		if !strings.EqualFold(strings.TrimSpace(f.Property), "event_name") {
+			continue
+		}
+		op := strings.ToUpper(strings.TrimSpace(f.Operation.Operator))
+		if op != "IS_EQUAL_TO" && op != "IS_ANY_OF" {
+			return nil, false
+		}
+		if !seen {
+			editions = UniqueIDs(append([]string(nil), f.Operation.Values...))
+			seen = true
+			continue
+		}
+		allowed := make(map[string]bool, len(f.Operation.Values))
+		for _, v := range f.Operation.Values {
+			allowed[strings.ToLower(strings.TrimSpace(v))] = true
+		}
+		kept := editions[:0]
+		for _, e := range editions {
+			if allowed[strings.ToLower(strings.TrimSpace(e))] {
+				kept = append(kept, e)
+			}
+		}
+		editions = kept
+	}
+	return editions, len(editions) > 0
+}
+
+// everyPathRegistered reports whether every path through the tree requires an exact
+// completed-registration branch: an AND path does when any of its conditions is one;
+// an OR only when every alternative does (a direct filter there is an alternative
+// that does not).
+func (b qaBranch) everyPathRegistered() bool {
+	switch strings.ToUpper(b.FilterBranchType) {
+	case "UNIFIED_EVENTS":
+		if b.EventTypeID != registrationEventTypeID {
+			return false
+		}
+		_, exact := b.exactEditions()
+		return exact
+	case "AND":
+		for _, c := range b.FilterBranches {
+			if c.everyPathRegistered() {
+				return true
+			}
+		}
+		return false
+	case "OR":
+		if len(b.Filters) > 0 || len(b.FilterBranches) == 0 {
+			return false
+		}
+		for _, c := range b.FilterBranches {
+			if !c.everyPathRegistered() {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func (b qaBranch) coveredEditions() []string {
+	switch strings.ToUpper(b.FilterBranchType) {
+	case "OR":
+		var out []string
+		for _, c := range b.FilterBranches {
+			out = append(out, c.coveredEditions()...)
+		}
+		return out
+	case "AND":
+		if len(b.Filters) == 0 && len(b.FilterBranches) == 1 {
+			return b.FilterBranches[0].coveredEditions()
+		}
+		return nil
+	case "UNIFIED_EVENTS":
+		if b.EventTypeID != registrationEventTypeID {
+			return nil
+		}
+		// Every filter must be the exact event_name equality: any other condition
+		// narrows the branch below an edition's whole registration.
+		for _, f := range b.Filters {
+			if !strings.EqualFold(strings.TrimSpace(f.Property), "event_name") {
+				return nil
+			}
+		}
+		if len(b.FilterBranches) > 0 {
+			return nil
+		}
+		editions, exact := b.exactEditions()
+		if !exact {
+			return nil
+		}
+		return editions
+	default:
+		return nil
+	}
+}
+
+func (b qaBranch) covered() map[string]struct{} {
+	inList := func(i int) (string, bool) {
+		f := b.Filters[i]
+		id := strings.TrimSpace(f.ListID.String())
+		return id, f.FilterType == "IN_LIST" && f.Operator == "IN_LIST" && id != ""
+	}
+	out := map[string]struct{}{}
+	switch strings.ToUpper(b.FilterBranchType) {
+	case "OR":
+		for i := range b.Filters {
+			if id, ok := inList(i); ok {
+				out[id] = struct{}{}
+			}
+		}
+		for _, c := range b.FilterBranches {
+			for id := range c.covered() {
+				out[id] = struct{}{}
+			}
+		}
+	case "AND":
+		// Only a single condition: anything more narrows it below the whole list.
+		switch {
+		case len(b.Filters) == 1 && len(b.FilterBranches) == 0:
+			if id, ok := inList(0); ok {
+				out[id] = struct{}{}
+			}
+		case len(b.Filters) == 0 && len(b.FilterBranches) == 1:
+			return b.FilterBranches[0].covered()
+		}
+	}
+	return out
+}
+
+func (b qaBranch) coveredBy(set map[string]struct{}) bool {
+	inSet := func(i int) bool {
+		f := b.Filters[i]
+		_, ok := set[strings.TrimSpace(f.ListID.String())]
+		return ok && f.FilterType == "IN_LIST" && f.Operator == "IN_LIST"
+	}
+	switch strings.ToUpper(b.FilterBranchType) {
+	case "AND":
+		for i := range b.Filters {
+			if inSet(i) {
+				return true
+			}
+		}
+		for _, c := range b.FilterBranches {
+			if c.coveredBy(set) {
+				return true
+			}
+		}
+		return false
+	case "OR":
+		alternatives := 0
+		for i := range b.Filters {
+			alternatives++
+			if !inSet(i) {
+				return false
+			}
+		}
+		for _, c := range b.FilterBranches {
+			alternatives++
+			if !c.coveredBy(set) {
+				return false
+			}
+		}
+		return alternatives > 0
+	default:
+		return false
+	}
+}
+
+func (b qaBranch) required() map[string]struct{} { return b.requiredOp("IN_LIST") }
+
+// requiredOp is required() for a membership operator: IN_LIST for lists every path is
+// inside, NOT_IN_LIST for lists every path excludes.
+func (b qaBranch) requiredOp(operator string) map[string]struct{} {
+	inList := func(i int) (string, bool) {
+		f := b.Filters[i]
+		id := strings.TrimSpace(f.ListID.String())
+		return id, f.FilterType == "IN_LIST" && f.Operator == operator && id != ""
+	}
+	switch strings.ToUpper(b.FilterBranchType) {
+	case "AND":
+		out := map[string]struct{}{}
+		for i := range b.Filters {
+			if id, ok := inList(i); ok {
+				out[id] = struct{}{}
+			}
+		}
+		for _, c := range b.FilterBranches {
+			for id := range c.requiredOp(operator) {
+				out[id] = struct{}{}
+			}
+		}
+		return out
+	case "OR":
+		var alternatives []map[string]struct{}
+		for i := range b.Filters {
+			alt := map[string]struct{}{}
+			if id, ok := inList(i); ok {
+				alt[id] = struct{}{}
+			}
+			alternatives = append(alternatives, alt)
+		}
+		for _, c := range b.FilterBranches {
+			alternatives = append(alternatives, c.requiredOp(operator))
+		}
+		if len(alternatives) == 0 {
+			return map[string]struct{}{}
+		}
+		out := alternatives[0]
+		for _, alt := range alternatives[1:] {
+			for id := range out {
+				if _, ok := alt[id]; !ok {
+					delete(out, id)
+				}
+			}
+		}
+		return out
+	default:
+		return map[string]struct{}{}
 	}
 }
 
@@ -700,20 +1096,27 @@ func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
 // ExclusionCheck adds how many exclusion segments were found.
 type ExclusionCheck struct {
 	Check
+	// ExclusionCount is every exclusion that will apply: the list's own plus those
+	// applied at send time. SendTimeCount is the send-time share of it.
 	ExclusionCount int
+	SendTimeCount  int
 }
 
-// CheckExclusionCompleteness asks whether the list excludes anything at all.
+// CheckExclusionCompleteness asks whether the send excludes anything at all.
 //
 // Coarse on purpose, and a FAIL rather than a warning: zero exclusions means no
 // unsubscribe, no opt-out, and no non-marketable filter is applied, which is a
 // send that should not go out regardless of which specific list is missing. It says
 // nothing about whether the exclusions present are the RIGHT ones — that is
 // CheckSuppression's job.
-func CheckExclusionCompleteness(filters []ListFilter) ExclusionCheck {
-	count := len(ReferencedListIDs(filters, "NOT_IN_LIST"))
+//
+// sendTime counts suppression lists that are applied when the email is sent rather
+// than baked into the list — the builder's design for custom lists and for lists
+// attached without a composed master. They exclude the same contacts, so they count.
+func CheckExclusionCompleteness(filters []ListFilter, sendTime int) ExclusionCheck {
+	count := len(ReferencedListIDs(filters, "NOT_IN_LIST")) + sendTime
 	if count > 0 {
-		return ExclusionCheck{Check: Check{Verdict: VerdictPass, Findings: []Finding{}}, ExclusionCount: count}
+		return ExclusionCheck{Check: Check{Verdict: VerdictPass, Findings: []Finding{}}, ExclusionCount: count, SendTimeCount: sendTime}
 	}
 	return ExclusionCheck{
 		Check: Check{Verdict: VerdictFail, Findings: []Finding{{

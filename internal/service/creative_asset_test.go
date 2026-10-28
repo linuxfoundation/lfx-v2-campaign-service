@@ -82,6 +82,17 @@ type fakeCreativeAssetRepo struct {
 	// existing makes CreateAsset take the IDEMPOTENT path: it returns the stored row while
 	// reporting created=false, which is what a re-upload of identical bytes does.
 	existing bool
+
+	// The read and delete paths. Each is inert unless a test sets it, so the upload tests above
+	// are unaffected by their presence.
+	list      []*model.CreativeAsset
+	listErr   error
+	meta      *model.CreativeAsset
+	metaErr   error
+	deleteErr error
+	// deletedID records the id the handler passed through, so a test can tell a delete that was
+	// refused from one that was never attempted.
+	deletedID string
 }
 
 func (f *fakeCreativeAssetRepo) CreateAsset(_ context.Context, a *model.CreativeAsset) (*model.CreativeAsset, bool, error) {
@@ -100,6 +111,35 @@ func (f *fakeCreativeAssetRepo) GetAsset(_ context.Context, _, _, _ string) (*mo
 
 func (f *fakeCreativeAssetRepo) GetAssetSize(_ context.Context, _, _, _ string) (int64, error) {
 	return 0, domain.ErrNotFound
+}
+
+func (f *fakeCreativeAssetRepo) GetAssetMetadata(_ context.Context, _, _, _ string) (*model.CreativeAsset, error) {
+	if f.metaErr != nil {
+		return nil, f.metaErr
+	}
+	if f.meta == nil {
+		return nil, domain.ErrNotFound
+	}
+	return f.meta, nil
+}
+
+// ListAssets sums the fixture rather than taking totals as fields: the repository derives them
+// from the same rows it returns, and a fake free to disagree would let a handler that published
+// unrelated totals pass.
+func (f *fakeCreativeAssetRepo) ListAssets(_ context.Context, _, _ string) ([]*model.CreativeAsset, int, int64, error) {
+	if f.listErr != nil {
+		return nil, 0, 0, f.listErr
+	}
+	var bytesUsed int64
+	for _, a := range f.list {
+		bytesUsed += a.ByteSize
+	}
+	return f.list, len(f.list), bytesUsed, nil
+}
+
+func (f *fakeCreativeAssetRepo) DeleteAsset(_ context.Context, _, _, assetID string) error {
+	f.deletedID = assetID
+	return f.deleteErr
 }
 
 // pngBytes is the smallest real PNG that image.DecodeConfig accepts: signature + a complete IHDR.
@@ -263,6 +303,107 @@ func TestBriefService_UploadCreativeAsset_StoresSniffedTypeAndChecksum(t *testin
 			// unasserted until now, so a handler storing a wrong size passed this test.
 			if want := int64(len(tc.bytes)); repo.stored.ByteSize != want {
 				t.Errorf("stored ByteSize = %d, want len(bytes) = %d", repo.stored.ByteSize, want)
+			}
+		})
+	}
+}
+
+// TestBriefService_UploadCreativeAsset_PersistsHeaderDimensions binds the two columns
+// migration 000047 added, at both ends: the model handed to CreateAsset and the wire result
+// handed back.
+//
+// The image is deliberately NON-SQUARE and its sides are different primes, unlike every other
+// fixture in this file, which is 2x2. A square fixture cannot tell width from height: swapping
+// the two assignments in either the handler or creativeAssetResult passes a 2x2 test, and a
+// transposed dimension is precisely the defect that makes a slot classifier confidently assign a
+// portrait image to a landscape slot.
+//
+// Both PNG and JPEG are exercised because the dimensions come from image.DecodeConfig, whose
+// per-format decoders are what actually read the header — the handler only passes along what they
+// report.
+func TestBriefService_UploadCreativeAsset_PersistsHeaderDimensions(t *testing.T) {
+	const wantW, wantH = 3, 7
+
+	for _, tc := range []struct {
+		name string
+		mime string
+		enc  func(*bytes.Buffer, image.Image) error
+	}{
+		{"png", "image/png", func(b *bytes.Buffer, m image.Image) error { return png.Encode(b, m) }},
+		{"jpeg", "image/jpeg", func(b *bytes.Buffer, m image.Image) error { return jpeg.Encode(b, m, nil) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := tc.enc(&buf, image.NewRGBA(image.Rect(0, 0, wantW, wantH))); err != nil {
+				t.Fatalf("encode %s: %v", tc.name, err)
+			}
+
+			repo := &fakeCreativeAssetRepo{}
+			s := NewBriefService(nil, nil, nil, nil)
+			s.SetCreativeAssetRepo(repo)
+
+			out, err := s.UploadCreativeAsset(context.Background(), &briefs.UploadCreativeAssetPayload{
+				ProjectID: "cncf", BriefID: "b1", ContentType: tc.mime, Bytes: b64(buf.Bytes()),
+			})
+			if err != nil {
+				t.Fatalf("UploadCreativeAsset: %v", err)
+			}
+
+			if repo.stored.Width != wantW || repo.stored.Height != wantH {
+				t.Errorf("stored dimensions = %dx%d, want %dx%d — the header values must be persisted, not discarded",
+					repo.stored.Width, repo.stored.Height, wantW, wantH)
+			}
+			if out.Width == nil || out.Height == nil {
+				t.Fatalf("result dimensions = (%v, %v), want both present for an asset stored with dimensions", out.Width, out.Height)
+			}
+			if *out.Width != wantW || *out.Height != wantH {
+				t.Errorf("result dimensions = %dx%d, want %dx%d", *out.Width, *out.Height, wantW, wantH)
+			}
+		})
+	}
+}
+
+// TestCreativeAssetResult_UnknownDimensionsAreAbsentNotZero pins the one case the upload path
+// cannot produce and therefore cannot cover: a row stored BEFORE migration 000047, which reads
+// back with the zero pair.
+//
+// The contract spells "unknown" as an absent field and the model spells it as 0, so this mapping
+// is where the two meet. Publishing a literal 0 would be worse than useless — it is a shape no
+// image has, and a client matching assets to platform slots reads it as failing every minimum,
+// so a pre-000047 asset would be reported as unusable everywhere rather than as unclassified.
+//
+// The half-set cases are asserted too. 000047's CHECK makes them unreachable from the database,
+// but creativeAssetResult is also called on models built in memory, and a mapping that published
+// a lone width would hand a client a ratio it could compute from one number.
+func TestCreativeAssetResult_UnknownDimensionsAreAbsentNotZero(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		width, height int
+		wantPresent   bool
+	}{
+		{"both unknown (pre-000047 row)", 0, 0, false},
+		{"width only", 5, 0, false},
+		{"height only", 0, 5, false},
+		{"both known", 4, 5, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := creativeAssetResult(&model.CreativeAsset{
+				ID: "a1", ProjectID: "cncf", BriefID: "b1",
+				MimeType: model.MimeTypePNG, ByteSize: 1, Checksum: "abc",
+				Width: tc.width, Height: tc.height,
+			})
+			if tc.wantPresent {
+				if res.Width == nil || res.Height == nil {
+					t.Fatalf("dimensions = (%v, %v), want both present", res.Width, res.Height)
+				}
+				if *res.Width != tc.width || *res.Height != tc.height {
+					t.Errorf("dimensions = %dx%d, want %dx%d", *res.Width, *res.Height, tc.width, tc.height)
+				}
+				return
+			}
+			if res.Width != nil || res.Height != nil {
+				t.Errorf("dimensions = (%v, %v), want both absent — an incomplete pair is not a shape",
+					res.Width, res.Height)
 			}
 		})
 	}
@@ -860,6 +1001,18 @@ func (f *deadlineObservingAssetRepo) GetAssetSize(_ context.Context, _, _, _ str
 	return 0, domain.ErrNotFound
 }
 
+func (f *deadlineObservingAssetRepo) GetAssetMetadata(_ context.Context, _, _, _ string) (*model.CreativeAsset, error) {
+	return nil, domain.ErrNotFound
+}
+
+func (f *deadlineObservingAssetRepo) ListAssets(_ context.Context, _, _ string) ([]*model.CreativeAsset, int, int64, error) {
+	return nil, 0, 0, domain.ErrNotFound
+}
+
+func (f *deadlineObservingAssetRepo) DeleteAsset(_ context.Context, _, _, _ string) error {
+	return domain.ErrNotFound
+}
+
 // TestUploadCreativeAsset_BoundsTheInsertHeldUnderThePermit pins the availability property that
 // the UploadAdmission permit cannot be pinned by a stalled insert.
 //
@@ -1077,4 +1230,227 @@ func TestUploadCreativeAsset_ReleasesTheEncodedStringAfterDecoding(t *testing.T)
 			"string stays reachable across the pixel decode, so the coexisting peak exceeds what "+
 			"UploadAdmissionWeightBytes charges for one upload", len(payload.Bytes))
 	}
+}
+
+// TestCreativeAssetReads_UnavailableWithoutRepo pins the availability guard on the three
+// non-upload handlers.
+//
+// It exists for the reason the upload's own guard test does: the creative-asset repository is set
+// after construction (SetCreativeAssetRepo) and is nil whenever the feature's config pair is
+// absent, so every handler reaches a nil interface in a perfectly normal deployment. Without the
+// guard that is a panic in the HTTP goroutine, not a 503 — and a panic takes the process with it,
+// so one GET against an unconfigured environment would end the service.
+func TestCreativeAssetReads_UnavailableWithoutRepo(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("list", func(t *testing.T) {
+		s := NewBriefService(nil, nil, nil, nil)
+		_, err := s.ListCreativeAssets(ctx, &briefs.ListCreativeAssetsPayload{ProjectID: "p1", BriefID: "b1"})
+		assertCreativeAssetUnavailable(t, err, "creative asset reads are unavailable")
+	})
+	t.Run("get", func(t *testing.T) {
+		s := NewBriefService(nil, nil, nil, nil)
+		_, err := s.GetCreativeAsset(ctx, &briefs.GetCreativeAssetPayload{ProjectID: "p1", BriefID: "b1", AssetID: "a1"})
+		assertCreativeAssetUnavailable(t, err, "creative asset reads are unavailable")
+	})
+	t.Run("delete", func(t *testing.T) {
+		s := NewBriefService(nil, nil, nil, nil)
+		err := s.DeleteCreativeAsset(ctx, &briefs.DeleteCreativeAssetPayload{ProjectID: "p1", BriefID: "b1", AssetID: "a1"})
+		assertCreativeAssetUnavailable(t, err, "creative asset deletion is unavailable")
+	})
+}
+
+func assertCreativeAssetUnavailable(t *testing.T, err error, wantMessage string) {
+	t.Helper()
+	var svcErr *briefs.ConnServiceUnavailableError
+	if !errors.As(err, &svcErr) {
+		t.Fatalf("err = %T (%v), want *briefs.ConnServiceUnavailableError", err, err)
+	}
+	if svcErr.Code != "503" {
+		t.Errorf("code = %q, want %q", svcErr.Code, "503")
+	}
+	if svcErr.Message != wantMessage {
+		t.Errorf("message = %q, want %q", svcErr.Message, wantMessage)
+	}
+}
+
+// TestListCreativeAssets_PublishesTheEnforcedQuota binds the published ceilings to the SAME
+// constants the repository enforces.
+//
+// This is the test the quota's design depends on. The whole reason MaxCreativeAssetsPerBrief and
+// MaxCreativeAssetBytesPerBrief live in the domain is that two layers read them; a literal copied
+// into this handler would compile, pass every other test, and tell a folder upload it had room
+// for files the insert then refuses. Comparing against the constants is what makes that drift a
+// failure rather than a silent lie on the wire.
+func TestListCreativeAssets_PublishesTheEnforcedQuota(t *testing.T) {
+	repo := &fakeCreativeAssetRepo{
+		list: []*model.CreativeAsset{
+			{ID: "a1", ProjectID: "p1", BriefID: "b1", MimeType: model.MimeTypePNG, ByteSize: 10, Checksum: "c1", Width: 4, Height: 2},
+			{ID: "a2", ProjectID: "p1", BriefID: "b1", MimeType: model.MimeTypeJPEG, ByteSize: 32, Checksum: "c2"},
+		},
+	}
+	s := NewBriefService(nil, nil, nil, nil)
+	s.SetCreativeAssetRepo(repo)
+
+	res, err := s.ListCreativeAssets(context.Background(), &briefs.ListCreativeAssetsPayload{ProjectID: "p1", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("ListCreativeAssets: %v", err)
+	}
+	if res.CountLimit != model.MaxCreativeAssetsPerBrief {
+		t.Errorf("count_limit = %d, want model.MaxCreativeAssetsPerBrief (%d)", res.CountLimit, model.MaxCreativeAssetsPerBrief)
+	}
+	if res.BytesLimit != model.MaxCreativeAssetBytesPerBrief {
+		t.Errorf("bytes_limit = %d, want model.MaxCreativeAssetBytesPerBrief (%d)", res.BytesLimit, model.MaxCreativeAssetBytesPerBrief)
+	}
+	if res.Count != 2 || len(res.Assets) != 2 {
+		t.Fatalf("count = %d, len(assets) = %d, want 2 and 2", res.Count, len(res.Assets))
+	}
+	if res.BytesUsed != 42 {
+		t.Errorf("bytes_used = %d, want 42", res.BytesUsed)
+	}
+	// Order is the repository's (oldest first) and must survive the handler untouched: the asset
+	// plan built on top of this list reads it positionally.
+	if res.Assets[0].ID != "a1" || res.Assets[1].ID != "a2" {
+		t.Errorf("asset ids = %q, %q, want a1, a2", res.Assets[0].ID, res.Assets[1].ID)
+	}
+	// Dimensions keep the absent-vs-zero mapping the upload path established: a2 was stored
+	// before dimensions were recorded, and reporting it as 0x0 would make the slot classifier
+	// call every pre-existing asset too small for every slot.
+	if res.Assets[0].Width == nil || *res.Assets[0].Width != 4 {
+		t.Errorf("assets[0].width = %v, want 4", res.Assets[0].Width)
+	}
+	if res.Assets[1].Width != nil || res.Assets[1].Height != nil {
+		t.Errorf("assets[1] dimensions = %v/%v, want both absent", res.Assets[1].Width, res.Assets[1].Height)
+	}
+}
+
+// TestListCreativeAssets_EmptyLibraryIsAnEmptyArray pins the one case a nil slice would corrupt.
+//
+// An empty library is a real, common answer — every brief has one until its first upload — and
+// `assets` is a REQUIRED field. A nil slice marshals as `null`, which a client iterating the list
+// to render a picker has to special-case or crash on. The repository returns a non-nil empty
+// slice for this reason; the handler must not undo it.
+func TestListCreativeAssets_EmptyLibraryIsAnEmptyArray(t *testing.T) {
+	s := NewBriefService(nil, nil, nil, nil)
+	s.SetCreativeAssetRepo(&fakeCreativeAssetRepo{})
+
+	res, err := s.ListCreativeAssets(context.Background(), &briefs.ListCreativeAssetsPayload{ProjectID: "p1", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("ListCreativeAssets: %v", err)
+	}
+	if res.Assets == nil {
+		t.Fatal("assets is nil; an empty library must serialize as [] rather than null")
+	}
+	if len(res.Assets) != 0 || res.Count != 0 || res.BytesUsed != 0 {
+		t.Errorf("len(assets) = %d, count = %d, bytes_used = %d, want 0, 0, 0", len(res.Assets), res.Count, res.BytesUsed)
+	}
+	// The ceilings are published even when nothing is stored: "0 of 100" is exactly what a picker
+	// about to upload needs, and it is the state in which it needs it most.
+	if res.CountLimit != model.MaxCreativeAssetsPerBrief || res.BytesLimit != model.MaxCreativeAssetBytesPerBrief {
+		t.Errorf("limits = %d/%d, want %d/%d", res.CountLimit, res.BytesLimit,
+			model.MaxCreativeAssetsPerBrief, model.MaxCreativeAssetBytesPerBrief)
+	}
+}
+
+// TestGetCreativeAsset_ReturnsMetadataAndNeverCreated covers the read's two properties: it maps
+// through mapBriefErr like every other brief-child read, and it leaves `created` absent.
+//
+// `created` selects 201 over 200 on the UPLOAD method alone. Setting it here would be harmless
+// today only because this method declares no 201 — which is precisely the kind of coincidence
+// that stops being true when someone adds one.
+func TestGetCreativeAsset_ReturnsMetadataAndNeverCreated(t *testing.T) {
+	repo := &fakeCreativeAssetRepo{
+		meta: &model.CreativeAsset{
+			ID: "a1", ProjectID: "p1", BriefID: "b1",
+			MimeType: model.MimeTypePNG, ByteSize: 10, Checksum: "c1", Width: 4, Height: 2,
+		},
+	}
+	s := NewBriefService(nil, nil, nil, nil)
+	s.SetCreativeAssetRepo(repo)
+
+	res, err := s.GetCreativeAsset(context.Background(), &briefs.GetCreativeAssetPayload{ProjectID: "p1", BriefID: "b1", AssetID: "a1"})
+	if err != nil {
+		t.Fatalf("GetCreativeAsset: %v", err)
+	}
+	if res.ID != "a1" || res.Checksum != "c1" || res.ByteSize != 10 {
+		t.Errorf("result = %+v, want the stored row's id/checksum/size", res)
+	}
+	if res.Created != nil {
+		t.Errorf("created = %q, want absent on a read", *res.Created)
+	}
+
+	// A foreign, archived or absent asset is one outcome, and it must reach the caller as 404
+	// rather than as the 500 an unmapped sentinel would produce.
+	s2 := NewBriefService(nil, nil, nil, nil)
+	s2.SetCreativeAssetRepo(&fakeCreativeAssetRepo{metaErr: domain.ErrNotFound})
+	_, err = s2.GetCreativeAsset(context.Background(), &briefs.GetCreativeAssetPayload{ProjectID: "p1", BriefID: "b1", AssetID: "a1"})
+	var notFound *briefs.NotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("err = %T (%v), want *briefs.NotFoundError", err, err)
+	}
+}
+
+// TestDeleteCreativeAsset_RefusalsCarryTheirDiscriminator pins the two 409 reasons the quota
+// design depends on, and the 404 beside them.
+//
+// Both refusals are 409 and both are well-formed requests, so prose is all that separates them on
+// the wire — and prose is not something a client may branch on. A folder upload must tell "the
+// brief is full, stop and free space" from "this asset is pinned by a campaign, skip it", and the
+// reason string is the only field that carries that. A missing or renamed reason turns both into
+// the same opaque conflict.
+func TestDeleteCreativeAsset_RefusalsCarryTheirDiscriminator(t *testing.T) {
+	cases := []struct {
+		name       string
+		repoErr    error
+		wantReason string
+	}{
+		{"in use", domain.ErrCreativeAssetInUse, "creative_asset_in_use"},
+		{"quota", domain.ErrCreativeAssetQuotaExceeded, "creative_asset_quota_exceeded"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeCreativeAssetRepo{deleteErr: tc.repoErr}
+			s := NewBriefService(nil, nil, nil, nil)
+			s.SetCreativeAssetRepo(repo)
+
+			err := s.DeleteCreativeAsset(context.Background(), &briefs.DeleteCreativeAssetPayload{ProjectID: "p1", BriefID: "b1", AssetID: "a1"})
+			var conflict *briefs.ConflictError
+			if !errors.As(err, &conflict) {
+				t.Fatalf("err = %T (%v), want *briefs.ConflictError", err, err)
+			}
+			if conflict.Code != "409" {
+				t.Errorf("code = %q, want %q", conflict.Code, "409")
+			}
+			if conflict.Reason == nil || *conflict.Reason != tc.wantReason {
+				t.Fatalf("reason = %v, want %q", conflict.Reason, tc.wantReason)
+			}
+			// The message must stay actionable rather than restating the reason: a refusal with
+			// no next step is what sends the user to support.
+			if !strings.Contains(conflict.Message, "retry") {
+				t.Errorf("message = %q, want it to name the remedy", conflict.Message)
+			}
+		})
+	}
+
+	t.Run("missing", func(t *testing.T) {
+		s := NewBriefService(nil, nil, nil, nil)
+		s.SetCreativeAssetRepo(&fakeCreativeAssetRepo{deleteErr: domain.ErrNotFound})
+		err := s.DeleteCreativeAsset(context.Background(), &briefs.DeleteCreativeAssetPayload{ProjectID: "p1", BriefID: "b1", AssetID: "a1"})
+		var notFound *briefs.NotFoundError
+		if !errors.As(err, &notFound) {
+			t.Fatalf("err = %T (%v), want *briefs.NotFoundError", err, err)
+		}
+	})
+
+	t.Run("success passes the id through", func(t *testing.T) {
+		repo := &fakeCreativeAssetRepo{}
+		s := NewBriefService(nil, nil, nil, nil)
+		s.SetCreativeAssetRepo(repo)
+		if err := s.DeleteCreativeAsset(context.Background(), &briefs.DeleteCreativeAssetPayload{ProjectID: "p1", BriefID: "b1", AssetID: "a1"}); err != nil {
+			t.Fatalf("DeleteCreativeAsset: %v", err)
+		}
+		if repo.deletedID != "a1" {
+			t.Errorf("repo saw asset id %q, want %q", repo.deletedID, "a1")
+		}
+	})
 }

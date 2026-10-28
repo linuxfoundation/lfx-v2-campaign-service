@@ -796,6 +796,11 @@ type campaignEditRepo struct {
 	// the try-lock losing: the real repo answers ErrCampaignWriteInProgress immediately
 	// rather than waiting for the holder.
 	claimErr error
+	// replaceErr, when set, is returned by ReplaceCampaign instead of the written campaign,
+	// and nothing is recorded. It models the refusals the real repo decides INSIDE its
+	// transaction — where a fake cannot stand in for the lock — so a service test can still
+	// pin how such a sentinel is mapped onto the wire.
+	replaceErr error
 }
 
 func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
@@ -804,6 +809,14 @@ func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) 
 }
 
 func (r *campaignEditRepo) ListProjectPlatformCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
+	return nil, nil
+}
+
+func (r *campaignEditRepo) ListProjectPlatformDeletedCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
+	return nil, nil
+}
+
+func (r *campaignEditRepo) ListProjectPlatformMonitorCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
 	return nil, nil
 }
 
@@ -831,7 +844,13 @@ func (r *campaignEditRepo) ListCampaignsForBrief(context.Context, string, string
 func (r *campaignEditRepo) GetCampaignByPlatform(context.Context, string, string, model.Provider, string) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
+func (r *campaignEditRepo) GetCampaignByPlatformWithMaxSlotVersion(context.Context, string, string, model.Provider, string) (*model.Campaign, int, error) {
+	return nil, 0, domain.ErrNotFound
+}
 func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string, int, string, *model.Actor) (bool, *model.Campaign, error) {
+	return true, nil, nil
+}
+func (r *campaignEditRepo) ClaimNewCampaignVersion(context.Context, string, string, model.Provider, string, int, string, *model.Actor) (bool, *model.Campaign, error) {
 	return true, nil, nil
 }
 func (r *campaignEditRepo) DeleteDispatchClaim(context.Context, string, model.Provider, string, int, string) error {
@@ -845,6 +864,11 @@ func (r *campaignEditRepo) AdoptCampaign(_ context.Context, c *model.Campaign, _
 }
 func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64, _ domain.CampaignLockToken, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	r.got = c
+	if r.replaceErr != nil {
+		// Refused inside the transaction: no version bump and no index payload, because the
+		// real repo rolls back rather than committing a row it then refuses.
+		return nil, r.replaceErr
+	}
 	// The version bump lives here, not in the claim — mirroring the real repo, which
 	// increments inside the same transaction that writes the outbox event.
 	r.cur.Version++
@@ -1173,6 +1197,41 @@ func TestBriefService_GetJob_HubspotURL(t *testing.T) {
 	}
 	if ga.HubspotURL != nil {
 		t.Errorf("google-ads result HubspotURL = %q, want nil (no hubspot_url was stored for this platform)", *ga.HubspotURL)
+	}
+}
+
+// TestBriefService_GetJob_Warnings guards the last hop of the warnings seam: a stored
+// per-platform result's warnings decode into PlatformResult.Warnings, and a platform that stored
+// none leaves it nil. Built from the real platformResult so a rename of its warnings tag breaks
+// this test instead of leaving it green.
+func TestBriefService_GetJob_Warnings(t *testing.T) {
+	const warning = "The hero image could not be added to the email: the image could not be downloaded from the event page."
+	resultJSON, err := json.Marshal([]platformResult{
+		{Platform: "hubspot", OK: true, CampaignID: "999", Warnings: []string{warning}},
+		{Platform: "google-ads", OK: true, CampaignID: "pc-1"},
+	})
+	if err != nil {
+		t.Fatalf("marshal platformResult fixture: %v", err)
+	}
+	s := getJobTestService(&model.CampaignJob{
+		ID: "j1", BriefID: "b1", Status: model.JobSucceeded,
+		Result: resultJSON,
+	})
+	resp, err := s.GetJob(context.Background(), &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"})
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	for _, r := range resp.Result {
+		switch r.Platform {
+		case "hubspot":
+			if len(r.Warnings) != 1 || r.Warnings[0] != warning {
+				t.Errorf("hubspot Warnings = %v, want [%q]", r.Warnings, warning)
+			}
+		case "google-ads":
+			if r.Warnings != nil {
+				t.Errorf("google-ads Warnings = %v, want nil", r.Warnings)
+			}
+		}
 	}
 }
 
@@ -2075,6 +2134,30 @@ func TestIndexedDocsUseSnakeCase(t *testing.T) {
 	raw, _ = json.Marshal(campaignDoc(&briefs.Campaign{ID: "c2"}))
 	if strings.Contains(string(raw), "null") {
 		t.Errorf("nil optionals must be omitted, not emitted as null\ngot: %s", raw)
+	}
+	// The bidding fields (LFXV2-2665, PR #332 review) are indexed like the API returns them:
+	// absent when not recorded (above), present when they are.
+	for _, absent := range []string{`"bidding_strategy"`, `"max_cpc_bid"`} {
+		if strings.Contains(string(raw), absent) {
+			t.Errorf("an unrecorded %s must be omitted\ngot: %s", absent, raw)
+		}
+	}
+	manual, bid := "manual", 1.25
+	raw, err = json.Marshal(campaignDoc(campaignResult(&model.Campaign{
+		ID: "c3", BiddingStrategy: func() *model.BiddingStrategy { s := model.BiddingManual; return &s }(), MaxCPCBid: &bid,
+	})))
+	if err != nil {
+		t.Fatalf("marshal campaign doc: %v", err)
+	}
+	for _, want := range []string{`"bidding_strategy":"` + manual + `"`, `"max_cpc_bid":1.25`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("campaign doc missing %s\ngot: %s", want, raw)
+		}
+	}
+	for _, bad := range []string{`"BiddingStrategy"`, `"MaxCPCBid"`, `"MaxCpcBid"`} {
+		if strings.Contains(string(raw), bad) {
+			t.Errorf("campaign doc leaks the Go field name %s\ngot: %s", bad, raw)
+		}
 	}
 }
 
@@ -5770,5 +5853,51 @@ func TestBriefService_GetJob_ReconcileTruncatedIsPolled(t *testing.T) {
 	}
 	if len(pr.Reconcile) != 1 || pr.Reconcile[0].Key != "Ads[0].AdID" {
 		t.Errorf("reconcile = %+v, want the one stored identifier", pr.Reconcile)
+	}
+}
+
+// conversion_value and roas are carried through the campaign-scoped route as the adapter's
+// POINTERS. The case that matters most is a zero-spend window, where the adapter withholds
+// roas while still reporting a MEASURED zero value: the response must keep those two states
+// apart rather than flattening the absent roas into a 0 that reads as "earned nothing".
+func TestBriefService_GetCampaignMetrics_ConversionValueAndRoasPassThrough(t *testing.T) {
+	row := func(t *testing.T, value, roas *float64) *briefs.CampaignMetrics {
+		t.Helper()
+		camp := &model.Campaign{
+			ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+			PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+		}
+		disp := &metricsOnlyDispatcher{metrics: &model.CampaignMetrics{
+			CampaignID: "ga-1", Window: model.MetricsWindowLast30Days,
+			Impressions: 100, Clicks: 10, CostMicros: 25_000_000, Ctr: 0.1,
+			ConversionValue: value, Roas: roas,
+		}}
+		res, err := newMetricsService(camp, disp).GetCampaignMetrics(context.Background(),
+			&briefs.GetCampaignMetricsPayload{ProjectID: "cncf", BriefID: "b1", CampaignID: "c1"})
+		if err != nil {
+			t.Fatalf("GetCampaignMetrics: %v", err)
+		}
+		return res
+	}
+
+	value, roas := 60.0, 2.4
+	if got := row(t, &value, &roas); got.ConversionValue == nil || *got.ConversionValue != 60 ||
+		got.Roas == nil || *got.Roas != 2.4 {
+		t.Errorf("conversion_value=%v roas=%v, want 60 and 2.4 carried through unchanged",
+			got.ConversionValue, got.Roas)
+	}
+
+	zero := 0.0
+	got := row(t, &zero, nil)
+	if got.ConversionValue == nil || *got.ConversionValue != 0 {
+		t.Errorf("conversion_value = %v, want a MEASURED 0, not an absence", got.ConversionValue)
+	}
+	if got.Roas != nil {
+		t.Errorf("roas = %v for a withheld return; an undefined ratio became a measurement", *got.Roas)
+	}
+
+	if got := row(t, nil, nil); got.ConversionValue != nil || got.Roas != nil {
+		t.Errorf("conversion_value=%v roas=%v for a platform that reports neither, want both absent",
+			got.ConversionValue, got.Roas)
 	}
 }

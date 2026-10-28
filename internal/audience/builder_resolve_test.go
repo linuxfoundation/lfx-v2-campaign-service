@@ -247,6 +247,9 @@ func TestMatchesStandardSuppression_NormalisesSeparatorsQuartersAndSuffix(t *tes
 		"LF_Events_Suppression_List":           "LF Events Suppression List",
 		"LF Global Opt Outs":                   "LF Global Opt-Outs",
 		"lf europe global opt-outs":            "LF Europe Global Opt-Outs",
+		"26Q2-Kernel-Domain-Contacts":          "Kernel Domain Contacts",
+		"Persona Linux Kernel":                 "Persona Linux Kernel",
+		"Q1 2026 - LF - kernel.org Contacts":   "LF kernel.org Contacts",
 	}
 	for name, term := range accept {
 		assert.True(t, MatchesStandardSuppression(name, term), "%q should satisfy %q", name, term)
@@ -256,9 +259,20 @@ func TestMatchesStandardSuppression_NormalisesSeparatorsQuartersAndSuffix(t *tes
 		"LF Global Opt-Outs - without Internal Emails": "LF Global Opt-Outs",
 		"AAIF LF Global Opt-Outs":                      "LF Global Opt-Outs",
 		"LF Training Global Opt-Outs":                  "LF Global Opt-Outs",
+		"Kernel Domain Contacts - Registrants":         "Kernel Domain Contacts",
+		"Open Source Summit kernel.org Contacts":       "LF kernel.org Contacts",
 		"anything":                                     "   ",
 	}
 	for name, term := range reject {
 		assert.False(t, MatchesStandardSuppression(name, term), "%q must not satisfy %q", name, term)
 	}
+}
+
+func TestLastSentMatchReason(t *testing.T) {
+	terms := NewLastSentTerms("AGNTCon + MCPCon Japan", "CNCF")
+	assert.Equal(t, LastSentReasonName, LastSentMatchReason("Complimentary Ticket to AGNTCon + MCPCon Japan", "", terms))
+	assert.Equal(t, LastSentReasonSubject, LastSentMatchReason("26Q3 - CNCF - Newsletter Pytorch emailer", "Join us at AGNTCon Japan", terms),
+		"a newsletter that promoted the event is listed for its subject, and says so")
+	assert.Equal(t, LastSentReasonBrand, LastSentMatchReason("CNCF Monthly Newsletter", "Roundup", terms))
+	assert.Empty(t, LastSentMatchReason("Unrelated", "Nothing", terms))
 }

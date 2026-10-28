@@ -88,6 +88,61 @@ var (
 	// this service, not the answer an API client should get. Maps to 400.
 	ErrBriefIdentityPairInvalid = errors.New("this delivery type and stage cannot be combined")
 
+	// ErrCreativeAssetQuotaExceeded indicates an upload refused because the brief already holds
+	// model.MaxCreativeAssetsPerBrief assets, or because this upload's bytes would take it past
+	// model.MaxCreativeAssetBytesPerBrief. Decided inside the insert's transaction, after the
+	// brief row lock, so the count it is judged against cannot be stale.
+	//
+	// 409 rather than 400, and a distinct sentinel rather than ErrConflict, for the usual reason
+	// in this file: the request is perfectly well formed, nothing about it conflicts with another
+	// resource, and "resource already exists" is actively wrong — nothing the caller asked for
+	// exists. The remedy is to delete an asset and retry, which delete-creative-asset makes
+	// actionable. It surfaces with reason "creative_asset_quota_exceeded".
+	//
+	// A DEDUPE hit never raises it: identical bytes re-sent to the same brief resolve to the
+	// existing row and store nothing, so counting that against the quota would make a plain retry
+	// fail — the exact opposite of what the (brief_id, checksum) uniqueness is for.
+	ErrCreativeAssetQuotaExceeded = errors.New("the brief has reached its creative-asset limit")
+
+	// ErrCreativeAssetInUse indicates a delete refused because a live campaign on the brief could
+	// still need the asset. Three independent arms: one still 'pending', whatever its snapshot
+	// says; one whose stored config_snapshot names the asset id; or one whose config_snapshot is
+	// NULL. The 'pending' arm leads because it needs no timing argument — a dispatch that has not
+	// resolved may read any of the brief's assets, and a delete in that window would remove bytes
+	// it is about to read. The NULL arm covers the narrower case the claim creates:
+	// claimCampaignDispatchQuery inserts the row BEFORE the dispatcher resolves any asset, so a
+	// snapshot naming it does not exist yet. That is not a hedge, but it is not sufficient on its
+	// own either — the claim is not the only writer of config_snapshot.
+	//
+	// Maps to 409 with reason "creative_asset_in_use". Distinct from ErrConflict because the
+	// remedy is specific: delete the campaign, or reconcile a claim stuck in 'pending', then
+	// retry — not change the request.
+	//
+	// The wording is "could still need" rather than "references" on purpose: the 'pending' arm
+	// refuses a campaign whose snapshot provably does NOT name the asset, because a dispatcher may
+	// still be about to resolve it. A message promising a reference would be false in exactly that
+	// case, and it is the one a caller is most likely to be surprised by.
+	ErrCreativeAssetInUse = errors.New("a live campaign on this brief could still need the creative asset")
+
+	// ErrCreativeAssetReferenceMissing indicates a campaign replace refused because the config
+	// it would store NEWLY names a creative asset that does not exist for the campaign's
+	// (project, brief) — an id present in the incoming snapshot and absent from the stored one.
+	// A caller that carries an already-dangling reference through unchanged is NOT refused.
+	//
+	// It is the inverse of ErrCreativeAssetInUse, and the two close the same window from
+	// opposite sides: the delete guard stops an asset going away while a campaign names it,
+	// this stops a campaign starting to name an asset that is already gone.
+	//
+	// Maps to 409 with reason "creative_asset_reference_missing", not 400: the request was well
+	// formed and named an id that existed when the caller read the brief. The remedy is to
+	// upload the asset again or drop the reference, then retry.
+	//
+	// How the decision is reached — why it must run inside the replace's transaction under the
+	// brief lock, and why the scope is newly introduced ids — is argued once, on
+	// (*CampaignRepo).checkNewSnapshotAssetRefs in internal/infrastructure/postgres. Service
+	// callers of this sentinel do not need those mechanics; do not restate them here.
+	ErrCreativeAssetReferenceMissing = errors.New("the campaign configuration references a creative asset that no longer exists for this brief")
+
 	// ErrPreconditionFailed indicates an optimistic-concurrency version
 	// mismatch on a conditional update (stale If-Match). Maps to 412.
 	ErrPreconditionFailed = errors.New("version precondition failed")
@@ -413,6 +468,17 @@ var (
 	// ErrToggleUnsupported: a platform dispatcher must be able to return it without
 	// importing the orchestration layer.
 	ErrAccountsUnsupported = errors.New("account discovery is not supported for this platform")
+
+	// ErrTargetingLookupUnsupported indicates the platform has no targeting-lookup capability
+	// wired (geo target suggestions, user lists). Maps to 400, like ErrAccountsUnsupported:
+	// the platform is never contacted.
+	ErrTargetingLookupUnsupported = errors.New("targeting lookup is not supported for this platform")
+
+	// ErrUserListsSharedTenancy refuses a user-list read on a platform whose ad account is
+	// shared across foundations. The read is account-wide and this service records no user
+	// list per project, so there is nothing to scope it to: answering would hand one
+	// foundation's audiences to another. Permanent for the platform, so 409, not 503.
+	ErrUserListsSharedTenancy = errors.New("user lists cannot be listed per project on an ad account shared across foundations")
 
 	// ErrAccountMetricsUnsupported indicates the platform has no account-scoped monitor
 	// capability wired (the AccountMetricsReader interface). The platform is never contacted.
@@ -1248,17 +1314,6 @@ var (
 	// the caller may not be able to see. Maps to 409.
 	ErrPlatformCampaignAlreadyBound = errors.New("this platform campaign is already bound to another brief")
 
-	// ErrSlotVersionUnavailable indicates a request for ANOTHER campaign on a slot that
-	// already has one could not be claimed because the schema still enforces one live
-	// campaign per (brief, platform, variant). Migration 000037 adds the per-slot-version
-	// index alongside the old one. The old one is NOT dropped the release after 000037: the
-	// per-slot adopt/claim lock ships first, in its own release, and the drop (a later contract
-	// migration) ships one release AFTER that lock, so an image-only rollback never runs a
-	// lock-free binary without the old index (expand → lock → contract). Until that drop this
-	// is the expected answer to new_version, not a fault.
-	// Nothing was created upstream.
-	ErrSlotVersionUnavailable = errors.New("another campaign on this platform cannot be created for this brief yet")
-
 	// ErrDispatchClaimLost indicates a dispatch tried to record its upstream campaign but the
 	// pending claim it took is no longer the row on its slot version: the claim was cleared
 	// (an operator removing an apparently-stuck claim — ClearDispatchClaim, or by hand)
@@ -1273,6 +1328,15 @@ var (
 	// reconciliation and keep whatever identifiers it has (the upstream id, or the reconcile
 	// handles of an id-less partial) where an operator can find them.
 	ErrDispatchClaimLost = errors.New("the dispatch's claim on this campaign slot was lost before its result could be recorded")
+
+	// ErrSlotVersionUsed indicates a new_version claim found its slot version already used by
+	// a SOFT-DELETED campaign. The version was free when the request read the slot, so a
+	// concurrent new_version request took it, completed, and was deleted before this claim
+	// ran. The live-row unique index ignores deleted rows and would admit the claim, but the
+	// deleted campaign keeps the upstream name the version composes, so a name-based lookup
+	// would hand it back as this one. The request is the losing half of a double submit and
+	// is reported as skipped.
+	ErrSlotVersionUsed = errors.New("a concurrent new_version request already used this campaign slot version")
 
 	// ErrAdoptionRequiresOwnConnection indicates the project has no ad-platform connection of
 	// its own. Maps to 409.

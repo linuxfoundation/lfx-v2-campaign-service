@@ -708,10 +708,14 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 		// (today monitor-twitter-ads-account alone) may receive these two sentinels. A method
 		// declaring the shared ConflictError instead would not encode this type as its 409.
 		// Before letting another producer return them, declare this type on its method.
+		//
+		// The cap counts the whole shared account: the report is read account-wide and only the
+		// response is scoped to the project, so the message says so rather than letting a
+		// project with a handful of campaigns read it as a count of its own.
 		return &conn.AccountMonitorConflictError{
 			Code:    "409",
 			Reason:  "account_too_many_active_campaigns",
-			Message: domain.ErrAccountTooManyActiveCampaigns.Error() + " (at most " + strconv.Itoa(twitter.MaxMonitorActiveCampaigns) + " campaigns active in the window for " + d.displayName + ")",
+			Message: domain.ErrAccountTooManyActiveCampaigns.Error() + " (at most " + strconv.Itoa(twitter.MaxMonitorActiveCampaigns) + " campaigns active in the window for " + d.displayName + ", counted across every project on the shared account)",
 		}
 	case errors.Is(aerr, domain.ErrAccountTimezoneUnsupported):
 		// Same shape as the arm above: permanent for the account's timezone, not a fault of the

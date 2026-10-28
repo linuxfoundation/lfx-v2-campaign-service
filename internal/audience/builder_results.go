@@ -61,6 +61,9 @@ type DiscoveredList struct {
 // DiscoveryMaxInspections candidates, and a silent cap looks exactly like a portal
 // that holds nothing more.
 type DiscoveryOutcome struct {
+	// Hidden counts lists discovery found but did not offer for inclusion
+	// (suppressions, masters, test and staff lists — see DiscoveryHidden).
+	Hidden         int
 	Event          EventIdentity
 	Lists          []DiscoveredList
 	MissingSignals []Signal
@@ -81,6 +84,10 @@ type SuppressionRow struct {
 	Size       *int64
 	Category   string
 	HubSpotURL string
+	// WillCreate marks a row whose list does not exist yet and is created, by name, when an
+	// attach or compose applies it. Only the current-registrants row sets it: a read never
+	// creates lists.
+	WillCreate bool
 }
 
 // Suppression row categories, mirroring the picker's groups.
@@ -93,6 +100,9 @@ const (
 	// so a consumer grouping on the generated contract dropped exactly the rows that outrank
 	// the other two — the per-event suppression list is the highest-value exclusion here.
 	SuppressionCategoryEvent = "event_specific"
+	// SuppressionCategoryCurrentRegistrants is the current edition's registrants: a send
+	// promoting registration should not reach people who already registered.
+	SuppressionCategoryCurrentRegistrants = "current_registrants"
 )
 
 // ListBrief names a list referenced from somewhere else — a prior send's include or
@@ -101,21 +111,37 @@ const (
 // Missing is carried explicitly because a deleted list still leaves its id in the
 // email's record. Dropping the row would silently understate what the last send
 // targeted; showing the id with Missing set says what actually happened.
+//
+// Unresolved is the THIRD state, and it is not a shade of Missing: the read failed
+// for a reason that is not "no such list" — a throttle, a 401/403, a 5xx — so whether
+// the list exists is unknown. Folding it into Missing told an operator a list they
+// still have was deleted, which is the one conclusion they act on irreversibly.
+// At most one of Missing and Unresolved is ever set; a resolved row has neither.
 type ListBrief struct {
 	ListID               string
 	Name                 string
 	Size                 *int64
 	Missing              bool
+	Unresolved           bool
 	ResolvedFromLegacyID string
-	// HubSpotURL links to the list; empty when it no longer resolves.
+	// HubSpotURL links to the list. An Unresolved row keeps its link on purpose, so the
+	// operator can check the list by hand. It is empty on a Missing row, and on any row
+	// whose ListID is still the ResolvedFromLegacyID it came in as: the link route takes
+	// v3 (ILS) ids only, and a legacy id through it opens HubSpot on "list not found",
+	// which reads as exactly the deletion an unresolved row is saying it cannot confirm.
+	// An empty URL is never itself a statement about the list; read Missing and
+	// Unresolved for that.
 	HubSpotURL string
 }
 
 // LastSentEmail is a prior send and the lists it used — the best available precedent
 // for what this event's audience should be.
 type LastSentEmail struct {
-	EmailID          string
-	EmailName        string
+	EmailID   string
+	EmailName string
+	// Subject and MatchReason explain why the send is listed (see LastSentMatchReason).
+	Subject          string
+	MatchReason      string
 	SentAt           string
 	HubSpotURL       string
 	IncludedLists    []ListBrief
@@ -133,6 +159,10 @@ type ComposeInput struct {
 	BrandShort     string
 	EventName      string
 	EventDates     []string
+	// CurrentRegistrantsEvent, when set, is the edition (event name with year) whose current
+	// registrants the master also excludes, through a list found or created by
+	// CurrentRegistrantsName.
+	CurrentRegistrantsEvent string
 	// RecordUnderBriefID asks the caller's service layer to record the composed master as
 	// this brief's built audience. It is empty for the exploratory use of the builder, which
 	// composes lists without a campaign to attach them to.
@@ -156,7 +186,10 @@ type ComposedList struct {
 // requested — ExclusionIDs resolves an id selected both ways in favour of inclusion,
 // and an operator reading the result needs to see which ids the master really unions.
 type ComposeOutcome struct {
-	Master        ComposedList
+	Master ComposedList
+	// Suppression is the project's standing standard suppression list (StandardSuppressionName),
+	// found or created and REUSED across audiences; nil when the selection did not include every
+	// resolved standard list.
 	Suppression   *ComposedList
 	SourceListIDs []string
 	// PortalID is the HubSpot portal both lists were created in, read from the token of the
@@ -164,9 +197,9 @@ type ComposeOutcome struct {
 	// was set, because it is only ever needed to stamp provenance on a recorded audience — and
 	// the lookup is a network round trip the exploratory path should not pay for.
 	PortalID string
-	// AttachedSuppressionIDs are EXISTING suppression lists recorded beside the master by an
-	// attach (AttachExisting), which composes no combined suppression of its own. Empty for a
-	// compose, whose single suppression is Suppression above.
+	// AttachedSuppressionIDs are the suppression lists recorded beside Suppression: every
+	// selected list that is not one of the standard terms (brand, event, current registrants,
+	// lists marked Exclude), plus the standard ones when only some were selected.
 	AttachedSuppressionIDs []string
 	// Attached marks an outcome that created nothing: the lists already existed and were
 	// only verified. It changes the recorded row's default summary, nothing else.

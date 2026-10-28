@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,8 +19,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
@@ -89,7 +92,22 @@ func builtHubSpotAudienceInPortal(masterList string, suppression []string, porta
 // synchronizes at the deferred Close, which runs AFTER the assertions (same guard as
 // meta_test.go).
 type hubspotRec struct {
-	mu           sync.Mutex
+	mu sync.Mutex
+	// standing, when set, is the project's standing standard suppression list the fake portal
+	// holds: its id, found by a search for its name, and its filter, read back by GetList.
+	standingID     string
+	standingName   string
+	standingFilter json.RawMessage
+	listSearches   int
+	// searchMisses makes the list search never find the standing list (index lag, a rename).
+	searchMisses bool
+	// sendListFilters are the filters GetList returns for other lists (the send lists).
+	sendListFilters map[string]json.RawMessage
+	// listReads counts GetList calls per list id; missingLists answer 404; staticLists answer as
+	// MANUAL lists with no filterBranch.
+	listReads    map[string]int
+	missingLists map[string]bool
+	staticLists  map[string]bool
 	sendListBody map[string]any
 	sawClone     bool
 	sawSendList  bool
@@ -442,6 +460,50 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/crm/v3/lists/search":
+			var body struct {
+				Query string `json:"query"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			rec.mu.Lock()
+			rec.listSearches++
+			lists := []map[string]any{}
+			if rec.standingID != "" && body.Query == rec.standingName && !rec.searchMisses {
+				lists = append(lists, map[string]any{"listId": rec.standingID, "name": rec.standingName, "objectTypeId": "0-1"})
+			}
+			rec.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"lists": lists, "hasMore": false})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/crm/v3/lists/"):
+			rec.mu.Lock()
+			id, name, filter := rec.standingID, rec.standingName, rec.standingFilter
+			asked := strings.TrimPrefix(r.URL.Path, "/crm/v3/lists/")
+			sendFilter, isSend := rec.sendListFilters[asked]
+			rec.mu.Unlock()
+			rec.mu.Lock()
+			if rec.listReads == nil {
+				rec.listReads = map[string]int{}
+			}
+			rec.listReads[asked]++
+			missing, static := rec.missingLists[asked], rec.staticLists[asked]
+			rec.mu.Unlock()
+			if missing {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if static {
+				_ = json.NewEncoder(w).Encode(map[string]any{"list": map[string]any{
+					"listId": asked, "name": "static " + asked, "objectTypeId": "0-1", "processingType": "MANUAL"}})
+				return
+			}
+			switch {
+			case isSend:
+				id, name, filter = asked, "send list "+asked, sendFilter
+			case asked != id || id == "":
+				// Any other list exists, named for its id, with an empty union filter.
+				id, name, filter = asked, "list "+asked, json.RawMessage(`{"filterBranchType":"OR","filterBranches":[],"filters":[]}`)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"list": map[string]any{
+				"listId": id, "name": name, "objectTypeId": "0-1", "processingType": "DYNAMIC", "filterBranch": filter}})
 		case r.Method == http.MethodPost && r.URL.Path == hubSpotTokenInfoPath:
 			rec.mu.Lock()
 			rec.tokenInfoCalls++
@@ -760,6 +822,9 @@ func TestHubSpot_StagesWithoutEventName(t *testing.T) {
 // HubSpot call — otherwise the clone would be created and then orphaned when SetSendList rejects.
 func TestHubSpot_MasterInSuppressionRefusedBeforeClone(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		t.Errorf("no HubSpot call should happen when master is in the suppression set: %s %s", r.Method, r.URL.Path)
 	}))
 	defer srv.Close()
@@ -813,6 +878,9 @@ func TestHubSpot_DispatchSendsToEveryIncludeList(t *testing.T) {
 // whole list from the send, and finding it after CloneEmail would orphan a draft.
 func TestHubSpot_IncludeListInSuppressionRefusedBeforeClone(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		t.Errorf("no HubSpot call should happen when an include list is suppressed: %s %s", r.Method, r.URL.Path)
 	}))
 	defer srv.Close()
@@ -839,6 +907,9 @@ func TestHubSpot_IncludeListInSuppressionRefusedBeforeClone(t *testing.T) {
 // a draft may exist) must retain the claim (non-nil name-only partial) with an UNCONFIRMED error.
 func TestHubSpot_CloneUnconfirmedRetainsClaim(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		// Answer token-info with the audience's portal, so the cross-portal guard passes and
 		// this test reaches the clone it is about of. A canned body for every path would fail
@@ -885,6 +956,9 @@ func TestHubSpot_CloneUnconfirmedRetainsClaim(t *testing.T) {
 // caller reconciles rather than reporting a clean success.
 func TestHubSpot_SendListFailureIsPartial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		// token-info must answer, or the cross-portal guard refuses before the clone and this
 		// never reaches the set-send-list failure it is written for.
@@ -1208,6 +1282,9 @@ func TestHubSpot_UTMCampaignOverrideReachesTheLinks(t *testing.T) {
 // configured draft behind.
 func TestHubSpot_TaggingFailureDoesNotFailTheDispatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == hubSpotTokenInfoPath:
@@ -1249,6 +1326,9 @@ func TestHubSpot_TaggingFailureDoesNotFailTheDispatch(t *testing.T) {
 // deadline the token-info REQUEST actually carried, not by waiting one out.
 func TestHubSpot_DispatchBoundsThePortalLookupBelowProviderCallTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == hubSpotTokenInfoPath:
@@ -1473,6 +1553,9 @@ func TestHubSpot_CreateCampaignTagsANeverSentFailure(t *testing.T) {
 func TestHubSpot_SearchCampaignsCrossesTheSeam(t *testing.T) {
 	const searchPath = "/crm/v3/objects/0-35/search"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPost && r.URL.Path == searchPath {
 			// total (7) deliberately exceeds the returned rows (1): that is what makes the page
@@ -1713,6 +1796,9 @@ func assertRefusedBeforeCreate(t *testing.T, camp *model.Campaign, err error, re
 func TestHubSpot_DispatchRefusesWhenPortalIdentityIsUnreadable(t *testing.T) {
 	rec := &hubspotRec{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		// Everything works EXCEPT portal identity.
 		if r.URL.Path == hubSpotTokenInfoPath {
@@ -1860,6 +1946,9 @@ func TestHubSpot_AContentRevertIsLoggedAsAnErrorNotAWarning(t *testing.T) {
 	// 2xx on the content PATCH, but a re-read that never shows the widgets — HubSpot's silent
 	// revert. verifyContentSaved catches it and RebuildEmailContent wraps it.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerStandingListReads(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == hubSpotTokenInfoPath:
@@ -1969,5 +2058,374 @@ func TestHubSpot_NAT64PrefixesReachTheHeroFetch(t *testing.T) {
 	// immediate; a dial is not. Do not remove this in favour of the widget check alone.
 	if elapsed := time.Since(started); elapsed > 2*time.Second {
 		t.Errorf("the address was dialled rather than refused (%s elapsed): the NAT64 prefix did not reach the guard", elapsed)
+	}
+}
+
+// TestHubSpot_AFailedHeroIsReportedNotSilent pins that a hero which cannot be re-hosted still
+// leaves the draft created (best-effort), but is now REPORTED: the persisted Result blob carries
+// an operator-readable warning. Before this, the only trace was a server log line, and an
+// operator saw a clean "draft created" and found the banner missing only after opening it.
+func TestHubSpot_AFailedHeroIsReportedNotSilent(t *testing.T) {
+	srv, _ := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(
+		fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud,
+		hubspot.WithBaseURL(srv.URL),
+		hubspot.WithNAT64Prefixes("2a01:4f8:808:808::/96"),
+	)
+
+	// The address decodes to the metadata endpoint, so the guard refuses it immediately: a
+	// deterministic hero failure that needs no network.
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","bodyHtml":"<p>b</p>","heroImageUrl":"http://[2a01:4f8:808:808::a9fe:a9fe]/hero.png"}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
+		t.Fatalf("a failed hero must stay non-fatal: %v", err)
+	}
+
+	var blob struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(camp.Result, &blob); err != nil {
+		t.Fatalf("decode result blob: %v", err)
+	}
+	if len(blob.Warnings) != 1 || !strings.Contains(blob.Warnings[0], "hero image could not be added") {
+		t.Fatalf("Warnings = %v, want one hero warning", blob.Warnings)
+	}
+	// The address the guard refused must not be echoed into a persisted, API-visible string.
+	// Staging again reuses the stored campaign and its warnings, so the warning must send the
+	// operator to the HubSpot editor, never suggest a re-stage would retry the upload.
+	if !strings.Contains(blob.Warnings[0], "Check the draft's banner in the HubSpot editor") || strings.Contains(blob.Warnings[0], "or stage again") {
+		t.Errorf("the warning must point to the HubSpot editor, not a re-stage: %q", blob.Warnings[0])
+	}
+	// A failed upload does not prove the draft has no banner: the template's may remain.
+	if strings.Contains(blob.Warnings[0], "without a hero banner") {
+		t.Errorf("the warning must not assert the banner is absent: %q", blob.Warnings[0])
+	}
+	if strings.Contains(blob.Warnings[0], "169.254") || strings.Contains(blob.Warnings[0], "a9fe") {
+		t.Errorf("the warning echoes the refused address: %q", blob.Warnings[0])
+	}
+}
+
+// TestHubSpot_NoHeroMeansNoWarning pins the other direction: a campaign that never asked for a
+// hero must not report one missing.
+func TestHubSpot_NoHeroMeansNoWarning(t *testing.T) {
+	srv, _ := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(
+		fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud,
+		hubspot.WithBaseURL(srv.URL),
+	)
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","bodyHtml":"<p>b</p>"}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if strings.Contains(string(camp.Result), "warnings") {
+		t.Errorf("a campaign with no hero reported a warning: %s", camp.Result)
+	}
+}
+
+// TestHeroFailureReason pins the fixed vocabulary: each failure this package produces maps to a
+// sentence an operator can act on, and unknown text falls back to a generic line instead of being
+// echoed into a persisted string.
+func TestHeroFailureReason(t *testing.T) {
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{errors.New(`hubspot: image format "webp" is not one this service re-hosts`), "format email cannot use"},
+		{errors.New("hubspot: source URL did not return a decodable image: boom"), "format email cannot use"},
+		{errors.New(`hubspot: source URL did not return an image (content-type "text/html")`), "did not return an image"},
+		{errors.New("hubspot: download image from https://x.example/h.jpg: dial tcp: refused"), "could not be downloaded"},
+		{errors.New("hubspot: downloaded image exceeds 26214400 bytes"), "too large"},
+		// The SSRF guard's refusal, wrapped exactly as fetchImage wraps a client.Do failure
+		// (through the dialer's OpError): classified by identity, not as a failed download.
+		{fmt.Errorf("hubspot: download image from https://x.example/h.jpg: %w",
+			&net.OpError{Op: "dial", Net: "tcp", Err: fmt.Errorf("%w: 169.254.169.254", eventurl.ErrEventURLForbidden)}),
+			"network safety check"},
+		{errors.New("hubspot: missing private-app token"), "files permission"},
+		{errors.New("something unexpected with secret-token-abc"), "did not accept the upload"},
+	}
+	for _, tc := range cases {
+		got := heroFailureReason(tc.err)
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("heroFailureReason(%q) = %q, want it to contain %q", tc.err, got, tc.want)
+		}
+		if strings.Contains(got, "secret-token-abc") {
+			t.Errorf("heroFailureReason echoed error text: %q", got)
+		}
+	}
+}
+
+// The project's standing standard list grew, after this audience was recorded, to cover the
+// list the audience SENDS to. Dispatch reads it back before anything is created and refuses:
+// excluding it would exclude the whole inclusion. Covering only other lists is fine.
+func TestHubSpot_DispatchRefusesASendListTheStandingListNowCovers(t *testing.T) {
+	covering, err := audience.MasterListFilter([]string{"7001", "26724"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, rec := hubspotServer(t)
+	rec.standingID, rec.standingName, rec.standingFilter = "77", audience.StandardSuppressionName("cncf"), covering
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", []string{"77", "9002"})}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err == nil || camp != nil {
+		t.Fatalf("expected a pre-create refusal, got camp=%v err=%v", camp, err)
+	}
+	if !strings.Contains(err.Error(), "standing standard suppression list") || !strings.Contains(err.Error(), "26724") {
+		t.Errorf("the refusal must name the covered send list and the standing list, got %v", err)
+	}
+	if rec.SawClone() || rec.SawSendList() {
+		t.Error("nothing may be created when the send would exclude its own inclusion")
+	}
+
+	// The same standing list covering only other lists is no obstacle.
+	fine, _ := audience.MasterListFilter([]string{"7001"})
+	srv2, rec2 := hubspotServer(t)
+	rec2.standingID, rec2.standingName, rec2.standingFilter = "77", audience.StandardSuppressionName("cncf"), fine
+	masterOf, _ := audience.MasterListWithSuppressionsFilter([]string{"500", "501"}, []string{"7001"})
+	rec2.sendListFilters = map[string]json.RawMessage{"26724": masterOf}
+	d = NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv2.URL))
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if !rec2.SawSendList() {
+		t.Error("expected the send list to be applied")
+	}
+}
+
+// A composed audience records its MASTER as the send list. The standing list now covers the
+// master's only source list -- not the master itself -- so the send would reach nobody: refused
+// before anything is created. A NOT_IN_LIST exclusion of the master is not a source.
+func TestHubSpot_DispatchRefusesAMasterWhoseSourceTheStandingListNowCovers(t *testing.T) {
+	standing, _ := audience.MasterListFilter([]string{"7001", "500"})
+	master, err := audience.MasterListWithSuppressionsFilter([]string{"500"}, []string{"9002"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, rec := hubspotServer(t)
+	rec.standingID, rec.standingName, rec.standingFilter = "77", audience.StandardSuppressionName("cncf"), standing
+	rec.sendListFilters = map[string]json.RawMessage{"26724": master}
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", []string{"77", "9002"})}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	_, err = d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err == nil || !strings.Contains(err.Error(), `includes list "500"`) {
+		t.Fatalf("want a refusal naming the covered source list, got %v", err)
+	}
+	if rec.SawClone() || rec.SawSendList() {
+		t.Error("nothing may be created when the send's inclusion is excluded")
+	}
+
+	// The standing list covering only the master's EXCLUSION (9002) is not a covered source.
+	standingOnExclusion, _ := audience.MasterListFilter([]string{"7001", "9002"})
+	srv2, rec2 := hubspotServer(t)
+	rec2.standingID, rec2.standingName, rec2.standingFilter = "77", audience.StandardSuppressionName("cncf"), standingOnExclusion
+	rec2.sendListFilters = map[string]json.RawMessage{"26724": master}
+	d = NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv2.URL))
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if !rec2.SawSendList() {
+		t.Error("expected the send list to be applied")
+	}
+}
+
+// A 200-list attach that excludes the standing list is never refused for its size: every list
+// is checked by id and only the first audience.MaxSendListFilterReads have their filters read.
+func TestHubSpot_DispatchLargeAttachExcludingTheStandingListIsNotRefusedForSize(t *testing.T) {
+	standing, _ := audience.MasterListFilter([]string{"7001"})
+	srv, rec := hubspotServer(t)
+	rec.standingID, rec.standingName, rec.standingFilter = "77", audience.StandardSuppressionName("cncf"), standing
+	includes := make([]string, 200)
+	for i := range includes {
+		includes[i] = fmt.Sprintf("%d", 30000+i)
+	}
+	auds := builtHubSpotAudience(includes[0], []string{"77"})
+	auds[0].IncludeListIDs, _ = json.Marshal(includes)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, fakeAudienceReader{auds: auds}, hubspot.WithBaseURL(srv.URL))
+
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if !rec.SawSendList() {
+		t.Error("expected the 200-list send to be applied")
+	}
+	read := 0
+	for _, id := range includes {
+		read += rec.listReadsOf(id)
+	}
+	if read > audience.MaxSendListFilterReads {
+		t.Fatalf("read %d send lists, want at most %d", read, audience.MaxSendListFilterReads)
+	}
+}
+
+// Two existing MASTERS attached together, both including list 500, which the standing list now
+// covers: the multi-list send is refused, though neither master's own id is covered.
+func TestHubSpot_DispatchRefusesAttachedMastersSharingACoveredSource(t *testing.T) {
+	standing, _ := audience.MasterListFilter([]string{"7001", "500"})
+	master, _ := audience.MasterListFilter([]string{"500"})
+	srv, rec := hubspotServer(t)
+	rec.standingID, rec.standingName, rec.standingFilter = "77", audience.StandardSuppressionName("cncf"), standing
+	rec.sendListFilters = map[string]json.RawMessage{"26724": master, "26725": master}
+	auds := builtHubSpotAudience("26724", []string{"77"})
+	auds[0].IncludeListIDs, _ = json.Marshal([]string{"26724", "26725"})
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, fakeAudienceReader{auds: auds}, hubspot.WithBaseURL(srv.URL))
+
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err == nil || !strings.Contains(err.Error(), `includes list "500"`) {
+		t.Fatalf("want a refusal naming the covered source, got %v", err)
+	}
+	if rec.SawClone() {
+		t.Error("nothing may be created")
+	}
+}
+
+// The standing list read back with a null filterBranch is unknown, not "covers nothing": refused
+// before anything is created.
+func TestHubSpot_DispatchRefusesAStandingListReadWithoutAFilter(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.standingID, rec.standingName, rec.standingFilter = "77", audience.StandardSuppressionName("cncf"), json.RawMessage(`null`)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", []string{"77"})}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if !errors.Is(err, audience.ErrListFilterUnreadable) {
+		t.Fatalf("want ErrListFilterUnreadable, got %v", err)
+	}
+	if rec.SawClone() {
+		t.Error("nothing may be created")
+	}
+}
+
+// The name search MISSES the standing list (index lag right after it was created, or a rename),
+// but the audience still records it as a suppression: it is found among the recorded exclusions
+// by reading them, and the master whose only source it covers is refused.
+func TestHubSpot_DispatchFindsTheStandingListWhenTheSearchMisses(t *testing.T) {
+	standing, _ := audience.MasterListFilter([]string{"7001", "500"})
+	master, _ := audience.MasterListFilter([]string{"500"})
+	srv, rec := hubspotServer(t)
+	// The fake's search answers only for this name, so the real standing name is a miss; its
+	// GetList still reports the standing name.
+	rec.standingID, rec.standingName, rec.standingFilter = "77", audience.StandardSuppressionName("cncf"), standing
+	rec.searchMisses = true
+	rec.sendListFilters = map[string]json.RawMessage{"26724": master}
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", []string{"9002", "77"})}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err == nil || !strings.Contains(err.Error(), `includes list "500"`) {
+		t.Fatalf("want a refusal naming the covered source, got %v", err)
+	}
+	if rec.SawClone() {
+		t.Error("nothing may be created")
+	}
+}
+
+// listReadsOf is how many times the fake portal answered GetList for id.
+func (r *hubspotRec) listReadsOf(id string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.listReads[id]
+}
+
+// answerStandingListReads answers the send-time standing-list check's reads for a fake portal
+// that holds no standing list: an empty list search, and any list read as an ordinary list with
+// an empty union filter. It reports whether it answered.
+func answerStandingListReads(w http.ResponseWriter, r *http.Request) bool {
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == "/crm/v3/lists/search":
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"lists":[],"hasMore":false}`)
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/crm/v3/lists/"):
+		id := strings.TrimPrefix(r.URL.Path, "/crm/v3/lists/")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"list": map[string]any{
+			"listId": id, "name": "list " + id, "objectTypeId": "0-1", "processingType": "DYNAMIC",
+			"filterBranch": map[string]any{"filterBranchType": "OR", "filterBranches": []any{}, "filters": []any{}}}})
+		return true
+	}
+	return false
+}
+
+// A static (MANUAL) send list has no filterBranch. With no suppressions it dispatches, rather than
+// being refused as unreadable; a DYNAMIC list read back without one still refuses.
+func TestHubSpot_DispatchSendsToAStaticListWithoutAFilter(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.staticLists = map[string]bool{"26724": true}
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if !rec.SawSendList() {
+		t.Error("the static list must be sent to")
+	}
+
+	srv2, rec2 := hubspotServer(t)
+	rec2.sendListFilters = map[string]json.RawMessage{"26724": json.RawMessage(`null`)}
+	d = NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv2.URL))
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if !errors.Is(err, audience.ErrListFilterUnreadable) {
+		t.Fatalf("a DYNAMIC send list without a filter must refuse, got %v", err)
+	}
+	if rec2.SawClone() {
+		t.Error("nothing may be created")
+	}
+}
+
+// Master A excludes the standing list itself, master B does not, and the standing list covers
+// only B's source: the standing list does not apply to B, so the send proceeds.
+func TestHubSpot_DispatchScopesAMastersOwnExclusionsToThatMaster(t *testing.T) {
+	standing, _ := audience.MasterListFilter([]string{"500"})
+	masterA, _ := audience.MasterListWithSuppressionsFilter([]string{"100"}, []string{"77"})
+	masterB, _ := audience.MasterListFilter([]string{"500"})
+	srv, rec := hubspotServer(t)
+	rec.standingID, rec.standingName, rec.standingFilter = "77", audience.StandardSuppressionName("cncf"), standing
+	rec.sendListFilters = map[string]json.RawMessage{"2001": masterA, "2002": masterB}
+	auds := builtHubSpotAudience("2001", nil)
+	auds[0].IncludeListIDs, _ = json.Marshal([]string{"2001", "2002"})
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, fakeAudienceReader{auds: auds}, hubspot.WithBaseURL(srv.URL))
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	// The standing list covering A's own source, which A excludes it from: refused.
+	coversA, _ := audience.MasterListFilter([]string{"100"})
+	srv2, rec2 := hubspotServer(t)
+	rec2.standingID, rec2.standingName, rec2.standingFilter = "77", audience.StandardSuppressionName("cncf"), coversA
+	rec2.sendListFilters = map[string]json.RawMessage{"2001": masterA, "2002": masterB}
+	d = NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, fakeAudienceReader{auds: auds}, hubspot.WithBaseURL(srv2.URL))
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err == nil || !strings.Contains(err.Error(), `includes list "100"`) {
+		t.Fatalf("want a refusal naming A's covered source, got %v", err)
+	}
+}
+
+// An exclusion inside a master constrains only its OR alternative: in (IN 600) OR (IN 601 AND
+// NOT 77), the standing list covering 600 leaves that alternative delivering, so the send
+// proceeds; covering 601, the alternative that excludes it, is refused.
+func TestHubSpot_DispatchScopesEmbeddedExclusionsToTheirOrBranch(t *testing.T) {
+	xy := json.RawMessage(`{"filterBranchType":"OR","filters":[],"filterBranches":[` +
+		`{"filterBranchType":"AND","filterBranches":[],"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":"600"}]},` +
+		`{"filterBranchType":"AND","filterBranches":[],"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":"601"},{"filterType":"IN_LIST","operator":"NOT_IN_LIST","listId":"77"}]}]}`)
+	run := func(covers string) error {
+		standing, _ := audience.MasterListFilter([]string{covers})
+		srv, rec := hubspotServer(t)
+		rec.standingID, rec.standingName, rec.standingFilter = "77", audience.StandardSuppressionName("cncf"), standing
+		rec.sendListFilters = map[string]json.RawMessage{"26724": xy}
+		d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+			fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}, hubspot.WithBaseURL(srv.URL))
+		_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+		return err
+	}
+	if err := run("600"); err != nil {
+		t.Fatalf("X's alternative does not exclude the standing list, so the send must proceed: %v", err)
+	}
+	if err := run("601"); err == nil || !strings.Contains(err.Error(), `includes list "601"`) {
+		t.Fatalf("want a refusal naming 601, got %v", err)
 	}
 }

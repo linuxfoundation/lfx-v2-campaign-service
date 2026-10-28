@@ -106,6 +106,13 @@ func CombinedSuppressionName(baseName string, id EventIdentity, now time.Time) s
 //
 // Order-insensitive and blank-insensitive: the ids are trimmed, deduplicated and sorted
 // before hashing, so the same selection clicked in a different order tags the same.
+//
+// The hash also covers fingerprintScheme, the shape of master a fingerprint names. Before
+// LFXV2-2770 a master excluded ONE combined suppression list wrapping the selected exclusions;
+// since then it excludes each resolved list directly. For a selection whose resolved
+// exclusions equal the requested ones (no full standard set, no registrants edition) the ids
+// alone would tag both shapes the same, and a repeat compose would reuse a pre-change master
+// whose wrapper may since have been edited or deleted. The scheme keeps the two apart.
 func SelectionFingerprint(include, exclude []string) string {
 	norm := func(ids []string) []string {
 		out := make([]string, 0, len(ids))
@@ -117,9 +124,14 @@ func SelectionFingerprint(include, exclude []string) string {
 		slices.Sort(out)
 		return slices.Compact(out)
 	}
-	sum := sha256.Sum256([]byte(strings.Join(norm(include), ",") + "|" + strings.Join(norm(exclude), ",")))
+	sum := sha256.Sum256([]byte(fingerprintScheme + "|" + strings.Join(norm(include), ",") + "|" + strings.Join(norm(exclude), ",")))
 	return hex.EncodeToString(sum[:])[:8]
 }
+
+// fingerprintScheme names the master shape SelectionFingerprint tags: every resolved exclusion
+// as its own NOT_IN_LIST filter. Change it whenever that shape changes, so a master of the old
+// shape is never reused as one of the new.
+const fingerprintScheme = "direct-exclusions-v2"
 
 // WithFingerprint appends a SelectionFingerprint to a list name: `<name> (<tag>)`.
 func WithFingerprint(name, tag string) string {

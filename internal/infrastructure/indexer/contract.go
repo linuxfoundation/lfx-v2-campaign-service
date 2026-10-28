@@ -243,6 +243,13 @@ type CampaignDoc struct {
 	// history are served from these documents, and without it two live campaigns on a slot
 	// would read as duplicates. Unrelated to Version, the optimistic-concurrency counter.
 	SlotVersion int `json:"slot_version"`
+	// BiddingStrategy and MaxCPCBid mirror the campaign resource's bidding_strategy and
+	// max_cpc_bid (LFXV2-2665): the strategy the create path recorded and the manual max CPC bid
+	// this service last set. OMITTED, never null, when not recorded — a legacy or adopted row, an
+	// automatic campaign's bid, a Google Ads or email campaign — matching the API, where both are
+	// absent in exactly those cases.
+	BiddingStrategy *string  `json:"bidding_strategy,omitempty"`
+	MaxCPCBid       *float64 `json:"max_cpc_bid,omitempty"`
 	// Adopted is true for a campaign bound by adopt-campaign rather than created here (the
 	// campaign result type's `adopted`, derived from model.CampaignAdopted). OMITTED, never
 	// false, otherwise: absence means "not recorded as adopted" — a row adopted before the

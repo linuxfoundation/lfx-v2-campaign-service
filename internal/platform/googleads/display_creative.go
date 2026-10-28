@@ -153,6 +153,9 @@ type displayCreativePlan struct {
 	descriptions     []string
 	businessName     string
 	callToActionText string
+	// resolved is CampaignInput.ResolvedImages, carried for the reason
+	// demandGenCreativePlan.resolved gives.
+	resolved map[string][]byte
 	// present is false when the caller asked for no creative, which leaves the
 	// campaign-and-ad-group-but-no-ad shape intact.
 	present bool
@@ -176,11 +179,11 @@ func validateDisplayCreative(kind string, in CampaignInput) (displayCreativePlan
 		return displayCreativePlan{}, fmt.Errorf("google-ads Display creative (marketing images, long headline, business name) is supported on Display campaigns only, not on %s", kind)
 	}
 
-	plan := displayCreativePlan{present: true, urls: make([][]string, len(displayImageSlots))}
+	plan := displayCreativePlan{present: true, urls: make([][]string, len(displayImageSlots)), resolved: in.ResolvedImages}
 
 	raw := [][]string{d.MarketingImages, d.SquareMarketingImages, d.LogoImages, d.SquareLogoImages}
 	for i, slot := range displayImageSlots {
-		urls, err := validateImageURLs(slot, raw[i])
+		urls, err := validateImageEntries(slot, raw[i], in.ResolvedImages)
 		if err != nil {
 			return displayCreativePlan{}, err
 		}
@@ -263,7 +266,7 @@ func (c *Client) fetchDisplayImages(ctx context.Context, plan displayCreativePla
 	if !plan.present {
 		return nil, nil
 	}
-	return c.fetchSlotImages(ctx, displayImageSlots, plan.urls)
+	return c.fetchSlotImages(ctx, displayImageSlots, plan.urls, plan.resolved)
 }
 
 // ---------------------------------------------------------------------------

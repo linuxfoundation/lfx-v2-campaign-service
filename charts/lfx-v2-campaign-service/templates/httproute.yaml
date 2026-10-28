@@ -43,7 +43,7 @@ spec:
     # per-campaign path below a brief, including the Meta ad-set read and pause/resume
     # (campaigns/{id}/meta-ad-sets[/{adSetId}/status|/{adSetId}/ads], LFXV2-2665), with no branch of its own. The connection-* family is ruled
     # for exactly the base, /test, and /set-credential sub-paths;
-    # google-ads/keywords|audience|campaign-ref, microsoft-ads/keywords|audience|campaign-ref,
+    # google-ads/keywords|audience|campaign-ref|geo-targets|user-lists, microsoft-ads/keywords|audience|campaign-ref,
     # (linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience, reddit-ads/keywords and (meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref are
     # ruled at the base path only. There is NO per-provider /metrics branch: the chart used to
     # route (google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics, but no design/
@@ -75,15 +75,16 @@ spec:
     #
     # audience-builder (LFXV2-2770) is a sibling of /briefs, not a descendant, so it
     # inherits nothing and needs its own alternation branch here plus its own RuleSet
-    # entries. Its ten leaves are enumerated instead of taking a free `(/.*)?` tail:
-    # compose-master writes real contact lists into a production HubSpot portal and is
-    # NOT idempotent, so admitting a path the service does not serve is worse here than
-    # for a read family. Two leaves are two segments deep (lists/search, qa/run), which
-    # is why a single-segment placeholder would not have covered the family either.
+    # entries. Its thirteen leaves are enumerated instead of taking a free `(/.*)?` tail:
+    # compose-master and custom/create write real contact lists into a production
+    # HubSpot portal and are NOT idempotent, so admitting a path the service does not
+    # serve is worse here than for a read family. Five leaves are two segments deep
+    # (lists/search, qa/run, custom/interpret|preview|create), which is why a
+    # single-segment placeholder would not have covered the family either.
     - matches:
       - path:
           type: RegularExpression
-          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|google-ads/(keywords|audience|campaign-ref)|microsoft-ads/(keywords|audience|campaign-ref)|(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience|reddit-ads/keywords|(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run))$
+          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|google-ads/(keywords|audience|campaign-ref|geo-targets|user-lists)|microsoft-ads/(keywords|audience|campaign-ref)|(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience|reddit-ads/keywords|(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run|custom/(interpret|preview|create)))$
       {{- if .Values.heimdall.enabled }}
       filters:
         - type: ExtensionRef

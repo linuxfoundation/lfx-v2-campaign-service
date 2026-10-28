@@ -59,7 +59,8 @@ func (s *BriefService) GetKeywordTargeting(ctx context.Context, p *briefs.GetKey
 // RemoveKeywordTargeting removes keywords from the keyword targeting of a Reddit or X campaign.
 //
 // Like ApplyKeywordActions it PERSISTS NOTHING — the targeting lives upstream — so it takes no
-// write lock, no If-Match, returns no ETag and publishes no index event. The row is read to
+// campaign write lock, no If-Match, returns no ETag and publishes no index event. (The Reddit
+// dispatcher serializes its whole-targeting write per ad group itself.) The row is read to
 // authorize and to reach the platform ids, and never written.
 func (s *BriefService) RemoveKeywordTargeting(ctx context.Context, p *briefs.RemoveKeywordTargetingPayload) (*briefs.KeywordTargetingRemovals, error) {
 	_, campaignRepo, _, orch, err := s.ready()
@@ -132,7 +133,7 @@ func keywordTargetingPlatformLabel(platform model.Provider) string {
 }
 
 // classifyKeywordTargetingError maps an orchestrator failure onto this service's error set. The
-// arms and their order are classifyKeywordActionError's, plus the four targeting-specific
+// arms and their order are classifyKeywordActionError's, plus the targeting-specific
 // refusals. verb is "read" or "remove". Adapter text is logged, never returned.
 func (s *BriefService) classifyKeywordTargetingError(ctx context.Context, verb, projectID, briefID, campaignID string, platform model.Provider, aerr error) error {
 	logFields := []any{"project_id", projectID, "brief_id", briefID, "campaign_id", campaignID, "platform", platform, "op", verb + "_keyword_targeting"}
@@ -155,6 +156,8 @@ func (s *BriefService) classifyKeywordTargetingError(ctx context.Context, verb, 
 		return &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id, so it has no keyword targeting"}
 	case errors.Is(aerr, domain.ErrKeywordTargetingChanged):
 		return &briefs.ConflictError{Code: "409", Message: "the ad group's targeting changed since it was read — nothing was removed; read the keyword targeting again and resend with its revision"}
+	case errors.Is(aerr, domain.ErrKeywordTargetingWriteInProgress):
+		return &briefs.ConflictError{Code: "409", Message: "another change to this ad group's keyword targeting is still in progress — nothing was removed; read the keyword targeting again and resend with its revision"}
 	case errors.Is(aerr, domain.ErrKeywordTargetingWouldEmpty):
 		return &briefs.ConflictError{Code: "409", Message: "this would remove every keyword, which stops keyword targeting and widens delivery — nothing was removed; keep at least one keyword, or remove the last one in the ad platform"}
 	case errors.Is(aerr, domain.ErrKeywordTargetingUnaddressable):

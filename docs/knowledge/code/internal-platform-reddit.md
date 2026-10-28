@@ -703,7 +703,11 @@ replaces the WHOLE targeting from a pre-read snapshot, so a retry after a commit
 first attempt could overwrite an operator's later change to another dimension and still pass the
 final comparison against that stale snapshot. A 429 is therefore UNCONFIRMED at once; otherwise
 the classification is `UpdateAdGroupBid`'s (transport, 3xx, 5xx UNCONFIRMED; any other 4xx
-definite), plus an UNCONFIRMED echo naming another keyword list. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
+definite), plus an UNCONFIRMED echo naming another keyword list. The file's CONCURRENCY note
+states what is and is not covered: two LFX writes on one ad group are serialized by the
+dispatcher's per-ad-group lock (held from the fresh read through the re-read); an edit made
+outside LFX between the read and the PATCH is still overwritten without the re-read noticing,
+because Reddit offers no conditional write. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
 
 ## Ad-group excluded keywords (`excluded_keywords.go`, LFXV2-2665)
 
@@ -853,3 +857,19 @@ next eligible `tryTake`, so while reporting traffic continues the map holds only
 the last two windows; if report requests stop, expired ledgers stay until the next request sweeps
 them (`TestReportBudgets_InactiveLedgersAreDropped`: after the window an inactive account's
 ledger is gone, and releasing the last slot returns the map to 0).
+
+## Create-time bidding (`CampaignInput.ManualCPCBid`, LFXV2-2665)
+
+`ManualCPCBid` zero is AUTOMATIC: campaign and ad group are created `BIDLESS` exactly as before. A
+positive value is MANUAL: campaign AND ad group `bid_strategy` `MANUAL_BIDDING` (under Campaign
+Budget Optimization the ad group's strategy and `bid_type` must match the campaign's) and the ad
+group's `bid_value` in micro-units — what `RedditDispatcher.WriteBid` checks before it re-bids.
+Only an objective whose `bid_type` is `CPC` can take it (`ManualCPCBidSupported`: `traffic`; the
+default objective, `conversions`, bids CPM), and `manualBidMicros` refuses an amount that is not a
+whole number of micro-units; both run before the first mutating call. The Reddit reference could
+not be re-fetched from the authoring environment (the host refuses automated fetches); the field
+names match the create body and the bid lever's, and a secondary reference states the CBO
+matching rule.
+
+`CampaignResult.BidApplied` is always true on success: this client never reuses a campaign or ad
+group by name.

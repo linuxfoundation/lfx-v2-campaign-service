@@ -1529,6 +1529,15 @@ func isMutatingMethod(method string) bool {
 	}
 }
 
+// rawBody is an `out` for do that receives a 2xx body's bytes UNDECODED. Every other `out` is
+// json.Unmarshal'd inside do, where a syntax-invalid 2xx becomes a transportError — the right
+// answer for a create (it may have committed) but not for a read whose caller can degrade an
+// unreadable answer more narrowly than failing the whole call. fetchAccountAdSetBudgets is that
+// caller: a body it cannot decode leaves only the ad-set budgets unknown (PR #316 review).
+// Everything before the decode — status, throttle, size and read-error classification — is
+// unchanged.
+type rawBody struct{ b []byte }
+
 // doRequest performs a Graph API call and decodes the JSON body into out.
 // It honors ctx via http.NewRequestWithContext. A 429 (rate-limited) response is
 // retried up to retryMax times with a bounded backoff (honoring Retry-After when
@@ -1888,6 +1897,11 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 			return apiErr
 		}
 
+		if sink, ok := out.(*rawBody); ok {
+			// The caller classifies the bytes itself — see rawBody.
+			sink.b = raw
+			return nil
+		}
 		if out != nil {
 			if err := json.Unmarshal(raw, out); err != nil {
 				// A 2xx we can't decode is AMBIGUOUS: Meta committed the mutation but we
@@ -2766,22 +2780,34 @@ type CampaignInput struct {
 	EndDate        string // YYYY-MM-DD
 	Placements     Placement
 	PixelID        string
-	// InstagramUserID is the Instagram account (IGSID) bound to the ad creative. It
-	// is REQUIRED for an ad set that requests any Instagram placement (the default
+	// InstagramUserID is the Instagram account (IGSID) bound to the ad creative. Meta
+	// needs it to publish an ad set that requests any Instagram placement (the default
 	// placements include Instagram Feed): without it Meta flags the ad "Please add
 	// Instagram account" and refuses to publish, even though the Page's connected
-	// Instagram account shows pre-selected in the editor. Sent only when supplied, so
-	// Facebook-only flows are unchanged. (Legacy Graph field name: instagram_actor_id.)
+	// Instagram account shows pre-selected in the editor. Sent only when supplied AND an
+	// Instagram placement is enabled (CreateCampaign clears it otherwise), so Facebook-only
+	// creatives are unchanged. An absent value is not refused (CheckPublishIdentity).
+	// (Legacy Graph field name: instagram_actor_id.)
 	InstagramUserID string
 	// DSABeneficiary and DSAPayor are the EU Digital Services Act "advertiser" and
 	// "payer" disclosures set on the ad set. Meta holds the ad set unpublishable
-	// ("Please add Advertiser" / "Please add Payer") for regulated locations until both
-	// are present. Both are sent only when supplied, so flows that target no regulated
-	// location are unchanged.
+	// ("Please add Advertiser" / "Please add Payer") for EU targets until both are
+	// present, so CheckPublishIdentity refuses an EU target without them. Both are sent
+	// only when supplied.
 	DSABeneficiary string
 	DSAPayor       string
 	HSToken        string
 	Variants       []AdVariant
+	// BidCap is the manual starting bid (LFXV2-2665), in whole units of the ad ACCOUNT's currency
+	// like Budget. ZERO means AUTOMATIC bidding: the ad set is created exactly as before, with
+	// bid_strategy LOWEST_COST_WITHOUT_CAP and billing_event IMPRESSIONS. A positive value creates
+	// the ad set as a LINK-CLICK BID CAP — bid_strategy LOWEST_COST_WITH_BID_CAP, billing_event
+	// LINK_CLICKS, bid_amount in minor units — the one shape the bid lever reads as a max cost per
+	// click (AdSetBid.CPCBidCap; see bid_update.go for the cited reasoning). Only an objective that
+	// optimizes for LINK_CLICKS can take it (ManualBidSupported); the amount must be a whole number
+	// of the currency's minor units, refused rather than rounded. Both are checked before the first
+	// mutating call.
+	BidCap float64
 	// ReconcileByName opts THIS call in to looking the campaign (and its ad set) up by
 	// name before creating, and reusing a PAUSED match instead of creating a second one.
 	//
@@ -2828,6 +2854,11 @@ type CampaignResult struct {
 	AdCount   int
 	MetaURL   string
 	Steps     []string
+	// BidApplied reports that THIS run created the ad set, which carries the bid strategy,
+	// billing event and bid cap (LFXV2-2665). A reused ad set keeps its existing bidding, so the
+	// dispatcher records the strategy and starting bid only when this is true. Set only on the
+	// successful result.
+	BidApplied bool
 	// Ads carries one entry per SUCCESSFULLY-created ad (so len(Ads) == AdCount), in
 	// variant order, each with its ad/creative ids and the image_hash attached to its
 	// creative. A per-variant failure contributes a Steps line, not an Ads entry.
@@ -3045,38 +3076,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// producing a malformed parse. Trim once here, ahead of both consumers.
 	in.RegistrationURL = strings.TrimSpace(in.RegistrationURL)
 
-	// Trim the disclosure/identity fields once here so the "sent only when supplied"
-	// guards below treat a whitespace-only value as absent (not as a blank string that
-	// Meta would reject) and every consumer sees the same normalized value.
-	in.InstagramUserID = strings.TrimSpace(in.InstagramUserID)
-	in.DSABeneficiary = strings.TrimSpace(in.DSABeneficiary)
-	in.DSAPayor = strings.TrimSpace(in.DSAPayor)
-
-	// A SUPPLIED InstagramUserID must be well-formed. It is optional (an empty value
-	// is a legitimate Facebook-only campaign and stays allowed), but when present it
-	// is only consumed at the CREATIVE POST — which runs after the campaign and ad set
-	// already exist, and where a 4xx is treated as a non-fatal per-variant failure.
-	// A malformed IGSID would therefore surface as a created_degraded campaign with no
-	// publishable ad: a billable resource that can never serve. The value is knowable-
-	// bad here, so reject it before the first mutating call, the same gate PageID and
-	// PixelID already get (Meta object ids are decimal strings).
-	if in.InstagramUserID != "" && !numericIDRE.MatchString(in.InstagramUserID) {
-		return nil, domain.PreflightRefusalf("instagramUserId %s is malformed: Meta Instagram account IDs (IGSID) are numeric strings", domain.CallerValue(in.InstagramUserID))
+	// The Instagram identity and EU DSA disclosures are trimmed in place and checked BEFORE any
+	// mutating call (CheckPublishIdentity): a malformed IGSID, a one-sided disclosure pair, or an
+	// EU-targeted ad set with no disclosures is deterministically unpublishable and knowable here.
+	// The dispatcher runs the same check synchronously at create time (a 400); this is the backstop
+	// for any path that skipped it.
+	pid := PublishIdentity{GeoTargets: in.GeoTargets, InstagramUserID: in.InstagramUserID, DSABeneficiary: in.DSABeneficiary, DSAPayor: in.DSAPayor}
+	if err := CheckPublishIdentity(&pid); err != nil {
+		return nil, err
 	}
-
-	// The two EU DSA disclosures are attached to the ad set independently, so exactly
-	// one could otherwise be sent. Meta requires BOTH to publish an ad set targeting a
-	// regulated location (docs/api-catalog.md), so a one-sided pair is deterministically
-	// incomplete: it either gets the ad set rejected after the campaign exists, or leaves
-	// it unpublishable. Unlike Meta's other publish-time requirements, one-sidedness is
-	// knowable HERE, so reject it before any mutating call. Both absent remains valid —
-	// that is the ordinary non-regulated flow and must not break.
-	if (in.DSABeneficiary == "") != (in.DSAPayor == "") {
-		supplied, missing := "dsaBeneficiary", "dsaPayor"
-		if in.DSABeneficiary == "" {
-			supplied, missing = "dsaPayor", "dsaBeneficiary"
-		}
-		return nil, domain.PreflightRefusalf("EU DSA disclosures are incomplete: %s was supplied without %s; Meta requires both to publish a regulated ad set — supply both or omit both", supplied, missing)
+	in.InstagramUserID, in.DSABeneficiary, in.DSAPayor = pid.InstagramUserID, pid.DSABeneficiary, pid.DSAPayor
+	// The Instagram identity is bound only when the ad set actually runs on Instagram; a
+	// Facebook-only ad set's creatives are left exactly as before.
+	if !UsesInstagram(in.Placements) {
+		in.InstagramUserID = ""
 	}
 
 	// Resolve the objective and validate deterministic inputs (placements and the
@@ -3264,6 +3277,29 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	budgetMinor, err := budgetToMinorUnits(in.Budget, offset)
 	if err != nil {
 		return nil, err
+	}
+	// The manual bid cap, encoded against the same offset and refused — never rounded — when it is
+	// not a whole number of minor units. Still before any mutating call.
+	var bidCapMinor int64
+	if in.BidCap != 0 {
+		if objParams.OptimizationGoal != OptimizationLinkClicks {
+			return nil, &bidAmountError{msg: fmt.Sprintf("manual bidding needs an objective that optimizes for link clicks (traffic or leads); %q optimizes for %s", objective, objParams.OptimizationGoal)}
+		}
+		if bidCapMinor, err = CreateBidMinorUnits(in.BidCap, offset); err != nil {
+			return nil, err
+		}
+		// A daily budget under BidCapDailyBudgetMultiple x the bid is refused by Meta at the
+		// ad-set POST, after the campaign exists — so refuse it here, in exact minor units. The
+		// product is checked BEFORE it is formed (PR #332 review): with a large fallback offset a
+		// legal bid could encode near int64's limit, and an overflowing 5x would wrap negative and
+		// pass every budget. CreateBidMinorUnits' exact bound (MaxExactMinorUnits) now keeps every
+		// encoded bid far below that; this stays as the backstop if that bound ever changes.
+		if !in.LifetimeBudget && bidCapMinor > math.MaxInt64/BidCapDailyBudgetMultiple {
+			return nil, &bidAmountError{msg: fmt.Sprintf("the bid is too large: the daily budget Meta requires for it (%d times the bid) cannot be represented at the ad account currency's minor-unit scale", BidCapDailyBudgetMultiple)}
+		}
+		if !in.LifetimeBudget && budgetMinor < BidCapDailyBudgetMultiple*bidCapMinor {
+			return nil, &bidAmountError{msg: fmt.Sprintf("a link-click bid cap needs a daily budget of at least %d times the bid (Meta's minimum)", BidCapDailyBudgetMultiple)}
+		}
 	}
 
 	// Step 2: geo filtering (done above, before Step 1) + campaign creation.
@@ -3510,6 +3546,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	} else {
 		adSetBody["daily_budget"] = budgetMinor
 	}
+	// MANUAL bidding: a bid cap charged per link click, the shape the bid lever accepts. The
+	// optimization goal is already LINK_CLICKS (checked above), so all three fields name the same
+	// click and bid_amount is a max cost per link click in minor units. Meta: "If you select this
+	// [LOWEST_COST_WITH_BID_CAP], you must provide a bid cap with the bid_amount field", and a
+	// non-impression billing event's bid is "for each occurrence, and has a minimum value 1 US
+	// cents" (Ad Set reference, https://developers.facebook.com/docs/marketing-api/reference/ad-campaign).
+	if bidCapMinor > 0 {
+		adSetBody["bid_strategy"] = BidStrategyBidCap
+		adSetBody["billing_event"] = BillingEventLinkClicks
+		adSetBody["bid_amount"] = bidCapMinor
+	}
 
 	// Reconcile the ad set by name too, same rationale as the campaign lookup above:
 	// adSetName is deterministic ("<EventName> - <objective label>", disambiguated by
@@ -3568,10 +3615,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return partialResult(), fmt.Errorf("meta ad set lookup UNCONFIRMED (reused campaign %s, PAUSED; cannot confirm ad set %q is absent; verify in Meta Ads Manager before retrying): %w", campaignID, adSetName, errors.Join(errLookupAmbiguous, adSetLookupErr))
 		}
 	}
+	adSetCreated := false
 	if existingAdSetID != "" {
 		adSetID = existingAdSetID
 		steps = append(steps, fmt.Sprintf("Ad set already exists by name: %s (not re-created)", adSetID))
+		steps = append(steps, fmt.Sprintf("Warning: bid NOT applied to reused ad set %s; its existing bidding is unchanged — verify its bid strategy in Meta Ads Manager", adSetID))
 	} else {
+		adSetCreated = true
 		var adSetResp createResponse
 		if err := c.doCreate(ctx, "/"+accountID+"/adsets", adSetBody, &adSetResp); err != nil {
 			// The campaign was already created (PAUSED). Return a partial result carrying
@@ -3715,7 +3765,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Success: partialResult() now carries the fully-created campaign, ad set, and
 	// ad count (same fields as a bespoke literal); reuse it so success and partial
 	// failure return an identically-shaped result.
-	return partialResult(), nil
+	r := partialResult()
+	r.BidApplied = adSetCreated
+	return r, nil
 }
 
 // objectStorySpec builds a creative's object_story_spec for a single-image (or,
@@ -4320,7 +4372,8 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 	// default includes Instagram Feed) is publishable. Without it Meta flags "Please add
 	// Instagram account" and blocks publish. instagram_user_id is a top-level adcreative
 	// field, sibling to object_story_spec — not nested inside it. Sent only when
-	// configured so Facebook-only creatives are unchanged.
+	// configured AND an Instagram placement is enabled (CreateCampaign clears it otherwise),
+	// so Facebook-only creatives are unchanged.
 	if in.InstagramUserID != "" {
 		creativeBody["instagram_user_id"] = in.InstagramUserID
 	}

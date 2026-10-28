@@ -47,12 +47,13 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
    `account-monitor` only, until LFXV2-2665) — because folding them together would rule
    `/accounts` for hubspot and `/emails` for google-ads, neither of which is served. `parity_test` fails if the
    RuleSet and the regex ever disagree, in either direction —
-   `briefs` [+ nested campaigns], `jobs`, `google-ads/keywords|audience|campaign-ref`, `microsoft-ads/keywords|audience|campaign-ref` (LFXV2-2665), `(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience` and `reddit-ads/keywords` (LFXV2-2665), `(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref` (LFXV2-2665), `hubspot`, and the nine
+   `briefs` [+ nested campaigns], `jobs`, `google-ads/keywords|audience|campaign-ref|geo-targets|user-lists`, `microsoft-ads/keywords|audience|campaign-ref` (LFXV2-2665), `(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience` and `reddit-ads/keywords` (LFXV2-2665), `(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref` (LFXV2-2665), `hubspot`, and the thirteen
    `audience-builder/*` leaves). The audience-builder family (LFXV2-2770) is enumerated
-   entry by entry rather than covered by an `audience-builder/**` wildcard: two of its
-   leaves are two segments deep (`lists/search`, `qa/run`) so a single-segment capture
-   would miss them, and `compose-master` writes real contact lists into a production
-   HubSpot portal and is not idempotent, so a `**` that also authorized the bare base and
+   entry by entry rather than covered by an `audience-builder/**` wildcard: five of its
+   leaves are two segments deep (`lists/search`, `qa/run`, `custom/interpret`,
+   `custom/preview`, `custom/create`) so a single-segment capture
+   would miss them, and `compose-master` and `custom/create` write real contact lists into a
+   production HubSpot portal and are not idempotent, so a `**` that also authorized the bare base and
    the unimplemented `signal-list` would rule paths the service does not serve.
    **There is no `{provider}/metrics` entry.** The rule used to authorize
    `/projects/:projectId/{google-ads,linkedin-ads,meta-ads,reddit-ads,twitter-ads}/metrics`,

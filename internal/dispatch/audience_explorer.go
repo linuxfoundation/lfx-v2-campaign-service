@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -74,6 +75,22 @@ type AudienceExplorer struct {
 	// now is injected so the quarter segment of a derived list name is testable. It
 	// is never nil after construction.
 	now func() time.Time
+	// sleep waits between re-lookups of a standing list whose create was refused or
+	// unconfirmed (findOrCreateStanding). Injected so tests do not wait; never nil after
+	// construction.
+	sleep func(ctx context.Context, d time.Duration) error
+}
+
+// sleepCtx waits d, or until ctx is done.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // NewAudienceExplorer constructs the explorer. fetcher, parser and llm may each be
@@ -96,7 +113,7 @@ func NewAudienceExplorer(builder *AudienceBuilder, fetcher eventPageReader, pars
 	if isNilIface(parser) {
 		parser = nil
 	}
-	return &AudienceExplorer{builder: builder, fetcher: fetcher, parser: parser, llm: llm, now: time.Now}
+	return &AudienceExplorer{builder: builder, fetcher: fetcher, parser: parser, llm: llm, now: time.Now, sleep: sleepCtx}
 }
 
 // isNilIface reports whether v is either an untyped nil interface or an interface
@@ -204,6 +221,16 @@ func (x *AudienceExplorer) Discover(ctx context.Context, projectID, eventURL str
 	if serr != nil {
 		return nil, serr
 	}
+	// The page named no brand: take the one this event's own lists are filed under.
+	// Resolved BEFORE classification, which reads the brand: a brand-scoped list
+	// (an education child filed under the brand) is only recognised with it.
+	if strings.TrimSpace(identity.BrandShort) == "" {
+		names := make([]string, 0, len(candidates))
+		for _, c := range candidates {
+			names = append(names, c.Name)
+		}
+		identity.BrandShort = audience.DominantBrand(names, identity.Name)
+	}
 
 	// Newest quarter first, so the inspection budget is spent on the lists most
 	// likely to be the current edition's rather than on whatever the search returned
@@ -244,7 +271,15 @@ func (x *AudienceExplorer) Discover(ctx context.Context, projectID, eventURL str
 		// silently drop the list from the outcome -- classify the list itself instead
 		// of falling through to the loop's `continue`, which would leave it neither
 		// classified nor reported.
-		if childIDs := audience.RollupChildIDs(filters); audience.IsRollup(filters) && len(childIDs) > 0 {
+		// A rollup named as a suppression, test or staff list is never expanded: its
+		// children are what it suppresses (or tests), and offering one would include the
+		// very contacts the parent exists to keep out. It is classified, and hidden, as
+		// itself. A master rollup is still expanded; its children are real signals.
+		parentHidden := false
+		if reason, hidden := audience.DiscoveryHidden(list.Name, false); hidden && reason != "master" {
+			parentHidden = true
+		}
+		if childIDs := audience.RollupChildIDs(filters); !parentHidden && audience.IsRollup(filters) && len(childIDs) > 0 {
 			for _, childID := range childIDs {
 				// Same reason as the outer loop: two rollups can name the same child, and
 				// the second costs no read but would still spend a budget slot.
@@ -292,6 +327,12 @@ func (x *AudienceExplorer) classifyInto(
 	seen[list.ListID] = struct{}{}
 
 	classification := audience.ClassifyList(list.Name, filters, identity)
+	// Never offered for inclusion: a suppression would put an opt-out audience into the
+	// send, and masters, test and staff lists each belong elsewhere or nowhere.
+	if _, hide := audience.DiscoveryHidden(list.Name, classification.Signal == audience.SignalUncertain); hide {
+		out.Hidden++
+		return
+	}
 	// `uncertain` is recorded as a visible row but NOT as a signal found. Counting it
 	// would suppress the missing-signal section for a portal where nothing was
 	// actually identified — the one case where that section matters most.
@@ -503,35 +544,27 @@ func (x *AudienceExplorer) SearchLists(ctx context.Context, projectID, query str
 	return out, nil
 }
 
-// SuppressionLists resolves the suppression rows an operator chooses from: the six
-// fixed portfolio-wide hygiene lists, the brand's own opt-out list, and the event's
-// own suppression list carried over from a prior edition.
+// SuppressionLists resolves the suppression rows an operator chooses from: the fixed
+// portfolio-wide hygiene lists, the brand's own opt-out list, the event's own suppression
+// list carried over from a prior edition, and -- when registrantsEvent names the current
+// edition -- that edition's current registrants. standing is the project's standing
+// standard suppression list when it already exists, for the picker to link to.
 //
-// A row whose list does not resolve is returned with an empty ListID rather than
+// A standard row whose list does not resolve is returned with an empty ListID rather than
 // dropped. An operator who cannot see that the GDPR row is unavailable will assume it
-// was applied.
-func (x *AudienceExplorer) SuppressionLists(ctx context.Context, projectID, brandShort, eventName string) (rows []audience.SuppressionRow, err error) {
+// was applied. It creates nothing: a registrants list that does not exist yet comes back
+// with WillCreate set and is created when an attach or compose applies it.
+func (x *AudienceExplorer) SuppressionLists(ctx context.Context, projectID, brandShort, eventName, registrantsEvent string) (rows []audience.SuppressionRow, standing *audience.ListRow, err error) {
 	client, fromSystem, err := x.builder.client(ctx, projectID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() { err = systemScopedHubSpot(err, fromSystem) }()
 
 	keywords := audience.EventKeywords(eventName)
-	out := make([]audience.SuppressionRow, 0, len(audience.StandardSuppressionTerms)+2)
-
-	for _, term := range audience.StandardSuppressionTerms {
-		row := audience.SuppressionRow{Key: term.Key, Label: term.Label, Category: audience.SuppressionCategoryStandard}
-		hit, berr := x.bestMatch(ctx, client, []string{term.SearchTerm}, func(name string) bool {
-			return audience.MatchesStandardSuppression(name, term.SearchTerm)
-		})
-		if berr != nil {
-			return nil, berr
-		}
-		if hit != nil {
-			row.ListID, row.Name, row.Size, row.HubSpotURL = hit.ListID, hit.Name, sizeOf(hit), hit.AppURL
-		}
-		out = append(out, row)
+	out, err := x.standardRows(ctx, client, false)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	if probe := audience.BrandOptOutProbe(brandShort); probe != "" {
@@ -539,7 +572,7 @@ func (x *AudienceExplorer) SuppressionLists(ctx context.Context, projectID, bran
 			return audience.MatchesBrandOptOut(name, brandShort)
 		})
 		if berr != nil {
-			return nil, berr
+			return nil, nil, berr
 		}
 		if hit != nil {
 			out = append(out, audience.SuppressionRow{
@@ -559,7 +592,7 @@ func (x *AudienceExplorer) SuppressionLists(ctx context.Context, projectID, bran
 			return audience.MatchesEventSuppression(name, keywords)
 		})
 		if berr != nil {
-			return nil, berr
+			return nil, nil, berr
 		}
 		if hit != nil {
 			out = append(out, audience.SuppressionRow{
@@ -574,11 +607,50 @@ func (x *AudienceExplorer) SuppressionLists(ctx context.Context, projectID, bran
 		}
 	}
 
+	// No row for an edition without its year: its list would match nobody (see
+	// audience.RegistrantsEditionOK), and offering it ticked would read as applied.
+	if edition := strings.TrimSpace(registrantsEvent); audience.RegistrantsEditionOK(edition) {
+		name := audience.CurrentRegistrantsName(edition)
+		row := audience.SuppressionRow{
+			Key:      "current_registrants",
+			Label:    "Current registrants - " + edition,
+			Category: audience.SuppressionCategoryCurrentRegistrants,
+			Name:     name,
+		}
+		// Lenient like the standard rows: a failed search leaves the row with no list id and
+		// WillCreate unset (the picker cannot say whether it exists) rather than failing the
+		// whole picker. A permission rejection still fails it -- see standardRows.
+		hit, lerr := exactList(ctx, client, name)
+		switch {
+		case lerr != nil && hubspot.IsPermissionRejection(lerr):
+			return nil, nil, lerr
+		case lerr != nil:
+			slog.WarnContext(ctx, "current registrants list search failed", "error", lerr)
+		case hit != nil:
+			row.ListID, row.Size, row.HubSpotURL = hit.ListID, sizeOf(hit), hit.AppURL
+		default:
+			row.WillCreate = true
+		}
+		out = append(out, row)
+	}
+
+	// The standing list is a link for the picker, never a gate: a failed search omits it.
+	hit, lerr := exactList(ctx, client, audience.StandardSuppressionName(projectID))
+	switch {
+	case lerr != nil && hubspot.IsPermissionRejection(lerr):
+		return nil, nil, lerr
+	case lerr != nil:
+		slog.WarnContext(ctx, "standing standard suppression list search failed", "error", lerr)
+	case hit != nil:
+		row := listRow(hit)
+		standing = &row
+	}
+
 	// The brand and event rows are APPENDED rather than resolved-or-placeheld,
-	// because unlike the fixed six they are not expected to exist: most events have
+	// because unlike the fixed set they are not expected to exist: most events have
 	// no prior edition's suppression list, and an empty row for one would read as a
 	// missing required suppression.
-	return out, nil
+	return out, standing, nil
 }
 
 // ExistingMasterLists finds master lists already composed for this event family,
@@ -881,6 +953,8 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 		row := audience.LastSentEmail{
 			EmailID:          r.row.email.ID,
 			EmailName:        r.row.email.Name,
+			Subject:          r.row.email.Subject,
+			MatchReason:      audience.LastSentMatchReason(r.row.email.Name, r.row.email.Subject, terms),
 			HubSpotURL:       sendDetailsURL(client, r.row.email),
 			IncludedLists:    []audience.ListBrief{},
 			SuppressionLists: []audience.ListBrief{},
@@ -1125,7 +1199,17 @@ func (x *AudienceExplorer) listBriefs(ctx context.Context, client *hubspot.Clien
 	seenIDs := map[string]struct{}{}
 	seenNames := map[string]struct{}{}
 	add := func(brief audience.ListBrief) {
-		if !brief.Missing {
+		// An UNRESOLVED row keeps its link on purpose: the read failed, so the operator's
+		// next step is to open the list themselves, and only a confirmed deletion makes
+		// the link pointless.
+		//
+		// Linked by the id ListURL's route can actually resolve. That route is objectLists,
+		// which takes v3 (ILS) ids only, so a row still carrying its LEGACY id -- one that
+		// never mapped, or that resolved by legacy name alone -- has no v3 id to link to,
+		// and putting the legacy id through this route opens HubSpot on a "list not found"
+		// page. On an unresolved row that reads as exactly the deletion the row is saying it
+		// cannot confirm, so no link beats a wrong one.
+		if !brief.Missing && brief.ListID != brief.ResolvedFromLegacyID {
 			brief.HubSpotURL = client.ListURL(brief.ListID)
 		}
 		// The name-based drop applies ONLY to a brief resolved from a legacy id, which is what
@@ -1144,27 +1228,59 @@ func (x *AudienceExplorer) listBriefs(ctx context.Context, client *hubspot.Clien
 	}
 	for _, id := range audience.UniqueIDs(ids) {
 		brief := audience.ListBrief{ListID: id, Missing: true}
-		if list, err := client.GetList(ctx, id); err == nil && list != nil {
+		list, err := client.GetList(ctx, id)
+		if err == nil && list != nil {
 			brief.Name, brief.Size, brief.Missing = list.Name, sizeOf(list), false
-		} else if name := client.LegacyListName(ctx, id); name != "" {
+		} else if name, _ := client.LegacyListName(ctx, id); name != "" {
 			// A v3 id that only resolves under the legacy API still names a real list.
 			brief.Name, brief.Missing = name, false
+		} else if err != nil && !hubspot.IsNotFound(err) {
+			// Only a 404 is evidence the list is gone. A throttle, a 401/403 or a 5xx says
+			// the READ failed and the list's existence is still unknown -- reporting that as
+			// deleted sends an operator to rebuild a list they still have. Decided on the v3
+			// error alone: the legacy lookup above is enrichment for an id this API already
+			// answered about, and it is only reached when that answer was not a usable list.
+			brief.Missing, brief.Unresolved = false, true
 		}
 		add(brief)
 	}
 	for _, id := range audience.UniqueIDs(legacyIDs) {
-		if mapped := client.ListIDForLegacy(ctx, id); mapped != "" {
+		// readFailed carries the same distinction as the v3 loop across the fallback below:
+		// only a 404 is evidence the list is gone, and a non-404 failure ANYWHERE on this
+		// path -- the id mapping, the mapped read, or the legacy name lookup -- leaves the
+		// list's existence unknown. It is set for a failed MAPPING too: a throttled or
+		// 401'd idmapping call reports nothing about whether the list exists, and shipping
+		// that row as `missing` is the #238 failure through a second door.
+		mapped, mapErr := client.ListIDForLegacy(ctx, id)
+		readFailed := mapErr != nil && !hubspot.IsNotFound(mapErr)
+		// listID is what the recovery link is built from. ListURL's objectLists route takes
+		// v3 (ILS) ids only -- a legacy id opens HubSpot on a "list not found" page, which
+		// reads as exactly the deletion this row is saying it cannot confirm -- so a row
+		// that reaches the unresolved branch holding a mapping links to the MAPPED id.
+		listID := id
+		if mapped != "" {
 			if _, dup := seenIDs[mapped]; dup {
 				continue
 			}
-			if list, err := client.GetList(ctx, mapped); err == nil && list != nil {
+			list, err := client.GetList(ctx, mapped)
+			if err == nil && list != nil {
 				add(audience.ListBrief{ListID: mapped, ResolvedFromLegacyID: id, Name: list.Name, Size: sizeOf(list)})
 				continue
 			}
+			// mapped != "" means the mapping call itself answered, so mapErr was nil and
+			// this is the first read failure on the row rather than an overwrite.
+			readFailed = err != nil && !hubspot.IsNotFound(err)
+			if readFailed {
+				listID = mapped
+			}
 		}
-		brief := audience.ListBrief{ListID: id, ResolvedFromLegacyID: id, Missing: true}
-		if name := client.LegacyListName(ctx, id); name != "" {
-			brief.Name, brief.Missing = name, false
+		brief := audience.ListBrief{ListID: listID, ResolvedFromLegacyID: id, Missing: !readFailed, Unresolved: readFailed}
+		if name, err := client.LegacyListName(ctx, id); name != "" {
+			brief.Name, brief.Missing, brief.Unresolved = name, false, false
+		} else if err != nil && !hubspot.IsNotFound(err) {
+			// The name lookup is the last word on this path, so its failure decides the row
+			// the same way the v3 error does above: unknown, not deleted.
+			brief.Missing, brief.Unresolved = false, true
 		}
 		add(brief)
 	}
@@ -1222,6 +1338,17 @@ func newerSuppression(a, b *hubspot.List) bool {
 // "unavailable": an authentication outage rendered as "this portal has no GDPR lists", which is
 // the one answer that must never be guessed.
 func (x *AudienceExplorer) bestMatch(ctx context.Context, client *hubspot.Client, probes []string, accept func(name string) bool) (*hubspot.List, error) {
+	return x.bestMatchWith(ctx, client, probes, accept, false)
+}
+
+// bestMatchStrict is bestMatch for a caller that WRITES from the answer: any failed search is
+// returned rather than read as "no such list", because a missed list would then be written out
+// of a shared list (see resolveSuppressions).
+func (x *AudienceExplorer) bestMatchStrict(ctx context.Context, client *hubspot.Client, probes []string, accept func(name string) bool) (*hubspot.List, error) {
+	return x.bestMatchWith(ctx, client, probes, accept, true)
+}
+
+func (x *AudienceExplorer) bestMatchWith(ctx context.Context, client *hubspot.Client, probes []string, accept func(name string) bool, strict bool) (*hubspot.List, error) {
 	var best *hubspot.List
 	for _, probe := range probes {
 		hits, err := client.SearchLists(ctx, probe)
@@ -1229,7 +1356,7 @@ func (x *AudienceExplorer) bestMatch(ctx context.Context, client *hubspot.Client
 			// A revoked token fails EVERY probe, so absorbing them all reported an empty
 			// hygiene set for what is really a credential problem — and bypassed the
 			// deferred systemScopedHubSpot classifier that turns it into a typed 503.
-			if hubspot.IsPermissionRejection(err) {
+			if strict || hubspot.IsPermissionRejection(err) {
 				return nil, err
 			}
 			slog.WarnContext(ctx, "suppression list search failed", "error", err)
@@ -1376,12 +1503,12 @@ func sumKnownSizes(sizes []*int64) (total int, allKnown bool) {
 // Compose
 // ---------------------------------------------------------------------------
 
-// ComposeMaster creates the combined suppression list and then the master list in the
-// project's portal.
+// ComposeMaster creates the master list in the project's portal, excluding the selected
+// suppressions through standing lists (see resolveSuppressions).
 //
-// Ordering is fixed and load-bearing: the suppression list must exist before the
-// master can reference its id inside every branch of the union. That is also what
-// makes this NOT idempotent — a failure between the two creates the orphan
+// Ordering is fixed and load-bearing: the standing suppression lists must exist before the
+// master can reference their ids inside every branch of the union. They are reused by name,
+// so only the master create can leave state to reconcile -- the unconfirmed create
 // ComposePartialError describes.
 func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, in audience.ComposeInput) (*audience.ComposeOutcome, error) {
 	// Reject blank EXCLUSIONS on the raw input, before ExclusionIDs drops them. Dropping one
@@ -1444,107 +1571,82 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 		masterName = audience.MasterListName(identity, "Master", x.now())
 	}
 
-	suppressionName := audience.CombinedSuppressionName(in.Name, identity, x.now())
+	// The exclusions resolve to STANDING lists the master excludes directly: the project's
+	// standard suppression list (reused, never one per compose) and each other selected list,
+	// plus the edition's current registrants when asked. They are resolved before the master
+	// exists, so a failure here leaves nothing to reconcile -- both are found by name on a retry.
+	// The master repeats every exclusion on every inclusion branch, so its size is checked
+	// against MaxMasterFilterConditions from the resolved counts before anything is written.
+	standard, others, rerr := x.resolveSuppressions(ctx, client, projectID, include, exclude, in.CurrentRegistrantsEvent,
+		func(exclusions int) error { return audience.CheckMasterExpansion(len(include), exclusions) })
+	if rerr != nil {
+		return nil, fmt.Errorf("audience compose: %w", systemScopedHubSpot(rerr, fromSystem))
+	}
+	excludeIDs := make([]string, 0, 1+len(others))
+	if standard != nil {
+		excludeIDs = append(excludeIDs, standard.ListID)
+	}
+	excludeIDs = append(excludeIDs, others...)
 
-	// HubSpot list names are unique per portal and the derived names repeat for every
-	// compose against one event, so a second compose was refused upstream and surfaced as an
-	// opaque 500 ("master lists are not building"). Resolve the names BEFORE creating
-	// anything: when either derived name is already taken, both are tagged with the
-	// selection's fingerprint, and a tagged master that already exists is THIS selection's
-	// earlier compose — reused rather than duplicated or refused.
-	names, nerr := x.resolveComposeNames(ctx, client, masterName, suppressionName, len(exclude) > 0,
-		audience.SelectionFingerprint(include, exclude))
+	// HubSpot list names are unique per portal and the derived name repeats for every compose
+	// against one event, so a second compose was refused upstream and surfaced as an opaque 500
+	// ("master lists are not building"). Resolve the name BEFORE creating: when the derived name
+	// is taken, it is tagged with the selection's fingerprint, and a tagged master that already
+	// exists is THIS selection's earlier compose -- reused rather than duplicated or refused.
+	//
+	// The fingerprint covers the RESOLVED exclusions (excludeIDs: the standing list's id, each
+	// other list, the registrants list's id), not the requested ones. A reused master excludes
+	// exactly the ids it was built with, so its identity must be those ids: the same requested
+	// selection resolves to a DIFFERENT standing list in another project sharing the portal, or
+	// after a standing or registrants list is recreated, and reusing on the request alone would
+	// hand back a master excluding lists this compose no longer reports.
+	names, nerr := x.resolveComposeNames(ctx, client, masterName, "", false,
+		audience.SelectionFingerprint(include, excludeIDs))
 	if nerr != nil {
 		return nil, fmt.Errorf("audience compose: check list names: %w", systemScopedHubSpot(nerr, fromSystem))
 	}
-	masterName, suppressionName = names.master, names.suppression
+	masterName = names.master
+	outcome := &audience.ComposeOutcome{
+		Suppression:            standard,
+		AttachedSuppressionIDs: others,
+		SourceListIDs:          include,
+		PortalID:               portalID,
+	}
 	if names.existingMaster != nil {
-		// REFUSED rather than reused when exclusions were requested and the tagged suppression
-		// list is gone. The master is fingerprinted with the selection, so finding it means this
-		// exact selection was composed before -- WITH its suppression. If that list has since
-		// been deleted or renamed in the portal, reusing the master alone returns success with
-		// `Suppression == nil`, `audienceFromCompose` records the audience with no suppression
-		// ids, and the operator believes exclusions apply to a send that now has none. For an
-		// exclusion list that is an opt-out roster, that emails people who asked not to be.
-		//
-		// Falling through to create is wrong too: the master already exists under this
-		// fingerprint, so a create would duplicate it. The honest answer is to refuse and say
-		// which list is missing, so the operator can restore or rename it.
-		if len(exclude) > 0 && names.existingSuppression == nil {
-			return nil, fmt.Errorf("audience compose: the master list %q already exists for this selection but its suppression list %q is missing from the portal, so the exclusions cannot be reapplied: %w",
-				names.master, names.suppression, audience.ErrListNotFound)
-		}
-		outcome := &audience.ComposeOutcome{
-			Master:        audience.ComposedList{ListRow: listRow(names.existingMaster)},
-			SourceListIDs: include,
-			PortalID:      portalID,
-		}
-		if names.existingSuppression != nil {
-			outcome.Suppression = &audience.ComposedList{ListRow: listRow(names.existingSuppression)}
-		}
+		outcome.Master = audience.ComposedList{ListRow: listRow(names.existingMaster)}
 		return outcome, nil
 	}
 
-	var suppression *audience.ComposedList
 	var filter json.RawMessage
 	var err error
-
-	if len(exclude) > 0 {
-		suppressionFilter, ferr := audience.MasterListFilter(exclude)
-		if ferr != nil {
-			return nil, ferr
-		}
-		created, cerr := x.createList(ctx, projectID, suppressionName, suppressionFilter)
-		if cerr != nil {
-			if hubspot.IsUnconfirmed(cerr) {
-				return nil, &audience.ComposePartialError{
-					Suppression:            audience.ComposedList{ListRow: audience.ListRow{Name: suppressionName}},
-					SuppressionUnconfirmed: true,
-					Err:                    fmt.Errorf("audience compose: create combined suppression list: %w", cerr),
-				}
-			}
-			return nil, fmt.Errorf("audience compose: create combined suppression list: %w", cerr)
-		}
-		suppression = created
-		filter, err = audience.MasterListWithSuppressionFilter(include, created.ListID)
+	if len(excludeIDs) > 0 {
+		filter, err = audience.MasterListWithSuppressionsFilter(include, excludeIDs)
 	} else {
 		filter, err = audience.MasterListFilter(include)
 	}
 	if err != nil {
-		if suppression != nil {
-			return nil, &audience.ComposePartialError{Suppression: *suppression, Err: err}
-		}
 		return nil, err
 	}
 
-	var master *audience.ComposedList
-	master, cerr = x.createList(ctx, projectID, masterName, filter)
+	master, cerr := x.createList(ctx, projectID, masterName, filter)
 	if cerr != nil {
 		wrapped := fmt.Errorf("audience compose: create master list: %w", cerr)
 		if hubspot.IsUnconfirmed(cerr) {
-			partial := &audience.ComposePartialError{MasterName: masterName, Err: wrapped}
-			if suppression != nil {
-				partial.Suppression = *suppression
-			}
-			return nil, partial
-		}
-		if suppression != nil {
-			return nil, &audience.ComposePartialError{Suppression: *suppression, Err: wrapped}
+			return nil, &audience.ComposePartialError{MasterName: masterName, Err: wrapped}
 		}
 		return nil, wrapped
 	}
-
-	return &audience.ComposeOutcome{
-		Master:        *master,
-		Suppression:   suppression,
-		SourceListIDs: include,
-		PortalID:      portalID,
-	}, nil
+	outcome.Master = *master
+	return outcome, nil
 }
 
 // AttachExisting verifies lists that ALREADY exist and returns them as a compose outcome
 // that can be recorded as a brief's audience: the "send to the same lists as this earlier
-// email" path, which composes nothing and so cannot hit a duplicate name or leave an orphan.
+// email" path. It composes no master. The selected suppressions go through
+// resolveSuppressions: a full set of standard lists is replaced by the project's standing
+// standard list (the outcome's Suppression), and every other list -- plus the current
+// registrants of registrantsEvent, when set -- is attached as is. Those two standing lists are
+// the only lists an attach may create.
 //
 // Every id is caller-supplied, so each is read back from the project's portal: a mistyped or
 // foreign id is a 404 now rather than a send that fails at dispatch. The portal is resolved
@@ -1553,7 +1655,7 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 // includeIDs are the lists the send goes to: one (the master_list_id form) or several (the
 // include_list_ids form, sent to directly with no composed master). The first is reported as
 // the outcome's Master, which the audience records as its platform_master_list_id.
-func (x *AudienceExplorer) AttachExisting(ctx context.Context, projectID string, includeIDs, suppressionIDs []string) (outcome *audience.ComposeOutcome, err error) {
+func (x *AudienceExplorer) AttachExisting(ctx context.Context, projectID string, includeIDs, suppressionIDs []string, registrantsEvent string) (outcome *audience.ComposeOutcome, err error) {
 	include := audience.UniqueIDs(includeIDs)
 	if len(include) == 0 {
 		return nil, audience.ErrNoInclusionLists
@@ -1614,13 +1716,19 @@ func (x *AudienceExplorer) AttachExisting(ctx context.Context, projectID string,
 	if strings.TrimSpace(portalID) == "" {
 		return nil, audience.ErrComposePortalUnconfirmed
 	}
-	return &audience.ComposeOutcome{
-		Master:                 audience.ComposedList{ListRow: listRow(master)},
-		SourceListIDs:          sourceIDs,
-		PortalID:               portalID,
-		AttachedSuppressionIDs: suppress,
-		Attached:               true,
-	}, nil
+	outcome = &audience.ComposeOutcome{
+		Master:        audience.ComposedList{ListRow: listRow(master)},
+		SourceListIDs: sourceIDs,
+		PortalID:      portalID,
+		Attached:      true,
+	}
+	standard, rest, rerr := x.resolveSuppressions(ctx, client, projectID, sourceIDs, suppress, registrantsEvent, nil)
+	if rerr != nil {
+		return nil, fmt.Errorf("audience attach: %w", rerr)
+	}
+	outcome.Suppression = standard
+	outcome.AttachedSuppressionIDs = rest
+	return outcome, nil
 }
 
 // composeNames is the outcome of resolveComposeNames.
@@ -1714,7 +1822,13 @@ func (x *AudienceExplorer) createList(ctx context.Context, projectID, name strin
 //
 // It creates and changes nothing, and its verdict is evidence for a human decision
 // rather than a gate — see internal/audience/builder_qa.go.
-func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool) (outcome *audience.QaOutcome, err error) {
+//
+// sendSuppressionIDs are suppression lists the send will apply on top of the list
+// (HubSpot's send-time exclusions). They are read like the list's own exclusions —
+// by name, one hop into a combined suppression — and count toward the suppression
+// and completeness checks. One that cannot be read counts for nothing, so a
+// mistyped id can never turn a FAIL into a PASS.
+func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool, sendSuppressionIDs []string) (outcome *audience.QaOutcome, err error) {
 	client, fromSystem, err := x.builder.client(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -1781,13 +1895,187 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		}
 	}
 
-	exclusionNames := x.exclusionNames(ctx, client, cache, filters, nameByID)
+	excludedIDs := audience.ReferencedListIDs(filters, "NOT_IN_LIST")
+	alreadyExcluded := make(map[string]bool, len(excludedIDs))
+	for _, id := range excludedIDs {
+		alreadyExcluded[id] = true
+	}
+	// The audited list, or a list EVERY branch of it requires membership of, sent as a
+	// "suppression" would exclude the audience itself; it is no suppression and must not
+	// count toward check 3. A list only some branches include ("A OR B") is a real
+	// exclusion at send time: B minus A remains.
+	notSuppression := map[string]bool{strings.TrimSpace(listID): true}
+	if list != nil {
+		for _, id := range audience.RequiredInListIDs(list.FilterBranch) {
+			notSuppression[id] = true
+		}
+	}
+	// Every send-time id is VERIFIED first (readable, a contact list, not the audience
+	// itself), independently of whether the list's own filters already exclude it: that
+	// dedup is for check 3's count only, and a flattened NOT_IN_LIST can be local to one
+	// branch. sentAway is what the send provably does not reach, for check 4: each
+	// verified suppression, plus every list its own filter tree fully covers (one hop:
+	// ComposeMaster's combined suppression is "R OR OptOut").
+	sendTimeIDs := make([]string, 0, len(sendSuppressionIDs))
+	sentAway := map[string]bool{}
+	// editionsAway are registration editions a verified suppression's own tree excludes
+	// whole (an inline "registered for KubeCon 2026" predicate), for check 4.
+	editionsAway := map[string]bool{}
+	for _, id := range audience.UniqueIDs(sendSuppressionIDs) {
+		if notSuppression[id] {
+			continue
+		}
+		l, _, rerr := x.listWithFilters(ctx, client, cache, id)
+		if rerr != nil {
+			continue
+		}
+		// A company or deal list cannot exclude a contact, so it is no suppression
+		// (AttachExisting refuses one on the same test).
+		if l != nil && l.ObjectTypeID != "" && l.ObjectTypeID != "0-1" {
+			continue
+		}
+		// A wrapper that fully covers the audience itself (the audited list, or a list
+		// every branch requires) excludes every contact: it is no suppression either.
+		var covered []string
+		if l != nil {
+			covered = audience.CoveredListIDs(l.FilterBranch)
+		}
+		if slices.ContainsFunc(covered, func(c string) bool { return notSuppression[c] }) {
+			continue
+		}
+		// Nor is one whose covered lists together cover every path through the audience
+		// ("1 OR 2" suppressed by a "1 OR 2" wrapper leaves nobody to send to).
+		if list != nil && audience.TreeCoveredBy(list.FilterBranch, covered) {
+			continue
+		}
+		sentAway[id] = true
+		for _, c := range covered {
+			sentAway[c] = true
+		}
+		if l != nil {
+			for _, e := range audience.CoveredEditions(l.FilterBranch) {
+				editionsAway[strings.ToLower(strings.TrimSpace(e))] = true
+			}
+		}
+		if alreadyExcluded[id] {
+			continue
+		}
+		if _, done := nameByID[id]; !done {
+			nameByID[id] = x.listName(ctx, client, cache, id)
+		}
+		sendTimeIDs = append(sendTimeIDs, id)
+	}
+	// Each suppression alone may leave recipients while all of them together leave
+	// none ("A OR B" suppressed by separate A and B). Then the set is no suppression,
+	// as a single wrapper covering the audience is not: its credit is withheld.
+	if list != nil && len(sentAway) > 0 {
+		union := make([]string, 0, len(sentAway))
+		for id := range sentAway {
+			union = append(union, id)
+		}
+		// An audience made only of exact registrations is empty, too, when the verified
+		// suppressions' inline predicates exclude every one of its editions.
+		editions, exclusive := audience.RegistrationEvidence(list.FilterBranch)
+		allEditionsAway := exclusive && len(editions) > 0
+		for _, e := range editions {
+			if !editionsAway[strings.ToLower(strings.TrimSpace(e))] {
+				allEditionsAway = false
+			}
+		}
+		if audience.TreeCoveredBy(list.FilterBranch, union) || allEditionsAway {
+			sendTimeIDs = sendTimeIDs[:0]
+			sentAway = map[string]bool{}
+			editionsAway = map[string]bool{}
+		}
+	}
+	exclusionNames := x.exclusionNames(ctx, client, cache, append(excludedIDs, sendTimeIDs...), nameByID)
 
 	// The names this list INCLUDES, for check 4. One hop is not needed here, unlike the
 	// exclusions: ComposeMaster wraps exclusions in a single Combined-Suppression list whose
 	// own name says nothing, whereas inclusions are referenced directly.
+	//
+	// The audited list's OWN name counts too. A list used directly as the send — this
+	// edition's registrants picked with "use an existing list" — includes no other list,
+	// so judging only its references passed the very list check 4 exists to catch
+	// (seen live on AgntCon Japan's registrants list).
 	inclusionNames := make([]string, 0, 4)
+	// When the list's own registration predicates name the editions it selects, they are
+	// the evidence, not its display name: "26Q4 - KubeCon 2026 - Event Registration" built
+	// for registered_for ["KubeCon 2025"] holds only 2025's registrants. The name is the
+	// fallback for a static or otherwise opaque list.
+	// A list the audited list excludes on EVERY path is no recipient either, exactly as a
+	// send-time suppression is: a composed master's combined suppression clears the
+	// registrants it covers (as a list or inline), so they are not current-registrant
+	// evidence. A branch-local NOT_IN_LIST excludes only from that branch and is ignored.
+	for _, id := range audience.ExcludedOnEveryPathIDs(list.FilterBranch) {
+		sentAway[id] = true
+		if ex, _, xerr := x.listWithFilters(ctx, client, cache, id); xerr == nil && ex != nil {
+			for _, c := range audience.CoveredListIDs(ex.FilterBranch) {
+				sentAway[c] = true
+			}
+			for _, e := range audience.CoveredEditions(ex.FilterBranch) {
+				editionsAway[strings.ToLower(strings.TrimSpace(e))] = true
+			}
+		}
+	}
+
+	// Every edition a registration branch explicitly includes is evidence, less any a
+	// verified suppression excludes whole; the display name is evidence too unless those
+	// branches are the list's whole membership.
+	// emptied are lists whose whole membership is excluded: in sentAway, or made only of
+	// registrations whose every edition is away. Used below to tell an audience its
+	// exclusions leave nobody, which check 4 must not report as a pass.
+	emptied := map[string]bool{}
+	for id := range sentAway {
+		emptied[id] = true
+	}
+	// localAway are the editions an included list excludes on every one of its own
+	// paths. That exclusion clears the list's own registration branches, but not the
+	// master's other branches, so it is credited to that list alone.
+	localAway := func(raw json.RawMessage) map[string]bool {
+		away := map[string]bool{}
+		for _, id := range audience.ExcludedOnEveryPathIDs(raw) {
+			if ex, _, xerr := x.listWithFilters(ctx, client, cache, id); xerr == nil && ex != nil {
+				for _, e := range audience.CoveredEditions(ex.FilterBranch) {
+					away[strings.ToLower(strings.TrimSpace(e))] = true
+				}
+			}
+		}
+		return away
+	}
+	addEvidence := func(raw json.RawMessage, name string, local map[string]bool) (allAway bool) {
+		editions, exclusive := audience.RegistrationEvidence(raw)
+		allAway = exclusive && len(editions) > 0
+		for _, e := range editions {
+			if key := strings.ToLower(strings.TrimSpace(e)); !editionsAway[key] && !local[key] {
+				allAway = false
+				inclusionNames = append(inclusionNames, e+" Registrants")
+			}
+		}
+		if !exclusive {
+			if name = strings.TrimSpace(name); name != "" {
+				inclusionNames = append(inclusionNames, name)
+			}
+		}
+		return allAway
+	}
+	auditedAllAway := addEvidence(list.FilterBranch, list.Name, nil)
+	// A list the send itself suppresses (sentAway, verified above) is not sent to: this
+	// edition's registrants included as "A OR B" and excluded at send time leave only B.
+	// A flattened NOT_IN_LIST reference may be local to one branch, so it is no proof
+	// the list is excluded from the whole audience and is not used here.
 	for _, id := range audience.ReferencedListIDs(filters, "IN_LIST") {
+		if sentAway[id] {
+			continue
+		}
+		// A referenced list is judged the same way: its registration branches' editions
+		// (less any suppressed whole), and its name unless they are its whole membership.
+		if ref, _, rerr := x.listWithFilters(ctx, client, cache, id); rerr == nil && ref != nil {
+			if addEvidence(ref.FilterBranch, nameByID[id], localAway(ref.FilterBranch)) {
+				emptied[id] = true
+			}
+			continue
+		}
 		if name := nameByID[id]; name != "" {
 			inclusionNames = append(inclusionNames, name)
 		}
@@ -1795,8 +2083,27 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 
 	signalMapping := audience.CheckSignalMapping(filters, nameByID)
 	suppression := audience.CheckSuppression(exclusionNames, targetsEU, targetsCA)
-	completeness := audience.CheckExclusionCompleteness(filters)
+	completeness := audience.CheckExclusionCompleteness(filters, len(sendTimeIDs))
 	currentRegistrants := audience.CheckCurrentRegistrants(eventName, inclusionNames)
+	// When the list's own exclusions (and the send's) leave nobody, removing this
+	// edition's registrants is not a pass: the send would reach no one. Reported so the
+	// operator sees it before sending, as the send-time credit guard does for check 3.
+	if strings.TrimSpace(eventName) != "" {
+		ids := make([]string, 0, len(emptied))
+		for id := range emptied {
+			ids = append(ids, id)
+		}
+		if auditedAllAway || audience.TreeCoveredBy(list.FilterBranch, ids) {
+			currentRegistrants = audience.Check{
+				Verdict: audience.VerdictNeedsVerify,
+				Findings: []audience.Finding{{
+					Severity: audience.SeverityHigh,
+					Message:  "This list's exclusions remove every contact it includes, so the send would reach no one.",
+					Fix:      "Check the list's inclusions and exclusions: remove the exclusion that covers the whole audience, or include contacts it does not cover.",
+				}},
+			}
+		}
+	}
 
 	findings := make([]audience.Finding, 0, 7)
 	findings = append(findings, signalMapping.Findings...)
@@ -1823,27 +2130,30 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 // exclusionNames collects the names of everything the list excludes, following ONE
 // hop into each excluded list's own inclusions.
 //
-// The hop is required, not defensive: ComposeMaster wraps every exclusion in a single
-// "… - Combined Suppression" list, so a master composed by this service excludes ONE
-// list whose name says nothing about GDPR or opt-outs. Without the hop, every list
-// this service creates would fail its own suppression check.
+// The hop is required, not defensive: a master composed by this service excludes the
+// project's standing "LFX Standard Suppressions - <project>" list (and older ones a
+// "… - Combined Suppression" list), whose name says nothing about GDPR or opt-outs.
+// Without the hop, every list this service creates would fail its own suppression check.
 //
 // Exactly one hop. Suppression lists reference each other, and an unbounded walk
 // across a portal's exclusion graph would spend the request's deadline reading lists
 // whose bearing on this audience is already indirect.
-func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.Client, cache map[string]*hubspot.List, filters []audience.ListFilter, nameByID map[string]string) []string {
+func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.Client, cache map[string]*hubspot.List, excludedIDs []string, nameByID map[string]string) []string {
 	out := make([]string, 0, 8)
-	for _, id := range audience.ReferencedListIDs(filters, "NOT_IN_LIST") {
+	for _, id := range excludedIDs {
 		if name := nameByID[id]; name != "" {
 			out = append(out, name)
 		}
-		_, childFilters, err := x.listWithFilters(ctx, client, cache, id)
-		if err != nil {
+		wrapper, _, err := x.listWithFilters(ctx, client, cache, id)
+		if err != nil || wrapper == nil {
 			// An unreadable exclusion is reported by its own name only. Failing the
 			// whole audit would withhold the two checks that did complete.
 			continue
 		}
-		for _, childID := range audience.ReferencedListIDs(childFilters, "IN_LIST") {
+		// Only the children the wrapper FULLY covers are credited: an "A OR B" wrapper
+		// excludes everyone in A and in B, but "GDPR AND Opt-Outs" excludes only the
+		// contacts in both, so neither protection is applied by it.
+		for _, childID := range audience.CoveredListIDs(wrapper.FilterBranch) {
 			if name, done := nameByID[childID]; done {
 				if name != "" {
 					out = append(out, name)
@@ -1874,7 +2184,11 @@ func (x *AudienceExplorer) listName(ctx context.Context, client *hubspot.Client,
 		cache[listID] = list
 		return list.Name
 	}
-	return client.LegacyListName(ctx, listID)
+	// The error is discarded on purpose: this resolver's contract is "" for genuinely
+	// unresolvable, and a name that could not be read and a list that has no legacy name
+	// are the same answer to a caller that only wants to print one.
+	name, _ := client.LegacyListName(ctx, listID)
+	return name
 }
 
 // listWithFilters fetches a list with its filters and flattens them, consulting

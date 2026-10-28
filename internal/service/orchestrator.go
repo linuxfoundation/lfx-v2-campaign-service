@@ -441,6 +441,31 @@ type AccountMonitorReader interface {
 		accountID string, days int) (*model.AccountMonitorRead, error)
 }
 
+// AccountMonitorScoper is an OPTIONAL dispatcher capability, discovered by type assertion like
+// AccountMonitorReader: it reduces the project's campaign scope to the upstream campaign ids that
+// can be read under the monitored account (linuxfoundation/lfx-self-serve-ops#897).
+//
+// Implementing it is this codebase's record that the platform's ad account is SHARED across
+// foundations (docs/architecture.md, "Account Tenancy"). An account read on such a platform
+// returns every foundation's campaigns, so ReadAccountCampaignMetrics and
+// ReadReportedAccountCampaigns keep only the rows whose ids this returns, and a platform that
+// implements it never answers the monitor account-wide. A platform that does not implement it
+// keeps the account-wide read.
+//
+// MonitorScopePrecheck runs FIRST, before the scope is read: the credential-free refusals the
+// dispatcher's own monitor read would answer (a disabled monitor, a malformed accountID), so a
+// 400 the platform's read promises does not turn into a 200 or a 409 depending on which campaigns
+// the project happens to have recorded. It must not resolve a credential or call the platform.
+//
+// MonitorScopeForAccount's scope is never empty: the orchestrator answers an empty scope with an
+// empty monitor before calling it. ANY entry recorded under an account other than accountID must
+// fail the call with an error wrapping ErrCampaignAccountMismatch, never be dropped: a partly
+// matching scope reduced to the matching ids would be reported as the project's whole picture.
+type AccountMonitorScoper interface {
+	MonitorScopePrecheck(accountID string) error
+	MonitorScopeForAccount(scope []model.ProjectCampaignScope, accountID string) ([]string, error)
+}
+
 // EmailSearcher is an OPTIONAL dispatcher capability: search the marketing emails reachable
 // through a project's stored connection. Discovered by type assertion like StatusToggler,
 // MetricsReader and AccountLister; a dispatcher that doesn't implement it yields a clean
@@ -905,6 +930,19 @@ func (o *Orchestrator) recordUpstream(ctx context.Context, platform model.Provid
 	o.dispatchMetrics().RecordUpstreamCall(ctx, platform, operation, outcome, time.Since(start).Seconds())
 }
 
+// recordLockedUpstream is recordUpstream for a call that may wait on this service's own
+// keyword-targeting write lock (Reddit's whole-targeting writes). A refusal AT the lock —
+// domain.IsKeywordTargetingLockRefusal: a timeout or an unavailable lock — made no platform call,
+// so nothing is recorded; otherwise the time spent waiting for the lock is taken out of the
+// measured latency, so LFX's own contention never reads as the platform's errors or latency.
+// ErrKeywordTargetingChanged is still recorded: the fresh read behind it was a platform call.
+func (o *Orchestrator) recordLockedUpstream(ctx context.Context, platform model.Provider, operation string, start time.Time, lockWait time.Duration, err error) {
+	if domain.IsKeywordTargetingLockRefusal(err) {
+		return
+	}
+	o.recordUpstream(ctx, platform, operation, start.Add(min(lockWait, time.Since(start))), err)
+}
+
 // Upstream call outcome tokens, mirroring internal/infrastructure/metrics for the
 // same reason as the dispatch outcomes above.
 const (
@@ -1281,6 +1319,10 @@ type platformResult struct {
 	// campaign's own persisted Result blob (see hubspotURLFromResult) — nothing
 	// upstream of the campaign row carries it.
 	HubspotURL string `json:"hubspot_url,omitempty"`
+	// Warnings lists best-effort steps of a SUCCESSFUL dispatch that did not apply (for the email
+	// channel, a hero image that could not be re-hosted). Read back from the campaign's Result
+	// blob like HubspotURL; empty for every other platform.
+	Warnings []string `json:"warnings,omitempty"`
 	// Reconcile is set only for domain.ErrDispatchClaimLost: the identifying fields of what the
 	// dispatch created (see reconcileRef), because the campaign row that would have held its
 	// result blob was never written. GetJob returns it as PlatformResult.reconcile (see
@@ -1306,6 +1348,21 @@ func hubspotURLFromResult(result json.RawMessage) string {
 		return ""
 	}
 	return probe.HubspotURL
+}
+
+// hubspotWarningsFromResult reads the warnings a HubSpot dispatch stashed in the campaign's
+// Result blob. Any other platform's blob has no "warnings" key and decodes to nil.
+func hubspotWarningsFromResult(result json.RawMessage) []string {
+	if len(result) == 0 {
+		return nil
+	}
+	var probe struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(result, &probe); err != nil {
+		return nil
+	}
+	return probe.Warnings
 }
 
 // Start creates a queued job for the brief and launches dispatch asynchronously,
@@ -1725,7 +1782,19 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// The lookup returns the slot's LATEST live campaign, and slotVersion is which campaign
 	// on the slot this dispatch claims: the latest one for a retry, the one after it for a
 	// deliberate new version, and the first when the slot is empty.
-	existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p, variant)
+	//
+	// A new-version request also needs the highest slot version ever used, and reads it in the
+	// same statement as the latest (see GetCampaignByPlatformWithMaxSlotVersion for why one).
+	var (
+		existing *model.Campaign
+		maxUsed  int
+		lerr     error
+	)
+	if opts.NewVersion {
+		existing, maxUsed, lerr = o.campaigns.GetCampaignByPlatformWithMaxSlotVersion(ctx, brief.ProjectID, brief.ID, p, variant)
+	} else {
+		existing, lerr = o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p, variant)
+	}
 	slotVersion := model.FirstSlotVersion
 	switch {
 	case lerr == nil && isReusableCampaign(existing) && opts.NewVersion:
@@ -1737,7 +1806,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// latest campaign complete makes one more. Two CONCURRENT ones compute the same
 		// next version and the claim lets exactly one through (the other is skipped or
 		// reuses the winner), which is what covers a double-submitted form.
-		slotVersion = existing.SlotVersion + 1
+		//
+		// Numbered past every version the slot has EVER used, not just the live latest: a
+		// deleted campaign keeps its upstream name, so reusing its version would compose that
+		// name again and a name-based lookup would return the deleted campaign as this one.
+		slotVersion = max(existing.SlotVersion, maxUsed) + 1
 	case lerr == nil && isReusableCampaign(existing):
 		// A COMPLETED campaign (created / created_degraded — both terminal, since a
 		// re-dispatch can't repair a degraded sub-step). Reuse it idempotently. A
@@ -1746,6 +1819,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		res.OK = true
 		res.CampaignID = existing.PlatformCampaignID
 		res.HubspotURL = hubspotURLFromResult(existing.Result)
+		res.Warnings = hubspotWarningsFromResult(existing.Result)
 		return res
 	case lerr == nil:
 		// The latest campaign is unfinished, so claim ITS slot version, new-version request
@@ -1758,6 +1832,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// (pending status WITH an upstream id, recorded for reconciliation after a
 		// mid-flow failure). In both cases fall through to the claim path, which
 		// reconciles it rather than falsely reporting the pending orphan as a success.
+	case errors.Is(lerr, domain.ErrNotFound) && opts.NewVersion && maxUsed > 0:
+		// No LIVE campaign, but the slot has used versions before and every one was deleted.
+		// Number past them for the same reason as above: version 1 would compose the deleted
+		// campaign's upstream name again and a name-based lookup would return it.
+		slotVersion = maxUsed + 1
 	case errors.Is(lerr, domain.ErrNotFound):
 		// No campaign for this pair yet — fall through to claim/dispatch.
 	default:
@@ -1782,16 +1861,19 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// index arbitrates). The INSERT runs in a short transaction under the per-slot advisory
 	// lock — it waits only for local statements on the same slot, and nothing is held once
 	// it commits, so no connection is held across the platform call below.
-	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, variant, slotVersion, jobID, by)
-	if errors.Is(err, domain.ErrSlotVersionUnavailable) {
-		// Expected until the release after this one drops 000022's one-campaign-per-slot
-		// index, which still rejects the second campaign. That drop is staged one release
-		// after the per-slot lock ships, so an image-only rollback to the previous binary
-		// (which takes no slot lock) still finds the index in place. Nothing was written or
-		// created, so this is a plain refusal rather than a fault.
-		slog.WarnContext(ctx, "new campaign version refused: the schema still allows one live campaign per slot",
-			"platform", p, "job_id", jobID, "project_id", brief.ProjectID, "slot_version", slotVersion)
-		res.Error = "creating another campaign on this platform for the same brief is not available yet"
+	// Every new_version claim, whichever version it targets, also refuses a version a concurrent
+	// request completed and deleted since this request read the slot (ClaimNewCampaignVersion): the
+	// live-row index alone would admit it again and recompose the deleted campaign's upstream name.
+	claim := o.campaigns.ClaimCampaignDispatch
+	if opts.NewVersion {
+		claim = o.campaigns.ClaimNewCampaignVersion
+	}
+	claimed, existing, err := claim(ctx, brief.ProjectID, brief.ID, p, variant, slotVersion, jobID, by)
+	if errors.Is(err, domain.ErrSlotVersionUsed) {
+		// A concurrent request took this version, completed and was deleted between our read and
+		// our claim: the losing half of a double submit, so skipped like any other.
+		res.Skipped = true
+		res.Error = "skipped: a concurrent new_version request already used this version"
 		return res
 	}
 	if err != nil {
@@ -1809,6 +1891,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			res.OK = true
 			res.CampaignID = existing.PlatformCampaignID
 			res.HubspotURL = hubspotURLFromResult(existing.Result)
+			res.Warnings = hubspotWarningsFromResult(existing.Result)
 			return res
 		}
 		// A retained partial ORPHAN is distinguishable from a claim held by a still-
@@ -2180,6 +2263,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	res.OK = true
 	res.CampaignID = campaign.PlatformCampaignID
 	res.HubspotURL = hubspotURLFromResult(campaign.Result)
+	res.Warnings = hubspotWarningsFromResult(campaign.Result)
 	return res
 }
 
@@ -2864,9 +2948,10 @@ func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platf
 	return accounts, nil
 }
 
-// ReadAccountCampaignMetrics reads every campaign visible on accountID over the trailing
-// `days` days, for the account-scoped monitor endpoints, with the account's currency when the
-// dispatcher reports it. Modeled directly on ReadAccounts above: type-assert for the reader
+// ReadAccountCampaignMetrics reads the campaigns on accountID over the trailing `days` days, for
+// the account-monitor endpoints, with the account's currency when the dispatcher reports it. On a
+// shared-tenancy platform (AccountMonitorScoper) only the project's own campaigns are returned;
+// elsewhere every campaign visible on the account is. Modeled directly on ReadAccounts above: type-assert for the reader
 // (AccountMonitorReader first, then AccountMetricsReader), bound the call, record it through
 // recordUpstream, and treat a nil result with no error as a contract violation rather than an
 // authoritative empty answer.
@@ -2879,6 +2964,17 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 	reader, rowsOnly := d.(AccountMetricsReader)
 	if !withCurrency && !rowsOnly {
 		return nil, fmt.Errorf("%w: %s", ErrAccountMetricsUnsupported, platform)
+	}
+	// On a shared-tenancy platform the project's own campaigns are established BEFORE any
+	// upstream call, and an empty scope answers with an empty monitor without contacting the
+	// platform at all: the account read below would otherwise return every foundation's
+	// campaigns to a project that has none of its own (lfx-self-serve-ops#897).
+	scopeIDs, scoped, serr := o.scopeAccountMonitor(ctx, projectID, platform, accountID)
+	if serr != nil {
+		return nil, serr
+	}
+	if scoped && len(scopeIDs) == 0 {
+		return &model.AccountMonitorRead{Rows: []model.AccountCampaignMetrics{}}, nil
 	}
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
@@ -2908,7 +3004,119 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 	// value reaches the response, and a dispatcher that forgot would otherwise publish whatever
 	// the platform sent.
 	read.Currency = model.NormalizeCurrencyCode(read.Currency)
+	// The upstream read is account-wide; only the project's own campaigns leave this service.
+	// Filtered before the rule engine runs, so action items and totals describe the same rows.
+	if scoped {
+		scopeIDs, serr = o.revalidateAccountMonitorScope(ctx, projectID, platform, accountID, scopeIDs)
+		if serr != nil {
+			return nil, serr
+		}
+		read.Rows = filterMonitorRows(read.Rows, scopeIDs)
+	}
 	return read, nil
+}
+
+// scopeAccountMonitor resolves the project's campaign scope for an account-monitor read.
+//
+// scoped is false when platform's dispatcher does not implement AccountMonitorScoper: its
+// account is not recorded as shared, and the monitor keeps its account-wide read. Otherwise the
+// scoper's MonitorScopePrecheck runs before anything is read, and ids
+// is the set of upstream campaign ids the monitor may return — EMPTY when the project has no
+// campaigns on platform, which the caller answers without any upstream call, exactly as
+// ReadKeywordPerformance does. A live scope entry recorded under a different account than
+// accountID fails the read (ErrCampaignAccountMismatch → 409) rather than shrinking the set.
+//
+// The project's SOFT-DELETED campaigns are in ids too: a local delete does not stop the upstream
+// campaign (BriefService.DeleteCampaign), and the monitor is where one still spending is seen.
+// Each is checked on its own by the same MonitorScopeForAccount rule as the live scope, and kept
+// unless the scoper refuses it (a different recorded account; on Google Ads, Reddit and X, also an
+// unrecorded one; an id the platform cannot read). A refused one is dropped and logged, never a 409: a deleted row
+// cannot be re-dispatched or reconciled, so a 409 on it would have no remedy.
+func (o *Orchestrator) scopeAccountMonitor(ctx context.Context, projectID string, platform model.Provider, accountID string) (ids map[string]bool, scoped bool, err error) {
+	scoper, ok := o.dispatchers[platform].(AccountMonitorScoper)
+	if !ok {
+		return nil, false, nil
+	}
+	// Before the scope, so a disabled monitor or a malformed account id answers its 400 whatever
+	// the project has recorded — an empty scope would otherwise answer 200 for both.
+	if err := scoper.MonitorScopePrecheck(accountID); err != nil {
+		return nil, true, err
+	}
+	scope, err := o.projectCampaignScope(ctx, projectID, platform)
+	if err != nil {
+		return nil, true, err
+	}
+	ids = make(map[string]bool, len(scope))
+	if len(scope) > 0 {
+		campaignIDs, serr := scoper.MonitorScopeForAccount(scope, accountID)
+		if serr != nil {
+			return nil, true, serr
+		}
+		for _, id := range campaignIDs {
+			ids[id] = true
+		}
+	}
+	deleted, err := o.campaigns.ListProjectPlatformDeletedCampaignIDs(ctx, projectID, platform)
+	if err != nil {
+		return nil, true, fmt.Errorf("resolve deleted campaign scope for project %s on %s: %w", projectID, platform, err)
+	}
+	for _, d := range deleted {
+		campaignIDs, derr := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{d}, accountID)
+		if derr != nil {
+			slog.InfoContext(ctx, "account monitor: soft-deleted campaign not shown, it does not fit the monitored account",
+				"project_id", projectID, "platform", string(platform), "error", safeErrSummary(derr))
+			continue
+		}
+		for _, id := range campaignIDs {
+			ids[id] = true
+		}
+	}
+	return ids, true, nil
+}
+
+// revalidateAccountMonitorScope shrinks the initial authorization using ONE fresh database
+// snapshot after all platform work. It never admits a newly acquired id, and a database
+// failure returns no data. This catches takeovers committed during either precheck query
+// or the platform read; it does not lock ownership through response delivery.
+func (o *Orchestrator) revalidateAccountMonitorScope(ctx context.Context, projectID string, platform model.Provider, accountID string, initial map[string]bool) (map[string]bool, error) {
+	scope, err := o.campaigns.ListProjectPlatformMonitorCampaignIDs(ctx, projectID, platform)
+	if err != nil {
+		return nil, fmt.Errorf("revalidate account monitor scope for project %s on %s: %w", projectID, platform, err)
+	}
+	scoper, ok := o.dispatchers[platform].(AccountMonitorScoper)
+	if !ok {
+		return nil, fmt.Errorf("revalidate account monitor scope: %s has no monitor scoper", platform)
+	}
+	ids := make(map[string]bool, len(initial))
+	for _, entry := range scope {
+		if !initial[entry.PlatformCampaignID] {
+			continue
+		}
+		current, scopeErr := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{entry}, accountID)
+		if scopeErr != nil {
+			// Changed or unreadable provenance cannot authorize the captured campaign.
+			continue
+		}
+		for _, id := range current {
+			if initial[id] {
+				ids[id] = true
+			}
+		}
+	}
+	return ids, nil
+}
+
+// filterMonitorRows keeps only the rows whose upstream campaign id is in ids, matched by
+// PlatformCampaignID exactly as the insight report merges match theirs (scopeCampaignIDs). The
+// result is never nil, so an empty answer still serializes as `[]`.
+func filterMonitorRows(rows []model.AccountCampaignMetrics, ids map[string]bool) []model.AccountCampaignMetrics {
+	out := make([]model.AccountCampaignMetrics, 0, len(ids))
+	for _, r := range rows {
+		if ids[r.PlatformCampaignID] {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // ProbeConnection verifies a project's own stored connection against the platform, for the
@@ -3772,9 +3980,10 @@ func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string
 	}
 	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
 	defer cancel()
+	callCtx, lockWaited := domain.WithLockWaitRecorder(callCtx)
 	start := time.Now()
 	outcomes, aerr := adder.AddNegativeKeywords(callCtx, projectID, platform, campaign, keywords, revision)
-	o.recordUpstream(ctx, platform, opNegativeKeywords, start, aerr)
+	o.recordLockedUpstream(ctx, platform, opNegativeKeywords, start, lockWaited(), aerr)
 	if aerr != nil {
 		return nil, aerr
 	}
@@ -3834,9 +4043,10 @@ func (o *Orchestrator) RemoveKeywordTargeting(ctx context.Context, projectID str
 	}
 	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
 	defer cancel()
+	callCtx, lockWaited := domain.WithLockWaitRecorder(callCtx)
 	start := time.Now()
 	outcomes, rerr := remover.RemoveKeywordTargeting(callCtx, projectID, platform, campaign, removals, revision)
-	o.recordUpstream(ctx, platform, opRemoveKeywordTargeting, start, rerr)
+	o.recordLockedUpstream(ctx, platform, opRemoveKeywordTargeting, start, lockWaited(), rerr)
 	if rerr != nil {
 		return nil, rerr
 	}

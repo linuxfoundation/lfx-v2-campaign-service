@@ -1028,11 +1028,11 @@ func assertJSONEqual(t *testing.T, column string, got json.RawMessage, want stri
 }
 
 // TestLivePairCheckMatchesSurveyStageNames is TestLivePairCheckMatchesEmailStageNames for the
-// SURVEY arm of the same constraint, added with 000047.
+// SURVEY arm of the same constraint, added with 000052.
 //
 // It is a separate test rather than a loop over both surfaces because the failure it describes is
 // different. The email arm's risk is a stage drifting out of a long-standing list; the survey
-// arm's is the arm being absent entirely -- a database that stopped at 000046 has no survey arm at
+// arm's is the arm being absent entirely -- a database that stopped at 000051 has no survey arm at
 // all, so every survey brief fails its write as a 500 while the API enum accepts the stage
 // happily. Scoping to the arm is what tells those two apart.
 func TestLivePairCheckMatchesSurveyStageNames(t *testing.T) {
@@ -1052,7 +1052,7 @@ func TestLivePairCheckMatchesSurveyStageNames(t *testing.T) {
 	// the same scoping reason the email test gives, applied to the other arm.
 	marker := strings.Index(def, "'survey'::text")
 	if marker < 0 {
-		t.Fatalf("the live pair CHECK has no survey arm: migration 000047 has not run against "+
+		t.Fatalf("the live pair CHECK has no survey arm: migration 000052 has not run against "+
 			"this database, so every survey brief fails its write as a 500 while the API enum "+
 			"accepts the stage. constraint: %s", def)
 	}

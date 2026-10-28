@@ -65,7 +65,18 @@ var accountMonitorExamplePlatforms = map[string]accountMonitorExamplePlatform{
 	},
 	"monitor-meta-ads-account": {
 		evaluate: func(rows []model.AccountCampaignMetrics, days int, _ map[string]any) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem, error) {
-			r, i := rules.EvaluateMetaMonitor(rows, days, accountMonitorExampleNow)
+			// The Meta evaluator takes no clock: each row carries the Insights window its spend
+			// covers, which the wire response does not publish. Stamp the window the read would
+			// have sent at the example's instant for `days` — UTC calendar days ending today,
+			// inclusive (meta.fetchAccountCampaignInsights) — as the dispatcher does.
+			until := accountMonitorExampleNow.UTC()
+			since := until.AddDate(0, 0, -(days - 1))
+			stamped := make([]model.AccountCampaignMetrics, len(rows))
+			for k, m := range rows {
+				m.MetricsWindowStart, m.MetricsWindowEnd = since.Format(time.DateOnly), until.Format(time.DateOnly)
+				stamped[k] = m
+			}
+			r, i := rules.EvaluateMetaMonitor(stamped)
 			return r, i, nil
 		},
 		activeStatus: "ACTIVE", flightDates: true, totalBudget: true, currency: true,

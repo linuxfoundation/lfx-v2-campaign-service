@@ -322,6 +322,18 @@ func (r *observingCreativeAssetRepo) GetAssetSize(_ context.Context, _, _, _ str
 	return 0, domain.ErrNotFound
 }
 
+func (r *observingCreativeAssetRepo) GetAssetMetadata(_ context.Context, _, _, _ string) (*model.CreativeAsset, error) {
+	return nil, domain.ErrNotFound
+}
+
+func (r *observingCreativeAssetRepo) ListAssets(_ context.Context, _, _ string) ([]*model.CreativeAsset, int, int64, error) {
+	return nil, 0, 0, domain.ErrNotFound
+}
+
+func (r *observingCreativeAssetRepo) DeleteAsset(_ context.Context, _, _, _ string) error {
+	return domain.ErrNotFound
+}
+
 // TestUploadCreativeAsset_DecodeReservationIsReleasedWhenTheDecodeFails covers the arm a
 // happy-path fix is most likely to skip.
 //

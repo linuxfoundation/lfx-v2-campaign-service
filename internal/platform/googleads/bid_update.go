@@ -122,9 +122,10 @@ func (c *Client) UpdateAdGroupCPCBid(ctx context.Context, adGroupID string, bidM
 		Update:     adGroupCPCBidUpdate{ResourceName: "customers/" + c.account.CustomerID + "/adGroups/" + id, CpcBidMicros: bidMicros},
 		UpdateMask: "cpc_bid_micros",
 	}}}
-	body, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), req, true)
+	body, retries, err := c.doRequestCounted(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), req, true)
 	if err != nil {
-		return fmt.Errorf("google-ads ad group %s cpc bid update failed: %w", id, err)
+		return retriedUnconfirmed("ad group cpc bid update", retries,
+			fmt.Errorf("google-ads ad group %s cpc bid update failed: %w", id, err))
 	}
 	// A 2xx is not yet a confirmed write, and the caller's contract is that a nil return means
 	// the platform APPLIED the change — it persists the new bid on that basis. Both failures

@@ -369,9 +369,12 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 		RegistrationURL: "https://events.example.org/kubecon",
 		Objective:       "traffic",
 		GeoTargets:      []string{"US", "DE"},
-		Budget:          500,
-		StartDate:       "2026-08-01",
-		EndDate:         "2026-08-31",
+		// DE is in the EU, so the DSA disclosures are required to create (CheckPublishIdentity).
+		DSABeneficiary: "The Linux Foundation",
+		DSAPayor:       "The Linux Foundation",
+		Budget:         500,
+		StartDate:      "2026-08-01",
+		EndDate:        "2026-08-31",
 		Variants: []AdVariant{
 			{PrimaryText: "Join us", Headline: "KubeCon 2026"},
 			{PrimaryText: "Register", Headline: "See you there"},
@@ -3413,7 +3416,7 @@ func TestCreateCampaignRejectsHugeBudget(t *testing.T) {
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "exceeds the representable minor-unit range") {
+	if err == nil || !strings.Contains(err.Error(), "too large to represent exactly") {
 		t.Fatalf("err = %v, want offset-aware overflow rejection", err)
 	}
 }
@@ -3502,7 +3505,7 @@ func TestCreateCampaignRejectsOffsetOverflowBeforeAnyPost(t *testing.T) {
 		GeoTargets: []string{"US"}, Budget: 1000, StartDate: "2026-08-01", EndDate: "2026-08-31",
 		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "exceeds the representable minor-unit range") {
+	if err == nil || !strings.Contains(err.Error(), "too large to represent exactly") {
 		t.Fatalf("err = %v, want it to reject an offset-scaled overflow before mutation", err)
 	}
 }

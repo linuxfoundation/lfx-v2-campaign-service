@@ -63,6 +63,27 @@ type redditConfig struct {
 	CallToAction      string `json:"callToAction"`
 	ConversionPixelID string `json:"conversionPixelId"`
 	VideoGoal         string `json:"videoGoal"`
+	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
+	// (BIDLESS, unchanged); manual creates a MANUAL_BIDDING CPC campaign — see redditBidPlan.
+	Bidding *biddingConfig `json:"bidding,omitempty"`
+}
+
+// redditBidPlan resolves redditConfig's bidding choice. Manual bidding creates campaign and ad
+// group as MANUAL_BIDDING with bid_type CPC and the ad group's bid_value — the shape the bid lever
+// accepts — so it needs the traffic objective, the one Reddit objective here that bids CPC
+// (reddit.ManualCPCBidSupported; the default objective, conversions, bids CPM). Reddit sets bids in
+// micro-units, so the generic whole-micro rule is its precision rule too. Reddit publishes no
+// fixed minimum or maximum bid this service could check ahead of it; its refusal fails the job.
+func redditBidPlan(cfg redditConfig) (bidPlan, error) {
+	const key = "redditConfig"
+	plan, err := resolveBidding(key, cfg.Bidding)
+	if err != nil || !plan.manual() {
+		return plan, err
+	}
+	if !reddit.ManualCPCBidSupported(cfg.Objective) {
+		return bidPlan{}, biddingInvalid(key, "manual bidding sets a cost-per-click bid, which needs objective \"traffic\" (the other objectives bid per thousand impressions); use automatic bidding for this objective")
+	}
+	return plan, nil
 }
 
 // briefFields is the subset of a brief's JSON blobs the adapters read. The brief
@@ -120,12 +141,21 @@ type RedditDispatcher struct {
 	// A nil assetURLs is the feature OFF.
 	assets    redditAssetSizer
 	assetURLs *assetsign.Signer
+	// targetingLock serializes the whole-targeting keyword writes (RemoveKeywordTargeting,
+	// AddNegativeKeywords) per ad group: in-process by default, the Postgres advisory lock once
+	// the container binds it (SetKeywordTargetingWriteLock), so replicas serialize too.
+	targetingLock domain.KeywordTargetingWriteLock
+	// targetingCooldown is how long the lock is kept after an UNCONFIRMED whole-targeting write
+	// (releaseRedditTargeting): domain.KeywordTargetingUnconfirmedCooldown; a field only so tests
+	// can shorten it.
+	targetingCooldown time.Duration
 }
 
 // NewRedditDispatcher builds the adapter from the connection repo + encryptor.
 func NewRedditDispatcher(repo connReader, enc domain.Encryptor, opts ...reddit.Option) *RedditDispatcher {
 	return &RedditDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts,
-		audience: newRedditReportGuard[reddit.AudienceInsights](), keywords: newRedditReportGuard[reddit.KeywordPerformance]()}
+		audience: newRedditReportGuard[reddit.AudienceInsights](), keywords: newRedditReportGuard[reddit.KeywordPerformance](),
+		targetingLock: newLocalTargetingLock(domain.KeywordTargetingLockWait), targetingCooldown: domain.KeywordTargetingUnconfirmedCooldown}
 }
 
 // Dispatch implements service.PlatformDispatcher for Reddit.
@@ -158,6 +188,24 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	if err := unmarshalPlatformConfig(config, "redditConfig", &cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The bidding choice, validated before any upstream call (PreflightCreate normally refused a
+	// bad one already, as a 400). Recorded on every row this dispatch returns.
+	if err := checkBiddingShape(config, "redditConfig"); err != nil {
+		return nil, notCreated(err)
+	}
+	plan, err := redditBidPlan(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
+	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
+	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
+	var bidApplied bool
+	defer func() {
+		if err == nil && bidApplied {
+			plan.stamp(camp)
+		}
+	}()
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -222,6 +270,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		CallToAction:      cfg.CallToAction,
 		ConversionPixelID: cfg.ConversionPixelID,
 		VideoGoal:         cfg.VideoGoal,
+		ManualCPCBid:      plan.amount,
 	}
 
 	// The reddit client's contract: (nil, err) ONLY when NOTHING was (or may have
@@ -270,6 +319,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	// `created_degraded` status (the warning text is already carried in Result). A
 	// human/monitor reconciles the ad; the campaign is not silently "succeeded".
 	// Mirrors the twitter adapter's PromotedTweetWarning handling.
+	bidApplied = result.BidApplied
 	camp = campaignFromReddit(ctx, result, cfg)
 	if strings.TrimSpace(result.AdWarning) != "" {
 		camp.Status = campaignStatusCreatedDegraded
@@ -960,6 +1010,9 @@ func redditRunStatus(status string) (string, error) {
 //
 // Kept verbatim: Objective (refused by the client unless it names a known objective),
 // ImageAssetID (a stored asset key), numbers and dates.
+// Bidding is kept verbatim too: resolveBidding refuses a strategy other than automatic or
+// manual before anything is sent, and bidAmount is a number
+// (TestConfigSnapshot_BiddingRoundTripsThroughTheValidator replays the stored copy).
 //
 // cfg is passed by value but its slices share backing arrays with the config Dispatch sends,
 // so every slice that is rewritten is REALLOCATED first: the FULL url and text must still

@@ -3,7 +3,9 @@
 
 -- Admit the survey surface's REMINDER and CLOSING stages.
 --
--- 000047 gave the survey surface two stages, one per asset: `Survey Promo` and `Report Promo`.
+-- 000053: first numbered 000048 on its branch, renumbered with 000052 for the same reason.
+--
+-- 000052 gave the survey surface two stages, one per asset: `Survey Promo` and `Report Promo`.
 -- That modelled WHICH ASSET is promoted but not WHICH SEND in a series, so a survey campaign that
 -- goes out as an invite and then a reminder had nowhere to put the second email: both sends would
 -- have keyed to `Survey Promo` and the later one would have displaced the first.
@@ -19,10 +21,10 @@
 -- is a real campaign shape asking otherwise.
 --
 -- WIDENING ONLY, so this is expand-safe in a single release (see this directory's README): every
--- row that satisfied 000047 still satisfies this, and an N-1 binary that never writes the new
+-- row that satisfied 000052 still satisfies this, and an N-1 binary that never writes the new
 -- stages is unaffected. Nothing is dropped or narrowed, so no contract step follows.
 --
--- Only the PAIR check changes. The delivery-type CHECK from 000047 already admits `survey` and is
+-- Only the PAIR check changes. The delivery-type CHECK from 000052 already admits `survey` and is
 -- untouched here, so it is deliberately not re-stated: re-dropping and re-adding a constraint this
 -- migration does not alter would make a reader look for a change that is not there.
 

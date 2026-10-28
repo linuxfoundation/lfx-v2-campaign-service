@@ -150,6 +150,13 @@ type AccountCampaignMetrics struct {
 	// delivery-judges a window must use the ranges when they are set. Empty when the platform
 	// does not report per-line-item flights or the campaign has none.
 	FlightRanges []FlightRange
+	// MetricsWindowStart/MetricsWindowEnd are Meta only: the Insights `time_range` (YYYY-MM-DD,
+	// both inclusive) the row's Spend covers — the bounds the read SENT, the same on every row of
+	// one read. Meta's rule engine paces against exactly these days rather than re-deriving a
+	// window from a clock of its own, which a request crossing UTC midnight would put one day
+	// away from the spend. Empty for every other platform.
+	MetricsWindowStart string
+	MetricsWindowEnd   string
 	// PacingUnknown is true when pacing could not be computed at all: either the flight dates
 	// were unavailable (e.g. Google Ads rows this port does not schedule-bound, or a platform
 	// row with no runSchedule/start_time), or the campaign has no usable budget to pace
@@ -168,16 +175,21 @@ type AccountCampaignMetrics struct {
 	// avoids depending on an unported string-parsing helper for a boolean that GAQL already
 	// answers authoritatively. Always false for LinkedIn/Meta/Reddit rows.
 	IsSearchChannel bool
-	// FetchFailed marks a row some part of whose upstream data could not be trusted: either a
-	// per-campaign metrics call to the platform failed outright (e.g. LinkedIn's per-campaign
-	// creative-analytics fetch, or Reddit's per-campaign report fetch), in which case the
-	// numeric metrics fields are left at their zero value, or (Google Ads only) a
-	// present-but-unparseable campaign_budget.amount_micros was read alongside otherwise-good
-	// metrics (round-24/25 review — internal/platform/googleads/monitor.go's microsToUSD), in
-	// which case Impressions/Clicks/SpendUSD may be genuinely non-zero while BudgetDailyUSD is
-	// the untrusted one. Either way, this is the explicit status marker the migration spec
-	// calls for: a consumer can tell "the platform authoritatively reported zero" from "this
-	// service could not read this row's data" — the same distinguishability
+	// FetchFailed marks a row some part of whose upstream data could not be trusted. WHICH part
+	// is not recorded, and it is NOT always the metrics. The shapes it takes include: a
+	// per-campaign metrics call that failed outright (Reddit's per-campaign report fetch, Meta's
+	// per-campaign insights), in which case the numeric metrics fields are left at their zero
+	// value; a present-but-unparseable budget read alongside otherwise-good metrics (Google Ads'
+	// campaign_budget.amount_micros, LinkedIn's dailyBudget/totalBudget, Meta's daily_budget/
+	// lifetime_budget, Microsoft Ads' and X's budget fields), in which case Impressions/Clicks/
+	// Spend may be genuinely non-zero while only BudgetDay/TotalBudget is untrusted; an
+	// unreadable flight (X); and an unparseable spend alone while impressions and clicks are
+	// real (LinkedIn's costInLocalCurrency). Treat that as examples, not a closed set: every
+	// platform client sets this flag and each has its own partial cases, so a text that
+	// enumerates them by platform goes stale — which is what #219 is about. Whatever the
+	// cause, this is the status marker the migration spec calls for: a consumer can tell "the
+	// platform authoritatively reported zero" from "this service could not read this row's
+	// data" — the same distinguishability
 	// CampaignSettingsReadback's `unknown` verdict exists to preserve. Renderers MUST check
 	// this before treating any of this row's fields, zero or not, as a fully trusted reading.
 	FetchFailed bool
@@ -217,7 +229,7 @@ type AccountMonitorActionItem struct {
 	Action       string
 }
 
-// AccountMonitorTotals is the account-wide aggregate the monitor response reports next to
+// AccountMonitorTotals is the aggregate the monitor response reports next to
 // the per-campaign rows.
 //
 // Always the sum of exactly those rows, on every platform (service.monitorTotals). Reddit's

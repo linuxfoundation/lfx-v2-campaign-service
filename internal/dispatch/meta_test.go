@@ -3227,7 +3227,7 @@ func TestMeta_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 		stored    *string // nil keeps the fixture's act_777
 		requested string
 		wantErr   error  // set on the arms that must be refused
-		wantPath  string // set on the permitted arms: the upstream path fragment reached
+		wantPath  string // set on the permitted arms: the FIRST upstream path reached (the Insights read since PR #316 put it before the campaign list)
 	}{
 		{
 			name:      "a different account is refused as a request mismatch",
@@ -3243,13 +3243,13 @@ func TestMeta_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 		{
 			name:      "the connection's own account reaches upstream as that account",
 			requested: "act_777",
-			wantPath:  "/act_777/campaigns",
+			wantPath:  "/act_777/insights",
 		},
 		{
 			name:      "whitespace around the STORED account does not make a matching request a mismatch",
 			stored:    strPtr("  act_777  "),
 			requested: "act_777",
-			wantPath:  "/act_777/campaigns",
+			wantPath:  "/act_777/insights",
 		},
 	}
 
@@ -3306,6 +3306,55 @@ func TestMeta_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 	}
 }
 
+// TestMeta_ListAccountCampaignMetrics_CarriesTheInsightsWindow: every row carries the
+// since/until the Insights read SENT, so the rules layer paces against exactly the days the spend
+// covers instead of re-deriving a window from a clock of its own (PR #316 review). The client's
+// clock is pinned 1s before UTC midnight; the window must be the one the read sent at that
+// instant, on a delivered row and on a zero-delivery one alike.
+func TestMeta_ListAccountCampaignMetrics_CarriesTheInsightsWindow(t *testing.T) {
+	var mu sync.Mutex
+	var insightsQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = w.Write([]byte(`{"data":[{"id":"111","name":"A","status":"ACTIVE","daily_budget":"1000"},{"id":"222","name":"B","status":"ACTIVE","daily_budget":"1000"}],"paging":{}}`))
+		case strings.HasSuffix(r.URL.Path, "/insights"):
+			mu.Lock()
+			insightsQuery = r.URL.Query().Get("time_range")
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"data":[{"campaign_id":"111","impressions":"10","clicks":"1","spend":"5"}],"paging":{}}`))
+		default: // the account currency read
+			_, _ = w.Write([]byte(`{"currency":"USD","id":"act_777"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	clock := func() time.Time { return time.Date(2026, 7, 30, 23, 59, 59, 0, time.UTC) }
+	d := NewMetaDispatcher(&scopedConnReader{
+		rows: map[string]*model.Connection{"cncf": activeMetaConn(goodMetaCreds)},
+	}, identityEncryptor{}, meta.WithBaseURL(srv.URL), meta.WithClock(clock))
+
+	rows, err := d.ListAccountCampaignMetrics(context.Background(), "cncf", model.ProviderMetaAds, "act_777", 7)
+	if err != nil {
+		t.Fatalf("ListAccountCampaignMetrics: %v", err)
+	}
+	// Copied under the lock: the handler writes it on the httptest server's goroutine.
+	mu.Lock()
+	gotRange := insightsQuery
+	mu.Unlock()
+	if gotRange != `{"since":"2026-07-24","until":"2026-07-30"}` {
+		t.Fatalf("insights time_range = %s", gotRange)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	for _, r := range rows {
+		if r.MetricsWindowStart != "2026-07-24" || r.MetricsWindowEnd != "2026-07-30" {
+			t.Errorf("row %s window = %q..%q, want the read's 2026-07-24..2026-07-30", r.PlatformCampaignID, r.MetricsWindowStart, r.MetricsWindowEnd)
+		}
+	}
+}
+
 // TestMeta_ListAccountCampaignMetrics_ProjectRowIsTheAuthority pins WHICH row the guard
 // compares against, using two projects whose stored accounts DIFFER so that the second
 // project is load-bearing rather than decoration.
@@ -3345,8 +3394,8 @@ func TestMeta_ListAccountCampaignMetrics_ProjectRowIsTheAuthority(t *testing.T) 
 		wantPath  string // permitted: the upstream path that must be reached
 		wantErr   error  // refused: the sentinel
 	}{
-		{name: "tlf reads its own account", projectID: "tlf", requested: tlfAccount, wantPath: "/" + tlfAccount + "/campaigns"},
-		{name: "lf-events reads its own account", projectID: "lf-events", requested: eventsAccount, wantPath: "/" + eventsAccount + "/campaigns"},
+		{name: "tlf reads its own account", projectID: "tlf", requested: tlfAccount, wantPath: "/" + tlfAccount + "/insights"},
+		{name: "lf-events reads its own account", projectID: "lf-events", requested: eventsAccount, wantPath: "/" + eventsAccount + "/insights"},
 		{name: "tlf is refused lf-events' account", projectID: "tlf", requested: eventsAccount, wantErr: domain.ErrAccountNotManagedByConnection},
 		{name: "lf-events is refused tlf's account", projectID: "lf-events", requested: tlfAccount, wantErr: domain.ErrAccountNotManagedByConnection},
 		// Meta ids come in two equivalent forms and this service treats them as one
@@ -3355,7 +3404,7 @@ func TestMeta_ListAccountCampaignMetrics_ProjectRowIsTheAuthority(t *testing.T) 
 		// must be permitted, not refused. Raw equality refused it; found by Cursor Bugbot
 		// on PR #242. The reverse pair (act_ row, bare-digit request) is not testable
 		// here: ValidateAccountID rejects the request before the guard runs.
-		{name: "a legacy bare-digit row matches the canonical act_ request", projectID: "legacy", requested: "act_777", wantPath: "/act_777/campaigns"},
+		{name: "a legacy bare-digit row matches the canonical act_ request", projectID: "legacy", requested: "act_777", wantPath: "/act_777/insights"},
 	}
 
 	for _, tc := range cases {

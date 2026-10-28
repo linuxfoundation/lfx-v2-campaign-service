@@ -566,10 +566,15 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 	microsoftDispatcher := dispatch.NewMicrosoftDispatcher(repo, enc)
 	// LinkedIn too (linkedInConfig.variants[].imageAssetId, Images API thumbnails).
 	linkedinDispatcher := dispatch.NewLinkedInDispatcher(repo, enc)
+	// And Google, whose fourteen creative image slots take an imageAssetId as well as a URL
+	// (LFXV2-2665). Built here rather than inline in the map below so it can be bound like
+	// every sibling that holds asset bytes.
+	googleDispatcher := dispatch.NewGoogleAdsDispatcher(repo, enc, googleads.WithNAT64Prefixes(nat64...))
 	if creatives != nil {
 		metaDispatcher.SetCreativeAssetRepo(creatives)
 		microsoftDispatcher.SetCreativeAssetRepo(creatives)
 		linkedinDispatcher.SetCreativeAssetRepo(creatives)
+		googleDispatcher.SetCreativeAssetRepo(creatives)
 	}
 	// The AGGREGATE asset budget is bound unconditionally, not under the `creatives != nil`
 	// guard above. The two are independent: that guard exists because a nil concrete pointer
@@ -591,12 +596,13 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 	}
 	twitterDispatcher.SetAssetReserver(assets)
 	linkedinDispatcher.SetAssetReserver(assets)
+	googleDispatcher.SetAssetReserver(assets)
 	return map[model.Provider]service.PlatformDispatcher{
 		model.ProviderRedditAds:    dispatch.NewRedditDispatcher(repo, enc),
 		model.ProviderLinkedInAds:  linkedinDispatcher,
 		model.ProviderMetaAds:      metaDispatcher,
 		model.ProviderTwitterAds:   twitterDispatcher,
-		model.ProviderGoogleAds:    dispatch.NewGoogleAdsDispatcher(repo, enc, googleads.WithNAT64Prefixes(nat64...)),
+		model.ProviderGoogleAds:    googleDispatcher,
 		model.ProviderHubSpot:      dispatch.NewHubSpotDispatcher(repo, enc, audiences, hubspot.WithNAT64Prefixes(nat64...)),
 		model.ProviderMicrosoftAds: microsoftDispatcher,
 	}
@@ -617,8 +623,20 @@ func (c *Container) bindStatsJobLease(dispatchers map[model.Provider]service.Pla
 	c.mu.Unlock()
 }
 
+// bindKeywordTargetingWriteLock gives the Reddit dispatcher the Postgres advisory lock that
+// serializes its whole-targeting keyword writes per ad group across replicas (see
+// domain.KeywordTargetingWriteLock). Both wiring paths call it with the pool they built the
+// dispatchers on; without it the dispatcher's in-process lock serializes one replica only.
+func bindKeywordTargetingWriteLock(dispatchers map[model.Provider]service.PlatformDispatcher, pool *postgres.Pool) {
+	rd, ok := dispatchers[model.ProviderRedditAds].(*dispatch.RedditDispatcher)
+	if !ok || pool == nil {
+		return
+	}
+	rd.SetKeywordTargetingWriteLock(postgres.NewKeywordTargetingWriteLock(pool))
+}
+
 // bindCreativeAssetSharing wires the stored-creative-asset paths that span more than one
-// component (LFXV2-2665), on BOTH live paths: the Meta, Microsoft, LinkedIn and X dispatchers and the
+// component (LFXV2-2665), on BOTH live paths: the Meta, Microsoft, LinkedIn, X and Google dispatchers and the
 // signed-asset route share the container's single AssetReserver (registerDispatchers' own
 // reserver is replaced, so the bound is one budget rather than two), the Reddit dispatcher gets the store and the
 // signer behind redditConfig.imageAssetId, and the signed-asset route gets the store.
@@ -642,6 +660,13 @@ func (c *Container) bindCreativeAssetSharing(dispatchers map[model.Provider]serv
 		// two budgets, so the process-wide bound was not a bound (#311 review).
 		if td, ok := dispatchers[model.ProviderTwitterAds].(*dispatch.TwitterDispatcher); ok {
 			td.SetAssetReserver(c.assetReserver)
+		}
+		// Google holds asset bytes too, across fourteen creative image slots, and is the heaviest
+		// of them — a Performance Max config can name an asset in every one. Left out, it would
+		// charge registerDispatchers' reserver and reintroduce exactly the two-budget defect the
+		// X arm above records.
+		if gd, ok := dispatchers[model.ProviderGoogleAds].(*dispatch.GoogleAdsDispatcher); ok {
+			gd.SetAssetReserver(c.assetReserver)
 		}
 	}
 	if creatives == nil {
@@ -1035,6 +1060,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(repo, enc, cfg)
 	dispatchers := registerDispatchers(repo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool), nat64Prefixes(c))
 	c.bindStatsJobLease(dispatchers, pool)
+	bindKeywordTargetingWriteLock(dispatchers, pool)
 	c.bindCreativeAssetSharing(dispatchers, postgres.NewCreativeAssetRepo(pool))
 	logMissingDispatchers(dispatchers)
 	// Surface claims stranded by a previous process (crash/eviction mid-dispatch) — they
@@ -1115,6 +1141,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(connRepo, enc, cfg)
 			dispatchers := registerDispatchers(connRepo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool), nat64Prefixes(c))
 			c.bindStatsJobLease(dispatchers, pool)
+			bindKeywordTargetingWriteLock(dispatchers, pool)
 			c.bindCreativeAssetSharing(dispatchers, postgres.NewCreativeAssetRepo(pool))
 			logMissingDispatchers(dispatchers)
 			// Same stuck-claim scan as the fast path: the DB only just became reachable, so

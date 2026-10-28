@@ -23,6 +23,65 @@ import (
 // Names that mark a list as an exclusion asset, which is never an inclusion signal.
 var suppressionNameHints = []string{"suppress", "exclusion", "unsubscribe", "do not email", "opt out", "opt-out", "optout", "bounce"}
 
+// hasSuppressionHint reports whether a list name marks a suppression or
+// exclusion list. The name is also read with its separators normalised, so
+// "Seoul - Opt_Out Contacts" or "Do_Not_Email" match the same as "Opt Out" and
+// "Do Not Email": a missed suppression gets offered as an inclusion.
+//
+// It also recognises the lists this service itself manages as suppressions, whose names carry
+// none of those words: every StandardSuppressionTerms list (the kernel lists, "26Q2-Kernel-
+// Domain-Contacts", among them), the project's standing "LFX Standard Suppressions - <project>"
+// list, and an edition's "<edition> - Current Registrants" list. The last one in particular
+// READS like an inclusion signal, and offering it as one would send to exactly the people the
+// send means to exclude.
+func hasSuppressionHint(name string) bool {
+	return hasGenericSuppressionHint(name) || isManagedSuppressionName(name)
+}
+
+// hasGenericSuppressionHint is hasSuppressionHint without the managed lists: the generic
+// suppression words only. MatchesEventSuppression uses it, with isStandingOrStandardName, because
+// the event's OWN suppression row must not be filled with the current-registrants list (which has
+// its own row) or a standard list (which has its own rows).
+func hasGenericSuppressionHint(name string) bool {
+	return containsAny(name, suppressionNameHints) || containsAny(normaliseSuppressionName(name), suppressionNameHints)
+}
+
+// isStandingOrStandardName is the NARROW form of isManagedSuppressionName, for
+// MatchesEventSuppression: a name that IS a standard list (its normalised words equal a term's,
+// not merely contain them) or one of the two standing lists. The broad substring form would
+// reject an event's own list such as "KubeCon - LF Events Suppression List", which is a
+// legitimate event exclusion, while discovery hiding keeps the broad form.
+func isStandingOrStandardName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if strings.HasPrefix(lower, strings.ToLower(standardSuppressionPrefix)) || strings.HasSuffix(lower, strings.ToLower(currentRegistrantsSuffix)) {
+		return true
+	}
+	for _, term := range StandardSuppressionTerms {
+		if MatchesStandardSuppression(name, term.SearchTerm) {
+			return true
+		}
+	}
+	return false
+}
+
+// isManagedSuppressionName reports whether name is one of the suppression lists the standing
+// suppression flow resolves or creates (see hasSuppressionHint). A standard term matches when
+// its normalised words appear in the normalised name, so a quarter code, a year or separators
+// around them do not hide it.
+func isManagedSuppressionName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if strings.HasPrefix(lower, strings.ToLower(standardSuppressionPrefix)) || strings.HasSuffix(lower, strings.ToLower(currentRegistrantsSuffix)) {
+		return true
+	}
+	normalised := " " + normaliseSuppressionName(name) + " "
+	for _, term := range StandardSuppressionTerms {
+		if t := normaliseSuppressionName(term.SearchTerm); t != "" && strings.Contains(normalised, " "+t+" ") {
+			return true
+		}
+	}
+	return false
+}
+
 // Property names that carry an email-subscription type, whose VALUE decides the
 // opt-in bucket.
 var subscriptionPropertyHints = []string{"subscription", "opt_in", "optin", "newsletter"}
@@ -289,7 +348,7 @@ func ClassifyList(name string, filters []ListFilter, id EventIdentity) Classific
 	// 1. Suppression. Checked first because these lists routinely ALSO carry a
 	//    registration or page-view filter, and bucketing one as an inclusion
 	//    signal would put an opt-out audience into a send.
-	if containsAny(name, suppressionNameHints) {
+	if hasSuppressionHint(name) {
 		return Classification{Signal: SignalUncertain, Reason: "Suppression or exclusion list, not an inclusion signal"}
 	}
 

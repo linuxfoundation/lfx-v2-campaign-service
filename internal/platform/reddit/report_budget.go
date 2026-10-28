@@ -37,10 +37,16 @@ import (
 // partially.
 //
 // PER PROCESS. With more than one replica each process keeps its own ledger, so the account-wide
-// total is up to replicas × 45. The chart therefore refuses to render REDDIT_METRICS_ENABLED with
-// more than one replica (templates/deployment.yaml, beside the TWITTER_METRICS_ENABLED guard); a
-// multi-replica deployment needs a shared ledger (as the X stats jobs use a database lease) before
-// that guard can be lifted.
+// total is up to replicas × 45 against the account's 60. That is a CEILING reachable by concurrent
+// user traffic, not a rate the service sustains: every path that spends this budget — the audience
+// and keyword reads, the metrics read, and the ungated account monitor — is driven by an inbound
+// request, and nothing polls them. The chart does NOT refuse multiple replicas over it (see
+// templates/deployment.yaml, which records why an earlier render-time guard was wrong and must not
+// come back); production runs three. Lifting the ceiling itself needs a SHARED ledger — a token
+// bucket keyed by ad account in Postgres. Note that neither of the obvious shortcuts works here:
+// a lease like the X stats jobs' makes non-owner pods refuse, which is intolerable on the
+// user-facing monitor endpoint, and dividing this 45 by the replica count leaves less than the 24
+// a single audience read already needs.
 const (
 	reportBudgetWindow   = 60 * time.Second
 	reportBudgetTotal    = 45

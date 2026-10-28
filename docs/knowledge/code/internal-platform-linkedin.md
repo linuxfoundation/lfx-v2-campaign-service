@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, and optional single-flight access-token refresh."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) where the create once sent no optimizationTargetType, and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -901,3 +901,38 @@ bounded wait for AVAILABLE (`WithImagePolling`). The upload PUT carries the bear
 is sent only to https `linkedin.com` hosts. The minted URNs go to `CampaignResult.ImageURNs`.
 An image failure returns the partial result with zero creatives. See
 [LinkedIn Creative Image Assets](../architecture/linkedin-creative-assets.md).
+
+## Create-time bidding (`CampaignInput.ManualCPCBid`, `campaignBidding`, LFXV2-2665)
+
+**Bug fixed**: the create body used to send `WEBSITE_CONVERSION`, `costType` `CPC` and NO
+`optimizationTargetType`, which LinkedIn defaults to `NONE` — manual bidding — with `unitCost` 0,
+under which "the campaign does not deliver". `campaignBidding` now returns a `campaignBiddingPlan`
+(body fields, `objectiveType`, name Objective segment) that `createSponsoredCampaign` merges.
+
+**Decision (2026-10-13, Misha)**: automatic LinkedIn campaigns optimise for clicks via
+`WEBSITE_VISIT`/`MAX_CLICK`, because `MAX_CONVERSION` — the only automated target
+`WEBSITE_CONVERSION` allows — needs a conversion association this service doesn't create. So the
+OBJECTIVE follows the strategy:
+
+- AUTOMATIC (`ManualCPCBid` 0): `objectiveType` `WEBSITE_VISIT`, `optimizationTargetType`
+  `MAX_CLICK`, `costType` `CPM`, no `unitCost`; name segment `Traffic`.
+- MANUAL: `objectiveType` `WEBSITE_CONVERSION`, `costType` `CPC`, `optimizationTargetType` `NONE`,
+  `unitCost` `{amount, USD}` at whole cents (`ValidateBidAmount`, refused never rounded) — what
+  `CampaignSettings.ManualCPC` (the bid lever) accepts; name segment `Conversions`, as before.
+
+Sources (li-lms-2026-09, consulted 2026-10-13): "Ad Budget Type Allowable Combinations",
+Objective Type Descriptions rows `WEBSITE_VISIT` (NONE, MAX_CLICK, ENHANCED_CONVERSION,
+TARGET_COST_PER_CLICK, CAP_COST_AND_MAXIMIZE_CLICKS) and `WEBSITE_CONVERSION` (NONE,
+ENHANCED_CONVERSION, MAX_CONVERSION); "Create and Manage Campaigns", Website Traffic table rows
+`STANDARD_UPDATE | AUTO | MAX_CLICK` (costType CPM, Bid Type CPC) and `STANDARD_UPDATE | CPC | NONE`
+(costType CPC), plus "Campaigns optimizing for MAX_CONVERSION must have a conversion associated with
+it to be activated". The bid lever refuses `MAX_CLICK` (not `NONE`/`ENHANCED_CONVERSION`).
+
+**Reuse by name**: `findCampaignByNameInGroup` takes the plan's objective and ABORTS on a same-name,
+same-group campaign reporting a different `objectiveType` (`responseElement.ObjectiveType`);
+an unreported objective cannot contradict, so it is reused. The two strategies' names already
+differ in the Objective segment, which also changes the automatic campaigns' `utm_term`. The bid is
+resolved before the first POST. Neither shape is verified against a live account.
+
+`CampaignResult.BidApplied` is false when `createSponsoredCampaign` reused a campaign found by name
+in the group (it now returns `(id, reused, err)`), with a "bid NOT applied to reused campaign" step.

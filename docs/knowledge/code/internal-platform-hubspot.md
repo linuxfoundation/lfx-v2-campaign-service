@@ -55,12 +55,20 @@ googleads/reddit/meta/twitter clients:
   caller's client is never mutated. A 3xx is surfaced, not followed.
 - **Bounded reads** (`maxResponseBody+1`, 10 MiB).
 - **Typed body-free errors:** a non-2xx surfaces an `apiError` whose `Error()`
-  renders only method/path/status — the response body is NOT retained at all (the
-  request layer drains it for connection reuse but keeps no snapshot). Nothing in this
-  client classifies on the body, and retaining it on an exported field could leak a
-  HubSpot error envelope's request material via reflection/JSON of the error even though
-  `Error()` omits it. A round-trip failure after the request was plausibly sent, or a 2xx
-  whose body can't be read, is a `transportError`; it is ambiguous ONLY for a
+  renders only method/path/status — the response body is not retained (the request
+  layer drains it for connection reuse but keeps no snapshot), with one exception: for a
+  400, up to 16 KiB of the body is read to classify it, and when HubSpot categorises it as
+  `VALIDATION_ERROR` its `message` (whitespace-collapsed, at most 300 runes, cut on a rune
+  boundary) is kept on the unexported `apiError.validation` — absent from `Error()`,
+  readable only through `ValidationMessage`, and returned by the custom-audience handlers
+  in their 400 body (`"HubSpot rejected the request: " + ValidationMessage(err)`), so that
+  HubSpot-authored text DOES reach an API response there. Nothing else is kept from the
+  body, and that 400 `VALIDATION_ERROR` category is the only classification this client
+  makes on it; retaining the body on an exported field could leak a HubSpot error
+  envelope's request material via reflection/JSON of the error even though `Error()`
+  omits it. A new caller of `ValidationMessage` must treat its result as upstream text.
+  A round-trip failure after the request was plausibly sent, or a 2xx whose body can't
+  be read, is a `transportError`; it is ambiguous ONLY for a
   MUTATING call (`IsUnconfirmed` returns `transportError.Mutating`) — an idempotent
   read/search that failed in transit landed no mutation and is safely retryable. Its
   `Error()` peels
@@ -194,7 +202,9 @@ would be sent nothing while the send reports success. Single-list callers pass a
 SERVER-SIDE via the `objectTypeId "0-1"` request field (a valid `ListSearchRequest`
 field per HubSpot's v3 docs), with a per-hit `ObjectTypeID` check kept as
 defense-in-depth; follows `offset`/`hasMore` pagination with a repeated-page guard;
-`includeFilters` is a GET-single-list field, NOT a search field, and is not sent),
+`includeFilters` is a GET-single-list field, NOT a search field, and is not sent;
+`SearchListsAnyType` is the same search with no `objectTypeId` and no per-hit drop, for asking
+whether a NAME is taken, since list names are unique per portal across object types),
 `GetList` (with `includeFilters=true`
 so the filterBranch + processingType come back),
 `CreateList` (`POST /crm/v3/lists` — canonical no-trailing-slash path, since the client
@@ -572,10 +582,15 @@ exclusion. `IsNotFound` lets a caller tell "deleted" apart from "unreadable", wh
 different answers for an operator.
 
 `ListIDForLegacy` maps a legacy id to its v3 (ILS) id through `GET /crm/v3/lists/idmapping`, and
-returns `""` on any failure so the caller falls back to `LegacyListName`. It exists because a
-marketing email carries the SAME list in both `contactIlsLists` and the legacy `contactLists`,
-under two different ids — reading them as two lists rendered every inclusion and suppression of a
-pre-cut-off send twice ([[2026-09-30-audience-suppression-and-last-sent-scoping]]).
+returns `""` on any failure so the caller falls back to `LegacyListName`. Both helpers return the
+error beside that `""`: still best-effort, in that the empty string is the answer and no caller is
+failed because one list could not be named, but a caller that must tell "HubSpot reported no such
+list" from "the lookup never reached an answer" can ask `IsNotFound` about it instead of reading a
+throttled call as a deletion (#238). A caller that only wants a name discards it.
+`ListIDForLegacy` exists because a marketing email carries the SAME list in both
+`contactIlsLists` and the legacy `contactLists`, under two different ids — reading them as two
+lists rendered every inclusion and suppression of a pre-cut-off send twice
+([[2026-09-30-audience-suppression-and-last-sent-scoping]]).
 
 `email_sendlists.go` reads the same `to.contactIlsLists` object `SetSendList` WRITES — otherwise
 the builder would report a precedent the sender never used. The legacy `to.contactLists`
@@ -719,3 +734,22 @@ is the token's own — the same reasoning `ReadMetrics`' provenance guard record
 therefore logged as a warning about dead deep links, not returned as a failed connection test; a
 token "pasted from the wrong portal" is a token whose portal the operator chose by pasting it,
 and nothing in this package would send a campaign anywhere else.
+
+## Contact property definitions (`properties.go`)
+
+`GetContactProperty` (`GET /crm/v3/properties/contacts/{name}`, read-only) returns a property's
+name, type and options. A 404 is `(nil, nil)` rather than an error, because callers validate a SET
+of names and report every missing one together; a 2xx with no name is an error. The custom
+audience builder uses it so a property filter is never built on a guessed name, and so its
+operation type matches the property's type, and so an enumeration `country_dropdown`'s options
+can be checked against the countries asked for. It needs the token's contact-schema read scope.
+
+The custom-audience handlers' shared error mapper (`customErr` in
+`internal/service/audience_custom.go`, used by interpret, preview and create) is the one caller of
+`ValidationMessage`: when HubSpot refuses any request on those paths with a `VALIDATION_ERROR` 400
+(preview's property and list reads as well as create's list definition), its bounded message is the
+only part of an error body that leaves this client (see "Typed body-free errors" above).
+
+`EventTypeProperties` pages `/events/v3/event-definitions?includeProperties=true` (50 per page) and
+returns the properties of the definition whose `objectTypeId` matches, or `(nil, nil)` when none
+does.

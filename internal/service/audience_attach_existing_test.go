@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,7 +28,7 @@ type attachExplorer struct {
 	err        error
 }
 
-func (f *attachExplorer) AttachExisting(_ context.Context, _ string, includeIDs, _ []string) (*audience.ComposeOutcome, error) {
+func (f *attachExplorer) AttachExisting(_ context.Context, _ string, includeIDs, _ []string, _ string) (*audience.ComposeOutcome, error) {
 	f.calls++
 	f.includeIDs = includeIDs
 	if f.err != nil {
@@ -69,6 +70,37 @@ func TestAttachExistingAudienceRecordsTheReusedListsWithTheirPortal(t *testing.T
 	assert.Equal(t, "8112310", rows[0].BuiltInPortalID)
 	assert.Equal(t, model.AudienceBuilt, rows[0].Status)
 	assert.Equal(t, "Reused existing list 26Q3 - CNCF - AGNTCon - Master with 2 suppression list(s)", rows[0].InclusionSummary)
+}
+
+// The standing standard list is recorded in place of the standard lists, beside every other
+// suppression, and the response names it so the operator can open it.
+func TestAttachExistingAudienceRecordsTheStandingStandardListBesideTheRest(t *testing.T) {
+	standing := audience.ComposedList{ListRow: audience.ListRow{ListID: "40000", Name: "LFX Standard Suppressions - proj-1", HubSpotURL: "https://app.hubspot.com/x"}}
+	explorer := &attachExplorer{outcome: &audience.ComposeOutcome{
+		Master:        audience.ComposedList{ListRow: audience.ListRow{ListID: "31027", Name: "Master"}},
+		SourceListIDs: []string{"31027"},
+		PortalID:      "8112310",
+		Suppression:   &standing,
+		Attached:      true,
+
+		AttachedSuppressionIDs: []string{"b1"},
+	}}
+	repo := newCountingAudienceRepo()
+	briefs := newFakeBriefRepo()
+	seedBrief(t, briefs, "proj-1", "brief-1")
+	svc := NewAudienceExploreService(explorer)
+	svc.SetAudienceRepo(repo)
+	svc.SetBriefRepo(briefs)
+
+	res, err := svc.AttachExistingAudience(context.Background(), attachPayload("brief-1"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"40000", "b1"}, res.SuppressionListIds)
+	require.NotNil(t, res.Suppression)
+	assert.Equal(t, "40000", res.Suppression.ListID)
+
+	rows := repo.rows()
+	require.Len(t, rows, 1)
+	assert.Equal(t, "Reused existing list Master with the standard suppression list and 1 more suppression list(s)", rows[0].InclusionSummary)
 }
 
 // An unknown brief is refused before any portal read.
@@ -218,4 +250,55 @@ func numericIDs(from, n int) []string {
 		out = append(out, strconv.Itoa(from+i))
 	}
 	return out
+}
+
+// A list squatting on a standing suppression list's name is a 409 naming it, not a 500: the
+// operator has a list to rename, and a retry would hit it again.
+func TestAttachExistingAudienceMapsAStandingListConflictTo409(t *testing.T) {
+	conflict := &audience.StandingListConflictError{Name: "LFX Standard Suppressions - proj-1", ListID: "77", Reason: "is not a DYNAMIC list"}
+	svc, repo := attachService(t, &attachExplorer{err: fmt.Errorf("audience attach: %w", conflict)})
+
+	_, err := svc.AttachExistingAudience(context.Background(), attachPayload("brief-1"))
+	var ce *explore.ConflictError
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, "409", ce.Code)
+	assert.Contains(t, ce.Message, `"LFX Standard Suppressions - proj-1" (id 77)`)
+	assert.Contains(t, ce.Message, "rename or remove it in HubSpot")
+	assert.Zero(t, repo.calls)
+}
+
+// A resolved exclusion that is also an inclusion is a 400 naming the list, not the generic
+// "check the event URL" text the ErrInvalidRequest arm gives.
+func TestAttachExistingAudienceMapsAResolvedOverlapTo400NamingTheList(t *testing.T) {
+	overlap := &audience.ExclusionOverlapError{ListID: "88", Name: "KubeCon EU 2026 - Current Registrants", Role: "the current-registrants list of current_registrants_event"}
+	svc, repo := attachService(t, &attachExplorer{err: fmt.Errorf("audience attach: %w", overlap)})
+
+	_, err := svc.AttachExistingAudience(context.Background(), attachPayload("brief-1"))
+	var br *explore.BadRequestError
+	require.ErrorAs(t, err, &br)
+	assert.Equal(t, "400", br.Code)
+	assert.Contains(t, br.Message, `list 88 ("KubeCon EU 2026 - Current Registrants")`)
+	assert.Contains(t, br.Message, "cannot be both sent to and suppressed")
+	assert.Zero(t, repo.calls, "nothing is recorded")
+}
+
+// A yearless current_registrants_event is a 400 that names the field and the year it needs, not
+// the generic "check the event URL" text the ErrInvalidRequest arm gives.
+func TestAttachExistingAudienceMapsAYearlessEditionTo400NamingTheField(t *testing.T) {
+	_, ferr := audience.CurrentRegistrantsFilter("AGNTCon + MCPCon Japan")
+	require.Error(t, ferr)
+	svc, repo := attachService(t, &attachExplorer{err: fmt.Errorf("audience attach: %w", ferr)})
+
+	_, err := svc.AttachExistingAudience(context.Background(), attachPayload("brief-1"))
+	var br *explore.BadRequestError
+	require.ErrorAs(t, err, &br)
+	assert.Equal(t, "400", br.Code)
+	assert.True(t, strings.HasPrefix(br.Message, "current_registrants_event: "), br.Message)
+	assert.Contains(t, br.Message, "WITH its year")
+	assert.Zero(t, repo.calls)
+
+	// compose maps through the same function.
+	cerr := composeErr(context.Background(), "proj-1", fmt.Errorf("audience compose: %w", ferr))
+	require.ErrorAs(t, cerr, &br)
+	assert.Contains(t, br.Message, "current_registrants_event")
 }
