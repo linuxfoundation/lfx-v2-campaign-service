@@ -17,17 +17,23 @@ import (
 )
 
 // currencyCreateServer serves the create path's requests for an account denominated in currency,
-// and records the raw ad-set POST body so the budget can be asserted as it went on the wire.
-func currencyCreateServer(t *testing.T, currency string) (*httptest.Server, func() (string, bool)) {
+// and records the raw ad-set POST body so the budget can be asserted as it went on the wire. It
+// also counts every POST, so a refusal can be shown to have created nothing upstream at all.
+func currencyCreateServer(t *testing.T, currency string) (*httptest.Server, func() (string, int)) {
 	t.Helper()
 	var (
 		mu       sync.Mutex
 		adSet    string
-		sentSet  bool
+		posts    int
 		creative int
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			mu.Lock()
+			posts++
+			mu.Unlock()
+		}
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
 			_, _ = io.WriteString(w, `{"data":[]}`)
@@ -38,7 +44,7 @@ func currencyCreateServer(t *testing.T, currency string) (*httptest.Server, func
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
 			body, _ := io.ReadAll(r.Body)
 			mu.Lock()
-			adSet, sentSet = string(body), true
+			adSet = string(body)
 			mu.Unlock()
 			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adcreatives"):
@@ -55,10 +61,10 @@ func currencyCreateServer(t *testing.T, currency string) (*httptest.Server, func
 		}
 	}))
 	t.Cleanup(srv.Close)
-	return srv, func() (string, bool) {
+	return srv, func() (string, int) {
 		mu.Lock()
 		defer mu.Unlock()
-		return adSet, sentSet
+		return adSet, posts
 	}
 }
 
@@ -66,7 +72,7 @@ func currencyCreateServer(t *testing.T, currency string) (*httptest.Server, func
 // service persists the REQUESTED amount (campaigns.budget_amount), so the only way the row can
 // equal what Meta holds is for every accepted amount to reach Meta exactly — amount x the
 // account currency's minor-unit offset, with no rounding — and for every amount that cannot be
-// sent exactly to be refused before anything is created. JPY and KRW are zero-decimal (offset 1:
+// sent exactly to be refused before anything is created — no campaign, no ad set. JPY and KRW are zero-decimal (offset 1:
 // the minor unit IS the whole unit); USD is two-decimal (offset 100). The offset is derived from
 // the account's own currency, as in production, not set explicitly.
 func TestCreateCampaign_TheBudgetSentIsTheBudgetRequested(t *testing.T) {
@@ -98,21 +104,21 @@ func TestCreateCampaign_TheBudgetSentIsTheBudgetRequested(t *testing.T) {
 			in := metaFieldInput()
 			in.Budget = tc.budget
 			_, err := c.CreateCampaign(context.Background(), in)
-			body, sent := adSet()
+			body, posts := adSet()
 
 			if tc.wantErr != "" {
 				if !errors.Is(err, ErrBudgetAmountInvalid) || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err = %v, want an ErrBudgetAmountInvalid containing %q", err, tc.wantErr)
 				}
-				if sent {
-					t.Fatalf("an ad set was sent for a refused budget: %s", body)
+				if posts != 0 {
+					t.Fatalf("%d POSTs were sent for a refused budget; it must be refused before anything is created", posts)
 				}
 				return
 			}
 			if err != nil {
 				t.Fatalf("CreateCampaign: %v", err)
 			}
-			if !sent {
+			if body == "" {
 				t.Fatal("no ad set was sent")
 			}
 			// Assert the raw wire value: decoding into map[string]any would turn a quoted
