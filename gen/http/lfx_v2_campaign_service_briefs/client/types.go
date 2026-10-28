@@ -4904,8 +4904,16 @@ type PlatformResultResponseBody struct {
 	// the platform before anything was created (HTTP status only), or could not be
 	// confirmed (something may have been created; verify before retrying). An
 	// unclassified failure reads "platform campaign creation failed". Never
-	// contains a platform response body, URL, query or token. Google Ads dispatch
-	// failures are not yet classified beyond the connection classes.
+	// contains a platform response body, URL, query or token. A Google Ads
+	// dispatch failure the dispatcher could classify replaces the
+	// could-not-be-confirmed sentence with one naming what is in the ad account: a
+	// budget of the name this service composes already exists and nothing new was
+	// created, a campaign of that name already exists, a budget was created or
+	// reused and the campaign was then refused or left unconfirmed, or the
+	// campaign was created and its setup could not be confirmed. Each is a fixed
+	// sentence chosen by a service-authored token and never built from it, so it
+	// too carries no platform text. No other provider is classified beyond the
+	// classes above.
 	Error *string `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`
 	// Deep link to this campaign's email in the HubSpot editor. Present only for
 	// the email (HubSpot) channel, and only once the portal that created it is
