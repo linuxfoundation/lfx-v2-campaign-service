@@ -84,6 +84,10 @@ type SuppressionRow struct {
 	Size       *int64
 	Category   string
 	HubSpotURL string
+	// WillCreate marks a row whose list does not exist yet and is created, by name, when an
+	// attach or compose applies it. Only the current-registrants row sets it: a read never
+	// creates lists.
+	WillCreate bool
 }
 
 // Suppression row categories, mirroring the picker's groups.
@@ -96,6 +100,9 @@ const (
 	// so a consumer grouping on the generated contract dropped exactly the rows that outrank
 	// the other two — the per-event suppression list is the highest-value exclusion here.
 	SuppressionCategoryEvent = "event_specific"
+	// SuppressionCategoryCurrentRegistrants is the current edition's registrants: a send
+	// promoting registration should not reach people who already registered.
+	SuppressionCategoryCurrentRegistrants = "current_registrants"
 )
 
 // ListBrief names a list referenced from somewhere else — a prior send's include or
@@ -139,6 +146,10 @@ type ComposeInput struct {
 	BrandShort     string
 	EventName      string
 	EventDates     []string
+	// CurrentRegistrantsEvent, when set, is the edition (event name with year) whose current
+	// registrants the master also excludes, through a list found or created by
+	// CurrentRegistrantsName.
+	CurrentRegistrantsEvent string
 	// RecordUnderBriefID asks the caller's service layer to record the composed master as
 	// this brief's built audience. It is empty for the exploratory use of the builder, which
 	// composes lists without a campaign to attach them to.
@@ -162,7 +173,10 @@ type ComposedList struct {
 // requested — ExclusionIDs resolves an id selected both ways in favour of inclusion,
 // and an operator reading the result needs to see which ids the master really unions.
 type ComposeOutcome struct {
-	Master        ComposedList
+	Master ComposedList
+	// Suppression is the project's standing standard suppression list (StandardSuppressionName),
+	// found or created and REUSED across audiences; nil when the selection did not include every
+	// resolved standard list.
 	Suppression   *ComposedList
 	SourceListIDs []string
 	// PortalID is the HubSpot portal both lists were created in, read from the token of the
@@ -170,9 +184,9 @@ type ComposeOutcome struct {
 	// was set, because it is only ever needed to stamp provenance on a recorded audience — and
 	// the lookup is a network round trip the exploratory path should not pay for.
 	PortalID string
-	// AttachedSuppressionIDs are EXISTING suppression lists recorded beside the master by an
-	// attach (AttachExisting), which composes no combined suppression of its own. Empty for a
-	// compose, whose single suppression is Suppression above.
+	// AttachedSuppressionIDs are the suppression lists recorded beside Suppression: every
+	// selected list that is not one of the standard terms (brand, event, current registrants,
+	// lists marked Exclude), plus the standard ones when only some were selected.
 	AttachedSuppressionIDs []string
 	// Attached marks an outcome that created nothing: the lists already existed and were
 	// only verified. It changes the recorded row's default summary, nothing else.

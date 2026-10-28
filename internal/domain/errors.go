@@ -1308,17 +1308,6 @@ var (
 	// the caller may not be able to see. Maps to 409.
 	ErrPlatformCampaignAlreadyBound = errors.New("this platform campaign is already bound to another brief")
 
-	// ErrSlotVersionUnavailable indicates a request for ANOTHER campaign on a slot that
-	// already has one could not be claimed because the schema still enforces one live
-	// campaign per (brief, platform, variant). Migration 000037 adds the per-slot-version
-	// index alongside the old one. The old one is NOT dropped the release after 000037: the
-	// per-slot adopt/claim lock ships first, in its own release, and the drop (a later contract
-	// migration) ships one release AFTER that lock, so an image-only rollback never runs a
-	// lock-free binary without the old index (expand → lock → contract). Until that drop this
-	// is the expected answer to new_version, not a fault.
-	// Nothing was created upstream.
-	ErrSlotVersionUnavailable = errors.New("another campaign on this platform cannot be created for this brief yet")
-
 	// ErrDispatchClaimLost indicates a dispatch tried to record its upstream campaign but the
 	// pending claim it took is no longer the row on its slot version: the claim was cleared
 	// (an operator removing an apparently-stuck claim — ClearDispatchClaim, or by hand)
@@ -1333,6 +1322,15 @@ var (
 	// reconciliation and keep whatever identifiers it has (the upstream id, or the reconcile
 	// handles of an id-less partial) where an operator can find them.
 	ErrDispatchClaimLost = errors.New("the dispatch's claim on this campaign slot was lost before its result could be recorded")
+
+	// ErrSlotVersionUsed indicates a new_version claim found its slot version already used by
+	// a SOFT-DELETED campaign. The version was free when the request read the slot, so a
+	// concurrent new_version request took it, completed, and was deleted before this claim
+	// ran. The live-row unique index ignores deleted rows and would admit the claim, but the
+	// deleted campaign keeps the upstream name the version composes, so a name-based lookup
+	// would hand it back as this one. The request is the losing half of a double submit and
+	// is reported as skipped.
+	ErrSlotVersionUsed = errors.New("a concurrent new_version request already used this campaign slot version")
 
 	// ErrAdoptionRequiresOwnConnection indicates the project has no ad-platform connection of
 	// its own. Maps to 409.

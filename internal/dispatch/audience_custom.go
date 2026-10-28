@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
@@ -34,11 +35,14 @@ const customVersionLimit = 10
 // InterpretCustom turns a free-text request into draft criteria.
 //
 // eventURL, when set, makes this an EVENT audience: the page is fetched through the
-// SSRF-guarded reader and its metadata quoted to the model, so a regional plan can
-// be drafted without running discovery first.
+// SSRF-guarded reader and its metadata quoted to the model, so the event's audience
+// can be drafted without running discovery first. It is not location-scoped unless
+// the request asks for one.
 func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, request, eventURL string, answers []audience.CustomAnswer) (outcome *audience.CustomInterpretOutcome, err error) {
 	if strings.TrimSpace(request) == "" && strings.TrimSpace(eventURL) != "" {
-		request = "Plan the regional event audience for this event."
+		// Neutral on purpose: "regional" read to the model as a request for the host
+		// city and country, which an event audience no longer defaults to.
+		request = "Plan the default audience for this event."
 	}
 	if _, perr := audience.CustomInterpretPrompt(request, answers, nil); perr != nil {
 		return nil, perr
@@ -82,7 +86,16 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 		// and an audience that excludes past registrants gets none. The guard runs even
 		// when the warehouse returned nothing: a guessed name matches nobody either way.
 		{
-			named, invented := knownEditions(draft.Criteria.RegisteredFor, append([]string{event.Name}, event.PastEditions...))
+			var ambiguities []string
+			named, invented := knownEditionsWithAmbiguity(draft.Criteria.RegisteredFor, append([]string{event.Name}, event.PastEditions...),
+				func(name string, candidates []string) {
+					ambiguities = append(ambiguities, fmt.Sprintf("%q could be any of %s", name, quoteAll(candidates)))
+				})
+			if len(ambiguities) > 0 {
+				draft.Notes = append(draft.Notes, fmt.Sprintf(
+					"Left out %d registered_for names that match more than one past edition once spacing and case are ignored; name the exact spelling to include one: %s.",
+					len(ambiguities), strings.Join(ambiguities, "; ")))
+			}
 			if len(invented) > 0 {
 				reason := "are not this event's or one of its past editions' exact names"
 				if len(event.PastEditions) == 0 {
@@ -91,21 +104,59 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 				draft.Notes = append(draft.Notes, fmt.Sprintf("Left out %d registered_for names that %s: %s.",
 					len(invented), reason, strings.Join(invented, "; ")))
 			}
-			// The past editions are a REGIONAL audience's default: one with a location.
-			// Anything else gets none, because the registration branch is OR'd beside
-			// the others. For speakers alone it would AND every speaker with a past
-			// registration and drop first-time speakers; for a topic-only education
-			// audience it would add past registrants who never enrolled.
+			// The past editions are the default of two audiences: a regional one (with a
+			// location), and the event's default audience, which selects the event
+			// page's visitors and has no location. The service adds them rather than the
+			// model, so they are capped newest first. Anything else gets none, because
+			// the registration branch is OR'd beside the others: for speakers or
+			// ambassadors alone it would AND every one with a past registration and drop
+			// first-timers; for a topic-only education audience it would add past
+			// registrants who never enrolled.
 			defaults := event.PastEditions
 			hasLocation := len(draft.Criteria.Cities) > 0 || len(draft.Criteria.Countries) > 0
 			regional := hasLocation && (draft.Criteria.ContactLocation || draft.Criteria.EventRegistered || draft.Criteria.EducationEnrolled)
+			rolesOnly := draft.Criteria.Speakers != nil || draft.Criteria.Ambassadors
+			// The event's default audience pairs the visitors of THIS event's page with the
+			// brand's education enrollees. A page-view URL of some other page is a different
+			// segment, and a visitors-only draft (no education) asked for visitors alone:
+			// ORing past registrants into either would reach people outside what was asked for.
+			// The signals alone cannot tell the default from "this page's visitors plus some
+			// OTHER course's enrollees", so the model's explicit include_past_editions: true is
+			// required as well. The regional audience keeps its existing rule (unset applies).
+			eventDefault := draft.IncludePastEditions && !hasLocation && !rolesOnly && draft.Criteria.EducationEnrolled &&
+				selectsPage(draft.Criteria.PageViewURLs, event.URL)
+			// An event page identified by a non-tracking query ("/event?id=123") cannot be
+			// isolated: HubSpot's page-view filter is a CONTAINS match, so "?id=123" also matches
+			// "?id=1234" and misses "?utm_source=x&id=123". Its visitors are not a reliable
+			// default audience, so none is built; the URL stays in page_view_urls as the most
+			// precise visitor filter there is, and the operator picks editions and pages.
+			if eventDefault && strings.ContainsRune(withoutTracking(event.URL), '?') {
+				eventDefault = false
+				// Only when that withholds the defaults: editions the operator named are kept below.
+				if len(named) == 0 {
+					draft.Notes = append(draft.Notes, "No past editions were added automatically: this event's page is identified by a query (\""+
+						withoutTracking(event.URL)+"\") that page-view filters cannot isolate, so it is not treated as the event's default audience. Pick the editions and pages explicitly.")
+				}
+			}
 			switch {
 			case len(named) > 0:
 				defaults = named
-			case len(draft.Criteria.RegisteredFor) > 0, draft.ExcludePastEditions, !regional:
+			case len(draft.Criteria.RegisteredFor) > 0, draft.ExcludePastEditions, !regional && !eventDefault:
 				// Every named edition was unknown, or past registrants were ruled out:
 				// adding the warehouse's editions would reach people the operator excluded.
 				defaults = nil
+			default:
+				// The warehouse matches the event's name as a SUBSTRING, so "Synthetic Summit"
+				// also returns "Synthetic Summit Workshop 2025" -- another event. Only editions
+				// that are this event's name with another year are added unasked; the rest are
+				// named in a note, for the operator to add by name if they belong.
+				var others []string
+				defaults, others = sameEventEditions(defaults, event.Name)
+				if len(others) > 0 {
+					draft.Notes = append(draft.Notes, fmt.Sprintf(
+						"Left out %d past events the warehouse matched whose names are not this event's name with another year; name any that are this event's editions to include them: %s.",
+						len(others), strings.Join(others, "; ")))
+				}
 			}
 			kept, omitted := capPastEditions(defaults)
 			draft.Criteria.RegisteredFor = kept
@@ -130,9 +181,7 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 	defer func() { err = systemScopedHubSpot(err, fromSystem) }()
 
 	if brand := strings.TrimSpace(draft.BrandShort); brand != "" {
-		gate, gerr := x.bestMatch(ctx, client, audience.BrandMasterProbes(brand), func(name string) bool {
-			return audience.MatchesBrandMaster(name, brand)
-		})
+		gate, gerr := x.brandMaster(ctx, client, brand)
 		if gerr != nil {
 			return nil, gerr
 		}
@@ -161,21 +210,35 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 		// No brand from the page or the model: take the one this event's lists use.
 		// A brand the model named already resolved its own gate above, and is never
 		// overridden by whichever segment the event's lists happen to be filed under.
-		if hits, serr := client.SearchLists(ctx, event.Name); serr == nil {
-			names := make([]string, 0, len(hits))
-			for _, h := range hits {
-				names = append(names, h.Name)
+		if brand := x.listBrand(ctx, client, event.Name, event.Name); brand != "" {
+			out.Draft.BrandShort = brand
+			out.Event.BrandShort = brand
+			if gate, gerr := x.brandMaster(ctx, client, brand); gerr == nil && gate != nil {
+				row := listRow(gate)
+				out.Gate = &row
+				out.Draft.Criteria.GateListID = row.ListID
 			}
-			if brand := audience.DominantBrand(names, event.Name); brand != "" {
+		}
+	}
+	if out.Gate == nil {
+		// A project or event series ("gRPC") has no master list of its own: its lists
+		// are filed under the foundation that owns it, whose master is the gate.
+		named := strings.TrimSpace(out.Draft.BrandShort)
+		query := named
+		if query == "" {
+			query = strings.TrimSpace(out.Draft.Criteria.Label)
+		}
+		// Unscoped: the project's lists are named for its events ("gRPConf"), not for the
+		// project ("gRPC"), so a scoped vote would discard every one of them.
+		if brand := x.listBrand(ctx, client, query, ""); brand != "" && !strings.EqualFold(brand, named) {
+			if gate, gerr := x.brandMaster(ctx, client, brand); gerr == nil && gate != nil {
+				row := listRow(gate)
+				out.Gate = &row
+				out.Draft.Criteria.GateListID = row.ListID
 				out.Draft.BrandShort = brand
-				out.Event.BrandShort = brand
-				if gate, gerr := x.bestMatch(ctx, client, audience.BrandMasterProbes(brand), func(name string) bool {
-					return audience.MatchesBrandMaster(name, brand)
-				}); gerr == nil && gate != nil {
-					row := listRow(gate)
-					out.Gate = &row
-					out.Draft.Criteria.GateListID = row.ListID
-				}
+				out.Draft.Notes = append(out.Draft.Notes, fmt.Sprintf(
+					"Suggested %s's master list (%s): %q has none of its own, and its HubSpot lists are filed under %s. Change it if that is wrong.",
+					brand, row.Name, query, brand))
 			}
 		}
 	}
@@ -185,9 +248,38 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 	return out, nil
 }
 
+// brandMaster is the brand's standing master list, or nil.
+func (x *AudienceExplorer) brandMaster(ctx context.Context, client *hubspot.Client, brand string) (*hubspot.List, error) {
+	return x.bestMatch(ctx, client, audience.BrandMasterProbes(brand), func(name string) bool {
+		return audience.MatchesBrandMaster(name, brand)
+	})
+}
+
+// listBrand is the brand the portal's lists matching query are filed under, or "".
+// eventName, when set, keeps only that event's own lists in the vote (see
+// audience.DominantBrand). A failed search is no brand: the caller then reports the
+// gate as missing.
+func (x *AudienceExplorer) listBrand(ctx context.Context, client *hubspot.Client, query, eventName string) string {
+	if query == "" {
+		return ""
+	}
+	hits, err := client.SearchLists(ctx, query)
+	if err != nil {
+		return ""
+	}
+	names := make([]string, 0, len(hits))
+	for _, h := range hits {
+		names = append(names, h.Name)
+	}
+	return audience.DominantBrand(names, eventName)
+}
+
 // PreviewCustom validates criteria against the portal and returns what Create
 // would build. Writes nothing.
 func (x *AudienceExplorer) PreviewCustom(ctx context.Context, projectID string, criteria audience.CustomCriteria, name string) (preview *audience.CustomPreview, err error) {
+	if nerr := audience.CheckCustomListName(name); nerr != nil {
+		return nil, nerr
+	}
 	ctx = x.builder.BeginBuild(ctx)
 	client, fromSystem, cerr := x.builder.cachedClient(ctx, projectID)
 	if cerr != nil {
@@ -328,12 +420,13 @@ func (x *AudienceExplorer) previewCustom(ctx context.Context, client *hubspot.Cl
 		return nil, fmt.Errorf("audience custom: re-read built filter: %w", perr)
 	}
 
+	// An EXPLICIT name is the operator's: one too long was refused up front (CheckCustomListName),
+	// never cut, so two typed names that differ past the limit cannot collide. Only the DERIVED
+	// name is cut to fit, so the name preview returns is one create accepts back unchanged.
 	listName := strings.Join(strings.Fields(name), " ")
 	if listName == "" {
-		listName = audience.CustomListName(resolved, x.now())
+		listName = audience.FitListName(audience.CustomListName(resolved, x.now()))
 	}
-	// Create takes back the name preview returns, so it must fit the input's limit.
-	listName = audience.FitListName(listName)
 	listName, nerr := x.freeCustomName(ctx, client, listName)
 	if nerr != nil {
 		return nil, nerr
@@ -356,6 +449,9 @@ func (x *AudienceExplorer) previewCustom(ctx context.Context, client *hubspot.Cl
 
 // CreateCustom builds and creates the list. NOT idempotent.
 func (x *AudienceExplorer) CreateCustom(ctx context.Context, projectID string, criteria audience.CustomCriteria, name string) (created *audience.ComposedList, err error) {
+	if nerr := audience.CheckCustomListName(name); nerr != nil {
+		return nil, nerr
+	}
 	ctx = x.builder.BeginBuild(ctx)
 	client, fromSystem, cerr := x.builder.cachedClient(ctx, projectID)
 	if cerr != nil {
@@ -501,7 +597,12 @@ func (x *AudienceExplorer) customEventContext(ctx context.Context, eventURL stri
 	}
 	return &audience.CustomEventContext{
 		PastEditions: past,
-		URL:          eventURL,
+		// The page without the TRACKING parameters and fragment the operator reached it by
+		// (utm_*, click ids): the model copies this URL into page_view_urls, where HubSpot keeps
+		// the whole string and a tracking query would narrow the visitors to that link. Any
+		// other query stays: "/event?id=123" names the page, and "/event" would match every
+		// event on that route.
+		URL: withoutTracking(eventURL),
 		// The edition's own name carries its year ("Synthetic Summit 2026"), as its
 		// registrations are stored: a yearless page title would be copied into an
 		// exact registered_for filter and match none of them.
@@ -517,26 +618,67 @@ func (x *AudienceExplorer) customEventContext(ctx context.Context, eventURL stri
 // one of the known edition names, returned in the known spelling, and lists the
 // rest. A guessed edition name would match nobody.
 func knownEditions(requested, known []string) (kept, unknown []string) {
-	canonical := make(map[string]string, len(known))
+	return knownEditionsWithAmbiguity(requested, known, nil)
+}
+
+// knownEditionsWithAmbiguity is knownEditions that also reports, through ambiguous, each
+// requested name that matched more than one warehouse spelling only after normalising (with
+// the candidates), so the caller can say why it was left out.
+//
+// A requested name is kept as the warehouse spells it, verbatim: first an EXACT match (the
+// warehouse can hold "Synthetic Summit 2025" and "Synthetic  Summit 2025" as two editions),
+// then -- only when exactly one warehouse spelling normalises to it, ignoring case and spacing
+// -- that spelling. Several candidates are ambiguous and the name is unknown: guessing one
+// would send to the wrong edition's registrants.
+func knownEditionsWithAmbiguity(requested, known []string, ambiguous func(name string, candidates []string)) (kept, unknown []string) {
+	norm := func(v string) string { return strings.ToLower(strings.Join(strings.Fields(v), " ")) }
+	exact := make(map[string]bool, len(known))
+	byNorm := make(map[string][]string, len(known))
 	for _, k := range known {
-		if n := strings.Join(strings.Fields(k), " "); n != "" {
-			canonical[strings.ToLower(n)] = n
+		n := norm(k)
+		if n == "" || exact[k] {
+			continue
 		}
+		exact[k] = true
+		byNorm[n] = append(byNorm[n], k)
 	}
 	seen := map[string]bool{}
 	for _, r := range requested {
-		key := strings.ToLower(strings.Join(strings.Fields(r), " "))
-		if key == "" || seen[key] {
+		if strings.TrimSpace(r) == "" || seen[r] {
 			continue
 		}
-		seen[key] = true
-		if name, ok := canonical[key]; ok {
-			kept = append(kept, name)
-		} else {
+		seen[r] = true
+		switch candidates := byNorm[norm(r)]; {
+		case exact[r]:
+			kept = append(kept, r)
+		case len(candidates) == 1:
+			kept = append(kept, candidates[0])
+		case len(candidates) > 1:
+			if ambiguous != nil {
+				ambiguous(r, candidates)
+			}
+			unknown = append(unknown, r)
+		default:
 			unknown = append(unknown, r)
 		}
 	}
-	return kept, unknown
+	return uniqueExact(kept), unknown
+}
+
+// uniqueExact drops exact repeats, first kept.
+func uniqueExact(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	seen := make(map[string]bool, len(values))
+	out := values[:0]
+	for _, v := range values {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // capPastEditions bounds the warehouse's past editions to registered_for's
@@ -545,11 +687,149 @@ func knownEditions(requested, known []string) (kept, unknown []string) {
 // far above the contract's, so the most recent are kept: ordered newest year
 // first (an edition with no year in its name sorts last), the input order
 // breaking ties. It returns the kept names, verbatim, and how many were left out.
+//
+// The warehouse returns DISTINCT (EVENT_NAME, EVENT_ID) pairs, so one name can arrive several
+// times; repeats are dropped first (exact match, first spelling kept), or they would use up cap
+// slots and push real editions out.
 func capPastEditions(past []string) ([]string, int) {
-	kept := append([]string(nil), past...)
-	if len(kept) <= audience.CustomMaxRegisteredFor {
+	seen := make(map[string]bool, len(past))
+	var kept []string // nil for no editions, as before: an empty registered_for stays absent
+	for _, p := range past {
+		if !seen[p] {
+			seen[p] = true
+			kept = append(kept, p)
+		}
+	}
+	unique := len(kept)
+	if unique <= audience.CustomMaxRegisteredFor {
 		return kept, 0
 	}
 	slices.SortStableFunc(kept, func(a, b string) int { return strings.Compare(yearIn(b), yearIn(a)) })
-	return kept[:audience.CustomMaxRegisteredFor], len(past) - audience.CustomMaxRegisteredFor
+	return kept[:audience.CustomMaxRegisteredFor], unique - audience.CustomMaxRegisteredFor
+}
+
+// selectsPage reports whether urls includes the event page pageURL itself. Scheme, a leading
+// "www.", a trailing slash and the path's case are ignored: page_view_urls is a CONTAINS match
+// with the scheme optional, and the model may copy the event URL with or without them.
+//
+// The query is the page's identity when it is not tracking: pageURL keeps every non-tracking
+// parameter (withoutTracking), and a page-view URL is the event page only when its query is
+// exactly that remainder. So "/event?id=123" selects the page "/event?id=123"; "?id=456", a bare
+// "/event" (every event on the route), or any added parameter such as "?ticket=vip" or
+// "?utm_source=x" (only the visits made with it) does not. A page-view URL with a fragment is
+// never the page. An empty pageURL matches nothing.
+func selectsPage(urls []string, pageURL string) bool {
+	norm := func(u string) string {
+		u = strings.ToLower(strings.TrimSpace(u))
+		u = strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
+		u = strings.TrimPrefix(u, "www.")
+		return strings.TrimRight(u, "/")
+	}
+	split := func(u string) (page, query string) {
+		u = strings.TrimSpace(u)
+		if i := strings.IndexByte(u, '?'); i >= 0 {
+			return norm(u[:i]), u[i+1:]
+		}
+		return norm(u), ""
+	}
+	wantPage, wantQuery := split(withoutTracking(pageURL))
+	if wantPage == "" {
+		return false
+	}
+	for _, u := range urls {
+		if strings.ContainsRune(u, '#') {
+			continue
+		}
+		if page, query := split(u); page == wantPage && query == wantQuery {
+			return true
+		}
+	}
+	return false
+}
+
+// editionFamily is an edition name without its year, lowercased and with whitespace collapsed:
+// "Synthetic Summit 2026", "Synthetic  Summit 2025" and "Synthetic Summit2024" are one family.
+//
+// A year is found by the SAME rule the warehouse resolver applies to the names it returns
+// (yearIn here, yearInName in internal/platform/snowflake): a 19xx/20xx run of exactly four
+// digits, bounded by non-digits -- so a year written against letters ("Summit2026") counts and
+// a longer number containing one does not. A \b rule would miss the first and keep its year in
+// the family, so the resolver's own edition would be left out of the default.
+func editionFamily(name string) string {
+	var b strings.Builder
+	for i := 0; i < len(name); {
+		if i+4 <= len(name) && isSupportedYear(name[i:i+4]) &&
+			(i == 0 || name[i-1] < '0' || name[i-1] > '9') && (i+4 == len(name) || name[i+4] < '0' || name[i+4] > '9') {
+			b.WriteByte(' ')
+			i += 4
+			continue
+		}
+		b.WriteByte(name[i])
+		i++
+	}
+	return strings.ToLower(strings.Join(strings.Fields(b.String()), " "))
+}
+
+// sameEventEditions splits the warehouse's past editions into those that are eventName's own
+// family (the same name with another year) and the rest, both verbatim and in order. An event
+// name with no family left (empty) keeps nothing.
+func sameEventEditions(past []string, eventName string) (same, others []string) {
+	family := editionFamily(eventName)
+	for _, p := range past {
+		if family != "" && editionFamily(p) == family {
+			same = append(same, p)
+		} else {
+			others = append(others, p)
+		}
+	}
+	return same, others
+}
+
+// trackingParams are query parameters that say how a visitor ARRIVED, never which page it is:
+// campaign tags and ad or email click ids. utm_* and hsa_* are matched as prefixes.
+var trackingParams = map[string]bool{
+	"gclid": true, "fbclid": true, "msclkid": true, "mc_cid": true, "mc_eid": true, "_hsenc": true, "_hsmi": true,
+}
+
+// isTrackingParam reports whether a query parameter name is a tracking parameter.
+func isTrackingParam(name string) bool {
+	name = strings.ToLower(name)
+	return trackingParams[name] || strings.HasPrefix(name, "utm_") || strings.HasPrefix(name, "hsa_")
+}
+
+// withoutTracking is u without its fragment and without its tracking query parameters, every
+// other parameter kept in order and byte for byte (no re-encoding). "?utm_source=x&id=123"
+// becomes "?id=123"; a query left empty is dropped with its "?".
+func withoutTracking(u string) string {
+	if i := strings.IndexByte(u, '#'); i >= 0 {
+		u = u[:i]
+	}
+	i := strings.IndexByte(u, '?')
+	if i < 0 {
+		return u
+	}
+	kept := make([]string, 0, 4)
+	for _, param := range strings.Split(u[i+1:], "&") {
+		if param == "" {
+			continue
+		}
+		name, _, _ := strings.Cut(param, "=")
+		if !isTrackingParam(name) {
+			kept = append(kept, param)
+		}
+	}
+	if len(kept) == 0 {
+		return u[:i]
+	}
+	return u[:i] + "?" + strings.Join(kept, "&")
+}
+
+// quoteAll quotes each value, joined with " or ", so spellings that differ only in spacing stay
+// visibly different in a note.
+func quoteAll(values []string) string {
+	quoted := make([]string, len(values))
+	for i, v := range values {
+		quoted[i] = strconv.Quote(v)
+	}
+	return strings.Join(quoted, " or ")
 }

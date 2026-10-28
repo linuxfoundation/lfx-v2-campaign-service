@@ -530,10 +530,12 @@ func DecodeGetAudienceSuppressionListsRequest(mux goahttp.Muxer, decoder func(*h
 	return func(r *http.Request) (*lfxv2campaignserviceaudiencebuilder.GetAudienceSuppressionListsPayload, error) {
 		var payload *lfxv2campaignserviceaudiencebuilder.GetAudienceSuppressionListsPayload
 		var (
-			projectID   string
-			brandShort  *string
-			eventName   *string
-			bearerToken *string
+			projectID        string
+			brandShort       *string
+			eventName        *string
+			registrantsEvent *string
+			bearerToken      *string
+			err              error
 
 			params = mux.Vars(r)
 		)
@@ -547,11 +549,23 @@ func DecodeGetAudienceSuppressionListsRequest(mux goahttp.Muxer, decoder func(*h
 		if eventNameRaw != "" {
 			eventName = &eventNameRaw
 		}
+		registrantsEventRaw := qp.Get("registrants_event")
+		if registrantsEventRaw != "" {
+			registrantsEvent = &registrantsEventRaw
+		}
+		if registrantsEvent != nil {
+			if utf8.RuneCountInString(*registrantsEvent) > 200 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("registrants_event", *registrantsEvent, utf8.RuneCountInString(*registrantsEvent), 200, false))
+			}
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		payload = NewGetAudienceSuppressionListsPayload(projectID, brandShort, eventName, bearerToken)
+		if err != nil {
+			return payload, err
+		}
+		payload = NewGetAudienceSuppressionListsPayload(projectID, brandShort, eventName, registrantsEvent, bearerToken)
 		if payload.BearerToken != nil {
 			cred := *payload.BearerToken
 			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
@@ -2325,6 +2339,21 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceSuppressionListToAudience
 		Size:       v.Size,
 		Category:   v.Category,
 		HubspotURL: v.HubspotURL,
+		WillCreate: v.WillCreate,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceaudiencebuilderAudienceComposedListToAudienceComposedListResponseBody
+// builds a value of type *AudienceComposedListResponseBody from a value of
+// type *lfxv2campaignserviceaudiencebuilder.AudienceComposedList.
+func marshalLfxv2campaignserviceaudiencebuilderAudienceComposedListToAudienceComposedListResponseBody(v *lfxv2campaignserviceaudiencebuilder.AudienceComposedList) *AudienceComposedListResponseBody {
+	res := &AudienceComposedListResponseBody{
+		ListID:     v.ListID,
+		Name:       v.Name,
+		HubspotURL: v.HubspotURL,
+		Size:       v.Size,
 	}
 
 	return res
@@ -2407,11 +2436,12 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceMasterListBriefToAudience
 // of type *AudienceComposeMasterInputRequestBody.
 func unmarshalAudienceComposeMasterInputRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceComposeMasterInput(v *AudienceComposeMasterInputRequestBody) *lfxv2campaignserviceaudiencebuilder.AudienceComposeMasterInput {
 	res := &lfxv2campaignserviceaudiencebuilder.AudienceComposeMasterInput{
-		Name:             v.Name,
-		BrandShort:       v.BrandShort,
-		EventName:        v.EventName,
-		BriefID:          v.BriefID,
-		InclusionSummary: v.InclusionSummary,
+		Name:                    v.Name,
+		BrandShort:              v.BrandShort,
+		EventName:               v.EventName,
+		CurrentRegistrantsEvent: v.CurrentRegistrantsEvent,
+		BriefID:                 v.BriefID,
+		InclusionSummary:        v.InclusionSummary,
 	}
 	res.ListIds = make([]string, len(v.ListIds))
 	for i, val := range v.ListIds {
@@ -2428,20 +2458,6 @@ func unmarshalAudienceComposeMasterInputRequestBodyToLfxv2campaignserviceaudienc
 		for i, val := range v.EventDates {
 			res.EventDates[i] = val
 		}
-	}
-
-	return res
-}
-
-// marshalLfxv2campaignserviceaudiencebuilderAudienceComposedListToAudienceComposedListResponseBody
-// builds a value of type *AudienceComposedListResponseBody from a value of
-// type *lfxv2campaignserviceaudiencebuilder.AudienceComposedList.
-func marshalLfxv2campaignserviceaudiencebuilderAudienceComposedListToAudienceComposedListResponseBody(v *lfxv2campaignserviceaudiencebuilder.AudienceComposedList) *AudienceComposedListResponseBody {
-	res := &AudienceComposedListResponseBody{
-		ListID:     v.ListID,
-		Name:       v.Name,
-		HubspotURL: v.HubspotURL,
-		Size:       v.Size,
 	}
 
 	return res
@@ -2474,9 +2490,10 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceComposeRecordedAudienceTo
 // value of type *AudienceAttachExistingInputRequestBody.
 func unmarshalAudienceAttachExistingInputRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceAttachExistingInput(v *AudienceAttachExistingInputRequestBody) *lfxv2campaignserviceaudiencebuilder.AudienceAttachExistingInput {
 	res := &lfxv2campaignserviceaudiencebuilder.AudienceAttachExistingInput{
-		BriefID:          *v.BriefID,
-		MasterListID:     v.MasterListID,
-		InclusionSummary: v.InclusionSummary,
+		BriefID:                 *v.BriefID,
+		MasterListID:            v.MasterListID,
+		CurrentRegistrantsEvent: v.CurrentRegistrantsEvent,
+		InclusionSummary:        v.InclusionSummary,
 	}
 	if v.IncludeListIds != nil {
 		res.IncludeListIds = make([]string, len(v.IncludeListIds))

@@ -180,6 +180,86 @@ func TestInterpretCustom_ResolvesTheGateTheModelCannotKnow(t *testing.T) {
 	assert.Empty(t, portal.creates, "interpretation never writes")
 }
 
+// grpcDraft is the model naming a hosted project, not its foundation, as the brand.
+const grpcDraft = `{"criteria":{"cities":["Bengaluru"],"countries":[],"contact_location":true,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"gRPC","property_filters":[],"speakers":null,"ambassadors":false,"label":"gRPC India 2026"},"questions":[],"notes":[]}`
+
+func TestInterpretCustom_InfersTheFoundationWhenTheProjectHasNoMasterList(t *testing.T) {
+	portal := &fakePortal{lists: map[string]string{
+		"26Q2 - CNCF - Foundation - Master-list":      "26724",
+		"25Q2 - CNCF - Events - gRPConf - AOI":        "20643",
+		"25Q2 - CNCF - Events - gRPConf - Web Visits": "17133",
+		"gRPConf India — Master (11df46d4)":           "31136",
+	}}
+	srv := portal.serve(t)
+	defer srv.Close()
+
+	out, err := explorerOver(srv, &stubLLM{reply: grpcDraft}).InterpretCustom(context.Background(), "proj-1", "gRPC India 2026: contacts in Bengaluru", "", nil)
+	require.NoError(t, err)
+
+	require.NotNil(t, out.Gate, "a project with no master list is gated by its foundation's")
+	assert.Equal(t, "26724", out.Gate.ListID)
+	assert.Equal(t, "26724", out.Draft.Criteria.GateListID)
+	assert.Equal(t, "CNCF", out.Draft.BrandShort)
+	notes := strings.Join(out.Draft.Notes, "\n")
+	assert.Contains(t, notes, "Suggested CNCF's master list (26Q2 - CNCF - Foundation - Master-list)", "an inferred gate is said, not silently applied")
+	assert.NotContains(t, notes, "No brand master list was found")
+	assert.Empty(t, portal.creates, "interpretation never writes")
+}
+
+func TestInterpretCustom_NeverGuessesBetweenTwoBrands(t *testing.T) {
+	portal := &fakePortal{lists: map[string]string{
+		"26Q2 - CNCF - Foundation - Master-list":           "26724",
+		"26Q2 - The Linux Foundation - Master-list":        "26716",
+		"25Q2 - CNCF - Events - gRPConf - AOI":             "20643",
+		"25Q2 - CNCF - Events - gRPConf - Web Visits":      "17133",
+		"25Q2 - The Linux Foundation - gRPConf - Speakers": "1",
+		"25Q2 - The Linux Foundation - gRPConf - Sponsors": "2",
+	}}
+	srv := portal.serve(t)
+	defer srv.Close()
+
+	out, err := explorerOver(srv, &stubLLM{reply: grpcDraft}).InterpretCustom(context.Background(), "proj-1", "gRPC India 2026: contacts in Bengaluru", "", nil)
+	require.NoError(t, err)
+
+	assert.Nil(t, out.Gate, "a tie between brands is no brand: a guessed gate is the wrong audience")
+	assert.Empty(t, out.Draft.Criteria.GateListID)
+	assert.Equal(t, "gRPC", out.Draft.BrandShort)
+	assert.Contains(t, strings.Join(out.Draft.Notes, "\n"), "No brand master list was found")
+}
+
+// A name HubSpot's list search cannot take (over 200 characters) is cut to fit, so the
+// taken-name check is a search HubSpot answers rather than a 500.
+// An EXPLICIT name HubSpot cannot search (over MaxListNameLength runes) is refused with a 400
+// naming the field and the limit, before any HubSpot call, on preview and create alike. It is
+// never cut: two typed names differing past the limit would collide into one list's "(v2)".
+// A name at the limit is kept unchanged.
+func TestPreviewCustom_RefusesAnExplicitNameHubSpotCannotSearch(t *testing.T) {
+	silent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no HubSpot call may be made for a name refused up front: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer silent.Close()
+	x := explorerOver(silent, nil)
+	tooLong := strings.Repeat("n", audience.MaxListNameLength) + "x"
+
+	_, err := x.PreviewCustom(context.Background(), "proj-1", seoulCriteria(), tooLong)
+	var field *audience.FieldError
+	require.ErrorAs(t, err, &field)
+	assert.Equal(t, "name", field.Field)
+	assert.ErrorIs(t, err, audience.ErrInvalidRequest)
+	assert.Contains(t, err.Error(), "at most 200")
+	_, err = x.CreateCustom(context.Background(), "proj-1", seoulCriteria(), tooLong)
+	require.ErrorAs(t, err, &field)
+
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	atLimit := strings.Repeat("n", audience.MaxListNameLength)
+	preview, err := explorerOver(srv, nil).PreviewCustom(context.Background(), "proj-1", seoulCriteria(), atLimit)
+	require.NoError(t, err)
+	assert.Equal(t, atLimit, preview.Name, "a name at the limit is kept unchanged")
+}
+
 func TestPreviewCustom_NamesEveryUnknownPropertyAndWritesNothing(t *testing.T) {
 	portal := seoulPortal()
 	srv := portal.serve(t)
@@ -669,7 +749,7 @@ func TestPreviewCustom_ANonStringTopicPropertyIsRefusedForItsType(t *testing.T) 
 // A taken name at the input limit previews as a version create accepts back.
 func TestPreviewCustom_AVersionedNameFitsTheCreateLimit(t *testing.T) {
 	portal := seoulPortal()
-	long := strings.Repeat("n", audience.CustomNameMaxLen)
+	long := strings.Repeat("n", audience.MaxListNameLength)
 	portal.lists[long] = "990"
 	srv := portal.serve(t)
 	defer srv.Close()
@@ -839,6 +919,57 @@ func TestInterpretCustom_ATopicOnlyEducationAudienceGetsNoPastEditions(t *testin
 	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
 	require.NoError(t, err)
 	assert.Empty(t, out.Draft.Criteria.RegisteredFor, "a topic-only education audience is not widened with past registrants")
+}
+
+// The event's default audience has no location, yet still gets the event's past
+// editions -- added by the service, newest first and capped, never left to the
+// model to copy from a cut-short, alphabetical EVENT block.
+func TestInterpretCustom_TheDefaultEventAudienceGetsItsPastEditionsNewestFirst(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":[],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
+	}}
+	events := make([]snowflake.Event, 0, 40)
+	for year := 1990; year < 2026; year++ {
+		events = append(events, snowflake.Event{EventName: fmt.Sprintf("Synthetic Summit %d", year)})
+	}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	c := out.Draft.Criteria
+	assert.Empty(t, c.Cities, "an event audience is not location-scoped by default")
+	require.Len(t, c.RegisteredFor, audience.CustomMaxRegisteredFor)
+	assert.Equal(t, "Synthetic Summit 2025", c.RegisteredFor[0], "the most recent editions are kept")
+	assert.Contains(t, strings.Join(out.Draft.Notes, "\n"), "11 older ones were left out")
+}
+
+// An event URL reached through a tracking link reaches the prompt as the page alone, so the
+// copied page_view_urls entry is the event page and the default still gets its past editions.
+func TestInterpretCustom_ATrackingLinkEventURLStillGetsTheDefault(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["https://events.example.org/synthetic-summit"],"registered_for":[],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit?utm_source=newsletter#agenda", nil)
+	require.NoError(t, err)
+	require.Len(t, llm.prompts, 2)
+	assert.Contains(t, llm.prompts[1], "url: https://events.example.org/synthetic-summit\n")
+	assert.NotContains(t, llm.prompts[1], "utm_source")
+	assert.Equal(t, []string{"Synthetic Summit 2025"}, out.Draft.Criteria.RegisteredFor)
 }
 
 // A label filled in from a long page title is cut to the contract's 200 runes, so
@@ -1451,4 +1582,313 @@ func TestRunQA_AnIncludedListsOwnExclusionClearsItsEvidence(t *testing.T) {
 			assert.Equal(t, tc.fail, out.Checks.CurrentRegistrants.Verdict == audience.VerdictFail)
 		})
 	}
+}
+
+// Visitors of a page that is NOT the event's page are a different segment: they get no past
+// editions ORed in, which would reach people outside the requested visitors.
+func TestInterpretCustom_VisitorsOfAnotherPageGetNoPastEditions(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":["events.example.org/synthetic-summit/cfp"],"registered_for":[],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"events.example.org/synthetic-summit/cfp"}, out.Draft.Criteria.PageViewURLs)
+	assert.Empty(t, out.Draft.Criteria.RegisteredFor, "another page's visitors are not the event's default audience")
+}
+
+func TestInterpretCustom_VisitorsOnlyOfTheEventPageGetNoPastEditions(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":[],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "visitors of this event page only", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"events.example.org/synthetic-summit"}, out.Draft.Criteria.PageViewURLs)
+	assert.Empty(t, out.Draft.Criteria.RegisteredFor, "a visitors-only draft is not the event's default audience")
+}
+
+func TestSelectsPage(t *testing.T) {
+	const event = "https://events.example.org/synthetic-summit/"
+	assert.True(t, selectsPage([]string{"events.example.org/synthetic-summit"}, event))
+	assert.True(t, selectsPage([]string{"https://www.Events.example.org/synthetic-summit"}, event))
+	assert.True(t, selectsPage([]string{"events.example.org/synthetic-summit"}, event+"?utm_source=newsletter"),
+		"the event URL's own query only says how the operator reached the page")
+	// HubSpot's page-view filter keeps the whole string, so a query narrows it to the visits
+	// made with that query: not the page's visitors. utm_* tags included -- "?utm_source=x"
+	// matches only the visits that arrived with that tag.
+	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit?ticket=vip"}, event))
+	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit?utm_source=x"}, event))
+	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit#agenda"}, event))
+
+	// A non-tracking query is the page's identity: it must match exactly.
+	const byID = "https://events.example.org/event?id=123"
+	assert.True(t, selectsPage([]string{"events.example.org/event?id=123"}, byID))
+	assert.True(t, selectsPage([]string{"events.example.org/event?id=123"}, "https://events.example.org/event?utm_source=x&id=123"),
+		"tracking parameters on the event URL are not part of the page")
+	assert.False(t, selectsPage([]string{"events.example.org/event?id=456"}, byID), "another event on the same route")
+	assert.False(t, selectsPage([]string{"events.example.org/event"}, byID), "the bare route is every event on it")
+	assert.False(t, selectsPage([]string{"events.example.org/event?id=123&ticket=vip"}, byID), "an added parameter narrows it")
+	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit/cfp"}, event))
+	assert.False(t, selectsPage([]string{"events.example.org/synthetic-summit"}, ""))
+	assert.False(t, selectsPage(nil, event))
+}
+
+func TestSameEventEditions(t *testing.T) {
+	same, others := sameEventEditions([]string{
+		"Synthetic Summit 2025", "Synthetic Summit Workshop 2025", "synthetic  summit 2024", "Synthetic Summit Tokyo 2025",
+	}, "Synthetic Summit 2026")
+	assert.Equal(t, []string{"Synthetic Summit 2025", "synthetic  summit 2024"}, same, "kept verbatim, in order")
+	assert.Equal(t, []string{"Synthetic Summit Workshop 2025", "Synthetic Summit Tokyo 2025"}, others)
+
+	// The resolver's own year rule: a year against letters is still a year, a longer number is not.
+	same, others = sameEventEditions([]string{"Synthetic Summit2025", "Synthetic Summit 202512"}, "Synthetic Summit 2026")
+	assert.Equal(t, []string{"Synthetic Summit2025"}, same, "a year written against the name is that edition's year")
+	assert.Equal(t, []string{"Synthetic Summit 202512"}, others, "six digits are not a year")
+	same, _ = sameEventEditions([]string{"Synthetic Summit 2025"}, "Synthetic Summit2026")
+	assert.Equal(t, []string{"Synthetic Summit 2025"}, same, "the event name's own adjacent year is removed too")
+
+	same, others = sameEventEditions([]string{"2025"}, "2026")
+	assert.Empty(t, same, "a name that is only a year has no family to match")
+	assert.Equal(t, []string{"2025"}, others)
+}
+
+// The warehouse matches the event name as a substring, so it returns other events sharing it.
+// The default adds only this event's own editions and names the rest in a note.
+func TestInterpretCustom_DefaultLeavesOutOtherEventsTheWarehouseMatched(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":[],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}, {EventName: "Synthetic Summit Workshop 2025"}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Synthetic Summit 2025"}, out.Draft.Criteria.RegisteredFor)
+	assert.Contains(t, strings.Join(out.Draft.Notes, "\n"), "Synthetic Summit Workshop 2025")
+}
+
+// The event page's visitors plus enrollees in some OTHER course carry the same two signals as
+// the default audience. Without the model's explicit include_past_editions: true, no past
+// editions are added.
+func TestInterpretCustom_DefaultNeedsAnExplicitIncludePastEditions(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Unrelated Course"],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":[],"label":""},"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "event page visitors and Unrelated Course enrollees", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.Empty(t, out.Draft.Criteria.RegisteredFor, "unset include_past_editions is not the default audience")
+}
+
+// A warehouse edition spelled with a double space is returned verbatim, so the exact
+// event_name filter built from it matches its registrations.
+func TestInterpretCustom_DoubleSpacedWarehouseEditionIsKeptVerbatim(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":["Synthetic Summit 2024"],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "Synthetic  Summit 2024"}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Synthetic  Summit 2024"}, out.Draft.Criteria.RegisteredFor, "a named edition comes back as the warehouse spells it")
+	criteria := out.Draft.Criteria
+	criteria.EducationTopicProperty = "course_name" // preview resolves this from the portal
+	raw, err := audience.CustomListFilter(criteria)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"Synthetic  Summit 2024"`, "and reaches the filter verbatim")
+}
+
+func TestWithoutTracking(t *testing.T) {
+	assert.Equal(t, "https://e.org/event?id=123", withoutTracking("https://e.org/event?utm_source=x&id=123"))
+	assert.Equal(t, "https://e.org/event?id=123&lang=en", withoutTracking("https://e.org/event?id=123&gclid=g&lang=en&hsa_acc=1#agenda"))
+	assert.Equal(t, "https://e.org/summit", withoutTracking("https://e.org/summit?utm_source=x&UTM_MEDIUM=y&fbclid=f&msclkid=m&mc_cid=c&mc_eid=e&_hsenc=h&_hsmi=i"))
+	assert.Equal(t, "https://e.org/summit", withoutTracking("https://e.org/summit#agenda"))
+	assert.Equal(t, "https://e.org/event?id=a%20b", withoutTracking("https://e.org/event?id=a%20b"), "kept byte for byte, never re-encoded")
+}
+
+// An event URL whose query names the page keeps it in the EVENT block (the most precise visitor
+// filter there is), but HubSpot's CONTAINS page-view filter cannot isolate that page ("?id=123"
+// also matches "?id=1234"), so it is not treated as the default audience: no past editions,
+// and a note asks the operator to choose editions and pages.
+func TestInterpretCustom_AnIdentifyingEventQueryIsKeptButGetsNoDefault(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["https://events.example.org/event?id=123"],"registered_for":[],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/event?utm_source=x&id=123", nil)
+	require.NoError(t, err)
+	require.Len(t, llm.prompts, 2)
+	assert.Contains(t, llm.prompts[1], "url: https://events.example.org/event?id=123\n", "the identifying query stays, the tracking one goes")
+	assert.Empty(t, out.Draft.Criteria.RegisteredFor, "a query-identified page is not a reliable default audience")
+	assert.Equal(t, []string{"https://events.example.org/event?id=123"}, out.Draft.Criteria.PageViewURLs)
+	assert.Contains(t, strings.Join(out.Draft.Notes, "\n"), "identified by a query (\"https://events.example.org/event?id=123\") that page-view filters cannot isolate")
+}
+
+// A named edition on a query-identified page is kept, and the note about withheld defaults is
+// not added: nothing was withheld, so it would contradict the draft the operator reviews.
+func TestInterpretCustom_AQueryIdentifiedPageKeepsANamedEditionWithoutTheNote(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["https://events.example.org/event?id=123"],"registered_for":["Synthetic Summit 2025"],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}, {EventName: "Synthetic Summit 2024"}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/event?id=123", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Synthetic Summit 2025"}, out.Draft.Criteria.RegisteredFor)
+	assert.NotContains(t, strings.Join(out.Draft.Notes, "\n"), "No past editions were added")
+}
+
+// The warehouse returns distinct (name, id) pairs, so one name can repeat. Repeats must not use
+// up cap slots: the cap keeps the most recent DISTINCT editions and counts only distinct ones out.
+func TestCapPastEditions_DropsRepeatedNamesBeforeTheCap(t *testing.T) {
+	past := make([]string, 0, 60)
+	for year := 2025; year > 2025-audience.CustomMaxRegisteredFor-1; year-- {
+		name := fmt.Sprintf("Synthetic Summit %d", year)
+		past = append(past, name, name) // every edition twice, as two event ids
+	}
+	kept, omitted := capPastEditions(past)
+	require.Len(t, kept, audience.CustomMaxRegisteredFor)
+	assert.Equal(t, 1, omitted, "26 distinct editions, one over the cap")
+	seen := map[string]bool{}
+	for _, k := range kept {
+		assert.False(t, seen[k], "no repeated edition fills a slot: %s", k)
+		seen[k] = true
+	}
+	assert.Equal(t, "Synthetic Summit 2025", kept[0])
+	assert.Equal(t, fmt.Sprintf("Synthetic Summit %d", 2025-audience.CustomMaxRegisteredFor+1), kept[len(kept)-1])
+
+	exact, omitted := capPastEditions([]string{"A 2025", "A 2025", "A  2025"})
+	assert.Equal(t, []string{"A 2025", "A  2025"}, exact, "an exact repeat is dropped; a different spelling is not")
+	assert.Zero(t, omitted)
+}
+
+// The warehouse keeps an edition's padding (ResolvePastEditions does not trim it), and the
+// event_name equality matches only as spelled: a model-typed name maps to that exact spelling,
+// which reaches the filter verbatim.
+func TestInterpretCustom_PaddedWarehouseEditionIsKeptVerbatim(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":["events.example.org/synthetic-summit"],"registered_for":["Synthetic Summit 2024"],"label":""},"include_past_editions":true,"questions":[],"notes":[]}`,
+	}}
+	events := []snowflake.Event{{EventName: "  Synthetic Summit 2024  "}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"  Synthetic Summit 2024  "}, out.Draft.Criteria.RegisteredFor)
+	criteria := out.Draft.Criteria
+	criteria.EducationTopicProperty = "course_name"
+	raw, err := audience.CustomListFilter(criteria)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"  Synthetic Summit 2024  "`)
+}
+
+// The warehouse can hold one edition under two spellings that differ only in spacing. A
+// requested name is matched EXACTLY first; a normalised match is used only when it is
+// unambiguous, and an ambiguous one is left out with its candidates named.
+func TestKnownEditions_ExactFirstAndAmbiguityRefused(t *testing.T) {
+	known := []string{"Synthetic Summit 2025", "Synthetic  Summit 2025", "Synthetic Summit 2024"}
+
+	kept, unknown := knownEditions([]string{"Synthetic  Summit 2025"}, known)
+	assert.Equal(t, []string{"Synthetic  Summit 2025"}, kept, "the exact spelling wins over the first normalised match")
+	assert.Empty(t, unknown)
+
+	kept, unknown = knownEditions([]string{"synthetic summit 2024"}, known)
+	assert.Equal(t, []string{"Synthetic Summit 2024"}, kept, "an unambiguous normalised match maps to the warehouse spelling")
+	assert.Empty(t, unknown)
+
+	var got []string
+	kept, unknown = knownEditionsWithAmbiguity([]string{"synthetic summit 2025"}, known, func(name string, candidates []string) {
+		got = append(got, candidates...)
+	})
+	assert.Empty(t, kept, "two spellings normalise to it: guessing one could pick the wrong edition")
+	assert.Equal(t, []string{"synthetic summit 2025"}, unknown)
+	assert.Equal(t, []string{"Synthetic Summit 2025", "Synthetic  Summit 2025"}, got)
+}
+
+// End to end: the model's double-spaced name survives parsing and selects that spelling; an
+// ambiguous one is left out with a note naming both candidates.
+func TestInterpretCustom_EditionSpellingsThatDifferOnlyInSpacing(t *testing.T) {
+	run := func(t *testing.T, requested string) *audience.CustomInterpretOutcome {
+		t.Helper()
+		portal := seoulPortal()
+		srv := portal.serve(t)
+		t.Cleanup(srv.Close)
+		llm := &seqLLM{replies: []string{
+			`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+			`{"criteria":{"cities":["Seoul"],"countries":[],"contact_location":true,"event_registered":true,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":[],"registered_for":["` + requested + `"],"label":""},"questions":[],"notes":[]}`,
+		}}
+		events := []snowflake.Event{{EventName: "Synthetic Summit 2025"}, {EventName: "Synthetic  Summit 2025"}}
+		repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+		builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+		x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+		out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+		require.NoError(t, err)
+		return out
+	}
+
+	out := run(t, "Synthetic  Summit 2025")
+	assert.Equal(t, []string{"Synthetic  Summit 2025"}, out.Draft.Criteria.RegisteredFor, "parsing keeps the double space and the exact match wins")
+
+	out = run(t, "synthetic summit 2025")
+	assert.Empty(t, out.Draft.Criteria.RegisteredFor)
+	assert.Contains(t, strings.Join(out.Draft.Notes, "\n"), `could be any of "Synthetic Summit 2025" or "Synthetic  Summit 2025"`)
 }
