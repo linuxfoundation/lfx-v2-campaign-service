@@ -1393,4 +1393,3 @@ func TestValidateLogFragmentIndentedHeadingDoesNotSelectArchiveMode(t *testing.T
 		t.Errorf("Validate() = %v, want the single-entry kind marker still checked", errs)
 	}
 }
-
