@@ -959,8 +959,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 // mutation did not apply is then false, and on the budget and bid levers it is false about
 // money.
 //
-// Only the six IDEMPOTENT mutating call sites need this; reads have no commit to be
+// Only the five IDEMPOTENT mutating call sites need this; reads have no commit to be
 // ambiguous about, and the creates pass idempotent=false and are never retried at all.
+// adGroupAds:mutate is idempotent too but deliberately stays on doRequest: its failures
+// already surface as partialCascadeError, which reports Unconfirmed() (see adgroup_ad.go).
 // Mirrors internal/platform/microsoft's doRequestCounted, which solves the same problem
 // with the same shape.
 func (c *Client) doRequestCounted(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, int, error) {
@@ -971,7 +973,7 @@ func (c *Client) doRequestCounted(ctx context.Context, method, path string, body
 	return c.doRequestValidatedCounted(ctx, method, path, body, idempotent)
 }
 
-// retriedUnconfirmed is the ONE place the retry-ambiguity rule is applied, so the six
+// retriedUnconfirmed is the ONE place the retry-ambiguity rule is applied, so the five
 // idempotent mutating call sites each spend a single line on it and none of them can get the
 // condition subtly different.
 //
