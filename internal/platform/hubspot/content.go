@@ -5,11 +5,14 @@ package hubspot
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -298,21 +301,28 @@ func (c *Client) verifyContentSaved(ctx context.Context, id string, ourWidgets m
 			id, len(missing), strings.Join(missing, ", "))
 	}
 
-	// The BODY's value, not only its key. The keys are fixed, so a template cloned from an email
-	// an earlier generation wrote already carries a `staging_body` placed in the layout: a
+	// The BODY's content, not only its key. The keys are fixed, so a template cloned from an
+	// email an earlier generation wrote already carries a `staging_body` placed in the layout: a
 	// reverted PATCH then passes the key check while the draft still holds that earlier body --
-	// and a caller recording the draft as carrying this campaign's copy would be wrong.
-	// Compared with whitespace runs collapsed, so re-indentation is not read as a revert.
+	// and a caller recording the draft as carrying this campaign's copy would be wrong. The
+	// read-back body must carry THIS write's marker (stagedBodyMarker); an earlier body carries
+	// another one, or none. Not a comparison of the whole html, which HubSpot may re-serialise.
 	if wrote, ok := widgetHTML(ourWidgets[bodyWidgetKey]); ok {
-		var savedWidgets map[string]struct {
-			Body struct {
-				HTML string `json:"html"`
-			} `json:"body"`
-		}
-		_ = json.Unmarshal(doc.Content["widgets"], &savedWidgets)
-		if collapseHTMLWhitespace(savedWidgets[bodyWidgetKey].Body.HTML) != collapseHTMLWhitespace(wrote) {
-			return fmt.Errorf("hubspot: email %s content PATCH left %s holding different html than was written (HubSpot may have silently reverted it)",
-				id, bodyWidgetKey)
+		if token := stagedMarkerPattern.FindString(wrote); token != "" {
+			var savedWidgets map[string]struct {
+				Body struct {
+					HTML string `json:"html"`
+				} `json:"body"`
+			}
+			if derr := json.Unmarshal(doc.Content["widgets"], &savedWidgets); derr != nil {
+				// An unreadable shape says nothing about whether the write landed: unknown and
+				// retryable, never a proven revert.
+				return fmt.Errorf("%w: email %s: decode widgets: %v", errVerifyReadFailed, id, derr)
+			}
+			if !strings.Contains(savedWidgets[bodyWidgetKey].Body.HTML, token) {
+				return fmt.Errorf("hubspot: email %s content PATCH left %s without this write's marker (HubSpot may have silently reverted it)",
+					id, bodyWidgetKey)
+			}
 		}
 	}
 	return nil
@@ -330,11 +340,6 @@ func widgetHTML(widget any) (string, bool) {
 	}
 	html, ok := body["html"].(string)
 	return html, ok
-}
-
-// collapseHTMLWhitespace trims html and reduces every whitespace run to one space.
-func collapseHTMLWhitespace(html string) string {
-	return strings.Join(strings.Fields(html), " ")
 }
 
 var defaultSectionStyle = map[string]any{
@@ -441,13 +446,29 @@ func richTextWidget(html string, padTop, padRight, padBottom, padLeft string) ma
 	}
 }
 
+// stagedBodyMarker is the HTML comment written at the end of the rebuilt body: a token derived
+// from the body itself, which verifyContentSaved looks for in the read-back html. A token, not a
+// comparison of the whole html: HubSpot may re-serialise markup on save (`&` to `&amp;`, `<br>`
+// to `<br />`, attribute order), and reading that as a revert would refuse every draft. A comment
+// because it renders nothing and email HTML depends on comments surviving (MSO conditional
+// comments), so it is the form most likely to be kept.
+func stagedBodyMarker(bodyHTML string) string {
+	sum := sha256.Sum256([]byte(bodyHTML))
+	return "<!-- " + stagedMarkerPrefix + hex.EncodeToString(sum[:8]) + " -->"
+}
+
+// stagedMarkerPrefix opens the token stagedBodyMarker writes and stagedMarkerPattern finds.
+const stagedMarkerPrefix = "lfx-staged:"
+
+var stagedMarkerPattern = regexp.MustCompile(`lfx-staged:[0-9a-f]{16}`)
+
 // bodyWidgetKey names the rebuild's own body widget. Shared with the preserve path above, so
 // the two cannot drift onto different keys.
 const bodyWidgetKey = "staging_body"
 
 func addBodySection(widgets map[string]any, sections *[]map[string]any, bodyHTML string) {
 	const key = bodyWidgetKey
-	widgets[key] = richTextWidget(bodyHTML, "15px", "20px", "10px", "20px")
+	widgets[key] = richTextWidget(bodyHTML+"\n"+stagedBodyMarker(bodyHTML), "15px", "20px", "10px", "20px")
 	*sections = append(*sections, makeSection(
 		"section-staging-body",
 		[]widgetColumn{{id: "col-body-0", widgets: []string{key}, width: 12}},

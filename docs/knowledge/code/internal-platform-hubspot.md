@@ -632,10 +632,13 @@ clears it at ~5.17:1.
 `verifyContentSaved` re-reads the draft afterwards, because HubSpot has in practice accepted a
 content PATCH with a 2xx and silently reverted it. It requires EVERY widget it wrote to be
 referenced from `flexAreas`, not merely one: the keys are fixed, so a single surviving key from
-an earlier generation used to confirm a rebuild whose new content was lost. It also compares the
-body widget's read-back html with what was written (whitespace runs collapsed): a template cloned
-from an earlier generated email already carries a placed `staging_body`, so a reverted PATCH passed
-the key check while the draft held the earlier body. It distinguishes two
+an earlier generation used to confirm a rebuild whose new content was lost. The body also carries a
+marker, an HTML comment `<!-- lfx-staged:<16 hex of sha256(body)> -->` (`stagedBodyMarker`), and the
+read-back body must CONTAIN it: a template cloned from an earlier generated email already carries a
+placed `staging_body`, so a reverted PATCH passed the key check while the draft held the earlier
+body. A marker rather than a comparison of the whole html, because HubSpot may re-serialise markup
+on save (`&amp;`, `<br />`, attribute order). A widgets value that does not decode is
+`errVerifyReadFailed`, not a revert. It distinguishes two
 outcomes — a proven revert (`ErrContentNotPersisted`, unrecoverable, logged at ERROR by the
 dispatcher as needing manual repair) and a failed verification read (`errVerifyReadFailed`,
 retryable, because the write's outcome is unknown rather than known-bad).

@@ -179,10 +179,11 @@ func TestRebuildEmailContent_DetectsSilentRevert(t *testing.T) {
 	}
 }
 
-func TestRebuildEmailContent_DetectsARevertBehindIdenticalWidgetKeys(t *testing.T) {
-	// The template was cloned from an email an earlier generation wrote, so its draft already
-	// holds a `staging_body` placed in the layout. HubSpot 2xxes the PATCH and reverts it: every
-	// widget KEY is present on the read-back, but the body is the earlier one.
+// bodyReadBackServer accepts the content PATCH and answers the verification read with every
+// widget the PATCH wrote, except staging_body, whose html readBack derives from the html written.
+// widgets, when non-nil, replaces the whole widgets value read back.
+func bodyReadBackServer(t *testing.T, readBack func(written string) string, widgets json.RawMessage) *Client {
+	t.Helper()
 	var mu sync.Mutex
 	var patched map[string]any
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -194,14 +195,19 @@ func TestRebuildEmailContent_DetectsARevertBehindIdenticalWidgetKeys(t *testing.
 				_ = json.NewEncoder(w).Encode(map[string]any{"content": map[string]any{}})
 				return
 			}
-			widgets := map[string]any{}
-			for key, v := range patched["widgets"].(map[string]any) {
-				widgets[key] = v
+			out := map[string]any{"flexAreas": patched["flexAreas"]}
+			if widgets != nil {
+				out["widgets"] = widgets
+			} else {
+				ws := map[string]any{}
+				for key, v := range patched["widgets"].(map[string]any) {
+					ws[key] = v
+				}
+				written := ws["staging_body"].(map[string]any)["body"].(map[string]any)["html"].(string)
+				ws["staging_body"] = map[string]any{"body": map[string]any{"html": readBack(written)}}
+				out["widgets"] = ws
 			}
-			widgets["staging_body"] = map[string]any{"body": map[string]any{"html": "<p>last year's body</p>"}}
-			_ = json.NewEncoder(w).Encode(map[string]any{"content": map[string]any{
-				"widgets": widgets, "flexAreas": patched["flexAreas"],
-			}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"content": out})
 		case http.MethodPatch:
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -209,44 +215,53 @@ func TestRebuildEmailContent_DetectsARevertBehindIdenticalWidgetKeys(t *testing.
 			_, _ = io.WriteString(w, `{"id":"email-1"}`)
 		}
 	})
+	return c
+}
 
-	_, err := c.RebuildEmailContent(context.Background(), "email-1", RebuildEmailContentInput{BodyHTML: "<p>this year's body</p>"})
-	if !errors.Is(err, ErrContentNotPersisted) {
-		t.Fatalf("error = %v, want ErrContentNotPersisted for a body that read back different", err)
+const markerTestBody = `<p>Read the <a href="https://x.example/r?a=1&b=2">report</a><br>today</p>`
+
+func TestRebuildEmailContent_AcceptsABodyHubSpotReserialised(t *testing.T) {
+	// HubSpot may re-serialise the markup it stores: entity-encode an & in an href, close a <br>,
+	// re-indent. The body still carries this write's marker, so it persisted.
+	c := bodyReadBackServer(t, func(written string) string {
+		out := strings.ReplaceAll(written, "&b=", "&amp;b=")
+		out = strings.ReplaceAll(out, "<br>", "<br />")
+		return "\n   " + strings.ReplaceAll(out, "<p>", "<p>\n  ") + "\n"
+	}, nil)
+	if _, err := c.RebuildEmailContent(context.Background(), "email-1", RebuildEmailContentInput{BodyHTML: markerTestBody}); err != nil {
+		t.Fatalf("a re-serialised body was read as a revert: %v", err)
 	}
 }
 
-func TestRebuildEmailContent_AcceptsABodyReadBackWithOtherWhitespace(t *testing.T) {
-	// Re-indentation on the way back is not a revert.
-	var mu sync.Mutex
-	var patched map[string]any
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		switch r.Method {
-		case http.MethodGet:
-			if patched == nil {
-				_ = json.NewEncoder(w).Encode(map[string]any{"content": map[string]any{}})
-				return
+func TestRebuildEmailContent_DetectsARevertBehindIdenticalWidgetKeys(t *testing.T) {
+	// The template was cloned from an email an earlier generation wrote, so its draft already
+	// holds a placed staging_body. HubSpot 2xxes the PATCH and reverts it: every KEY reads back,
+	// but the body is the earlier one -- with no marker, or with that earlier write's marker.
+	for name, earlier := range map[string]string{
+		"no marker":            "<p>last year's body</p>",
+		"an earlier marker":    "<p>last year's body</p>\n" + stagedBodyMarker("<p>last year's body</p>"),
+		"the same text, moved": markerTestBody,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := bodyReadBackServer(t, func(string) string { return earlier }, nil)
+			_, err := c.RebuildEmailContent(context.Background(), "email-1", RebuildEmailContentInput{BodyHTML: markerTestBody})
+			if !errors.Is(err, ErrContentNotPersisted) {
+				t.Fatalf("error = %v, want ErrContentNotPersisted for a body without this write's marker", err)
 			}
-			widgets := map[string]any{}
-			for key, v := range patched["widgets"].(map[string]any) {
-				widgets[key] = v
-			}
-			widgets["staging_body"] = map[string]any{"body": map[string]any{"html": "\n  <p>this year's\n body</p>\n"}}
-			_ = json.NewEncoder(w).Encode(map[string]any{"content": map[string]any{
-				"widgets": widgets, "flexAreas": patched["flexAreas"],
-			}})
-		case http.MethodPatch:
-			var body map[string]any
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			patched, _ = body["content"].(map[string]any)
-			_, _ = io.WriteString(w, `{"id":"email-1"}`)
-		}
-	})
+		})
+	}
+}
 
-	if _, err := c.RebuildEmailContent(context.Background(), "email-1", RebuildEmailContentInput{BodyHTML: "<p>this year's body</p>"}); err != nil {
-		t.Fatalf("RebuildEmailContent: %v", err)
+func TestRebuildEmailContent_AnUndecodableWidgetsReadIsNotAProvenRevert(t *testing.T) {
+	// A widgets value of an unexpected shape says nothing about whether the write landed: it is
+	// the retryable unknown, never the "needs manual repair" revert.
+	c := bodyReadBackServer(t, nil, json.RawMessage(`["not","an","object"]`))
+	_, err := c.RebuildEmailContent(context.Background(), "email-1", RebuildEmailContentInput{BodyHTML: markerTestBody})
+	if !errors.Is(err, errVerifyReadFailed) {
+		t.Fatalf("error = %v, want errVerifyReadFailed", err)
+	}
+	if errors.Is(err, ErrContentNotPersisted) {
+		t.Error("an undecodable read was reported as a proven revert")
 	}
 }
 
