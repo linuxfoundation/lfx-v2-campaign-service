@@ -1817,6 +1817,173 @@ func TestLastSent_ALegacyIDForAListAlreadyListedIsNotRepeated(t *testing.T) {
 	assert.False(t, rows[0].SuppressionLists[0].Missing)
 }
 
+// TestLastSent_AFailedListReadIsNotReportedAsDeleted pins #238. Both list ids below fail to
+// resolve, and the OLD code reported both identically as `missing` — "this list was deleted".
+// One of them was deleted; the other is a list the portal refused to let this token read, and
+// telling an operator to rebuild that one is the expensive half of the confusion.
+func TestLastSent_AFailedListReadIsNotReportedAsDeleted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case "/marketing/v3/emails":
+			_, _ = io.WriteString(w, `{"results":[{"id":"e1","name":"AGNTCon Japan Invite","state":"PUBLISHED",`+
+				`"updatedAt":"2026-09-01T00:00:00Z","publishDate":"2026-02-01T09:00:00Z"}]}`)
+		case "/marketing/v3/emails/e1":
+			_, _ = io.WriteString(w, `{"id":"e1","publishDate":"2026-02-01T09:00:00Z","to":{`+
+				`"contactIlsLists":{"include":[700,701]}}}`)
+		case "/crm/v3/lists/700", "/contacts/v1/lists/700":
+			// The token cannot see this list. Whether it exists is unknown.
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"message":"permission denied"}`)
+		default:
+			// Everything else, 701 included, is a genuine 404.
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "AGNTCon + MCPCon Japan 2026", "LF", 3)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0].IncludedLists, 2, "both referenced lists must still be listed")
+
+	byID := map[string]audience.ListBrief{}
+	for _, b := range rows[0].IncludedLists {
+		byID[b.ListID] = b
+	}
+
+	refused := byID["700"]
+	assert.False(t, refused.Missing, "a 403 is not evidence the list was deleted")
+	assert.True(t, refused.Unresolved, "a read that failed for any reason but absence is unresolved")
+	assert.NotEmpty(t, refused.HubSpotURL, "the operator's remedy is to open the list themselves")
+
+	gone := byID["701"]
+	assert.True(t, gone.Missing, "a 404 from both APIs is HubSpot saying there is no such list")
+	assert.False(t, gone.Unresolved)
+	assert.Empty(t, gone.HubSpotURL)
+}
+
+// TestLastSent_LegacyListReadFailure pins the LEGACY half of #238, which the v3 test above
+// does not reach: a send's `to.contactLists` ids go through a second loop that maps each
+// legacy id to a v3 one before reading it, and each of that loop's three HubSpot calls can
+// fail for a reason that is not absence.
+//
+// It also pins the link: `ListURL` builds the objectLists route, which resolves v3 ids only,
+// so an unresolved row must link by its MAPPED id — a link built from the legacy id opens
+// HubSpot on "list not found", which is the deletion the row is saying it cannot confirm.
+func TestLastSent_LegacyListReadFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// The id-mapping route is a sibling of GET /crm/v3/lists/{id} and must be matched first.
+		if r.URL.Path == "/crm/v3/lists/idmapping" {
+			switch r.URL.Query().Get("legacyListId") {
+			case "800":
+				_, _ = io.WriteString(w, `{"listId":900}`)
+			case "801":
+				_, _ = io.WriteString(w, `{"listId":901}`)
+			case "804":
+				// A definite 404 from the mapping route: there genuinely is no v3 copy.
+				w.WriteHeader(http.StatusNotFound)
+			default:
+				// 802's and 803's mapping calls are refused outright: no id, and no evidence
+				// either way about whether the list is still there.
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = io.WriteString(w, `{"message":"permission denied"}`)
+			}
+			return
+		}
+		switch r.URL.Path {
+		case hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case "/marketing/v3/emails":
+			_, _ = io.WriteString(w, `{"results":[{"id":"e1","name":"AGNTCon Japan Invite","state":"PUBLISHED",`+
+				`"updatedAt":"2026-09-01T00:00:00Z","publishDate":"2026-02-01T09:00:00Z"}]}`)
+		case "/marketing/v3/emails/e1":
+			_, _ = io.WriteString(w, `{"id":"e1","publishDate":"2026-02-01T09:00:00Z","to":{`+
+				`"contactLists":{"include":[800,801,802,803,804]}}}`)
+		case "/crm/v3/lists/900", "/contacts/v1/lists/802", "/contacts/v1/lists/804":
+			// 800 mapped, but the mapped read is refused. 802's and 804's name lookups are
+			// refused too; 803's answers a clean 404, leaving its mapping error the only signal.
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"message":"permission denied"}`)
+		default:
+			// Everything else — 901's mapped read, and every legacy name but 802's and
+			// 804's — is a 404.
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "AGNTCon + MCPCon Japan 2026", "LF", 3)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0].IncludedLists, 5, "all five referenced lists must still be listed")
+
+	byLegacy := map[string]audience.ListBrief{}
+	for _, b := range rows[0].IncludedLists {
+		byLegacy[b.ResolvedFromLegacyID] = b
+	}
+
+	// 800: mapped to 900, and the read of 900 was refused. The list is there to read and
+	// the token could not read it — unresolved, and linked by the id the link route resolves.
+	refused := byLegacy["800"]
+	assert.False(t, refused.Missing, "a 403 on the mapped read is not evidence the list was deleted")
+	assert.True(t, refused.Unresolved)
+	assert.Equal(t, "900", refused.ListID, "the mapped v3 id must survive onto the unresolved row")
+	assert.Contains(t, refused.HubSpotURL, "/objectLists/900/filters",
+		"the recovery link must target the mapped v3 id, not the legacy id")
+
+	// 801: mapped to 901, and 901 is a 404 from both APIs. HubSpot said there is no such list.
+	gone := byLegacy["801"]
+	assert.True(t, gone.Missing, "a 404 on the mapped read is HubSpot saying there is no such list")
+	assert.False(t, gone.Unresolved)
+	assert.Empty(t, gone.HubSpotURL)
+
+	// 802: the MAPPING call was refused, so there is no v3 id and never was an answer about
+	// the list. Before the error reached this loop, `mapped == ""` was indistinguishable from
+	// "no mapping exists" and the row shipped as missing — #238 through a second door.
+	unmapped := byLegacy["802"]
+	assert.False(t, unmapped.Missing, "a 403 on the id mapping is not evidence the list was deleted")
+	assert.True(t, unmapped.Unresolved)
+	assert.Equal(t, "802", unmapped.ListID, "nothing mapped, so the legacy id is all the row has")
+	assert.Empty(t, unmapped.HubSpotURL,
+		"no v3 id to link to: the objectLists route cannot open a legacy id, and a link onto "+
+			"HubSpot's 'list not found' page reads as the deletion this row cannot confirm")
+
+	// 803: the mapping call was refused and the legacy name lookup answered a clean 404. That
+	// 404 is about the LEGACY copy, which a v3-created list never has; the one call that could
+	// have spoken for the list itself never completed. The refused mapping is the sole signal
+	// on this row, so it is also the only thing that can keep the row off `missing`.
+	mapRefused := byLegacy["803"]
+	assert.False(t, mapRefused.Missing,
+		"a refused id mapping is the only signal on this row, and it is not a deletion")
+	assert.True(t, mapRefused.Unresolved)
+	assert.Equal(t, "803", mapRefused.ListID, "nothing mapped, so the legacy id is all the row has")
+	assert.Empty(t, mapRefused.HubSpotURL, "no v3 id to link to")
+
+	// 804: the mapping route answered a definite 404 — there is no v3 copy, which is a normal
+	// answer — and then the legacy name lookup was refused. The last call on the path is the
+	// only one that could have found the list, and it never got an answer.
+	nameRefused := byLegacy["804"]
+	assert.False(t, nameRefused.Missing,
+		"a 403 on the legacy name lookup is not evidence the list was deleted")
+	assert.True(t, nameRefused.Unresolved)
+}
+
 // composeNameServer answers the pre-create name check from `existing` (name → id) and
 // records every list create, so a test can assert what compose chose to name — and
 // whether it created anything at all.

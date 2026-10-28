@@ -111,13 +111,26 @@ const (
 // Missing is carried explicitly because a deleted list still leaves its id in the
 // email's record. Dropping the row would silently understate what the last send
 // targeted; showing the id with Missing set says what actually happened.
+//
+// Unresolved is the THIRD state, and it is not a shade of Missing: the read failed
+// for a reason that is not "no such list" — a throttle, a 401/403, a 5xx — so whether
+// the list exists is unknown. Folding it into Missing told an operator a list they
+// still have was deleted, which is the one conclusion they act on irreversibly.
+// At most one of Missing and Unresolved is ever set; a resolved row has neither.
 type ListBrief struct {
 	ListID               string
 	Name                 string
 	Size                 *int64
 	Missing              bool
+	Unresolved           bool
 	ResolvedFromLegacyID string
-	// HubSpotURL links to the list; empty when it no longer resolves.
+	// HubSpotURL links to the list. An Unresolved row keeps its link on purpose, so the
+	// operator can check the list by hand. It is empty on a Missing row, and on any row
+	// whose ListID is still the ResolvedFromLegacyID it came in as: the link route takes
+	// v3 (ILS) ids only, and a legacy id through it opens HubSpot on "list not found",
+	// which reads as exactly the deletion an unresolved row is saying it cannot confirm.
+	// An empty URL is never itself a statement about the list; read Missing and
+	// Unresolved for that.
 	HubSpotURL string
 }
 
