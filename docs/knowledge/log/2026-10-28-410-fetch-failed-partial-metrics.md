@@ -9,7 +9,8 @@ behaviour changes and no code path moves.
    has an `impressions`, `clicks` or `cost_micros` value that fails `parseMetricInt`, the
    campaign is marked `FetchFailed` and that row is skipped, but the rows that did parse keep
    their `+=` contribution. So a flagged Google row can carry real but incomplete delivery. If
-   the campaign's only row fails, its metrics stay zero. The `fetch_failed` and
+   the campaign's only row fails, impressions, clicks and spend stay zero and `Conversions` stays
+   nil (absent, not a measured zero). The `fetch_failed` and
    `unmeasured_campaigns` design attributes (regenerated through `make apigen` into `gen/**` and
    the kodata OpenAPI copies), `model.AccountCampaignMetrics.FetchFailed`,
    `model.AccountMonitorTotals.UnmeasuredCampaigns`, `rules.fetchFailedRow` (which also no longer
