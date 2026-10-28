@@ -1918,8 +1918,8 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 				// MaxLength does not bound what the server reads off the WIRE either: the
 				// validator sees the string only after the JSON decoder has read the whole
 				// body. The inbound cap that does is constants.MaxRequestBodyBytes (42 MiB),
-				// applied by middleware.MaxBodyBytes; it is sized from the 30 MiB ceiling and
-				// must be raised alongside any increase here.
+				// applied to this route by middleware.MaxBodyBytesPerRoute; it is sized from the
+				// 30 MiB ceiling and must be raised alongside any increase here.
 				MaxLength(41943040)
 				Example("aVZCT1J3MEtHZ29BQUFBTlNVaEVVZ0FBQUFFQUFBQUJDQUFBQUFDNnBLcmVBQUFBREVsRVFWUUlIV05nWUdBQUFBQUVBQUdiQTNvSkFBQUFBRWxGVGtTdVFtQ0M=")
 			})
@@ -3027,7 +3027,7 @@ func commonBriefErrors() {
 	Error("Conflict", ConflictError, "Conflict")
 	Error("InternalServerError", InternalServerError, "Internal server error")
 	Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
-	// PayloadTooLarge is produced by middleware.MaxBodyBytes, which sits outside the mux
+	// PayloadTooLarge is produced by middleware.MaxBodyBytesPerRoute, which sits outside the mux
 	// and so never reaches a Goa encoder — declaring it here is what gives the generated
 	// CLIENT a decode case for 413 (otherwise an oversized upload surfaces as
 	// ErrInvalidResponse) and what puts the status in the OpenAPI documents. It is on
