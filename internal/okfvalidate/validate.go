@@ -742,11 +742,20 @@ func fenceState(fence, line string) (string, bool) {
 		return normaliseContainer(prefix) + "\x00" + marker, true
 	}
 	openPrefix, openMarker, _ := strings.Cut(fence, "\x00")
-	if marker != "" && normaliseContainer(prefix) == openPrefix && marker[0] == openMarker[0] &&
+	// A closer never carries a list marker: inside a list item it is written
+	// as indented content, and at top level it has no prefix at all. So a
+	// line such as "- ```" inside an open fence is content, not a closer.
+	if marker != "" && !hasListMarker(prefix) && normaliseContainer(prefix) == openPrefix && marker[0] == openMarker[0] &&
 		len(marker) >= len(openMarker) && strings.TrimSpace(rest) == "" {
 		return "", true
 	}
 	return fence, true
+}
+
+// hasListMarker reports whether a container prefix contains a list-item
+// marker ("- ", "* ", "+ ", "1. ", "1) ") rather than only blockquote markers.
+func hasListMarker(prefix string) bool {
+	return strings.TrimSpace(strings.ReplaceAll(prefix, ">", "")) != ""
 }
 
 // normaliseContainer reduces a container prefix to its blockquote depth. Only

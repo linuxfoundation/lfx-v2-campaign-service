@@ -1387,9 +1387,27 @@ func TestValidateLogFragmentIndentedHeadingDoesNotSelectArchiveMode(t *testing.T
 	// "    ## 2026-01-01" is indented code, not a section, so it must not switch
 	// the fragment into archive mode and skip the single-entry marker check.
 	dir := t.TempDir()
-	writeFragment(t, dir, "## 2026-08-05\n\n    ## 2026-01-01\n\n**Feature** — did a thing.\n")
+	writeFragment(t, dir, "    ## 2026-01-01\n\n**Feature** — did a thing.\n")
 
 	if errs := Validate(dir); !errsContain(errs, "kind marker") {
 		t.Errorf("Validate() = %v, want the single-entry kind marker still checked", errs)
+	}
+}
+
+func TestValidateLogFragmentListMarkerLookalikeDoesNotCloseATopLevelFence(t *testing.T) {
+	// Container markers are not parsed inside a fenced block, so "- ```"
+	// inside a top-level fence is content: it must not close the fence and
+	// let the sample's real closer open a new one that hides later sections.
+	dir := t.TempDir()
+	writeFragment(t, dir,
+		"## 2026-08-05 (first)\n\n**Docs** — sample:\n\n```markdown\n- ```\n## 2026-01-01\n```\n\n"+
+			"## 2026-08-04 (second)\n\n**Feature** — did the other thing.\n")
+
+	errs := Validate(dir)
+	if errsContain(errs, "## 2026-01-01") || errsContain(errs, "never closed") {
+		t.Errorf("Validate() = %v, want the list-marker lookalike treated as fence content", errs)
+	}
+	if !errsContain(errs, `kind marker "Feature"`) {
+		t.Errorf("Validate() = %v, want the section after the fence still checked", errs)
 	}
 }
