@@ -431,8 +431,10 @@ the keys and format `metaConfig` uses. The dispatcher passes them to the client 
 `CampaignInput.StartDate`/`EndDate`, which validates them before any request and sends them
 as the AD GROUP's `StartDate`/`EndDate` (see [microsoft](internal-platform-microsoft.md),
 "Flight dates"). `campaignFromMicrosoft` records them on the row through `applyCampaignConfig`,
-as Meta's are, so the brief view paces the campaign over its flight; absent dates record none,
-as before. An invalid date is a `PreflightRefusal` from the client, so `Dispatch` returns it
+as Meta's are, so the brief view paces the campaign over its flight — but only when the result
+says `FlightApplied` (this run created the ad group with them), the same rule `BidApplied`
+sets for the recorded bid. A reused ad group or an UNCONFIRMED partial records no dates; the
+config snapshot still keeps what was asked for. Absent dates record none, as before. An invalid date is a `PreflightRefusal` from the client, so `Dispatch` returns it
 wrapped in `notCreated` and the claim is released — the same job-time (not synchronous 400)
 failure an invalid Meta date gives; `PreflightCreate` does not check dates.
 

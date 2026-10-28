@@ -5037,14 +5037,18 @@ type CampaignCreateInputRequestBody struct {
 	// googleAdsConfig.biddingStrategy). FLIGHT DATES: metaConfig (required) and
 	// microsoftConfig (optional) take `startDate` and `endDate` as YYYY-MM-DD
 	// strings that must be real calendar dates, with the start not before today's
-	// UTC calendar day and the end after the start. Microsoft Advertising sets
-	// them on the campaign's AD GROUP (AdGroup.StartDate/EndDate), each
-	// independently optional: an omitted startDate leaves Microsoft's default
-	// (eligible from today, so an endDate alone must be after today) and an
-	// omitted endDate runs until stopped; omitting both creates the campaign
-	// exactly as before. An invalid Microsoft date fails the platform job before
-	// anything is created, as an invalid Meta date does. A retry that reuses an
-	// existing Microsoft ad group leaves its dates unchanged.
+	// UTC calendar day and the end after the start (for microsoftConfig with an
+	// explicit timeZone, today is the calendar day at UTC+14, since Microsoft
+	// reads the dates in the campaign's zone, which may be ahead of UTC).
+	// Microsoft Advertising sets them on the campaign's AD GROUP
+	// (AdGroup.StartDate/EndDate), each independently optional: an omitted
+	// startDate leaves Microsoft's default (eligible from today, so an endDate
+	// alone must be after today) and an omitted endDate runs until stopped;
+	// omitting both creates the campaign exactly as before. An invalid Microsoft
+	// date fails the platform job before anything is created, as an invalid Meta
+	// date does. Microsoft dates are recorded on the campaign row only when this
+	// run created the ad group that carries them; a retry that reuses an existing
+	// ad group leaves its schedule unchanged and records no dates.
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

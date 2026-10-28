@@ -345,6 +345,9 @@ func (c *Client) createAdGroupAndAd(
 	// bidApplied: the requested bidding reached Microsoft only when this run created BOTH the
 	// campaign (the BiddingScheme) and the ad group (the CpcBid). See CampaignResult.BidApplied.
 	bidApplied := !alreadyExisted && !adGroupExisted
+	// flightApplied: the requested flight dates reached Microsoft only when this run CREATED the
+	// ad group that carries them. See CampaignResult.FlightApplied.
+	flightApplied := tgt.flight.set() && !adGroupExisted
 	if in.BiddingScheme != "" && !bidApplied {
 		reused := fmt.Sprintf("campaign %s", campaignID)
 		if !alreadyExisted {
@@ -527,6 +530,7 @@ func (c *Client) createAdGroupAndAd(
 				// This run created something only if at least one keyword was new.
 				r.AlreadyExisted = alreadyExisted && adGroupExisted && adExisted && len(keywordIDs) == 0
 				r.BidApplied = bidApplied
+				r.FlightApplied = flightApplied
 				r.Steps = *steps
 				return r, nil
 			case createOutcomeAmbiguous(kerr) || errors.Is(kerr, errNoID):
@@ -560,6 +564,7 @@ func (c *Client) createAdGroupAndAd(
 		*steps = append(*steps, fmt.Sprintf("Keywords attached: %d (PAUSED — enable them with the campaign)", len(keywordIDs)))
 		r.AlreadyExisted = false // this run created keywords, so the tree is not untouched
 		r.BidApplied = bidApplied
+		r.FlightApplied = flightApplied
 		r.Steps = *steps
 		return r, nil
 	}
@@ -575,6 +580,7 @@ func (c *Client) createAdGroupAndAd(
 	// run did produce something new, so the field must be false (its documented contract).
 	r.AlreadyExisted = alreadyExisted && adGroupExisted && adExisted
 	r.BidApplied = bidApplied
+	r.FlightApplied = flightApplied
 	r.Steps = *steps
 	return r, nil
 }

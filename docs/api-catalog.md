@@ -697,7 +697,9 @@ imageAltText?: string           — OPTIONAL extension AlternativeText, at most 
 startDate?: string              — OPTIONAL flight start, YYYY-MM-DD (the `metaConfig` key and
                                   format). Sent as the AD GROUP's StartDate — Microsoft schedules
                                   delivery on the ad group, not the campaign. Must be a real
-                                  calendar date and not before today's UTC calendar day. Omitted,
+                                  calendar date and not before today's UTC calendar day — or, when
+                                  `timeZone` is supplied, today at UTC+14 (Microsoft reads the date
+                                  in the campaign's zone, which may be ahead of UTC). Omitted,
                                   Microsoft's default applies: eligible to serve from today.
 endDate?: string                — OPTIONAL flight end, YYYY-MM-DD, sent as the ad group's EndDate.
                                   Must be after startDate, or after today when startDate is
@@ -708,9 +710,10 @@ Omitting both dates creates the campaign exactly as before they existed. Either 
 alone. An invalid date fails the platform job BEFORE anything is created (claim released), the
 same job-time failure an invalid `metaConfig` date gives — not a synchronous 400. Supplied dates
 are recorded on the campaign row (`start_date`/`end_date`), so the brief view paces the campaign
-over its flight. A retry that REUSES an existing ad group leaves its schedule unchanged and
-records a warning step. The dates are interpreted by Microsoft in the campaign's `timeZone`
-(default Pacific), while "today" here is the UTC day.
+over its flight — but only when this run created the ad group that carries them. A retry that
+REUSES an existing ad group leaves its schedule unchanged, records no dates on the row and adds a
+warning step. Microsoft interprets the dates in the campaign's `timeZone` (default Pacific, which
+is behind UTC, so the UTC-day rule is safe there).
 
 `geoTargets` is accepted (LFXV2-3279), using the SAME ISO 3166-1 alpha-2 vocabulary as
 `redditConfig`/`metaConfig`/`linkedInConfig`. Microsoft's location criteria take numeric

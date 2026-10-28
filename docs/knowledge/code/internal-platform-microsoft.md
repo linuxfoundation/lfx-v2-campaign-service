@@ -203,25 +203,29 @@ each independently optional) are validated by `validateFlightDates` (`flight.go`
 `CreateCampaign` prologue, BEFORE the first request, because the ad group is created after
 the campaign and a date refused at AddAdGroups would leave a campaign without one. The rules
 mirror the Meta client's: `^\d{4}-\d{2}-\d{2}$` then a calendar parse (separate refusals for
-format and value), start not before the client clock's UTC calendar day, end strictly after
-the start — or after today when only an end is given, since Microsoft then starts the ad
-group today. Every refusal is a `PreflightRefusal` naming the caller value through
+format and value), start not before "today", end strictly after the start — or after today
+when only an end is given, since Microsoft then starts the ad group today. "Today" is the
+client clock's UTC calendar day, as in Meta, unless the caller supplied `TimeZone`: then it is
+the calendar day at UTC+14 (`latestZone`), because the client does not map Microsoft's zone
+enum to an offset and a zone ahead of UTC can already be on the next day. Every refusal is a `PreflightRefusal` naming the caller value through
 `domain.CallerValue`.
 
 `findOrCreateAdGroup` sets the two `msAdGroup` fields (`omitempty` pointers), so a create
 with no dates sends exactly the body it sent before: Microsoft then serves from today and
 never ends. A REUSED ad group (found by name on a retry) keeps its existing schedule, like its
 bid; the step "Warning: flight dates NOT applied to reused ad group …" says so. A created
-one gets the step "Ad group flight dates set: start …, end …". `flight_test.go` pins the
+one gets the step "Ad group flight dates set: start …, end …" and the successful result sets
+`FlightApplied`, which is what the dispatcher keys the row's recorded dates on (exactly as
+`BidApplied` gates the recorded bid); a partial never sets it. `flight_test.go` pins the
 wire shape, the absent-date body, every refusal (with no request sent) and the reuse warning.
 
-Microsoft interprets the dates in the campaign's time zone (`defaultTimeZone`, Pacific,
-unless `TimeZone` is supplied), while "today" here is the UTC day, as in Meta. With the
-default zone, which is behind UTC, a start accepted here is never earlier than Microsoft's
-today; with a caller-supplied zone ahead of UTC, a start of the UTC day can already be
-yesterday there, and Microsoft may refuse it at AddAdGroups, after the campaign exists. That
-refusal has not been observed against the live API; it is the documented reason the rule is
-UTC-day rather than zone-aware, not a tested behaviour.
+Why the zone matters: Microsoft interprets the dates in the campaign's time zone
+(`defaultTimeZone`, Pacific, unless `TimeZone` is supplied). Pacific is behind UTC, so a start
+accepted on the UTC day is never earlier than Microsoft's today. A supplied zone may be ahead of
+UTC, where a start of the UTC day can already be yesterday and AddAdGroups — after the campaign
+exists — could refuse it; the UTC+14 day closes that, at the cost of refusing a caller's own
+"today" for part of the day. Microsoft's refusal of a past start has not been observed against
+the live API here; it is the reason for the rule, not a tested behaviour.
 
 ## Ad group + ad creation (MS-2.5)
 

@@ -167,3 +167,32 @@ func TestMicrosoft_InvalidFlightDatesFailBeforeAnyUpstreamCall(t *testing.T) {
 		})
 	}
 }
+
+// TestCampaignFromMicrosoft_RecordsDatesOnlyWhenApplied: the row records the flight dates only
+// when the client confirms it created the ad group carrying them. A reused ad group, or an
+// UNCONFIRMED partial (which never sets FlightApplied), records none — mirroring how bidding is
+// recorded only on BidApplied — while the snapshot still keeps what was asked for.
+func TestCampaignFromMicrosoft_RecordsDatesOnlyWhenApplied(t *testing.T) {
+	cfg := microsoftConfig{Budget: 50, StartDate: "2026-02-01", EndDate: "2026-02-28"}
+	for name, tc := range map[string]struct {
+		applied  bool
+		wantDate bool
+	}{
+		"created ad group":          {applied: true, wantDate: true},
+		"reused ad group / partial": {applied: false, wantDate: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			camp := campaignFromMicrosoft(context.Background(), &microsoft.CampaignResult{CampaignID: "321", FlightApplied: tc.applied}, cfg)
+			if got := camp.StartDate != nil && camp.EndDate != nil; got != tc.wantDate {
+				t.Errorf("row dates recorded = %v (%v / %v), want %v", got, camp.StartDate, camp.EndDate, tc.wantDate)
+			}
+			var snap map[string]any
+			if err := json.Unmarshal(camp.ConfigSnapshot, &snap); err != nil {
+				t.Fatalf("config snapshot: %v", err)
+			}
+			if snap["startDate"] != "2026-02-01" {
+				t.Errorf("snapshot startDate = %v, want the requested 2026-02-01", snap["startDate"])
+			}
+		})
+	}
+}

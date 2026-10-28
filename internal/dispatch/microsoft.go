@@ -470,9 +470,15 @@ func campaignFromMicrosoft(ctx context.Context, r *microsoft.CampaignResult, cfg
 	// UNENCRYPTED, and the unvalidated free-text timeZone is scrubbed of any link it carries
 	// before it gets there.
 	// The flight dates are recorded as Meta's are, so the brief view paces the campaign over its
-	// flight. Absent dates record none, as before. They were validated by the client before
-	// anything was created, so every row that reaches here carries valid or empty dates.
-	applyCampaignConfig(ctx, c, cfg.Budget, false, cfg.StartDate, cfg.EndDate, microsoftSnapshotConfig(cfg))
+	// flight — but ONLY when the client confirms it created the ad group carrying them
+	// (r.FlightApplied, set on a successful result only). A reused ad group keeps its existing
+	// schedule and a partial may never have reached the ad group, so both record no dates, as
+	// absent dates do; the snapshot still keeps what was asked for.
+	startDate, endDate := "", ""
+	if r.FlightApplied {
+		startDate, endDate = cfg.StartDate, cfg.EndDate
+	}
+	applyCampaignConfig(ctx, c, cfg.Budget, false, startDate, endDate, microsoftSnapshotConfig(cfg))
 	if raw, err := json.Marshal(r); err != nil {
 		// Near-impossible for this plain struct, but do NOT swallow it: on an ambiguous-orphan
 		// path Result is the sole carrier of the reconcile-by-name payload (campaign/ad-group/ad

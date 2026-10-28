@@ -255,6 +255,11 @@ type CampaignResult struct {
 	// dispatcher records the strategy and starting bid ONLY when this is true. Set only on a
 	// successful result; a partial never carries it.
 	BidApplied bool `json:"bidApplied,omitempty"`
+	// FlightApplied reports that THIS run created the ad group with the requested flight dates
+	// (CampaignInput.StartDate/EndDate). A reused ad group keeps its existing schedule, so the
+	// dispatcher records the dates on the row ONLY when this is true. Set only on a successful
+	// result; a partial never carries it.
+	FlightApplied bool `json:"flightApplied,omitempty"`
 	// ImageMediaID / ImageAdExtensionID record the campaign image extension (LFXV2-2665),
 	// set by the DISPATCHER after AttachCampaignImage — CreateCampaign never sets them. They
 	// are the persisted record of the upload, mirroring the Meta result's per-ad ImageHash:
@@ -598,7 +603,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Flight dates go on the ad group, which is created only AFTER the campaign, so they are
 	// checked here: a date Microsoft refused at AddAdGroups would leave a campaign with no ad
 	// group behind.
-	flightDates, err := validateFlightDates(in.StartDate, in.EndDate, c.now())
+	flightDates, err := validateFlightDates(in.StartDate, in.EndDate, c.now(), strings.TrimSpace(in.TimeZone) != "")
 	if err != nil {
 		return nil, err
 	}
