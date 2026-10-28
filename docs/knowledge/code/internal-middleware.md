@@ -14,7 +14,7 @@ Package middleware provides HTTP middleware for the service.
 `MaxBodyBytes(limit)` bounds how much of a request body the server will read.
 `cmd/campaign-service` applies it per route through `MaxBodyBytesPerRoute(uploadLimit, otherLimit)`:
 `constants.MaxRequestBodyBytes` (42 MiB) for the creative-asset upload (`isUploadRequest`, the
-same predicate `UploadAdmission` gates on) and `constants.MaxNonUploadRequestBodyBytes` (2 MiB)
+same predicate `UploadAdmission` gates on) and `constants.MaxNonUploadRequestBodyBytes` (4 MiB)
 for every other route.
 
 **Why per route (#177).** Goa decodes a body before the endpoint authenticates the caller, and
@@ -24,8 +24,8 @@ ONLY pre-auth bound. While all routes shared the upload's 42 MiB cap, one reques
 several times that once boxed into interface values, before any token was checked. The smaller
 cap runs at the same point and through the same two arms as the upload's. It is sized from the
 largest legitimate body, the email wizard's `update-sections` (`ArrayOf(Any)`, bounded only in
-the service at 120 blocks and a 200,000-rune assembled body): JSON-escaped at the worst case that
-is ~1.2 MB, which 1 MiB would refuse. `TestNonUploadRoutes_AdmitMaximalWizardSections` pins that
+the service at 120 blocks and a 200,000-rune assembled body): JSON-escaped at the worst case JSON
+permits (a surrogate-pair escape, 12 bytes per rune) that is ~2.4 MB, which 2 MiB would refuse. `TestNonUploadRoutes_AdmitMaximalWizardSections` pins that
 body under the cap. What it does not bound is concurrency: many sub-cap unauthenticated bodies at once is
 the gateway's to own, since only it can authenticate before reading.
 `TestNonUploadRoutes_RejectOversizeBodyBeforeDecoding` drives every body-bearing route in the

@@ -63,16 +63,18 @@ const MaxRequestBodyBytes int64 = 42 << 20 // 42 MiB
 // Sized from the largest LEGITIMATE body, which is the email wizard's update-sections, not a
 // Goa-declared field: its `sections` is ArrayOf(Any), and the bound lives in the service
 // (internal/service/email_wizard_sections.go): at most maxWizardSections (120) blocks and an
-// assembled body of maxWizardBodyHTML (200,000) runes. JSON-escaped at the worst case of 6 bytes
-// per rune (\u003c for `<`, as Go's encoder writes it) that body is ~1.2 MB before the section
-// envelopes, so a 1 MiB cap would refuse an email the service renders in full.
+// assembled body of maxWizardBodyHTML (200,000) runes. The wire size of that body depends on the
+// CLIENT's JSON encoder, and the worst case JSON permits is 12 bytes per rune: a rune outside the
+// Basic Multilingual Plane (an emoji) escaped as a UTF-16 surrogate pair, `\ud83d\ude00`, which is
+// what Python's default encoder writes. 200,000 runes at 12 bytes is ~2.4 MB before the section
+// envelopes, so a 2 MiB cap would refuse an email the service renders in full.
 // TestNonUploadRoutes_AdmitMaximalWizardSections sends exactly that body and pins it under this
-// cap. 2 MiB clears it with headroom while cutting the pre-auth allocation one request can force
-// by a factor of 21. Raising the wizard limits requires revisiting this in step.
+// cap. 4 MiB clears it with headroom while cutting the pre-auth allocation one request can force
+// by a factor of 10. Raising the wizard limits requires revisiting this in step.
 //
 // What it does NOT do: bound how many such requests run at once. Concurrency of unauthenticated
 // bodies belongs at the gateway, which can authenticate before reading (see #177).
-const MaxNonUploadRequestBodyBytes int64 = 2 << 20 // 2 MiB
+const MaxNonUploadRequestBodyBytes int64 = 4 << 20 // 4 MiB
 
 // PodMemoryLimitBytes mirrors resources.limits.memory in
 // charts/lfx-v2-campaign-service/values.yaml (512Mi).

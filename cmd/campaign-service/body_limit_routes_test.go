@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
@@ -167,24 +168,44 @@ func TestNonUploadRoutes_RejectOversizeBodyBeforeDecoding(t *testing.T) {
 // update-sections takes `sections` as ArrayOf(Any): Goa declares no bound, and the real one is
 // in the service — 120 blocks, 20,000 runes per rich_text block and a 200,000-rune assembled
 // body (internal/service/email_wizard_sections.go). This sends a body at that limit, encoded at
-// the worst case a client can produce (encoding/json writes `<` as the 6-byte \u003c), and
-// requires it to pass the size gate. It is over 1 MiB, which is why the cap is 2 MiB.
+// the worst case JSON permits: every rune an emoji written as a UTF-16 surrogate-pair escape,
+// 12 bytes per rune, which is what Python's default encoder produces. It is over 2 MiB, which is
+// why the cap is 4 MiB. The body is assembled by hand because encoding/json never escapes a
+// printable non-BMP rune, so marshalling could not reach this worst case.
 func TestNonUploadRoutes_AdmitMaximalWizardSections(t *testing.T) {
 	const blocks, richBlocks, runesPerRich = 120, 10, 19900 // 10 x 19,900 + wrappers stays within 200,000
-	sections := make([]map[string]string, 0, blocks)
+	const emojiEscaped = `\ud83d\ude00`                     // one rune (U+1F600), 12 bytes on the wire
+	var b strings.Builder
+	b.WriteString(`{"session_id":"48b76cd3-4f8f-4644-9310-a6c9548e5726","sections":[`)
 	for i := 0; i < blocks; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
 		if i < richBlocks {
-			sections = append(sections, map[string]string{"type": "rich_text", "html": strings.Repeat("<", runesPerRich)})
+			b.WriteString(`{"type":"rich_text","html":"` + strings.Repeat(emojiEscaped, runesPerRich) + `"}`)
 		} else {
-			sections = append(sections, map[string]string{"type": "divider"})
+			b.WriteString(`{"type":"divider"}`)
 		}
 	}
-	body, err := json.Marshal(map[string]any{"session_id": "48b76cd3-4f8f-4644-9310-a6c9548e5726", "sections": sections})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
+	b.WriteString(`]}`)
+	body := []byte(b.String())
+
+	// Pin the premise rather than trusting the arithmetic: the fixture must decode to a block of
+	// exactly runesPerRich runes (so it is within the service's per-block limit, i.e. legitimate)
+	// and its wire size must exceed 2 MiB (so it shows why the cap is not 2 MiB).
+	var decoded struct {
+		Sections []struct {
+			HTML string `json:"html"`
+		} `json:"sections"`
 	}
-	if int64(len(body)) <= 1<<20 {
-		t.Fatalf("premise: fixture is %d bytes; it must exceed 1 MiB to show why the cap is not 1 MiB", len(body))
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("fixture is not valid JSON: %v", err)
+	}
+	if n := utf8.RuneCountInString(decoded.Sections[0].HTML); n != runesPerRich {
+		t.Fatalf("premise: a rich_text block decodes to %d runes, want %d", n, runesPerRich)
+	}
+	if int64(len(body)) <= 2<<20 {
+		t.Fatalf("premise: fixture is %d bytes; it must exceed 2 MiB to show why the cap is not 2 MiB", len(body))
 	}
 	if int64(len(body)) > constants.MaxNonUploadRequestBodyBytes {
 		t.Fatalf("a maximal legitimate update-sections body (%d bytes) exceeds MaxNonUploadRequestBodyBytes (%d)",
