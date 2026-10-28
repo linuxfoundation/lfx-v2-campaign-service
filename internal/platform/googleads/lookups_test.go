@@ -109,7 +109,7 @@ func TestListUserLists_QueryAndParse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	lists, err := newManagerTestClient(t, srv).ListUserLists(context.Background(), "1234567890")
+	lists, err := newManagerTestClient(t, srv).ListUserLists(context.Background(), "1234567890", 3)
 	if err != nil {
 		t.Fatalf("ListUserLists: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestListUserLists_QueryAndParse(t *testing.T) {
 	if gotPath != "/v23/customers/1234567890/googleAds:search" {
 		t.Errorf("path = %q", gotPath)
 	}
-	for _, f := range []string{"user_list.resource_name", "user_list.size_for_search", "user_list.eligible_for_search", "user_list.membership_status", "FROM user_list"} {
+	for _, f := range []string{"user_list.resource_name", "user_list.size_for_search", "user_list.eligible_for_search", "user_list.membership_status", "FROM user_list", "ORDER BY user_list.id LIMIT 3"} {
 		if !strings.Contains(gotQuery, f) {
 			t.Errorf("query %q is missing %s", gotQuery, f)
 		}
@@ -145,8 +145,18 @@ func TestListUserLists_RefusesAMalformedCustomerID(t *testing.T) {
 		t.Error("no request may be sent for a malformed customer id")
 	}))
 	defer srv.Close()
-	if _, err := newManagerTestClient(t, srv).ListUserLists(context.Background(), "123-456"); err == nil {
+	if _, err := newManagerTestClient(t, srv).ListUserLists(context.Background(), "123-456", 3); err == nil {
 		t.Fatal("want an error for a dashed customer id")
+	}
+}
+
+func TestListUserLists_RefusesANonPositiveLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("no request may be sent for a non-positive limit")
+	}))
+	defer srv.Close()
+	if _, err := newManagerTestClient(t, srv).ListUserLists(context.Background(), "1234567890", 0); err == nil {
+		t.Fatal("want an error for limit 0")
 	}
 }
 

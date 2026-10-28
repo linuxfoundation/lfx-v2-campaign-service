@@ -80,6 +80,17 @@ func (o *Orchestrator) ReadUserLists(ctx context.Context, projectID string, plat
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTargetingLookupUnsupported, platform)
 	}
+	// Refused on a shared-tenancy platform, before any credential is resolved or Google is
+	// contacted. AccountMonitorScoper is this codebase's marker for "one upstream account shared
+	// by every foundation" (docs/architecture.md, "Account Tenancy"). Refusing the LF system
+	// fallback is not enough there: a project's OWN connection row points at the same shared
+	// customer, so an account-wide user_list read returns every foundation's audiences, and the
+	// monitor's remedy (filter to recorded ids) has nothing to filter by — no user list is
+	// recorded per project. The BFF's ROOT-only gate (lfx-self-serve-ops#54) is not a boundary
+	// this service can rely on, since a project campaign_manager can call it directly.
+	if _, shared := d.(AccountMonitorScoper); shared {
+		return nil, fmt.Errorf("%w: %s", domain.ErrUserListsSharedTenancy, platform)
+	}
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
 	start := time.Now()
@@ -121,7 +132,7 @@ const (
 	// re-applies it for a caller that bypasses Goa.
 	googleAdsGeoSuggestMax     = 50
 	googleAdsGeoSuggestDefault = 20
-	googleAdsUserListMax       = 500
+	googleAdsUserListMax       = googleads.MaxUserListRows
 	// googleAdsGeoQueryMaxLen / googleAdsGeoTargetTypesMax mirror the payload's MaxLength.
 	googleAdsGeoQueryMaxLen    = 100
 	googleAdsGeoTargetTypesMax = 10
@@ -132,6 +143,9 @@ const (
 func (s *ConnectionService) classifyTargetingLookupError(ctx context.Context, projectID string, d accountDiscovery, err error) error {
 	if errors.Is(err, ErrTargetingLookupUnsupported) {
 		return &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
+	}
+	if errors.Is(err, domain.ErrUserListsSharedTenancy) {
+		return &conn.ConflictError{Code: "409", Message: domain.ErrUserListsSharedTenancy.Error() + "; enter the user-list resource name directly"}
 	}
 	return s.classifyDiscoveryError(ctx, projectID, d, err)
 }
@@ -201,9 +215,9 @@ func validateGeoTargetSuggestPayload(p *conn.SuggestGoogleAdsGeoTargetsPayload) 
 			return model.GeoTargetQuery{}, 0, nil, &conn.BadRequestError{Code: "400", Message: "country_code must be an ISO 3166-1 alpha-2 code"}
 		}
 	}
-	limit := p.Limit
-	if limit == 0 {
-		limit = googleAdsGeoSuggestDefault
+	limit := googleAdsGeoSuggestDefault
+	if p.Limit != nil {
+		limit = *p.Limit
 	}
 	if limit < 1 || limit > googleAdsGeoSuggestMax {
 		return model.GeoTargetQuery{}, 0, nil, &conn.BadRequestError{Code: "400", Message: "limit must be between 1 and 50"}

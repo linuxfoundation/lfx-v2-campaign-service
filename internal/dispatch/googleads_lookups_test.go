@@ -6,11 +6,13 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -149,4 +151,99 @@ func TestGoogleAdsListUserLists_ExplicitAccountAndItsGuards(t *testing.T) {
 			t.Error("Google was contacted with no account to read")
 		}
 	})
+}
+
+// Regression for the cross-tenant read: two projects whose OWN connections point at the same
+// shared Google Ads customer. Neither may list user lists through the orchestrator — the read
+// is refused (ErrUserListsSharedTenancy) before any credential is used or Google contacted, so
+// project A can never see lists project B created.
+func TestGoogleAdsUserLists_TwoProjectsOnOneSharedCustomerAreRefused(t *testing.T) {
+	opts, reached := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, userListBody)
+	})
+	a := activeGoogleAdsConn(goodGoogleAdsCreds)
+	b := activeGoogleAdsConn(goodGoogleAdsCreds) // same customer 1234567890
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-a": a, "proj-b": b}}
+	d := NewGoogleAdsDispatcher(repo, identityEncryptor{}, opts...)
+	orch := service.NewOrchestrator(nil, nil, map[model.Provider]service.PlatformDispatcher{model.ProviderGoogleAds: d})
+	for _, p := range []string{"proj-a", "proj-b"} {
+		for _, acct := range []string{"", "1234567890"} {
+			_, err := orch.ReadUserLists(context.Background(), p, model.ProviderGoogleAds, acct)
+			if !errors.Is(err, domain.ErrUserListsSharedTenancy) {
+				t.Fatalf("%s/%q: err = %v, want ErrUserListsSharedTenancy", p, acct, err)
+			}
+		}
+	}
+	if reached.Load() {
+		t.Error("Google was contacted for a shared-customer user-list read")
+	}
+	if len(repo.gets) != 0 {
+		t.Errorf("connections were resolved (%v); the refusal must come first", repo.gets)
+	}
+}
+
+// A repeated geo search is served from the cache: Google is asked once.
+func TestGoogleAdsSuggestGeoTargets_CachesRepeatedSearches(t *testing.T) {
+	rec := &pathRecorder{}
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		rec.add(r.URL.Path)
+		_, _ = io.WriteString(w, geoSuggestBody)
+	})
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	for _, q := range []string{"78701", " 78701 ", "78701"} {
+		rows, err := d.SuggestGeoTargets(context.Background(), "proj-1", model.ProviderGoogleAds, model.GeoTargetQuery{Query: q, CountryCode: "US"})
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("rows=%v err=%v", rows, err)
+		}
+		rows[0].ID = "mutated" // must not corrupt the cached copy
+	}
+	if n := len(rec.all()); n != 1 {
+		t.Errorf("Google was asked %d times, want 1", n)
+	}
+	// A different country is a different question.
+	if _, err := d.SuggestGeoTargets(context.Background(), "proj-1", model.ProviderGoogleAds, model.GeoTargetQuery{Query: "78701", CountryCode: "CA"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(rec.all()); n != 2 {
+		t.Errorf("Google was asked %d times after a new country, want 2", n)
+	}
+}
+
+// The cache never answers for a project that resolves no credential: its 404 stands.
+func TestGoogleAdsSuggestGeoTargets_CacheDoesNotMaskAMissingConnection(t *testing.T) {
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, geoSuggestBody) })
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	q := model.GeoTargetQuery{Query: "78701"}
+	if _, err := d.SuggestGeoTargets(context.Background(), "proj-1", model.ProviderGoogleAds, q); err != nil {
+		t.Fatal(err)
+	}
+	d.creds = newCredsSource(ownOnlyConnReader{}, identityEncryptor{})
+	if _, err := d.SuggestGeoTargets(context.Background(), "proj-2", model.ProviderGoogleAds, q); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound despite a cached answer", err)
+	}
+}
+
+func TestGeoSuggestCache_ExpiresAndStaysBounded(t *testing.T) {
+	c := newGeoSuggestCache()
+	now := time.Unix(0, 0)
+	c.now = func() time.Time { return now }
+	c.put("k", []model.GeoTargetSuggestion{{ID: "1"}})
+	if _, ok := c.get("k"); !ok {
+		t.Fatal("fresh entry missing")
+	}
+	now = now.Add(geoSuggestTTL)
+	if _, ok := c.get("k"); ok {
+		t.Error("expired entry served")
+	}
+	for i := 0; i < geoSuggestMaxEntries+10; i++ {
+		c.put(fmt.Sprint(i), nil)
+	}
+	if n := len(c.entries); n > geoSuggestMaxEntries {
+		t.Errorf("cache holds %d entries, cap is %d", n, geoSuggestMaxEntries)
+	}
+	var nilCache *geoSuggestCache
+	nilCache.put("k", nil)
+	if _, ok := nilCache.get("k"); ok {
+		t.Error("a nil cache must cache nothing")
+	}
 }

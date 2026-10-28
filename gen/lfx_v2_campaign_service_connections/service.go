@@ -175,9 +175,14 @@ type Service interface {
 	// project's OWN connection only and never falls back to the shared LF system
 	// credential: user lists are account data on a customer shared across
 	// foundations, so a project with no Google Ads connection of its own gets a
-	// 404, not the LF account's audiences. An account_id the credential cannot
-	// reach is refused by Google and answered 503, like the account monitor. A
-	// pure read: nothing is persisted.
+	// 404, not the LF account's audiences. On a platform whose ad account is
+	// shared across foundations — Google Ads today — the read is refused with 409
+	// before Google is contacted: the read is account-wide, this service records
+	// no user list per project, and a project's own connection points at the same
+	// shared customer, so answering would expose every foundation's audiences.
+	// Only a per-foundation customer is listed. An account_id the credential
+	// cannot reach is refused by Google and answered 503, like the account
+	// monitor. A pure read: nothing is persisted.
 	ListGoogleAdsUserLists(context.Context, *ListGoogleAdsUserListsPayload) (res *GoogleAdsUserLists, err error)
 	// Read Meta audience insights — age and gender (one combined breakdown) and
 	// placement (publisher_platform and platform_position) — for this project's
@@ -2663,8 +2668,8 @@ type SuggestGoogleAdsGeoTargetsPayload struct {
 	// Optional location types to keep (e.g. City, Postal Code). Matched ignoring
 	// case, spaces, underscores and hyphens, so postal_code matches Postal Code.
 	TargetTypes []string
-	// Maximum suggestions to return
-	Limit int
+	// Maximum suggestions to return (1-50). Defaults to 20 when omitted.
+	Limit *int
 }
 
 // TestGoogleAdsPayload is the payload type of the

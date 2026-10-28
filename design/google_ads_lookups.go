@@ -91,10 +91,12 @@ func googleAdsLookupMethods() {
 				MaxLength(10)
 				Example([]string{"Postal Code"})
 			})
-			Attribute("limit", Int, "Maximum suggestions to return", func() {
+			// No Default(): with one, Goa makes the field a non-pointer and its generated client
+			// always sends limit, so an unset Limit goes out as limit=0 and is refused. The service
+			// applies the default instead.
+			Attribute("limit", Int, "Maximum suggestions to return (1-50). Defaults to 20 when omitted.", func() {
 				Minimum(1)
 				Maximum(googleAdsGeoSuggestMax)
-				Default(20)
 				Example(20)
 			})
 			Required("project_id", "q")
@@ -125,8 +127,12 @@ func googleAdsLookupMethods() {
 			"the customer the project's connection is bound to is read. Like the account monitor, this resolves " +
 			"the project's OWN connection only and never falls back to the shared LF system credential: user " +
 			"lists are account data on a customer shared across foundations, so a project with no Google Ads " +
-			"connection of its own gets a 404, not the LF account's audiences. An account_id the credential " +
-			"cannot reach is refused by Google and answered 503, like the account monitor. A pure read: nothing is persisted.")
+			"connection of its own gets a 404, not the LF account's audiences. On a platform whose ad account is " +
+			"shared across foundations — Google Ads today — the read is refused with 409 before Google is contacted: " +
+			"the read is account-wide, this service records no user list per project, and a project's own " +
+			"connection points at the same shared customer, so answering would expose every foundation's audiences. " +
+			"Only a per-foundation customer is listed. An account_id the credential cannot reach is refused by " +
+			"Google and answered 503, like the account monitor. A pure read: nothing is persisted.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -139,6 +145,7 @@ func googleAdsLookupMethods() {
 		})
 		Result(GoogleAdsUserLists)
 		Error("NotFound", NotFoundError, "Resource not found")
+		Error("Conflict", ConflictError, "User lists cannot be listed per project on an ad account shared across foundations")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -149,6 +156,7 @@ func googleAdsLookupMethods() {
 			Param("account_id")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})

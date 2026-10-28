@@ -10448,10 +10448,9 @@ paths:
                   maxItems: 10
                 - name: limit
                   in: query
-                  description: Maximum suggestions to return
+                  description: Maximum suggestions to return (1-50). Defaults to 20 when omitted.
                   required: false
                   type: integer
-                  default: 20
                   maximum: 50
                   minimum: 1
                 - name: project_id
@@ -10616,7 +10615,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: list-google-ads-user-lists lfx-v2-campaign-service-connections
-            description: 'List the Google Ads user lists (audiences) on a customer, live from GAQL on user_list, for picking googleAdsConfig.audienceSegments (Search only). account_id names the customer; omitted, the customer the project''s connection is bound to is read. Like the account monitor, this resolves the project''s OWN connection only and never falls back to the shared LF system credential: user lists are account data on a customer shared across foundations, so a project with no Google Ads connection of its own gets a 404, not the LF account''s audiences. An account_id the credential cannot reach is refused by Google and answered 503, like the account monitor. A pure read: nothing is persisted.'
+            description: 'List the Google Ads user lists (audiences) on a customer, live from GAQL on user_list, for picking googleAdsConfig.audienceSegments (Search only). account_id names the customer; omitted, the customer the project''s connection is bound to is read. Like the account monitor, this resolves the project''s OWN connection only and never falls back to the shared LF system credential: user lists are account data on a customer shared across foundations, so a project with no Google Ads connection of its own gets a 404, not the LF account''s audiences. On a platform whose ad account is shared across foundations — Google Ads today — the read is refused with 409 before Google is contacted: the read is account-wide, this service records no user list per project, and a project''s own connection points at the same shared customer, so answering would expose every foundation''s audiences. Only a per-foundation customer is listed. An account_id the credential cannot reach is refused by Google and answered 503, like the account monitor. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#list-google-ads-user-lists
             parameters:
                 - name: account_id
@@ -10663,6 +10662,13 @@ paths:
                     description: 'NotFound: Resource not found'
                     schema:
                         $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "409":
+                    description: 'Conflict: User lists cannot be listed per project on an ad account shared across foundations'
+                    schema:
+                        $ref: '#/definitions/ConflictError'
                         required:
                             - code
                             - message

@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Google Ads Targeting Lookups"
-description: "Two read-only pickers for the Google Ads create form: a geo target constant search (SuggestGeoTargetConstants, by name or postal code, returning the numeric id geoTargets accepts, readable through the LF system credential because it is public reference data) and a user-list read (GAQL on user_list, returning the resource name audienceSegments accepts, own connection only because user lists are account data on a shared customer)."
+description: "Two read-only pickers for the Google Ads create form: a geo target constant search (SuggestGeoTargetConstants, by name or postal code, returning the numeric id geoTargets accepts, readable through the LF system credential because it is public reference data) and a user-list read (GAQL on user_list, returning the resource name audienceSegments accepts, own connection only, and refused with 409 on a shared-tenancy platform such as Google Ads because the read is account-wide and no user list is recorded per project)."
 resource: "internal/service/google_ads_lookups.go"
 ---
 
@@ -25,11 +25,16 @@ operator type them (self-serve #4455, #4456). Neither persists anything.
   dropped; duplicate ids are collapsed.
 - `target_types` filters Google's label (`City`, `Postal Code`, ...) ignoring case, spaces,
   underscores and hyphens (`googleads.NormalizeGeoTargetType`). Google's suggest has no type filter
-  of its own, so the filter runs after the call; `limit` (1-50, default 20) caps the filtered rows
+  of its own, so the filter runs after the call; `limit` (1-50, default 20 applied by the service; no Goa `Default`, so the generated client
+  omits an unset limit) caps the filtered rows
   and `truncated` reports more.
 - **Resolution: the LF system fallback is allowed** (`resolveGoogleAdsDiscoveryClient`, as for
   `/connection-google-ads/accounts`). The answer is Google's public location table and reveals
   no ad account's data.
+- **Cached** per dispatcher (`geoSuggestCache`: 6h TTL, 2048 entries, keyed by country + folded
+  query) so a typeahead does not spend the shared developer token's quota on repeated searches.
+  The cache is consulted after credential resolution, so a project with no reachable credential
+  still gets its 404. The one-shot client uses `WithCallerScopedTokenRefresh`.
 
 ## User lists
 
@@ -37,19 +42,24 @@ operator type them (self-serve #4455, #4456). Neither persists anything.
 
 - Upstream: GAQL `SELECT user_list.resource_name, id, name, type, membership_status,
   account_user_list_status, size_for_search, size_range_for_search, eligible_for_search FROM
-  user_list` on the customer, sorted by name locally, capped at 500 with `truncated`.
+  user_list ORDER BY user_list.id LIMIT 501` on the customer (bounded, deterministic), sorted by
+  name locally, capped at 500 with `truncated`.
 - `resource_name` is `customers/{id}/userLists/{id}`, exactly what `validateAudienceSegments`
   accepts. A row naming another customer, or a non-userLists resource, is dropped.
 - `account_id` (digits only) picks the customer; omitted, the connection's stored account is
   read. No account either way is a 400 (`ErrConnectionNotUsable` + `ErrAccountNotSelected`).
-- **Resolution: own connection only** (`resolveOwnedGoogleAdsDiscovery`), the account monitor's
-  rule. User lists are account data, and Google Ads is one customer shared by every foundation, so
-  through the fallback any unconnected project would see every foundation's audiences. That is
-  why the BFF gates shared-account reads to ROOT (lfx-self-serve-ops#54); this service has no ROOT
-  notion and refuses the fallback for every caller instead (404 for a project with no connection
-  of its own). Lists cannot be project-scoped (this service records none), so a project with its
-  own connection sees what its credential reaches, including, through `account_id`, any other
-  customer under the same manager (the Google managed-account guard is deferred, as for the monitor).
+- **Refused with 409 on a shared-tenancy platform** (`domain.ErrUserListsSharedTenancy`), before
+  any credential is resolved. `Orchestrator.ReadUserLists` keys on `service.AccountMonitorScoper`,
+  the codebase's shared-tenancy marker, which the Google Ads dispatcher implements. Refusing the
+  LF fallback is not enough: per `docs/architecture.md` ("Account Tenancy") each project's OWN
+  connection row points at the one shared customer, so an account-wide `user_list` read hands
+  every foundation's audiences to any project `campaign_manager`. The account monitor's remedy
+  (filter to ids recorded for the project) has nothing to filter by, since no user list is
+  recorded per project, and the BFF's ROOT-only gate (lfx-self-serve-ops#54) is bypassed by a
+  direct call. Until a per-project list mapping exists, the picker falls back to manual entry
+  on Google Ads; the read itself remains for a per-foundation customer.
+- **Resolution, where it runs: own connection only** (`resolveOwnedGoogleAdsDiscovery`, caller-scoped
+  token refresh), never the LF system fallback; a project with no connection of its own gets 404.
 
 ## Shared
 

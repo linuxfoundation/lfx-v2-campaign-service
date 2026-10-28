@@ -178,20 +178,30 @@ type userListGaqlRow struct {
 	} `json:"userList"`
 }
 
-// userListQuery selects every user list on the customer. Sorted locally rather than with
-// ORDER BY so the result does not depend on which fields GAQL lets a user_list query sort by.
+// MaxUserListRows is the most user lists a picker is offered. A caller asks ListUserLists for
+// one more than it will show, so it can tell a full page from a truncated one.
+const MaxUserListRows = 500
+
+// userListQuery selects user lists on the customer, bounded by LIMIT so a large account is
+// not downloaded whole for a page that shows MaxUserListRows. ORDER BY user_list.id makes the
+// bounded subset deterministic; the rows are then sorted by name locally.
 const userListQuery = "SELECT user_list.resource_name, user_list.id, user_list.name, user_list.type, " +
 	"user_list.membership_status, user_list.account_user_list_status, user_list.size_for_search, " +
-	"user_list.size_range_for_search, user_list.eligible_for_search FROM user_list"
+	"user_list.size_range_for_search, user_list.eligible_for_search FROM user_list " +
+	"ORDER BY user_list.id LIMIT %d"
 
-// ListUserLists reads the user lists on customerID, sorted by name (then resource name).
+// ListUserLists reads at most limit user lists on customerID (lowest ids first), sorted by
+// name (then resource name). limit must be positive.
 //
 // customerID is validated by gaqlSearchForCustomer (digits only) because it is interpolated
 // into the request path. A row whose resource name is not a userLists resource under
 // customerID is dropped rather than offered: audienceSegments would refuse it, and a row
 // claiming another customer means the response cannot be trusted for this one.
-func (c *Client) ListUserLists(ctx context.Context, customerID string) ([]UserList, error) {
-	raw, err := c.gaqlSearchForCustomer(ctx, customerID, userListQuery)
+func (c *Client) ListUserLists(ctx context.Context, customerID string, limit int) ([]UserList, error) {
+	if limit < 1 {
+		return nil, fmt.Errorf("google-ads: user list limit must be positive, got %d", limit)
+	}
+	raw, err := c.gaqlSearchForCustomer(ctx, customerID, fmt.Sprintf(userListQuery, limit))
 	if err != nil {
 		return nil, fmt.Errorf("list user lists: %w", err)
 	}

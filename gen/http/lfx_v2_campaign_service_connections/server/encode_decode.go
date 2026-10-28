@@ -6938,7 +6938,7 @@ func DecodeSuggestGoogleAdsGeoTargetsRequest(mux goahttp.Muxer, decoder func(*ht
 			q           string
 			countryCode *string
 			targetTypes []string
-			limit       int
+			limit       *int
 			bearerToken *string
 			err         error
 
@@ -6979,21 +6979,24 @@ func DecodeSuggestGoogleAdsGeoTargetsRequest(mux goahttp.Muxer, decoder func(*ht
 		}
 		{
 			limitRaw := qp.Get("limit")
-			if limitRaw == "" {
-				limit = 20
-			} else {
+			if limitRaw != "" {
 				v, err2 := strconv.ParseInt(limitRaw, 10, strconv.IntSize)
 				if err2 != nil {
 					err = goa.MergeErrors(err, goa.InvalidFieldTypeError("limit", limitRaw, "integer"))
 				}
-				limit = int(v)
+				pv := int(v)
+				limit = &pv
 			}
 		}
-		if limit < 1 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("limit", limit, 1, true))
+		if limit != nil {
+			if *limit < 1 {
+				err = goa.MergeErrors(err, goa.InvalidRangeError("limit", *limit, 1, true))
+			}
 		}
-		if limit > 50 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("limit", limit, 50, false))
+		if limit != nil {
+			if *limit > 50 {
+				err = goa.MergeErrors(err, goa.InvalidRangeError("limit", *limit, 50, false))
+			}
 		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
@@ -7194,6 +7197,19 @@ func EncodeListGoogleAdsUserListsError(encoder func(context.Context, http.Respon
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignserviceconnections.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListGoogleAdsUserListsConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
 			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError

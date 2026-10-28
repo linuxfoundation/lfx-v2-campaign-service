@@ -474,6 +474,12 @@ var (
 	// the platform is never contacted.
 	ErrTargetingLookupUnsupported = errors.New("targeting lookup is not supported for this platform")
 
+	// ErrUserListsSharedTenancy refuses a user-list read on a platform whose ad account is
+	// shared across foundations. The read is account-wide and this service records no user
+	// list per project, so there is nothing to scope it to: answering would hand one
+	// foundation's audiences to another. Permanent for the platform, so 409, not 503.
+	ErrUserListsSharedTenancy = errors.New("user lists cannot be listed per project on an ad account shared across foundations")
+
 	// ErrAccountMetricsUnsupported indicates the platform has no account-scoped monitor
 	// capability wired (the AccountMetricsReader interface). The platform is never contacted.
 	//

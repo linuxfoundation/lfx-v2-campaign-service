@@ -56,7 +56,7 @@ func TestSuggestGoogleAdsGeoTargets_FiltersTypesAndCapsAtLimit(t *testing.T) {
 		{ID: "9031002", Name: "78703", TargetType: "Postal Code", CountryCode: "US", Status: "REMOVAL_PLANNED"},
 	}}
 	res, err := lookupService(d).SuggestGoogleAdsGeoTargets(context.Background(), &conn.SuggestGoogleAdsGeoTargetsPayload{
-		ProjectID: "cncf", Q: " 787 ", CountryCode: strp("us"), TargetTypes: []string{"postal_code"}, Limit: 2,
+		ProjectID: "cncf", Q: " 787 ", CountryCode: strp("us"), TargetTypes: []string{"postal_code"}, Limit: intp(2),
 	})
 	if err != nil {
 		t.Fatalf("SuggestGoogleAdsGeoTargets: %v", err)
@@ -94,7 +94,7 @@ func TestSuggestGoogleAdsGeoTargets_EmptyIsAnEmptyArray(t *testing.T) {
 func TestSuggestGoogleAdsGeoTargets_CountsCharactersNotBytes(t *testing.T) {
 	d := &mockLookupDispatcher{geo: []model.GeoTargetSuggestion{}}
 	_, err := lookupService(d).SuggestGoogleAdsGeoTargets(context.Background(), &conn.SuggestGoogleAdsGeoTargetsPayload{
-		ProjectID: "cncf", Q: strings.Repeat("東", 50), TargetTypes: []string{strings.Repeat("市", 40)},
+		ProjectID: "cncf", Q: strings.Repeat("東", 50), TargetTypes: []string{strings.Repeat("市", 39) + "1"},
 	})
 	if err != nil || d.calls != 1 {
 		t.Fatalf("err=%v calls=%d; a within-limit multi-byte query must reach the dispatcher", err, d.calls)
@@ -105,7 +105,7 @@ func TestSuggestGoogleAdsGeoTargets_RejectsBadInputBeforeAnyUpstreamCall(t *test
 	cases := map[string]*conn.SuggestGoogleAdsGeoTargetsPayload{
 		"blank query":     {ProjectID: "cncf", Q: "   "},
 		"bad country":     {ProjectID: "cncf", Q: "Austin", CountryCode: strp("USA")},
-		"limit too large": {ProjectID: "cncf", Q: "Austin", Limit: 51},
+		"limit too large": {ProjectID: "cncf", Q: "Austin", Limit: intp(51)},
 		"blank type":      {ProjectID: "cncf", Q: "Austin", TargetTypes: []string{" _ "}},
 	}
 	for name, p := range cases {
@@ -250,5 +250,48 @@ func TestReadUserLists_NilResultIsAnError(t *testing.T) {
 	o = &Orchestrator{dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: &mockLookupDispatcher{}}}
 	if _, err := o.ReadGeoTargetSuggestions(context.Background(), "cncf", model.ProviderGoogleAds, model.GeoTargetQuery{Query: "x"}); err == nil {
 		t.Error("a nil suggestion slice must not be reported as an empty answer")
+	}
+}
+
+func intp(v int) *int { return &v }
+
+// An omitted limit is the documented default of 20, not zero.
+func TestSuggestGoogleAdsGeoTargets_OmittedLimitDefaultsTo20(t *testing.T) {
+	rows := make([]model.GeoTargetSuggestion, 25)
+	for i := range rows {
+		rows[i] = model.GeoTargetSuggestion{ID: fmt.Sprint(i + 1)}
+	}
+	res, err := lookupService(&mockLookupDispatcher{geo: rows}).SuggestGoogleAdsGeoTargets(context.Background(),
+		&conn.SuggestGoogleAdsGeoTargetsPayload{ProjectID: "cncf", Q: "a"})
+	if err != nil {
+		t.Fatalf("SuggestGoogleAdsGeoTargets: %v", err)
+	}
+	if res.SuggestionCount != 20 || !res.Truncated {
+		t.Errorf("count=%d truncated=%v, want 20 and truncated", res.SuggestionCount, res.Truncated)
+	}
+}
+
+// sharedTenancyLookupDispatcher is mockLookupDispatcher on a shared-tenancy platform: it
+// carries the AccountMonitorScoper marker the shared platforms' dispatchers implement.
+type sharedTenancyLookupDispatcher struct{ mockLookupDispatcher }
+
+func (*sharedTenancyLookupDispatcher) MonitorScopePrecheck(string) error { return nil }
+func (*sharedTenancyLookupDispatcher) MonitorScopeForAccount([]model.ProjectCampaignScope, string) ([]string, error) {
+	return nil, nil
+}
+
+// On a shared-tenancy platform the account-wide user-list read is refused with 409 before the
+// dispatcher is reached, whatever account the caller names.
+func TestListGoogleAdsUserLists_SharedTenancyIsRefusedWith409(t *testing.T) {
+	for _, acct := range []*string{nil, strp("8666746580")} {
+		d := &sharedTenancyLookupDispatcher{mockLookupDispatcher{lists: &model.AudienceUserLists{Lists: []model.AudienceUserList{}}}}
+		_, err := lookupService(d).ListGoogleAdsUserLists(context.Background(), &conn.ListGoogleAdsUserListsPayload{ProjectID: "cncf", AccountID: acct})
+		var c *conn.ConflictError
+		if !errors.As(err, &c) || c.Code != "409" {
+			t.Fatalf("err = %T %v, want 409", err, err)
+		}
+		if d.calls != 0 {
+			t.Error("the dispatcher was reached on a shared-tenancy platform")
+		}
 	}
 }

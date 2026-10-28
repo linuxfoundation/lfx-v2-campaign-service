@@ -9424,7 +9424,9 @@ func EncodeSuggestGoogleAdsGeoTargetsRequest(encoder func(*http.Request) goahttp
 		for _, value := range p.TargetTypes {
 			values.Add("target_types", value)
 		}
-		values.Add("limit", strconv.Itoa(p.Limit))
+		if p.Limit != nil {
+			values.Add("limit", strconv.Itoa(*p.Limit))
+		}
 		req.URL.RawQuery = values.Encode()
 		return nil
 	}
@@ -9640,6 +9642,7 @@ func EncodeListGoogleAdsUserListsRequest(encoder func(*http.Request) goahttp.Enc
 // response body should be restored after having been read.
 // DecodeListGoogleAdsUserListsResponse may return the following errors:
 //   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -9696,6 +9699,20 @@ func DecodeListGoogleAdsUserListsResponse(decoder func(*http.Response) goahttp.D
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
 			}
 			return nil, NewListGoogleAdsUserListsBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body ListGoogleAdsUserListsConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			err = ValidateListGoogleAdsUserListsConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			return nil, NewListGoogleAdsUserListsConflict(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body ListGoogleAdsUserListsServiceUnavailableResponseBody

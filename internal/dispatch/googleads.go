@@ -507,7 +507,10 @@ type GoogleAdsDispatcher struct {
 	// and thereafter read-only. That is a per-client property, not a property of the cache; see
 	// clientCache's doc comment.
 	clients *clientCache
-	opts    []googleads.Option
+	// geo caches geo target suggestions (public reference data) so a typeahead does not spend
+	// the shared developer token's quota on repeated identical searches. Nil-safe.
+	geo  *geoSuggestCache
+	opts []googleads.Option
 	// creatives and assets are the creative-asset library and the process-wide memory
 	// budget, bound late by registerDispatchers exactly as they are on the Meta, Microsoft,
 	// Twitter and LinkedIn dispatchers. Both may be nil — a nil repo means a config naming
@@ -519,7 +522,7 @@ type GoogleAdsDispatcher struct {
 
 // NewGoogleAdsDispatcher builds the adapter from the connection repo + encryptor.
 func NewGoogleAdsDispatcher(repo connReader, enc domain.Encryptor, opts ...googleads.Option) *GoogleAdsDispatcher {
-	return &GoogleAdsDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts}
+	return &GoogleAdsDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), geo: newGeoSuggestCache(), opts: opts}
 }
 
 // Dispatch implements service.PlatformDispatcher for Google Ads.
@@ -1776,7 +1779,11 @@ func (d *GoogleAdsDispatcher) googleAdsClientFor(projectID string, res *resolved
 // reaches, so scoping it to one of them would narrow the answer to a subset of the question.
 // The manager id, when present, is what lets discovery expand an MCC hierarchy rather than
 // returning only the manager itself.
-func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, error) {
+//
+// extra appends per-caller client options, as resolveOwnedGoogleAdsDiscovery's does: a one-shot
+// lookup client passes googleads.WithCallerScopedTokenRefresh so its token refresh ends with
+// the request rather than outliving it.
+func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Context, projectID string, platform model.Provider, extra ...googleads.Option) (*googleads.Client, error) {
 	res, err := d.creds.resolve(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
@@ -1813,7 +1820,8 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 			LoginCustomerID: loginCustomerID,
 			Label:           res.label,
 		},
-		d.opts...,
+		// Copied, never appended in place: d.opts is shared by every call on this dispatcher.
+		append(append([]googleads.Option(nil), d.opts...), extra...)...,
 	), nil
 }
 

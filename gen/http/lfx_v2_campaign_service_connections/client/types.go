@@ -4260,6 +4260,19 @@ type ListGoogleAdsUserListsBadRequestResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListGoogleAdsUserListsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "Conflict" error.
+type ListGoogleAdsUserListsConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
 // ListGoogleAdsUserListsServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
@@ -11555,6 +11568,19 @@ func NewListGoogleAdsUserListsBadRequest(body *ListGoogleAdsUserListsBadRequestR
 	v := &lfxv2campaignserviceconnections.BadRequestError{
 		Code:    *body.Code,
 		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListGoogleAdsUserListsConflict builds a
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// endpoint Conflict error.
+func NewListGoogleAdsUserListsConflict(body *ListGoogleAdsUserListsConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -19655,6 +19681,23 @@ func ValidateListGoogleAdsUserListsBadRequestResponseBody(body *ListGoogleAdsUse
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsConflictResponseBody runs the validations
+// defined on ListGoogleAdsUserListsConflictResponseBody
+func ValidateListGoogleAdsUserListsConflictResponseBody(body *ListGoogleAdsUserListsConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
+		}
 	}
 	return
 }

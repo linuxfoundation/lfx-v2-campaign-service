@@ -1731,7 +1731,7 @@ func BuildGetGoogleAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetGoogleAd
 // BuildSuggestGoogleAdsGeoTargetsPayload builds the payload for the
 // lfx-v2-campaign-service-connections suggest-google-ads-geo-targets endpoint
 // from CLI flags.
-func BuildSuggestGoogleAdsGeoTargetsPayload(lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsProjectID *string, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsQ *string, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsCountryCode *string, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsTargetTypes *string, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsLimit string, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsBearerToken *string) (*lfxv2campaignserviceconnections.SuggestGoogleAdsGeoTargetsPayload, error) {
+func BuildSuggestGoogleAdsGeoTargetsPayload(lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsProjectID *string, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsQ *string, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsCountryCode *string, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsTargetTypes *string, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsLimit *string, lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsBearerToken *string) (*lfxv2campaignserviceconnections.SuggestGoogleAdsGeoTargetsPayload, error) {
 	var err error
 	var projectID string
 	{
@@ -1791,22 +1791,25 @@ func BuildSuggestGoogleAdsGeoTargetsPayload(lfxV2CampaignServiceConnectionsSugge
 			}
 		}
 	}
-	var limit int
+	var limit *int
 	{
-		var v int64
-		v, err = strconv.ParseInt(lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsLimit, 10, strconv.IntSize)
-		limit = int(v)
-		if err != nil {
-			return nil, fmt.Errorf("invalid value for limit, must be INT")
-		}
-		if limit < 1 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("limit", limit, 1, true))
-		}
-		if limit > 50 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("limit", limit, 50, false))
-		}
-		if err != nil {
-			return nil, err
+		if lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsLimit != nil {
+			var v int64
+			v, err = strconv.ParseInt(*lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsLimit, 10, strconv.IntSize)
+			val := int(v)
+			limit = &val
+			if err != nil {
+				return nil, fmt.Errorf("invalid value for limit, must be INT")
+			}
+			if val < 1 {
+				err = goa.MergeErrors(err, goa.InvalidRangeError("limit", val, 1, true))
+			}
+			if val > 50 {
+				err = goa.MergeErrors(err, goa.InvalidRangeError("limit", val, 50, false))
+			}
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	var bearerToken *string
