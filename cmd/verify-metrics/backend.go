@@ -75,7 +75,8 @@ func openLiveBackend(ctx context.Context) (*backend, error) {
 		return nil, err
 	}
 	// The lease is a session-level advisory lock (pg_try_advisory_lock), which a READ ONLY
-	// session may take: it writes no row.
+	// session may take: it writes no row. Its session is opened outside the pool from the
+	// pool's ConnConfig, which carries default_transaction_read_only (readOnlyPoolConfig).
 	lease := postgres.NewStatsJobLease(pool)
 	return &backend{
 		conns:      postgres.NewConnectionRepo(pool),
@@ -116,17 +117,32 @@ const dsnSourceVerifyMetrics = "the database settings (" + constants.EnvDatabase
 // would leave the driver's original message reachable through errors.As for any later caller to
 // print. Nothing in this command inspects this error's chain — run only matches flag.ErrHelp —
 // so there is no behaviour to preserve, and dropping the cause is the safe direction.
-func openReadOnlyPool(ctx context.Context, dsn string) (*postgres.Pool, error) {
+// readOnlyPoolConfig is the pool configuration: every session READ ONLY twice over. The
+// default_transaction_read_only startup parameter rides in ConnConfig, so it also covers a
+// session opened OUTSIDE the pool from a copy of that config — the X stats-job lease opens its
+// session that way (postgres.StatsJobLease), and AfterConnect never runs for it. AfterConnect
+// stays as the pooled sessions' second guard.
+func readOnlyPoolConfig(dsn string) (*pgxpool.Config, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, errors.New("parse database config: invalid database settings (redacted; check host/port/params)")
 	}
-	// Three: the stats-job lease holds one dedicated session for its advisory locks, leaving
-	// two for the reads.
-	cfg.MaxConns = 3
+	cfg.MaxConns = 2
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
 	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		_, err := conn.Exec(ctx, "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
 		return err
+	}
+	return cfg, nil
+}
+
+func openReadOnlyPool(ctx context.Context, dsn string) (*postgres.Pool, error) {
+	cfg, err := readOnlyPoolConfig(dsn)
+	if err != nil {
+		return nil, err
 	}
 	p, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

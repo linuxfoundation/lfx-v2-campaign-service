@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -60,6 +61,10 @@ func (s *secretSet) add(v string) {
 		if e != v {
 			s.values[e] = struct{}{}
 		}
+	}
+	// And as Go's %q writes it inside an error message (a parse error quoting a cell).
+	if q := strconv.Quote(v); q[1:len(q)-1] != v {
+		s.values[q[1:len(q)-1]] = struct{}{}
 	}
 }
 

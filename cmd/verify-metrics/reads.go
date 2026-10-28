@@ -303,6 +303,23 @@ func printGatedResult(out *scrubWriter, v any) error {
 // scrubbedLogger routes the service's own slog output (the report-backed reads log a failed
 // check or submission and carry on) through the scrubber, so a logged error cannot print a
 // secret the rest of the output withholds.
+//
+// Each attribute (the message included) is scrubbed BEFORE the handler serialises it, as well as
+// the finished line after: TextHandler quotes a value with a quote or backslash in it, so an
+// error that already quoted a credential (a %q in a parse error) reaches the output escaped
+// twice, a form the after-the-fact scrub cannot match.
 func scrubbedLogger(w *scrubWriter) *slog.Logger {
-	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+			v := a.Value.Resolve()
+			switch v.Kind() {
+			case slog.KindString:
+				return slog.String(a.Key, w.secrets.scrub(v.String()))
+			case slog.KindAny:
+				return slog.String(a.Key, w.secrets.scrub(fmt.Sprint(v.Any())))
+			}
+			return a
+		},
+	}))
 }

@@ -110,8 +110,11 @@ to another host.
 
 ## Read-only by construction
 
-- The database pool is the command's own. Every session runs `SET SESSION CHARACTERISTICS AS
-  TRANSACTION READ ONLY` (pinned by a live-database test).
+- The database pool is the command's own. Every session starts with the
+  `default_transaction_read_only=on` startup parameter and also runs `SET SESSION
+  CHARACTERISTICS AS TRANSACTION READ ONLY` (pinned by a live-database test). The startup
+  parameter is carried in the connection config, so it also covers the X stats-job lease's
+  session, which is opened outside the pool from a copy of that config.
 - The X dispatcher is bound to the service's own stats-job lease (`postgres.NewStatsJobLease`,
   a session-level advisory lock that a READ ONLY session may take). A run therefore creates X
   stats jobs only when no service pod, and no other run, owns the account, and fails before
@@ -154,7 +157,10 @@ submission and carry on). The audience, keywords and account-monitor
 results are printed through the `-raw` body redactor. That means secret-named keys are withheld,
 URLs are reduced by `pkg/redact.SnapshotText`, and int64 values keep full precision.
 
-Token exchanges are printed as a status line only. URLs go through `pkg/redact.URL`, with
+Each log attribute is scrubbed before the text handler quotes it, so a credential that an error
+had already `%q`-quoted cannot reach stderr escaped twice. A gzip body in `-raw` (X's results
+file) is decoded, within the cap, before redaction; one that is truncated, corrupt or oversized is
+withheld. Token exchanges are printed as a status line only. URLs go through `pkg/redact.URL`, with
 secret-named query values (`sig`, `*token*`, and so on) withheld. In bodies, every decoded string
 has its URLs reduced and every recorded secret scrubbed before re-encoding. The output is encoded
 without HTML escaping, so a signed URL is not split at its first `&`. A JSON body that does not

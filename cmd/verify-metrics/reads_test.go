@@ -6,10 +6,12 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -730,5 +732,73 @@ func TestMemReports_GetCopiesTheFailureTime(t *testing.T) {
 	again, _ := s.GetAccountReport(ctx, key)
 	if !again.LastFailureAt.Equal(at) {
 		t.Errorf("stored failure time = %v, want %v unchanged", again.LastFailureAt, at)
+	}
+}
+
+// A credential with a quote and a backslash, already %q-quoted inside an error (a report parse
+// error quoting a cell), is escaped AGAIN by the text handler. It must still be scrubbed.
+func TestScrubbedLogger_ScrubsAnAlreadyQuotedCredential(t *testing.T) {
+	const cred = `qu"ote\back0123456`
+	secrets := newSecretSet()
+	secrets.add(cred)
+	var buf bytes.Buffer
+	err := fmt.Errorf("parse report cell %q: invalid syntax", cred)
+	scrubbedLogger(&scrubWriter{w: &buf, secrets: secrets}).Warn("check failed for "+cred, "error", err, "cell", cred)
+	for _, leak := range []string{"ote", "back0123456"} {
+		if strings.Contains(buf.String(), leak) {
+			t.Errorf("log line leaked %q: %s", leak, buf.String())
+		}
+	}
+	if !strings.Contains(buf.String(), "parse report cell") {
+		t.Errorf("log line lost the error: %s", buf.String())
+	}
+}
+
+// -raw decodes a gzip body (X's results file) before redaction, and withholds one it cannot
+// decode whole.
+func TestRenderResponse_DecodesGzip(t *testing.T) {
+	var gz bytes.Buffer
+	zw := gzip.NewWriter(&gz)
+	_, _ = io.WriteString(zw, `{"data":[{"id":"abc1","url":"https://ton.example/r.json.gz?sig=GZSECRETSIG&x=1","access_token":"tok-0123456789"}]}`)
+	_ = zw.Close()
+	b := &cappedBuffer{}
+	b.write(gz.Bytes())
+	got := renderResponse(b, nil)
+	if !strings.Contains(got, `"id": "abc1"`) {
+		t.Errorf("gzip not decoded:\n%s", got)
+	}
+	for _, leak := range []string{"GZSECRETSIG", "tok-0123456789"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("gzip body leaked %q:\n%s", leak, got)
+		}
+	}
+	corrupt := &cappedBuffer{}
+	corrupt.write(gz.Bytes()[:len(gz.Bytes())-6])
+	if got := renderResponse(corrupt, nil); got != withheldGzip {
+		t.Errorf("corrupt gzip = %q, want withheld", got)
+	}
+	var big bytes.Buffer
+	bw := gzip.NewWriter(&big)
+	_, _ = bw.Write(bytes.Repeat([]byte("a"), maxCapture+10))
+	_ = bw.Close()
+	over := &cappedBuffer{}
+	over.write(big.Bytes())
+	if got := renderResponse(over, nil); got != withheldGzip {
+		t.Errorf("oversized gzip = %q, want withheld", got)
+	}
+}
+
+// Every session is READ ONLY by its startup parameter, which survives the config copy the X
+// stats-job lease opens its out-of-pool session from (AfterConnect does not run for it).
+func TestReadOnlyPoolConfig_CoversSessionsOutsideThePool(t *testing.T) {
+	cfg, err := readOnlyPoolConfig("postgres://u@127.0.0.1:1/db?sslmode=disable") // secretlint-disable-line -- synthetic DSN, no credential
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.ConnConfig.Copy().RuntimeParams["default_transaction_read_only"]; got != "on" {
+		t.Errorf("copied ConnConfig default_transaction_read_only = %q, want on", got)
+	}
+	if cfg.AfterConnect == nil {
+		t.Error("the pooled sessions' AfterConnect guard is gone")
 	}
 }

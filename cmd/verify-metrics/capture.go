@@ -6,6 +6,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -290,6 +291,12 @@ func renderResponse(b *cappedBuffer, secrets *secretSet) string {
 	if truncated {
 		note = fmt.Sprintf("\n(truncated: only the first %d bytes were kept)", maxCapture)
 	}
+	if bytes.HasPrefix(body, []byte{0x1f, 0x8b}) {
+		// A gzip body (X's stats-job results file). Decoded, bounded, then redacted like any
+		// other body; one that was cut off, is corrupt, or decompresses past the cap is
+		// withheld, since compressed bytes cannot be redacted.
+		return renderGzip(body, truncated, secrets)
+	}
 	if bytes.HasPrefix(body, []byte("PK\x03\x04")) && !truncated {
 		zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
 		if err == nil {
@@ -310,6 +317,25 @@ func renderResponse(b *cappedBuffer, secrets *secretSet) string {
 		}
 	}
 	return redactBody(body, secrets) + note
+}
+
+// withheldGzip stands in for a gzip body that could not be decoded whole within the cap.
+const withheldGzip = "(withheld: a gzip body that was truncated, corrupt, or over the capture cap once decompressed — compressed bytes cannot be redacted)"
+
+func renderGzip(body []byte, truncated bool, secrets *secretSet) string {
+	if truncated {
+		return withheldGzip
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		return withheldGzip
+	}
+	defer func() { _ = zr.Close() }()
+	data, err := io.ReadAll(io.LimitReader(zr, maxCapture+1))
+	if err != nil || len(data) > maxCapture {
+		return withheldGzip
+	}
+	return "gzip body:\n" + redactBody(data, secrets)
 }
 
 func indent(s string) string {
