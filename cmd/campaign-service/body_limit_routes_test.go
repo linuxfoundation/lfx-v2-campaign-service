@@ -90,7 +90,7 @@ func bodyBearingRoutes(t *testing.T) []bodyRoute {
 //
 // Goa decodes a request body before the endpoint authenticates the caller, so whatever the
 // per-request cap admits is allocated pre-auth. Before #177 every route shared the upload's
-// 42 MiB cap, so a ~2 MiB body on create-brief (whose Any fields accept arbitrary JSON) was read
+// 42 MiB cap, so a body of several MiB on create-brief (whose Any fields accept arbitrary JSON) was read
 // and decoded in full, then refused for an unrelated reason (400/401). This test sends exactly
 // that and requires 413 — the only status that proves the size gate, not a later check, refused it.
 //
@@ -102,8 +102,8 @@ func TestNonUploadRoutes_RejectOversizeBodyBeforeDecoding(t *testing.T) {
 	routes := bodyBearingRoutes(t)
 	h := realChain(t)
 
-	// Comfortably over the non-upload cap and far under the upload one, so the test fails
-	// against a single global 42 MiB cap and passes only when the cap is per-route.
+	// One byte over the non-upload cap and far under the upload one, so the test fails against
+	// a single global 42 MiB cap and pins the exact boundary.
 	oversize := constants.MaxNonUploadRequestBodyBytes + 1
 	if oversize >= constants.MaxRequestBodyBytes {
 		t.Fatalf("premise: non-upload cap %d must be below the upload cap %d", constants.MaxNonUploadRequestBodyBytes, constants.MaxRequestBodyBytes)

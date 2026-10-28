@@ -126,7 +126,7 @@ func UploadAdmission(budgetBytes int64, maxBodyBytes int64, weightFor func(conte
 			// this handler ran — so it consumes no body and admits nothing unadmitted. An
 			// UNDECLARED or chunked body is not covered here and must not be: its size is
 			// unknowable without reading it, so it still goes through admission and meets
-			// MaxBodyBytes' MaxBytesReader arm downstream, which is where that case belongs.
+			// MaxBodyBytesPerRoute's MaxBytesReader arm downstream, which is where that case belongs.
 			if maxBodyBytes > 0 && r.ContentLength > maxBodyBytes {
 				writeRequestTooLarge(w)
 				return
