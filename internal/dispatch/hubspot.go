@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
@@ -563,6 +564,12 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	portalID, perr := assertAudiencePortal(ctx, client, res, audiencePortal)
 	if perr != nil {
 		return nil, notCreated(perr)
+	}
+	// The standing standard list grows after an audience is recorded, so it can come to cover a
+	// list this audience SENDS to; excluding it would then exclude that whole inclusion. Read
+	// back now, before anything is created (one search and at most one read).
+	if cerr := standingCoversSendList(ctx, client, brief.ProjectID, sendListIDs, suppressionIDs); cerr != nil {
+		return nil, notCreated(cerr)
 	}
 	// The campaign carries the cloned email's edit link. A row with no portal_id would build it
 	// blank; the guard has just verified the token's portal, so links reuse that value rather than
@@ -1404,4 +1411,48 @@ func assertAudiencePortal(ctx context.Context, client *hubspot.Client, res *reso
 			"current connection: %w", audiencePortal, current, domain.ErrCampaignAccountMismatch)
 	}
 	return strings.TrimSpace(current), nil
+}
+
+// standingCoversSendList refuses a send that excludes a standing standard suppression list --
+// through its recorded suppressions, or through a composed master's own NOT_IN_LIST filter --
+// while that list now covers one of the send lists or one of a master's inclusion sources
+// (audience.StandingSendCheck). Read-only: one name search, then GetLists (the one-list send's
+// master, the standing list, and -- only when the search missed -- the exclusions, bounded). A
+// failed read refuses too -- the send cannot be shown to be safe -- and nothing is created, so a
+// retry is clean.
+func standingCoversSendList(ctx context.Context, client *hubspot.Client, projectID string, sendIDs, suppressionIDs []string) error {
+	standing, err := exactList(ctx, client, audience.StandardSuppressionName(projectID))
+	if err != nil {
+		return fmt.Errorf("hubspot: could not check the standing suppression list before the send: %w", err)
+	}
+	hit := ""
+	if standing != nil {
+		hit = standing.ListID
+	}
+	res, cerr := audience.StandingSendCheck(hit, sendIDs, suppressionIDs, func(id string) (audience.ListInfo, error) {
+		l, gerr := client.GetList(ctx, id)
+		if gerr != nil {
+			return audience.ListInfo{}, gerr
+		}
+		return audience.ListInfo{Name: l.Name, Filter: l.FilterBranch, ProcessingType: l.ProcessingType}, nil
+	})
+	if res.Fallback {
+		slog.WarnContext(ctx, "standing suppression check read only the name-search hit: too many exclusions to read",
+			"project_id", projectID, "limit", audience.MaxStandingCandidateReads)
+	}
+	if res.SourcesSkipped {
+		slog.WarnContext(ctx, "standing suppression check read the sources of only the first send lists; the rest were checked by id",
+			"project_id", projectID, "limit", audience.MaxSendListFilterReads)
+	}
+	switch {
+	case cerr != nil:
+		return fmt.Errorf("hubspot: could not read a list before the send: %w", cerr)
+	case res.CoveredID != "" && res.CoveredID == res.SendID:
+		return domain.PreflightRefusalf("hubspot: the audience sends to list %s, which the standing standard suppression list %s it excludes now covers — the send would exclude that entire list; remove it from the standing list in HubSpot or rebuild the audience",
+			domain.CallerValue(res.SendID), domain.CallerValue(res.StandingID))
+	case res.CoveredID != "":
+		return domain.PreflightRefusalf("hubspot: the audience's send list %s includes list %s, which the standing standard suppression list %s it excludes now covers — the send would exclude that whole inclusion; remove it from the standing list in HubSpot or rebuild the audience",
+			domain.CallerValue(res.SendID), domain.CallerValue(res.CoveredID), domain.CallerValue(res.StandingID))
+	}
+	return nil
 }

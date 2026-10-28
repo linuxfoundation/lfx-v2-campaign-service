@@ -124,7 +124,7 @@ func EventSuppressionLabel(eventName string) string {
 // would suppress exactly the people the send is for, producing an empty or
 // near-empty audience that still looks like a successful build.
 func MatchesEventSuppression(name string, keywords map[string]struct{}) bool {
-	return SharesKeyword(name, keywords) && hasSuppressionHint(name) && !TestOrStaffList(name)
+	return SharesKeyword(name, keywords) && hasGenericSuppressionHint(name) && !isStandingOrStandardName(name) && !TestOrStaffList(name)
 }
 
 // ExistingMasterProbes are the searches for master lists already built for this
