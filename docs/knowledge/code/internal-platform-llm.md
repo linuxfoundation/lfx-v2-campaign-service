@@ -1,7 +1,7 @@
 ---
 type: "Code Concept"
 title: "internal/platform/llm"
-description: "Client for the LF LiteLLM proxy's OpenAI-compatible /chat/completions surface: the service's only route to a model, with redirect refusal that survives client injection, per-attempt context deadlines, 429 retry with drained bodies, and rebuilt (never forwarded) transport errors."
+description: "Client for the LF LiteLLM proxy's OpenAI-compatible /chat/completions surface: the service's only route to a model, with a fail-safe model-aware sampling guard, redirect refusal that survives client injection, per-attempt context deadlines, 429 retry with drained bodies, and rebuilt (never forwarded) transport errors."
 resource: "internal/platform/llm"
 ---
 
@@ -73,6 +73,43 @@ gone away would otherwise get one more request made on their behalf.
 asked for 0" — fully deterministic, which a caller wanting reproducible output will want — from
 "the caller said nothing". `Model` and `MaxTokens` need no such treatment: an empty model and a
 zero token budget are not meaningful requests.
+
+## Sampling parameters are sent only to models that accept them
+
+Claude Opus 4.7 and later, and every 5-series Claude model, return **400** when a request sets
+`temperature`, `top_p` or `top_k` (Anthropic's model reference; the extended-thinking doc's
+sampling-parameters list names Opus 4.7, Opus 4.8, Sonnet 5, Sonnet 5.5 and Haiku 5.5). The
+proxy does not strip them — `lfit-litellm.yaml` sets no `drop_params` — so a value sent reaches
+Bedrock as sent. Production pins `AI_MODEL` to `claude-sonnet-5-5`, and until #397 the request
+body marshalled `temperature` unconditionally, so every generation failed.
+
+`acceptsSampling(model)` is the one place the decision is made. It reads the id from its last
+`claude-` onward, so the short proxy name (`claude-sonnet-5-5`) and the Bedrock id
+(`bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0`) are judged the same way, and matches it
+against `samplingFamilies`, an **allowlist** of family / major / newest-known minor:
+
+| family | accepts sampling |
+|---|---|
+| Claude 3, 3.5, 3.7 (`claude-3-…`) | yes |
+| Haiku 4.5 | yes |
+| Sonnet 4, 4.5, 4.6 | yes |
+| Opus 4, 4.1, 4.5, 4.6 | yes |
+| Opus 4.7, 4.8; every 5-series; any newer minor or major; non-Claude; unparseable | **no** |
+
+It **fails safe**: anything the table cannot positively match gets no sampling parameters. The
+costs are lopsided — omitting `temperature` costs some variety between regenerations, sending it
+to a model that rejects it costs every generation — and a newly released model is far likelier
+to share the newer contract than the older one. Widening the table is a deliberate edit, made
+after checking the new model's documentation. This mirrors lfx-self-serve's `AI_MODEL` sampling
+guard, including the Opus 4.7+ widening tracked in lfx-self-serve#4460.
+
+`chatRequest.Temperature` is a `*float64` with `omitempty`, so a nil — the guard's "no" — leaves
+the key off the wire, while an explicit `0` is still sent. The guard runs on the **resolved**
+model (after `DefaultModel` is applied) and outranks `Config.Temperature`: a configured value is
+dropped for a model that rejects it, because sending it is a certain 400. There is no `top_p` or
+`top_k` today; one added later must go through the same guard.
+`TestComplete_TemperatureOnTheWireFollowsTheGuard` reads the raw request body, because decoding
+into the struct cannot tell an absent key from a null one.
 
 ## Configuration is optional as a group
 
