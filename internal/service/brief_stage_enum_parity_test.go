@@ -12,8 +12,14 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 )
 
-// TestPublishedStageEnumMatchesEmailStageNames pins the design's `stage` enum to
-// `emailstage.Names()`, which owns the stage taxonomy.
+// TestPublishedStageEnumMatchesEmailStageNames pins the design's `stage` enum to the stage
+// taxonomies `emailstage` owns: `Names()` for the event surface and `SurveyNames()` for the survey
+// surface.
+//
+// ONE published enum spans BOTH surfaces, because `stage` is one column and one query parameter.
+// Which vocabulary a given stage belongs to is enforced by the delivery/stage pair rule
+// (`briefIdentityPairProblem`, and the column's own CHECK) rather than by this enum, which can only
+// say whether the string is a stage at all.
 //
 // The list is spelled out by hand in the design DSL because `design/` imports only the Goa DSL --
 // depending on a service package there would invert the contract/implementation direction. That
@@ -35,11 +41,12 @@ func TestPublishedStageEnumMatchesEmailStageNames(t *testing.T) {
 	// It is a storage concept and not an email stage, which is why it is added here instead of
 	// living in emailstage.Names().
 	want := append([]string{""}, emailstage.Names()...)
+	want = append(want, emailstage.SurveyNames()...)
 
-	if len(want) != 7 {
-		t.Fatalf("expected 6 email stages plus the empty paid stage, got %d (%v): this test's "+
-			"premise moved and the design enum needs a deliberate review, not a mechanical update",
-			len(want), want)
+	if len(want) != 11 {
+		t.Fatalf("expected 6 email stages plus 4 survey stages plus the empty paid stage, got "+
+			"%d (%v): this test's premise moved and the design enum needs a deliberate review, "+
+			"not a mechanical update", len(want), want)
 	}
 
 	for _, rel := range []string{
@@ -90,8 +97,8 @@ func TestPublishedStageEnumMatchesEmailStageNames(t *testing.T) {
 					"brief that can never be read back.", rel)
 			}
 			if !equalStrings(stage.Enum, want) {
-				t.Errorf("%s: BriefInput.stage enum = %v, want %v (emailstage.Names() plus the "+
-					"empty paid stage)", rel, stage.Enum, want)
+				t.Errorf("%s: BriefInput.stage enum = %v, want %v (the empty paid stage, then "+
+					"emailstage.Names(), then emailstage.SurveyNames())", rel, stage.Enum, want)
 			}
 
 			// The READ enum too, which is a SEPARATE hand-written list in the find-brief query

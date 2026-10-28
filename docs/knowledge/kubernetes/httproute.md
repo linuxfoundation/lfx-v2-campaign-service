@@ -18,7 +18,7 @@ every endpoint is nested under a project and gated on that project's
 `campaign_manager` relation). `project-service` owns `PathPrefix: /projects/`, and
 the token that distinguishes a campaign-service path (`connection-*`, `briefs`,
 `jobs`, `google-ads/keywords|audience|campaign-ref|geo-targets|user-lists`, `microsoft-ads/keywords|audience|campaign-ref`, `(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience`, `reddit-ads/keywords`, `(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref`, `hubspot`,
-`audience-builder`)
+`audience-builder`, `fetch-event-url`, `send-workflows`)
 sits *after* the variable `{projectId}` — which a `PathPrefix`/`Exact` match cannot
 reach past.
 

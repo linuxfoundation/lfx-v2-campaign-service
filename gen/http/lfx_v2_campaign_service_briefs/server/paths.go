@@ -74,6 +74,11 @@ func CreateCampaignsLfxV2CampaignServiceBriefsPath(projectID string, briefID str
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns", projectID, briefID)
 }
 
+// CreateSendWorkflowLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service create-send-workflow HTTP endpoint.
+func CreateSendWorkflowLfxV2CampaignServiceBriefsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/send-workflows", projectID)
+}
+
 // AdoptCampaignLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service adopt-campaign HTTP endpoint.
 func AdoptCampaignLfxV2CampaignServiceBriefsPath(projectID string, briefID string) string {
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/adopt", projectID, briefID)

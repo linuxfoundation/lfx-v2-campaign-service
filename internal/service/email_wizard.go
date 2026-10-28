@@ -58,6 +58,12 @@ type HubSpotWizardClient interface {
 	// send list is applied (wizardStandingCoversSendList).
 	SearchLists(ctx context.Context, query string) ([]hubspot.List, error)
 	GetList(ctx context.Context, listID string) (*hubspot.List, error)
+	// CloneFlowWithEmails belongs to the SEND-WORKFLOW path (CreateSendWorkflow), not the
+	// wizard. It is declared here because both reach HubSpot through the same per-request
+	// resolver, and a second resolver would let the two paths authenticate as different
+	// credentials for the same project -- the exact drift this interface's per-request
+	// resolution exists to prevent.
+	CloneFlowWithEmails(ctx context.Context, flowID string, opts hubspot.CloneFlowOptions) (*hubspot.FlowRef, error)
 }
 
 // HubSpotClientResolver hands the wizard a HubSpot client for one project.
@@ -276,6 +282,10 @@ type wizardEventDetails struct {
 	URL             string `json:"url"`
 	Speakers        []string
 	Sponsors        []wizardEventSponsor `json:"sponsors"`
+	// SourceText is the survey surface's pasted source document -- the survey instrument or
+	// report the email promotes, and on that surface the only place its facts may come from.
+	// Empty on every event brief.
+	SourceText string `json:"sourceText"`
 }
 
 type wizardEventSponsor struct {
@@ -322,10 +332,13 @@ func wizardFacts(brief *model.CampaignBrief, d wizardEventDetails, extraContext,
 		// The brief's own url column is the primary, with the blob's registrationUrl as the
 		// fallback — the same precedence resolveRegistrationURL documents.
 		registrationURL: firstNonEmpty(httpURL(brief.URL), httpURL(d.RegistrationURL)),
-		stage:           strings.TrimSpace(brief.Stage),
-		extraContext:    strings.TrimSpace(extraContext),
-		emailType:       strings.TrimSpace(emailType),
-		changeRequest:   strings.TrimSpace(changeRequest),
+		// Bounded exactly as generate-email-copy bounds it, so the two surfaces see the same
+		// document and the facts size guard is not what a survey brief trips.
+		sourceText:    factText(d.SourceText, maxFactSourceTextRunes),
+		stage:         strings.TrimSpace(brief.Stage),
+		extraContext:  strings.TrimSpace(extraContext),
+		emailType:     strings.TrimSpace(emailType),
+		changeRequest: strings.TrimSpace(changeRequest),
 	}
 	for _, sp := range d.Speakers {
 		if v := strings.TrimSpace(sp); v != "" {
@@ -480,7 +493,7 @@ func (s *BriefService) PlanEmailWizard(ctx context.Context, p *briefs.PlanEmailW
 	}
 	details := s.resolveWizardDetails(ctx, brief, requestedURL)
 
-	tpl := emailstage.Resolve(brief.Stage)
+	tpl := resolveStageTemplate(brief.Stage)
 	plan := wizardPlan{
 		Mode: "stage",
 		// This turn's guidance wins; anything it omits keeps what plan-start recorded.
@@ -695,6 +708,16 @@ func wizardPlanMessage(d wizardEventDetails, tpl emailstage.Template, plan wizar
 	return strings.TrimSpace(b.String())
 }
 
+// resolveStageTemplate is the stage library entry for a brief's stage, on the surface the stage
+// belongs to. A survey stage resolved against the event templates silently falls back to
+// Registration Push, so survey briefs would get event copy and an event-named draft.
+func resolveStageTemplate(stage string) emailstage.Template {
+	if emailstage.IsSurveyStage(stage) {
+		return emailstage.ResolveSurvey(stage)
+	}
+	return emailstage.Resolve(stage)
+}
+
 // wizardDraftName is the name a cloned draft is given, and the string UTM resolution
 // slugifies when the brief carries no campaign of its own.
 func wizardDraftName(d wizardEventDetails, tpl emailstage.Template, now time.Time) string {
@@ -754,6 +777,9 @@ func (s *BriefService) GenerateWizardContent(ctx context.Context, p *briefs.Gene
 	// for it (it is supplied on plan-start/plan), and dropping it here would generate copy
 	// that ignores instructions the operator has already given.
 	plan := wizardStoredPlan(sess)
+	if serr := sourceTextTooLong(details.SourceText); serr != nil {
+		return nil, serr
+	}
 	facts := wizardFacts(brief, details, plan.ExtraContext, plan.EmailType, strVal(p.ChangeRequest))
 	if facts.size() > maxWizardFactsSize {
 		// 400 and the caller's to fix: these values come from the brief and the request, and
@@ -766,7 +792,7 @@ func (s *BriefService) GenerateWizardContent(ctx context.Context, p *briefs.Gene
 			Message: "the brief's event details and guidance are too large; shorten them before generating content",
 		}
 	}
-	tpl := emailstage.Resolve(brief.Stage)
+	tpl := resolveStageTemplate(brief.Stage)
 
 	// Reference variant.
 	s.publishWizardProgress(sess, WizardProgressFrame{Type: "brief", Text: "Writing the email in your team's voice"})
@@ -1178,7 +1204,7 @@ func (s *BriefService) CloneWizardEmail(ctx context.Context, p *briefs.CloneWiza
 	}
 
 	details := decodeWizardEventDetails(brief.EventDetails)
-	tpl := emailstage.Resolve(brief.Stage)
+	tpl := resolveStageTemplate(brief.Stage)
 	cloneName := wizardDraftName(details, tpl, s.now())
 	email, clerr := client.CloneEmail(ctx, src.ID, cloneName)
 	if clerr != nil {

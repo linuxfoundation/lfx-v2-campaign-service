@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -23,6 +24,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 )
 
 // -----------------------------------------------------------------------------
@@ -276,6 +278,13 @@ func (f *fakeWizardHubSpot) SetSendList(_ context.Context, id string, ilsListIDs
 
 func (f *fakeWizardHubSpot) GetEmailHTMLWidgets(context.Context, string) ([]hubspot.EmailHTMLBlock, error) {
 	return f.blocks, nil
+}
+
+// CloneFlowWithEmails is on this fake only because the resolver's client interface carries
+// it for the send-workflow path; the wizard never calls it. CreateSendWorkflow's own tests
+// use their own double, so a call arriving here means a wizard turn reached the workflow API.
+func (f *fakeWizardHubSpot) CloneFlowWithEmails(context.Context, string, hubspot.CloneFlowOptions) (*hubspot.FlowRef, error) {
+	return nil, errors.New("the wizard must not create workflows")
 }
 
 func (f *fakeWizardHubSpot) SetEmailHTMLWidgets(_ context.Context, id string, widgets map[string]string) (*hubspot.Email, error) {
@@ -2262,5 +2271,94 @@ func TestSetWizardSendList_AppliesAStaticSendList(t *testing.T) {
 	}
 	if len(h.hubspot.sendListIDs) == 0 && h.hubspot.sendListID == "" {
 		t.Error("the static list must be applied")
+	}
+}
+
+// TestWizard_SurveyBriefUsesTheSurveyStage: every wizard turn resolves the stage on the surface it
+// belongs to. Resolved against the event library, "Survey Reminder" silently became Registration
+// Push -- event copy written for a survey, and a draft named after a registration push -- and the
+// pasted source document, the survey's only factual basis, never reached the prompt.
+func TestWizard_SurveyBriefUsesTheSurveyStage(t *testing.T) {
+	h := newWizardHarness(t, nil)
+	h.briefs.briefs[briefKey(wizardTestProject, wizardTestBrief)] = &model.CampaignBrief{
+		ID: wizardTestBrief, ProjectID: wizardTestProject,
+		DeliveryType: model.DeliverySurvey, Stage: emailstage.SurveyReminder,
+		URL:          "https://survey.example.org/cncf-2026",
+		EventDetails: json.RawMessage(`{"eventName":"CNCF Annual Survey 2026","sourceText":"The survey asks how teams run Kubernetes in production."}`),
+	}
+	var mu sync.Mutex
+	var prompts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		prompts = append(prompts, string(body))
+		mu.Unlock()
+		content, _ := json.Marshal(wizardModelJSON())
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(content) + `},"finish_reason":"stop"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	h.svc.SetLLMClient(newTestLLMClient(t, srv))
+	h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "CNCF Annual Survey 2025 - Reminder"}}
+	survey := emailstage.ResolveSurvey(emailstage.SurveyReminder)
+
+	started := h.start(t)
+	plan, err := h.svc.PlanEmailWizard(context.Background(), &briefs.PlanEmailWizardPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	})
+	if err != nil {
+		t.Fatalf("PlanEmailWizard: %v", err)
+	}
+	if !strings.Contains(plan.Message, strings.ToLower(survey.StageName)) {
+		t.Errorf("plan message = %q, want it to name the %q stage", plan.Message, survey.StageName)
+	}
+
+	if _, err := h.svc.GenerateWizardContent(context.Background(), &briefs.GenerateWizardContentPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("GenerateWizardContent: %v", err)
+	}
+	mu.Lock()
+	requests := append([]string(nil), prompts...)
+	mu.Unlock()
+	// EACH model request on its own: the reference variant (the default draft when a past email
+	// exists) and the stage variant must both be written to the survey specification and from
+	// the source document. A check over the concatenation passed with only one of them right.
+	if len(requests) < 2 {
+		t.Fatalf("got %d model requests, want both variants", len(requests))
+	}
+	for i, raw := range requests {
+		var req struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.Unmarshal([]byte(raw), &req); err != nil {
+			t.Fatalf("request %d: decode: %v", i, err)
+		}
+		var prompt strings.Builder
+		for _, m := range req.Messages {
+			prompt.WriteString(m.Content)
+			prompt.WriteString("\n")
+		}
+		got := prompt.String()
+		if !strings.Contains(got, survey.ContentPrompt) {
+			t.Errorf("request %d does not carry the %s specification", i, survey.StageName)
+		}
+		if strings.Contains(got, "STAGE: "+emailstage.Resolve("").StageName) {
+			t.Errorf("request %d fell back to the event default stage", i)
+		}
+		if !strings.Contains(got, "Source document") || !strings.Contains(got, "how teams run Kubernetes in production") {
+			t.Errorf("request %d does not carry the survey's source document", i)
+		}
+	}
+
+	if _, err := h.svc.CloneWizardEmail(context.Background(), &briefs.CloneWizardEmailPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID, Approved: true,
+	}); err != nil {
+		t.Fatalf("CloneWizardEmail: %v", err)
+	}
+	if !strings.Contains(h.hubspot.clonedName, " - "+survey.StageName+" - ") {
+		t.Errorf("draft name = %q, want it to carry the survey stage %q", h.hubspot.clonedName, survey.StageName)
 	}
 }

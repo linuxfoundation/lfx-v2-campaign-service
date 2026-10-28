@@ -501,6 +501,9 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// inherits nothing: it needs its own alternation branch in the HTTPRoute regex AND
 		// its own RuleSet entry. This row is what fails if a future edit adds only one.
 		{"/projects/p1/fetch-event-url", true},
+		// --- accepted: survey send series ---
+		// Another single-path sibling of /briefs: its own branch on BOTH sides.
+		{"/projects/p1/send-workflows", true},
 		// --- accepted: audience builder (LFXV2-2770) ---
 		// Another sibling of /briefs that inherits nothing, and unlike fetch-event-url it is
 		// a family of thirteen leaves rather than one path. Each leaf is enumerated on BOTH
@@ -552,6 +555,7 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/hubspot-ads/metrics", false},
 		// The branch is an exact alternative, not a prefix: nothing hangs off it.
 		{"/projects/p1/fetch-event-url/anything", false},
+		{"/projects/p1/send-workflows/x", false},
 		// The audience-builder branch is an enumeration, not a prefix: the bare base serves
 		// nothing, an unknown leaf serves nothing, and POST /signal-list is specified but
 		// deliberately unimplemented, so routing it would let a caller reach a handler that

@@ -51,7 +51,7 @@ var BriefData = Type("brief-data", func() {
 	// lookup can name — see the note on `stage`.
 	Attribute("event_slug", String, "Event/course slug. Part of a brief's composite identity, not unique on its own: see delivery_type and stage.")
 	Attribute("delivery_type", String, "Delivery surface this brief was authored for.", func() {
-		Enum("paid-marketing", "email")
+		Enum("paid-marketing", "email", "survey")
 		Example("email")
 	})
 	// The Enum is here on BriefData -- the WRITE side -- and not only on find-brief, because a
@@ -69,8 +69,8 @@ var BriefData = Type("brief-data", func() {
 	// unrecognised stage to Registration Push under a 200 by documented contract, because copy
 	// generation should never be blocked by a misspelling. Storage is the opposite -- a
 	// misspelling there is unrecoverable, so it must fail at the edge.
-	Attribute("stage", String, "Stage within an email series. Empty for paid, which has no series.", func() {
-		Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event")
+	Attribute("stage", String, "Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.", func() {
+		Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo")
 		Example("Registration Push")
 	})
 	Attribute("url", String, "Event/course page URL")
@@ -218,6 +218,59 @@ var JobCreateResponse = Type("job-create-response", func() {
 	})
 	Attribute("platforms", ArrayOf(String), "Platforms this job will create on")
 	Required("job_id", "status", "platforms")
+})
+
+// SendWorkflowInput asks for ONE HubSpot workflow that sends an already-staged series.
+//
+// It carries brief ids rather than HubSpot email ids: which draft a brief produced is this
+// service's own record (the campaign row's platform id), and a client that had to look that
+// up could pair a brief with somebody else's email.
+var SendWorkflowInput = Type("send-workflow-input", func() {
+	Attribute("source_workflow_url", String, "The HubSpot workflow to copy: its steps, sending windows, blocked dates and suppression lists are kept, while its emails, dates and enrollment are replaced. Its editor URL, or its bare numeric id. OPTIONAL: omitted, the deployment's configured survey-sequence workflow is used, which is the ordinary case. It is only ever READ.", func() {
+		MinLength(1)
+		MaxLength(500)
+		Example("https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit")
+	})
+	Attribute("name", String, "Name for the new workflow", func() {
+		MinLength(1)
+		MaxLength(200)
+		Example("2026 Cloud Native Annual Survey - Workflow")
+	})
+	Attribute("brief_ids", ArrayOf(String), "The briefs whose staged drafts this workflow sends, in SEND ORDER. One per send step in the source workflow.", func() {
+		// Two, not one: a single email needs no workflow -- it is staged, scheduled and sent
+		// on its own -- so a one-brief request is asking for machinery that would only add a
+		// place for the send to go wrong.
+		MinLength(2)
+		MaxLength(10)
+	})
+	Attribute("send_dates", ArrayOf(String, func() {
+		Pattern(`^\d{4}-\d{2}-\d{2}$`)
+		Example("2026-11-09")
+	}), "Calendar dates (YYYY-MM-DD), one per wait-until-date step of the source workflow, in the order a contact meets them. Each must be after today (UTC) and after the one before it. Required whenever the source workflow has dated steps: the source's own dates belong to another campaign. Each step's time of day is always the source's.", func() {
+		MaxLength(10)
+		Example([]string{"2026-10-09", "2026-10-19", "2026-10-23"})
+	})
+	// source_workflow_url is NOT required: a survey series is normally built from the
+	// deployment's configured workflow, and making an operator find that URL in HubSpot to do
+	// the ordinary thing would be a step with no decision in it.
+	Required("name", "brief_ids")
+})
+
+// SendWorkflowResult is the created workflow, for the human who has to review and enable it.
+var SendWorkflowResult = Type("send-workflow-result", func() {
+	Attribute("flow_id", String, "HubSpot's id for the new workflow")
+	Attribute("name", String, "Name HubSpot recorded")
+	Attribute("edit_url", String, "Where to review and enable it")
+	Attribute("source_flow_id", String, "The workflow it was copied from")
+	Attribute("source_flow_name", String, "That workflow's name")
+	Attribute("is_enabled", Boolean, "Always false on create: the workflow sends nothing until a human enables it in HubSpot", func() {
+		Example(false)
+	})
+	Attribute("send_email_steps", Int, "How many send steps were pointed at this campaign's drafts")
+	Attribute("dated_steps", Int, "How many wait-until-date steps had their date replaced")
+	Attribute("enrollment_list_ids", ArrayOf(String), "The HubSpot lists the new workflow enrolls: the series' shared audience (its master list, or every list it was attached from). A contact in any of them is enrolled. The source workflow's own enrollment is always replaced.")
+	Attribute("suppression_list_ids", ArrayOf(String), "The new workflow's whole suppression set: the source workflow's own suppression lists plus the audience's.")
+	Required("flow_id", "name", "edit_url", "source_flow_id", "is_enabled", "send_email_steps", "dated_steps", "enrollment_list_ids", "suppression_list_ids")
 })
 
 // PlatformResult is one platform's outcome within a terminal job result. It
@@ -1686,12 +1739,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// only surface whose brief could be saved, so an omitted pair addresses exactly the
 			// row such a caller would have found before.
 			Attribute("delivery_type", String, "Delivery surface the brief was authored for.", func() {
-				Enum("paid-marketing", "email")
+				Enum("paid-marketing", "email", "survey")
 				Default("paid-marketing")
 				Example("email")
 			})
-			Attribute("stage", String, "Stage within an email series. Empty for paid, which has no series.", func() {
-				Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event")
+			Attribute("stage", String, "Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.", func() {
+				Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo")
 				Default("")
 				Example("Registration Push")
 			})
@@ -2071,6 +2124,26 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
+	Method("create-send-workflow", func() {
+		Description("Create ONE HubSpot workflow that sends an already-staged series of emails, and return it DISABLED. Each brief named in brief_ids must already have a fully staged HubSpot draft (its campaign row's platform id is the email the workflow will send) and must belong to a send surface; a paid brief is refused. The source workflow (source_workflow_url, else the deployment's SURVEY_SEQUENCE_WORKFLOW_ID, else the in-code default) is only ever read: its definition is fetched, its send steps -- walked from its start action, which must be one straight sequence -- are pointed at this campaign's drafts in the order brief_ids gives, each wait-until-date step is re-dated from send_dates, its enrollment is replaced by the series' audience, the audience's suppression lists are added to its own, and the result is created as a NEW workflow. 400 when the source URL names no workflow (or names one HubSpot refuses), when a brief has no staged draft yet, when a brief is on the paid surface or appears twice, when there are fewer than two briefs, or when a date is not YYYY-MM-DD, not after today or not after the date before it. 409 when the source workflow's send-step count does not equal the number of briefs or its dated-step count the number of send_dates, when it branches, has steps off its main path, does not enroll by list membership or still refers to its own emails elsewhere; when a draft is not fully staged or was staged in another portal; when a brief has no BUILT HubSpot audience, when the briefs were built against different audiences (a workflow enrolls ONE audience, so every brief must carry the same send lists, suppressions and portal), or that audience was built in a different HubSpot portal than this project's credential reaches; when a list the series sends to is also suppressed, or the project's standing standard suppression list now covers it (the same send-time check staging applies); when the project has no usable HubSpot connection, the credential lacks the automation scope, or the default workflow does not exist in the project's portal. 404 when a brief does not exist in this project. 500 when HubSpot's answer to the create could not be read, so a workflow may exist. 503 when the audience store or HubSpot is unavailable. The workflow is always created disabled -- enabling it is left to the human who reviews the drafts, and is the only irreversible step on this path.")
+		Payload(func() {
+			bearerToken()
+			// Slug-only, matching create-campaigns: project_id is the exact-match key for the
+			// HubSpot connection lookup, and a UUID finds no connection.
+			projectSlugAttr()
+			Attribute("input", SendWorkflowInput)
+			Required("project_id", "input")
+		})
+		Result(SendWorkflowResult)
+		commonBriefErrors()
+		HTTP(func() {
+			POST("/projects/{project_id}/send-workflows")
+			Header("bearer_token:Authorization")
+			Response(StatusCreated)
+			briefErrorResponses()
+		})
+	})
+
 	Method("adopt-campaign", func() {
 		Description("Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project's connection, and nothing is created upstream. Supported platforms: google-ads, microsoft-ads, meta-ads, reddit-ads, twitter-ads and linkedin-ads; every other platform answers 400. The read is one get-campaign-by-id under the project's OWN connection (never the shared LF system account), plus, on Reddit, X and LinkedIn only, one read of that connection's ad account after a campaign 404, and the campaign must belong to that connection's ad account. Returns 404 only when the platform PROVES it holds no such campaign (a deleted, removed or archived campaign counts as absent; on LinkedIn a CANCELED, PENDING_DELETION or REMOVED one), 503 when the campaign could not be verified (the platform was unreachable or throttled, answered with something untrustworthy, or gave a not-found that could equally be an access, auth or account problem - its existence is unknown), 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the platform reports the campaign under a different ad account than the project's connection / the campaign is of a type that platform's slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired or platform_campaign_id is malformed for that platform (checked before any connection work). An adopted campaign records only the campaign itself (id, name, account), never its children, and is returned, read back by get-campaign and indexed with `adopted: true`. The metrics read and the settings readback (on the platforms that support them), delete and pause work on it; activation is refused on every platform because adoption does not verify the targeting the activate guard requires (toggle-campaign-status answers 409 with reason=campaign_adopted); the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line item the row does not record) and on LinkedIn (its bid is the campaign's own unitCost, but adoption verifies identity, not the bidding setup); the budget lever is refused on Meta (its budget lives on the ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget is the campaign's own. A LinkedIn PAUSE on an adopted campaign addresses the campaign alone, never its creatives.")
 		Payload(func() {
@@ -2210,7 +2283,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// told it succeeded. `emailstage.Resolve` is where that fallback lives, and the
 			// response does not report which stage was actually used — a caller that needs to
 			// know must compare what it sent against `Names()`.
-			Attribute("stage", String, "Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.", func() {
+			Attribute("stage", String, "Stage the email belongs to. Event stages: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Survey stages: Survey Promo, Survey Reminder, Survey Closing, Report Promo. Matching is CASE-SENSITIVE; an unrecognised value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.", func() {
 				Example("Post-Event")
 			})
 			// OPTIONAL, same free-text/lenient-fallback shape as stage: absent or unrecognised

@@ -1865,6 +1865,25 @@ func TestComposeEmailCopyPrompt_WithholdsURLForNonRegistrationStages(t *testing.
 	}
 }
 
+// TestComposeEmailCopyPrompt_SurveyStagesCarryThePromotedURL: a survey brief's url is the survey
+// or report itself, and every survey stage's CTA points at "the supplied URL". Withholding it left
+// the primary button without a destination.
+func TestComposeEmailCopyPrompt_SurveyStagesCarryThePromotedURL(t *testing.T) {
+	const surveyURL = "https://survey.example.org/cncf-2026"
+	for _, stage := range emailstage.SurveyNames() {
+		t.Run(stage, func(t *testing.T) {
+			_, userPrompt := composeEmailCopyPrompt(emailCopyPromptVars{
+				eventName:       "CNCF Annual Survey 2026",
+				registrationURL: surveyURL,
+				stage:           stage,
+			})
+			if !strings.Contains(userPrompt, surveyURL) {
+				t.Errorf("the %s prompt does not carry the promoted URL", stage)
+			}
+		})
+	}
+}
+
 // TestParseEmailCopyResponse_RefusesLegacyShapeWhenSectionsWereRequested pins the gate on the
 // legacy repackaging.
 //
@@ -2045,5 +2064,40 @@ func TestFactText_CollapsesWhitespaceWithoutEatingContent(t *testing.T) {
 
 	if got != "Two spaces and a tab and a newline" {
 		t.Fatalf("factText = %q; a whitespace run must become one space, not vanish", got)
+	}
+}
+
+// TestEventFactsBlockKeepsTheSourceDocument: a survey brief's source document at its own bound,
+// beside a description and other facts at theirs, sums past the block bound. The backstop must cut
+// the event facts, never the document -- the only place a survey email's facts may come from.
+func TestEventFactsBlockKeepsTheSourceDocument(t *testing.T) {
+	source := strings.Repeat("s", maxFactSourceTextRunes)
+	const urlPrefix = "https://events.example/"
+	maxURL := urlPrefix + strings.Repeat("u", maxFactURLRunes-len(urlPrefix))
+	details := emailCopyEventDetails{
+		SourceText:     source + "tail past the bound",
+		Description:    strings.Repeat("d", maxFactDescriptionRunes*2),
+		Audience:       strings.Repeat("a", maxFactTextRunes*2),
+		AgendaURL:      maxURL,
+		CFPURL:         maxURL,
+		VenueURL:       maxURL,
+		SponsorshipURL: maxURL,
+	}
+	block := details.eventFactsBlock()
+	if n := len([]rune(block)); n > maxEventFactsBlockRunes {
+		t.Fatalf("block is %d runes, over its bound of %d", n, maxEventFactsBlockRunes)
+	}
+	if !strings.Contains(block, "Source document: "+source) {
+		t.Error("the source document was cut; the bound must leave out the event facts after it")
+	}
+	// What does not fit is left out WHOLE. A URL cut mid-string is one the prompt tells the model
+	// to copy exactly, so every URL line present must carry the full URL.
+	for _, line := range strings.Split(block, "\n") {
+		if strings.Contains(line, urlPrefix) && !strings.HasSuffix(line, ": "+maxURL) {
+			t.Errorf("a URL line was cut: %q", line)
+		}
+	}
+	if !strings.Contains(block, maxURL) {
+		t.Error("no URL fit; the test is not exercising a partial fit")
 	}
 }

@@ -274,6 +274,16 @@ app:
     REDDIT_METRICS_ENABLED:
       value: "false"
 
+    # The HubSpot workflow a survey send series (POST /projects/{project_id}/send-workflows) is
+    # copied from when the request names no source_workflow_url. The copy keeps its schedule,
+    # sending windows and suppression lists and gets the series' own drafts and audience; the
+    # source is only ever read. Empty selects the in-code default (1841232183, the LF Research
+    # survey-promo workflow in the LF portal), which exists in that one portal only — a
+    # deployment whose projects connect other portals should set its own, or callers must
+    # always pass source_workflow_url.
+    SURVEY_SEQUENCE_WORKFLOW_ID:
+      value: ""
+
     # Opts this deployment IN to Microsoft Advertising metrics reads. Default off
     # for the same reason as REDDIT_METRICS_ENABLED above: the v13 Reporting
     # contract was implemented from Microsoft's published documentation and has
