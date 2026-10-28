@@ -186,6 +186,57 @@ func TestRefresh_StaleMidFlight401KeepsTheNewToken(t *testing.T) {
 	}
 }
 
+// TestRefresh_ReissuedRecoveryIsStillClearedByTheNext401 pins the deliberate limit of the
+// rejection record: it lives on the flight a 401 raced, not beyond it. If the RECOVERY
+// exchange is answered with the same value again, that is the authorization server's current
+// answer and it is served -- remembering rejections across flights would turn one transient
+// 401 into a permanent refusal of a token the endpoint still vouches for. What must hold is
+// that nothing is stuck: the next 401 for that value clears the cache, and the call after it
+// exchanges again instead of being served the rejected token until it expires.
+func TestRefresh_ReissuedRecoveryIsStillClearedByTheNext401(t *testing.T) {
+	srv, hits, entered, release := gatedTokenServer(t, 2,
+		`{"access_token":"tok_1","expires_in":3600}`,
+		`{"access_token":"tok_1","expires_in":3600}`, // raced by the 401: dropped
+		`{"access_token":"tok_1","expires_in":3600}`, // recovery: re-issued again
+		`{"access_token":"tok_2","expires_in":3600}`,
+	)
+	clock := newSteppingClock()
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(srv.URL), WithClock(clock.now))
+	ctx := context.Background()
+
+	if got, err := c.accessTokenValue(ctx); err != nil || got != "tok_1" {
+		t.Fatalf("first mint = %q, %v; want tok_1", got, err)
+	}
+	clock.advance(time.Hour - 30*time.Second)
+
+	waiter := make(chan tokenResult, 1)
+	go func() {
+		tok, err := c.accessTokenValue(ctx)
+		waiter <- tokenResult{tok, err}
+	}()
+	waitFor(t, entered, "the refresh to reach the token endpoint")
+	c.invalidateAccessToken("tok_1")
+	release()
+
+	if w := waitFor(t, waiter, "the waiter"); w.err != nil || w.token != "tok_1" {
+		t.Fatalf("waiter = %q, %v; want the recovery's re-issued tok_1", w.token, w.err)
+	}
+
+	// The waiter presents it and is refused again.
+	c.invalidateAccessToken("tok_1")
+
+	got, err := c.accessTokenValue(ctx)
+	if err != nil {
+		t.Fatalf("after the second 401: %v", err)
+	}
+	if got == "tok_1" {
+		t.Errorf("served %q after a second 401: the cache is stuck on a rejected token", got)
+	}
+	if got != "tok_2" || atomic.LoadInt64(hits) != 4 {
+		t.Errorf("got %q with %d token hits; want tok_2 from a 4th exchange", got, atomic.LoadInt64(hits))
+	}
+}
+
 // TestFetchToken_DoesNotWriteTheCache pins WHERE the cache write lives. The leader stores
 // the token in the same critical section that checks the flight's rejections, sets
 // inflight.token and tears the flight down. A cache write inside fetchToken (its own lock

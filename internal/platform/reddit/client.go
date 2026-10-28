@@ -890,10 +890,10 @@ func (c *Client) refreshToken(ctx context.Context) (string, error) {
 			// is the leak the guard exists to close.
 			//
 			// An empty token is never an ordinary success — fetchToken rejects an
-			// empty access_token — so this arm cannot fire on a healthy refresh. Re-lead a fresh exchange instead. The leader has
-			// already cleared c.inflight by the time done is closed, so the retry
-			// starts a NEW flight rather than rejoining this one, and cannot loop on
-			// the poisoned result.
+			// empty access_token — so this arm cannot fire on a healthy refresh.
+			// Re-lead a fresh exchange instead. The leader has already cleared
+			// c.inflight by the time done is closed, so the retry starts a NEW flight
+			// rather than rejoining this one, and cannot loop on the poisoned result.
 			return c.refreshToken(ctx)
 		}
 		return inflight.token, inflight.err
