@@ -104,7 +104,7 @@ func validateMonitorDays(days int) error {
 // the partial delivery the rows that did parse contributed, which understates it; a row whose
 // budget alone was unparseable — on any platform that reports a budget, not only Google Ads —
 // contributes its genuinely non-zero spend/impressions/clicks, which is correct because only its
-// budget field, not summed here, was untrusted. LinkedIn is the case that does contribute a
+// budget field, not summed here, was untrusted. LinkedIn is another case that contributes a
 // wrong figure: a row whose costInLocalCurrency was unreadable carries Spend=0 with real
 // impressions/clicks, so the spend sum understates it — which is exactly what
 // UnmeasuredCampaigns exists to flag below.
