@@ -72,9 +72,10 @@ func currencyCreateServer(t *testing.T, currency string) (*httptest.Server, func
 // service persists the REQUESTED amount (campaigns.budget_amount), so the only way the row can
 // equal what Meta holds is for every accepted amount to reach Meta exactly — amount x the
 // account currency's minor-unit offset, with no rounding — and for every amount that cannot be
-// sent exactly to be refused before anything is created — no campaign, no ad set. JPY and KRW are zero-decimal (offset 1:
-// the minor unit IS the whole unit); USD is two-decimal (offset 100). The offset is derived from
-// the account's own currency, as in production, not set explicitly.
+// sent exactly to be refused before anything is created — no campaign, no ad set. JPY and KRW
+// are zero-decimal (offset 1: the minor unit IS the whole unit); USD is two-decimal (offset
+// 100). The offset is derived from the account's own currency, as in production, not set
+// explicitly.
 func TestCreateCampaign_TheBudgetSentIsTheBudgetRequested(t *testing.T) {
 	cases := []struct {
 		name      string

@@ -20,8 +20,8 @@ because no accepted amount is rounded.
   two-decimal (USD) currencies:
   - `TestCreateCampaign_TheBudgetSentIsTheBudgetRequested` (`internal/platform/meta`) derives
     the offset from the account's own currency, as production does. It asserts the raw
-    `daily_budget` value on the ad-set POST, and that a fractional amount is refused before any
-    ad set is created.
+    `daily_budget` value on the ad-set POST, and that a fractional amount is refused before
+    anything is created upstream (zero POSTs: no campaign, no ad set).
   - `TestMeta_WriteBudget_SentAmountIsTheRequestedAmount` and a KRW row in
     `TestMeta_WriteBudget_Guards` (`internal/dispatch`) do the same on the budget-change path.
 - **The contract says so.** The `budget` attribute of `update-campaign-budget`
