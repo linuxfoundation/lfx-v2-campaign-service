@@ -412,6 +412,9 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 		// least visible. See model.CampaignBrief.CreatedBy.
 		CreatedBy: attributedActor(ctx, "create brief"),
 	}
+	if serr := eventDetailsSourceTextTooLong(b.EventDetails); serr != nil {
+		return nil, serr
+	}
 	// The index message co-commits with the row (see briefIndexPayload); the relay delivers it.
 	created, err := briefRepo.CreateBrief(ctx, b, s.briefIndexPayload(indexer.ActionCreated))
 	if err != nil {
@@ -569,6 +572,9 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 		// Only updated_by moves on an edit; created_by is untouched by the UPDATE and
 		// keeps naming the original author.
 		UpdatedBy: attributedActor(ctx, "update brief"),
+	}
+	if serr := eventDetailsSourceTextTooLong(b.EventDetails); serr != nil {
+		return nil, serr
 	}
 	updated, uerr := briefRepo.ReplaceBrief(ctx, b, version, s.briefIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {

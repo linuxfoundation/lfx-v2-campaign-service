@@ -2319,16 +2319,38 @@ func TestWizard_SurveyBriefUsesTheSurveyStage(t *testing.T) {
 		t.Fatalf("GenerateWizardContent: %v", err)
 	}
 	mu.Lock()
-	all := strings.Join(prompts, "\n")
+	requests := append([]string(nil), prompts...)
 	mu.Unlock()
-	if !strings.Contains(all, "STAGE: "+survey.StageName) {
-		t.Errorf("the stage prompt does not carry the survey stage %q", survey.StageName)
+	// EACH model request on its own: the reference variant (the default draft when a past email
+	// exists) and the stage variant must both be written to the survey specification and from
+	// the source document. A check over the concatenation passed with only one of them right.
+	if len(requests) < 2 {
+		t.Fatalf("got %d model requests, want both variants", len(requests))
 	}
-	if strings.Contains(all, "STAGE: "+emailstage.Resolve("").StageName) {
-		t.Error("the stage prompt fell back to the event default stage")
-	}
-	if !strings.Contains(all, "Source document") || !strings.Contains(all, "how teams run Kubernetes in production") {
-		t.Error("the survey's source document did not reach the prompt")
+	for i, raw := range requests {
+		var req struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.Unmarshal([]byte(raw), &req); err != nil {
+			t.Fatalf("request %d: decode: %v", i, err)
+		}
+		var prompt strings.Builder
+		for _, m := range req.Messages {
+			prompt.WriteString(m.Content)
+			prompt.WriteString("\n")
+		}
+		got := prompt.String()
+		if !strings.Contains(got, survey.ContentPrompt) {
+			t.Errorf("request %d does not carry the %s specification", i, survey.StageName)
+		}
+		if strings.Contains(got, "STAGE: "+emailstage.Resolve("").StageName) {
+			t.Errorf("request %d fell back to the event default stage", i)
+		}
+		if !strings.Contains(got, "Source document") || !strings.Contains(got, "how teams run Kubernetes in production") {
+			t.Errorf("request %d does not carry the survey's source document", i)
+		}
 	}
 
 	if _, err := h.svc.CloneWizardEmail(context.Background(), &briefs.CloneWizardEmailPayload{

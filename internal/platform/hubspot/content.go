@@ -297,7 +297,44 @@ func (c *Client) verifyContentSaved(ctx context.Context, id string, ourWidgets m
 		return fmt.Errorf("hubspot: email %s content PATCH did not persist %d of the rebuilt widgets (%s) (HubSpot may have silently reverted it)",
 			id, len(missing), strings.Join(missing, ", "))
 	}
+
+	// The BODY's value, not only its key. The keys are fixed, so a template cloned from an email
+	// an earlier generation wrote already carries a `staging_body` placed in the layout: a
+	// reverted PATCH then passes the key check while the draft still holds that earlier body --
+	// and a caller recording the draft as carrying this campaign's copy would be wrong.
+	// Compared with whitespace runs collapsed, so re-indentation is not read as a revert.
+	if wrote, ok := widgetHTML(ourWidgets[bodyWidgetKey]); ok {
+		var savedWidgets map[string]struct {
+			Body struct {
+				HTML string `json:"html"`
+			} `json:"body"`
+		}
+		_ = json.Unmarshal(doc.Content["widgets"], &savedWidgets)
+		if collapseHTMLWhitespace(savedWidgets[bodyWidgetKey].Body.HTML) != collapseHTMLWhitespace(wrote) {
+			return fmt.Errorf("hubspot: email %s content PATCH left %s holding different html than was written (HubSpot may have silently reverted it)",
+				id, bodyWidgetKey)
+		}
+	}
 	return nil
+}
+
+// widgetHTML is the html a rich-text widget built by richTextWidget carries.
+func widgetHTML(widget any) (string, bool) {
+	w, ok := widget.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	body, ok := w["body"].(map[string]any)
+	if !ok {
+		return "", false
+	}
+	html, ok := body["html"].(string)
+	return html, ok
+}
+
+// collapseHTMLWhitespace trims html and reduces every whitespace run to one space.
+func collapseHTMLWhitespace(html string) string {
+	return strings.Join(strings.Fields(html), " ")
 }
 
 var defaultSectionStyle = map[string]any{

@@ -179,6 +179,77 @@ func TestRebuildEmailContent_DetectsSilentRevert(t *testing.T) {
 	}
 }
 
+func TestRebuildEmailContent_DetectsARevertBehindIdenticalWidgetKeys(t *testing.T) {
+	// The template was cloned from an email an earlier generation wrote, so its draft already
+	// holds a `staging_body` placed in the layout. HubSpot 2xxes the PATCH and reverts it: every
+	// widget KEY is present on the read-back, but the body is the earlier one.
+	var mu sync.Mutex
+	var patched map[string]any
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.Method {
+		case http.MethodGet:
+			if patched == nil {
+				_ = json.NewEncoder(w).Encode(map[string]any{"content": map[string]any{}})
+				return
+			}
+			widgets := map[string]any{}
+			for key, v := range patched["widgets"].(map[string]any) {
+				widgets[key] = v
+			}
+			widgets["staging_body"] = map[string]any{"body": map[string]any{"html": "<p>last year's body</p>"}}
+			_ = json.NewEncoder(w).Encode(map[string]any{"content": map[string]any{
+				"widgets": widgets, "flexAreas": patched["flexAreas"],
+			}})
+		case http.MethodPatch:
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			patched, _ = body["content"].(map[string]any)
+			_, _ = io.WriteString(w, `{"id":"email-1"}`)
+		}
+	})
+
+	_, err := c.RebuildEmailContent(context.Background(), "email-1", RebuildEmailContentInput{BodyHTML: "<p>this year's body</p>"})
+	if !errors.Is(err, ErrContentNotPersisted) {
+		t.Fatalf("error = %v, want ErrContentNotPersisted for a body that read back different", err)
+	}
+}
+
+func TestRebuildEmailContent_AcceptsABodyReadBackWithOtherWhitespace(t *testing.T) {
+	// Re-indentation on the way back is not a revert.
+	var mu sync.Mutex
+	var patched map[string]any
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.Method {
+		case http.MethodGet:
+			if patched == nil {
+				_ = json.NewEncoder(w).Encode(map[string]any{"content": map[string]any{}})
+				return
+			}
+			widgets := map[string]any{}
+			for key, v := range patched["widgets"].(map[string]any) {
+				widgets[key] = v
+			}
+			widgets["staging_body"] = map[string]any{"body": map[string]any{"html": "\n  <p>this year's\n body</p>\n"}}
+			_ = json.NewEncoder(w).Encode(map[string]any{"content": map[string]any{
+				"widgets": widgets, "flexAreas": patched["flexAreas"],
+			}})
+		case http.MethodPatch:
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			patched, _ = body["content"].(map[string]any)
+			_, _ = io.WriteString(w, `{"id":"email-1"}`)
+		}
+	})
+
+	if _, err := c.RebuildEmailContent(context.Background(), "email-1", RebuildEmailContentInput{BodyHTML: "<p>this year's body</p>"}); err != nil {
+		t.Fatalf("RebuildEmailContent: %v", err)
+	}
+}
+
 func TestAddSponsorSections_SplitsIntoTwoTiersAndSkipsLogolessSponsors(t *testing.T) {
 	sponsors := []Sponsor{
 		{Name: "A", LogoURL: "https://x/a.png"},

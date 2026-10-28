@@ -2641,3 +2641,9 @@ The email wizard resolves a brief's stage through `resolveStageTemplate` (`IsSur
 clone (draft name) — as `generate-email-copy` does, and carries a survey brief's
 `event_details.sourceText` into its prompt facts as a fenced `Source document`, bounded by
 `maxFactSourceTextRunes`.
+
+A survey's `event_details.sourceText` is never cut silently: `sourceTextTooLong` refuses one past
+`maxFactSourceTextRunes` with a 400 naming the field and the limit, at brief create and replace
+(`eventDetailsSourceTextTooLong`) and again at `generate-email-copy` and the wizard's generate step.
+For a survey stage the wizard's reference variant also carries the stage's `ContentPrompt`, so
+both variants are written to the survey specification.

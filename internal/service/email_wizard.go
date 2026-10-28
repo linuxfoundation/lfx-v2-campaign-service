@@ -777,6 +777,9 @@ func (s *BriefService) GenerateWizardContent(ctx context.Context, p *briefs.Gene
 	// for it (it is supplied on plan-start/plan), and dropping it here would generate copy
 	// that ignores instructions the operator has already given.
 	plan := wizardStoredPlan(sess)
+	if serr := sourceTextTooLong(details.SourceText); serr != nil {
+		return nil, serr
+	}
 	facts := wizardFacts(brief, details, plan.ExtraContext, plan.EmailType, strVal(p.ChangeRequest))
 	if facts.size() > maxWizardFactsSize {
 		// 400 and the caller's to fix: these values come from the brief and the request, and

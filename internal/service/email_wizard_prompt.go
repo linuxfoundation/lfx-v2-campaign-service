@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 )
 
 // Prompt composition for the email wizard.
@@ -226,6 +228,15 @@ wrong for this one. Every fact in your output must come from the event facts sec
 			fmt.Fprintf(&b, "\n--- Reference %d ---\nName: %s\nSubject: %s\n%s\n",
 				i+1, ref.Name, ref.Subject, truncateString(ref.Excerpt, maxReferenceExcerpt))
 		}
+	}
+	// A survey stage's specification is a CONTENT requirement, not a style: the word cap, the
+	// privacy/visibility/questions disclosure, the report's share line, and what a reminder or a
+	// closing send may claim. Without it the reference variant -- the wizard's default draft when
+	// a past email exists -- is written to none of them. Event stages keep their reference prompt
+	// unchanged.
+	if emailstage.IsSurveyStage(f.stage) {
+		b.WriteString("\nSurvey specification (follow it exactly; the past emails above set only the voice):\n")
+		b.WriteString(resolveStageTemplate(f.stage).ContentPrompt)
 	}
 	return systemPrompt, b.String()
 }

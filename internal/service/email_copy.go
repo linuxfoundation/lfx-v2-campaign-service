@@ -213,7 +213,9 @@ const (
 	// later line that would not fit is left out whole, never cut --
 	// TestEventFactsBlockKeepsTheSourceDocument.
 	maxEventFactsBlockRunes = 3600 // runes
-	// maxFactSourceTextRunes bounds the survey surface's source document. Generous relative to the
+	// maxFactSourceTextRunes bounds the survey surface's source document, and is the ONE limit for
+	// it: a longer document is refused (sourceTextTooLong) on save and at generation, never cut
+	// silently; the truncation in eventFactsBlock is only a backstop. Generous relative to the
 	// other per-field bounds because it is the whole factual basis of a survey email, and sized
 	// under maxEventFactsBlockRunes and rendered first so the block backstop is never what cuts
 	// it.
@@ -508,6 +510,37 @@ func factURL(raw string) string {
 // the line ending in a space before the next label.
 func factText(value string, bound int) string {
 	return strings.TrimSpace(truncateRunes(collapseFactWhitespace(value), bound))
+}
+
+// sourceTextTooLong refuses a survey source document longer than maxFactSourceTextRunes, measured
+// as factText would render it. Both copy generators would otherwise cut it to the bound, and the
+// cut text is the survey's ONLY factual basis: a finding, closing date or incentive past the
+// bound would simply be missing from the copy, with nothing telling the operator. Refused where
+// the brief is saved and again where copy is generated, so a brief stored before this check
+// cannot slip through either.
+func sourceTextTooLong(sourceText string) error {
+	n := utf8.RuneCountInString(strings.TrimSpace(collapseFactWhitespace(sourceText)))
+	if n <= maxFactSourceTextRunes {
+		return nil
+	}
+	return &briefs.BadRequestError{
+		Code: "400",
+		Message: fmt.Sprintf("event_details.sourceText is %d characters; the limit is %d. Shorten the source document so no finding, date or incentive is cut from the copy",
+			n, maxFactSourceTextRunes),
+	}
+}
+
+// eventDetailsSourceTextTooLong is sourceTextTooLong for a whole event_details blob, as a brief
+// write carries it. A blob that does not decode is not this check's to refuse: event_details is
+// opaque here, and generation reports an unusable one in its own terms.
+func eventDetailsSourceTextTooLong(blob json.RawMessage) error {
+	var d struct {
+		SourceText string `json:"sourceText"`
+	}
+	if len(blob) == 0 || json.Unmarshal(blob, &d) != nil {
+		return nil
+	}
+	return sourceTextTooLong(d.SourceText)
 }
 
 // collapseFactWhitespace reduces every whitespace RUN to one space.
@@ -1239,6 +1272,10 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 			Code:    "400",
 			Message: "brief's event details are incomplete or invalid; provide at least eventName before generating copy",
 		}
+	}
+
+	if serr := sourceTextTooLong(details.SourceText); serr != nil {
+		return nil, serr
 	}
 
 	// Compose the generation prompt using the brief's event details.
