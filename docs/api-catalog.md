@@ -1766,38 +1766,29 @@ placements?: object             — Which feeds to run on; ALL keys optional boo
                                   NOTE: `MessengerInbox: true` is REJECTED — Meta removed the
                                   Messenger Inbox placement (Nov 2025), so the client fails the
                                   dispatch job pre-create if it is enabled. Leave it false/omitted.
-instagramUserId?: string        — Instagram account (IGSID) bound to the ad creative (sent as the
-                                  top-level `instagram_user_id` adcreative field). Meta requires it to
-                                  PUBLISH whenever an Instagram placement is used — the default
-                                  `placements` enable Instagram Feed — otherwise Meta refuses ("Please
-                                  add Instagram account"), even though the ad is created. PRESENCE is
-                                  NOT validated locally: this service does not reject a create that
-                                  omits it, so a missing pairing surfaces only as an async publish block
-                                  on Meta, not a synchronous error. The FORMAT is: a supplied value must
-                                  be a numeric IGSID, and a malformed one fails the dispatch job
-                                  pre-create (it is otherwise only consumed at the creative call, after
-                                  the campaign and ad set exist, where the failure is non-fatal and
-                                  would leave a billable campaign with no publishable ad). Omit for a
-                                  Facebook-only campaign. Sent only when non-empty; a blank/whitespace
-                                  value is treated as absent.
-dsaBeneficiary?: string         — EU Digital Services Act "advertiser" disclosure, set on the ad set
-                                  (`dsa_beneficiary`). Meta requires BOTH `dsaBeneficiary` and
-                                  `dsaPayor` to PUBLISH an ad set that targets a regulated location, and
-                                  blocks publish ("Please add Advertiser" / "Please add Payer") until
-                                  they are present. Supply BOTH or NEITHER: a ONE-SIDED pair (exactly
-                                  one of the two) IS validated locally and fails the dispatch job
-                                  pre-create, because it is deterministically unpublishable and knowable
-                                  before any billable call. Omitting BOTH is NOT validated locally —
-                                  that is the ordinary non-regulated flow; like `instagramUserId`, a
-                                  disclosure missing where Meta requires one then surfaces only as an
-                                  async publish block on Meta. Sent only when non-empty;
-                                  blank/whitespace is treated as absent (so a whitespace-only
-                                  counterpart still counts as one-sided). Omit both for non-regulated
-                                  targeting.
-dsaPayor?: string               — EU DSA "payer" disclosure counterpart, set on the ad set
-                                  (`dsa_payor`); same rules as `dsaBeneficiary` — both are required by
-                                  Meta together for regulated locations, a one-sided pair is rejected
-                                  locally pre-create while both-absent is not, sent only when non-empty.
+instagramUserId?: string        — Instagram account id (IGSID, numeric) bound to each ad creative as
+                                  the top-level `instagram_user_id` adcreative field (Meta Graph
+                                  v22.0+; legacy `instagram_actor_id`). Sent only when an Instagram
+                                  placement is enabled (InstagramFeed, Stories or Reels — the default
+                                  `placements` enable Instagram Feed). Meta will not PUBLISH an
+                                  Instagram placement without it ("Please add Instagram account"),
+                                  though the ad is created. A non-numeric value is a synchronous 400.
+                                  A non-string JSON type (for any of instagramUserId, dsaBeneficiary,
+                                  dsaPayor) is a 400 too; null counts as absent.
+                                  An ABSENT value is NOT refused (Facebook-only callers, and callers
+                                  not yet collecting it, keep working). Blank/whitespace = absent.
+dsaBeneficiary?: string         — EU Digital Services Act "advertiser" (who the ads benefit), set on
+                                  the ad set as `dsa_beneficiary`. At most 256 characters, one line: no control,
+                                  line/paragraph-separator or bidi-control characters.
+dsaPayor?: string               — EU DSA "payer" (who pays for the ads), set on the ad set as
+                                  `dsa_payor`. Same limits. Supply BOTH or NEITHER — a one-sided pair
+                                  is a 400. When `geoTargets` include ANY EU country (the 27 member
+                                  states, plus AX, GF, GP, MQ, RE, YT, MF and the EEA's IS, LI, NO; not GB/CH), BOTH are
+                                  REQUIRED — Meta: "For ad sets targeting the EU and/or associated
+                                  territories, the dsa_payor and dsa_beneficiary fields are required" —
+                                  and a create without them is refused with a synchronous 400 naming
+                                  the EU countries, before any job exists, rather than creating an ad
+                                  set Meta will not publish. Blank/whitespace = absent.
 variants: AdVariant[]           — One ad per variant; at least one is required.
 ```
 

@@ -18,8 +18,9 @@ const (
 	DefaultIdleTimeout  = 90 * time.Second
 )
 
-// MaxRequestBodyBytes caps how many bytes the server will read from any request
-// body before refusing it with 413.
+// MaxRequestBodyBytes caps how many bytes the server will read from the creative-asset
+// upload's request body before refusing it with 413; every other route is held to
+// MaxNonUploadRequestBodyBytes.
 //
 // It exists because the size bounds declared in design/ do NOT bound the wire. The
 // creative-asset upload declares MaxLength(41943040) on a base64 `String` attribute --
@@ -41,11 +42,39 @@ const (
 // headroom, while still bounding the read at a fixed, modest multiple of the largest
 // thing the contract admits.
 //
-// It applies to every route, not just the upload: no other endpoint takes a body
-// remotely this large, so one ceiling costs them nothing and closes the same
-// unbounded-read hole on all of them. Raising design/'s MaxLength requires raising
-// this in step, or max-size uploads start failing with 413.
+// It applies ONLY to the creative-asset upload (middleware.isUploadRequest). Every other
+// route is held to MaxNonUploadRequestBodyBytes, because no other endpoint takes a body
+// remotely this large and a 42 MiB ceiling on them is 42 MiB of pre-auth allocation per
+// request for nothing (#177). Raising design/'s MaxLength requires raising this in step,
+// or max-size uploads start failing with 413.
 const MaxRequestBodyBytes int64 = 42 << 20 // 42 MiB
+
+// MaxNonUploadRequestBodyBytes caps the request body of every route EXCEPT the creative-asset
+// upload, before the body is read.
+//
+// Why a separate, much smaller cap (#177). Goa decodes the body before the endpoint
+// authenticates the caller, so whatever this cap admits is allocated on behalf of a caller nobody
+// has checked yet. Those routes are not gated by UploadAdmission, so the per-request cap is the
+// only bound on them, and the decoder amplifies it: an `Any` attribute (create-brief's copy,
+// keywords, targeting, event_details; a campaign's config; the wizard's sections) materialises as
+// boxed interface values several times the size of the JSON it came from. At 42 MiB a single
+// request could approach the pod's 512 MiB limit on its own.
+//
+// Sized from the largest LEGITIMATE body, which is the email wizard's update-sections, not a
+// Goa-declared field: its `sections` is ArrayOf(Any), and the bound lives in the service
+// (internal/service/email_wizard_sections.go): at most maxWizardSections (120) blocks and an
+// assembled body of maxWizardBodyHTML (200,000) runes. The wire size of that body depends on the
+// CLIENT's JSON encoder, and the worst case JSON permits is 12 bytes per rune: a rune outside the
+// Basic Multilingual Plane (an emoji) escaped as a UTF-16 surrogate pair, `\ud83d\ude00`, which is
+// what Python's default encoder writes. 200,000 runes at 12 bytes is ~2.4 MB before the section
+// envelopes, so a 2 MiB cap would refuse an email the service renders in full.
+// TestNonUploadRoutes_AdmitMaximalWizardSections sends exactly that body and pins it under this
+// cap. 4 MiB clears it with headroom while cutting the pre-auth allocation one request can force
+// by a factor of 10. Raising the wizard limits requires revisiting this in step.
+//
+// What it does NOT do: bound how many such requests run at once. Concurrency of unauthenticated
+// bodies belongs at the gateway, which can authenticate before reading (see #177).
+const MaxNonUploadRequestBodyBytes int64 = 4 << 20 // 4 MiB
 
 // PodMemoryLimitBytes mirrors resources.limits.memory in
 // charts/lfx-v2-campaign-service/values.yaml (512Mi).
