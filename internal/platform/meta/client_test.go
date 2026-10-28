@@ -369,9 +369,12 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 		RegistrationURL: "https://events.example.org/kubecon",
 		Objective:       "traffic",
 		GeoTargets:      []string{"US", "DE"},
-		Budget:          500,
-		StartDate:       "2026-08-01",
-		EndDate:         "2026-08-31",
+		// DE is in the EU, so the DSA disclosures are required to create (CheckPublishIdentity).
+		DSABeneficiary: "The Linux Foundation",
+		DSAPayor:       "The Linux Foundation",
+		Budget:         500,
+		StartDate:      "2026-08-01",
+		EndDate:        "2026-08-31",
 		Variants: []AdVariant{
 			{PrimaryText: "Join us", Headline: "KubeCon 2026"},
 			{PrimaryText: "Register", Headline: "See you there"},
