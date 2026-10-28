@@ -990,6 +990,10 @@ func TestAcceptsSampling_ModelFamilies(t *testing.T) {
 		{"vertex_ai/claude-opus-4-7@20260101", false},
 		{"claude-opus-4-7:0", false},
 		{"anthropic.claude-opus-4-7-v1:0", false},
+		// An alias word after the major is not a known .0 release.
+		{"claude-opus-4-latest", false},
+		{"claude-sonnet-4-preview", false},
+		{"anthropic.claude-sonnet-4-v1:0", true},
 		// Every 5-series model: reject. claude-sonnet-5-5 is what production runs (#397).
 		{"claude-sonnet-5", false},
 		{"claude-sonnet-5-5", false},

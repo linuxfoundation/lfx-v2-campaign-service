@@ -87,9 +87,10 @@ body marshalled `temperature` unconditionally, so every generation failed.
 `claude-` onward, so the short proxy name (`claude-sonnet-5-5`) and the Bedrock id
 (`bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0`) are judged the same way, and matches it
 against `samplingFamilies`, an **allowlist** of family / major / newest-known minor. The segment
-after the major is the minor when it is one or two digits; a date (six or more digits) or a word
-(`v1`) means the `.0` release; a digit with a suffix attached (`7[1m]`, `7@20260101`) is a **no**,
-so Opus 4.7 under a suffixed alias cannot pass as Opus 4:
+after the major is the minor when it is one or two digits; a date (six or more digits), a Bedrock
+version tag (`v1:0`) or the family word of a Claude 3 name (`claude-3-opus`) means the `.0`
+release. A digit with a suffix attached (`7[1m]`, `7@20260101`) or any other word (`latest`,
+`preview`) is a **no**, so Opus 4.7 under an alias cannot pass as Opus 4:
 
 | family | accepts sampling |
 |---|---|

@@ -416,10 +416,10 @@ var samplingFamilies = []struct {
 // ("claude-sonnet-5-5") and the provider-prefixed Bedrock id
 // ("bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0") — so the id is read from its
 // LAST "claude-" onward. The segment after the major is a minor version when it is
-// one or two digits. A run of six or more digits is a release date ("-20250514") and a
-// segment starting with a letter is a word ("-v1:0"); either means the .0 release. A
-// segment that starts with a digit but is neither ("7[1m]", "7@20260101") is a "no",
-// because it may hide a minor the table would refuse.
+// one or two digits. A release date ("-20250514"), a Bedrock version tag ("-v1:0") or
+// the family word of a Claude 3 name ("claude-3-opus") means the .0 release. Anything
+// else there — a digit with a suffix ("7[1m]", "7@20260101") or an alias word
+// ("latest") — is a "no", because it may hide a minor the table would refuse.
 func acceptsSampling(model string) bool {
 	m := strings.ToLower(model)
 	i := strings.LastIndex(m, "claude-")
@@ -444,7 +444,13 @@ func acceptsSampling(model string) bool {
 		case isAllDigits(seg) && len(seg) >= 6:
 			// A release date: this is the .0 release.
 		case seg != "" && (seg[0] < '0' || seg[0] > '9'):
-			// A word ("opus" in claude-3-opus, "v1" in -v1:0): no minor.
+			// A word means no minor ONLY where the word is known: the family in a
+			// generation-first Claude 3 name ("opus" in claude-3-opus) or a Bedrock
+			// version tag ("v1" in -v1:0). Any other word ("latest", "preview") is
+			// an alias that may resolve to a minor the table would refuse.
+			if family != "" && !isVersionTag(seg) {
+				return false
+			}
 		default:
 			// A digit with something attached ("7[1m]", "7@20260101", "7:0") is a
 			// minor this parser cannot read. Reading it as .0 would let Opus 4.7
@@ -715,6 +721,11 @@ func (c *Client) retryAfter(v string) time.Duration {
 		}
 	}
 	return 0
+}
+
+// isVersionTag reports whether seg is a Bedrock version tag such as "v1" or "v1:0".
+func isVersionTag(seg string) bool {
+	return len(seg) >= 2 && seg[0] == 'v' && seg[1] >= '0' && seg[1] <= '9'
 }
 
 // isAllDigits reports whether s is a non-empty ASCII digit string — the
