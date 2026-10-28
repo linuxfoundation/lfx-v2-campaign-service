@@ -20713,7 +20713,7 @@ components:
                     format: double
                 cost_micros:
                     type: integer
-                    description: 'Cost over the window, in micro-units of the platform''s native currency (platform-dependent: USD for LinkedIn/Reddit, X''s billing unit for Twitter, etc.). Always 0 on the email channel, which bills no per-send cost — do not blend that 0 into a cross-channel cost-per-acquisition.'
+                    description: 'Cost over the window, in micro-units of the platform''s native currency (platform-dependent: USD for LinkedIn/Reddit, X''s billing unit for Twitter, the ad account''s own currency for Google Ads — the same currency conversion_value is reported in — etc.). Always 0 on the email channel, which bills no per-send cost — do not blend that 0 into a cross-channel cost-per-acquisition.'
                     example: 0
                     format: int64
                 ctr:
@@ -20734,7 +20734,7 @@ components:
                     example: "104670127234"
                 roas:
                     type: number
-                    description: 'Return on ad spend: conversion_value divided by cost over the same window and in the same currency, so it is DIMENSIONLESS and is the only figure here comparable across accounts in different currencies. Derived upstream so every consumer gets the same answer. ABSENT whenever that division would not be a measurement — no conversion value, no spend in the window, or a reported cost below zero. A campaign that earned value without spending has an UNDEFINED return on ad spend, not an infinite one and not a zero one; rendering absent as 0 would state the opposite of what happened.'
+                    description: 'Return on ad spend: conversion_value divided by cost over the same window and in the same currency, so it is DIMENSIONLESS and is the only figure here comparable across accounts in different currencies. Derived upstream so every consumer gets the same answer. ABSENT whenever that division would not be a measurement — no conversion value, no spend in the window, or a reported cost below zero. A campaign that earned value without spending has an UNDEFINED return on ad spend, not an infinite one and not a zero one; rendering absent as 0 would state the opposite of what happened. A RATIO, not a percentage: 2.41 means 2.41 units of value per unit spent (241%), the scale Google''s own target ROAS uses. Absence carries no meaning of its own beyond "not computed": which of the three cases applies is read from the sibling fields (conversion_value absent; cost_micros 0; cost_micros below 0), so a consumer never has to interpret it, and it says nothing about whether the channel can report a return. A PRESENT 0 is a real measurement: the campaign spent and earned no conversion value.'
                     example: 2.41
                     format: double
                 window:

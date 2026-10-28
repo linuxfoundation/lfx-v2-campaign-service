@@ -116,11 +116,18 @@ type CampaignMetrics struct {
 	// Roas is ConversionValue divided by cost in the same currency — conversions_value over
 	// cost_micros/1e6 — and is nil whenever that division would not be a measurement.
 	//
-	// Two distinct cases reach nil and both must, because the alternative in each is a
-	// fabricated figure. ConversionValue nil is an unmeasured numerator. CostMicros == 0 is a
-	// window with no spend, where the ratio is either 0/0 or a division by zero: a campaign
-	// that earned value without spending has an undefined return on ad spend, not an infinite
-	// one, and reporting 0 there would say the opposite of what happened.
+	// The contract (model.CampaignMetrics.Roas, and the `roas` attribute in design/brief.go)
+	// names three cases that reach nil, because the alternative in each is a fabricated
+	// figure. An unmeasured numerator cannot arise in THIS adapter, which always populates
+	// ConversionValue, so the guard here is on cost alone. CostMicros == 0 is a window with
+	// no spend, where the ratio is either 0/0 or a division by zero: a campaign that earned
+	// value without spending has an undefined return on ad spend, not an infinite one, and
+	// reporting 0 there would say the opposite of what happened. CostMicros < 0 is upstream
+	// corruption (parseMetricInt accepts a leading minus), and dividing by it would report a
+	// negative return as if it were real.
+	//
+	// A ratio, not a percentage — 2.4 is 240% — on the same scale as the TargetROAS this
+	// package sends in bidding.go, so a read can be compared against the target directly.
 	//
 	// Derived HERE rather than left to each consumer, for the reason the repo keeps relearning
 	// on keys: two call sites dividing the same pair of fields will eventually disagree about

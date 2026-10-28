@@ -1347,6 +1347,14 @@ audited for neither, so its nil asserts nothing about any platform. Neither fiel
 no rule evaluates a return on ad spend, so nothing fires or fails to fire on
 them. They are reporting surface only, on the `campaign-metrics` response.
 
+ROAS is a RATIO, not a percentage (2.4 is 240%), on the same scale as the
+`TargetROAS` `bidding.go` sends, so a read compares against the target
+directly. Its nil adds no new meaning to the response: which of the three
+cases withheld it is read off the sibling fields (`conversion_value` absent,
+`cost_micros` 0, `cost_micros` below 0), so it does not repeat the overloaded
+nil #175 records for `conversions`, and a PRESENT 0 is always a measurement —
+the campaign spent and earned no conversion value.
+
 `WindowFor` maps the platform-agnostic `model.MetricsWindow` (`last_30_days`, …)
 onto this package's GAQL literals. It lives HERE, not in the dispatcher, so
 Google's dialect never escapes the platform package — the API surface and the
