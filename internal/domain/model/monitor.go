@@ -177,9 +177,15 @@ type AccountCampaignMetrics struct {
 	IsSearchChannel bool
 	// FetchFailed marks a row some part of whose upstream data could not be trusted. WHICH part
 	// is not recorded, and it is NOT always the metrics. The shapes it takes include: a
-	// per-campaign metrics call that failed outright (Reddit's per-campaign report fetch, Meta's
-	// per-campaign insights), in which case the numeric metrics fields are left at their zero
-	// value; a present-but-unparseable budget read alongside otherwise-good metrics (Google Ads'
+	// per-campaign metrics call that failed outright (Reddit's per-campaign report fetch), in
+	// which case the numeric metrics fields are left at their zero value; a metrics row that
+	// came back but would not parse — Meta's row in its one account-level insights read, whose
+	// metrics are then zero while the budget set earlier from the campaign list is real, and a
+	// Google Ads GAQL row, which is summed per campaign across segments.date so a failed row
+	// leaves the accumulator holding what the campaign's other rows contributed: real but
+	// incomplete delivery, not zero. Zero or partial, those metrics are unsuitable for pacing
+	// and action-item evaluation. Further shapes: a present-but-unparseable budget read
+	// alongside otherwise-good metrics (Google Ads'
 	// campaign_budget.amount_micros, LinkedIn's dailyBudget/totalBudget, Meta's daily_budget/
 	// lifetime_budget, Microsoft Ads' and X's budget fields), in which case Impressions/Clicks/
 	// Spend may be genuinely non-zero while only BudgetDay/TotalBudget is untrusted; an
@@ -253,8 +259,8 @@ type AccountMonitorTotals struct {
 	Conversions   *float64
 	CampaignCount int
 	// UnmeasuredCampaigns is how many of the CampaignCount rows are FetchFailed (#218). The sums
-	// above include those rows at whatever they carry — zero for a row whose metrics could not
-	// be read — so a non-zero count says the totals may understate the account: by up to this
+	// above include those rows at whatever they carry — zero, or partial delivery, for a row
+	// whose metrics could not be fully read — so a non-zero count says the totals may understate the account: by up to this
 	// many campaigns' delivery. It is an upper bound, not an exact count of rows missing from the
 	// sum, because FetchFailed also marks a row whose budget or flight alone was unreadable while
 	// its metrics were read and summed (Google Ads, LinkedIn, Meta, Microsoft Ads, X).
