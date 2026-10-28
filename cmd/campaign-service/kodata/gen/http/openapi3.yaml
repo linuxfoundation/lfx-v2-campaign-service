@@ -15331,6 +15331,7 @@ paths:
                     type: string
                     description: Place name or postal code to search for
                     example: Austin
+                    pattern: \S
                     minLength: 1
                     maxLength: 100
                   example: Austin
@@ -15353,6 +15354,7 @@ paths:
                     items:
                         type: string
                         example: xp
+                        pattern: '[A-Za-z0-9]'
                         minLength: 1
                         maxLength: 40
                     description: Optional location types to keep (e.g. City, Postal Code). Matched ignoring case, spaces, underscores and hyphens, so postal_code matches Postal Code.
@@ -15632,7 +15634,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: list-google-ads-user-lists lfx-v2-campaign-service-connections
-            description: 'List the Google Ads user lists (audiences) on a customer, live from GAQL on user_list, for picking googleAdsConfig.audienceSegments (Search only). account_id names the customer; omitted, the customer the project''s connection is bound to is read. Like the account monitor, this resolves the project''s OWN connection only and never falls back to the shared LF system credential: user lists are account data on a customer shared across foundations, so a project with no Google Ads connection of its own gets a 404, not the LF account''s audiences. A pure read: nothing is persisted.'
+            description: 'List the Google Ads user lists (audiences) on a customer, live from GAQL on user_list, for picking googleAdsConfig.audienceSegments (Search only). account_id names the customer; omitted, the customer the project''s connection is bound to is read. Like the account monitor, this resolves the project''s OWN connection only and never falls back to the shared LF system credential: user lists are account data on a customer shared across foundations, so a project with no Google Ads connection of its own gets a 404, not the LF account''s audiences. An account_id the credential cannot reach is refused by Google and answered 503, like the account monitor. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#list-google-ads-user-lists
             parameters:
                 - name: account_id

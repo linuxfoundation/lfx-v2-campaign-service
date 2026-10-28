@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -85,6 +86,18 @@ func TestSuggestGoogleAdsGeoTargets_EmptyIsAnEmptyArray(t *testing.T) {
 	b, _ := json.Marshal(res.Suggestions)
 	if string(b) != "[]" || res.Truncated {
 		t.Errorf("suggestions = %s truncated=%v, want [] and not truncated", b, res.Truncated)
+	}
+}
+
+// Lengths are counted in characters, as the Goa decoder counts them: a 50-character
+// non-ASCII place name (150 bytes) is within the published 100-character limit.
+func TestSuggestGoogleAdsGeoTargets_CountsCharactersNotBytes(t *testing.T) {
+	d := &mockLookupDispatcher{geo: []model.GeoTargetSuggestion{}}
+	_, err := lookupService(d).SuggestGoogleAdsGeoTargets(context.Background(), &conn.SuggestGoogleAdsGeoTargetsPayload{
+		ProjectID: "cncf", Q: strings.Repeat("東", 50), TargetTypes: []string{strings.Repeat("市", 40)},
+	})
+	if err != nil || d.calls != 1 {
+		t.Fatalf("err=%v calls=%d; a within-limit multi-byte query must reach the dispatcher", err, d.calls)
 	}
 }
 

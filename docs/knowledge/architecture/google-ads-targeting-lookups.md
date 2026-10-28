@@ -48,7 +48,8 @@ operator type them (self-serve #4455, #4456). Neither persists anything.
   why the BFF gates shared-account reads to ROOT (lfx-self-serve-ops#54); this service has no ROOT
   notion and refuses the fallback for every caller instead (404 for a project with no connection
   of its own). Lists cannot be project-scoped (this service records none), so a project with its
-  own connection sees what its credential reaches.
+  own connection sees what its credential reaches, including, through `account_id`, any other
+  customer under the same manager (the Google managed-account guard is deferred, as for the monitor).
 
 ## Shared
 
@@ -57,5 +58,7 @@ operator type them (self-serve #4455, #4456). Neither persists anything.
   refused with 404 (`rejectSystemScope`).
 - Errors: `classifyDiscoveryError` arms under each read's own operation noun, plus
   `ErrTargetingLookupUnsupported` (400) for a dispatcher without the capability
-  (`GeoTargetSuggester` / `UserListReader`). Upstream failures are 503.
+  (`GeoTargetSuggester` / `UserListReader`). Upstream failures are 503, including Google refusing
+  a caller-supplied `country_code` or an `account_id` the credential cannot reach (the account
+  monitor behaves the same). Input lengths are counted in characters, matching the Goa decoder.
 - Metrics: `suggest_geo_targets` and `list_user_lists` upstream-call operations.

@@ -1746,6 +1746,7 @@ func BuildSuggestGoogleAdsGeoTargetsPayload(lfxV2CampaignServiceConnectionsSugge
 			return nil, fmt.Errorf("missing required flag --q")
 		}
 		q = *lfxV2CampaignServiceConnectionsSuggestGoogleAdsGeoTargetsQ
+		err = goa.MergeErrors(err, goa.ValidatePattern("q", q, "\\S"))
 		if utf8.RuneCountInString(q) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("q", q, utf8.RuneCountInString(q), 1, true))
 		}
@@ -1777,6 +1778,7 @@ func BuildSuggestGoogleAdsGeoTargetsPayload(lfxV2CampaignServiceConnectionsSugge
 				err = goa.MergeErrors(err, goa.InvalidLengthError("target_types", targetTypes, len(targetTypes), 10, false))
 			}
 			for _, e := range targetTypes {
+				err = goa.MergeErrors(err, goa.ValidatePattern("target_types[*]", e, "[A-Za-z0-9]"))
 				if utf8.RuneCountInString(e) < 1 {
 					err = goa.MergeErrors(err, goa.InvalidLengthError("target_types[*]", e, utf8.RuneCountInString(e), 1, true))
 				}

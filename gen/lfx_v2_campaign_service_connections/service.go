@@ -175,7 +175,9 @@ type Service interface {
 	// project's OWN connection only and never falls back to the shared LF system
 	// credential: user lists are account data on a customer shared across
 	// foundations, so a project with no Google Ads connection of its own gets a
-	// 404, not the LF account's audiences. A pure read: nothing is persisted.
+	// 404, not the LF account's audiences. An account_id the credential cannot
+	// reach is refused by Google and answered 503, like the account monitor. A
+	// pure read: nothing is persisted.
 	ListGoogleAdsUserLists(context.Context, *ListGoogleAdsUserListsPayload) (res *GoogleAdsUserLists, err error)
 	// Read Meta audience insights — age and gender (one combined breakdown) and
 	// placement (publisher_platform and platform_position) — for this project's

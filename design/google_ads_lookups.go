@@ -80,13 +80,14 @@ func googleAdsLookupMethods() {
 			Attribute("q", String, "Place name or postal code to search for", func() {
 				MinLength(1)
 				MaxLength(100)
+				Pattern(`\S`)
 				Example("Austin")
 			})
 			Attribute("country_code", String, "Optional ISO 3166-1 alpha-2 country to search within", func() {
 				Pattern(`^[A-Za-z]{2}$`)
 				Example("US")
 			})
-			Attribute("target_types", ArrayOf(String, func() { MinLength(1); MaxLength(40) }), "Optional location types to keep (e.g. City, Postal Code). Matched ignoring case, spaces, underscores and hyphens, so postal_code matches Postal Code.", func() {
+			Attribute("target_types", ArrayOf(String, func() { MinLength(1); MaxLength(40); Pattern(`[A-Za-z0-9]`) }), "Optional location types to keep (e.g. City, Postal Code). Matched ignoring case, spaces, underscores and hyphens, so postal_code matches Postal Code.", func() {
 				MaxLength(10)
 				Example([]string{"Postal Code"})
 			})
@@ -124,7 +125,8 @@ func googleAdsLookupMethods() {
 			"the customer the project's connection is bound to is read. Like the account monitor, this resolves " +
 			"the project's OWN connection only and never falls back to the shared LF system credential: user " +
 			"lists are account data on a customer shared across foundations, so a project with no Google Ads " +
-			"connection of its own gets a 404, not the LF account's audiences. A pure read: nothing is persisted.")
+			"connection of its own gets a 404, not the LF account's audiences. An account_id the credential " +
+			"cannot reach is refused by Google and answered 503, like the account monitor. A pure read: nothing is persisted.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()

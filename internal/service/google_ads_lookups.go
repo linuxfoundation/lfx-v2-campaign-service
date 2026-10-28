@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -190,7 +191,7 @@ func (s *ConnectionService) SuggestGoogleAdsGeoTargets(ctx context.Context, p *c
 // the generated HTTP decoder, and normalizes the inputs.
 func validateGeoTargetSuggestPayload(p *conn.SuggestGoogleAdsGeoTargetsPayload) (model.GeoTargetQuery, int, map[string]struct{}, error) {
 	query := strings.TrimSpace(p.Q)
-	if query == "" || len(p.Q) > googleAdsGeoQueryMaxLen {
+	if query == "" || utf8.RuneCountInString(p.Q) > googleAdsGeoQueryMaxLen {
 		return model.GeoTargetQuery{}, 0, nil, &conn.BadRequestError{Code: "400", Message: "q must be 1-100 characters and not blank"}
 	}
 	country := ""
@@ -213,7 +214,7 @@ func validateGeoTargetSuggestPayload(p *conn.SuggestGoogleAdsGeoTargetsPayload) 
 	var types map[string]struct{}
 	for _, t := range p.TargetTypes {
 		n := googleads.NormalizeGeoTargetType(t)
-		if n == "" || len(t) > 40 {
+		if n == "" || utf8.RuneCountInString(t) > 40 {
 			return model.GeoTargetQuery{}, 0, nil, &conn.BadRequestError{Code: "400", Message: "each target_types entry must be 1-40 characters and not blank"}
 		}
 		if types == nil {
