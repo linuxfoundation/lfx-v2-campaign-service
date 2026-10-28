@@ -2651,6 +2651,19 @@ work.
 The BYTE arm of the quota is deliberately NOT exercised live: inserting 512 MiB would dominate
 the suite's runtime to reach the other branch of the same `if` the count arm already covers.
 
+## `ListProjectPlatformCampaignIDs` — the shared-customer read boundary (#166)
+
+The scope for the Google Ads keyword and audience reads, which run against a customer shared by
+every foundation: the `(platform_campaign_id, result)` pairs of a project's live rows on one
+platform, with an upstream id. It selects those two columns and nothing else. `result` travels
+because a platform id is unique only within the customer that created it, and the adapter matches
+the recorded creating customer against the connection's current one before querying. The
+boundary is pinned by BEHAVIOUR, not only text: `TestLiveListProjectPlatformCampaignIDsIsTenantScoped`
+(`dbtest/project_scope_live_test.go`, added in `aef68385`, #153) seeds a second project,
+another provider, deleted, empty-id and NULL-id rows, and asserts the exact id set returned,
+so dropping any one predicate changes the result. `TestListProjectPlatformCampaignIDs_IsScopedInSQL`
+remains as a cheap SQL-text check beside it, not as the boundary's proof.
+
 ## `ListRecentProjectPlatformCampaigns` (LFXV2-2665)
 
 The HubSpot email monitor's scope: `campaignCols` for a project's rows on one platform that have
