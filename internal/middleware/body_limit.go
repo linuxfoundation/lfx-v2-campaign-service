@@ -82,8 +82,32 @@ import (
 // nature of the failure only; the rejected bytes are never read into a message, and on
 // the Content-Length arm they are never read at all.
 func MaxBodyBytes(limit int64) func(http.Handler) http.Handler {
+	return maxBodyBytesFor(func(*http.Request) int64 { return limit })
+}
+
+// MaxBodyBytesPerRoute is MaxBodyBytes with the cap chosen per request: uploadLimit for the
+// creative-asset upload (isUploadRequest, the same predicate UploadAdmission gates on) and
+// otherLimit for every other route.
+//
+// Why per-route (#177). One global cap had to be sized for the largest legal upload, so every
+// OTHER route inherited a 42 MiB pre-auth allocation it never needs: Goa decodes a body before
+// the endpoint authenticates the caller, and those routes are not gated by UploadAdmission, so
+// the cap was the only bound on them. Choosing the limit from the request keeps both arms below
+// (Content-Length and the read cap) exactly as they are, so the smaller cap is enforced at the
+// same point and in the same way as the upload's — before the decoder touches the body.
+func MaxBodyBytesPerRoute(uploadLimit, otherLimit int64) func(http.Handler) http.Handler {
+	return maxBodyBytesFor(func(r *http.Request) int64 {
+		if isUploadRequest(r) {
+			return uploadLimit
+		}
+		return otherLimit
+	})
+}
+
+func maxBodyBytesFor(limitFor func(*http.Request) int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			limit := limitFor(r)
 			// A GET/DELETE with no body carries ContentLength 0 (or -1 when unknown) and
 			// is unaffected by either arm.
 			if r.ContentLength > limit {
