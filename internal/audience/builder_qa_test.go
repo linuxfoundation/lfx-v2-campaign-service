@@ -797,6 +797,10 @@ func TestCombineVerdicts_AnEmptyVerdictIsInertAndAnUnknownOneIsNot(t *testing.T)
 		{"empty alone", []Verdict{""}, VerdictPass},
 		{"an unknown verdict is not a pass", []Verdict{VerdictPass, Verdict("WARN")}, VerdictNeedsVerify},
 		{"an unknown verdict cannot outrank a fail", []Verdict{VerdictFail, Verdict("WARN")}, VerdictFail},
+		// #244: a check set aside for the send's stage is inert like one that did not run --
+		// and, unlike an unknown verdict, must NOT turn a clean audit into NEEDS VERIFY.
+		{"not applicable beside passes", []Verdict{VerdictPass, VerdictPass, VerdictPass, VerdictNotApplicable}, VerdictPass},
+		{"not applicable does not mask a fail", []Verdict{VerdictFail, VerdictNotApplicable}, VerdictFail},
 	}
 
 	for _, tc := range cases {
@@ -910,4 +914,27 @@ func TestExcludedOnEveryPathIDs(t *testing.T) {
 	assert.Equal(t, []string{"9"}, ExcludedOnEveryPathIDs(json.RawMessage(or(and(f("IN_LIST", "1"), f("NOT_IN_LIST", "9")), and(f("IN_LIST", "2"), f("NOT_IN_LIST", "9"))))))
 	assert.Equal(t, []string{}, ExcludedOnEveryPathIDs(json.RawMessage(or(and(f("IN_LIST", "1"), f("NOT_IN_LIST", "9")), and(f("IN_LIST", "2"))))), "a branch-local exclusion is not global")
 	assert.Equal(t, []string{"1"}, RequiredInListIDs(json.RawMessage(or(and(f("IN_LIST", "1"), f("NOT_IN_LIST", "9"))))), "IN_LIST requirement unchanged")
+}
+
+// TestCheckCurrentRegistrantsForStage_PostEventIsNotApplicable pins #244 at the check's own
+// level: on a Post-Event send this edition's own registration list is the intended audience, so
+// check 4 is reported NOT APPLICABLE (with a note, no findings) instead of the CRITICAL it raises
+// for every other stage. Absent and every other stage are unchanged.
+func TestCheckCurrentRegistrantsForStage_PostEventIsNotApplicable(t *testing.T) {
+	const event = "AGNTCon + MCPCon North America 2026"
+	included := []string{"26Q2 AGNTCon + MCPCon North America 2026 Event Registration"}
+
+	post := CheckCurrentRegistrantsForStage(event, "Post-Event", included)
+	assert.Equal(t, VerdictNotApplicable, post.Verdict)
+	assert.Empty(t, post.Findings)
+	assert.Contains(t, post.Note, "Post-Event")
+
+	for _, stage := range []string{"", "Registration Push", "Final Countdown", "Survey Promo"} {
+		got := CheckCurrentRegistrantsForStage(event, stage, included)
+		assert.Equal(t, CheckCurrentRegistrants(event, included), got, "stage %q must run check 4 unchanged", stage)
+		assert.Equal(t, VerdictFail, got.Verdict, "stage %q", stage)
+	}
+
+	assert.Equal(t, Check{}, CheckCurrentRegistrantsForStage("", "Post-Event", included),
+		"no event name is still \"did not run\", whatever the stage")
 }

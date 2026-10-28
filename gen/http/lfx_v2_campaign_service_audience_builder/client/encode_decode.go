@@ -3244,7 +3244,7 @@ func unmarshalAudienceQaChecksResponseBodyToLfxv2campaignserviceaudiencebuilderA
 	res.Suppression = unmarshalAudienceQaSuppressionCheckResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceQaSuppressionCheck(v.Suppression)
 	res.ExclusionCompleteness = unmarshalAudienceQaExclusionCheckResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceQaExclusionCheck(v.ExclusionCompleteness)
 	if v.CurrentRegistrants != nil {
-		res.CurrentRegistrants = unmarshalAudienceQaCheckResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceQaCheck(v.CurrentRegistrants)
+		res.CurrentRegistrants = unmarshalAudienceQaStageScopedCheckResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceQaStageScopedCheck(v.CurrentRegistrants)
 	}
 
 	return res
@@ -3314,6 +3314,27 @@ func unmarshalAudienceQaExclusionCheckResponseBodyToLfxv2campaignserviceaudience
 		Verdict:        *v.Verdict,
 		ExclusionCount: *v.ExclusionCount,
 		SendTimeCount:  v.SendTimeCount,
+	}
+	res.Findings = make([]*lfxv2campaignserviceaudiencebuilder.AudienceQaFinding, len(v.Findings))
+	for i, val := range v.Findings {
+		if val == nil {
+			res.Findings[i] = nil
+			continue
+		}
+		res.Findings[i] = unmarshalAudienceQaFindingResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceQaFinding(val)
+	}
+
+	return res
+}
+
+// unmarshalAudienceQaStageScopedCheckResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceQaStageScopedCheck
+// builds a value of type
+// *lfxv2campaignserviceaudiencebuilder.AudienceQaStageScopedCheck from a value
+// of type *AudienceQaStageScopedCheckResponseBody.
+func unmarshalAudienceQaStageScopedCheckResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceQaStageScopedCheck(v *AudienceQaStageScopedCheckResponseBody) *lfxv2campaignserviceaudiencebuilder.AudienceQaStageScopedCheck {
+	res := &lfxv2campaignserviceaudiencebuilder.AudienceQaStageScopedCheck{
+		Verdict: *v.Verdict,
+		Note:    v.Note,
 	}
 	res.Findings = make([]*lfxv2campaignserviceaudiencebuilder.AudienceQaFinding, len(v.Findings))
 	for i, val := range v.Findings {

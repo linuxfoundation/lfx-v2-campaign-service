@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 )
 
@@ -124,6 +125,17 @@ func TestPublishedStageEnumMatchesEmailStageNames(t *testing.T) {
 					"enums have drifted, so a stage valid on one is unaddressable on the other",
 					rel, readEnum, want)
 			}
+
+			// run-audience-qa's `stage` (#244) shares the vocabulary, so a client sends the
+			// stage a brief already holds. Drift here would make QA refuse a stage the brief
+			// accepted -- or accept a misspelt "Post Event" that silently runs check 4.
+			qa, ok := doc.Components.Schemas["RunAudienceQaRequestBody"]
+			if !ok {
+				t.Fatalf("%s has no RunAudienceQaRequestBody schema", rel)
+			}
+			if qaStage := qa.Properties["stage"]; !equalStrings(qaStage.Enum, want) {
+				t.Errorf("%s: run-audience-qa stage enum = %v, want %v", rel, qaStage.Enum, want)
+			}
 		})
 	}
 }
@@ -138,4 +150,14 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestAudienceStagePostEventMatchesEmailStage pins audience QA's own spelling of the Post-Event
+// stage, which gates check 4 (#244), to the one emailstage owns. `internal/audience` declares
+// the constant rather than importing the service layer, so drift is otherwise silent: a
+// renamed stage would quietly re-enable the false CRITICAL on every Post-Event audit.
+func TestAudienceStagePostEventMatchesEmailStage(t *testing.T) {
+	if audience.StagePostEvent != emailstage.PostEvent {
+		t.Fatalf("audience.StagePostEvent = %q, want emailstage.PostEvent %q", audience.StagePostEvent, emailstage.PostEvent)
+	}
 }

@@ -1828,7 +1828,10 @@ func (x *AudienceExplorer) createList(ctx context.Context, projectID, name strin
 // by name, one hop into a combined suppression — and count toward the suppression
 // and completeness checks. One that cannot be read counts for nothing, so a
 // mistyped id can never turn a FAIL into a PASS.
-func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool, sendSuppressionIDs []string) (outcome *audience.QaOutcome, err error) {
+//
+// stage is the send's email stage, or "" when the caller did not say; only Post-Event changes
+// anything (see audience.CheckCurrentRegistrantsForStage).
+func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventName, stage string, targetsEU, targetsCA bool, sendSuppressionIDs []string) (outcome *audience.QaOutcome, err error) {
 	client, fromSystem, err := x.builder.client(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -2084,10 +2087,14 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	signalMapping := audience.CheckSignalMapping(filters, nameByID)
 	suppression := audience.CheckSuppression(exclusionNames, targetsEU, targetsCA)
 	completeness := audience.CheckExclusionCompleteness(filters, len(sendTimeIDs))
-	currentRegistrants := audience.CheckCurrentRegistrants(eventName, inclusionNames)
+	// stage gates check 4: a Post-Event send is FOR this edition's attendees, so it reports
+	// NOT APPLICABLE there instead of a false CRITICAL (#244). Absent runs it as before.
+	currentRegistrants := audience.CheckCurrentRegistrantsForStage(eventName, stage, inclusionNames)
 	// When the list's own exclusions (and the send's) leave nobody, removing this
 	// edition's registrants is not a pass: the send would reach no one. Reported so the
 	// operator sees it before sending, as the send-time credit guard does for check 3.
+	// It overrides NOT APPLICABLE too: a Post-Event send that suppresses the attendees it
+	// includes reaches no one, which is worth knowing whatever the stage.
 	if strings.TrimSpace(eventName) != "" {
 		ids := make([]string, 0, len(emptied))
 		for id := range emptied {

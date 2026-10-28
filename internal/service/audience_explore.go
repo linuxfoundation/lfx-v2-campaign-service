@@ -61,7 +61,7 @@ type AudienceExplorer interface {
 	// list and the edition's current-registrants list, both reused by name. includeIDs are the lists the send
 	// goes to; the first is reported as the outcome's Master, and every one is verified.
 	AttachExisting(ctx context.Context, projectID string, includeIDs, suppressionIDs []string, registrantsEvent string) (*audience.ComposeOutcome, error)
-	RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool, sendSuppressionIDs []string) (*audience.QaOutcome, error)
+	RunQA(ctx context.Context, projectID, listRef, eventName, stage string, targetsEU, targetsCA bool, sendSuppressionIDs []string) (*audience.QaOutcome, error)
 	// InterpretCustom asks the model for draft criteria; it creates nothing.
 	InterpretCustom(ctx context.Context, projectID, request, eventURL string, answers []audience.CustomAnswer) (*audience.CustomInterpretOutcome, error)
 	// PreviewCustom validates criteria against the portal; it creates nothing.
@@ -697,7 +697,7 @@ func (s *AudienceExploreService) RunAudienceQa(ctx context.Context, p *explore.R
 	if err != nil {
 		return nil, err
 	}
-	outcome, qerr := explorer.RunQA(ctx, p.ProjectID, p.ListRef, derefStr(p.EventName), derefBool(p.TargetsEu), derefBool(p.TargetsCa), p.SendSuppressionListIds)
+	outcome, qerr := explorer.RunQA(ctx, p.ProjectID, p.ListRef, derefStr(p.EventName), derefStr(p.Stage), derefBool(p.TargetsEu), derefBool(p.TargetsCa), p.SendSuppressionListIds)
 	if qerr != nil {
 		return nil, audienceExploreErr(ctx, "run audience QA", p.ProjectID, qerr)
 	}
@@ -948,11 +948,18 @@ func composePartialMessage(partial *audience.ComposePartialError) string {
 // An empty verdict means no event name reached the audit, so there is nothing to report. A
 // zero-valued check would arrive as a verdict the client has to interpret, and the one
 // interpretation that must never be reached is "passed".
-func currentRegistrantsResult(c audience.Check) *explore.AudienceQaCheck {
+//
+// NOT APPLICABLE is NOT omitted: it is a check that ran and was set aside for this send's stage,
+// and it carries the note saying why.
+func currentRegistrantsResult(c audience.Check) *explore.AudienceQaStageScopedCheck {
 	if c.Verdict == "" {
 		return nil
 	}
-	return qaCheckResult(c)
+	out := &explore.AudienceQaStageScopedCheck{Verdict: string(c.Verdict), Findings: findingResults(c.Findings)}
+	if note := strings.TrimSpace(c.Note); note != "" {
+		out.Note = &note
+	}
+	return out
 }
 
 // ─── Result mapping ───

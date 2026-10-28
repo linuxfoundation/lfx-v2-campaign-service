@@ -62,6 +62,10 @@ type RunAudienceQaRequestBody struct {
 	// This edition's event name, so an included registration list for THIS event
 	// can be told from another event's
 	EventName *string `form:"event_name,omitempty" json:"event_name,omitempty" xml:"event_name,omitempty"`
+	// The send's email stage. Post-Event marks check 4 (current_registrants) NOT
+	// APPLICABLE, since this edition's attendees are that send's intended
+	// audience; absent or any other stage runs it as before.
+	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
 }
 
 // InterpretCustomAudienceRequestBody is the type of the
@@ -1506,8 +1510,9 @@ type AudienceQaChecksResponseBody struct {
 	Suppression *AudienceQaSuppressionCheckResponseBody `form:"suppression,omitempty" json:"suppression,omitempty" xml:"suppression,omitempty"`
 	// Are the exclusions present and well-formed?
 	ExclusionCompleteness *AudienceQaExclusionCheckResponseBody `form:"exclusion_completeness,omitempty" json:"exclusion_completeness,omitempty" xml:"exclusion_completeness,omitempty"`
-	// Is this edition's own registration list suppressed rather than included?
-	CurrentRegistrants *AudienceQaCheckResponseBody `form:"current_registrants,omitempty" json:"current_registrants,omitempty" xml:"current_registrants,omitempty"`
+	// Is this edition's own registration list suppressed rather than included? NOT
+	// APPLICABLE for a Post-Event send.
+	CurrentRegistrants *AudienceQaStageScopedCheckResponseBody `form:"current_registrants,omitempty" json:"current_registrants,omitempty" xml:"current_registrants,omitempty"`
 }
 
 // AudienceQaCheckResponseBody is used to define fields on response body types.
@@ -1554,6 +1559,18 @@ type AudienceQaExclusionCheckResponseBody struct {
 	// How many of those are send-time suppression lists rather than filters on the
 	// list
 	SendTimeCount *int64 `form:"send_time_count,omitempty" json:"send_time_count,omitempty" xml:"send_time_count,omitempty"`
+}
+
+// AudienceQaStageScopedCheckResponseBody is used to define fields on response
+// body types.
+type AudienceQaStageScopedCheckResponseBody struct {
+	// Check verdict. NOT APPLICABLE means the check's question does not apply to
+	// this send's stage; it then carries no findings and does not affect overall.
+	Verdict *string `form:"verdict,omitempty" json:"verdict,omitempty" xml:"verdict,omitempty"`
+	// Findings that produced the verdict
+	Findings []*AudienceQaFindingResponseBody `form:"findings,omitempty" json:"findings,omitempty" xml:"findings,omitempty"`
+	// Why the check does not apply; set only when verdict is NOT APPLICABLE
+	Note *string `form:"note,omitempty" json:"note,omitempty" xml:"note,omitempty"`
 }
 
 // AudienceCustomCriteriaResponseBody is used to define fields on response body
@@ -1825,6 +1842,7 @@ func NewRunAudienceQaRequestBody(p *lfxv2campaignserviceaudiencebuilder.RunAudie
 		TargetsEu: p.TargetsEu,
 		TargetsCa: p.TargetsCa,
 		EventName: p.EventName,
+		Stage:     p.Stage,
 	}
 	if p.SendSuppressionListIds != nil {
 		body.SendSuppressionListIds = make([]string, len(p.SendSuppressionListIds))
@@ -5293,7 +5311,7 @@ func ValidateAudienceQaChecksResponseBody(body *AudienceQaChecksResponseBody) (e
 		}
 	}
 	if body.CurrentRegistrants != nil {
-		if err2 := validateAudienceQaCheckResponseBody(body.CurrentRegistrants, "body.current_registrants"); err2 != nil {
+		if err2 := validateAudienceQaStageScopedCheckResponseBody(body.CurrentRegistrants, "body.current_registrants"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -5328,7 +5346,7 @@ func validateAudienceQaChecksResponseBody(body *AudienceQaChecksResponseBody, pa
 		}
 	}
 	if body.CurrentRegistrants != nil {
-		if err2 := validateAudienceQaCheckResponseBody(body.CurrentRegistrants, path+".current_registrants"); err2 != nil {
+		if err2 := validateAudienceQaStageScopedCheckResponseBody(body.CurrentRegistrants, path+".current_registrants"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -5527,6 +5545,55 @@ func validateAudienceQaExclusionCheckResponseBody(body *AudienceQaExclusionCheck
 	if body.Verdict != nil {
 		if !(*body.Verdict == "PASS" || *body.Verdict == "NEEDS VERIFY" || *body.Verdict == "FAIL") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".verdict", *body.Verdict, []any{"PASS", "NEEDS VERIFY", "FAIL"}))
+		}
+	}
+	for _, e := range body.Findings {
+		if e != nil {
+			if err2 := validateAudienceQaFindingResponseBody(e, path+".findings[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateAudienceQaStageScopedCheckResponseBody runs the validations defined
+// on audience-qa-stage-scoped-check
+func ValidateAudienceQaStageScopedCheckResponseBody(body *AudienceQaStageScopedCheckResponseBody) (err error) {
+	if body.Verdict == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("verdict", "body"))
+	}
+	if body.Findings == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("findings", "body"))
+	}
+	if body.Verdict != nil {
+		if !(*body.Verdict == "PASS" || *body.Verdict == "NEEDS VERIFY" || *body.Verdict == "FAIL" || *body.Verdict == "NOT APPLICABLE") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.verdict", *body.Verdict, []any{"PASS", "NEEDS VERIFY", "FAIL", "NOT APPLICABLE"}))
+		}
+	}
+	for _, e := range body.Findings {
+		if e != nil {
+			if err2 := validateAudienceQaFindingResponseBody(e, "body.findings[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// validateAudienceQaStageScopedCheckResponseBody checks
+// audience-qa-stage-scoped-check and reports errors using the path supplied by
+// its caller
+func validateAudienceQaStageScopedCheckResponseBody(body *AudienceQaStageScopedCheckResponseBody, path string) (err error) {
+	if body.Verdict == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("verdict", path))
+	}
+	if body.Findings == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("findings", path))
+	}
+	if body.Verdict != nil {
+		if !(*body.Verdict == "PASS" || *body.Verdict == "NEEDS VERIFY" || *body.Verdict == "FAIL" || *body.Verdict == "NOT APPLICABLE") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".verdict", *body.Verdict, []any{"PASS", "NEEDS VERIFY", "FAIL", "NOT APPLICABLE"}))
 		}
 	}
 	for _, e := range body.Findings {

@@ -13852,7 +13852,7 @@ definitions:
         type: object
         properties:
             current_registrants:
-                $ref: '#/definitions/AudienceQaCheck'
+                $ref: '#/definitions/AudienceQaStageScopedCheck'
             exclusion_completeness:
                 $ref: '#/definitions/AudienceQaExclusionCheck'
             signal_mapping:
@@ -13871,10 +13871,8 @@ definitions:
                     - fix: Aut sint neque.
                       message: Veniam qui possimus iure quo.
                       severity: MEDIUM
-                    - fix: Aut sint neque.
-                      message: Veniam qui possimus iure quo.
-                      severity: MEDIUM
-                verdict: PASS
+                note: Necessitatibus cum commodi.
+                verdict: NEEDS VERIFY
             exclusion_completeness:
                 exclusion_count: 926306291075617734
                 findings:
@@ -14076,10 +14074,8 @@ definitions:
                         - fix: Aut sint neque.
                           message: Veniam qui possimus iure quo.
                           severity: MEDIUM
-                        - fix: Aut sint neque.
-                          message: Veniam qui possimus iure quo.
-                          severity: MEDIUM
-                    verdict: PASS
+                    note: Necessitatibus cum commodi.
+                    verdict: NEEDS VERIFY
                 exclusion_completeness:
                     exclusion_count: 926306291075617734
                     findings:
@@ -14134,6 +14130,54 @@ definitions:
             overall: PASS
         required:
             - needs_disambiguation
+    AudienceQaStageScopedCheck:
+        title: AudienceQaStageScopedCheck
+        type: object
+        properties:
+            findings:
+                type: array
+                items:
+                    $ref: '#/definitions/AudienceQaFinding'
+                description: Findings that produced the verdict
+                example:
+                    - fix: Aut sint neque.
+                      message: Veniam qui possimus iure quo.
+                      severity: MEDIUM
+                    - fix: Aut sint neque.
+                      message: Veniam qui possimus iure quo.
+                      severity: MEDIUM
+                    - fix: Aut sint neque.
+                      message: Veniam qui possimus iure quo.
+                      severity: MEDIUM
+            note:
+                type: string
+                description: Why the check does not apply; set only when verdict is NOT APPLICABLE
+                example: Necessitatibus cum commodi.
+            verdict:
+                type: string
+                description: Check verdict. NOT APPLICABLE means the check's question does not apply to this send's stage; it then carries no findings and does not affect overall.
+                example: NEEDS VERIFY
+                enum:
+                    - PASS
+                    - NEEDS VERIFY
+                    - FAIL
+                    - NOT APPLICABLE
+        example:
+            findings:
+                - fix: Aut sint neque.
+                  message: Veniam qui possimus iure quo.
+                  severity: MEDIUM
+                - fix: Aut sint neque.
+                  message: Veniam qui possimus iure quo.
+                  severity: MEDIUM
+                - fix: Aut sint neque.
+                  message: Veniam qui possimus iure quo.
+                  severity: MEDIUM
+            note: Necessitatibus cum commodi.
+            verdict: NEEDS VERIFY
+        required:
+            - verdict
+            - findings
     AudienceQaSuppressionCheck:
         title: AudienceQaSuppressionCheck
         type: object
@@ -18423,6 +18467,22 @@ definitions:
                     - Et dolor placeat vel.
                     - Qui non eos veritatis.
                 maxItems: 200
+            stage:
+                type: string
+                description: The send's email stage. Post-Event marks check 4 (current_registrants) NOT APPLICABLE, since this edition's attendees are that send's intended audience; absent or any other stage runs it as before.
+                example: Post-Event
+                enum:
+                    - ""
+                    - CFP Launch
+                    - Schedule Announcement
+                    - Registration Push
+                    - Discount Offer
+                    - Final Countdown
+                    - Post-Event
+                    - Survey Promo
+                    - Survey Reminder
+                    - Survey Closing
+                    - Report Promo
             targets_ca:
                 type: boolean
                 description: The send targets Canada, so a CASL opt-out suppression is expected
@@ -18438,6 +18498,7 @@ definitions:
                 - Nihil incidunt omnis.
                 - Et dolor placeat vel.
                 - Qui non eos veritatis.
+            stage: Post-Event
             targets_ca: true
             targets_eu: true
         required:

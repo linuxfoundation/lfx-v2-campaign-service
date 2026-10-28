@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -444,7 +445,7 @@ func TestRunQA_CheckFourRunsOnlyWhenTheEventIsNamed(t *testing.T) {
 	x := NewAudienceExplorer(builder, nil, nil, nil)
 
 	t.Run("no event name: check 4 does not run and the roll-up is untouched", func(t *testing.T) {
-		outcome, err := x.RunQA(context.Background(), "proj-1", "111", "", false, false, nil)
+		outcome, err := x.RunQA(context.Background(), "proj-1", "111", "", "", false, false, nil)
 		require.NoError(t, err)
 
 		assert.Empty(t, outcome.Checks.CurrentRegistrants.Verdict,
@@ -457,7 +458,7 @@ func TestRunQA_CheckFourRunsOnlyWhenTheEventIsNamed(t *testing.T) {
 	})
 
 	t.Run("event named: check 4 catches the included registration list", func(t *testing.T) {
-		outcome, err := x.RunQA(context.Background(), "proj-1", "111", "AGNTCon + MCPCon North America 2026", false, false, nil)
+		outcome, err := x.RunQA(context.Background(), "proj-1", "111", "AGNTCon + MCPCon North America 2026", "", false, false, nil)
 		require.NoError(t, err)
 
 		assert.Equal(t, audience.VerdictFail, outcome.Checks.CurrentRegistrants.Verdict,
@@ -467,6 +468,41 @@ func TestRunQA_CheckFourRunsOnlyWhenTheEventIsNamed(t *testing.T) {
 		assert.Equal(t, audience.VerdictFail, outcome.Overall,
 			"a CRITICAL in check 4 must reach the overall verdict")
 	})
+
+	// #244: the SAME list on a Post-Event send. Its intended audience IS this edition's
+	// attendees, so including their list is the point of the send, not the A-02 defect.
+	t.Run("post-event: check 4 is reported NOT APPLICABLE and raises no CRITICAL", func(t *testing.T) {
+		outcome, err := x.RunQA(context.Background(), "proj-1", "111", "AGNTCon + MCPCon North America 2026", "Post-Event", false, false, nil)
+		require.NoError(t, err)
+
+		assert.Equal(t, audience.VerdictNotApplicable, outcome.Checks.CurrentRegistrants.Verdict,
+			"set aside VISIBLY, not dropped: an omitted check reads as \"no event name was given\"")
+		assert.Empty(t, outcome.Checks.CurrentRegistrants.Findings)
+		assert.Contains(t, outcome.Checks.CurrentRegistrants.Note, "Post-Event")
+		for _, f := range outcome.Findings {
+			assert.NotEqual(t, audience.SeverityCritical, f.Severity,
+				"a Post-Event send including its own attendees must raise no CRITICAL: %s", f.Message)
+		}
+		// The other three checks judge this fixture on their own (it has no suppressions), so
+		// the roll-up is asserted to be exactly theirs: check 4 contributes nothing.
+		assert.Equal(t, audience.CombineVerdicts(outcome.Checks.SignalMapping.Verdict,
+			outcome.Checks.Suppression.Verdict, outcome.Checks.ExclusionCompleteness.Verdict), outcome.Overall,
+			"an inapplicable check 4 must neither pass nor fail the audit")
+	})
+
+	// Every other stage, and an absent one, must keep the CRITICAL: a registration push
+	// mailing its own registrants is exactly what check 4 exists to catch.
+	for _, stage := range []string{"Registration Push", ""} {
+		t.Run("stage "+strconv.Quote(stage)+": check 4 still fails the included registration list", func(t *testing.T) {
+			outcome, err := x.RunQA(context.Background(), "proj-1", "111", "AGNTCon + MCPCon North America 2026", stage, false, false, nil)
+			require.NoError(t, err)
+
+			assert.Equal(t, audience.VerdictFail, outcome.Checks.CurrentRegistrants.Verdict)
+			require.NotEmpty(t, outcome.Checks.CurrentRegistrants.Findings)
+			assert.Equal(t, audience.SeverityCritical, outcome.Checks.CurrentRegistrants.Findings[0].Severity)
+			assert.Equal(t, audience.VerdictFail, outcome.Overall)
+		})
+	}
 }
 
 // TestComposeMaster_Recording_ResolvesThePortalBeforeCreatingAnything pins the
@@ -613,7 +649,7 @@ func TestRunQA_ByName_FetchesRealFiltersRatherThanCachedSearchHit(t *testing.T) 
 	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
 	x := NewAudienceExplorer(builder, nil, nil, nil)
 
-	outcome, err := x.RunQA(context.Background(), "proj-1", "KubeCon NA 2026 - master", "", false, false, nil)
+	outcome, err := x.RunQA(context.Background(), "proj-1", "KubeCon NA 2026 - master", "", "", false, false, nil)
 	require.NoError(t, err)
 	require.False(t, outcome.NeedsDisambiguation)
 

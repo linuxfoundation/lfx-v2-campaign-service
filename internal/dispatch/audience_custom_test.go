@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -513,11 +514,11 @@ func TestRunQA_CountsSendTimeSuppression(t *testing.T) {
 	defer srv.Close()
 	x := explorerOver(srv, nil)
 
-	without, err := x.RunQA(context.Background(), "proj-1", "500", "", true, false, nil)
+	without, err := x.RunQA(context.Background(), "proj-1", "500", "", "", true, false, nil)
 	require.NoError(t, err)
 	assert.Equal(t, audience.VerdictFail, without.Checks.ExclusionCompleteness.Verdict, "judged on its own filters, a custom list has no exclusion")
 
-	with, err := x.RunQA(context.Background(), "proj-1", "500", "", true, false, []string{"601", "602", "404404"})
+	with, err := x.RunQA(context.Background(), "proj-1", "500", "", "", true, false, []string{"601", "602", "404404"})
 	require.NoError(t, err)
 	assert.Equal(t, audience.VerdictPass, with.Checks.ExclusionCompleteness.Verdict)
 	assert.Equal(t, 2, with.Checks.ExclusionCompleteness.SendTimeCount, "an unreadable id counts for nothing")
@@ -525,7 +526,7 @@ func TestRunQA_CountsSendTimeSuppression(t *testing.T) {
 	assert.True(t, with.Checks.Suppression.AppliedOptOut)
 	assert.Empty(t, portal.creates, "QA never writes")
 
-	self, err := x.RunQA(context.Background(), "proj-1", "500", "", true, false, []string{"500"})
+	self, err := x.RunQA(context.Background(), "proj-1", "500", "", "", true, false, []string{"500"})
 	require.NoError(t, err)
 	assert.Equal(t, audience.VerdictFail, self.Checks.ExclusionCompleteness.Verdict, "the audited list sent as its own suppression is no exclusion")
 	assert.Zero(t, self.Checks.ExclusionCompleteness.SendTimeCount)
@@ -568,7 +569,7 @@ func TestRunQA_ANonContactSendTimeListIsNoSuppression(t *testing.T) {
 	srv := portal.serve(t)
 	defer srv.Close()
 
-	out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", false, false, []string{"650"})
+	out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", false, false, []string{"650"})
 	require.NoError(t, err)
 	assert.Zero(t, out.Checks.ExclusionCompleteness.SendTimeCount, "a company list excludes no contact")
 	assert.False(t, out.Checks.Suppression.AppliedOptOut, "its name must not satisfy the opt-out check")
@@ -649,7 +650,7 @@ func TestRunQA_FlagsTheEventsOwnRegistrantsAuditedDirectly(t *testing.T) {
 	srv := portal.serve(t)
 	defer srv.Close()
 
-	out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "29895", "AGNTCon + MCPCon Japan 2026", false, false, nil)
+	out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "29895", "AGNTCon + MCPCon Japan 2026", "", false, false, nil)
 	require.NoError(t, err)
 	assert.NotEqual(t, audience.VerdictPass, out.Checks.CurrentRegistrants.Verdict,
 		"sending a registration push to this edition's own registrants must not pass")
@@ -1031,14 +1032,14 @@ func TestRunQA_ASendTimeListOneBranchIncludesStillExcludes(t *testing.T) {
 	defer srv.Close()
 	x := explorerOver(srv, nil)
 
-	out, err := x.RunQA(context.Background(), "proj-1", "500", "", false, false, []string{"602"})
+	out, err := x.RunQA(context.Background(), "proj-1", "500", "", "", false, false, []string{"602"})
 	require.NoError(t, err)
 	assert.Equal(t, 1, out.Checks.ExclusionCompleteness.SendTimeCount, "suppressing one OR branch still excludes contacts")
 	assert.True(t, out.Checks.Suppression.AppliedOptOut, "and its name still satisfies the opt-out check")
 
 	// When every branch requires the list, the whole audience is inside it.
 	portal.branches["500"] = `{"filterBranchType":"OR","filters":[],"filterBranches":[` + inList("602") + `]}`
-	out, err = x.RunQA(context.Background(), "proj-1", "500", "", false, false, []string{"602"})
+	out, err = x.RunQA(context.Background(), "proj-1", "500", "", "", false, false, []string{"602"})
 	require.NoError(t, err)
 	assert.Zero(t, out.Checks.ExclusionCompleteness.SendTimeCount, "a list the whole audience is inside is no suppression")
 }
@@ -1062,11 +1063,11 @@ func TestRunQA_ASendTimeSuppressedRegistrantsListPassesCheckFour(t *testing.T) {
 	x := explorerOver(srv, nil)
 	const event = "AGNTCon + MCPCon Japan 2026"
 
-	suppressed, err := x.RunQA(context.Background(), "proj-1", "500", event, false, false, []string{"29895"})
+	suppressed, err := x.RunQA(context.Background(), "proj-1", "500", event, "", false, false, []string{"29895"})
 	require.NoError(t, err)
 	assert.NotEqual(t, audience.VerdictFail, suppressed.Checks.CurrentRegistrants.Verdict, "the send excludes this edition's registrants")
 
-	unverified, err := x.RunQA(context.Background(), "proj-1", "500", event, false, false, []string{"404404"})
+	unverified, err := x.RunQA(context.Background(), "proj-1", "500", event, "", false, false, []string{"404404"})
 	require.NoError(t, err)
 	assert.Equal(t, audience.VerdictFail, unverified.Checks.CurrentRegistrants.Verdict, "an unreadable send-time id proves nothing")
 }
@@ -1109,7 +1110,7 @@ func TestRunQA_CheckFourCreditsEverythingTheSendExcludes(t *testing.T) {
 			srv := portal.serve(t)
 			defer srv.Close()
 
-			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", event, false, false, []string{tc.send})
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", event, "", false, false, []string{tc.send})
 			require.NoError(t, err)
 			if tc.sameVerdict {
 				assert.Equal(t, tc.want, out.Checks.CurrentRegistrants.Verdict, "an intersection covers none of the registrants")
@@ -1148,7 +1149,7 @@ func TestRunQA_ASuppressionWrapperCreditsOnlyWhatItFullyCovers(t *testing.T) {
 			srv := portal.serve(t)
 			defer srv.Close()
 
-			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", true, false, []string{"700"})
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", true, false, []string{"700"})
 			require.NoError(t, err)
 			assert.Equal(t, tc.applied, out.Checks.Suppression.AppliedGDPR, "GDPR credited")
 			assert.Equal(t, tc.applied, out.Checks.Suppression.AppliedOptOut, "opt-out credited")
@@ -1188,7 +1189,7 @@ func TestRunQA_ASuppressionWrapperCoveringTheAudienceIsNoSuppression(t *testing.
 			srv := portal.serve(t)
 			defer srv.Close()
 
-			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", false, false, []string{"700"})
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", false, false, []string{"700"})
 			require.NoError(t, err)
 			assert.Zero(t, out.Checks.ExclusionCompleteness.SendTimeCount, "a wrapper that excludes the whole audience is no suppression")
 			assert.NotEqual(t, audience.VerdictPass, out.Checks.ExclusionCompleteness.Verdict)
@@ -1216,7 +1217,7 @@ func TestRunQA_ASuppressionWrapperCoveringOneAlternativeStillCounts(t *testing.T
 	srv := portal.serve(t)
 	defer srv.Close()
 
-	out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", false, false, []string{"700"})
+	out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", false, false, []string{"700"})
 	require.NoError(t, err)
 	assert.Equal(t, 1, out.Checks.ExclusionCompleteness.SendTimeCount, "611 remains, so the wrapper is a real suppression")
 }
@@ -1240,12 +1241,12 @@ func TestRunQA_SeparateSuppressionsCoveringTheAudienceTogetherAreNoSuppression(t
 	defer srv.Close()
 	x := explorerOver(srv, nil)
 
-	both, err := x.RunQA(context.Background(), "proj-1", "500", "", false, false, []string{"610", "611"})
+	both, err := x.RunQA(context.Background(), "proj-1", "500", "", "", false, false, []string{"610", "611"})
 	require.NoError(t, err)
 	assert.Zero(t, both.Checks.ExclusionCompleteness.SendTimeCount, "together they exclude every recipient")
 	assert.NotEqual(t, audience.VerdictPass, both.Checks.ExclusionCompleteness.Verdict)
 
-	one, err := x.RunQA(context.Background(), "proj-1", "500", "", false, false, []string{"610"})
+	one, err := x.RunQA(context.Background(), "proj-1", "500", "", "", false, false, []string{"610"})
 	require.NoError(t, err)
 	assert.Equal(t, 1, one.Checks.ExclusionCompleteness.SendTimeCount, "one alternative alone leaves the other")
 }
@@ -1279,7 +1280,7 @@ func TestRunQA_CheckFourReadsTheRegistrationPredicates(t *testing.T) {
 			srv := portal.serve(t)
 			defer srv.Close()
 
-			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", false, false, nil)
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", "", false, false, nil)
 			require.NoError(t, err)
 			assert.Equal(t, tc.fail, out.Checks.CurrentRegistrants.Verdict == audience.VerdictFail)
 		})
@@ -1346,7 +1347,7 @@ func TestRunQA_CheckFourEditionsAcrossPathsAndInlineSuppressions(t *testing.T) {
 			srv := portal.serve(t)
 			defer srv.Close()
 
-			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", false, false, tc.send)
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", "", false, false, tc.send)
 			require.NoError(t, err)
 			assert.Equal(t, tc.fail, out.Checks.CurrentRegistrants.Verdict == audience.VerdictFail)
 		})
@@ -1383,7 +1384,7 @@ func TestRunQA_CheckFourAppliesInlineSuppressionToReferencedLists(t *testing.T) 
 			srv := portal.serve(t)
 			defer srv.Close()
 
-			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", false, false, tc.send)
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", "", false, false, tc.send)
 			require.NoError(t, err)
 			assert.Equal(t, tc.fail, out.Checks.CurrentRegistrants.Verdict == audience.VerdictFail)
 		})
@@ -1414,7 +1415,7 @@ func TestRunQA_EditionsReplaceTheNameOnlyWhenEveryPathIsARegistration(t *testing
 			srv := portal.serve(t)
 			defer srv.Close()
 
-			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", id, "KubeCon 2026", false, false, nil)
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", id, "KubeCon 2026", "", false, false, nil)
 			require.NoError(t, err)
 			assert.Equal(t, audience.VerdictFail, out.Checks.CurrentRegistrants.Verdict, "the membership branch may hold 2026 registrants; the name decides")
 		})
@@ -1448,7 +1449,7 @@ func TestRunQA_MixedListsAndInlineEmptyAudience(t *testing.T) {
 			srv := portal.serve(t)
 			defer srv.Close()
 
-			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", false, false, nil)
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", "", false, false, nil)
 			require.NoError(t, err)
 			assert.Equal(t, audience.VerdictFail, out.Checks.CurrentRegistrants.Verdict, "the explicit 2026 registration branch is included")
 		})
@@ -1462,7 +1463,7 @@ func TestRunQA_MixedListsAndInlineEmptyAudience(t *testing.T) {
 		srv := portal.serve(t)
 		defer srv.Close()
 
-		out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", false, false, []string{"700"})
+		out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", "", false, false, []string{"700"})
 		require.NoError(t, err)
 		assert.Zero(t, out.Checks.ExclusionCompleteness.SendTimeCount, "a suppression leaving no recipients is no suppression")
 		assert.NotEqual(t, audience.VerdictPass, out.Checks.ExclusionCompleteness.Verdict)
@@ -1504,7 +1505,7 @@ func TestRunQA_TheMastersOwnSuppressionClearsCheckFour(t *testing.T) {
 			srv := portal.serve(t)
 			defer srv.Close()
 
-			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", false, false, nil)
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", "", false, false, nil)
 			require.NoError(t, err)
 			assert.Equal(t, tc.fail, out.Checks.CurrentRegistrants.Verdict == audience.VerdictFail)
 		})
@@ -1532,11 +1533,19 @@ func TestRunQA_AnEmptiedMasterIsNotAPass(t *testing.T) {
 	srv := portal.serve(t)
 	defer srv.Close()
 
-	out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", false, false, nil)
-	require.NoError(t, err)
-	assert.Equal(t, audience.VerdictNeedsVerify, out.Checks.CurrentRegistrants.Verdict)
-	require.NotEmpty(t, out.Checks.CurrentRegistrants.Findings)
-	assert.Contains(t, out.Checks.CurrentRegistrants.Findings[0].Message, "reach no one")
+	// Post-Event too (#244): check 4's registrants question does not apply there, but a send
+	// that reaches no one is worth knowing whatever the stage, so the guard must still win over
+	// NOT APPLICABLE rather than be hidden by it.
+	for _, stage := range []string{"", "Post-Event"} {
+		t.Run("stage "+strconv.Quote(stage), func(t *testing.T) {
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", stage, false, false, nil)
+			require.NoError(t, err)
+			assert.Equal(t, audience.VerdictNeedsVerify, out.Checks.CurrentRegistrants.Verdict)
+			assert.Empty(t, out.Checks.CurrentRegistrants.Note, "the guard replaces the check whole, note included")
+			require.NotEmpty(t, out.Checks.CurrentRegistrants.Findings)
+			assert.Contains(t, out.Checks.CurrentRegistrants.Findings[0].Message, "reach no one")
+		})
+	}
 }
 
 // An included list that excludes this edition's registrants on every one of its own
@@ -1577,7 +1586,7 @@ func TestRunQA_AnIncludedListsOwnExclusionClearsItsEvidence(t *testing.T) {
 			srv := portal.serve(t)
 			defer srv.Close()
 
-			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", false, false, nil)
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", "", false, false, nil)
 			require.NoError(t, err)
 			assert.Equal(t, tc.fail, out.Checks.CurrentRegistrants.Verdict == audience.VerdictFail)
 		})

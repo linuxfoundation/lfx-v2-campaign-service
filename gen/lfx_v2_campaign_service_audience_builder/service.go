@@ -541,8 +541,9 @@ type AudienceQaChecks struct {
 	Suppression *AudienceQaSuppressionCheck
 	// Are the exclusions present and well-formed?
 	ExclusionCompleteness *AudienceQaExclusionCheck
-	// Is this edition's own registration list suppressed rather than included?
-	CurrentRegistrants *AudienceQaCheck
+	// Is this edition's own registration list suppressed rather than included? NOT
+	// APPLICABLE for a Post-Event send.
+	CurrentRegistrants *AudienceQaStageScopedCheck
 }
 
 type AudienceQaExclusionCheck struct {
@@ -585,6 +586,16 @@ type AudienceQaResult struct {
 	Findings []*AudienceQaFinding
 	// Worst verdict across the checks
 	Overall *string
+}
+
+type AudienceQaStageScopedCheck struct {
+	// Check verdict. NOT APPLICABLE means the check's question does not apply to
+	// this send's stage; it then carries no findings and does not affect overall.
+	Verdict string
+	// Findings that produced the verdict
+	Findings []*AudienceQaFinding
+	// Why the check does not apply; set only when verdict is NOT APPLICABLE
+	Note *string
 }
 
 type AudienceQaSuppressionCheck struct {
@@ -841,6 +852,10 @@ type RunAudienceQaPayload struct {
 	// This edition's event name, so an included registration list for THIS event
 	// can be told from another event's
 	EventName *string
+	// The send's email stage. Post-Event marks check 4 (current_registrants) NOT
+	// APPLICABLE, since this edition's attendees are that send's intended
+	// audience; absent or any other stage runs it as before.
+	Stage *string
 }
 
 // SearchAudienceListsPayload is the payload type of the
