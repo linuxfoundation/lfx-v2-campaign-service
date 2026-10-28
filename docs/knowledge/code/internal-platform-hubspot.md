@@ -586,10 +586,11 @@ returns `""` on any failure so the caller falls back to `LegacyListName`. Both h
 error beside that `""`: still best-effort, in that the empty string is the answer and no caller is
 failed because one list could not be named, but a caller that must tell "HubSpot reported no such
 list" from "the lookup never reached an answer" can ask `IsNotFound` about it instead of reading a
-throttled call as a deletion (#238). A caller that only wants a name discards it. It exists because a
-marketing email carries the SAME list in both `contactIlsLists` and the legacy `contactLists`,
-under two different ids — reading them as two lists rendered every inclusion and suppression of a
-pre-cut-off send twice ([[2026-09-30-audience-suppression-and-last-sent-scoping]]).
+throttled call as a deletion (#238). A caller that only wants a name discards it.
+`ListIDForLegacy` exists because a marketing email carries the SAME list in both
+`contactIlsLists` and the legacy `contactLists`, under two different ids — reading them as two
+lists rendered every inclusion and suppression of a pre-cut-off send twice
+([[2026-09-30-audience-suppression-and-last-sent-scoping]]).
 
 `email_sendlists.go` reads the same `to.contactIlsLists` object `SetSendList` WRITES — otherwise
 the builder would report a precedent the sender never used. The legacy `to.contactLists`
