@@ -830,6 +830,33 @@ type GetGoogleAdsAudienceResponseBody struct {
 	BucketCount *int `form:"bucket_count,omitempty" json:"bucket_count,omitempty" xml:"bucket_count,omitempty"`
 }
 
+// SuggestGoogleAdsGeoTargetsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body.
+type SuggestGoogleAdsGeoTargetsResponseBody struct {
+	// Matching locations in Google's order, filtered to target_types when given,
+	// capped at limit
+	Suggestions []*GoogleAdsGeoTargetSuggestionResponseBody `form:"suggestions,omitempty" json:"suggestions,omitempty" xml:"suggestions,omitempty"`
+	// How many suggestions are in `suggestions`
+	SuggestionCount *int `form:"suggestion_count,omitempty" json:"suggestion_count,omitempty" xml:"suggestion_count,omitempty"`
+	// True when more matching locations were available than `limit` allowed
+	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
+}
+
+// ListGoogleAdsUserListsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body.
+type ListGoogleAdsUserListsResponseBody struct {
+	// The Google Ads customer the lists were read from
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// User lists on the customer, sorted by name, capped at 500 (see `truncated`)
+	UserLists []*GoogleAdsUserListResponseBody `form:"user_lists,omitempty" json:"user_lists,omitempty" xml:"user_lists,omitempty"`
+	// How many lists are in `user_lists`
+	UserListCount *int `form:"user_list_count,omitempty" json:"user_list_count,omitempty" xml:"user_list_count,omitempty"`
+	// True when the customer holds more lists than were returned
+	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
+}
+
 // GetMetaAdsAudienceResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body.
@@ -4157,6 +4184,142 @@ type GetGoogleAdsAudienceUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// SuggestGoogleAdsGeoTargetsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "BadRequest" error.
+type SuggestGoogleAdsGeoTargetsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type SuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "InternalServerError" error.
+type SuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SuggestGoogleAdsGeoTargetsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "NotFound" error.
+type SuggestGoogleAdsGeoTargetsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type SuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SuggestGoogleAdsGeoTargetsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "Unauthorized" error.
+type SuggestGoogleAdsGeoTargetsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsUserListsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListGoogleAdsUserListsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsUserListsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListGoogleAdsUserListsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsUserListsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListGoogleAdsUserListsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsUserListsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "NotFound" error.
+type ListGoogleAdsUserListsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsUserListsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListGoogleAdsUserListsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsUserListsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListGoogleAdsUserListsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsUserListsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "Conflict" error.
+type ListGoogleAdsUserListsConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMetaAdsAudienceBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -6103,6 +6266,58 @@ type GoogleAdsAudienceBucketResponseBody struct {
 	// Conversions over the window, fraction intact. Summable WITHIN a dimension
 	// for the same reason impressions are; summing across dimensions triple-counts.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
+}
+
+// GoogleAdsGeoTargetSuggestionResponseBody is used to define fields on
+// response body types.
+type GoogleAdsGeoTargetSuggestionResponseBody struct {
+	// The numeric geo target constant id, in exactly the form
+	// googleAdsConfig.geoTargets and excludedGeoTargets accept. Send it as-is; the
+	// geoTargetConstants/{id} resource name is NOT accepted there.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Google's display name for the location
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Google's fully qualified name, which disambiguates same-named places
+	CanonicalName *string `form:"canonical_name,omitempty" json:"canonical_name,omitempty" xml:"canonical_name,omitempty"`
+	// ISO 3166-1 alpha-2 country of the location, as Google reports it
+	CountryCode *string `form:"country_code,omitempty" json:"country_code,omitempty" xml:"country_code,omitempty"`
+	// Google's location type label, verbatim (e.g. Country, State, City, Postal
+	// Code, DMA Region)
+	TargetType *string `form:"target_type,omitempty" json:"target_type,omitempty" xml:"target_type,omitempty"`
+	// ENABLED, or REMOVAL_PLANNED for a location Google is retiring
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Google's approximate audience estimate. Absent when Google sent none.
+	Reach *int64 `form:"reach,omitempty" json:"reach,omitempty" xml:"reach,omitempty"`
+}
+
+// GoogleAdsUserListResponseBody is used to define fields on response body
+// types.
+type GoogleAdsUserListResponseBody struct {
+	// customers/{customerId}/userLists/{id}, in exactly the form
+	// googleAdsConfig.audienceSegments accepts (Search only). A list targets
+	// campaigns on its own customer.
+	ResourceName *string `form:"resource_name,omitempty" json:"resource_name,omitempty" xml:"resource_name,omitempty"`
+	// The user list id
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// The list's display name. Not an identifier.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Google's UserListType, verbatim (e.g. CRM_BASED, RULE_BASED, LOGICAL,
+	// SIMILAR)
+	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
+	// OPEN (accepting members) or CLOSED, verbatim
+	MembershipStatus *string `form:"membership_status,omitempty" json:"membership_status,omitempty" xml:"membership_status,omitempty"`
+	// The list's account_user_list_status (ENABLED or DISABLED), verbatim. Absent
+	// when Google sent none.
+	AccountStatus *string `form:"account_status,omitempty" json:"account_status,omitempty" xml:"account_status,omitempty"`
+	// Google's estimated Search-network size. Absent when Google sent none, which
+	// is not a size of 0.
+	SizeForSearch *int64 `form:"size_for_search,omitempty" json:"size_for_search,omitempty" xml:"size_for_search,omitempty"`
+	// Google's bucketed Search-network size, verbatim. Absent when Google sent
+	// none.
+	SizeRangeForSearch *string `form:"size_range_for_search,omitempty" json:"size_range_for_search,omitempty" xml:"size_range_for_search,omitempty"`
+	// Whether Google reports the list usable on Search. audienceSegments applies
+	// to Search campaigns, so an ineligible list will not serve there.
+	EligibleForSearch *bool `form:"eligible_for_search,omitempty" json:"eligible_for_search,omitempty" xml:"eligible_for_search,omitempty"`
 }
 
 // MetaAdsAudienceBucketResponseBody is used to define fields on response body
@@ -11229,6 +11444,205 @@ func NewGetGoogleAdsAudienceUnauthorized(body *GetGoogleAdsAudienceUnauthorizedR
 	return v
 }
 
+// NewSuggestGoogleAdsGeoTargetsGoogleAdsGeoTargetSuggestionsOK builds a
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint result from a HTTP "OK" response.
+func NewSuggestGoogleAdsGeoTargetsGoogleAdsGeoTargetSuggestionsOK(body *SuggestGoogleAdsGeoTargetsResponseBody) *lfxv2campaignserviceconnections.GoogleAdsGeoTargetSuggestions {
+	v := &lfxv2campaignserviceconnections.GoogleAdsGeoTargetSuggestions{
+		SuggestionCount: *body.SuggestionCount,
+		Truncated:       *body.Truncated,
+	}
+	v.Suggestions = make([]*lfxv2campaignserviceconnections.GoogleAdsGeoTargetSuggestion, len(body.Suggestions))
+	for i, val := range body.Suggestions {
+		if val == nil {
+			v.Suggestions[i] = nil
+			continue
+		}
+		v.Suggestions[i] = unmarshalGoogleAdsGeoTargetSuggestionResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsGeoTargetSuggestion(val)
+	}
+
+	return v
+}
+
+// NewSuggestGoogleAdsGeoTargetsBadRequest builds a
+// lfx-v2-campaign-service-connections service suggest-google-ads-geo-targets
+// endpoint BadRequest error.
+func NewSuggestGoogleAdsGeoTargetsBadRequest(body *SuggestGoogleAdsGeoTargetsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSuggestGoogleAdsGeoTargetsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service suggest-google-ads-geo-targets
+// endpoint ServiceUnavailable error.
+func NewSuggestGoogleAdsGeoTargetsServiceUnavailable(body *SuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSuggestGoogleAdsGeoTargetsInternalServerError builds a
+// lfx-v2-campaign-service-connections service suggest-google-ads-geo-targets
+// endpoint InternalServerError error.
+func NewSuggestGoogleAdsGeoTargetsInternalServerError(body *SuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSuggestGoogleAdsGeoTargetsNotFound builds a
+// lfx-v2-campaign-service-connections service suggest-google-ads-geo-targets
+// endpoint NotFound error.
+func NewSuggestGoogleAdsGeoTargetsNotFound(body *SuggestGoogleAdsGeoTargetsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSuggestGoogleAdsGeoTargetsPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service suggest-google-ads-geo-targets
+// endpoint PayloadTooLarge error.
+func NewSuggestGoogleAdsGeoTargetsPayloadTooLarge(body *SuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSuggestGoogleAdsGeoTargetsUnauthorized builds a
+// lfx-v2-campaign-service-connections service suggest-google-ads-geo-targets
+// endpoint Unauthorized error.
+func NewSuggestGoogleAdsGeoTargetsUnauthorized(body *SuggestGoogleAdsGeoTargetsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewListGoogleAdsUserListsGoogleAdsUserListsOK builds a
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint result from a HTTP "OK" response.
+func NewListGoogleAdsUserListsGoogleAdsUserListsOK(body *ListGoogleAdsUserListsResponseBody) *lfxv2campaignserviceconnections.GoogleAdsUserLists {
+	v := &lfxv2campaignserviceconnections.GoogleAdsUserLists{
+		AccountID:     *body.AccountID,
+		UserListCount: *body.UserListCount,
+		Truncated:     *body.Truncated,
+	}
+	v.UserLists = make([]*lfxv2campaignserviceconnections.GoogleAdsUserList, len(body.UserLists))
+	for i, val := range body.UserLists {
+		if val == nil {
+			v.UserLists[i] = nil
+			continue
+		}
+		v.UserLists[i] = unmarshalGoogleAdsUserListResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsUserList(val)
+	}
+
+	return v
+}
+
+// NewListGoogleAdsUserListsBadRequest builds a
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// endpoint BadRequest error.
+func NewListGoogleAdsUserListsBadRequest(body *ListGoogleAdsUserListsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListGoogleAdsUserListsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// endpoint ServiceUnavailable error.
+func NewListGoogleAdsUserListsServiceUnavailable(body *ListGoogleAdsUserListsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListGoogleAdsUserListsInternalServerError builds a
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// endpoint InternalServerError error.
+func NewListGoogleAdsUserListsInternalServerError(body *ListGoogleAdsUserListsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListGoogleAdsUserListsNotFound builds a
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// endpoint NotFound error.
+func NewListGoogleAdsUserListsNotFound(body *ListGoogleAdsUserListsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListGoogleAdsUserListsPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// endpoint PayloadTooLarge error.
+func NewListGoogleAdsUserListsPayloadTooLarge(body *ListGoogleAdsUserListsPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListGoogleAdsUserListsUnauthorized builds a
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// endpoint Unauthorized error.
+func NewListGoogleAdsUserListsUnauthorized(body *ListGoogleAdsUserListsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewListGoogleAdsUserListsConflict builds a
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// endpoint Conflict error.
+func NewListGoogleAdsUserListsConflict(body *ListGoogleAdsUserListsConflictResponseBody) *lfxv2campaignserviceconnections.UserListsConflictError {
+	v := &lfxv2campaignserviceconnections.UserListsConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewGetMetaAdsAudienceMetaAdsAudienceOK builds a
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint result from a HTTP "OK" response.
@@ -14790,6 +15204,53 @@ func ValidateGetGoogleAdsAudienceResponseBody(body *GetGoogleAdsAudienceResponse
 	for _, e := range body.Buckets {
 		if e != nil {
 			if err2 := validateGoogleAdsAudienceBucketResponseBody(e, "body.buckets[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateSuggestGoogleAdsGeoTargetsResponseBody runs the validations defined
+// on SuggestGoogleAdsGeoTargetsResponseBody
+func ValidateSuggestGoogleAdsGeoTargetsResponseBody(body *SuggestGoogleAdsGeoTargetsResponseBody) (err error) {
+	if body.Suggestions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("suggestions", "body"))
+	}
+	if body.SuggestionCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("suggestion_count", "body"))
+	}
+	if body.Truncated == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("truncated", "body"))
+	}
+	for _, e := range body.Suggestions {
+		if e != nil {
+			if err2 := validateGoogleAdsGeoTargetSuggestionResponseBody(e, "body.suggestions[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsResponseBody runs the validations defined on
+// ListGoogleAdsUserListsResponseBody
+func ValidateListGoogleAdsUserListsResponseBody(body *ListGoogleAdsUserListsResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.UserLists == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("user_lists", "body"))
+	}
+	if body.UserListCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("user_list_count", "body"))
+	}
+	if body.Truncated == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("truncated", "body"))
+	}
+	for _, e := range body.UserLists {
+		if e != nil {
+			if err2 := validateGoogleAdsUserListResponseBody(e, "body.user_lists[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -19134,6 +19595,164 @@ func ValidateGetGoogleAdsAudienceUnauthorizedResponseBody(body *GetGoogleAdsAudi
 	return
 }
 
+// ValidateSuggestGoogleAdsGeoTargetsBadRequestResponseBody runs the
+// validations defined on SuggestGoogleAdsGeoTargetsBadRequestResponseBody
+func ValidateSuggestGoogleAdsGeoTargetsBadRequestResponseBody(body *SuggestGoogleAdsGeoTargetsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody runs the
+// validations defined on
+// SuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody
+func ValidateSuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody(body *SuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody runs the
+// validations defined on
+// SuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody
+func ValidateSuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody(body *SuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSuggestGoogleAdsGeoTargetsNotFoundResponseBody runs the validations
+// defined on SuggestGoogleAdsGeoTargetsNotFoundResponseBody
+func ValidateSuggestGoogleAdsGeoTargetsNotFoundResponseBody(body *SuggestGoogleAdsGeoTargetsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody runs the
+// validations defined on SuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody
+func ValidateSuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody(body *SuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSuggestGoogleAdsGeoTargetsUnauthorizedResponseBody runs the
+// validations defined on SuggestGoogleAdsGeoTargetsUnauthorizedResponseBody
+func ValidateSuggestGoogleAdsGeoTargetsUnauthorizedResponseBody(body *SuggestGoogleAdsGeoTargetsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsBadRequestResponseBody runs the validations
+// defined on ListGoogleAdsUserListsBadRequestResponseBody
+func ValidateListGoogleAdsUserListsBadRequestResponseBody(body *ListGoogleAdsUserListsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsServiceUnavailableResponseBody runs the
+// validations defined on ListGoogleAdsUserListsServiceUnavailableResponseBody
+func ValidateListGoogleAdsUserListsServiceUnavailableResponseBody(body *ListGoogleAdsUserListsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsInternalServerErrorResponseBody runs the
+// validations defined on ListGoogleAdsUserListsInternalServerErrorResponseBody
+func ValidateListGoogleAdsUserListsInternalServerErrorResponseBody(body *ListGoogleAdsUserListsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsNotFoundResponseBody runs the validations
+// defined on ListGoogleAdsUserListsNotFoundResponseBody
+func ValidateListGoogleAdsUserListsNotFoundResponseBody(body *ListGoogleAdsUserListsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsPayloadTooLargeResponseBody runs the
+// validations defined on ListGoogleAdsUserListsPayloadTooLargeResponseBody
+func ValidateListGoogleAdsUserListsPayloadTooLargeResponseBody(body *ListGoogleAdsUserListsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsUnauthorizedResponseBody runs the validations
+// defined on ListGoogleAdsUserListsUnauthorizedResponseBody
+func ValidateListGoogleAdsUserListsUnauthorizedResponseBody(body *ListGoogleAdsUserListsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsUserListsConflictResponseBody runs the validations
+// defined on ListGoogleAdsUserListsConflictResponseBody
+func ValidateListGoogleAdsUserListsConflictResponseBody(body *ListGoogleAdsUserListsConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMetaAdsAudienceBadRequestResponseBody runs the validations
 // defined on GetMetaAdsAudienceBadRequestResponseBody
 func ValidateGetMetaAdsAudienceBadRequestResponseBody(body *GetMetaAdsAudienceBadRequestResponseBody) (err error) {
@@ -21568,6 +22187,115 @@ func validateGoogleAdsAudienceBucketResponseBody(body *GoogleAdsAudienceBucketRe
 		if !(*body.Dimension == "age" || *body.Dimension == "gender" || *body.Dimension == "device") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".dimension", *body.Dimension, []any{"age", "gender", "device"}))
 		}
+	}
+	return
+}
+
+// ValidateGoogleAdsGeoTargetSuggestionResponseBody runs the validations
+// defined on google-ads-geo-target-suggestion
+func ValidateGoogleAdsGeoTargetSuggestionResponseBody(body *GoogleAdsGeoTargetSuggestionResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.CanonicalName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("canonical_name", "body"))
+	}
+	if body.CountryCode == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("country_code", "body"))
+	}
+	if body.TargetType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("target_type", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.id", *body.ID, "^[1-9][0-9]{0,18}$"))
+	}
+	return
+}
+
+// validateGoogleAdsGeoTargetSuggestionResponseBody checks
+// google-ads-geo-target-suggestion and reports errors using the path supplied
+// by its caller
+func validateGoogleAdsGeoTargetSuggestionResponseBody(body *GoogleAdsGeoTargetSuggestionResponseBody, path string) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	if body.CanonicalName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("canonical_name", path))
+	}
+	if body.CountryCode == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("country_code", path))
+	}
+	if body.TargetType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("target_type", path))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", path))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".id", *body.ID, "^[1-9][0-9]{0,18}$"))
+	}
+	return
+}
+
+// ValidateGoogleAdsUserListResponseBody runs the validations defined on
+// google-ads-user-list
+func ValidateGoogleAdsUserListResponseBody(body *GoogleAdsUserListResponseBody) (err error) {
+	if body.ResourceName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource_name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+	}
+	if body.MembershipStatus == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("membership_status", "body"))
+	}
+	if body.EligibleForSearch == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("eligible_for_search", "body"))
+	}
+	if body.ResourceName != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.resource_name", *body.ResourceName, "^customers/[0-9]+/userLists/[1-9][0-9]{0,18}$"))
+	}
+	return
+}
+
+// validateGoogleAdsUserListResponseBody checks google-ads-user-list and
+// reports errors using the path supplied by its caller
+func validateGoogleAdsUserListResponseBody(body *GoogleAdsUserListResponseBody, path string) (err error) {
+	if body.ResourceName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource_name", path))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", path))
+	}
+	if body.MembershipStatus == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("membership_status", path))
+	}
+	if body.EligibleForSearch == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("eligible_for_search", path))
+	}
+	if body.ResourceName != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".resource_name", *body.ResourceName, "^customers/[0-9]+/userLists/[1-9][0-9]{0,18}$"))
 	}
 	return
 }

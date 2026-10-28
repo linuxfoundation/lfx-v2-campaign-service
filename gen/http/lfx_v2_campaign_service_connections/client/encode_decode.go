@@ -9373,6 +9373,437 @@ func DecodeGetGoogleAdsAudienceResponse(decoder func(*http.Response) goahttp.Dec
 	}
 }
 
+// BuildSuggestGoogleAdsGeoTargetsRequest instantiates a HTTP request object
+// with method and path set to call the "lfx-v2-campaign-service-connections"
+// service "suggest-google-ads-geo-targets" endpoint
+func (c *Client) BuildSuggestGoogleAdsGeoTargetsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.SuggestGoogleAdsGeoTargetsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", "*lfxv2campaignserviceconnections.SuggestGoogleAdsGeoTargetsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: SuggestGoogleAdsGeoTargetsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeSuggestGoogleAdsGeoTargetsRequest returns an encoder for requests sent
+// to the lfx-v2-campaign-service-connections suggest-google-ads-geo-targets
+// server.
+func EncodeSuggestGoogleAdsGeoTargetsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.SuggestGoogleAdsGeoTargetsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", "*lfxv2campaignserviceconnections.SuggestGoogleAdsGeoTargetsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		values.Add("q", p.Q)
+		if p.CountryCode != nil {
+			values.Add("country_code", *p.CountryCode)
+		}
+		for _, value := range p.TargetTypes {
+			values.Add("target_types", value)
+		}
+		if p.Limit != nil {
+			values.Add("limit", strconv.Itoa(*p.Limit))
+		}
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeSuggestGoogleAdsGeoTargetsResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// suggest-google-ads-geo-targets endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeSuggestGoogleAdsGeoTargetsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeSuggestGoogleAdsGeoTargetsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body SuggestGoogleAdsGeoTargetsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			err = ValidateSuggestGoogleAdsGeoTargetsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			res := NewSuggestGoogleAdsGeoTargetsGoogleAdsGeoTargetSuggestionsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body SuggestGoogleAdsGeoTargetsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			err = ValidateSuggestGoogleAdsGeoTargetsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			return nil, NewSuggestGoogleAdsGeoTargetsBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body SuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			err = ValidateSuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			return nil, NewSuggestGoogleAdsGeoTargetsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body SuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			err = ValidateSuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			return nil, NewSuggestGoogleAdsGeoTargetsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body SuggestGoogleAdsGeoTargetsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			err = ValidateSuggestGoogleAdsGeoTargetsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			return nil, NewSuggestGoogleAdsGeoTargetsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body SuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			err = ValidateSuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			return nil, NewSuggestGoogleAdsGeoTargetsPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body SuggestGoogleAdsGeoTargetsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			err = ValidateSuggestGoogleAdsGeoTargetsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			return nil, NewSuggestGoogleAdsGeoTargetsUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "suggest-google-ads-geo-targets", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildListGoogleAdsUserListsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "list-google-ads-user-lists" endpoint
+func (c *Client) BuildListGoogleAdsUserListsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ListGoogleAdsUserListsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", "*lfxv2campaignserviceconnections.ListGoogleAdsUserListsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ListGoogleAdsUserListsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeListGoogleAdsUserListsRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-connections list-google-ads-user-lists server.
+func EncodeListGoogleAdsUserListsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ListGoogleAdsUserListsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", "*lfxv2campaignserviceconnections.ListGoogleAdsUserListsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		if p.AccountID != nil {
+			values.Add("account_id", *p.AccountID)
+		}
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeListGoogleAdsUserListsResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// list-google-ads-user-lists endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeListGoogleAdsUserListsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - "Conflict" (type *lfxv2campaignserviceconnections.UserListsConflictError): http.StatusConflict
+//   - error: internal error
+func DecodeListGoogleAdsUserListsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ListGoogleAdsUserListsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			err = ValidateListGoogleAdsUserListsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			res := NewListGoogleAdsUserListsGoogleAdsUserListsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ListGoogleAdsUserListsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			err = ValidateListGoogleAdsUserListsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			return nil, NewListGoogleAdsUserListsBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ListGoogleAdsUserListsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			err = ValidateListGoogleAdsUserListsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			return nil, NewListGoogleAdsUserListsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ListGoogleAdsUserListsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			err = ValidateListGoogleAdsUserListsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			return nil, NewListGoogleAdsUserListsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ListGoogleAdsUserListsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			err = ValidateListGoogleAdsUserListsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			return nil, NewListGoogleAdsUserListsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ListGoogleAdsUserListsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			err = ValidateListGoogleAdsUserListsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			return nil, NewListGoogleAdsUserListsPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ListGoogleAdsUserListsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			err = ValidateListGoogleAdsUserListsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			return nil, NewListGoogleAdsUserListsUnauthorized(&body, wwwAuthenticate)
+		case http.StatusConflict:
+			var (
+				body ListGoogleAdsUserListsConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			err = ValidateListGoogleAdsUserListsConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			return nil, NewListGoogleAdsUserListsConflict(&body)
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildGetMetaAdsAudienceRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-connections"
 // service "get-meta-ads-audience" endpoint
@@ -15646,6 +16077,43 @@ func unmarshalGoogleAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectio
 		CostMicros:  *v.CostMicros,
 		Ctr:         *v.Ctr,
 		Conversions: *v.Conversions,
+	}
+
+	return res
+}
+
+// unmarshalGoogleAdsGeoTargetSuggestionResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsGeoTargetSuggestion
+// builds a value of type
+// *lfxv2campaignserviceconnections.GoogleAdsGeoTargetSuggestion from a value
+// of type *GoogleAdsGeoTargetSuggestionResponseBody.
+func unmarshalGoogleAdsGeoTargetSuggestionResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsGeoTargetSuggestion(v *GoogleAdsGeoTargetSuggestionResponseBody) *lfxv2campaignserviceconnections.GoogleAdsGeoTargetSuggestion {
+	res := &lfxv2campaignserviceconnections.GoogleAdsGeoTargetSuggestion{
+		ID:            *v.ID,
+		Name:          *v.Name,
+		CanonicalName: *v.CanonicalName,
+		CountryCode:   *v.CountryCode,
+		TargetType:    *v.TargetType,
+		Status:        *v.Status,
+		Reach:         v.Reach,
+	}
+
+	return res
+}
+
+// unmarshalGoogleAdsUserListResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsUserList
+// builds a value of type *lfxv2campaignserviceconnections.GoogleAdsUserList
+// from a value of type *GoogleAdsUserListResponseBody.
+func unmarshalGoogleAdsUserListResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsUserList(v *GoogleAdsUserListResponseBody) *lfxv2campaignserviceconnections.GoogleAdsUserList {
+	res := &lfxv2campaignserviceconnections.GoogleAdsUserList{
+		ResourceName:       *v.ResourceName,
+		ID:                 *v.ID,
+		Name:               *v.Name,
+		Type:               *v.Type,
+		MembershipStatus:   *v.MembershipStatus,
+		AccountStatus:      v.AccountStatus,
+		SizeForSearch:      v.SizeForSearch,
+		SizeRangeForSearch: v.SizeRangeForSearch,
+		EligibleForSearch:  *v.EligibleForSearch,
 	}
 
 	return res

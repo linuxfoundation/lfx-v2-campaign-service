@@ -261,6 +261,15 @@ var AccountMonitorScopeConflictError = Type("account-monitor-scope-conflict-erro
 	Required("reason")
 })
 
+// UserListsConflictError is the 409 body of list-google-ads-user-lists: the platform's ad account
+// is shared across foundations, so its user lists cannot be listed per project. It has its own
+// type for the reason AccountMonitorConflictError does: ConflictError's published example is a
+// connection collision (`already_exists`) this method never returns. It carries no `reason`,
+// since the method has exactly one kind of conflict.
+var UserListsConflictError = Type("user-lists-conflict-error", func() {
+	errorAttrs("409", "user lists cannot be listed per project on an ad account shared across foundations; enter the user-list resource name directly")
+})
+
 var PreconditionFailedError = Type("precondition-failed-error", func() {
 	errorAttrs("412", "The supplied ETag does not match the current version.")
 })
@@ -1751,6 +1760,9 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
 	})
+
+	// Targeting lookups (design/google_ads_lookups.go): the geo target and user-list pickers.
+	googleAdsLookupMethods()
 
 	Method("get-meta-ads-audience", func() {
 		Description("Read Meta audience insights — age and gender (one combined breakdown) and placement " +

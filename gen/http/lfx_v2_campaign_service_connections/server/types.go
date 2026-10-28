@@ -830,6 +830,33 @@ type GetGoogleAdsAudienceResponseBody struct {
 	BucketCount int `form:"bucket_count" json:"bucket_count" xml:"bucket_count"`
 }
 
+// SuggestGoogleAdsGeoTargetsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body.
+type SuggestGoogleAdsGeoTargetsResponseBody struct {
+	// Matching locations in Google's order, filtered to target_types when given,
+	// capped at limit
+	Suggestions []*GoogleAdsGeoTargetSuggestionResponseBody `form:"suggestions" json:"suggestions" xml:"suggestions"`
+	// How many suggestions are in `suggestions`
+	SuggestionCount int `form:"suggestion_count" json:"suggestion_count" xml:"suggestion_count"`
+	// True when more matching locations were available than `limit` allowed
+	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
+}
+
+// ListGoogleAdsUserListsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body.
+type ListGoogleAdsUserListsResponseBody struct {
+	// The Google Ads customer the lists were read from
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// User lists on the customer, sorted by name, capped at 500 (see `truncated`)
+	UserLists []*GoogleAdsUserListResponseBody `form:"user_lists" json:"user_lists" xml:"user_lists"`
+	// How many lists are in `user_lists`
+	UserListCount int `form:"user_list_count" json:"user_list_count" xml:"user_list_count"`
+	// True when the customer holds more lists than were returned
+	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
+}
+
 // GetMetaAdsAudienceResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body.
@@ -4157,6 +4184,142 @@ type GetGoogleAdsAudienceUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// SuggestGoogleAdsGeoTargetsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "BadRequest" error.
+type SuggestGoogleAdsGeoTargetsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type SuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "InternalServerError" error.
+type SuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SuggestGoogleAdsGeoTargetsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "NotFound" error.
+type SuggestGoogleAdsGeoTargetsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type SuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SuggestGoogleAdsGeoTargetsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "suggest-google-ads-geo-targets" endpoint HTTP response body for the
+// "Unauthorized" error.
+type SuggestGoogleAdsGeoTargetsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsUserListsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListGoogleAdsUserListsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsUserListsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListGoogleAdsUserListsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsUserListsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListGoogleAdsUserListsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsUserListsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "NotFound" error.
+type ListGoogleAdsUserListsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsUserListsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListGoogleAdsUserListsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsUserListsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListGoogleAdsUserListsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsUserListsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
+// endpoint HTTP response body for the "Conflict" error.
+type ListGoogleAdsUserListsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetMetaAdsAudienceBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -6105,6 +6268,58 @@ type GoogleAdsAudienceBucketResponseBody struct {
 	Conversions float64 `form:"conversions" json:"conversions" xml:"conversions"`
 }
 
+// GoogleAdsGeoTargetSuggestionResponseBody is used to define fields on
+// response body types.
+type GoogleAdsGeoTargetSuggestionResponseBody struct {
+	// The numeric geo target constant id, in exactly the form
+	// googleAdsConfig.geoTargets and excludedGeoTargets accept. Send it as-is; the
+	// geoTargetConstants/{id} resource name is NOT accepted there.
+	ID string `form:"id" json:"id" xml:"id"`
+	// Google's display name for the location
+	Name string `form:"name" json:"name" xml:"name"`
+	// Google's fully qualified name, which disambiguates same-named places
+	CanonicalName string `form:"canonical_name" json:"canonical_name" xml:"canonical_name"`
+	// ISO 3166-1 alpha-2 country of the location, as Google reports it
+	CountryCode string `form:"country_code" json:"country_code" xml:"country_code"`
+	// Google's location type label, verbatim (e.g. Country, State, City, Postal
+	// Code, DMA Region)
+	TargetType string `form:"target_type" json:"target_type" xml:"target_type"`
+	// ENABLED, or REMOVAL_PLANNED for a location Google is retiring
+	Status string `form:"status" json:"status" xml:"status"`
+	// Google's approximate audience estimate. Absent when Google sent none.
+	Reach *int64 `form:"reach,omitempty" json:"reach,omitempty" xml:"reach,omitempty"`
+}
+
+// GoogleAdsUserListResponseBody is used to define fields on response body
+// types.
+type GoogleAdsUserListResponseBody struct {
+	// customers/{customerId}/userLists/{id}, in exactly the form
+	// googleAdsConfig.audienceSegments accepts (Search only). A list targets
+	// campaigns on its own customer.
+	ResourceName string `form:"resource_name" json:"resource_name" xml:"resource_name"`
+	// The user list id
+	ID string `form:"id" json:"id" xml:"id"`
+	// The list's display name. Not an identifier.
+	Name string `form:"name" json:"name" xml:"name"`
+	// Google's UserListType, verbatim (e.g. CRM_BASED, RULE_BASED, LOGICAL,
+	// SIMILAR)
+	Type string `form:"type" json:"type" xml:"type"`
+	// OPEN (accepting members) or CLOSED, verbatim
+	MembershipStatus string `form:"membership_status" json:"membership_status" xml:"membership_status"`
+	// The list's account_user_list_status (ENABLED or DISABLED), verbatim. Absent
+	// when Google sent none.
+	AccountStatus *string `form:"account_status,omitempty" json:"account_status,omitempty" xml:"account_status,omitempty"`
+	// Google's estimated Search-network size. Absent when Google sent none, which
+	// is not a size of 0.
+	SizeForSearch *int64 `form:"size_for_search,omitempty" json:"size_for_search,omitempty" xml:"size_for_search,omitempty"`
+	// Google's bucketed Search-network size, verbatim. Absent when Google sent
+	// none.
+	SizeRangeForSearch *string `form:"size_range_for_search,omitempty" json:"size_range_for_search,omitempty" xml:"size_range_for_search,omitempty"`
+	// Whether Google reports the list usable on Search. audienceSegments applies
+	// to Search campaigns, so an ineligible list will not serve there.
+	EligibleForSearch bool `form:"eligible_for_search" json:"eligible_for_search" xml:"eligible_for_search"`
+}
+
 // MetaAdsAudienceBucketResponseBody is used to define fields on response body
 // types.
 type MetaAdsAudienceBucketResponseBody struct {
@@ -7559,6 +7774,53 @@ func NewGetGoogleAdsAudienceResponseBody(res *lfxv2campaignserviceconnections.Go
 		}
 	} else {
 		body.Buckets = []*GoogleAdsAudienceBucketResponseBody{}
+	}
+	return body
+}
+
+// NewSuggestGoogleAdsGeoTargetsResponseBody builds the HTTP response body from
+// the result of the "suggest-google-ads-geo-targets" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSuggestGoogleAdsGeoTargetsResponseBody(res *lfxv2campaignserviceconnections.GoogleAdsGeoTargetSuggestions) *SuggestGoogleAdsGeoTargetsResponseBody {
+	body := &SuggestGoogleAdsGeoTargetsResponseBody{
+		SuggestionCount: res.SuggestionCount,
+		Truncated:       res.Truncated,
+	}
+	if res.Suggestions != nil {
+		body.Suggestions = make([]*GoogleAdsGeoTargetSuggestionResponseBody, len(res.Suggestions))
+		for i, val := range res.Suggestions {
+			if val == nil {
+				body.Suggestions[i] = nil
+				continue
+			}
+			body.Suggestions[i] = marshalLfxv2campaignserviceconnectionsGoogleAdsGeoTargetSuggestionToGoogleAdsGeoTargetSuggestionResponseBody(val)
+		}
+	} else {
+		body.Suggestions = []*GoogleAdsGeoTargetSuggestionResponseBody{}
+	}
+	return body
+}
+
+// NewListGoogleAdsUserListsResponseBody builds the HTTP response body from the
+// result of the "list-google-ads-user-lists" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsUserListsResponseBody(res *lfxv2campaignserviceconnections.GoogleAdsUserLists) *ListGoogleAdsUserListsResponseBody {
+	body := &ListGoogleAdsUserListsResponseBody{
+		AccountID:     res.AccountID,
+		UserListCount: res.UserListCount,
+		Truncated:     res.Truncated,
+	}
+	if res.UserLists != nil {
+		body.UserLists = make([]*GoogleAdsUserListResponseBody, len(res.UserLists))
+		for i, val := range res.UserLists {
+			if val == nil {
+				body.UserLists[i] = nil
+				continue
+			}
+			body.UserLists[i] = marshalLfxv2campaignserviceconnectionsGoogleAdsUserListToGoogleAdsUserListResponseBody(val)
+		}
+	} else {
+		body.UserLists = []*GoogleAdsUserListResponseBody{}
 	}
 	return body
 }
@@ -11487,6 +11749,149 @@ func NewGetGoogleAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceco
 	return body
 }
 
+// NewSuggestGoogleAdsGeoTargetsBadRequestResponseBody builds the HTTP response
+// body from the result of the "suggest-google-ads-geo-targets" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSuggestGoogleAdsGeoTargetsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SuggestGoogleAdsGeoTargetsBadRequestResponseBody {
+	body := &SuggestGoogleAdsGeoTargetsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "suggest-google-ads-geo-targets"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewSuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody {
+	body := &SuggestGoogleAdsGeoTargetsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "suggest-google-ads-geo-targets"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewSuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody {
+	body := &SuggestGoogleAdsGeoTargetsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSuggestGoogleAdsGeoTargetsNotFoundResponseBody builds the HTTP response
+// body from the result of the "suggest-google-ads-geo-targets" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSuggestGoogleAdsGeoTargetsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SuggestGoogleAdsGeoTargetsNotFoundResponseBody {
+	body := &SuggestGoogleAdsGeoTargetsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "suggest-google-ads-geo-targets"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewSuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *SuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody {
+	body := &SuggestGoogleAdsGeoTargetsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSuggestGoogleAdsGeoTargetsUnauthorizedResponseBody builds the HTTP
+// response body from the result of the "suggest-google-ads-geo-targets"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewSuggestGoogleAdsGeoTargetsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *SuggestGoogleAdsGeoTargetsUnauthorizedResponseBody {
+	body := &SuggestGoogleAdsGeoTargetsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsUserListsBadRequestResponseBody builds the HTTP response
+// body from the result of the "list-google-ads-user-lists" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsUserListsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListGoogleAdsUserListsBadRequestResponseBody {
+	body := &ListGoogleAdsUserListsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsUserListsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "list-google-ads-user-lists" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsUserListsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListGoogleAdsUserListsServiceUnavailableResponseBody {
+	body := &ListGoogleAdsUserListsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsUserListsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "list-google-ads-user-lists" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsUserListsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListGoogleAdsUserListsInternalServerErrorResponseBody {
+	body := &ListGoogleAdsUserListsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsUserListsNotFoundResponseBody builds the HTTP response body
+// from the result of the "list-google-ads-user-lists" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsUserListsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListGoogleAdsUserListsNotFoundResponseBody {
+	body := &ListGoogleAdsUserListsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsUserListsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "list-google-ads-user-lists" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsUserListsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListGoogleAdsUserListsPayloadTooLargeResponseBody {
+	body := &ListGoogleAdsUserListsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsUserListsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "list-google-ads-user-lists" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsUserListsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListGoogleAdsUserListsUnauthorizedResponseBody {
+	body := &ListGoogleAdsUserListsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsUserListsConflictResponseBody builds the HTTP response body
+// from the result of the "list-google-ads-user-lists" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsUserListsConflictResponseBody(res *lfxv2campaignserviceconnections.UserListsConflictError) *ListGoogleAdsUserListsConflictResponseBody {
+	body := &ListGoogleAdsUserListsConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetMetaAdsAudienceBadRequestResponseBody builds the HTTP response body
 // from the result of the "get-meta-ads-audience" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -13954,6 +14359,33 @@ func NewGetGoogleAdsAudiencePayload(projectID string, window *string, bearerToke
 	v := &lfxv2campaignserviceconnections.GetGoogleAdsAudiencePayload{}
 	v.ProjectID = projectID
 	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewSuggestGoogleAdsGeoTargetsPayload builds a
+// lfx-v2-campaign-service-connections service suggest-google-ads-geo-targets
+// endpoint payload.
+func NewSuggestGoogleAdsGeoTargetsPayload(projectID string, q string, countryCode *string, targetTypes []string, limit *int, bearerToken *string) *lfxv2campaignserviceconnections.SuggestGoogleAdsGeoTargetsPayload {
+	v := &lfxv2campaignserviceconnections.SuggestGoogleAdsGeoTargetsPayload{}
+	v.ProjectID = projectID
+	v.Q = q
+	v.CountryCode = countryCode
+	v.TargetTypes = targetTypes
+	v.Limit = limit
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListGoogleAdsUserListsPayload builds a
+// lfx-v2-campaign-service-connections service list-google-ads-user-lists
+// endpoint payload.
+func NewListGoogleAdsUserListsPayload(projectID string, accountID *string, bearerToken *string) *lfxv2campaignserviceconnections.ListGoogleAdsUserListsPayload {
+	v := &lfxv2campaignserviceconnections.ListGoogleAdsUserListsPayload{}
+	v.ProjectID = projectID
+	v.AccountID = accountID
 	v.BearerToken = bearerToken
 
 	return v
