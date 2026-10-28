@@ -2132,7 +2132,9 @@ fake Microsoft, plus a check that a malformed report fails rather than returning
 best-effort decode, so these are a synchronous 400 (`ErrCreateConfigInvalid`) before the create
 job exists: `geoTargets` naming any EU or EEA country without BOTH `dsaBeneficiary` and `dsaPayor`; a
 one-sided pair; a disclosure over 256 runes or with a control, line-separator or bidi character; a non-numeric
-`instagramUserId`. The rules are `meta.CheckPublishIdentity`'s, so the 400 and the client agree;
+`instagramUserId`; and any of the three present with a non-string JSON type (`checkMetaIdentityShape`,
+run before the best-effort decode, which would otherwise read `true` or `1` as absent). The rules
+are `meta.CheckPublishIdentity`'s, so the 400 and the client agree;
 `Dispatch` runs them again before the client exists, as `notCreated`, and the client a third time.
 An absent `instagramUserId` is not refused. The client binds it only when an Instagram placement
 is enabled. See [internal/platform/meta](internal-platform-meta.md) § Publishability.

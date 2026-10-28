@@ -36,6 +36,14 @@ func TestMeta_PreflightCreate_PublishIdentity(t *testing.T) {
 			want: "dsaPayor was supplied without dsaBeneficiary"},
 		{name: "malformed Instagram id", config: `{"metaConfig":{"instagramUserId":"lfprojects"}}`,
 			want: "instagramUserId"},
+		// A wrong-typed identity field is refused on its type, not read as absent (PR #414 review).
+		{name: "boolean Instagram id", config: `{"metaConfig":{"geoTargets":["US"],"instagramUserId":true}}`,
+			want: `invalid campaign config: metaConfig: "instagramUserId" must be a string`},
+		{name: "numeric beneficiary on an EU target", config: `{"metaConfig":{"geoTargets":["DE"],"dsaBeneficiary":1,"dsaPayor":"LF"}}`,
+			want: `"dsaBeneficiary" must be a string`},
+		{name: "object payor, case-variant key", config: `{"metaConfig":{"DSAPayor":{},"dsaBeneficiary":"CNCF"}}`,
+			want: `"DSAPayor" must be a string`},
+		{name: "null disclosures read as absent", config: `{"metaConfig":{"geoTargets":["US"],"dsaBeneficiary":null,"dsaPayor":null,"instagramUserId":null}}`},
 		// Best-effort decode: an unrelated wrong-typed field must not let an EU target fail open.
 		{name: "EU without disclosures, broken budget", config: `{"metaConfig":{"budget":"lots","geoTargets":["IT"]}}`,
 			want: "EU DSA disclosures are required"},

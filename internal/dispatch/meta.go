@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -1523,6 +1524,11 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 	if err := checkBiddingShape(config, "metaConfig"); err != nil {
 		return err
 	}
+	// A wrong-typed identity field would decode to "" below and pass as absent, so it is refused
+	// on its raw JSON type first (PR #414 review).
+	if err := checkMetaIdentityShape(config); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
@@ -1540,6 +1546,48 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
+}
+
+// metaIdentityKeys are the publish-identity fields checkMetaIdentityShape type-checks.
+var metaIdentityKeys = []string{"instagramUserId", "dsaBeneficiary", "dsaPayor"}
+
+// checkMetaIdentityShape refuses a metaConfig whose instagramUserId, dsaBeneficiary or dsaPayor is
+// present with a non-string JSON type (null is absent, as encoding/json reads it). PreflightCreate
+// decodes best-effort and ignores type errors, so without this `"instagramUserId": true` or
+// `"dsaBeneficiary": 1` on an EU target would read as absent and fail open into a 202 — then fail
+// the job on Dispatch's strict decode. Keys are matched case-insensitively, as encoding/json
+// matches them. A config that is not an object envelope is left to Dispatch.
+func checkMetaIdentityShape(config json.RawMessage) error {
+	if len(config) == 0 {
+		return nil
+	}
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(config, &envelope) != nil {
+		return nil
+	}
+	var platformCfg map[string]json.RawMessage
+	if json.Unmarshal(envelope["metaConfig"], &platformCfg) != nil {
+		return nil
+	}
+	keys := make([]string, 0, len(platformCfg))
+	for k := range platformCfg {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		for _, want := range metaIdentityKeys {
+			if !strings.EqualFold(k, want) {
+				continue
+			}
+			raw := platformCfg[k]
+			var str string
+			if isJSONNull(raw) || json.Unmarshal(raw, &str) == nil {
+				continue
+			}
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: %s must be a string", domain.ErrCreateConfigInvalid, quoteKey(k)))
+		}
+	}
+	return nil
 }
 
 // checkMetaPublishIdentity applies meta.CheckPublishIdentity to the decoded config. It works on a
