@@ -110,6 +110,19 @@ func TestRun_GoogleAdsRefusedBeforeAnyBackend(t *testing.T) {
 	}
 }
 
+// metricsProviderFor picks the provider whose metrics client sends path, so the original
+// metrics allowlist table keeps its meaning under the per-provider list.
+func metricsProviderFor(path string) model.Provider {
+	p := strings.ToLower(path)
+	switch {
+	case strings.Contains(p, "/reporting/"), strings.Contains(p, "oauth2"), strings.Contains(p, "campaignmanagement"):
+		return model.ProviderMicrosoftAds
+	case strings.Contains(p, "accesstoken"):
+		return model.ProviderLinkedInAds
+	}
+	return model.ProviderRedditAds
+}
+
 func TestAllowedRequest(t *testing.T) {
 	cases := []struct {
 		method, path string
@@ -130,7 +143,7 @@ func TestAllowedRequest(t *testing.T) {
 		{http.MethodDelete, "/api/v3/campaigns/t3_c", false},
 	}
 	for _, tc := range cases {
-		if got := allowedRequest(tc.method, tc.path); got != tc.want {
+		if got := allowedRequest(readMetrics, metricsProviderFor(tc.path), tc.method, tc.path); got != tc.want {
 			t.Errorf("allowedRequest(%s %s) = %v, want %v", tc.method, tc.path, got, tc.want)
 		}
 	}
@@ -141,7 +154,7 @@ func TestRecorder_RefusesWritesWithoutSending(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { hits.Add(1) }))
 	defer srv.Close()
-	hc := newRecorder(newSecretSet()).client()
+	hc := newRecorder(newSecretSet(), readMetrics, model.ProviderRedditAds).client()
 	for _, m := range []string{http.MethodPatch, http.MethodPut, http.MethodDelete, http.MethodPost} {
 		req, _ := http.NewRequest(m, srv.URL+"/api/v3/campaigns/t3_c", strings.NewReader(`{}`))
 		resp, err := hc.Do(req)
@@ -262,7 +275,7 @@ func TestRecorder_ScrubsAnEchoedSecretQueryValue(t *testing.T) {
 	}))
 	defer srv.Close()
 	secrets := newSecretSet()
-	rec := newRecorder(secrets)
+	rec := newRecorder(secrets, readMetrics, model.ProviderMicrosoftAds)
 	resp, err := rec.client().Get(srv.URL + "/r/a.zip?sv=2020&sig=" + sig)
 	if err != nil {
 		t.Fatal(err)
@@ -293,7 +306,7 @@ func (b *blockingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 func TestRecorder_PrintsAPendingExchangeWithoutARace(t *testing.T) {
 	bt := &blockingTransport{started: make(chan struct{}), release: make(chan struct{})}
 	secrets := newSecretSet()
-	rec := newRecorder(secrets)
+	rec := newRecorder(secrets, readMetrics, model.ProviderMicrosoftAds)
 	rec.base = bt
 	done := make(chan struct{})
 	go func() {
@@ -330,7 +343,7 @@ func TestRecorder_PrintsAPendingExchangeWithoutARace(t *testing.T) {
 func TestRecorder_PrintsAnUnansweredExchangeAsPending(t *testing.T) {
 	bt := &blockingTransport{started: make(chan struct{}), release: make(chan struct{})}
 	secrets := newSecretSet()
-	rec := newRecorder(secrets)
+	rec := newRecorder(secrets, readMetrics, model.ProviderMicrosoftAds)
 	rec.base = bt
 	done := make(chan struct{})
 	go func() {
@@ -393,7 +406,7 @@ func TestRecorder_RefusesOversizedTokenResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/access_token", strings.NewReader("grant_type=x"))
-	resp, err := newRecorder(newSecretSet()).client().Do(req)
+	resp, err := newRecorder(newSecretSet(), readMetrics, model.ProviderRedditAds).client().Do(req)
 	if err == nil {
 		_ = resp.Body.Close()
 		t.Fatal("an oversized token response must be refused, not truncated")
@@ -434,7 +447,21 @@ func (f *fakeConns) Disconnected(context.Context, string, model.Provider) (bool,
 	return false, nil
 }
 
-type fakeScopes struct{ scopes []model.ProjectCampaignScope }
+// fakeScopes is the campaign reader: the scope lists are what the reads here call. Any other
+// reader method would panic on the nil embedded interface, which is the point — a read that
+// started calling one would fail its test rather than be faked into passing.
+type fakeScopes struct {
+	domain.CampaignReader
+	scopes []model.ProjectCampaignScope
+}
+
+func (f *fakeScopes) ListProjectPlatformDeletedCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
+	return nil, nil
+}
+
+func (f *fakeScopes) ListProjectPlatformMonitorCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
+	return f.scopes, nil
+}
 
 func (f *fakeScopes) ListProjectPlatformCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
 	return f.scopes, nil
