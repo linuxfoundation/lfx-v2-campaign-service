@@ -14,3 +14,15 @@ dominant source of merge conflicts between concurrent PRs. Each fragment still
 carries an ISO date in its name, so a conformant `log.md` can be reconstructed by
 normalizing each fragment's H1 into an `## YYYY-MM-DD` heading any time an
 external OKF consumer needs one.
+
+`okfvalidate` holds a fragment to its filename, its H1 date, and — since #176 —
+the bold kind marker the entry opens with, which must be one of CLAUDE.md's six
+(`Update`, `Fix`, `Creation`, `Note`, `Verification`, `Docs`). The set is closed
+because the marker is what classifies an entry for a reader scanning the
+directory, so a one-off spelling is not a richer label but an entry that sorts
+under nothing. Two shapes are not a plain single-entry fragment and are checked
+accordingly: an entry later superseded carries a `> **Superseded …**` blockquote
+ABOVE its marker, so the reader meets the warning first; and an ARCHIVE rolls
+many entries under one H1, each behind its own `##` heading with its own marker,
+which is checked per section. The archive is recognized by that structure rather
+than by filename, so there is no naming convention to keep in sync.

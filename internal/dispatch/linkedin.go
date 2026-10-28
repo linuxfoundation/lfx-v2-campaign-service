@@ -194,6 +194,58 @@ type linkedinConfig struct {
 	AdAccountID        string                            `json:"adAccountId"`
 	TargetingProfiles  []linkedin.TargetingProfileConfig `json:"targetingProfiles"`
 	EmployerExclusions []string                          `json:"employerExclusions"`
+	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic:
+	// a WEBSITE_VISIT campaign bidding MAX_CLICK. Manual is WEBSITE_CONVERSION + a manual CPC.
+	Bidding *biddingConfig `json:"bidding,omitempty"`
+}
+
+// linkedinBidPlan resolves linkedInConfig's bidding choice. The OBJECTIVE follows it (decision
+// 2026-10-13, Misha): automatic — the default — creates a WEBSITE_VISIT campaign optimising for
+// clicks (MAX_CLICK), because MAX_CONVERSION, the only automated target WEBSITE_CONVERSION allows,
+// needs a conversion association this service does not create; manual creates the WEBSITE_CONVERSION
+// campaign with costType CPC, optimizationTargetType NONE and unitCost = the bid — the setup the bid
+// lever reads as a manual max CPC. See linkedin.campaignBidding for the citations.
+//
+// Every LinkedIn write here is in USD at whole cents, so a manual amount must be a whole number of
+// cents (linkedin.ValidateBidAmount, refused rather than rounded). LinkedIn's bid floor depends on
+// the audience and is not a fixed figure this service can check ahead of it; its refusal fails the
+// job.
+func linkedinBidPlan(cfg linkedinConfig) (bidPlan, error) {
+	const key = "linkedInConfig"
+	plan, err := resolveBidding(key, cfg.Bidding)
+	if err != nil || !plan.manual() {
+		return plan, err
+	}
+	if _, verr := linkedin.ValidateBidAmount(plan.amount); verr != nil {
+		reason, ok := linkedin.BidAmountReason(verr)
+		if !ok {
+			reason = "the bid is not accepted by LinkedIn"
+		}
+		return bidPlan{}, biddingInvalid(key, "bidAmount: %s", reason)
+	}
+	return plan, nil
+}
+
+// PreflightCreate refuses, before the create job exists, a linkedInConfig whose bidding cannot be
+// created as asked. It never calls LinkedIn, so every other outcome is ErrPreflightNotApplicable;
+// a config that does not decode is left to Dispatch — except a wrong-typed `bidding`, refused here by
+// checkBiddingShape.
+func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
+	if err := checkBiddingShape(config, "linkedInConfig"); err != nil {
+		return err
+	}
+	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
+	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
+	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
+	// not decode is its zero value, which no plan rule reads as a refusal. The decode error itself
+	// stays "not applicable" — only bidding is promised as a synchronous 400.
+	var cfg linkedinConfig
+	_ = unmarshalPlatformConfig(config, "linkedInConfig", &cfg)
+	if _, err := linkedinBidPlan(cfg); err != nil {
+		return err
+	}
+	return domain.ErrPreflightNotApplicable
 }
 
 // LinkedInDispatcher creates LinkedIn campaigns for the orchestrator.
@@ -278,6 +330,23 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if err := unmarshalPlatformConfig(config, "linkedInConfig", &cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The bidding choice, validated before any upstream call; recorded on every returned row.
+	if err := checkBiddingShape(config, "linkedInConfig"); err != nil {
+		return nil, notCreated(err)
+	}
+	plan, err := linkedinBidPlan(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
+	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
+	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
+	var bidApplied bool
+	defer func() {
+		if err == nil && bidApplied {
+			plan.stamp(camp)
+		}
+	}()
 	// Reject an empty variant set BEFORE any upstream create. The client also refuses
 	// it (nil, err) after its own validation, but checking up front avoids the wasted
 	// input build + upstream round-trip and keeps the claim-release semantics obvious
@@ -349,6 +418,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		Variants:         cfg.Variants,
 		AdAccountID:      adAccountID,
 		Images:           images,
+		ManualCPCBid:     plan.amount,
 	}
 
 	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), runtime, d.opts...)
@@ -378,6 +448,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		// failure after a successful group create — either way the claim must be retained.
 		return campaignFromLinkedIn(ctx, result, len(cfg.Variants), cfg), fmt.Errorf("linkedin campaign creation incomplete (a campaign group and/or campaign may exist): %w", cerr)
 	}
+	bidApplied = result.BidApplied
 	return campaignFromLinkedIn(ctx, result, len(cfg.Variants), cfg), nil
 }
 
@@ -1201,6 +1272,9 @@ func linkedinRunStatus(status string) (string, error) {
 // (validFacets: facet URNs only, and creation is refused when no profile matches), and
 // AdAccountID (refused unless it equals the connection's account). GeoTargets[].URN,
 // Variants[].ImageAssetID (a stored asset key), numbers, flags and dates are kept too.
+// Bidding is kept verbatim too: resolveBidding refuses a strategy other than automatic or
+// manual before anything is sent, and bidAmount is a number
+// (TestConfigSnapshot_BiddingRoundTripsThroughTheValidator replays the stored copy).
 //
 // cfg is passed by value but its slices share backing arrays with the config Dispatch sends,
 // so every slice that is rewritten is REALLOCATED first: the FULL text must still reach

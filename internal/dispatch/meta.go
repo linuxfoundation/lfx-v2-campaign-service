@@ -65,6 +65,9 @@ type metaConfig struct {
 	// rejection fails the platform job BEFORE any mutating Meta call — it is a pre-create
 	// dispatch failure, not a synchronous 4xx on the campaign request. Left 0 → derived.
 	CurrencyOffset int64 `json:"currencyOffset"`
+	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
+	// (LOWEST_COST_WITHOUT_CAP, unchanged); manual creates a link-click bid cap — see metaBidPlan.
+	Bidding *biddingConfig `json:"bidding,omitempty"`
 }
 
 // creativeAssetReader is the ONE creative-asset operation this dispatcher needs: read a
@@ -656,6 +659,25 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	if err := unmarshalPlatformConfig(config, "metaConfig", &cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The bidding choice, validated before any upstream call; the one currency-dependent rule (a
+	// whole number of minor units) is the client's, after its account preflight read and still
+	// before anything is created.
+	if err := checkBiddingShape(config, "metaConfig"); err != nil {
+		return nil, notCreated(err)
+	}
+	plan, err := metaBidPlan(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
+	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
+	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
+	var bidApplied bool
+	defer func() {
+		if err == nil && bidApplied {
+			plan.stamp(camp)
+		}
+	}()
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -728,6 +750,7 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		// The RESOLVED variants (image bytes filled in), not cfg.Variants — cfg.Variants
 		// stays pristine for campaignFromMeta's snapshot and degraded-count check.
 		Variants: variants,
+		BidCap:   plan.amount,
 	}
 
 	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, account, d.opts...)
@@ -752,6 +775,7 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	// for a human/monitor to reconcile. Mirrors the reddit/twitter partial-ad handling.
 	// All requested variants are valid here (the client fails fast on a malformed
 	// variant), so len(cfg.Variants) is the requested count.
+	bidApplied = result.BidApplied
 	camp = campaignFromMeta(ctx, result, cfg)
 	if result.AdCount < len(cfg.Variants) {
 		camp.Status = campaignStatusCreatedDegraded
@@ -1167,6 +1191,9 @@ func metaRunStatus(status string) (string, error) {
 // InstagramUserID (refused unless numeric), Variants[].ImageAssetID (a stored asset key),
 // numbers, flags and dates. ImageBytes and
 // ImageMIME are json:"-" and never reach the snapshot.
+// Bidding is kept verbatim too: resolveBidding refuses a strategy other than automatic or
+// manual before anything is sent, and bidAmount is a number
+// (TestConfigSnapshot_BiddingRoundTripsThroughTheValidator replays the stored copy).
 //
 // cfg is passed by value but its slices share backing arrays with the config Dispatch sends,
 // so every slice that is rewritten is REALLOCATED first: the FULL url and text must still
@@ -1475,4 +1502,53 @@ func metaAccountLabel(a meta.AdAccount) string {
 		label += " (" + reason + ")"
 	}
 	return label
+}
+
+// PreflightCreate refuses, before the create job exists, a metaConfig whose bidding cannot be
+// created as asked (see metaBidPlan). It never calls Meta, so every other outcome is
+// ErrPreflightNotApplicable; a config that does not decode is left to Dispatch — except a wrong-typed
+// `bidding`, refused here by checkBiddingShape.
+func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
+	if err := checkBiddingShape(config, "metaConfig"); err != nil {
+		return err
+	}
+	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
+	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
+	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
+	// not decode is its zero value, which no plan rule reads as a refusal. The decode error itself
+	// stays "not applicable" — only bidding is promised as a synchronous 400.
+	var cfg metaConfig
+	_ = unmarshalPlatformConfig(config, "metaConfig", &cfg)
+	if _, err := metaBidPlan(cfg); err != nil {
+		return err
+	}
+	return domain.ErrPreflightNotApplicable
+}
+
+// metaBidPlan resolves metaConfig's bidding choice. Manual bidding is a LINK-CLICK bid cap on the
+// ad set — the only Meta shape the bid lever reads as a max cost per click — so it needs an
+// objective whose ad set optimizes for LINK_CLICKS (traffic, or leads, which runs as traffic here;
+// meta.ManualBidSupported), and at most two decimal places: every currency this service can encode
+// has a minor-unit scale of 100 or 1, so a third decimal is never a whole minor unit. Whether a
+// two-decimal amount is a whole unit of a ZERO-decimal currency (JPY) is known only after Meta
+// reports the account's currency, so the client checks that before its first mutating call.
+func metaBidPlan(cfg metaConfig) (bidPlan, error) {
+	const key = "metaConfig"
+	plan, err := resolveBidding(key, cfg.Bidding)
+	if err != nil || !plan.manual() {
+		return plan, err
+	}
+	if !meta.ManualBidSupported(cfg.Objective) {
+		return bidPlan{}, biddingInvalid(key, "manual bidding is a cost-per-link-click bid cap, which needs the traffic or leads objective; use automatic bidding for this objective")
+	}
+	if _, ok := exactScaled(plan.amount, 100); !ok {
+		return bidPlan{}, biddingInvalid(key, "bidAmount %s has more than two decimal places, which is not a whole minor unit of any ad account currency; it is refused rather than rounded", formatBid(plan.amount))
+	}
+	// Meta's daily-budget minimum for a click-billed bid cap (5 x bid_amount) is NOT checked here:
+	// it is a comparison of ENCODED minor units, and the minor-unit scale depends on the account
+	// currency, which only the client's account preflight knows (in JPY a 4.6 budget encodes to 5
+	// and satisfies 5 x 1, while a hundredths comparison here would refuse it — PR #332 review).
+	// The client refuses it before its first mutating call (meta.BidCapDailyBudgetMultiple).
+	return plan, nil
 }

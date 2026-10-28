@@ -646,9 +646,10 @@ func (c *Client) UpdateAdGroupsAndAdsStatus(ctx context.Context, targets []AdGro
 		}
 	}
 
-	groupResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), mutateRequest{Operations: groupOps}, true)
+	groupResp, retries, err := c.doRequestCounted(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), mutateRequest{Operations: groupOps}, true)
 	if err != nil {
-		return fmt.Errorf("google-ads ad group status update to %s failed (%d ad group(s)): %w", status, len(groupOps), err)
+		return retriedUnconfirmed("ad group status update", retries,
+			fmt.Errorf("google-ads ad group status update to %s failed (%d ad group(s)): %w", status, len(groupOps), err))
 	}
 	// Result count checked for the same reason the create path checks it, and the
 	// reason is NEW here: one operation per ad group means a short response is a 2xx
@@ -662,6 +663,13 @@ func (c *Client) UpdateAdGroupsAndAdsStatus(ctx context.Context, targets []AdGro
 		return &partialCascadeError{stage: "ad group", err: err}
 	}
 
+	// Deliberately NOT routed through doRequestCounted (#347), though it is an idempotent
+	// mutate like the five that are. Every failure here is already wrapped in
+	// partialCascadeError, which reports Unconfirmed(), so a retried-then-definitely-refused
+	// attempt is ALREADY ambiguous and retriedUnconfirmed would be a guaranteed no-op — its
+	// third clause drops anything IsOutcomeUnconfirmed already holds. The ad group stage above
+	// needs the wrap because its failure arm returns a plain error: nothing preceded it in this
+	// function, so there is no partial cascade to assert.
 	adResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroupAds:mutate"), mutateRequest{Operations: adOps}, true)
 	if err != nil {
 		// The ad group update already succeeded, and the ad update failed.

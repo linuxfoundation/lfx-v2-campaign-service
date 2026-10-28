@@ -1,6 +1,6 @@
 # 2026-08-20 — LFXV2-3281 the validator is tested, the call site is not
 
-**Test** — every rule in `internal/service/connection.go` was covered by a test that called the
+**Verification** — every rule in `internal/service/connection.go` was covered by a test that called the
 validator FUNCTION. Nothing tested that a handler CALLS it. Seven of the nine call sites could be
 deleted without turning this package red.
 

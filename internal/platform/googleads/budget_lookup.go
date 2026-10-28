@@ -117,7 +117,34 @@ func (c *Client) reuseBudgetAfterDuplicateName(ctx context.Context, budgetName s
 		// on this same connection, that the budget is not shared. findReusableBudget did
 		// exactly that — and refused on a missing explicitly_shared rather than assuming.
 		if err := c.UpdateCampaignBudget(ctx, budget.ID, amountMicros, budgetPeriodDaily); err != nil {
-			return "", "", nil, fmt.Errorf("google-ads campaign budget %s named %q carries %d micros but this brief asks for %d, and aligning it failed; refusing to attach a campaign to a budget with an amount nobody asked for: %w", budget.ID, budgetName, budget.AmountMicros, amountMicros, err)
+			alignErr := fmt.Errorf("google-ads campaign budget %s named %q carries %d micros but this brief asks for %d, and aligning it failed; refusing to attach a campaign to a budget with an amount nobody asked for: %w", budget.ID, budgetName, budget.AmountMicros, amountMicros, err)
+			// THE AMBIGUITY IS MARKED HERE, NOT INSIDE UpdateCampaignBudget, and the
+			// difference is not stylistic.
+			//
+			// UpdateCampaignBudget marks only the three 2xx exits where Google ACCEPTED
+			// the mutate and answered untrustworthily. Its ordinary ambiguous failures —
+			// a 5xx, an exhausted 429, a mid-flight transport timeout on
+			// campaignBudgets:mutate — return a plain wrapped error, because ambiguity of
+			// that shape is what createOutcomeAmbiguous reads, and the method's OTHER
+			// caller (dispatch/googleads_budget.go) already asks exactly that question via
+			// IsOutcomeUnconfirmed. Marking inside would be redundant there and would
+			// change the error type that path returns.
+			//
+			// The create path cannot reach the same answer by shape. CreateOutcome's
+			// budget_name_taken arm gates on carriesUnconfirmedWrite, which reads the
+			// explicit marker ONLY -- deliberately narrower than IsOutcomeUnconfirmed,
+			// because this same chain usually also carries a failed budget-lookup READ
+			// whose 5xx wrote nothing, and shape-inference there would suppress a token
+			// that is correct. So the write that may have landed has to say so itself.
+			//
+			// Gated on createOutcomeAmbiguous so the DEFINITE failures stay unmarked: a
+			// 4xx Google rejected, and the pre-send unsupported-period refusal that never
+			// left the process. Those changed nothing, and "nothing new was created" is
+			// true of them.
+			if createOutcomeAmbiguous(err) && !carriesUnconfirmedWrite(err) {
+				return "", "", nil, &unconfirmedBudgetMutateError{err: alignErr}
+			}
+			return "", "", nil, alignErr
 		}
 		steps = append(steps, fmt.Sprintf("Campaign budget %s amount aligned to the brief: %.2f/day in account currency (was %.2f)", budget.ID, budgetDisplay, float64(budget.AmountMicros)/microsPerUnit))
 	}
