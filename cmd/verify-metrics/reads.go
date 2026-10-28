@@ -190,14 +190,16 @@ type reportState struct {
 var errReportNeverServed = errors.New("no finished report was served and none is building: the platform refused or failed the report " +
 	"(see the logged warnings above, and -raw for the exchanges)")
 
-// pollReported calls read until its report is no longer building, sleeping interval between
+// pollReported calls read until a finished report is served or none is building, sleeping interval between
 // calls — the service does the same across requests, keeping the report in its store; this run
 // keeps it in memory and asks again. Each call is the endpoint's whole method, so the answer it
 // finally returns is the one the endpoint would serve on the request after the report finished.
 func pollReported[T any](ctx context.Context, out *scrubWriter, interval time.Duration, read func(context.Context) (*T, reportState, error)) (*T, reportState, error) {
 	for attempt := 1; ; attempt++ {
 		res, st, err := read(ctx)
-		if err != nil || !st.pending {
+		// Served ends the wait even while pending: a report collected past the freshness limit
+		// is served AND a replacement submitted at once, and the served one is the evidence.
+		if err != nil || !st.pending || st.served {
 			return res, st, err
 		}
 		out.printf("poll:     attempt %d: report still building; checking again in %s\n", attempt, interval)

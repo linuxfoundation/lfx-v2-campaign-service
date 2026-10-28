@@ -295,6 +295,17 @@ func TestPollReported(t *testing.T) {
 		t.Errorf("err = %v, want the still-building timeout", err)
 	}
 
+	// Served and pending at once (a stale report collected, its replacement already submitted):
+	// the served report is the answer, not a reason to keep waiting.
+	calls = 0
+	_, st, err = pollReported(context.Background(), w, time.Millisecond, func(context.Context) (*int, reportState, error) {
+		calls++
+		return new(int), reportState{pending: true, served: calls >= 2}, nil
+	})
+	if err != nil || !st.served || calls != 2 {
+		t.Errorf("served-and-pending: st=%+v err=%v calls=%d, want a return on the second call", st, err, calls)
+	}
+
 	boom := errors.New("boom")
 	if _, _, err = pollReported(context.Background(), w, time.Millisecond, func(context.Context) (*int, reportState, error) {
 		return nil, reportState{}, boom
