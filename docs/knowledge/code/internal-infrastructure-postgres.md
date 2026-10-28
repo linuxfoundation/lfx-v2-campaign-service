@@ -2660,8 +2660,10 @@ because a platform id is unique only within the customer that created it, and th
 the recorded creating customer against the connection's current one before querying. The
 boundary is pinned by BEHAVIOUR, not only text: `TestLiveListProjectPlatformCampaignIDsIsTenantScoped`
 (`dbtest/project_scope_live_test.go`, added in `aef68385`, #153) seeds a second project,
-another provider, deleted, empty-id and NULL-id rows, and asserts the exact id set returned,
-so dropping any one predicate changes the result. `TestListProjectPlatformCampaignIDs_IsScopedInSQL`
+another provider, deleted, empty-id and NULL-id rows, and asserts the exact id set returned, so
+it verifies the combined filtering. It does not catch the removal of every single predicate:
+`platform_campaign_id <> ''` also excludes NULL, so dropping only the `IS NOT NULL` guard leaves the
+result unchanged. `TestListProjectPlatformCampaignIDs_IsScopedInSQL`
 remains as a cheap SQL-text check beside it, not as the boundary's proof.
 
 ## `ListRecentProjectPlatformCampaigns` (LFXV2-2665)
