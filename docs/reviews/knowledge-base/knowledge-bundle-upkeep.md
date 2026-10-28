@@ -26,7 +26,7 @@ Both required parts in the same patch. A patch that has one of them is still a
 match — the incomplete update is the recurring shape, not a rarity.
 
 **The index arm is conditional, and demanding it unconditionally is a false
-finding.** `CLAUDE.md:22-23` requires the bullet only when a concept is *added,
+finding.** Step 2 of CLAUDE.md § "Keep the knowledge base current" requires the bullet only when a concept is *added,
 renamed, or its description changes*, so an in-place edit to a concept's body that
 leaves its path, title and indexed description untouched owes no index change.
 Raising one is churn, and it is the reviewer contradicting the rule surface it is
@@ -67,11 +67,11 @@ silently degrades every future agent's context.
   landed within 5–41 minutes of the comment — developers agree with this one
   immediately.
 
-**Status on main:** the rule is written at `CLAUDE.md:17-26`, with the same
+**Status on main:** the rule is written in CLAUDE.md § "Keep the knowledge base current", with the same
 four-step contract restated for humans in `README.md`. Note the accompanying
 prohibition: `go run ./cmd/okfgen` must **not** be re-run to satisfy it, because it
 regenerates the whole bundle from source and clobbers hand-edited concepts —
-`CLAUDE.md:28-30`.
+the paragraph after step 4 in the same CLAUDE.md section.
 
 **The bundle is not a complete inventory.** At the evidence SHA these packages
 have no concept and no index bullet: `internal/apivalidation`, `internal/domain`,
@@ -86,7 +86,7 @@ test-only change, a dependency bump, a refactor with no behavioural effect, or a
 bug fix whose corrected behaviour no concept describes.
 
 **A bug fix is in scope when a concept describes the behaviour it changed**, and
-out of scope otherwise. `CLAUDE.md:17` triggers the contract on *"whenever you
+out of scope otherwise. The opening line of CLAUDE.md § "Keep the knowledge base current" triggers the contract on *"whenever you
 merge a PR, update a Helm manifest, **or fix a bug**"*, and this entry's own
 evidence is a bug fix: the PR #17 comment says in as many words that it applies to
 "a bug fix too, not only a new package". Scoping the detector to package,
