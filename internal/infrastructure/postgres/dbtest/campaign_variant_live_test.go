@@ -20,7 +20,7 @@ const (
 	liveClaimSQL = `INSERT INTO campaigns
 		(project_id, brief_id, job_id, platform, variant, campaign_name, status, created_by, updated_by)
 		VALUES ($1, $2, $3, $4, $5, '', 'pending', $6, $6)
-		ON CONFLICT (brief_id, platform, variant) WHERE status <> 'deleted' DO NOTHING`
+		ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO NOTHING`
 	liveReleaseSQL = `DELETE FROM campaigns WHERE brief_id=$1 AND platform=$2 AND variant=$3 AND status='pending'`
 	liveCountSQL   = `SELECT count(*) FROM campaigns WHERE brief_id=$1 AND platform=$2 AND variant=$3 AND status <> 'deleted'`
 )

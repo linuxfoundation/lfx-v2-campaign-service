@@ -123,6 +123,18 @@ type CampaignReader interface {
 	// unique slot. Empty is normalized to model.VariantDefault, which is what every
 	// provider that does not sub-divide uses.
 	GetCampaignByPlatform(ctx context.Context, projectID, briefID string, platform model.Provider, variant string) (*model.Campaign, error)
+	// GetCampaignByPlatformWithMaxSlotVersion is GetCampaignByPlatform plus the highest
+	// SlotVersion any row on the slot has ever held, soft-deleted rows INCLUDED, read in ONE
+	// statement so both come from the same snapshot. A new_version request numbers its campaign
+	// past that maximum: deleting a campaign only unbinds it locally, so its upstream campaign
+	// keeps the name its slot version composed (model.SlotNameSuffix), and reusing that version
+	// would let a name-based lookup hand the deleted campaign back as the new one. One snapshot,
+	// because two reads let a concurrent request's claim land between them: both requests would
+	// see the same completed latest, but the second would count the first's pending claim in
+	// its maximum and pick a DIFFERENT next version, so the claim could no longer dedupe them.
+	// With no live campaign it returns ErrNotFound and STILL reports the maximum, so a slot
+	// whose campaigns were all deleted is numbered past them too.
+	GetCampaignByPlatformWithMaxSlotVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string) (*model.Campaign, int, error)
 	// ListCampaignsForBrief returns every live campaign under a brief, ordered so a
 	// consumer's rows are stable across reads. Soft-deleted rows are excluded, matching
 	// GetCampaign — a deleted campaign is invisible to reads.
@@ -217,11 +229,17 @@ type CampaignReader interface {
 	// carried no authenticated principal, and NULL means "not recorded", not "nobody".
 	//
 	// slotVersion names WHICH campaign on the slot is being claimed (model.Campaign.
-	// SlotVersion); 1 for the first. A claim for a slot version the schema cannot hold yet
-	// returns domain.ErrSlotVersionUnavailable, having written nothing. A claim is serialized
-	// per (brief, platform, variant) against AdoptCampaign, so an adopt never lands beside a
-	// claimed row on the same slot.
+	// SlotVersion); 1 for the first. A claim is serialized per (brief, platform, variant)
+	// against AdoptCampaign, so an adopt never lands beside a claimed row on the same slot.
 	ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (claimed bool, row *model.Campaign, err error)
+	// ClaimNewCampaignVersion is ClaimCampaignDispatch for EVERY new_version claim (a fresh
+	// version, an unfinished latest one's, or slot 1 on a never-used slot), plus one check under
+	// the same per-slot lock: a slotVersion held by a soft-deleted row and by no live row refuses
+	// the claim with ErrSlotVersionUsed. Such a row is a campaign a concurrent request completed and
+	// deleted after this request read the slot; the live-row index would admit a second row there,
+	// recomposing the deleted campaign's upstream name. A live row at the version is handed back as
+	// ClaimCampaignDispatch does. A plain create keeps ClaimCampaignDispatch.
+	ClaimNewCampaignVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (claimed bool, row *model.Campaign, err error)
 	// DeleteDispatchClaim removes the still-'pending' claim row jobID took on (brief,
 	// platform, variant, slot version) so the slot can be retried after a dispatch fails
 	// before the upstream campaign is created. It only deletes rows still in 'pending'

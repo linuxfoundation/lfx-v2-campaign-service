@@ -1782,7 +1782,19 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// The lookup returns the slot's LATEST live campaign, and slotVersion is which campaign
 	// on the slot this dispatch claims: the latest one for a retry, the one after it for a
 	// deliberate new version, and the first when the slot is empty.
-	existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p, variant)
+	//
+	// A new-version request also needs the highest slot version ever used, and reads it in the
+	// same statement as the latest (see GetCampaignByPlatformWithMaxSlotVersion for why one).
+	var (
+		existing *model.Campaign
+		maxUsed  int
+		lerr     error
+	)
+	if opts.NewVersion {
+		existing, maxUsed, lerr = o.campaigns.GetCampaignByPlatformWithMaxSlotVersion(ctx, brief.ProjectID, brief.ID, p, variant)
+	} else {
+		existing, lerr = o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p, variant)
+	}
 	slotVersion := model.FirstSlotVersion
 	switch {
 	case lerr == nil && isReusableCampaign(existing) && opts.NewVersion:
@@ -1794,7 +1806,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// latest campaign complete makes one more. Two CONCURRENT ones compute the same
 		// next version and the claim lets exactly one through (the other is skipped or
 		// reuses the winner), which is what covers a double-submitted form.
-		slotVersion = existing.SlotVersion + 1
+		//
+		// Numbered past every version the slot has EVER used, not just the live latest: a
+		// deleted campaign keeps its upstream name, so reusing its version would compose that
+		// name again and a name-based lookup would return the deleted campaign as this one.
+		slotVersion = max(existing.SlotVersion, maxUsed) + 1
 	case lerr == nil && isReusableCampaign(existing):
 		// A COMPLETED campaign (created / created_degraded — both terminal, since a
 		// re-dispatch can't repair a degraded sub-step). Reuse it idempotently. A
@@ -1816,6 +1832,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// (pending status WITH an upstream id, recorded for reconciliation after a
 		// mid-flow failure). In both cases fall through to the claim path, which
 		// reconciles it rather than falsely reporting the pending orphan as a success.
+	case errors.Is(lerr, domain.ErrNotFound) && opts.NewVersion && maxUsed > 0:
+		// No LIVE campaign, but the slot has used versions before and every one was deleted.
+		// Number past them for the same reason as above: version 1 would compose the deleted
+		// campaign's upstream name again and a name-based lookup would return it.
+		slotVersion = maxUsed + 1
 	case errors.Is(lerr, domain.ErrNotFound):
 		// No campaign for this pair yet — fall through to claim/dispatch.
 	default:
@@ -1840,16 +1861,19 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// index arbitrates). The INSERT runs in a short transaction under the per-slot advisory
 	// lock — it waits only for local statements on the same slot, and nothing is held once
 	// it commits, so no connection is held across the platform call below.
-	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, variant, slotVersion, jobID, by)
-	if errors.Is(err, domain.ErrSlotVersionUnavailable) {
-		// Expected until the release after this one drops 000022's one-campaign-per-slot
-		// index, which still rejects the second campaign. That drop is staged one release
-		// after the per-slot lock ships, so an image-only rollback to the previous binary
-		// (which takes no slot lock) still finds the index in place. Nothing was written or
-		// created, so this is a plain refusal rather than a fault.
-		slog.WarnContext(ctx, "new campaign version refused: the schema still allows one live campaign per slot",
-			"platform", p, "job_id", jobID, "project_id", brief.ProjectID, "slot_version", slotVersion)
-		res.Error = "creating another campaign on this platform for the same brief is not available yet"
+	// Every new_version claim, whichever version it targets, also refuses a version a concurrent
+	// request completed and deleted since this request read the slot (ClaimNewCampaignVersion): the
+	// live-row index alone would admit it again and recompose the deleted campaign's upstream name.
+	claim := o.campaigns.ClaimCampaignDispatch
+	if opts.NewVersion {
+		claim = o.campaigns.ClaimNewCampaignVersion
+	}
+	claimed, existing, err := claim(ctx, brief.ProjectID, brief.ID, p, variant, slotVersion, jobID, by)
+	if errors.Is(err, domain.ErrSlotVersionUsed) {
+		// A concurrent request took this version, completed and was deleted between our read and
+		// our claim: the losing half of a double submit, so skipped like any other.
+		res.Skipped = true
+		res.Error = "skipped: a concurrent new_version request already used this version"
 		return res
 	}
 	if err != nil {

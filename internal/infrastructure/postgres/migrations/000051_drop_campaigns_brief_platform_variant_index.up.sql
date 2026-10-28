@@ -1,0 +1,51 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
+-- CONTRACT step of the slot-version change (LFXV2-2023): drop 000022's three-column slot
+-- index, uq_campaigns_brief_platform_variant_live. 000037's four-column
+-- uq_campaigns_brief_platform_variant_slot_version_live has been the ON CONFLICT arbiter of
+-- every claim, upsert and adopt since the release that shipped it, and the per-slot advisory
+-- lock has serialized them since the release after that (PR #260). This migration ships one
+-- release AFTER the lock is deployed — expand → lock → contract — so every binary that can run
+-- against the contracted schema, including the one an image-only rollback returns to (reverting
+-- the image does not revert the schema), already takes the lock and boots without this index
+-- (#260 made it optional in requiredIndexes).
+--
+-- The N-1 binary is the release that embeds migrations through 000050. Numbered 000047 when
+-- written, this moved to 000050 when main claimed 000047-000049 first, then to 000051 when #332's
+-- bidding_strategy column took 000050. schemaIsNewerThanImage (#260) lets a binary boot on a
+-- schema exactly ONE version ahead, so an image-only rollback must return to an image embedding
+-- 000050; #260's own release embeds only through 000046 and refuses schema 51 ("no migration
+-- found"). That image must be deployed ahead of this one.
+--
+-- Safe for that N-1 binary: none of its statements names the three-column index as an arbiter.
+-- It only CLASSIFIED a 23505 raised on this index — as ErrSlotVersionUnavailable above slot 1,
+-- as a lost race at slot 1, and as a lost claim on UpsertCampaign's INSERT arm — and once the
+-- index is gone that 23505 simply never happens: a same-version race resolves on the arbiter
+-- as DO NOTHING, and a slot-2 claim succeeds, which is what new_version asked for.
+--
+-- NOT safe for that binary's new_version ALLOCATION. With the index gone the N-1 binary's
+-- new_version starts succeeding at slot 2+, without this release's safeguards: it numbers from the
+-- latest LIVE row (so it re-picks a deleted version), claims with ClaimCampaignDispatch (no
+-- refusal of a used, deleted version), and its DeleteCampaign takes no slot lock. After an
+-- image-only rollback, a new_version on a slot whose latest version was deleted reuses that
+-- version and its platform name, and on Microsoft the name lookup returns the deleted upstream
+-- campaign. Until the image is rolled forward again, do not send new_version for a slot that has a
+-- deleted version; a first create, a re-dispatch and a new_version on a slot with no deleted
+-- version are unaffected. See docs/knowledge/kubernetes/deployment.md.
+--
+-- What the index used to provide for free — "an adopt binds only an EMPTY slot", and "a stale
+-- upsert whose claim was cleared cannot insert beside a live row" — is enforced in code under
+-- that lock: AdoptCampaign checks for ANY live row on the slot, and UpsertCampaign's ownership
+-- check (slotOwnershipQuery) refuses an occupied slot as ErrDispatchClaimLost. See
+-- campaign_repo.go.
+--
+-- Bare and alone, as 000024 is: DROP INDEX CONCURRENTLY cannot run inside a transaction, and a
+-- multi-statement file is batched into one. CONCURRENTLY because migrations run during a
+-- rolling restart while other replicas are claiming dispatches, and a blocking drop would stall
+-- a claim mid-flight. IF EXISTS so a database whose index an operator already removed records
+-- this version cleanly. No verify step precedes it (unlike 000023 before 000024): the index that
+-- takes over is already the arbiter every statement names, and it is in requiredIndexes, so
+-- boot and /readyz fail closed if it is missing or invalid.
+
+DROP INDEX CONCURRENTLY IF EXISTS uq_campaigns_brief_platform_variant_live;
