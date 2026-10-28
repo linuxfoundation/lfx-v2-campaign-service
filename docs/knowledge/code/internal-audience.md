@@ -362,7 +362,18 @@ The plan is validated first, so a brief that cannot be planned leaves no row beh
 
 Every suppression-hint check reads the name with its separators normalised too
 (`hasSuppressionHint`, used by `DiscoveryHidden`, `ClassifyList`, `MatchesBrandMaster` and
-`MatchesEventSuppression`), so `Opt_Out` is an opt-out. `DiscoveryHidden` classifies test and
+`MatchesEventSuppression`), so `Opt_Out` is an opt-out. `hasSuppressionHint` also recognises the
+lists the standing suppression flow manages, whose names carry no suppression word
+(`isManagedSuppressionName`): every `StandardSuppressionTerms` list (normalised words contained,
+so "26Q2-Kernel-Domain-Contacts" counts), `LFX Standard Suppressions - <project>`, and
+`<edition> - Current Registrants`, which otherwise reads like an inclusion signal.
+`MatchesEventSuppression` keeps to the generic words (`hasGenericSuppressionHint`) and excludes
+only a name that IS a standard list or one of the two standing lists (`isStandingOrStandardName`,
+exact normalised equality, not containment), since each has its own picker row; an event's own
+"KubeCon - LF Events Suppression List" stays eligible. `CustomListFilter` writes `registered_for`
+through `exactValues` (blanks and exact repeats dropped, every other value verbatim, padding
+included) rather than `cleanValues`, because it
+is an exact `event_name` equality and collapsing a double space would match nobody. `DiscoveryHidden` classifies test and
 staff before master, so a test or staff master rollup ("… Master [test]") is hidden rather than
 expanded as a master. `TestOrStaffList` applies the same test and staff hints to every
 automatic pick (`MatchesBrandMaster`, `MatchesBrandOptOut`, `MatchesEventSuppression`), so a
@@ -440,6 +451,10 @@ the orchestration that calls HubSpot lives in [internal/dispatch](internal-dispa
   and requires equality, not containment. A raw comparison missed every portal whose hygiene lists
   are named `"Unsubscribed - Lists"` or `"GDPR_Suppression 26Q1"`, so the standard suppressions
   resolved as "not found in this portal" while existing.
+  `StandardSuppressionTerms` also carries the three Linux kernel contact lists
+  (`Kernel Domain Contacts`, `Persona Linux Kernel`, `LF kernel.org Contacts`), matched the same
+  way, so `26Q2-Kernel-Domain-Contacts` and `Q1 2026 - LF - kernel.org Contacts` resolve and next
+  quarter's rebuilds do too.
   `MatchLastSent` also refuses ANOTHER EDITION of the same series: `editionRegions` reads the
   region an event or email names (`editionRegionAliases`, token → edition region — not
   `region.go`'s `countryToRegion`, which maps MARKETING regions and would fold Japan into APAC), and
@@ -462,8 +477,26 @@ the orchestration that calls HubSpot lives in [internal/dispatch](internal-dispa
 - **`builder_errors.go`** — the failure vocabulary, living beside the results rather than in the
   orchestration, because importing the orchestration package would close a cycle through its
   tests. `ComposePartialError` unwraps to BOTH `ErrComposePartial` and the underlying cause: the
-  combined suppression list was created and the master list was not, which is a state an operator
-  must be shown rather than a failure to retry blindly.
+  master create is unconfirmed (compose creates no suppression list of its own any more), which is
+  a state an operator must be shown rather than a failure to retry blindly.
+- **`builder_standard.go`** — the standing suppression lists: `StandardSuppressionName` (one per
+  project, no date or fingerprint, so every audience reuses it; a project id too long for the name
+  is cut and tagged with a short hash via `fitTagged`, as the registrants name is, so two long ids
+  sharing a prefix never share a list), `CurrentRegistrantsName` and
+  `CurrentRegistrantsFilter` (the edition's registrants via the registration custom event; an
+  edition too long for the name is cut and tagged with a short hash of the whole edition),
+  `RegistrantsListMatches` (the whole edition and nobody else: `RegistrationEvidence` exclusive AND
+  `CoveredEditions` exactly that edition, compared exactly with only the ends trimmed, every stored
+  `event_name` value byte-equal to it (`eventNameValuesAre`: the QA readers trim and intersect
+  case-insensitively, which reuse must not), and no
+  filter setting `includeObjectsWithNoValueSet`) and `StandingFilterIsUnion` (whether a list found under a
+  standing name is safe to reuse, or to grow; a missing or null filter is not a union,
+  `HasFilterTree`, and every node must carry an explicit AND/OR `filterBranchType`), `SplitStandardSuppressions` (substitute the standing list only for
+  a COMPLETE standard selection), `SameIDSet`, and `MasterListWithSuppressionsFilter` (one
+  `NOT_IN_LIST` per excluded list on every inclusion path). A list holding a standing name that
+  cannot be reused is `StandingListConflictError` (unwraps to `ErrStandingListConflict`, a 409
+  naming the list) in `builder_errors.go`, beside `FieldError` (a 400 naming the request field,
+  e.g. a yearless `current_registrants_event`) and `ExclusionOverlapError`.
 
 See [internal/audience](../../../internal/audience).
 
@@ -479,7 +512,11 @@ AND wrote the HubSpot filter JSON AND called the create. Here the model does onl
   silently ignored — while one unusable filter row is dropped with a note rather than costing the
   whole draft. The model never supplies list ids (the gate and any speakers list are resolved
   against the portal) or property types (read from the portal's definitions). Operator text is
-  quoted inside `BEGIN/END` blocks with the markers neutralised, exactly as the event-page prompt is.
+  quoted inside `BEGIN/END` blocks with the markers neutralised, exactly as the event-page prompt is. The
+  request, the answers and the event name keep their internal spacing (`lineSafe`: line breaks
+  become spaces, markers neutralised, length cut), and the past editions are Go-quoted whole
+  (`quotedEditions`), so an edition spelled "Synthetic  Summit 2025" reaches the model as spelled
+  and `knownEditions`' exact-first match can find it.
 - **`CustomListFilter`** is the only thing that builds the filter, and it is pure and table-tested.
   The shape is the reference list's (`26Q3 - Seoul - Mailable Contacts - …`): an OR root of AND
   branches — `city`/`ip_city` (+ `country_dropdown`/`ip_country` when broadened), each gated by
@@ -509,9 +546,14 @@ AND wrote the HubSpot filter JSON AND called the create. Here the model does onl
 - **Naming.** `CustomListName` follows the reference pattern
   (`<YYQN> - <Location> - Mailable Contacts - <Label>`, `<Event> Speakers - <Scope>`,
   `<YYQN> - <Event> - Event Registration`). A taken name is versioned `(v2)`, `(v3)` and never
-  reused: a matching name does not prove a matching audience. Every derived or versioned name is
-  cut (on a rune boundary) to `CustomNameMaxLen`, the input's 250-rune limit, so the name preview
-  returns is one create accepts back.
+  reused: a matching name does not prove a matching audience. A DERIVED or versioned name is cut
+  (on a rune boundary, `FitListName` / `VersionedName`) to `MaxListNameLength` (200, HubSpot's
+  list-search limit), so the name preview returns is one create accepts back. An EXPLICIT,
+  operator-typed name is never cut: one over 200 runes is refused by `CheckCustomListName` as a
+  `FieldError` (400) naming `name` and the limit, before any HubSpot call, so two typed names that
+  differ past the limit cannot collide into one list's `(v2)`. `CustomNameMaxLen` equals
+  `MaxListNameLength`, and the Goa design's `name` MaxLength is 200 to match. More than three places
+  are named as `A, B, C and N more`.
 - **Speakers-list auto-pick fails closed.** `SpeakerListFits` decides whether an existing list
   may stand in for a speaker restriction; a filled `ListID` REPLACES the scope and event-name
   filters, so it accepts a list only when its name provably fits: a speakers list discovery would

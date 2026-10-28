@@ -202,7 +202,9 @@ would be sent nothing while the send reports success. Single-list callers pass a
 SERVER-SIDE via the `objectTypeId "0-1"` request field (a valid `ListSearchRequest`
 field per HubSpot's v3 docs), with a per-hit `ObjectTypeID` check kept as
 defense-in-depth; follows `offset`/`hasMore` pagination with a repeated-page guard;
-`includeFilters` is a GET-single-list field, NOT a search field, and is not sent),
+`includeFilters` is a GET-single-list field, NOT a search field, and is not sent;
+`SearchListsAnyType` is the same search with no `objectTypeId` and no per-hit drop, for asking
+whether a NAME is taken, since list names are unique per portal across object types),
 `GetList` (with `includeFilters=true`
 so the filterBranch + processingType come back),
 `CreateList` (`POST /crm/v3/lists` — canonical no-trailing-slash path, since the client

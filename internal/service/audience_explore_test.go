@@ -212,7 +212,14 @@ func TestComposeErr_DistinguishesConfirmedFromUnconfirmedMaster(t *testing.T) {
 			},
 			wantMasterNameSet: false,
 			wantSuppression:   true,
-			wantSubstrings:    []string{"combined suppression list was created but the master list was not"},
+			wantSubstrings:    []string{"suppression list was created but the master list was not"},
+		},
+		{
+			name: "a partial with nothing set still says to check the portal",
+			partial: &audience.ComposePartialError{
+				Err: cause,
+			},
+			wantSubstrings: []string{"check the portal before composing again"},
 		},
 		{
 			name: "unconfirmed suppression create reports only its name, never a suppression object",
@@ -224,7 +231,7 @@ func TestComposeErr_DistinguishesConfirmedFromUnconfirmedMaster(t *testing.T) {
 			wantMasterNameSet:   false,
 			wantSuppression:     false,
 			wantSuppressionName: true,
-			wantSubstrings:      []string{"combined suppression list creation is unconfirmed", "search HubSpot for it by name"},
+			wantSubstrings:      []string{"suppression list creation is unconfirmed", "search HubSpot for it by name"},
 		},
 		{
 			name: "unconfirmed master with no suppression names only the master and omits the suppression object",

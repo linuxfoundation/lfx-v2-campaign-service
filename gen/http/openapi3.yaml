@@ -12,7 +12,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-audience-builder
             summary: attach-existing-audience lfx-v2-campaign-service-audience-builder
-            description: Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. Creates nothing in HubSpot.
+            description: 'Record lists that already exist in the project''s HubSpot portal as a brief''s built audience, without composing a new master. Every id is read back from the portal first. When every resolved standard suppression list is supplied they are recorded as the project''s standing standard suppression list, and with current_registrants_event the edition''s current-registrants list is recorded too; those two lists, found by name and reused, are the only lists HubSpot may create here, so an attach creates at most two. The recorded and returned suppression_list_ids are therefore not the input ids: the standing list''s id replaces the standard ids, and the registrants list''s id is appended. A list already holding either name that cannot safely be reused is a 409 naming it.'
             operationId: lfx-v2-campaign-service-audience-builder#attach-existing-audience
             parameters:
                 - name: project_id
@@ -63,6 +63,11 @@ paths:
                                     - Repellendus est facilis.
                                     - Dolorum beatae officiis voluptatem hic.
                                 master:
+                                    hubspot_url: Aliquam quis dicta voluptas odio quo.
+                                    list_id: Quia nihil qui ab accusamus tempora culpa.
+                                    name: Eaque dicta qui numquam.
+                                    size: 4504693386713616226
+                                suppression:
                                     hubspot_url: Aliquam quis dicta voluptas odio quo.
                                     list_id: Quia nihil qui ab accusamus tempora culpa.
                                     name: Eaque dicta qui numquam.
@@ -250,7 +255,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-audience-builder
             summary: compose-audience-master lfx-v2-campaign-service-audience-builder
-            description: Create the combined suppression list and then the master list in the project's HubSpot portal, and when brief_id is supplied record the master as that brief's built audience. NOT idempotent.
+            description: Create the master list in the project's HubSpot portal, excluding the requested suppressions directly through the project's standing standard suppression list and, when asked, the edition's current-registrants list (both found by name and reused), and when brief_id is supplied record the master as that brief's built audience. NOT idempotent.
             operationId: lfx-v2-campaign-service-audience-builder#compose-audience-master
             parameters:
                 - name: project_id
@@ -273,6 +278,7 @@ paths:
                             compose:
                                 brand_short: Qui voluptatem dolore.
                                 brief_id: c32fcca9-7994-4925-b99f-3faa2c231afe
+                                current_registrants_event: 0tk
                                 event_dates:
                                     - Temporibus nobis minus neque.
                                     - Hic aut.
@@ -318,6 +324,11 @@ paths:
                                     list_id: Quia nihil qui ab accusamus tempora culpa.
                                     name: Eaque dicta qui numquam.
                                     size: 4504693386713616226
+                                suppression_list_ids:
+                                    - Tempore consequatur sed placeat modi sed.
+                                    - Molestiae cum quisquam ad illum.
+                                    - A aut rerum repellat ducimus.
+                                    - Quas nemo qui et molestiae qui.
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -1848,6 +1859,16 @@ paths:
                     description: Event name to match event-specific suppression lists
                     example: Cupiditate consectetur accusamus autem voluptate nostrum.
                   example: Cupiditate consectetur accusamus autem voluptate nostrum.
+                - name: registrants_event
+                  in: query
+                  description: Edition (event name with year) whose current-registrants row to add
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: Edition (event name with year) whose current-registrants row to add
+                    example: xuz
+                    maxLength: 200
+                  example: xuz
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -1866,20 +1887,27 @@ paths:
                                 $ref: '#/components/schemas/GetAudienceSuppressionListsResponseBody'
                             example:
                                 lists:
-                                    - category: standard
+                                    - category: current_registrants
                                       hubspot_url: Consequuntur autem velit.
                                       key: Et nisi voluptas est saepe vel.
                                       label: Facere nulla minima consectetur explicabo iusto.
                                       list_id: Ad quo.
                                       name: Maxime recusandae velit.
                                       size: 876045623713169027
-                                    - category: standard
+                                      will_create: true
+                                    - category: current_registrants
                                       hubspot_url: Consequuntur autem velit.
                                       key: Et nisi voluptas est saepe vel.
                                       label: Facere nulla minima consectetur explicabo iusto.
                                       list_id: Ad quo.
                                       name: Maxime recusandae velit.
                                       size: 876045623713169027
+                                      will_create: true
+                                standard_list:
+                                    hubspot_url: Aliquam quis dicta voluptas odio quo.
+                                    list_id: Quia nihil qui ab accusamus tempora culpa.
+                                    name: Eaque dicta qui numquam.
+                                    size: 4504693386713616226
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -17751,6 +17779,11 @@ components:
                     description: The brief to record the audience under
                     example: a20685c0-2378-4c21-84e7-b2f9d998ebbe
                     format: uuid
+                current_registrants_event:
+                    type: string
+                    description: Edition (event name with year) whose current registrants the send also suppresses, through a list found or created by name
+                    example: cro
+                    maxLength: 200
                 include_list_ids:
                     type: array
                     items:
@@ -17809,12 +17842,14 @@ components:
                         - Dolorum beatae officiis voluptatem hic.
                 master:
                     $ref: '#/components/schemas/AudienceComposedList'
+                suppression:
+                    $ref: '#/components/schemas/AudienceComposedList'
                 suppression_list_ids:
                     type: array
                     items:
                         type: string
                         example: Aliquam fugit vel nemo aut.
-                    description: The suppression list ids recorded beside it
+                    description: 'The suppression list ids recorded beside it. Not the input ids: a full standard set is recorded as the standing list''s id, and the current-registrants list''s id is appended'
                     example:
                         - Aliquam fugit vel nemo aut.
                         - Earum voluptas ut voluptatem et id.
@@ -17834,6 +17869,11 @@ components:
                     - Repellendus est facilis.
                     - Dolorum beatae officiis voluptatem hic.
                 master:
+                    hubspot_url: Aliquam quis dicta voluptas odio quo.
+                    list_id: Quia nihil qui ab accusamus tempora culpa.
+                    name: Eaque dicta qui numquam.
+                    size: 4504693386713616226
+                suppression:
                     hubspot_url: Aliquam quis dicta voluptas odio quo.
                     list_id: Quia nihil qui ab accusamus tempora culpa.
                     name: Eaque dicta qui numquam.
@@ -17873,6 +17913,11 @@ components:
                     description: Record the composed master as this brief's built audience, stamped with the portal it was composed in
                     example: c32fcca9-7994-4925-b99f-3faa2c231afe
                     format: uuid
+                current_registrants_event:
+                    type: string
+                    description: Edition (event name with year) whose current registrants the master also excludes, through a list found or created by name
+                    example: 0tk
+                    maxLength: 200
                 event_dates:
                     type: array
                     items:
@@ -17918,6 +17963,7 @@ components:
             example:
                 brand_short: Qui voluptatem dolore.
                 brief_id: c32fcca9-7994-4925-b99f-3faa2c231afe
+                current_registrants_event: 0tk
                 event_dates:
                     - Temporibus nobis minus neque.
                     - Hic aut.
@@ -17955,6 +18001,17 @@ components:
                         - Autem optio.
                 suppression:
                     $ref: '#/components/schemas/AudienceComposedList'
+                suppression_list_ids:
+                    type: array
+                    items:
+                        type: string
+                        example: Tempore consequatur sed placeat modi sed.
+                    description: 'Every list the master excludes, in the order attach-existing records them: the standing standard list first (when used), then each other excluded list, then the current-registrants list. Absent when the master excludes nothing'
+                    example:
+                        - Tempore consequatur sed placeat modi sed.
+                        - Molestiae cum quisquam ad illum.
+                        - A aut rerum repellat ducimus.
+                        - Quas nemo qui et molestiae qui.
             example:
                 audience:
                     id: Sit nisi rem id ullam tenetur voluptatem.
@@ -17981,6 +18038,11 @@ components:
                     list_id: Quia nihil qui ab accusamus tempora culpa.
                     name: Eaque dicta qui numquam.
                     size: 4504693386713616226
+                suppression_list_ids:
+                    - Tempore consequatur sed placeat modi sed.
+                    - Molestiae cum quisquam ad illum.
+                    - A aut rerum repellat ducimus.
+                    - Quas nemo qui et molestiae qui.
             required:
                 - master
                 - source_list_ids
@@ -18303,9 +18365,9 @@ components:
                     $ref: '#/components/schemas/AudienceCustomCriteria'
                 name:
                     type: string
-                    description: Explicit list name; derived from the criteria when omitted. A taken name is versioned, never reused
+                    description: Explicit list name, at most 200 characters (HubSpot cannot search a longer one); derived from the criteria when omitted. A taken name is versioned, never reused
                     example: np4
-                    maxLength: 250
+                    maxLength: 200
             example:
                 criteria:
                     cities:
@@ -19566,11 +19628,12 @@ components:
                 category:
                     type: string
                     description: Which group the row belongs to
-                    example: standard
+                    example: current_registrants
                     enum:
                         - standard
                         - brand
                         - event_specific
+                        - current_registrants
                 hubspot_url:
                     type: string
                     description: Deep link to the list in the HubSpot UI
@@ -19596,14 +19659,19 @@ components:
                     description: Membership size, when HubSpot reported one
                     example: 876045623713169027
                     format: int64
+                will_create:
+                    type: boolean
+                    description: The list does not exist yet; an attach or compose that applies this row creates it by name (current_registrants only)
+                    example: true
             example:
-                category: standard
+                category: current_registrants
                 hubspot_url: Consequuntur autem velit.
                 key: Et nisi voluptas est saepe vel.
                 label: Facere nulla minima consectetur explicabo iusto.
                 list_id: Ad quo.
                 name: Maxime recusandae velit.
                 size: 876045623713169027
+                will_create: true
             required:
                 - key
                 - label
@@ -20642,6 +20710,7 @@ components:
                 compose:
                     brand_short: Qui voluptatem dolore.
                     brief_id: c32fcca9-7994-4925-b99f-3faa2c231afe
+                    current_registrants_event: 0tk
                     event_dates:
                         - Temporibus nobis minus neque.
                         - Hic aut.
@@ -21851,36 +21920,47 @@ components:
                         $ref: '#/components/schemas/AudienceSuppressionList'
                     description: Suppression rows, standard first
                     example:
-                        - category: standard
+                        - category: current_registrants
                           hubspot_url: Consequuntur autem velit.
                           key: Et nisi voluptas est saepe vel.
                           label: Facere nulla minima consectetur explicabo iusto.
                           list_id: Ad quo.
                           name: Maxime recusandae velit.
                           size: 876045623713169027
-                        - category: standard
+                          will_create: true
+                        - category: current_registrants
                           hubspot_url: Consequuntur autem velit.
                           key: Et nisi voluptas est saepe vel.
                           label: Facere nulla minima consectetur explicabo iusto.
                           list_id: Ad quo.
                           name: Maxime recusandae velit.
                           size: 876045623713169027
+                          will_create: true
+                standard_list:
+                    $ref: '#/components/schemas/AudienceComposedList'
             example:
                 lists:
-                    - category: standard
+                    - category: current_registrants
                       hubspot_url: Consequuntur autem velit.
                       key: Et nisi voluptas est saepe vel.
                       label: Facere nulla minima consectetur explicabo iusto.
                       list_id: Ad quo.
                       name: Maxime recusandae velit.
                       size: 876045623713169027
-                    - category: standard
+                      will_create: true
+                    - category: current_registrants
                       hubspot_url: Consequuntur autem velit.
                       key: Et nisi voluptas est saepe vel.
                       label: Facere nulla minima consectetur explicabo iusto.
                       list_id: Ad quo.
                       name: Maxime recusandae velit.
                       size: 876045623713169027
+                      will_create: true
+                standard_list:
+                    hubspot_url: Aliquam quis dicta voluptas odio quo.
+                    list_id: Quia nihil qui ab accusamus tempora culpa.
+                    name: Eaque dicta qui numquam.
+                    size: 4504693386713616226
             required:
                 - lists
         GoogleAdsAccountMonitor:
