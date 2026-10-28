@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -260,14 +259,16 @@ func parseRowMetrics(m gaqlMetricRowMetrics, describe string) (impressions, clic
 	// audience bucket's running total, where one bad row corrupts every figure in that bucket
 	// rather than only its own.
 	//
-	// The upper bound is float64(math.MaxInt64) compared with '>=', not '>': MaxInt64 is not
-	// exactly representable as a float64, so the conversion rounds UP to 2^63 and a value of
-	// exactly 2^63 would pass a '>' guard. Same reasoning as GetCampaignMetrics.
+	// isUsableMetricDouble is that validation, shared with the two call sites in metrics.go
+	// rather than restated here: this test and theirs are the same test, and the comment that
+	// used to sit here explaining the '>=' bound said as much ("same reasoning as
+	// GetCampaignMetrics") while leaving a third copy free to drift away from it. The bound's
+	// reasoning now lives on the predicate, in one place.
 	//
 	// This fails the WHOLE response rather than zeroing the field, matching how this file
 	// already treats an unparseable counter above: a row whose metrics cannot be trusted is not
 	// a row with one missing number.
-	if math.IsNaN(m.Conversions) || math.IsInf(m.Conversions, 0) || m.Conversions < 0 || m.Conversions >= float64(math.MaxInt64) {
+	if !isUsableMetricDouble(m.Conversions) {
 		return 0, 0, 0, 0, fmt.Errorf("%s: conversions is not a usable count", describe)
 	}
 	return impressions, clicks, costMicros, m.Conversions, nil

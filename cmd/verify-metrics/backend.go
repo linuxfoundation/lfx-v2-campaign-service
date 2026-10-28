@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -24,6 +25,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -38,17 +40,19 @@ type connLookup interface {
 	Disconnected(ctx context.Context, projectID string, provider model.Provider) (bool, error)
 }
 
-// campaignScopes is the one campaign read this command makes.
-type campaignScopes interface {
-	ListProjectPlatformCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error)
-}
-
 // backend is the database side of a run.
 type backend struct {
-	conns     connLookup
-	campaigns campaignScopes
+	conns connLookup
+	// campaigns is the campaign repository's READ half: the metrics read looks its row up, and
+	// the other reads' orchestrator resolves the project's campaign scope through it.
+	campaigns domain.CampaignReader
 	enc       domain.Encryptor
-	close     func()
+	// statsLease is the service's cross-process X stats-job lease (domain.StatsJobLease), so a
+	// run that creates X stats jobs (the X audience read and account monitor) takes the same
+	// per-account ownership the service's pods take, and never runs jobs alongside one of them
+	// or another run. nil only in tests that build a backend by hand.
+	statsLease domain.StatsJobLease
+	close      func()
 }
 
 // openLiveBackend loads the database and encryption key the way the service's
@@ -70,13 +74,50 @@ func openLiveBackend(ctx context.Context) (*backend, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The lease is a session-level advisory lock (pg_try_advisory_lock), which a READ ONLY
+	// session may take: it writes no row. Its session is opened outside the pool from the
+	// pool's ConnConfig, which carries default_transaction_read_only (readOnlyPoolConfig).
+	lease := postgres.NewStatsJobLease(pool)
 	return &backend{
-		conns:     postgres.NewConnectionRepo(pool),
-		campaigns: postgres.NewCampaignRepo(pool),
-		enc:       enc,
-		close:     pool.Close,
+		conns:      postgres.NewConnectionRepo(pool),
+		campaigns:  postgres.NewCampaignRepo(pool),
+		enc:        enc,
+		statsLease: &safeLease{inner: lease, dsn: dsn},
+		close: func() {
+			closeCtx, cancel := context.WithTimeout(context.Background(), statsLeaseCloseTimeout)
+			lease.Close(closeCtx)
+			cancel()
+			pool.Close()
+		},
 	}, nil
 }
+
+// safeLease is the X stats-job lease as this command hands it to the dispatcher: the same
+// ownership answers, with the driver's text withheld whenever it could name a DSN identifier.
+// The lease opens its own session outside the pool, so a connect failure there (after the
+// pool's ping succeeded) carries pgconn's `user=… database=…` fragment; the dispatcher prints
+// or logs that error, and the secret scrubber knows nothing of DSN identifiers. The sentinels
+// are re-wrapped, so errors.Is still classifies the refusal; the raw error is not kept in the
+// chain, for openReadOnlyPool's reason.
+type safeLease struct {
+	inner domain.StatsJobLease
+	dsn   string
+}
+
+func (l *safeLease) Own(ctx context.Context, accountID string) error {
+	err := l.inner.Own(ctx, accountID)
+	if err == nil {
+		return nil
+	}
+	safe := postgres.SafeDSNErr(l.dsn, dsnSourceVerifyMetrics, err)
+	if errors.Is(err, domain.ErrStatsJobLeaseNotHeld) {
+		return fmt.Errorf("%w: %s", domain.ErrStatsJobLeaseNotHeld, safe)
+	}
+	return fmt.Errorf("%w: %s", domain.ErrStatsJobLeaseUnavailable, safe)
+}
+
+// statsLeaseCloseTimeout bounds releasing the X stats-job lease at exit.
+const statsLeaseCloseTimeout = 5 * time.Second
 
 // dsnSourceVerifyMetrics names where this command's DSN came from, for an operator who has to
 // go and fix it. config.ResolveDatabaseURL reads DATABASE_URL first and otherwise composes one
@@ -100,15 +141,32 @@ const dsnSourceVerifyMetrics = "the database settings (" + constants.EnvDatabase
 // would leave the driver's original message reachable through errors.As for any later caller to
 // print. Nothing in this command inspects this error's chain — run only matches flag.ErrHelp —
 // so there is no behaviour to preserve, and dropping the cause is the safe direction.
-func openReadOnlyPool(ctx context.Context, dsn string) (*postgres.Pool, error) {
+// readOnlyPoolConfig is the pool configuration: every session READ ONLY twice over. The
+// default_transaction_read_only startup parameter rides in ConnConfig, so it also covers a
+// session opened OUTSIDE the pool from a copy of that config — the X stats-job lease opens its
+// session that way (postgres.StatsJobLease), and AfterConnect never runs for it. AfterConnect
+// stays as the pooled sessions' second guard.
+func readOnlyPoolConfig(dsn string) (*pgxpool.Config, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, errors.New("parse database config: invalid database settings (redacted; check host/port/params)")
 	}
 	cfg.MaxConns = 2
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
 	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		_, err := conn.Exec(ctx, "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
 		return err
+	}
+	return cfg, nil
+}
+
+func openReadOnlyPool(ctx context.Context, dsn string) (*postgres.Pool, error) {
+	cfg, err := readOnlyPoolConfig(dsn)
+	if err != nil {
+		return nil, err
 	}
 	p, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -130,6 +188,46 @@ func (c *readOnlyConns) Get(ctx context.Context, projectID string, provider mode
 
 func (c *readOnlyConns) Disconnected(ctx context.Context, projectID string, provider model.Provider) (bool, error) {
 	return c.r.Disconnected(ctx, projectID, provider)
+}
+
+// readOnlyCampaigns is the domain.CampaignRepository the orchestrator is built on: the reader's
+// methods, and every write refused. NewOrchestrator takes the whole repository; none of the reads
+// this command runs writes a campaign, and if one ever did it would fail here, before the READ
+// ONLY session refused it too.
+type readOnlyCampaigns struct{ domain.CampaignReader }
+
+var _ domain.CampaignRepository = (*readOnlyCampaigns)(nil)
+
+func (*readOnlyCampaigns) UpsertCampaign(context.Context, *model.Campaign, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	return nil, errReadOnly
+}
+
+func (*readOnlyCampaigns) AdoptCampaign(context.Context, *model.Campaign, int64, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	return nil, errReadOnly
+}
+
+func (*readOnlyCampaigns) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignLockToken, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	return nil, errReadOnly
+}
+
+func (*readOnlyCampaigns) VerifyClaimedVersion(context.Context, string, string, string, int64, domain.CampaignLockToken) (*model.Campaign, error) {
+	return nil, errReadOnly
+}
+
+func (*readOnlyCampaigns) ClaimCampaignVersion(context.Context, string, string, string, int64) (*model.Campaign, domain.CampaignLockToken, error) {
+	var none domain.CampaignLockToken
+	return nil, none, errReadOnly
+}
+
+func (*readOnlyCampaigns) ReleaseCampaignLock(context.Context, domain.CampaignLockToken) error {
+	return errReadOnly
+}
+
+// ReleaseCampaignLockAfterCooldown has no error to return; a read never holds a lock to release.
+func (*readOnlyCampaigns) ReleaseCampaignLockAfterCooldown(domain.CampaignLockToken, time.Duration) {}
+
+func (*readOnlyCampaigns) DeleteCampaign(context.Context, string, string, string, int64, *model.Actor, domain.CampaignIndexPayloadFunc) error {
+	return errReadOnly
 }
 
 // recordingDecryptor decrypts exactly as the wrapped encryptor does and records every value of
@@ -163,11 +261,12 @@ type endpoints struct {
 	api       string
 	token     string
 	reporting string
+	customer  string // Microsoft Customer Management (the account monitor's currency read)
 }
 
-// newMetricsReader builds the provider's dispatcher with the service's own constructor, wired to
+// newDispatcher builds the provider's dispatcher with the service's own constructor, wired to
 // the read-only connection reader, the recording decryptor and the guarded HTTP client.
-func newMetricsReader(p model.Provider, be *backend, secrets *secretSet, hc *http.Client, ep endpoints) (metricsReader, error) {
+func newDispatcher(p model.Provider, be *backend, secrets *secretSet, hc *http.Client, ep endpoints) (service.PlatformDispatcher, error) {
 	conns := &readOnlyConns{r: be.conns}
 	enc := &recordingDecryptor{inner: be.enc, secrets: secrets}
 	switch p {
@@ -191,13 +290,20 @@ func newMetricsReader(p model.Provider, be *backend, secrets *secretSet, hc *htt
 		if ep.reporting != "" {
 			opts = append(opts, microsoft.WithReportingBaseURL(ep.reporting))
 		}
+		if ep.customer != "" {
+			opts = append(opts, microsoft.WithCustomerBaseURL(ep.customer))
+		}
 		return dispatch.NewMicrosoftDispatcher(conns, enc, opts...), nil
 	case model.ProviderTwitterAds:
 		opts := []twitter.Option{twitter.WithHTTPClient(hc)}
 		if ep.api != "" {
 			opts = append(opts, twitter.WithBaseURL(ep.api))
 		}
-		return dispatch.NewTwitterDispatcher(conns, enc, opts...), nil
+		d := dispatch.NewTwitterDispatcher(conns, enc, opts...)
+		if be.statsLease != nil {
+			d.SetStatsJobLease(be.statsLease)
+		}
+		return d, nil
 	case model.ProviderLinkedInAds:
 		opts := []linkedin.Option{linkedin.WithHTTPClient(hc)}
 		if ep.api != "" {
