@@ -5,6 +5,7 @@ package hubspot
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Hard-coded HubSpot drag-and-drop module ids. These are NOT arbitrary — they were
@@ -444,8 +446,19 @@ func richTextWidget(html string, padTop, padRight, padBottom, padLeft string) ma
 // to `<br />`, attribute order), and reading that as a revert would refuse every draft. A comment
 // because it renders nothing and email HTML depends on comments surviving (MSO conditional
 // comments), so it is the form most likely to be kept.
+//
+// The token mixes a fresh random nonce into the body hash, so every rebuild writes a NEW token
+// even when the body is unchanged (a rebuild may change only the native button's destination).
+// Derived from the body alone, a silently reverted PATCH of such a rebuild would read back the
+// previous write's identical token and pass verification with the old button.
 func stagedBodyMarker(bodyHTML string) string {
-	sum := sha256.Sum256([]byte(bodyHTML))
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		// crypto/rand does not fail on supported platforms; fall back to the clock so the token
+		// still differs per rebuild rather than repeating the previous write's.
+		nonce = []byte(time.Now().UTC().Format(time.RFC3339Nano))
+	}
+	sum := sha256.Sum256(append([]byte(bodyHTML), nonce...))
 	return "<!-- " + stagedMarkerPrefix + hex.EncodeToString(sum[:8]) + " -->"
 }
 

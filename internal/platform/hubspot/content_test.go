@@ -287,6 +287,23 @@ func TestRebuildEmailContent_IgnoresAnEarlierMarkerInTheInputBody(t *testing.T) 
 	})
 }
 
+func TestRebuildEmailContent_ARebuildWithTheSameBodyWritesANewMarker(t *testing.T) {
+	// A rebuild can change only the native button's destination and keep the body byte for byte.
+	// If HubSpot silently reverts that PATCH, the read-back carries the PREVIOUS write's body and
+	// marker. A token derived from the body alone would match it and record the old button as staged.
+	var first string
+	c := bodyReadBackServer(t, func(written string) string { first = written; return written }, nil)
+	if _, err := c.RebuildEmailContent(context.Background(), "email-1", RebuildEmailContentInput{BodyHTML: markerTestBody, ButtonURL: "https://example.org/old"}); err != nil {
+		t.Fatalf("first rebuild: %v", err)
+	}
+
+	c = bodyReadBackServer(t, func(string) string { return first }, nil)
+	_, err := c.RebuildEmailContent(context.Background(), "email-1", RebuildEmailContentInput{BodyHTML: markerTestBody, ButtonURL: "https://example.org/new"})
+	if !errors.Is(err, ErrContentNotPersisted) {
+		t.Fatalf("error = %v, want ErrContentNotPersisted: the read-back is the previous write's body and marker", err)
+	}
+}
+
 func TestRebuildEmailContent_AnUndecodableWidgetsReadIsNotAProvenRevert(t *testing.T) {
 	// A widgets value of an unexpected shape says nothing about whether the write landed: it is
 	// the retryable unknown, never the "needs manual repair" revert.
