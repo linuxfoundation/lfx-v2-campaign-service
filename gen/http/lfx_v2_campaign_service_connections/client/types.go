@@ -6401,12 +6401,17 @@ type AccountMonitorCampaignResponseBody struct {
 	// Google Ads only: true when the campaign's advertising_channel_type is
 	// SEARCH. Always false for LinkedIn/Meta/Reddit rows.
 	IsSearchChannel *bool `form:"is_search_channel,omitempty" json:"is_search_channel,omitempty" xml:"is_search_channel,omitempty"`
-	// True when some part of this row's upstream data could not be trusted: either
-	// its per-campaign metrics fetch failed outright (numeric fields left at their
-	// zero value), or, for Google Ads, its budget field was present but
-	// unparseable alongside otherwise-good metrics. A renderer MUST check this
-	// before treating any of this row's fields, zero or not, as a fully trusted
-	// reading.
+	// True when some part of this row's upstream data could not be trusted. WHICH
+	// part is not conveyed, and it is NOT always the metrics. The shapes it takes
+	// include: a per-campaign metrics fetch that failed outright, leaving that
+	// read's delivery metrics (spend, impressions, clicks, ctr) at their zero
+	// value while fields sourced from a different call — a budget read from the
+	// campaign list, say — may still be real; a budget or flight value that was
+	// present but unparseable alongside metrics that were read fine; and a spend
+	// that could not be parsed while impressions and clicks are real. Read those
+	// as examples rather than a closed set — every platform sets this flag and
+	// each has its own partial cases. A renderer MUST NOT treat ANY of this row's
+	// fields, zero or not, as a fully trusted reading.
 	FetchFailed *bool `form:"fetch_failed,omitempty" json:"fetch_failed,omitempty" xml:"fetch_failed,omitempty"`
 	// spend / expected-spend * 100. Meaningless when pacing_unknown is true.
 	PacingPct *float64 `form:"pacing_pct,omitempty" json:"pacing_pct,omitempty" xml:"pacing_pct,omitempty"`
