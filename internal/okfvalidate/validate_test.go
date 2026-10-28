@@ -1352,3 +1352,45 @@ func TestValidateRealBundle(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateLogFragmentQuotedFenceLookalikeDoesNotCloseATopLevelFence(t *testing.T) {
+	// A literal "> ```" inside a top-level fence is content: only a closer at
+	// the opener's blockquote depth ends the block, so a valid archive passes.
+	dir := t.TempDir()
+	writeFragment(t, dir,
+		"## 2026-08-05 (first)\n\n**Docs** — sample:\n\n```markdown\n> ```\n## 2026-01-01\n```\n\n"+
+			"## 2026-08-04 (second)\n\n**Docs** — did the other thing.\n")
+
+	if errs := Validate(dir); len(errs) != 0 {
+		t.Errorf("Validate() = %v, want a valid archive accepted", errs)
+	}
+}
+
+func TestValidateLogFragmentBlockquoteFenceClosesWithoutASpaceAfterTheMarker(t *testing.T) {
+	// A blockquote marker needs no following space, so ">```" closes a fence
+	// opened as "> ```" and the section after the quote is still checked.
+	dir := t.TempDir()
+	writeFragment(t, dir,
+		"## 2026-08-05 (first)\n\n**Docs** — quoted sample:\n\n> ```markdown\n> ## 2026-01-01\n>```\n\n"+
+			"## 2026-08-04 (second)\n\n**Feature** — did the other thing.\n")
+
+	errs := Validate(dir)
+	if errsContain(errs, "never closed") {
+		t.Errorf("Validate() = %v, want the quoted fence closed by >```", errs)
+	}
+	if !errsContain(errs, `kind marker "Feature"`) {
+		t.Errorf("Validate() = %v, want the section after the quote still checked", errs)
+	}
+}
+
+func TestValidateLogFragmentIndentedHeadingDoesNotSelectArchiveMode(t *testing.T) {
+	// "    ## 2026-01-01" is indented code, not a section, so it must not switch
+	// the fragment into archive mode and skip the single-entry marker check.
+	dir := t.TempDir()
+	writeFragment(t, dir, "## 2026-08-05\n\n    ## 2026-01-01\n\n**Feature** — did a thing.\n")
+
+	if errs := Validate(dir); !errsContain(errs, "kind marker") {
+		t.Errorf("Validate() = %v, want the single-entry kind marker still checked", errs)
+	}
+}
+

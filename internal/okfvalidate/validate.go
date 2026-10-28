@@ -657,7 +657,7 @@ func validateLogFragment(path string) []error {
 	// rather than at the top of the file. Detect that shape by what follows
 	// the H1 rather than by filename: a name convention would be a second
 	// rule to keep in sync, and this one reads the structure it is about.
-	if next, ok := nextMarkerCandidate(lines, headingAt+1); ok && logFragmentSectionPattern.MatchString(next) {
+	if next, ok := nextMarkerCandidateLine(lines, headingAt+1); ok && isArchiveSectionHeading(next) {
 		var errs []error
 		fence, fenceAt := "", 0
 		for i, line := range lines {
@@ -685,7 +685,8 @@ func validateLogFragment(path string) []error {
 		// fence into a silent pass for the rest of the archive, so it is
 		// reported instead of trusted.
 		if fence != "" {
-			errs = append(errs, fmt.Errorf("%s: code fence %q opened on line %d is never closed, so the archive sections after it cannot be checked", path, fence, fenceAt))
+			_, marker, _ := strings.Cut(fence, "\x00")
+			errs = append(errs, fmt.Errorf("%s: code fence %q opened on line %d is never closed, so the archive sections after it cannot be checked", path, marker, fenceAt))
 		}
 		return errs
 	}
@@ -694,6 +695,12 @@ func validateLogFragment(path string) []error {
 		return []error{err}
 	}
 	return nil
+}
+
+// isArchiveSectionHeading is archiveSectionHeading's boolean form.
+func isArchiveSectionHeading(line string) bool {
+	_, ok := archiveSectionHeading(line)
+	return ok
 }
 
 // archiveSectionHeading reports whether line is an archive section heading
@@ -722,45 +729,61 @@ func archiveSectionHeading(line string) (string, bool) {
 // content indentation, so a fence indented four or more spaces under a list
 // item is not recognised. That miss is harmless here: the "## " lines inside
 // such a fence are indented too, and archiveSectionHeading ignores them.
+//
+// The returned fence records the blockquote depth the opener sat at as well
+// as its marker, and only a line at that SAME depth can close the block. So a
+// literal "> ```" inside a top-level fence is content, not a closer.
 func fenceState(fence, line string) (string, bool) {
-	marker, rest := fenceMarker(line)
+	prefix, marker, rest := fenceMarker(line)
 	if fence == "" {
 		if marker == "" || (marker[0] == '`' && strings.Contains(rest, "`")) {
 			return "", false
 		}
-		return marker, true
+		return normaliseContainer(prefix) + "\x00" + marker, true
 	}
-	if marker != "" && marker[0] == fence[0] && len(marker) >= len(fence) && strings.TrimSpace(rest) == "" {
+	openPrefix, openMarker, _ := strings.Cut(fence, "\x00")
+	if marker != "" && normaliseContainer(prefix) == openPrefix && marker[0] == openMarker[0] &&
+		len(marker) >= len(openMarker) && strings.TrimSpace(rest) == "" {
 		return "", true
 	}
 	return fence, true
 }
 
+// normaliseContainer reduces a container prefix to its blockquote depth. Only
+// that has to match between an opener and its closer: a blockquote repeats
+// its ">" on every line, while a list item's continuation lines are written
+// as indented content without the item marker, so a list-item fence closes on
+// an indented closer.
+func normaliseContainer(prefix string) string {
+	return strings.Repeat("q", strings.Count(prefix, ">"))
+}
+
 // fenceContainerPrefix matches the blockquote and list-item markers a fence
 // may sit inside: "> ", "- ", "* ", "+ ", "1. ", "1) ", in any nesting.
-var fenceContainerPrefix = regexp.MustCompile(`^(?: {0,3}(?:>|[-*+]|\d{1,9}[.)])(?: |$))*`)
+var fenceContainerPrefix = regexp.MustCompile(`^(?: {0,3}(?:> ?|(?:[-*+]|\d{1,9}[.)])(?: |$)))*`)
 
-// fenceMarker returns the run of three or more backticks or tildes a line
-// opens with, after its container prefix and at most three spaces of
-// indentation, and the text after that run. It returns "" when the line
-// does not open with one.
-func fenceMarker(line string) (string, string) {
-	body := line[len(fenceContainerPrefix.FindString(line)):]
+// fenceMarker returns the line's container prefix, the run of three or more
+// backticks or tildes it opens with after that prefix and at most three
+// spaces of indentation, and the text after that run. The marker is "" when
+// the line does not open with one.
+func fenceMarker(line string) (string, string, string) {
+	prefix := fenceContainerPrefix.FindString(line)
+	body := line[len(prefix):]
 	if leadingSpaces(body) > 3 {
-		return "", ""
+		return prefix, "", ""
 	}
 	body = strings.TrimLeft(body, " ")
 	if len(body) < 3 || (body[0] != '`' && body[0] != '~') {
-		return "", ""
+		return prefix, "", ""
 	}
 	n := 0
 	for n < len(body) && body[n] == body[0] {
 		n++
 	}
 	if n < 3 {
-		return "", ""
+		return prefix, "", ""
 	}
-	return body[:n], body[n:]
+	return prefix, body[:n], body[n:]
 }
 
 // leadingSpaces counts the spaces a line opens with, a tab counting as four
@@ -789,6 +812,20 @@ func leadingSpaces(s string) int {
 // banner is itself bold, so a naive check both misses the real marker and
 // rejects the file for a word ("Superseded", "SUPERSEDED") that was never
 // meant to be one.
+// nextMarkerCandidateLine is nextMarkerCandidate's untrimmed form: the
+// first non-blank, non-blockquote line from start, as written, so the
+// caller can apply the same indentation rule the section scan does.
+func nextMarkerCandidateLine(lines []string, start int) (string, bool) {
+	for i := start; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" || strings.HasPrefix(trimmed, ">") {
+			continue
+		}
+		return lines[i], true
+	}
+	return "", false
+}
+
 func nextMarkerCandidate(lines []string, start int) (string, bool) {
 	for i := start; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
