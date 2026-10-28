@@ -810,8 +810,9 @@ func blockFirstLine(n ast.Node, src []byte) string {
 	return strings.TrimSpace(string(src[start:end]))
 }
 
-// unclosedFences reports every fenced code block that runs to the end of the
-// document without a closing fence.
+// unclosedFences reports every fenced code block, and every HTML block of
+// CommonMark types 1 to 5 (see htmlBlockNeverClosed), that runs to the end of
+// the document without its closer. Either swallows every later section.
 //
 // Only a fence directly under the document can run to its end. A fence inside
 // a blockquote or list item ends with that container, so it hides nothing past
@@ -826,8 +827,18 @@ func blockFirstLine(n ast.Node, src []byte) string {
 func unclosedFences(path string, doc ast.Node, src []byte) []error {
 	var errs []error
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		if hb, ok := n.(*ast.HTMLBlock); ok {
+			if hb.Parent() != nil && hb.Parent().Kind() == ast.KindDocument && htmlBlockNeverClosed(hb, src) {
+				open := blockStart(hb)
+				errs = append(errs, fmt.Errorf("%s: HTML block %q opened on line %d is never closed, so the archive sections after it cannot be checked", path, truncateForError(blockFirstLine(hb, src)), bytes.Count(src[:open], []byte("\n"))+1))
+			}
+			return ast.WalkSkipChildren, nil
+		}
 		fb, ok := n.(*ast.FencedCodeBlock)
-		if !entering || !ok {
+		if !ok {
 			return ast.WalkContinue, nil
 		}
 		if fb.Parent() == nil || fb.Parent().Kind() != ast.KindDocument {
@@ -848,6 +859,31 @@ func unclosedFences(path string, doc ast.Node, src []byte) []error {
 		return ast.WalkSkipChildren, nil
 	})
 	return errs
+}
+
+// htmlBlockClosers are the end conditions of CommonMark HTML block types 1
+// to 5 (spec §4.6), which run until their closer however many blank lines
+// pass, and so to the end of the document when it never comes. Types 6 and 7
+// end at a blank line and are not listed.
+var htmlBlockClosers = map[ast.HTMLBlockType]*regexp.Regexp{
+	ast.HTMLBlockType1: regexp.MustCompile(`(?i)</(?:script|pre|style|textarea)>`),
+	ast.HTMLBlockType2: regexp.MustCompile(`-->`),
+	ast.HTMLBlockType3: regexp.MustCompile(`\?>`),
+	ast.HTMLBlockType4: regexp.MustCompile(`>`),
+	ast.HTMLBlockType5: regexp.MustCompile(`\]\]>`),
+}
+
+// htmlBlockNeverClosed reports whether hb is an HTML block of type 1 to 5
+// that ran to the end of the document, swallowing every heading after it.
+// goldmark records a closure line only when the closer comes on a later line,
+// so a block closed on its own first line is recognised by reading that line.
+func htmlBlockNeverClosed(hb *ast.HTMLBlock, src []byte) bool {
+	closer, ok := htmlBlockClosers[hb.HTMLBlockType]
+	if !ok || hb.HasClosure() || hb.Lines().Len() == 0 {
+		return false
+	}
+	first := hb.Lines().At(0)
+	return !closer.Match(first.Value(src))
 }
 
 // fenceRun returns the run of backticks or tildes that opens the fence at or

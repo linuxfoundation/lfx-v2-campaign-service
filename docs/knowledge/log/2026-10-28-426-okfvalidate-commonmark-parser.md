@@ -29,6 +29,12 @@ What the validator now reads:
   directly under the document is checked: one inside a blockquote or list item ends with
   that container and hides nothing past it, so it is not reported, even when the
   container is the file's last block.
+- An HTML block of CommonMark types 1 to 5 (a comment, `<pre>`, `<script>`, `<style>`,
+  `<textarea>`, a processing instruction, a declaration or CDATA) runs to its closer
+  however many blank lines pass, so one that never closes swallows every later section
+  just as an unclosed fence does, and is reported the same way. goldmark records a
+  closure line only when the closer is on a later line, so a block closed on its own
+  first line is recognised by reading that line.
 - An H1 indented four spaces is code, not a heading, and is now reported as such.
 
 The helpers that implemented the scanner (`fenceState`, `fenceMarker`,

@@ -6,6 +6,7 @@ package okfvalidate
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -264,18 +265,74 @@ func claudeMDLogKinds(t *testing.T) []string {
 		step = step[:end[0]]
 	}
 
+	kinds := backtickedBoldKinds(step)
+	if len(kinds) == 0 {
+		t.Fatalf("found no backticked bold kind markers in CLAUDE.md's log step:\n%s", step)
+	}
+	return kinds
+}
+
+// backtickedBoldKinds returns, in order and without repeats, the bold label
+// opening each inline-code span in text: `**Feature**` alone, or a documented
+// example such as `**Feature** — did a thing`.
+func backtickedBoldKinds(text string) []string {
 	var kinds []string
 	seen := map[string]bool{}
-	for _, m := range regexp.MustCompile("`\\*\\*([^*`]+)\\*\\*`").FindAllStringSubmatch(step, -1) {
+	for _, m := range regexp.MustCompile("`\\*\\*([^*`]+)\\*\\*[^`]*`").FindAllStringSubmatch(text, -1) {
 		if !seen[m[1]] {
 			seen[m[1]] = true
 			kinds = append(kinds, m[1])
 		}
 	}
-	if len(kinds) == 0 {
-		t.Fatalf("found no backticked bold kind markers in CLAUDE.md's log step:\n%s", step)
-	}
 	return kinds
+}
+
+func TestBacktickedBoldKindsReadsAMarkerWithExampleText(t *testing.T) {
+	// CLAUDE.md may document a kind as a whole example entry. Missing that
+	// form would let a kind documented only that way drift unnoticed.
+	got := backtickedBoldKinds("Use `**Fix**`, or write `**Feature** — did a thing.`, and `**Fix** — again`.")
+	if want := []string{"Fix", "Feature"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("backtickedBoldKinds() = %v, want %v", got, want)
+	}
+}
+
+func TestValidateLogFragmentReportsAnUnclosedArchiveHTMLBlock(t *testing.T) {
+	// An HTML comment or <pre> block runs to its closer however many blank
+	// lines pass, so one that never closes swallows every later section.
+	for name, opener := range map[string]string{
+		"comment": "<!-- a note\n",
+		"pre":     "<pre>\nsample\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFragment(t, dir,
+				"## 2026-08-05 (first)\n\n**Docs** — did the thing.\n\n"+opener+"\n"+
+					"## 2026-08-04 (second)\n\n**Feature** — did the other thing.\n")
+			if errs := Validate(dir); !errsContain(errs, "HTML block") || !errsContain(errs, "is never closed") {
+				t.Errorf("Validate() = %v, want the unclosed HTML block reported", errs)
+			}
+		})
+	}
+}
+
+func TestValidateLogFragmentClosedHTMLBlocksAreNotReported(t *testing.T) {
+	// A block closed on its own first line records no closure line in
+	// goldmark, so it must be recognised from the source, not reported.
+	for name, block := range map[string]string{
+		"one-line comment": "<!-- a note -->\n",
+		"one-line pre":     "<pre>sample</pre>\n",
+		"multi-line pre":   "<pre>\nsample\n</pre>\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFragment(t, dir,
+				"## 2026-08-05 (first)\n\n**Docs** — did the thing.\n\n"+block+"\n"+
+					"## 2026-08-04 (second)\n\n**Docs** — did the other thing.\n")
+			if errs := Validate(dir); errsContain(errs, "never closed") {
+				t.Errorf("Validate() = %v, want a closed HTML block accepted", errs)
+			}
+		})
+	}
 }
 
 func TestValidateLogFragmentKindsMatchClaudeMD(t *testing.T) {

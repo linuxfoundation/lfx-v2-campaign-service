@@ -29,8 +29,10 @@ which is checked per section. The body is read with a CommonMark parser
 Setext heading that is a direct child of the document, so a `##` line inside
 fenced or indented code, an HTML block, a list or a blockquote is never one, and
 an entry's marker is the bold label opening its first paragraph. In an archive,
-a top-level fence left open to the end of the file is an error, because it would
-hide every section after it (#421); a single-entry fragment has no later
-sections to hide, so it is not checked for one. The archive is recognized by that structure rather than by
-filename, so there is no naming convention to keep in sync. The validator's set and CLAUDE.md's are held equal by a test that reads
-CLAUDE.md (#420), so a kind cannot be added to one and not the other.
+a top-level fence, or an HTML comment, `<pre>`, `<script>` or similar block,
+left open to the end of the file is an error, because it would hide every
+section after it (#421); a single-entry fragment has no later sections to hide,
+so it is not checked for one. The archive is recognized by that structure rather
+than by filename, so there is no naming convention to keep in sync. The
+validator's set and CLAUDE.md's are held equal by a test that reads CLAUDE.md
+(#420), so a kind cannot be added to one and not the other.
