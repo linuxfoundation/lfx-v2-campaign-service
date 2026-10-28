@@ -1027,8 +1027,16 @@ type CampaignCreateInput struct {
 	// defaults: `"strategy": null` or `""`, `"bidAmount": null` and `"bidding":
 	// null` are refused), or a bid breaking these rules is refused synchronously
 	// with 400 "invalid campaign config: <configKey>.bidding: ..." before any job
-	// exists. googleAdsConfig.bidding is refused with 400 (use
-	// googleAdsConfig.biddingStrategy). FLIGHT DATES: metaConfig (required) and
+	// exists. googleAdsConfig.bidding is refused with 400: Google Ads takes its
+	// strategy from googleAdsConfig.biddingStrategy and a manual bid from
+	// googleAdsConfig.cpcBid. GOOGLE ADS CPC BID: googleAdsConfig.cpcBid is the ad
+	// group's manual max cost-per-click bid, sent as cpcBidMicros, in whole units
+	// of the ad account's own currency (no FX conversion, like the budget). Search
+	// only, under the manual-cpc strategy (Search's default); it is refused on any
+	// other channel or strategy. Accepted range 0.01 to 100,000 inclusive; NaN,
+	// Inf or a value outside it fails the job before any Google Ads request.
+	// Omitted or 0 keeps the previous behaviour: no bid is sent, and the ad group
+	// inherits whatever Google derives. FLIGHT DATES: metaConfig (required) and
 	// microsoftConfig (optional) take `startDate` and `endDate` as YYYY-MM-DD
 	// strings that must be real calendar dates, with the start not before today
 	// and the end after the start. For metaConfig today is the UTC calendar day.

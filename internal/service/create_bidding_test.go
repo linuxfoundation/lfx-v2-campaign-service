@@ -48,6 +48,12 @@ func TestRefuseUnsupportedBidding(t *testing.T) {
 			if !errors.As(err, &bad) || !strings.Contains(bad.Message, "googleAdsConfig.bidding is not supported") {
 				t.Fatalf("err = %v, want a 400 naming googleAdsConfig.bidding", err)
 			}
+			// #156: the refusal must point to both replacement fields, the bid included.
+			for _, want := range []string{"googleAdsConfig.biddingStrategy", "googleAdsConfig.cpcBid"} {
+				if !strings.Contains(bad.Message, want) {
+					t.Errorf("message %q does not name %s", bad.Message, want)
+				}
+			}
 		})
 	}
 }
