@@ -6,6 +6,7 @@ package googleads
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -673,8 +674,11 @@ func TestReuseBudgetAfterDuplicateName_AlignsAmountToTheBrief(t *testing.T) {
 // changed nothing, so "nothing new was created" stays true and the precise token stands.
 func TestReuseBudgetAfterDuplicateName_AmbiguousAlignmentIsMarkedUnconfirmed(t *testing.T) {
 	// The brief asks for 50000000 against an orphan carrying 500000000, so alignment is
-	// always attempted; only the mutate's status differs between the two subtests.
-	newServer := func(t *testing.T, mutateStatus int) *httptest.Server {
+	// always attempted; only how the mutate fails differs between the subtests.
+	status := func(code int) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(code) }
+	}
+	newServer := func(t *testing.T, failMutate http.HandlerFunc) *httptest.Server {
 		t.Helper()
 		var (
 			mu       sync.Mutex
@@ -685,7 +689,7 @@ func TestReuseBudgetAfterDuplicateName_AmbiguousAlignmentIsMarkedUnconfirmed(t *
 				return
 			}
 			if strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate") {
-				w.WriteHeader(mutateStatus)
+				failMutate(w, r)
 				return
 			}
 			mu.Lock()
@@ -716,7 +720,7 @@ func TestReuseBudgetAfterDuplicateName_AmbiguousAlignmentIsMarkedUnconfirmed(t *
 	}
 
 	t.Run("a 500 on the alignment mutate may have landed", func(t *testing.T) {
-		c := newAccountsTestClient(t, newServer(t, http.StatusInternalServerError))
+		c := newAccountsTestClient(t, newServer(t, status(http.StatusInternalServerError)))
 
 		_, _, _, err := c.reuseBudgetAfterDuplicateName(context.Background(), testBudgetName, 50_000_000, 50)
 		if err == nil {
@@ -733,8 +737,47 @@ func TestReuseBudgetAfterDuplicateName_AmbiguousAlignmentIsMarkedUnconfirmed(t *
 		}
 	})
 
+	// The transport branch of createOutcomeAmbiguous is the one a status code cannot reach:
+	// the connection drops after the mutate was sent, so there is no answer at all, and
+	// Google may have applied the amount. Without this case the gate could be narrowed to
+	// HTTP statuses and a dropped connection would be reported as budget_name_taken again.
+	t.Run("a dropped connection on the alignment mutate may have landed", func(t *testing.T) {
+		dropConnection := func(w http.ResponseWriter, _ *http.Request) {
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Error("test server does not support hijacking; cannot drop the connection")
+				return
+			}
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				t.Errorf("hijack: %v", err)
+				return
+			}
+			_ = conn.Close()
+		}
+		c := newAccountsTestClient(t, newServer(t, dropConnection))
+
+		_, _, _, err := c.reuseBudgetAfterDuplicateName(context.Background(), testBudgetName, 50_000_000, 50)
+		if err == nil {
+			t.Fatal("a failed alignment must refuse the reuse")
+		}
+		var te *transportError
+		if !errors.As(err, &te) {
+			t.Fatalf("a dropped connection must surface as a transportError so this case exercises that branch; got %T: %v", err, err)
+		}
+		if !carriesUnconfirmedWrite(err) {
+			t.Errorf("the alignment error must carry the unconfirmed-write marker; the mutate was sent and never answered. got: %v", err)
+		}
+
+		got, ok := classify(err)
+		if !ok || got != domain.CreateOutcomeUnconfirmed {
+			t.Errorf("CreateOutcome = (%q, %v), want (%q, true): the existing budget's amount may have moved, so \"nothing new was created\" would be false",
+				got, ok, domain.CreateOutcomeUnconfirmed)
+		}
+	})
+
 	t.Run("a 400 on the alignment mutate changed nothing", func(t *testing.T) {
-		c := newAccountsTestClient(t, newServer(t, http.StatusBadRequest))
+		c := newAccountsTestClient(t, newServer(t, status(http.StatusBadRequest)))
 
 		_, _, _, err := c.reuseBudgetAfterDuplicateName(context.Background(), testBudgetName, 50_000_000, 50)
 		if err == nil {
