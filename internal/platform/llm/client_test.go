@@ -94,8 +94,8 @@ func TestComplete_SendsOpenAIShapeAndReturnsContent(t *testing.T) {
 	if got.Model != DefaultModel {
 		t.Errorf("model = %q, want %q", got.Model, DefaultModel)
 	}
-	if got.Temperature != DefaultTemperature || got.MaxTokens != DefaultMaxTokens {
-		t.Errorf("temperature/max_tokens = %v/%d", got.Temperature, got.MaxTokens)
+	if got.Temperature == nil || *got.Temperature != DefaultTemperature || got.MaxTokens != DefaultMaxTokens {
+		t.Errorf("temperature/max_tokens = %v/%d, want %v/%d", got.Temperature, got.MaxTokens, DefaultTemperature, DefaultMaxTokens)
 	}
 	want := []chatMessage{{Role: "system", Content: "sys"}, {Role: "user", Content: "usr"}}
 	if len(got.Messages) != 2 || got.Messages[0] != want[0] || got.Messages[1] != want[1] {
@@ -115,7 +115,7 @@ func TestComplete_ZeroTemperatureIsHonouredNotTreatedAsUnset(t *testing.T) {
 
 	zero := 0.0
 	c, err := NewClient(
-		Config{ProxyURL: srv.URL, APIKey: testKey, Temperature: &zero, Model: "custom-model", MaxTokens: 99},
+		Config{ProxyURL: srv.URL, APIKey: testKey, Temperature: &zero, Model: "claude-sonnet-4-6", MaxTokens: 99},
 		WithHTTPClient(srv.Client()),
 	)
 	if err != nil {
@@ -125,11 +125,11 @@ func TestComplete_ZeroTemperatureIsHonouredNotTreatedAsUnset(t *testing.T) {
 		t.Fatalf("Complete: %v", err)
 	}
 	got := rec.Req()
-	if got.Temperature != 0 {
-		t.Errorf("temperature = %v, want 0 (an explicit zero must not fall back to the default)", got.Temperature)
+	if got.Temperature == nil || *got.Temperature != 0 {
+		t.Errorf("temperature = %v, want 0 (an explicit zero must not fall back to the default or be omitted)", got.Temperature)
 	}
-	if got.Model != "custom-model" || got.MaxTokens != 99 {
-		t.Errorf("model/max_tokens = %q/%d, want custom-model/99", got.Model, got.MaxTokens)
+	if got.Model != "claude-sonnet-4-6" || got.MaxTokens != 99 {
+		t.Errorf("model/max_tokens = %q/%d, want claude-sonnet-4-6/99", got.Model, got.MaxTokens)
 	}
 }
 
@@ -865,7 +865,7 @@ func TestNewClient_SnapshotsTemperatureRatherThanAliasingTheCaller(t *testing.T)
 	if _, err := c.Complete(context.Background(), "s", "u"); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if got := rec.Req().Temperature; got != 0.2 {
+	if got := rec.Req().Temperature; got == nil || *got != 0.2 {
 		t.Errorf("temperature = %v, want 0.2 (the value at construction; the client aliased the caller's variable)", got)
 	}
 }
@@ -952,4 +952,159 @@ func TestDefaultModelCarriesTheBedrockPrefix(t *testing.T) {
 	if !strings.HasPrefix(DefaultModel, "bedrock/") {
 		t.Errorf("DefaultModel = %q, want the bedrock/ provider prefix the v2 LiteLLM requires", DefaultModel)
 	}
+}
+
+// TestAcceptsSampling_ModelFamilies pins the sampling guard one family at a time, in
+// both spellings the model id arrives in. The "no" cases are the point: Opus 4.7+ and
+// the 5-series return 400 on any sampling parameter, and anything the table does not
+// positively recognise must fail safe to "no".
+func TestAcceptsSampling_ModelFamilies(t *testing.T) {
+	cases := []struct {
+		model string
+		want  bool
+	}{
+		// Claude 3 generation-first names: accept.
+		{"claude-3-opus-20240229", true},
+		{"claude-3-5-sonnet-20241022", true},
+		{"claude-3-7-sonnet-20250219", true},
+		{"bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0", true},
+		// Sonnet 4.x: accept.
+		{"claude-sonnet-4", true},
+		{"claude-sonnet-4-5", true},
+		{"claude-sonnet-4-6", true},
+		{DefaultModel, true}, // bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0
+		// Haiku 4.5: accept.
+		{"claude-haiku-4-5", true},
+		{"claude-haiku-4-5-20251001", true},
+		// Opus 4 through 4.6: accept.
+		{"claude-opus-4", true},
+		{"claude-opus-4-1-20250805", true},
+		{"bedrock/us.anthropic.claude-opus-4-6", true},
+		// Opus 4.7 and later: reject.
+		{"claude-opus-4-7", false},
+		{"claude-opus-4-8", false},
+		{"bedrock/us.anthropic.claude-opus-4-8", false},
+		// A minor with a suffix attached must not be read as .0 (Opus 4.7 as Opus 4).
+		{"claude-opus-4-7[1m]", false},
+		{"claude-opus-4-7@20260101", false},
+		{"vertex_ai/claude-opus-4-7@20260101", false},
+		{"claude-opus-4-7:0", false},
+		{"anthropic.claude-opus-4-7-v1:0", false},
+		// An alias word after the major is not a known .0 release.
+		{"claude-opus-4-latest", false},
+		{"claude-sonnet-4-preview", false},
+		{"anthropic.claude-sonnet-4-v1:0", true},
+		// Every 5-series model: reject. claude-sonnet-5-5 is what production runs (#397).
+		{"claude-sonnet-5", false},
+		{"claude-sonnet-5-5", false},
+		{"CLAUDE-SONNET-5-5", false},
+		{"bedrock/us.anthropic.claude-sonnet-5-5", false},
+		{"claude-opus-5", false},
+		{"claude-opus-5-5", false},
+		{"claude-haiku-5-5", false},
+		// Newer, unknown or non-Claude: fail safe.
+		{"claude-sonnet-4-9", false},
+		{"claude-haiku-4-7", false},
+		{"claude-sonnet-6", false},
+		{"claude-fable-1", false},
+		{"claude-", false},
+		{"claude", false},
+		{"custom-model", false},
+		{"gpt-4o", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := acceptsSampling(tc.model); got != tc.want {
+			t.Errorf("acceptsSampling(%q) = %v, want %v", tc.model, got, tc.want)
+		}
+	}
+}
+
+// TestComplete_TemperatureOnTheWireFollowsTheGuard reads the RAW request body, not a
+// decoded chatRequest: the defect in #397 was a key being present at all, and decoding
+// into a struct cannot tell an absent key from a null one.
+func TestComplete_TemperatureOnTheWireFollowsTheGuard(t *testing.T) {
+	explicit := 0.3
+	cases := []struct {
+		name     string
+		model    string
+		temp     *float64
+		wantKey  bool
+		wantTemp float64
+	}{
+		{"default model sends the default temperature", "", nil, true, DefaultTemperature},
+		{"4-series sends the configured temperature", "claude-sonnet-4-6", &explicit, true, 0.3},
+		{"5-series omits temperature", "claude-sonnet-5-5", nil, false, 0},
+		{"5-series omits even an explicitly configured temperature", "claude-sonnet-5-5", &explicit, false, 0},
+		{"opus 4.7 omits temperature", "claude-opus-4-7", nil, false, 0},
+		{"unknown model omits temperature", "custom-model", nil, false, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var raw map[string]json.RawMessage
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				_ = json.NewDecoder(r.Body).Decode(&raw)
+				mu.Unlock()
+				_, _ = io.WriteString(w, completion("ok"))
+			}))
+			defer srv.Close()
+
+			c, err := NewClient(
+				Config{ProxyURL: srv.URL, APIKey: testKey, Model: tc.model, Temperature: tc.temp},
+				WithHTTPClient(srv.Client()),
+			)
+			if err != nil {
+				t.Fatalf("NewClient: %v", err)
+			}
+			if _, err := c.Complete(context.Background(), "s", "u"); err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if _, ok := raw["model"]; !ok {
+				t.Fatalf("request body was not captured: %v", raw)
+			}
+			v, ok := raw["temperature"]
+			if ok != tc.wantKey {
+				t.Fatalf("temperature key present = %v, want %v (body keys: %v)", ok, tc.wantKey, keys(raw))
+			}
+			if !tc.wantKey {
+				return
+			}
+			var got float64
+			if err := json.Unmarshal(v, &got); err != nil || got != tc.wantTemp {
+				t.Errorf("temperature = %s, want %v", v, tc.wantTemp)
+			}
+		})
+	}
+}
+
+// TestChatRequest_TemperatureIsOmittedWhenNil pins the marshalling contract the guard
+// relies on: nil leaves the key out, and an explicit zero is still sent.
+func TestChatRequest_TemperatureIsOmittedWhenNil(t *testing.T) {
+	without, err := json.Marshal(chatRequest{Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(without), "temperature") {
+		t.Errorf("nil temperature marshalled as %s, want the key absent", without)
+	}
+	zero := 0.0
+	with, err := json.Marshal(chatRequest{Model: "m", Temperature: &zero})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(with), `"temperature":0`) {
+		t.Errorf("explicit zero marshalled as %s, want \"temperature\":0", with)
+	}
+}
+
+func keys(m map[string]json.RawMessage) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }

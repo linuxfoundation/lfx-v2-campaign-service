@@ -56,7 +56,8 @@ const (
 	DefaultModel = "bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0"
 
 	// DefaultTemperature matches the lfx-one brief pipeline: regenerating after a
-	// result the operator disliked should not return the same words.
+	// result the operator disliked should not return the same words. It is sent ONLY
+	// to a model acceptsSampling approves; see samplingFamilies.
 	DefaultTemperature = 0.7
 
 	// DefaultMaxTokens bounds one completion.
@@ -132,7 +133,9 @@ type Config struct {
 	APIKey   string
 	Model    string
 	// Temperature is a POINTER because 0 is a meaningful request (deterministic
-	// output) that a plain float64 could not distinguish from an unset field.
+	// output) that a plain float64 could not distinguish from an unset field. It is
+	// honoured only for a model acceptsSampling approves: for any other model no
+	// temperature is sent at all, set or not, because sending one is a certain 400.
 	Temperature *float64
 	MaxTokens   int
 }
@@ -369,11 +372,98 @@ type chatMessage struct {
 	Content string `json:"content"`
 }
 
+// Temperature is a pointer with omitempty so that nil leaves the key off the wire
+// entirely, while an explicit 0 is still sent. Nil is what acceptsSampling's "no"
+// produces; see Complete.
 type chatRequest struct {
 	Model       string        `json:"model"`
 	Messages    []chatMessage `json:"messages"`
-	Temperature float64       `json:"temperature"`
+	Temperature *float64      `json:"temperature,omitempty"`
 	MaxTokens   int           `json:"max_tokens"`
+}
+
+// samplingFamilies is the allowlist of Claude model families that accept a sampling
+// parameter (temperature, top_p, top_k) on the request. It is an ALLOWLIST on purpose:
+// Claude Opus 4.7 and later, and every 5-series model, return 400 when one is set
+// ("Setting temperature, top_p, or top_k returns a 400 error" — Anthropic's model
+// reference; the extended-thinking doc's sampling-parameters list names Opus 4.7, Opus
+// 4.8, Sonnet 5, Sonnet 5.5 and Haiku 5.5). A model that is not on this list — newer,
+// unrecognised, or not Claude at all — therefore gets NO sampling parameters. Omitting
+// one costs some variety between regenerations; sending one to a model that rejects
+// it costs every generation. This mirrors lfx-self-serve's AI_MODEL sampling guard,
+// widened per lfx-self-serve#4460 to include Opus 4.7+.
+//
+// family is the word after "claude-" for family-first names (claude-sonnet-4-6), or ""
+// for the generation-first Claude 3 names (claude-3-5-sonnet-20241022).
+var samplingFamilies = []struct {
+	family string
+	major  int
+	// maxMinor is the newest minor KNOWN to accept sampling. A minor released later
+	// is refused until someone checks it and widens the row.
+	maxMinor int
+}{
+	{family: "", major: 3, maxMinor: 7},       // claude-3, claude-3-5, claude-3-7
+	{family: "haiku", major: 4, maxMinor: 5},  // claude-haiku-4-5
+	{family: "sonnet", major: 4, maxMinor: 6}, // claude-sonnet-4, -4-5, -4-6
+	{family: "opus", major: 4, maxMinor: 6},   // claude-opus-4, -4-1, -4-5, -4-6; 4-7+ rejects
+}
+
+// acceptsSampling reports whether model may be sent a sampling parameter. It is the
+// ONE place that decision is made, and it fails safe: anything it cannot positively
+// match against samplingFamilies is a "no".
+//
+// The model id arrives in more than one spelling — the short proxy name
+// ("claude-sonnet-5-5") and the provider-prefixed Bedrock id
+// ("bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0") — so the id is read from its
+// LAST "claude-" onward. The segment after the major is a minor version when it is
+// one or two digits. A release date ("-20250514"), a Bedrock version tag ("-v1:0") or
+// the family word of a Claude 3 name ("claude-3-opus") means the .0 release. Anything
+// else there — a digit with a suffix ("7[1m]", "7@20260101") or an alias word
+// ("latest") — is a "no", because it may hide a minor the table would refuse.
+func acceptsSampling(model string) bool {
+	m := strings.ToLower(model)
+	i := strings.LastIndex(m, "claude-")
+	if i < 0 {
+		return false
+	}
+	segs := strings.Split(m[i+len("claude-"):], "-")
+	family, rest := "", segs
+	if len(segs) > 0 && !isAllDigits(segs[0]) {
+		family, rest = segs[0], segs[1:]
+	}
+	if len(rest) == 0 || !isAllDigits(rest[0]) || len(rest[0]) > 2 {
+		return false
+	}
+	major, _ := strconv.Atoi(rest[0])
+	minor := 0
+	if len(rest) > 1 {
+		seg := rest[1]
+		switch {
+		case isAllDigits(seg) && len(seg) <= 2:
+			minor, _ = strconv.Atoi(seg)
+		case isAllDigits(seg) && len(seg) >= 6:
+			// A release date: this is the .0 release.
+		case seg != "" && (seg[0] < '0' || seg[0] > '9'):
+			// A word means no minor ONLY where the word is known: the family in a
+			// generation-first Claude 3 name ("opus" in claude-3-opus) or a Bedrock
+			// version tag ("v1" in -v1:0). Any other word ("latest", "preview") is
+			// an alias that may resolve to a minor the table would refuse.
+			if family != "" && !isVersionTag(seg) {
+				return false
+			}
+		default:
+			// A digit with something attached ("7[1m]", "7@20260101", "7:0") is a
+			// minor this parser cannot read. Reading it as .0 would let Opus 4.7
+			// pass as Opus 4, so it fails safe instead.
+			return false
+		}
+	}
+	for _, f := range samplingFamilies {
+		if f.family == family && f.major == major && minor <= f.maxMinor {
+			return true
+		}
+	}
+	return false
 }
 
 type chatResponse struct {
@@ -389,10 +479,6 @@ type chatResponse struct {
 // result is NOT parsed or validated: a caller expecting JSON parses it itself, and
 // must enforce its own limits in code rather than trusting the prompt's stated ones.
 func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
-	temp := DefaultTemperature
-	if c.cfg.Temperature != nil {
-		temp = *c.cfg.Temperature
-	}
 	// No TrimSpace here: NewClient is the only writer of cfg and normalizes it, so a
 	// whitespace-only model has already become "". Re-trimming would imply the field
 	// might arrive padded, which is the invariant this package now holds.
@@ -403,6 +489,16 @@ func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) 
 	maxTokens := c.cfg.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = DefaultMaxTokens
+	}
+	// The guard is applied to the RESOLVED model, after the default, so the decision is
+	// made about the id actually on the wire. A nil temp leaves the key out of the body.
+	var temp *float64
+	if acceptsSampling(model) {
+		t := DefaultTemperature
+		if c.cfg.Temperature != nil {
+			t = *c.cfg.Temperature
+		}
+		temp = &t
 	}
 
 	body, err := json.Marshal(chatRequest{
@@ -625,6 +721,11 @@ func (c *Client) retryAfter(v string) time.Duration {
 		}
 	}
 	return 0
+}
+
+// isVersionTag reports whether seg is a Bedrock version tag such as "v1" or "v1:0".
+func isVersionTag(seg string) bool {
+	return len(seg) >= 2 && seg[0] == 'v' && seg[1] >= '0' && seg[1] <= '9'
 }
 
 // isAllDigits reports whether s is a non-empty ASCII digit string — the
