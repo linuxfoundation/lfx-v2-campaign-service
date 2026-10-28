@@ -93,6 +93,8 @@ func builtHubSpotAudienceInPortal(masterList string, suppression []string, porta
 // meta_test.go).
 type hubspotRec struct {
 	mu sync.Mutex
+	// failSubject makes the subject PATCH answer 400, as a rejected subject write would.
+	failSubject bool
 	// standing, when set, is the project's standing standard suppression list the fake portal
 	// holds: its id, found by a search for its name, and its filter, read back by GetList.
 	standingID     string
@@ -573,6 +575,11 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 				content, _ := body["content"].(map[string]any)
 				rec.applyContent(string(raw), content)
 			case body["subject"] != nil:
+				if rec.failSubject {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = io.WriteString(w, `{"status":"error","message":"rejected"}`)
+					return
+				}
 				rec.markSubject(fmt.Sprint(body["subject"]))
 			default:
 				rec.markSendList(body)
@@ -707,8 +714,14 @@ func TestHubSpot_AppliesGeneratedContent(t *testing.T) {
 	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
 
 	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p><a href=\"https://events.lfx.dev/reg\">Register</a>"}}`)
-	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
+	}
+	// Recorded, so a send workflow can tell a draft carrying its own copy from one still holding
+	// the template's.
+	if !resultContentStaged(t, camp) {
+		t.Error("result contentStaged = false, want true once the subject and body both landed")
 	}
 
 	subject, body := rec.snapshotContent()
@@ -786,8 +799,12 @@ func TestHubSpot_ContentAbsentLeavesTemplateCopy(t *testing.T) {
 	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
 	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
 
-	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)); err != nil {
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
+	}
+	if resultContentStaged(t, camp) {
+		t.Error("result contentStaged = true, but the draft keeps the template's copy")
 	}
 
 	subject, body := rec.snapshotContent()
@@ -1973,8 +1990,13 @@ func TestHubSpot_AContentRevertIsLoggedAsAnErrorNotAWarning(t *testing.T) {
 	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
 
 	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"S","bodyHtml":"<p>b</p>"}}`)
-	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
 		t.Fatalf("Dispatch should stay best-effort: %v", err)
+	}
+	// The body write failed, so the row must not claim the draft carries this campaign's copy.
+	if resultContentStaged(t, camp) {
+		t.Error("result contentStaged = true for a draft whose body write did not persist")
 	}
 
 	logged := buf.String()
@@ -2427,5 +2449,42 @@ func TestHubSpot_DispatchScopesEmbeddedExclusionsToTheirOrBranch(t *testing.T) {
 	}
 	if err := run("601"); err == nil || !strings.Contains(err.Error(), `includes list "601"`) {
 		t.Fatalf("want a refusal naming 601, got %v", err)
+	}
+}
+
+// resultContentStaged reads the contentStaged flag dispatch records in the campaign result.
+func resultContentStaged(t *testing.T, camp *model.Campaign) bool {
+	t.Helper()
+	if camp == nil {
+		t.Fatal("no campaign returned")
+	}
+	var blob struct {
+		ContentStaged bool `json:"contentStaged"`
+	}
+	if err := json.Unmarshal(camp.Result, &blob); err != nil {
+		t.Fatalf("result blob is not valid JSON: %v", err)
+	}
+	return blob.ContentStaged
+}
+
+// TestHubSpot_AFailedSubjectIsNotRecordedAsStagedCopy: the body landing is not enough. A draft
+// whose subject write failed still carries the TEMPLATE's subject, so it must not be recorded as
+// carrying this campaign's own copy.
+func TestHubSpot_AFailedSubjectIsNotRecordedAsStagedCopy(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.failSubject = true
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p>"}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch should stay best-effort: %v", err)
+	}
+	if _, body := rec.snapshotContent(); !strings.Contains(body, "Join us") {
+		t.Fatalf("precondition: the body should still land, got %q", body)
+	}
+	if resultContentStaged(t, camp) {
+		t.Error("result contentStaged = true although the subject write failed")
 	}
 }

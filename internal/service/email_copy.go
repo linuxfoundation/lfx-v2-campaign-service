@@ -15,7 +15,6 @@ import (
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 )
 
 // emailCopyEventDetails is the slice of a brief's EventDetails this generation needs.
@@ -210,8 +209,9 @@ const (
 	// maxEventFactsBlockRunes bounds the whole rendered block. It is a BACKSTOP: on an event brief
 	// the per-field bounds below already sum under it, which TestEventFactsBlockHonoursItsBound
 	// measures rather than taking on faith from this comment. A survey brief's source document
-	// (maxFactSourceTextRunes) can meet it alongside event facts, so it is rendered first and the
-	// backstop cuts those facts, never the document -- TestEventFactsBlockKeepsTheSourceDocument.
+	// (maxFactSourceTextRunes) can meet it alongside event facts, so it is rendered first and a
+	// later line that would not fit is left out whole, never cut --
+	// TestEventFactsBlockKeepsTheSourceDocument.
 	maxEventFactsBlockRunes = 3600 // runes
 	// maxFactSourceTextRunes bounds the survey surface's source document. Generous relative to the
 	// other per-field bounds because it is the whole factual basis of a survey email, and sized
@@ -378,16 +378,26 @@ func decodeEmailCopyEventDetails(blob json.RawMessage) (emailCopyEventDetails, e
 // reach is the description at the end.
 func (d emailCopyEventDetails) eventFactsBlock() string {
 	lines := make([]string, 0, 10)
+	// used counts the rendered block so far, its leading newline included. A line that would take
+	// it past maxEventFactsBlockRunes is OMITTED whole rather than cut: a fact cut mid-value is
+	// worse than a missing one, and a URL cut mid-string is one the prompt tells the model to copy
+	// exactly, producing a wrong destination.
+	used := 0
 	add := func(label, value string) {
-		if value != "" {
-			lines = append(lines, label+": "+value)
+		if value == "" {
+			return
+		}
+		line := label + ": " + value
+		if n := utf8.RuneCountInString(line) + 1; used+n <= maxEventFactsBlockRunes {
+			lines = append(lines, line)
+			used += n
 		}
 	}
 	// FIRST, ahead of every event fact: on the survey surface this is the only factual source the
 	// copy may use, and it is the one value large enough to meet the block bound alongside a
-	// description. Rendered first, a backstop truncation cuts the event facts after it, never the
-	// document. Empty on every event brief, so their block is unchanged. Labelled as the source
-	// DOCUMENT, not as a fact about an event: the survey stage prompts refer to it by that name.
+	// description. Rendered first, it is never what the bound leaves out. Empty on every event
+	// brief, so their block is unchanged. Labelled as the source DOCUMENT, not as a fact about an
+	// event: the survey stage prompts refer to it by that name.
 	add("Source document", factText(d.SourceText, maxFactSourceTextRunes))
 	// URLs first, each through the same validator the registration URL goes through. The UI already
 	// verified that the event page literally links to each of these, but event_details is an opaque
@@ -407,8 +417,9 @@ func (d emailCopyEventDetails) eventFactsBlock() string {
 	if len(lines) == 0 {
 		return ""
 	}
-	// truncateRunes, not factText: the leading newline is what separates this block from the Dates
-	// line above it, and trimming the block would delete it.
+	// The budget above already holds the block to the bound; truncateRunes stays as the
+	// backstop, and not factText, because the leading newline is what separates this block from
+	// the Dates line above it and trimming the block would delete it.
 	return truncateRunes("\n"+strings.Join(lines, "\n"), maxEventFactsBlockRunes)
 }
 
@@ -622,10 +633,7 @@ Constraints:
 	// free text and is never told the brief's delivery type, so the stage itself is what selects
 	// the map: resolving "Survey Promo" against the event templates would silently return
 	// Registration Push and write event copy for a survey, under a 200.
-	tpl := emailstage.Resolve(vars.stage)
-	if emailstage.IsSurveyStage(vars.stage) {
-		tpl = emailstage.ResolveSurvey(vars.stage)
-	}
+	tpl := resolveStageTemplate(vars.stage)
 	systemPrompt += fmt.Sprintf(`
 
 STAGE: %s
@@ -1386,7 +1394,7 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// counting it for CFP Launch, Post-Event or Final Countdown would refuse a caller for a value
 	// those prompts never receive either. The predicate is therefore "does this call FORMAT the
 	// url", which is exactly the condition composeEmailCopyPrompt uses -- not "is a stage set".
-	if stage := strings.TrimSpace(promptVars.stage); stage != "" && emailstage.Resolve(stage).LinksToRegistration {
+	if stage := strings.TrimSpace(promptVars.stage); stage != "" && resolveStageTemplate(stage).LinksToRegistration {
 		inputSize += utf8.RuneCountInString(promptVars.registrationURL)
 	}
 	// The event-facts block is deliberately NOT counted here, and speakers/topics stopped being
@@ -1424,7 +1432,7 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 		// code contradicted it.
 		slog.ErrorContext(ctx, "email copy generation blocked: composed prompt exceeds size limit; a stage template has outgrown the budget",
 			"project_id", p.ProjectID, "brief_id", p.BriefID,
-			"stage", emailstage.Resolve(promptVars.stage).StageName,
+			"stage", resolveStageTemplate(promptVars.stage).StageName,
 			"prompt_size", totalPromptSize, "limit", maxComposedPromptSize)
 		// NOT "temporarily": this is a compiled-in template exceeding a compiled-in bound, so every
 		// retry returns this same 503 until a corrected deployment ships. Promising transience

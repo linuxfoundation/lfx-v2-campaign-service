@@ -609,7 +609,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		// Assigns the NAMED return, not a local: the deferred stampProvenance reads `camp`,
 		// and a local here would leave the named return nil for any later edit that turns this
 		// into a bare `return` or inserts a statement before it.
-		camp = campaignFromHubSpot(ctx, email, cfg, portalID, nil, nil)
+		camp = campaignFromHubSpot(ctx, email, cfg, portalID, nil, nil, false)
 		return camp, fmt.Errorf("hubspot email %s cloned but setting its send list failed (verify before retrying): %w", email.ID, serr)
 	}
 
@@ -639,7 +639,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if heroWarning != "" {
 		warnings = append(warnings, heroWarning)
 	}
-	applyEmailContentWithHero(ctx, client, email.ID, cfg.Subject, cfg.BodyHTML, hostedHeroURL, cfg.HeroLinkURL, cfg.HeroImageAlt, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewText)
+	contentStaged := applyEmailContentWithHero(ctx, client, email.ID, cfg.Subject, cfg.BodyHTML, hostedHeroURL, cfg.HeroLinkURL, cfg.HeroImageAlt, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewText)
 
 	// STEP 3B (mutating, BEST-EFFORT, OPT-IN): create a native A/B test variant of the clone and
 	// apply the variant's own copy to it. Ordered AFTER the clone's own content (STEP 3) and
@@ -671,7 +671,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		tagEmailLinks(ctx, client, abVariant.ID, cloneName, cfg.UTMCampaign)
 	}
 
-	return campaignFromHubSpot(ctx, email, cfg, portalID, abVariant, warnings), nil
+	return campaignFromHubSpot(ctx, email, cfg, portalID, abVariant, warnings, contentStaged), nil
 }
 
 // uploadHeroImage re-hosts a scraped hero/banner image in HubSpot's file manager, returning the
@@ -747,11 +747,20 @@ func heroFailureReason(err error) string {
 // uploading the source image twice.
 //
 // BEST-EFFORT, like tagEmailLinks: every failure is logged and swallowed.
-func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emailID, subject, bodyHTML, hostedHeroURL, heroLinkURL, heroImageAlt, buttonText, buttonURL string, sponsors []hubspot.Sponsor, sentByOrg, previewText string) {
+//
+// The result reports whether the draft now carries this campaign's own copy: a generated subject
+// AND a rebuilt body both written. False whenever either was not supplied or did not land, which
+// leaves the template's copy in the draft. Best-effort here, but recorded (contentStaged on the
+// campaign result) so a caller that sends the draft without review -- a send workflow -- can
+// refuse one that still holds another campaign's copy.
+func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emailID, subject, bodyHTML, hostedHeroURL, heroLinkURL, heroImageAlt, buttonText, buttonURL string, sponsors []hubspot.Sponsor, sentByOrg, previewText string) (contentStaged bool) {
+	subjectStaged := false
 	if subject = strings.TrimSpace(subject); subject != "" {
 		if _, err := client.PatchEmailSettings(ctx, emailID, hubspot.EmailSettings{Subject: &subject}); err != nil {
 			slog.WarnContext(ctx, "could not set the generated subject on the email draft; it keeps the template's subject",
 				"email_id", emailID, "error", err)
+		} else {
+			subjectStaged = true
 		}
 	}
 
@@ -776,7 +785,7 @@ func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emai
 		// Nothing to rebuild: every campaign that predates LFXV2-2775 (and any caller that only
 		// wants the subject updated) reaches here with no generated content at all, and a full
 		// rebuild with an empty body would wipe the clone's template content for nothing.
-		return
+		return false
 	}
 
 	if _, err := client.RebuildEmailContent(ctx, emailID, hubspot.RebuildEmailContentInput{
@@ -802,14 +811,15 @@ func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emai
 		if errors.Is(err, hubspot.ErrContentNotPersisted) {
 			slog.ErrorContext(ctx, "the email draft's content was accepted but not persisted; the draft is left in an inconsistent state and needs manual repair",
 				"email_id", emailID, "error", err)
-			return
+			return false
 		}
 		slog.WarnContext(ctx, "could not rebuild the email draft's content; it keeps the template's content",
 			"email_id", emailID, "error", err)
-		return
+		return false
 	}
 	slog.InfoContext(ctx, "rebuilt the email draft's content (hero, body, sponsors, footer), replacing the cloned template's content",
 		"email_id", emailID, "has_hero", strings.TrimSpace(hostedHeroURL) != "", "sponsor_count", len(sponsors))
+	return subjectStaged && bodyHTML != ""
 }
 
 // abVariantNameSuffix names the variant HubSpot creates from parentName, mirroring the naming the
@@ -845,7 +855,7 @@ func createABTestVariantWithHero(ctx context.Context, client *hubspot.Client, pa
 			"email_id", parentID, "error", err)
 		return nil
 	}
-	applyEmailContentWithHero(ctx, client, variant.ID, subjectB, bodyHTMLB, hostedHeroURL, heroLinkURL, heroImageAlt, buttonText, buttonURL, sponsors, sentByOrg, previewTextB)
+	_ = applyEmailContentWithHero(ctx, client, variant.ID, subjectB, bodyHTMLB, hostedHeroURL, heroLinkURL, heroImageAlt, buttonText, buttonURL, sponsors, sentByOrg, previewTextB)
 	slog.InfoContext(ctx, "created a HubSpot A/B test variant of the campaign email",
 		"email_id", parentID, "variant_id", variant.ID, "variant_state", variant.State)
 	return variant
@@ -1034,7 +1044,7 @@ func emailPartial(ctx context.Context, name string) *model.Campaign {
 // hubSpotCreationPortalID. It rides on a wrapper rather than inside the marshalled
 // hubspot.Email because it is a property of the connection that made the call, not a field
 // HubSpot returns. It may be empty: the lookup is best-effort at the call site.
-func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfig, portalID string, abVariant *hubspot.Email, warnings []string) *model.Campaign {
+func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfig, portalID string, abVariant *hubspot.Email, warnings []string, contentStaged bool) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: e.ID,
 		CampaignName:       e.Name,
@@ -1070,7 +1080,11 @@ func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfi
 		// Warnings are best-effort steps that did not apply (today: the hero image), so the
 		// operator learns of them from the job result instead of from the finished draft.
 		Warnings []string `json:"warnings,omitempty"`
-	}{Email: e, PortalID: portalID, HubspotURL: e.AppURL, ABTestVariant: abVariant, Warnings: warnings}); err != nil {
+		// ContentStaged is true only when this campaign's own subject and body were both
+		// written to the draft (applyEmailContentWithHero). Absent means the draft may still
+		// hold the template's copy.
+		ContentStaged bool `json:"contentStaged,omitempty"`
+	}{Email: e, PortalID: portalID, HubspotURL: e.AppURL, ABTestVariant: abVariant, Warnings: warnings, ContentStaged: contentStaged}); err != nil {
 		slog.WarnContext(ctx, "failed to marshal hubspot email result blob (Result left empty)",
 			"campaign_id", c.PlatformCampaignID, "error", err)
 	} else {

@@ -78,9 +78,10 @@ func (f *fakeFlowHubSpot) CloneFlowWithEmails(_ context.Context, flowID string, 
 	}
 	f.calls++
 	return &hubspot.FlowRef{
-		FlowID:             "new-flow-1",
-		Name:               opts.Name,
-		EditURL:            "https://app.hubspot.com/workflows/8112310/platform/flow/new-flow-1/edit",
+		FlowID: "new-flow-1",
+		Name:   opts.Name,
+		// What a client with no configured portal id builds: a link the service must not echo.
+		EditURL:            "https://app.hubspot.com/workflows//platform/flow/new-flow-1/edit",
 		SourceFlowID:       flowID,
 		SourceFlowName:     "26Q2 - LF Research - Survey Promo",
 		IsEnabled:          false,
@@ -99,15 +100,16 @@ func (f *fakeFlowHubSpot) sourceSuppression() string {
 }
 
 type fakeFlowResolver struct {
-	client *fakeFlowHubSpot
-	err    error
+	client     *fakeFlowHubSpot
+	err        error
+	fromSystem bool
 }
 
 func (r fakeFlowResolver) ResolveHubSpotClient(context.Context, string) (HubSpotWizardClient, bool, error) {
 	if r.err != nil {
 		return nil, false, r.err
 	}
-	return r.client, false, nil
+	return r.client, r.fromSystem, nil
 }
 
 // sendWorkflowHarness wires a service whose briefs are staged and ready to sequence.
@@ -143,7 +145,7 @@ func sendWorkflowHarness(t *testing.T) (*BriefService, *fakeCampaignRepo, *fakeF
 		camps.storeRow(&model.Campaign{
 			BriefID: b.id, Platform: model.ProviderHubSpot, Variant: model.VariantDefault,
 			PlatformCampaignID: b.emailID, Status: model.CampaignStatusCreated,
-			Result: json.RawMessage(`{"id":"` + b.emailID + `","portalId":"8112310"}`),
+			Result: json.RawMessage(`{"id":"` + b.emailID + `","portalId":"8112310","contentStaged":true}`),
 		})
 	}
 	return s, camps, hs
@@ -331,8 +333,8 @@ func TestCreateSendWorkflow_RefusesADraftStagedInAnotherPortal(t *testing.T) {
 	// one: the audience's portal check passes, but the send step would name an email the new
 	// portal cannot see. A row that never recorded its portal is unproven, and refused the same.
 	for name, result := range map[string]string{
-		"another portal":     `{"portalId":"1"}`,
-		"no recorded portal": `{"id":"email-2"}`,
+		"another portal":     `{"portalId":"1","contentStaged":true}`,
+		"no recorded portal": `{"id":"email-2","contentStaged":true}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, camps, hs := sendWorkflowHarness(t)
@@ -693,5 +695,111 @@ func TestCreateSendWorkflow_ShapeMismatchIsAConflict(t *testing.T) {
 	// The counts are what make the message actionable, so they survive the mapping.
 	if !strings.Contains(conflict.Message, "2 send-email step(s) but 3 email(s)") {
 		t.Errorf("message = %q, want it to keep both counts", conflict.Message)
+	}
+}
+
+func TestCreateSendWorkflow_SharedConnectionCopiesOnlyTheDeploymentsWorkflow(t *testing.T) {
+	// On the shared LF connection a workflow id is portal-wide: a caller-named one can be another
+	// project's workflow, whose definition would be read and whose other steps would run against
+	// this series' audience. Only the deployment's own survey workflow is accepted there.
+	onShared := func(t *testing.T) (*BriefService, *fakeFlowHubSpot) {
+		t.Helper()
+		s, _, hs := sendWorkflowHarness(t)
+		byBrief := map[string]*model.CampaignAudience{}
+		for _, id := range []string{"b-promo", "b-reminder"} {
+			byBrief[id] = seriesAudienceRow("4477", nil, `["9002"]`)
+		}
+		s.SetWizardBackend(newFakeWizardSessionRepo(), fakeFlowResolver{client: hs, fromSystem: true},
+			&fakeSeriesAudienceRepo{byBrief: byBrief})
+		return s, hs
+	}
+
+	t.Run("a caller-named workflow is refused", func(t *testing.T) {
+		t.Setenv(constants.EnvSurveySequenceWorkflowID, "555")
+		s, hs := onShared(t)
+		other := "https://app.hubspot.com/workflows/8112310/platform/flow/777/edit"
+		p := sendWorkflowPayload([]string{"b-promo", "b-reminder"}, nil)
+		p.Input.SourceWorkflowURL = &other
+
+		_, err := s.CreateSendWorkflow(context.Background(), p)
+		var conflict *briefs.ConflictError
+		if !errors.As(err, &conflict) || !strings.Contains(conflict.Message, "connect the project's own HubSpot portal") {
+			t.Fatalf("error = %T (%v), want a 409 telling the caller to connect its own portal", err, err)
+		}
+		if hs.flowID != "" || hs.calls != 0 {
+			t.Errorf("the named workflow was read (flow %q, %d creates); it must not be touched", hs.flowID, hs.calls)
+		}
+	})
+
+	for name, url := range map[string]*string{
+		"no source named":            nil,
+		"the configured id by name":  strPtr("https://app.hubspot.com/workflows/8112310/platform/flow/555/edit"),
+		"the configured id, bare id": strPtr("555"),
+	} {
+		t.Run(name+" is accepted", func(t *testing.T) {
+			t.Setenv(constants.EnvSurveySequenceWorkflowID, "555")
+			s, hs := onShared(t)
+			p := sendWorkflowPayload([]string{"b-promo", "b-reminder"}, nil)
+			p.Input.SourceWorkflowURL = url
+
+			if _, err := s.CreateSendWorkflow(context.Background(), p); err != nil {
+				t.Fatalf("CreateSendWorkflow: %v", err)
+			}
+			if hs.flowID != "555" {
+				t.Errorf("flow id = %q, want the configured 555", hs.flowID)
+			}
+		})
+	}
+
+	t.Run("the in-code default is accepted when nothing is configured", func(t *testing.T) {
+		t.Setenv(constants.EnvSurveySequenceWorkflowID, "")
+		s, hs := onShared(t)
+		if _, err := s.CreateSendWorkflow(context.Background(), sendWorkflowPayload([]string{"b-promo", "b-reminder"}, nil)); err != nil {
+			t.Fatalf("CreateSendWorkflow: %v", err)
+		}
+		if hs.flowID != defaultSurveySequenceWorkflowID {
+			t.Errorf("flow id = %q, want the default", hs.flowID)
+		}
+	})
+}
+
+func TestCreateSendWorkflow_RefusesADraftWithoutItsOwnCopy(t *testing.T) {
+	// Dispatch's copy write is best-effort, so a `created` row can still hold the TEMPLATE's
+	// subject and body. A workflow sends without anyone opening each draft, so only a draft
+	// recorded as carrying its own copy may go in. A row that predates the record is unproven.
+	for name, result := range map[string]string{
+		"copy write failed":        `{"portalId":"8112310","contentStaged":false}`,
+		"staged before the record": `{"portalId":"8112310"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, camps, hs := sendWorkflowHarness(t)
+			row, err := camps.GetCampaignByPlatform(context.Background(), "tlf", "b-reminder", model.ProviderHubSpot, model.VariantDefault)
+			if err != nil {
+				t.Fatal(err)
+			}
+			row.Result = json.RawMessage(result)
+
+			_, err = s.CreateSendWorkflow(context.Background(), sendWorkflowPayload([]string{"b-promo", "b-reminder"}, nil))
+			var conflict *briefs.ConflictError
+			if !errors.As(err, &conflict) || !strings.Contains(conflict.Message, "send 2") || !strings.Contains(conflict.Message, "its own subject and body") {
+				t.Fatalf("error = %T (%v), want a 409 naming send 2's missing copy", err, err)
+			}
+			if hs.calls != 0 {
+				t.Error("a workflow was created around a draft that may hold the template's copy")
+			}
+		})
+	}
+}
+
+func TestCreateSendWorkflow_EditLinkUsesTheVerifiedPortal(t *testing.T) {
+	// A connection with no configured portal id leaves the client's link as /workflows//...; the
+	// series' portal was verified before the create, so the link is built from that.
+	s, _, _ := sendWorkflowHarness(t)
+	res, err := s.CreateSendWorkflow(context.Background(), sendWorkflowPayload([]string{"b-promo", "b-reminder"}, nil))
+	if err != nil {
+		t.Fatalf("CreateSendWorkflow: %v", err)
+	}
+	if want := "https://app.hubspot.com/workflows/8112310/platform/flow/new-flow-1/edit"; res.EditURL != want {
+		t.Errorf("edit_url = %q, want %q", res.EditURL, want)
 	}
 }

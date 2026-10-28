@@ -2923,6 +2923,12 @@ because a subject patch 500'd would discard a staged email a human could still e
 log lines say exactly what the operator is left with — "it keeps the template's subject" / "it
 keeps the template's body" — so a draft that silently kept template copy is diagnosable.
 
+It is also RECORDED: `applyEmailContentWithHero` reports whether the generated subject AND body
+both landed, and the campaign result carries that as `contentStaged` (omitted when false). A
+survey send workflow sends drafts without a reviewer opening each one, so it refuses a draft
+without the flag rather than send the template's copy
+(`TestHubSpot_AFailedSubjectIsNotRecordedAsStagedCopy`).
+
 The body write targets the **first rich-text block in the draft's LAYOUT READING ORDER**, and
 refuses when the draft has no rich-text block at all — or when it has no LAYOUT. "First" comes
 from `content.flexAreas`, the drag-and-drop layout tree — the only place a draft records the order

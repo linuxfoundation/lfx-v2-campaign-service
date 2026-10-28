@@ -163,12 +163,15 @@ var SurveyTemplates = map[string]Template{
 			"Share your perspective: the 2026 state of [TOPIC]",
 			"The [SURVEY_NAME] survey is still open",
 		},
-		PreviewPattern:      "One-line inbox preview naming who the survey is for",
-		ContentPrompt:       surveyParticipationPrompt(surveyPromoOpening),
-		CTAStrategy:         surveyCTAStrategy,
-		FooterNote:          "Closes with the research team's privacy, visibility and questions disclosure.",
-		PrimaryCTA:          "Take the Survey",
-		LinksToRegistration: false,
+		PreviewPattern: "One-line inbox preview naming who the survey is for",
+		ContentPrompt:  surveyParticipationPrompt(surveyPromoOpening),
+		CTAStrategy:    surveyCTAStrategy,
+		FooterNote:     "Closes with the research team's privacy, visibility and questions disclosure.",
+		PrimaryCTA:     "Take the Survey",
+		// TRUE on every survey stage: a survey brief's url column IS the promoted survey or
+		// report, so the CTA's "supplied URL" is that column. False withheld it from the prompt
+		// while the prompt still asked for a button pointing at it -- a button with no link.
+		LinksToRegistration: true,
 	},
 
 	SurveyReminder: {
@@ -188,7 +191,7 @@ var SurveyTemplates = map[string]Template{
 		CTAStrategy:         surveyCTAStrategy,
 		FooterNote:          "Closes with the research team's privacy, visibility and questions disclosure.",
 		PrimaryCTA:          "Take the Survey",
-		LinksToRegistration: false,
+		LinksToRegistration: true,
 	},
 
 	SurveyClosing: {
@@ -208,7 +211,7 @@ var SurveyTemplates = map[string]Template{
 		CTAStrategy:         surveyCTAStrategy,
 		FooterNote:          "Closes with the research team's privacy, visibility and questions disclosure.",
 		PrimaryCTA:          "Take the Survey",
-		LinksToRegistration: false,
+		LinksToRegistration: true,
 	},
 
 	ReportPromo: {
@@ -264,7 +267,7 @@ REQUIRED INFORMATION HIERARCHY:
 		},
 		FooterNote:          "Closes with a standalone click-to-share sentence.",
 		PrimaryCTA:          "Read the Report",
-		LinksToRegistration: false,
+		LinksToRegistration: true,
 	},
 }
 

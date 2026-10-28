@@ -2628,3 +2628,15 @@ portal. `send_dates` must be after today (`s.now()`, UTC) and strictly increasin
 for every dated step. `mapFlowCloneErr` maps `hubspot.ErrFlowStepCountMismatch` and
 `ErrFlowShapeUnsupported` to 409, and a 404 on the deployment's default workflow to a 409 naming
 `SURVEY_SEQUENCE_WORKFLOW_ID`.
+
+On the shared LF connection (`fromSystem`), `CreateSendWorkflow` copies only the deployment's own
+survey workflow (`SURVEY_SEQUENCE_WORKFLOW_ID`, or the in-code default): a workflow id is
+portal-wide there, so a caller-named one could be another project's, and is a 409 telling the
+caller to connect the project's own portal. This is the same boundary the wizard draws for
+cross-turn ids on the shared row.
+
+The email wizard resolves a brief's stage through `resolveStageTemplate` (`IsSurveyStage` →
+`ResolveSurvey`, else `Resolve`) at every turn that reads it — plan, generate (stage prompt) and
+clone (draft name) — as `generate-email-copy` does, and carries a survey brief's
+`event_details.sourceText` into its prompt facts as a fenced `Source document`, bounded by
+`maxFactSourceTextRunes`.

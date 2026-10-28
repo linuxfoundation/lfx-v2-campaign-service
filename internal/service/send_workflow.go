@@ -78,11 +78,12 @@ func (s *BriefService) CreateSendWorkflow(ctx context.Context, p *briefs.CreateS
 	// An unnamed source is the ordinary case: the deployment's configured sequence workflow is
 	// what a survey series is normally built from. Only a request that NAMES something unusable
 	// is refused, so a blank field falls back rather than failing.
-	flowID := defaultSurveySequenceWorkflowID
-	sourceNamed := false
+	deploymentFlowID := defaultSurveySequenceWorkflowID
 	if configured := strings.TrimSpace(os.Getenv(constants.EnvSurveySequenceWorkflowID)); configured != "" {
-		flowID = configured
+		deploymentFlowID = configured
 	}
+	flowID := deploymentFlowID
+	sourceNamed := false
 	if named := strings.TrimSpace(strVal(p.Input.SourceWorkflowURL)); named != "" {
 		sourceNamed = true
 		flowID = hubspot.ParseFlowID(named)
@@ -146,12 +147,24 @@ func (s *BriefService) CreateSendWorkflow(ctx context.Context, p *briefs.CreateS
 		emailIDs = append(emailIDs, d.emailID)
 	}
 
-	client, _, rerr := resolver.ResolveHubSpotClient(ctx, p.ProjectID)
+	client, fromSystem, rerr := resolver.ResolveHubSpotClient(ctx, p.ProjectID)
 	if rerr != nil {
 		if errors.Is(rerr, domain.ErrNotFound) {
 			return nil, &briefs.ConflictError{Code: "409", Message: "this project has no usable HubSpot connection"}
 		}
 		return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the HubSpot connection could not be resolved"}
+	}
+	// On the shared LF connection a workflow id is portal-wide, so a caller-chosen one can be
+	// ANOTHER project's workflow: reading it would disclose its definition, and copying it would
+	// run its other steps (webhooks, property writes) against this series' audience. The same
+	// reason the wizard refuses a cross-turn id on the shared row (findWizardSourceEmail). Only
+	// the deployment's own survey workflow -- configured or default -- is accepted there.
+	if fromSystem && flowID != deploymentFlowID {
+		return nil, &briefs.ConflictError{
+			Code: "409",
+			Message: "this project sends through the shared LF HubSpot connection, where only the deployment's survey workflow may be copied; " +
+				"omit source_workflow_url, or connect the project's own HubSpot portal to copy a workflow of your choice",
+		}
 	}
 
 	// The same send-time checks staging and the wizard run before SetSendList, because enrolling
@@ -179,11 +192,10 @@ func (s *BriefService) CreateSendWorkflow(ctx context.Context, p *briefs.CreateS
 	// The LF-wide fallback is NOT refused here, unlike the wizard's email search. The search
 	// refuses it because HubSpot's email namespace is portal-wide and a match there can be
 	// another project's email. Here every email id and list id came from this project's own
-	// rows and is checked against the portal above. The SOURCE workflow is the one trust gap:
-	// it is the deployment's configured workflow or one a campaign manager pasted, and on the
-	// shared LF portal that can be any workflow in it. Only its schedule, time windows and
-	// suppression lists are inherited -- its emails, dates and enrollment are replaced, and a
-	// source still referring to its own emails anywhere else is refused.
+	// rows and is checked against the portal above. The SOURCE workflow is the deployment's own on
+	// the shared LF portal (refused above otherwise), or one a campaign manager pasted from the
+	// project's own portal. Its emails, dates and enrollment are replaced, and a source still
+	// referring to its own emails anywhere else is refused.
 	ref, cerr := client.CloneFlowWithEmails(ctx, flowID, hubspot.CloneFlowOptions{
 		Name:               name,
 		EmailIDs:           emailIDs,
@@ -196,10 +208,16 @@ func (s *BriefService) CreateSendWorkflow(ctx context.Context, p *briefs.CreateS
 		return nil, mapFlowCloneErr(cerr, flowID, sourceNamed)
 	}
 
+	// The link is built from the portal assertWizardPortal just verified, not the client's
+	// configured one, which is empty on a connection that never recorded its portal id.
+	editURL := ref.EditURL
+	if series.portalID != "" {
+		editURL = hubspot.FlowEditURLFor(series.portalID, ref.FlowID)
+	}
 	return &briefs.SendWorkflowResult{
 		FlowID:             ref.FlowID,
 		Name:               ref.Name,
-		EditURL:            ref.EditURL,
+		EditURL:            editURL,
 		SourceFlowID:       ref.SourceFlowID,
 		SourceFlowName:     &ref.SourceFlowName,
 		IsEnabled:          ref.IsEnabled,
@@ -288,7 +306,20 @@ func (s *BriefService) stagedDrafts(
 					briefID, position, campaign.Status),
 			}
 		}
-		drafts = append(drafts, stagedDraft{emailID: emailID, portalID: draftPortalID(campaign.Result)})
+		staged := readStagedResult(campaign.Result)
+		// isReusableCampaign proves the draft EXISTS, not that it carries this brief's copy:
+		// dispatch's content write is best-effort, so a `created` row can still hold the
+		// template's subject and body. A workflow sends without a reviewer opening each draft,
+		// so it takes only drafts dispatch recorded as carrying their own copy.
+		if !staged.ContentStaged {
+			return nil, &briefs.ConflictError{
+				Code: "409",
+				Message: fmt.Sprintf(
+					"brief %s (send %d)'s draft is not recorded as carrying its own subject and body (the copy write failed, or it was staged before this was recorded); re-stage it",
+					briefID, position),
+			}
+		}
+		drafts = append(drafts, stagedDraft{emailID: emailID, portalID: strings.TrimSpace(staged.PortalID)})
 	}
 	return drafts, nil
 }
@@ -299,17 +330,21 @@ type stagedDraft struct {
 	portalID string
 }
 
-// draftPortalID is the portal HubSpot dispatch recorded in the campaign's result blob after
-// proving the audience's lists live there. Empty when the row predates that record or the blob
-// is unreadable, which the caller treats as unproven.
-func draftPortalID(result json.RawMessage) string {
-	var blob struct {
-		PortalID string `json:"portalId"`
-	}
+// stagedResult is what HubSpot dispatch recorded in the campaign's result blob: the portal it
+// proved the audience's lists live in, and whether the draft carries this campaign's own copy.
+// Zero values when the row predates either record or the blob is unreadable, which the caller
+// treats as unproven.
+type stagedResult struct {
+	PortalID      string `json:"portalId"`
+	ContentStaged bool   `json:"contentStaged"`
+}
+
+func readStagedResult(result json.RawMessage) stagedResult {
+	var blob stagedResult
 	if len(result) == 0 || json.Unmarshal(result, &blob) != nil {
-		return ""
+		return stagedResult{}
 	}
-	return strings.TrimSpace(blob.PortalID)
+	return blob
 }
 
 // seriesAudienceSet is the one audience a workflow enrolls: the lists it sends to, the lists it

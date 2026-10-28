@@ -29,8 +29,8 @@ const (
 	DeliveryEmail         DeliveryType = "email"
 	// DeliverySurvey is the survey/report promotion surface. Its brief is authored from a
 	// free-text source document and a promoted URL rather than from a scraped event page, and
-	// its stages name WHICH ASSET is promoted rather than which send in a series it is --
-	// see emailstage.SurveyNames.
+	// its stages name the asset and the send (promo, reminder, closing; report promo) rather
+	// than a point on an event's lifecycle -- see emailstage.SurveyNames.
 	DeliverySurvey DeliveryType = "survey"
 )
 

@@ -21995,7 +21995,7 @@ definitions:
                 type: array
                 items:
                     type: string
-                    example: "6554-97-58"
+                    example: "2026-11-09"
                     pattern: ^\d{4}-\d{2}-\d{2}$
                 description: 'Calendar dates (YYYY-MM-DD), one per wait-until-date step of the source workflow, in the order a contact meets them. Each must be after today (UTC) and after the one before it. Required whenever the source workflow has dated steps: the source''s own dates belong to another campaign. Each step''s time of day is always the source''s.'
                 example:
@@ -22051,7 +22051,7 @@ definitions:
             is_enabled:
                 type: boolean
                 description: 'Always false on create: the workflow sends nothing until a human enables it in HubSpot'
-                example: true
+                example: false
             name:
                 type: string
                 description: Name HubSpot recorded
@@ -22087,7 +22087,7 @@ definitions:
                 - Quidem quaerat cum modi temporibus.
                 - Et maiores sit autem ut et.
             flow_id: Dolor aut aut quia tempora tempora.
-            is_enabled: true
+            is_enabled: false
             name: Quo accusamus aut.
             send_email_steps: 1275313078849356657
             source_flow_id: Unde eos facilis sit tempore perspiciatis voluptas.

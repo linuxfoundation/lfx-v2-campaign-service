@@ -245,6 +245,7 @@ var SendWorkflowInput = Type("send-workflow-input", func() {
 	})
 	Attribute("send_dates", ArrayOf(String, func() {
 		Pattern(`^\d{4}-\d{2}-\d{2}$`)
+		Example("2026-11-09")
 	}), "Calendar dates (YYYY-MM-DD), one per wait-until-date step of the source workflow, in the order a contact meets them. Each must be after today (UTC) and after the one before it. Required whenever the source workflow has dated steps: the source's own dates belong to another campaign. Each step's time of day is always the source's.", func() {
 		MaxLength(10)
 		Example([]string{"2026-10-09", "2026-10-19", "2026-10-23"})
@@ -262,7 +263,9 @@ var SendWorkflowResult = Type("send-workflow-result", func() {
 	Attribute("edit_url", String, "Where to review and enable it")
 	Attribute("source_flow_id", String, "The workflow it was copied from")
 	Attribute("source_flow_name", String, "That workflow's name")
-	Attribute("is_enabled", Boolean, "Always false on create: the workflow sends nothing until a human enables it in HubSpot")
+	Attribute("is_enabled", Boolean, "Always false on create: the workflow sends nothing until a human enables it in HubSpot", func() {
+		Example(false)
+	})
 	Attribute("send_email_steps", Int, "How many send steps were pointed at this campaign's drafts")
 	Attribute("dated_steps", Int, "How many wait-until-date steps had their date replaced")
 	Attribute("enrollment_list_ids", ArrayOf(String), "The HubSpot lists the new workflow enrolls: the series' shared audience (its master list, or every list it was attached from). A contact in any of them is enrolled. The source workflow's own enrollment is always replaced.")

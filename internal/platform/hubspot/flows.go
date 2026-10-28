@@ -89,7 +89,15 @@ type FlowRef struct {
 
 // FlowEditURL is where a human reviews and enables a workflow.
 func (c *Client) FlowEditURL(flowID string) string {
-	return fmt.Sprintf("https://app.hubspot.com/workflows/%s/platform/flow/%s/edit", c.account.PortalID, flowID)
+	return FlowEditURLFor(c.account.PortalID, flowID)
+}
+
+// FlowEditURLFor is a workflow's editor link in a named portal. A caller that has VERIFIED the
+// portal (the send-workflow path proves it before creating anything) builds the link from that,
+// because a connection with no configured portal id leaves the client's own copy empty and the
+// link would read /workflows//platform/...
+func FlowEditURLFor(portalID, flowID string) string {
+	return fmt.Sprintf("https://app.hubspot.com/workflows/%s/platform/flow/%s/edit", portalID, flowID)
 }
 
 // GetFlow fetches one workflow's full definition as opaque JSON.
