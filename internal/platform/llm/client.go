@@ -415,9 +415,11 @@ var samplingFamilies = []struct {
 // The model id arrives in more than one spelling — the short proxy name
 // ("claude-sonnet-5-5") and the provider-prefixed Bedrock id
 // ("bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0") — so the id is read from its
-// LAST "claude-" onward. The segment after the major is a minor version only when it
-// is one or two digits; a longer run is a release date ("-20250514"), so that model
-// is the .0 release.
+// LAST "claude-" onward. The segment after the major is a minor version when it is
+// one or two digits. A run of six or more digits is a release date ("-20250514") and a
+// segment starting with a letter is a word ("-v1:0"); either means the .0 release. A
+// segment that starts with a digit but is neither ("7[1m]", "7@20260101") is a "no",
+// because it may hide a minor the table would refuse.
 func acceptsSampling(model string) bool {
 	m := strings.ToLower(model)
 	i := strings.LastIndex(m, "claude-")
@@ -434,8 +436,21 @@ func acceptsSampling(model string) bool {
 	}
 	major, _ := strconv.Atoi(rest[0])
 	minor := 0
-	if len(rest) > 1 && isAllDigits(rest[1]) && len(rest[1]) <= 2 {
-		minor, _ = strconv.Atoi(rest[1])
+	if len(rest) > 1 {
+		seg := rest[1]
+		switch {
+		case isAllDigits(seg) && len(seg) <= 2:
+			minor, _ = strconv.Atoi(seg)
+		case isAllDigits(seg) && len(seg) >= 6:
+			// A release date: this is the .0 release.
+		case seg != "" && (seg[0] < '0' || seg[0] > '9'):
+			// A word ("opus" in claude-3-opus, "v1" in -v1:0): no minor.
+		default:
+			// A digit with something attached ("7[1m]", "7@20260101", "7:0") is a
+			// minor this parser cannot read. Reading it as .0 would let Opus 4.7
+			// pass as Opus 4, so it fails safe instead.
+			return false
+		}
 	}
 	for _, f := range samplingFamilies {
 		if f.family == family && f.major == major && minor <= f.maxMinor {

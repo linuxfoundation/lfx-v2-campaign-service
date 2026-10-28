@@ -984,6 +984,12 @@ func TestAcceptsSampling_ModelFamilies(t *testing.T) {
 		{"claude-opus-4-7", false},
 		{"claude-opus-4-8", false},
 		{"bedrock/us.anthropic.claude-opus-4-8", false},
+		// A minor with a suffix attached must not be read as .0 (Opus 4.7 as Opus 4).
+		{"claude-opus-4-7[1m]", false},
+		{"claude-opus-4-7@20260101", false},
+		{"vertex_ai/claude-opus-4-7@20260101", false},
+		{"claude-opus-4-7:0", false},
+		{"anthropic.claude-opus-4-7-v1:0", false},
 		// Every 5-series model: reject. claude-sonnet-5-5 is what production runs (#397).
 		{"claude-sonnet-5", false},
 		{"claude-sonnet-5-5", false},

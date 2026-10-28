@@ -79,14 +79,17 @@ zero token budget are not meaningful requests.
 Claude Opus 4.7 and later, and every 5-series Claude model, return **400** when a request sets
 `temperature`, `top_p` or `top_k` (Anthropic's model reference; the extended-thinking doc's
 sampling-parameters list names Opus 4.7, Opus 4.8, Sonnet 5, Sonnet 5.5 and Haiku 5.5). The
-proxy does not strip them — `lfit-litellm.yaml` sets no `drop_params` — so a value sent reaches
-Bedrock as sent. Production pins `AI_MODEL` to `claude-sonnet-5-5`, and until #397 the request
+proxy does not strip them — `values/global/lfit-litellm.yaml` in `linuxfoundation/lfx-v2-argocd`
+sets no `drop_params` (checked 2026-10-28) — so a value sent reaches Bedrock as sent. Production pins `AI_MODEL` to `claude-sonnet-5-5`, and until #397 the request
 body marshalled `temperature` unconditionally, so every generation failed.
 
 `acceptsSampling(model)` is the one place the decision is made. It reads the id from its last
 `claude-` onward, so the short proxy name (`claude-sonnet-5-5`) and the Bedrock id
 (`bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0`) are judged the same way, and matches it
-against `samplingFamilies`, an **allowlist** of family / major / newest-known minor:
+against `samplingFamilies`, an **allowlist** of family / major / newest-known minor. The segment
+after the major is the minor when it is one or two digits; a date (six or more digits) or a word
+(`v1`) means the `.0` release; a digit with a suffix attached (`7[1m]`, `7@20260101`) is a **no**,
+so Opus 4.7 under a suffixed alias cannot pass as Opus 4:
 
 | family | accepts sampling |
 |---|---|
