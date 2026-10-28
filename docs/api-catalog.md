@@ -526,7 +526,8 @@ cap, which needs the traffic or leads objective; ...`). The two rules that need 
 currency — Meta's whole minor unit in a zero-decimal currency and Meta's 5 × bid daily-budget
 minimum in encoded minor units — fail the platform job at dispatch instead, still before anything
 is created. `googleAdsConfig.bidding` is refused with `400` (Google Ads sets
-its strategy with `googleAdsConfig.biddingStrategy`).
+its strategy with `googleAdsConfig.biddingStrategy` and a manual max CPC bid with
+`googleAdsConfig.cpcBid`; the 400 names both).
 
 **LinkedIn's objective follows the strategy** (decision 2026-10-13, Misha: automatic LinkedIn
 campaigns optimise for clicks via `WEBSITE_VISIT`/`MAX_CLICK` because `MAX_CONVERSION` needs a
