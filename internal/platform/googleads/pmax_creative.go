@@ -25,9 +25,10 @@ import (
 // That makes this file the Performance Max counterpart of demandgen_creative.go, and
 // the two differ in exactly one structural way worth stating up front: Demand Gen
 // builds ONE ad object that embeds every asset reference inline, while Performance Max
-// creates the assets, creates the asset group, and then links each asset to the group
-// in a THIRD mutate carrying the field type. Three calls, not two, because Google has
-// no call that does more.
+// creates the assets, then creates the asset group together with a link per asset
+// carrying the field type, in one atomic googleAds:mutate. Two calls: Google refuses a
+// non-retail asset group created apart from its links (#437), and a link must name an
+// asset that already exists.
 //
 // Everything the two channels genuinely share is shared: the slot table shape, the URL
 // checks, the hardened fetch, the geometry rules, the text-weight accounting and the
@@ -97,8 +98,8 @@ const (
 
 // Asset field types, as AssetFieldTypeEnum names them. Written out rather than derived
 // from the slot label, because the enum is the wire contract and a derived name that
-// drifted would be rejected at the link mutate — which runs after the campaign, the
-// budget, the assets and the asset group all exist.
+// drifted would be rejected at the asset group mutate, which carries the links — and
+// which runs after the campaign, the budget and the assets all exist.
 const (
 	assetFieldHeadline             = "HEADLINE"
 	assetFieldLongHeadline         = "LONG_HEADLINE"
@@ -351,8 +352,9 @@ func validatePerformanceMaxCreative(kind string, in CampaignInput) (performanceM
 		// over-refusal: a create Google would have accepted, stopped locally.
 		//
 		// Refusing rather than passing it through matters because the asset group create
-		// (googleAds:mutate) runs AFTER the budget and campaign are created and paid for. An unusable name there
-		// strands a PAID campaign; the same name caught here costs one corrected request.
+		// (googleAds:mutate) runs AFTER the budget and campaign are created and paid for. An
+		// unusable name there strands a PAID campaign; the same name caught here costs one
+		// corrected request.
 		return performanceMaxPlan{}, fmt.Errorf("google-ads Performance Max asset group name %q contains NUL, LF or CR, which Google cannot store; remove the control character or omit the name to have one composed from the event", capForError(groupName))
 	}
 	if n := utf8.RuneCountInString(groupName); n > maxAssetGroupNameRunes {
@@ -773,7 +775,7 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 	// is what keeps the activation gate from reading an unconfirmed group as ready to serve.
 	confirmed := 0
 	for _, r := range results.MutateOperationResponses[1:] {
-		if r.AssetGroupAssetResult != nil && r.AssetGroupAssetResult.ResourceName != "" {
+		if r.AssetGroupAssetResult != nil && c.isAssetGroupAssetOf(groupID, r.AssetGroupAssetResult.ResourceName) {
 			confirmed++
 		}
 	}
@@ -781,6 +783,19 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 		return assetIDs, groupID, 0, fmt.Errorf("google-ads Performance Max asset group link creation UNCONFIRMED (asset group %s created; 2xx described %d of %d link(s) — verify in Google Ads before retrying)", groupID, confirmed, wantLinks)
 	}
 	return assetIDs, groupID, wantLinks, nil
+}
+
+// isAssetGroupAssetOf reports whether name is an assetGroupAssets resource in THIS account
+// whose group half is groupID: `customers/<cid>/assetGroupAssets/<groupId>~<assetId>~<fieldType>`.
+// A link result failing either check does not describe a link this request created, so it
+// is not counted as confirmed — the same reasoning the ad-group-ad results apply to their
+// own composite names. requireNumericID is false because the trailing segment is composite.
+func (c *Client) isAssetGroupAssetOf(groupID, name string) bool {
+	if c.validateResourceKind("assetGroupAssets", name, false) != nil {
+		return false
+	}
+	group, _, ok := strings.Cut(resourceID(name), "~")
+	return ok && group == groupID
 }
 
 // performanceMaxTempAssetGroupID is the TEMPORARY id the asset group carries inside the one

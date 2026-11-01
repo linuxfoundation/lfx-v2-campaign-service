@@ -178,8 +178,9 @@ type performanceMaxCampaignCreate struct {
 //
 // It creates NO AD GROUP AND NO AD, and that is the channel rather than a gap: a
 // Performance Max campaign has neither. Its creative is an ASSET GROUP, built by the
-// three mutates in pmax_creative.go, and the preflight refuses ad groups, keywords and
-// a CPC bid rather than dropping them.
+// two mutates in pmax_creative.go — the assets, then the group with its links in one
+// atomic googleAds:mutate — and the preflight refuses ad groups, keywords and a CPC bid
+// rather than dropping them.
 //
 // The partial-result contract is CreateCampaign's and CreateDemandGenCampaign's,
 // unchanged: past the campaign create every failure returns the error ALONGSIDE a

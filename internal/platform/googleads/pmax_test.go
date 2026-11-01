@@ -181,7 +181,7 @@ func TestCreatePerformanceMaxCampaign_HappyPath(t *testing.T) {
 	// what Google CONFIRMED, not what was sent, so it is asserted against the number of
 	// link results the server returned.
 	if res.AssetGroupAssetLinks == nil {
-		t.Fatal("AssetGroupAssetLinks is nil after a successful link mutate; the activation gate needs a recorded count")
+		t.Fatal("AssetGroupAssetLinks is nil after a successful asset group mutate; the activation gate needs a recorded count")
 	}
 	if *res.AssetGroupAssetLinks != pmaxAssetCount {
 		t.Errorf("AssetGroupAssetLinks = %d, want %d — one per confirmed link", *res.AssetGroupAssetLinks, pmaxAssetCount)
@@ -753,6 +753,51 @@ func TestCreatePerformanceMaxCampaign_EmptyLinkResultIsUnconfirmed(t *testing.T)
 	}
 	if res.AssetGroupAssetLinks == nil || *res.AssetGroupAssetLinks != 0 {
 		t.Errorf("AssetGroupAssetLinks = %v, want a recorded 0", res.AssetGroupAssetLinks)
+	}
+}
+
+// A link result Google answered with must name a link in THIS account and in THIS group;
+// anything else does not describe a link this request created and is not counted. One bad
+// name is enough to keep the count at zero, as an empty result is above.
+func TestCreatePerformanceMaxCampaign_ForeignLinkResultIsUnconfirmed(t *testing.T) {
+	cases := map[string]string{
+		"another account": "customers/9999999999/assetGroupAssets/555~900~HEADLINE",
+		"another group":   "customers/1234567890/assetGroupAssets/777~900~HEADLINE",
+		"another kind":    "customers/1234567890/assets/900",
+	}
+	for name, bad := range cases {
+		t.Run(name, func(t *testing.T) {
+			assetH, _ := okPMaxAssets()
+			groupH := func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				var req groupMutateBody
+				_ = json.Unmarshal(raw, &req)
+				parts := []string{`{"assetGroupResult":{"resourceName":"customers/1234567890/assetGroups/555"}}`}
+				for i := 1; i < len(req.MutateOperations); i++ {
+					link := "customers/1234567890/assetGroupAssets/555~9" + strconv.Itoa(i) + "~HEADLINE"
+					if i == 1 {
+						link = bad
+					}
+					parts = append(parts, `{"assetGroupAssetResult":{"resourceName":"`+link+`"}}`)
+				}
+				_, _ = io.WriteString(w, `{"mutateOperationResponses":[`+strings.Join(parts, ",")+`]}`)
+			}
+			srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH))
+			c := demandGenClient(t, srv)
+			in := demandGenInput()
+			in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+			res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+			if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+				t.Fatalf("error = %v, want UNCONFIRMED — link result %q is not this group's", err, bad)
+			}
+			if res == nil || res.AssetGroupID != "555" {
+				t.Fatalf("result = %+v, want the group kept", res)
+			}
+			if res.AssetGroupAssetLinks == nil || *res.AssetGroupAssetLinks != 0 {
+				t.Errorf("AssetGroupAssetLinks = %v, want a recorded 0", res.AssetGroupAssetLinks)
+			}
+		})
 	}
 }
 

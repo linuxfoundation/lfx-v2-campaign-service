@@ -21,8 +21,9 @@ creates of these types sent no creative, so they never reached these code paths.
     temporary resource name `assetGroups/-1`, which the links reference.
   - `partialFailure` stays off, so the request is atomic. A definite refusal therefore
     reports no group id.
-  - A 2xx that does not describe every link keeps the group id and records zero links,
-    so the activation gate still refuses.
+  - A 2xx that does not describe every link as one of this group's links, in this
+    account, keeps the group id and records zero links, so the activation gate still
+    refuses.
   - `pmaxCascade` now refuses a standalone asset-group or asset-group-asset create, as
     Google does.
 - **Display image rules.** `ResponsiveDisplayAdInfo` requires at least one landscape

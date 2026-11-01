@@ -113,7 +113,7 @@ func TestValidatePerformanceMaxCreative_Rejections(t *testing.T) {
 		wantSub string
 	}{
 		// Both marketing shapes are independently REQUIRED here. On Demand Gen the
-		// landscape and portrait shapes are reciprocal — either satisfies the other —
+		// landscape and square shapes are reciprocal — either satisfies the other —
 		// and assuming that rule travels is the specific mistake these two cases pin.
 		{"no landscape marketing image", func(c *PerformanceMaxCreative) { c.MarketingImages = nil }, "at least one marketing image"},
 		{"no square marketing image", func(c *PerformanceMaxCreative) { c.SquareMarketingImages = nil }, "at least one square marketing image"},
@@ -397,7 +397,7 @@ func TestValidateCampaignInputKind_RefusesTheSameAssetGroup(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // The asset ORDER is load-bearing, not cosmetic: the assets:mutate response is
-// POSITIONAL — result i describes operation i — and the link mutate pairs each
+// POSITIONAL — result i describes operation i — and the asset group mutate pairs each
 // returned resource name with the field type recorded at the same index. An order
 // that drifted from the field-type list would link every asset under the wrong type,
 // and Google would accept it: a headline linked as a DESCRIPTION is a valid link.
