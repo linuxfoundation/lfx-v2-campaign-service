@@ -1228,8 +1228,9 @@ func googleAdsVideoCreative(in *googleAdsVideoCreativeConfig) googleads.VideoCre
 // Demand Gen and Performance Max creatives.
 type googleAdsDisplayCreativeConfig struct {
 	// The four image arrays a responsiveDisplayAd carries. The two MARKETING arrays are
-	// reciprocally required — Google requires each when the other is absent — and are
-	// capped as a combined total; both LOGO arrays are optional and capped separately.
+	// EACH required — Google requires at least one landscape and at least one square
+	// marketing image — and are capped as a combined total; both LOGO arrays are
+	// optional and share one combined ceiling (#437).
 	// Their ratios and minimums differ from the same-named Demand Gen and Performance
 	// Max slots, which is why each channel keeps its own slot table.
 	MarketingImages       googleAdsImageRefs `json:"marketingImages"`
@@ -2605,11 +2606,13 @@ func googleAdsActivationGate(campaign *model.Campaign, targets []googleads.AdGro
 		if assetGroupID == "" {
 			return fmt.Errorf("%w: google ads campaign %s cannot be activated because this service has no record of its Performance Max asset group (a Performance Max campaign has no ad groups; the asset group is what serves) — either the creative never completed, or the campaign was ADOPTED, which records no serving resources at all and leaves un-pausing to the Google Ads UI", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 		}
-		// A group id is NOT a serving campaign. The group is created before its links, so a
-		// failed or unconfirmed assetGroupAssets:mutate leaves the id recorded with nothing
-		// attached — and an empty asset group looks finished in the Google Ads UI, which is
-		// exactly why the id is kept on the result rather than cleared. Activating on the id
-		// alone would un-pause a campaign that cannot serve and report success.
+		// A group id is NOT a serving campaign. The group and its links are created in one
+		// atomic request (#437), but a 2xx whose links cannot all be read back leaves the id
+		// recorded with zero confirmed links — and rows written by the earlier three-call
+		// cascade can hold an id whose links failed outright. An empty asset group looks
+		// finished in the Google Ads UI, which is exactly why the id is kept on the result
+		// rather than cleared. Activating on the id alone would un-pause a campaign that
+		// cannot serve and report success.
 		//
 		// nil is NOT zero: a row written before this field was recorded cannot distinguish
 		// "no links" from "not recorded", and refusing those would break activation on

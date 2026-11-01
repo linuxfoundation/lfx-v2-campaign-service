@@ -122,7 +122,7 @@ type performanceMaxCampaignCreate struct {
 	// The gap is NOT that this service cannot build those two assets: pmax_creative.go
 	// builds both, `assetFieldBusinessName` and `assetFieldLogo`, with the square logo's
 	// geometry bound already enforced. The gap is WHERE and WHEN. They are linked as
-	// ASSET-GROUP assets, through `assetGroupAssets:mutate`, and that happens at Step 5 —
+	// ASSET-GROUP assets, in the asset group's `googleAds:mutate` at Step 5 —
 	// AFTER the Step 2 campaign create this payload is the body of. So satisfying Brand
 	// Guidelines needs a campaign-level `campaignAssets:mutate` link AND a reordering of
 	// the cascade so the assets exist before the campaign is created; adding the link
@@ -428,19 +428,20 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 		return res, fmt.Errorf("google-ads performance max creation aborted after campaign %s created (context done before asset group create): %w", campaignID, ctxErr)
 	}
 
-	// Step 5: the asset group — assets, the group, then the links. Like the Demand Gen
-	// creative step, the asset ids are carried on the result even when a later half
-	// failed, so an operator can find assets created with nothing referencing them.
+	// Step 5: the asset group — the assets, then the group with its links in one atomic
+	// request (#437). Like the Demand Gen creative step, the asset ids are carried on the
+	// result even when the later request failed, so an operator can find assets created
+	// with nothing referencing them.
 	if pf.pmax.present {
 		assetIDs, groupID, links, agErr := c.createPerformanceMaxAssetGroup(ctx, campaignResource, campaignID, pf.finalURL, pf.pmax, images)
 		res.CreativeAssetIDs = assetIDs
 		res.AssetGroupID = groupID
-		// Recorded on BOTH paths, and recorded even when it is zero. The group id is kept on
-		// a failure so an operator can find an empty asset group; the count is what stops the
-		// activation gate from reading that same kept id as "ready to serve". On the error
-		// path createPerformanceMaxAssetGroup returns 0 both when the link mutate definitely
-		// failed and when its outcome is unconfirmed — see the field's doc for why zero is
-		// the right record for the ambiguous case too.
+		// Recorded on BOTH paths, and recorded even when it is zero. The group id is kept
+		// when Google answered 2xx but the links could not all be confirmed, so an operator
+		// can find the group; the count is what stops the activation gate from reading that
+		// same kept id as "ready to serve". On every error path createPerformanceMaxAssetGroup
+		// returns 0 — see the field's doc for why zero is the right record for the ambiguous
+		// case too.
 		res.AssetGroupAssetLinks = &links
 		if agErr != nil {
 			return res, agErr

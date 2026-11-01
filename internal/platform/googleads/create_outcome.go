@@ -32,11 +32,12 @@ import (
 // load-bearing rather than defensive. parseErrorCodes keeps the bare enum VALUE and discards
 // the error family, so hasErrorCode matches "DUPLICATE_NAME" raised by ANY mutate in the
 // cascade, not only the budget's — and Performance Max keeps mutating long after the campaign
-// exists (createPerformanceMaxAssetGroup, which calls assetGroups:mutate). Ungated, a duplicate
-// name from one of those later steps would be reported as "nothing new was created" while a
-// billable campaign was live. The ids are the better evidence everywhere except at the budget
-// step itself, which is the one place they cannot distinguish a DUPLICATE_NAME refusal from an
-// unconfirmed budget create — both leave the same id-less partial and mean opposite things.
+// exists (createPerformanceMaxAssetGroup, which creates the asset group through
+// googleAds:mutate). Ungated, a duplicate name from one of those later steps would be
+// reported as "nothing new was created" while a billable campaign was live. The ids are the
+// better evidence everywhere except at the budget step itself, which is the one place they
+// cannot distinguish a DUPLICATE_NAME refusal from an unconfirmed budget create — both leave
+// the same id-less partial and mean opposite things.
 func CreateOutcome(result *CampaignResult, err error) (string, bool) {
 	if err == nil || result == nil {
 		return "", false

@@ -350,8 +350,8 @@ func validatePerformanceMaxCreative(kind string, in CampaignInput) (performanceM
 		// U+2028/U+2029 and format characters are legal here, so refusing them would be
 		// over-refusal: a create Google would have accepted, stopped locally.
 		//
-		// Refusing rather than passing it through matters because assetGroups:mutate runs
-		// AFTER the budget and campaign are created and paid for. An unusable name there
+		// Refusing rather than passing it through matters because the asset group create
+		// (googleAds:mutate) runs AFTER the budget and campaign are created and paid for. An unusable name there
 		// strands a PAID campaign; the same name caught here costs one corrected request.
 		return performanceMaxPlan{}, fmt.Errorf("google-ads Performance Max asset group name %q contains NUL, LF or CR, which Google cannot store; remove the control character or omit the name to have one composed from the event", capForError(groupName))
 	}
@@ -506,12 +506,15 @@ type performanceMaxAssetCreate struct {
 // spending, which is not what "created paused" is understood to mean anywhere else in
 // this package.
 type assetGroupCreate struct {
-	Name      string   `json:"name"`
-	Campaign  string   `json:"campaign"`
-	FinalUrls []string `json:"finalUrls"`
-	Status    string   `json:"status"`
-	Path1     string   `json:"path1,omitempty"`
-	Path2     string   `json:"path2,omitempty"`
+	// ResourceName is set only to the TEMPORARY name the asset group carries inside the
+	// googleAds:mutate that creates it with its links; Google assigns the real one.
+	ResourceName string   `json:"resourceName,omitempty"`
+	Name         string   `json:"name"`
+	Campaign     string   `json:"campaign"`
+	FinalUrls    []string `json:"finalUrls"`
+	Status       string   `json:"status"`
+	Path1        string   `json:"path1,omitempty"`
+	Path2        string   `json:"path2,omitempty"`
 }
 
 // assetGroupStatusUpdate flips an existing asset group's status. Separate from
@@ -586,8 +589,8 @@ func (c *Client) UpdateAssetGroupStatus(ctx context.Context, assetGroupID, statu
 }
 
 // assetGroupAssetCreate links one already-created asset to the asset group under a field
-// type. The link is a separate resource from both ends, which is why the cascade needs a
-// third mutate.
+// type. The link is a separate resource from both ends, and it is created in the same
+// googleAds:mutate as the group, which it names by the group's temporary resource name.
 type assetGroupAssetCreate struct {
 	AssetGroup string `json:"assetGroup"`
 	Asset      string `json:"asset"`
@@ -648,14 +651,14 @@ func buildPerformanceMaxAssets(plan performanceMaxPlan, images []fetchedImage) [
 	return out
 }
 
-// createPerformanceMaxAssetGroup creates the assets, the asset group, and the links
-// between them — three mutates, in that order.
+// createPerformanceMaxAssetGroup creates the assets, then the asset group together with
+// the links between them — two mutates, in that order.
 //
-// The ORDER is forced and is worth stating: an asset group must exist before anything
-// can link to it, and an asset must exist before a link can name it, but an asset group
-// created first and then left unlinked is a visible empty container in the Google Ads UI
-// while loose assets are merely account-level litter. Assets first therefore fails in
-// the less confusing place.
+// The split is forced from both sides. Google requires the asset group and all of its
+// AssetGroupAsset links in ONE request (#437), so those two cannot be separated; and a link
+// must name an asset that already exists, so the assets go first. Assets first also fails
+// in the less confusing place: loose assets are merely account-level litter, while the
+// group and its links are atomic, so no empty group can be left behind.
 //
 // Every mutate past the campaign returns its error ALONGSIDE whatever was created, for
 // the reason the whole package does: the campaign exists either way, and an operator
@@ -706,56 +709,115 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 		assetResources = append(assetResources, r.ResourceName)
 	}
 
-	// Step B: the asset group.
-	groupReq := mutateRequest{Operations: []mutateOperation{{Create: assetGroupCreate{
-		Name:      plan.assetGroupName,
-		Campaign:  campaignResource,
-		FinalUrls: []string{finalURL},
-		Status:    performanceMaxAssetGroupPaused,
-		Path1:     plan.path1,
-		Path2:     plan.path2,
-	}}}}
-	groupResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("assetGroups:mutate"), groupReq, false)
-	if err != nil {
-		if createOutcomeAmbiguous(err) {
-			return assetIDs, "", 0, fmt.Errorf("google-ads Performance Max asset group %q creation UNCONFIRMED (campaign %s and %d asset(s) created; the group may exist — verify in Google Ads before retrying): %w", plan.assetGroupName, campaignID, len(assetIDs), err)
-		}
-		return assetIDs, "", 0, fmt.Errorf("google-ads Performance Max asset group %q creation failed (campaign %s and %d asset(s) created): %w", plan.assetGroupName, campaignID, len(assetIDs), err)
-	}
-	groupResource, groupID, err := firstResourceName(groupResp)
-	if err != nil {
-		return assetIDs, "", 0, fmt.Errorf("google-ads Performance Max asset group %q creation UNCONFIRMED (campaign %s created; 2xx with no/malformed resource name — the group may exist — verify in Google Ads before retrying): %w", plan.assetGroupName, campaignID, err)
-	}
-	if verr := c.validateResourceKind("assetGroups", groupResource, true); verr != nil {
-		return assetIDs, "", 0, fmt.Errorf("google-ads Performance Max asset group %q creation UNCONFIRMED (campaign %s created; %w — verify in Google Ads before retrying)", plan.assetGroupName, campaignID, verr)
-	}
-
-	// Step C: the links. The asset group id is returned from here on even when the links
-	// fail, because a group that exists with no assets is the state an operator most
-	// needs to find — it is visible in the UI and looks finished.
-	linkOps := make([]mutateOperation, 0, len(pending))
+	// Step B: the asset group AND its links, in ONE GoogleAdsService.Mutate (#437).
+	//
+	// Google refuses the two-step shape for a non-retail Performance Max campaign: "AssetGroup
+	// objects cannot be created in isolation using the AssetGroupService ... an AssetGroup and
+	// all associated AssetGroupAsset objects must be created in the same bulk mutate request"
+	// (Google Ads API, Performance Max asset groups guide). A standalone assetGroups:mutate
+	// fails its minimum-asset check, so every create that sent creative ended at this step
+	// with a campaign that could never be activated.
+	//
+	// The group is named by a TEMPORARY resource name (a negative id), which the links in the
+	// same request reference and Google replaces with the real id. partialFailure is left
+	// false, so the request is ATOMIC: either the group exists with every link, or nothing in
+	// it was applied. That is why a definite failure reports NO group: the state the earlier
+	// three-call cascade could leave, a group with nothing attached, cannot arise.
+	tempGroup := "customers/" + c.account.CustomerID + "/assetGroups/" + performanceMaxTempAssetGroupID
+	ops := make([]googleAdsMutateOperation, 0, 1+len(pending))
+	ops = append(ops, googleAdsMutateOperation{AssetGroupOperation: &mutateOperation{Create: assetGroupCreate{
+		ResourceName: tempGroup,
+		Name:         plan.assetGroupName,
+		Campaign:     campaignResource,
+		FinalUrls:    []string{finalURL},
+		Status:       performanceMaxAssetGroupPaused,
+		Path1:        plan.path1,
+		Path2:        plan.path2,
+	}}})
 	for i, p := range pending {
-		linkOps = append(linkOps, mutateOperation{Create: assetGroupAssetCreate{
-			AssetGroup: groupResource,
+		ops = append(ops, googleAdsMutateOperation{AssetGroupAssetOperation: &mutateOperation{Create: assetGroupAssetCreate{
+			AssetGroup: tempGroup,
 			// THE RESOURCE NAME GOOGLE RETURNED, never one rebuilt from the parsed id.
 			// A rebuilt name is this client asserting what Google said rather than
 			// repeating it.
 			Asset:     assetResources[i],
 			FieldType: p.fieldType,
-		}})
+		}}})
 	}
-	linkResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("assetGroupAssets:mutate"), mutateRequest{Operations: linkOps}, false)
+	wantLinks := len(ops) - 1
+	resp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("googleAds:mutate"), googleAdsMutateRequest{MutateOperations: ops}, false)
 	if err != nil {
 		if createOutcomeAmbiguous(err) {
-			return assetIDs, groupID, 0, fmt.Errorf("google-ads Performance Max asset group link creation UNCONFIRMED (asset group %s and %d asset(s) created; some links may exist — verify in Google Ads before retrying): %w", groupID, len(assetIDs), err)
+			return assetIDs, "", 0, fmt.Errorf("google-ads Performance Max asset group %q creation UNCONFIRMED (campaign %s and %d asset(s) created; the group and its %d link(s) may exist — verify in Google Ads before retrying): %w", plan.assetGroupName, campaignID, len(assetIDs), wantLinks, err)
 		}
-		return assetIDs, groupID, 0, fmt.Errorf("google-ads Performance Max asset group link creation failed (asset group %s and %d asset(s) created; the group has no assets attached): %w", groupID, len(assetIDs), err)
+		return assetIDs, "", 0, fmt.Errorf("google-ads Performance Max asset group %q creation failed (campaign %s and %d asset(s) created; the group and its %d link(s) are created in one atomic request, so none of them exists): %w", plan.assetGroupName, campaignID, len(assetIDs), wantLinks, err)
 	}
-	var linkResults mutateResponse
-	if uErr := json.Unmarshal(linkResp, &linkResults); uErr != nil || len(linkResults.Results) != len(linkOps) {
-		return assetIDs, groupID, 0, fmt.Errorf("google-ads Performance Max asset group link creation UNCONFIRMED (asset group %s created; 2xx with a malformed/short mutate response for %d link(s) — some may exist — verify in Google Ads before retrying)", groupID, len(linkOps))
+
+	var results googleAdsMutateResponse
+	if uErr := json.Unmarshal(resp, &results); uErr != nil || len(results.MutateOperationResponses) == 0 {
+		return assetIDs, "", 0, fmt.Errorf("google-ads Performance Max asset group %q creation UNCONFIRMED (campaign %s created; 2xx with a malformed mutate response — the group and its links may exist — verify in Google Ads before retrying)", plan.assetGroupName, campaignID)
 	}
-	return assetIDs, groupID, len(linkResults.Results), nil
+	// Responses are index-aligned with the operations, so the group's is the first.
+	first := results.MutateOperationResponses[0].AssetGroupResult
+	if first == nil || first.ResourceName == "" {
+		return assetIDs, "", 0, fmt.Errorf("google-ads Performance Max asset group %q creation UNCONFIRMED (campaign %s created; 2xx with no asset group resource name — the group may exist — verify in Google Ads before retrying)", plan.assetGroupName, campaignID)
+	}
+	if verr := c.validateResourceKind("assetGroups", first.ResourceName, true); verr != nil {
+		return assetIDs, "", 0, fmt.Errorf("google-ads Performance Max asset group %q creation UNCONFIRMED (campaign %s created; %w — verify in Google Ads before retrying)", plan.assetGroupName, campaignID, verr)
+	}
+	groupID := resourceID(first.ResourceName)
+
+	// The group id is returned from here on even when the links cannot be confirmed: the
+	// request was atomic and answered 2xx, so the group exists, and it is the handle an
+	// operator needs. The COUNT stays zero unless every link is accounted for, because zero
+	// is what keeps the activation gate from reading an unconfirmed group as ready to serve.
+	confirmed := 0
+	for _, r := range results.MutateOperationResponses[1:] {
+		if r.AssetGroupAssetResult != nil && r.AssetGroupAssetResult.ResourceName != "" {
+			confirmed++
+		}
+	}
+	if len(results.MutateOperationResponses) != len(ops) || confirmed != wantLinks {
+		return assetIDs, groupID, 0, fmt.Errorf("google-ads Performance Max asset group link creation UNCONFIRMED (asset group %s created; 2xx described %d of %d link(s) — verify in Google Ads before retrying)", groupID, confirmed, wantLinks)
+	}
+	return assetIDs, groupID, wantLinks, nil
+}
+
+// performanceMaxTempAssetGroupID is the TEMPORARY id the asset group carries inside the one
+// GoogleAdsService.Mutate that creates it with its links. Google treats a negative id as a
+// placeholder, scoped to that single request, and returns the real resource name in the
+// response; it is never persisted.
+const performanceMaxTempAssetGroupID = "-1"
+
+// googleAdsMutateRequest is the body of GoogleAdsService.Mutate (googleAds:mutate): a list of
+// typed operations over different resources, applied together. Only the two operation kinds
+// the Performance Max asset group needs are modelled.
+type googleAdsMutateRequest struct {
+	MutateOperations []googleAdsMutateOperation `json:"mutateOperations"`
+}
+
+// googleAdsMutateOperation is one MutateOperation: exactly one of its oneof arms is set. Each
+// arm reuses mutateOperation, which is the same {create|update|remove} shape the resource
+// services take.
+type googleAdsMutateOperation struct {
+	AssetGroupOperation      *mutateOperation `json:"assetGroupOperation,omitempty"`
+	AssetGroupAssetOperation *mutateOperation `json:"assetGroupAssetOperation,omitempty"`
+}
+
+// googleAdsMutateResponse is the (subset of the) GoogleAdsService.Mutate response consumed
+// here. mutateOperationResponses is index-aligned with the request's mutateOperations, and
+// each carries the result arm matching its operation.
+type googleAdsMutateResponse struct {
+	MutateOperationResponses []struct {
+		AssetGroupResult      *resourceNameResult `json:"assetGroupResult"`
+		AssetGroupAssetResult *resourceNameResult `json:"assetGroupAssetResult"`
+	} `json:"mutateOperationResponses"`
+}
+
+// resourceNameResult is a Mutate*Result under the default RESOURCE_NAME_ONLY response
+// content type: the created resource's name and nothing else.
+type resourceNameResult struct {
+	ResourceName string `json:"resourceName"`
 }
 
 // performanceMaxCreativeStep summarises the asset group for the operator-facing step

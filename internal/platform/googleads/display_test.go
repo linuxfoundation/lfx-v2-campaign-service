@@ -20,23 +20,27 @@ import (
 // pure validator's scheme rule, which a plain httptest server could not give them.
 func displayCreativeAt(base string) DisplayCreative {
 	return DisplayCreative{
-		MarketingImages:  []string{base + "/m.png"},
-		LogoImages:       []string{base + "/logo.png"},
-		Headlines:        []string{"Join us at KubeCon"},
-		LongHeadline:     "KubeCon + CloudNativeCon Europe 2026",
-		Descriptions:     []string{"Three days of talks."},
-		BusinessName:     "Linux Foundation",
-		CallToActionText: "Register",
+		MarketingImages:       []string{base + "/m.png"},
+		SquareMarketingImages: []string{base + "/sq.png"},
+		LogoImages:            []string{base + "/logo.png"},
+		Headlines:             []string{"Join us at KubeCon"},
+		LongHeadline:          "KubeCon + CloudNativeCon Europe 2026",
+		Descriptions:          []string{"Three days of talks."},
+		BusinessName:          "Linux Foundation",
+		CallToActionText:      "Register",
 	}
 }
 
-// displayImages are the two bodies displayCreativeAt asks for, at sizes satisfying the
-// landscape marketing slot (1.91:1, min 600x314) and the landscape logo slot (4:1, min
-// 512x128) respectively. Real image bytes, because the geometry rules are the point.
+// displayImages are the three bodies displayCreativeAt asks for, at sizes satisfying the
+// landscape marketing slot (1.91:1, min 600x314), the square marketing slot (1:1, min
+// 300x300) and the landscape logo slot (4:1, min 512x128) respectively. Real image bytes,
+// because the geometry rules are the point. Both marketing shapes, because Google requires
+// each on a responsive display ad (#437).
 func displayImages(t *testing.T) map[string][]byte {
 	t.Helper()
 	return map[string][]byte{
 		"/m.png":    pngOf(t, 1200, 628),
+		"/sq.png":   pngOf(t, 400, 400),
 		"/logo.png": pngOf(t, 1024, 256),
 	}
 }
@@ -52,10 +56,11 @@ func displayCampaignResource(int) string { return "customers/1234567890/campaign
 func displayAdGroupResource(int) string  { return "customers/1234567890/adGroups/333" }
 func displayAdResource(int) string       { return "customers/1234567890/adGroupAds/333~444" }
 
-// displayAssets answers assets:mutate with one resource name per image, in order.
+// displayAssets answers assets:mutate with one resource name per image, in slot order:
+// the landscape marketing image, the square marketing image, then the logo.
 func displayAssets() (http.HandlerFunc, func() string) {
-	return capturedMutate(2, func(i int) string {
-		return "customers/1234567890/assets/" + []string{"900", "901"}[i]
+	return capturedMutate(3, func(i int) string {
+		return "customers/1234567890/assets/" + []string{"900", "901", "902"}[i]
 	})
 }
 
@@ -125,8 +130,8 @@ func TestCreateDisplayCampaign_HappyPath(t *testing.T) {
 	if res.AssetGroupID != "" {
 		t.Errorf("AssetGroupID = %q, want empty — Display has no asset group", res.AssetGroupID)
 	}
-	if len(res.CreativeAssetIDs) != 2 {
-		t.Errorf("CreativeAssetIDs = %v, want the two image assets", res.CreativeAssetIDs)
+	if len(res.CreativeAssetIDs) != 3 {
+		t.Errorf("CreativeAssetIDs = %v, want the three image assets", res.CreativeAssetIDs)
 	}
 
 	// budgetKindFor gives Display its own budget-name segment, so a Display campaign on
@@ -211,18 +216,21 @@ func TestCreateDisplayCampaign_HappyPath(t *testing.T) {
 	}
 
 	// The ad must reference the resource names GOOGLE returned, each in the slot its
-	// image came from — the marketing image as a marketing image, the logo as a logo.
+	// image came from — each marketing shape in its own array, the logo as a logo.
 	adReq := readAd()
 	if !strings.Contains(adReq, `"marketingImages":[{"asset":"customers/1234567890/assets/900"}]`) {
 		t.Errorf("ad does not reference the marketing asset in its own slot: %s", adReq)
 	}
-	if !strings.Contains(adReq, `"logoImages":[{"asset":"customers/1234567890/assets/901"}]`) {
+	if !strings.Contains(adReq, `"squareMarketingImages":[{"asset":"customers/1234567890/assets/901"}]`) {
+		t.Errorf("ad does not reference the square marketing asset in its own slot: %s", adReq)
+	}
+	if !strings.Contains(adReq, `"logoImages":[{"asset":"customers/1234567890/assets/902"}]`) {
 		t.Errorf("ad does not reference the logo asset in its own slot: %s", adReq)
 	}
-	// The two square arrays were not supplied and are omitempty, so they must be absent
-	// rather than sent as empty lists.
-	if strings.Contains(adReq, "squareMarketingImages") || strings.Contains(adReq, "squareLogoImages") {
-		t.Errorf("unsupplied image arrays must be omitted, not sent empty: %s", adReq)
+	// The square logo array was not supplied and is omitempty, so it must be absent
+	// rather than sent as an empty list.
+	if strings.Contains(adReq, "squareLogoImages") {
+		t.Errorf("an unsupplied image array must be omitted, not sent empty: %s", adReq)
 	}
 
 	ad := mutateCreate(t, readAd())
@@ -435,7 +443,7 @@ func TestCreateDisplayCampaign_AdFailureReportsTheAssets(t *testing.T) {
 	if res == nil {
 		t.Fatal("the campaign, ad group and assets exist — the partial must not be dropped")
 	}
-	if len(res.CreativeAssetIDs) != 2 {
+	if len(res.CreativeAssetIDs) != 3 {
 		t.Errorf("CreativeAssetIDs = %v, want the created assets: they are the only handle on account-level litter", res.CreativeAssetIDs)
 	}
 	if res.AdID != "" {

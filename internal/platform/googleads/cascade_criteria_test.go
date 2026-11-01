@@ -107,12 +107,9 @@ func criteriaCascade(t *testing.T, images map[string][]byte, criteriaH http.Hand
 			okAdGroup(w, r)
 		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
 			okAdGroupAd(w, r)
-		case strings.HasSuffix(r.URL.Path, "assetGroupAssets:mutate"):
-			perOperationResults(func(i int) string {
-				return "customers/1234567890/assetGroupAssets/555~" + strconv.Itoa(900+i) + "~HEADLINE"
-			})(w, r)
-		case strings.HasSuffix(r.URL.Path, "assetGroups:mutate"):
-			perOperationResults(func(int) string { return "customers/1234567890/assetGroups/555" })(w, r)
+		case strings.HasSuffix(r.URL.Path, "googleAds:mutate"):
+			// Performance Max's asset group, created with its links in one request (#437).
+			groupMutateOK(w, r)
 		case strings.HasSuffix(r.URL.Path, "assets:mutate"):
 			perOperationResults(func(i int) string {
 				return "customers/1234567890/assets/" + strconv.Itoa(900+i)

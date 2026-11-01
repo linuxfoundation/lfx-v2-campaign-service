@@ -300,8 +300,8 @@ func TestValidatePerformanceMaxCreative_AssetGroupNameDefaultsToTheEvent(t *test
 // difference is deliberate — so both halves are pinned here. A derived name is sanitized
 // because nothing anyone typed is being rewritten; a caller-supplied name is refused
 // because silently returning a different name than the operator asked for is the worse
-// trade. Either way the name never reaches `assetGroups:mutate`, which runs after the
-// budget and campaign are created and paid for.
+// trade. Either way the name never reaches the asset group's `googleAds:mutate`, which runs
+// after the budget and campaign are created and paid for.
 func TestValidatePerformanceMaxCreative_AssetGroupNameControlCharacters(t *testing.T) {
 	in := pmaxInput(fullPMaxCreative())
 	in.EventName = "Kube\x00Con\tEU | Berlin"

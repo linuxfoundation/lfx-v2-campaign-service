@@ -930,9 +930,15 @@ type demandGenMultiAssetAdInfo struct {
 // demandGenAdCreate is the "ad" object nested in an adGroupAd create. It is
 // adCreate's Demand Gen sibling, separate for the same reason
 // demandGenAssetCreate is: adCreate's ResponsiveSearchAd arm has no meaning here.
+//
+// The key is the Ad oneof FIELD name, `demand_gen_multi_asset_ad` (ad.proto, field
+// 62), in its JSON spelling — not the name of the message it holds
+// (DemandGenMultiAssetAdInfo). Google's REST layer refuses an unknown key with a 400
+// after the campaign and ad group already exist, so the spelling is pinned by
+// TestAdTypeWireKeysMatchTheAdOneof (#437).
 type demandGenAdCreate struct {
 	FinalUrls             []string                   `json:"finalUrls"`
-	DemandGenMultiAssetAd *demandGenMultiAssetAdInfo `json:"demandGenMultiAssetAdInfo,omitempty"`
+	DemandGenMultiAssetAd *demandGenMultiAssetAdInfo `json:"demandGenMultiAssetAd,omitempty"`
 }
 
 // demandGenAdGroupAdCreate is the create payload for adGroupAds:mutate on this

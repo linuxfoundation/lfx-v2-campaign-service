@@ -258,10 +258,11 @@ func pmaxCampaignWithLinks(assetGroupID string, links int) *model.Campaign {
 }
 
 // TestToggleStatus_EmptyAssetGroupIsRefused is the gate's real question: an asset group ID is
-// not a serving campaign. The group is created BEFORE its asset links, so a failed or
-// unconfirmed assetGroupAssets:mutate leaves the id recorded with nothing attached — and the
-// id is deliberately kept on the result, because an empty asset group looks finished in the
-// Google Ads UI and is the state that most needs finding. A gate reading only the id reads
+// not a serving campaign. A 2xx on the group's googleAds:mutate whose links cannot all be read
+// back leaves the id recorded with zero confirmed links, as do rows written by the earlier
+// three-call cascade whose link step failed — and the id is deliberately kept on the result,
+// because an empty asset group looks finished in the Google Ads UI and is the state that most
+// needs finding. A gate reading only the id reads
 // that kept id as "provisioned", un-pauses a campaign that cannot serve, and reports success.
 func TestToggleStatus_EmptyAssetGroupIsRefused(t *testing.T) {
 	d, rec := toggleDispatcher(t)

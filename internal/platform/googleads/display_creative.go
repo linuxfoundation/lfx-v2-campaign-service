@@ -64,8 +64,10 @@ const (
 	// are not part of this total.
 	maxDisplayMarketingImages = 15
 
-	// maxDisplayLogos bounds EACH logo array — landscape and square — separately,
-	// because Google states the limit per array rather than across the pair.
+	// maxDisplayLogos is the COMBINED ceiling across the landscape and square logo
+	// arrays. v23 ResponsiveDisplayAdInfo states it on both fields — "Combined with
+	// `square_logo_images`, the maximum is 5" — and states no per-array limit, so 3 + 3
+	// is refused even though each array is under five (#437).
 	maxDisplayLogos = 5
 )
 
@@ -79,15 +81,16 @@ const (
 // the reason its siblings are kept: that shape is also what adoption of a campaign whose
 // ad was built by hand upstream looks like.
 type DisplayCreative struct {
-	// MarketingImages (1.91:1) and SquareMarketingImages (1:1) are reciprocally
-	// required — Google documents each as required when the other is absent — so
-	// neither alone is mandatory and the pair is. Together they are capped at
-	// maxDisplayMarketingImages.
+	// MarketingImages (1.91:1) and SquareMarketingImages (1:1) are EACH required:
+	// v23 ResponsiveDisplayAdInfo says "At least one `marketing_image` is required"
+	// and "At least one square `marketing_image` is required". This is the difference
+	// from Demand Gen, whose pair Google documents as reciprocal (#437). Together they
+	// are capped at maxDisplayMarketingImages.
 	MarketingImages       []string
 	SquareMarketingImages []string
 	// LogoImages (4:1) and SquareLogoImages (1:1) are both OPTIONAL on this channel,
-	// unlike the Demand Gen logo, which Google requires. Each array is capped on its
-	// own at maxDisplayLogos.
+	// unlike the Demand Gen logo, which Google requires. The two arrays share one
+	// ceiling, maxDisplayLogos.
 	LogoImages       []string
 	SquareLogoImages []string
 	// Headlines are the SHORT headlines, one to five. LongHeadline is a single
@@ -130,8 +133,9 @@ var displayImageSlots = []imageSlot{
 	{label: "Display square logo image", jsonKey: "squareLogoImages", ratioW: 1, ratioH: 1, minW: 128, minH: 128},
 }
 
-// Indices into displayImageSlots. The two rules that name specific slots — the combined
-// marketing cap and the per-array logo ceiling — address them by index rather than by
+// Indices into displayImageSlots. The rules that name specific slots — the combined
+// marketing cap, the two required marketing shapes and the combined logo ceiling —
+// address them by index rather than by
 // matching on a label, so renaming a label cannot silently change which rule applies.
 const (
 	displayMarketingSlotIndex       = 0
@@ -197,19 +201,24 @@ func validateDisplayCreative(kind string, in CampaignInput) (displayCreativePlan
 	if marketing > maxDisplayMarketingImages {
 		return displayCreativePlan{}, fmt.Errorf("google-ads responsive display ad accepts at most %d marketing images across both shapes, got %d", maxDisplayMarketingImages, marketing)
 	}
-	// At least one of the two REQUIRED shapes. Google's wording is reciprocal — each is
-	// required when the other is absent — so neither alone is mandatory and the pair is.
-	if marketing == 0 {
-		return displayCreativePlan{}, errors.New("google-ads responsive display ad needs at least one marketing image or one square marketing image (Google requires each when the other is absent)")
+	// BOTH shapes are required, each on its own, as on Performance Max and unlike Demand
+	// Gen's reciprocal pair: ResponsiveDisplayAdInfo requires at least one landscape and at
+	// least one square marketing image. Refused here, before the budget mutate, because
+	// Google refuses the ad only at adGroupAds:mutate — after the budget, the campaign and
+	// the ad group already exist (#437).
+	if len(plan.urls[displayMarketingSlotIndex]) == 0 {
+		return displayCreativePlan{}, errors.New("google-ads responsive display ad needs at least one marketing image (1.91:1); Google requires the landscape shape on every responsive display ad")
+	}
+	if len(plan.urls[displaySquareMarketingSlotIndex]) == 0 {
+		return displayCreativePlan{}, errors.New("google-ads responsive display ad needs at least one square marketing image (1:1); Google requires the square shape on every responsive display ad")
 	}
 	// Both logo arrays are OPTIONAL here, which is the difference from Demand Gen worth
 	// stating: that channel refuses an ad with no logo, this one does not, so there is a
-	// ceiling and no floor.
-	if n := len(plan.urls[displayLogoSlotIndex]); n > maxDisplayLogos {
-		return displayCreativePlan{}, fmt.Errorf("google-ads responsive display ad accepts at most %d logo images, got %d", maxDisplayLogos, n)
-	}
-	if n := len(plan.urls[displaySquareLogoSlotIndex]); n > maxDisplayLogos {
-		return displayCreativePlan{}, fmt.Errorf("google-ads responsive display ad accepts at most %d square logo images, got %d", maxDisplayLogos, n)
+	// ceiling and no floor. The ceiling is COMBINED across the two arrays, which is how
+	// Google states it, and is checked once across them for the reason the marketing
+	// ceiling above is.
+	if logos := len(plan.urls[displayLogoSlotIndex]) + len(plan.urls[displaySquareLogoSlotIndex]); logos > maxDisplayLogos {
+		return displayCreativePlan{}, fmt.Errorf("google-ads responsive display ad accepts at most %d logo images across both shapes, got %d", maxDisplayLogos, logos)
 	}
 
 	headlines, err := validateCreativeText("responsive display ad", "headline", d.Headlines, minDisplayHeadlines, maxDisplayHeadlines, maxDisplayHeadlineWeight)

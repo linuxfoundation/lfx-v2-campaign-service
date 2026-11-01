@@ -69,7 +69,7 @@ func DispatchFailureMessage(p model.Provider, derr error, preCreate bool) string
 			case domain.CreateOutcomeCampaignCreatedSetupIncomplete:
 				// "could not be confirmed", not "did not finish": the last mutate of the
 				// cascade can answer 2xx with a response this client cannot read
-				// (pmax_creative.go's assetGroupAssets:mutate, demandgen_creative.go's
+				// (pmax_creative.go's googleAds:mutate, demandgen_creative.go's
 				// adGroupAds:mutate), and those arms return a campaign partial whose own
 				// text says the resources MAY exist. The campaign's existence is proven by
 				// the returned id; the state of its setup is not.
