@@ -67,7 +67,9 @@ Austria, Belgium, Czech Republic (alias `Czechia`), Denmark, Finland and Norway 
 audience. `TestEveryGeoTargetCountryHasARegion` in the `googleads` package walks the Google map
 through `CountryForCode` and `RegionFor`, so a paid-targetable country added without its audience
 mapping fails the build; a deliberate gap must be listed, with its reason, in
-`geoTargetsWithoutRegion` there (empty today).
+`geoTargetsWithoutRegion` there (empty today). This also widens group 7 (region-wide
+registrants, built from `CountriesIn`) for EVERY EMEA brief: a Germany or UK event rebuilt after
+#200 also draws registrants from these six countries.
 
 ## The master list is a UNION
 

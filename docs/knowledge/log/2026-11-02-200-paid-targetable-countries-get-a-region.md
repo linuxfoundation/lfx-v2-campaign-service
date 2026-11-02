@@ -4,7 +4,8 @@
 `googleads.geoTargetConstants` but not in `audience.countryToRegion` (nor `iso2ToCountry`), so a
 brief in any of them could run paid ads while its email audience build failed with no region.
 All six are now EMEA in both maps; `Czechia` is an alias whose HubSpot display value is
-`Czech Republic`.
+`Czech Republic`. Because group 7 (region-wide registrants) is built from `CountriesIn`, this
+also widens group 7 for every EMEA brief rebuilt after the change.
 
 `TestEveryGeoTargetCountryHasARegion` (googleads package) asserts every ISO code in the Google
 map resolves through `CountryForCode` and `RegionFor`, with an explicit, reasoned exception list
