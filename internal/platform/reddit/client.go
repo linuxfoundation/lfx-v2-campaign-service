@@ -2492,7 +2492,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				// and require verification first, matching the transport-error path.
 				row := promoRow(PromoAdNoID)
 				adWarning = row.AdWarning
-				steps = append(steps, fmt.Sprintf(row.Step, postID))
+				steps = append(steps, row.stepf(postID))
 			}
 		}
 	} else if authorFailure != nil {
@@ -2520,7 +2520,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// utm_* keys it sets and PRESERVES every other query parameter (including any
 			// utm_* the tool doesn't generate, e.g. utm_id) — so the operator keeps all
 			// other params; appending instead would leave duplicate/conflicting values.
-			steps = append(steps, fmt.Sprintf(promoRow(PromoNotRequestedVariants).StepWithStatus, variantCount))
+			steps = append(steps, promoRow(PromoNotRequestedVariants).stepf(variantCount))
 			for i := 0; i < variantCount; i++ {
 				steps = append(steps, fmt.Sprintf("  Variant %d: %q -> %s", i+1, in.Variants[i].Headline, displayRedditUTMURL(in, i)))
 			}
