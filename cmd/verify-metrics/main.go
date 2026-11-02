@@ -494,16 +494,18 @@ func lookupCampaign(ctx context.Context, be *backend, opts *options) (*model.Cam
 		len(matches), opts.campaign)
 }
 
-// result is the printed form of model.CampaignMetrics. Conversions stays a pointer so "not
-// measured" (null) and a measured zero remain distinguishable, as they are in the model.
+// result is the printed form of model.CampaignMetrics, shaped like the API response: the total
+// is printed only when ConversionsStatus is reported (null otherwise), and the status says why it
+// is null (#175).
 type result struct {
-	CampaignID  string              `json:"campaign_id"`
-	Window      model.MetricsWindow `json:"window"`
-	Impressions int64               `json:"impressions"`
-	Clicks      int64               `json:"clicks"`
-	CostMicros  int64               `json:"cost_micros"`
-	Ctr         float64             `json:"ctr"`
-	Conversions *float64            `json:"conversions"`
+	CampaignID        string                  `json:"campaign_id"`
+	Window            model.MetricsWindow     `json:"window"`
+	Impressions       int64                   `json:"impressions"`
+	Clicks            int64                   `json:"clicks"`
+	CostMicros        int64                   `json:"cost_micros"`
+	Ctr               float64                 `json:"ctr"`
+	Conversions       *float64                `json:"conversions"`
+	ConversionsStatus model.ConversionsStatus `json:"conversions_status"`
 }
 
 func toResult(m *model.CampaignMetrics) *result {
@@ -512,6 +514,7 @@ func toResult(m *model.CampaignMetrics) *result {
 	}
 	return &result{
 		CampaignID: m.CampaignID, Window: m.Window, Impressions: m.Impressions, Clicks: m.Clicks,
-		CostMicros: m.CostMicros, Ctr: m.Ctr, Conversions: m.Conversions,
+		CostMicros: m.CostMicros, Ctr: m.Ctr, Conversions: m.ReportedConversions(),
+		ConversionsStatus: m.ResolvedConversionsStatus(),
 	}
 }

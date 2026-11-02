@@ -345,3 +345,58 @@ func TestUncomparableSettingsField_IsAlwaysUnknownWithBothSides(t *testing.T) {
 		}
 	}
 }
+
+// TestResolvedConversionsStatus pins the channel-wide #175 rules applied in one place: the
+// fallback for an adapter that sets no status, the zero-click reclassification, the downgrade of
+// a total-less `reported`, and that ReportedConversions publishes a total only with `reported`.
+func TestResolvedConversionsStatus(t *testing.T) {
+	zero, two := 0.0, 2.0
+	cases := []struct {
+		name  string
+		m     *CampaignMetrics
+		want  ConversionsStatus
+		total bool
+	}{
+		{"nil metrics", nil, ConversionsUnavailable, false},
+		{"no status, no total", &CampaignMetrics{Clicks: 80}, ConversionsUnavailable, false},
+		{"no status, a total", &CampaignMetrics{Clicks: 80, Conversions: &zero}, ConversionsReported, true},
+		{"no status, zero total, zero clicks (Google no-rows)", &CampaignMetrics{Conversions: &zero}, ConversionsNoConversions, false},
+		{"reported, zero total, zero clicks", &CampaignMetrics{Conversions: &zero, ConversionsStatus: ConversionsReported}, ConversionsNoConversions, false},
+		{"reported, conversion without clicks (view-through)", &CampaignMetrics{Conversions: &two, ConversionsStatus: ConversionsReported}, ConversionsReported, true},
+		{"reported without a total", &CampaignMetrics{Clicks: 80, ConversionsStatus: ConversionsReported}, ConversionsUnavailable, false},
+		{"incomplete with a stray total", &CampaignMetrics{Clicks: 80, Conversions: &zero, ConversionsStatus: ConversionsIncomplete}, ConversionsIncomplete, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.m.ResolvedConversionsStatus(); got != tc.want {
+				t.Errorf("ResolvedConversionsStatus = %q, want %q", got, tc.want)
+			}
+			if got := tc.m.ReportedConversions(); (got != nil) != tc.total {
+				t.Errorf("ReportedConversions = %v, want a total = %v", got, tc.total)
+			}
+		})
+	}
+}
+
+// conversion_value and roas ride with the total (#175 review): beside a status that publishes no
+// total — a Google no-rows window reclassified to no_conversions, an incomplete read — they are
+// withheld too.
+func TestReportedConversionValueAndRoasFollowTheStatus(t *testing.T) {
+	zero, value, roas := 0.0, 120.0, 2.4
+	quiet := &CampaignMetrics{Conversions: &zero, ConversionValue: &zero}
+	if quiet.ReportedConversionValue() != nil || quiet.ReportedRoas() != nil {
+		t.Error("a zero-click no_conversions window must not publish a conversion value or roas")
+	}
+	incomplete := &CampaignMetrics{Clicks: 80, Conversions: &zero, ConversionValue: &value, Roas: &roas, ConversionsStatus: ConversionsIncomplete}
+	if incomplete.ReportedConversionValue() != nil || incomplete.ReportedRoas() != nil {
+		t.Error("an incomplete read must not publish a conversion value or roas")
+	}
+	two := 2.0
+	reported := &CampaignMetrics{Clicks: 80, Conversions: &two, ConversionValue: &value, Roas: &roas}
+	if v := reported.ReportedConversionValue(); v == nil || *v != 120 {
+		t.Errorf("ReportedConversionValue = %v, want 120", v)
+	}
+	if r := reported.ReportedRoas(); r == nil || *r != 2.4 {
+		t.Errorf("ReportedRoas = %v, want 2.4", r)
+	}
+}

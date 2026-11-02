@@ -1011,10 +1011,12 @@ func TestGetBriefMetrics_ConversionsSurfaceOnTheRow(t *testing.T) {
 func TestGetBriefMetrics_RowCarriesConversionValueAndRoas(t *testing.T) {
 	spent := campaignOn("c1", model.ProviderGoogleAds)
 	idle := campaignOn("c2", model.ProviderGoogleAds)
-	value, roas, zero := 60.0, 2.4, 0.0
+	value, roas, zero, three := 60.0, 2.4, 0.0, 3.0
 	disp := newPerCampaignDispatcher()
-	disp.results["c1"] = &model.CampaignMetrics{Impressions: 100, Clicks: 10, CostMicros: 25_000_000, Ctr: 0.1, ConversionValue: &value, Roas: &roas}
-	disp.results["c2"] = &model.CampaignMetrics{ConversionValue: &zero}
+	// Google always reports a conversion total, and since #175 the value and roas ride only with
+	// a reported one, so both rows carry a total and real clicks. The idle row spent nothing.
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 100, Clicks: 10, CostMicros: 25_000_000, Ctr: 0.1, Conversions: &three, ConversionValue: &value, Roas: &roas}
+	disp.results["c2"] = &model.CampaignMetrics{Impressions: 40, Clicks: 2, Conversions: &zero, ConversionValue: &zero}
 
 	s := newBriefMetricsService(t, disp, spent, idle)
 	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
@@ -1031,5 +1033,97 @@ func TestGetBriefMetrics_RowCarriesConversionValueAndRoas(t *testing.T) {
 	}
 	if m.Roas != nil {
 		t.Errorf("idle row roas = %v, want absent: a return on zero spend is undefined, not %v", *m.Roas, *m.Roas)
+	}
+}
+
+// #175: both metrics routes report conversions_status, carry a total ONLY with `reported`, and
+// the no_conversions item never fires on a status that is not reported — even when an adapter
+// set a zero total beside it, which ReportedConversions withholds.
+func TestGetBriefMetrics_ConversionsStatusGatesTheTotalAndTheRule(t *testing.T) {
+	zero := 0.0
+	cases := []struct {
+		name       string
+		metrics    *model.CampaignMetrics
+		wantStatus string
+		wantTotal  bool
+		wantFire   bool
+	}{
+		{"reported zero against real clicks fires",
+			&model.CampaignMetrics{Impressions: 40000, Clicks: 800, Ctr: 0.02, Conversions: &zero, ConversionsStatus: model.ConversionsReported},
+			"reported", true, true},
+		{"incomplete with a stray zero total: no total, no item",
+			&model.CampaignMetrics{Impressions: 40000, Clicks: 800, Ctr: 0.02, Conversions: &zero, ConversionsStatus: model.ConversionsIncomplete},
+			"incomplete", false, false},
+		{"zero-click window: no_conversions, no total, no item",
+			&model.CampaignMetrics{Impressions: 500, Clicks: 0, ConversionsStatus: model.ConversionsNoConversions},
+			"no_conversions", false, false},
+		{"adapter that sets no status and no total: unavailable",
+			&model.CampaignMetrics{Impressions: 40000, Clicks: 800, Ctr: 0.02},
+			"unavailable", false, false},
+		{"adapter that sets no status but a total: reported",
+			&model.CampaignMetrics{Impressions: 40000, Clicks: 800, Ctr: 0.02, Conversions: &zero},
+			"reported", true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			disp := newPerCampaignDispatcher()
+			disp.results["c1"] = tc.metrics
+			s := newBriefMetricsService(t, disp, campaignOn("c1", model.ProviderLinkedInAds))
+			s.SetClock(func() time.Time { return metricsNow })
+			res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+			if err != nil {
+				t.Fatalf("GetBriefMetrics: %v", err)
+			}
+			if len(res.Rows) != 1 || res.Rows[0].Metrics == nil {
+				t.Fatalf("expected one ok row carrying metrics, got %+v", res.Rows)
+			}
+			got := res.Rows[0].Metrics
+			if got.ConversionsStatus != tc.wantStatus {
+				t.Errorf("conversions_status = %q, want %q", got.ConversionsStatus, tc.wantStatus)
+			}
+			if (got.Conversions != nil) != tc.wantTotal {
+				t.Errorf("conversions = %v, want a total only with reported", got.Conversions)
+			}
+			fired := false
+			for _, item := range res.ActionItems {
+				if item.Rule == "no_conversions" {
+					fired = true
+				}
+			}
+			if fired != tc.wantFire {
+				t.Errorf("no_conversions fired = %v, want %v", fired, tc.wantFire)
+			}
+		})
+	}
+}
+
+// Both metrics routes withhold conversion_value and roas when the status publishes no total
+// (#175 review), e.g. a Google window with no result rows.
+func TestGetBriefMetrics_ConversionValueAndRoasFollowTheStatus(t *testing.T) {
+	zero := 0.0
+	disp := newPerCampaignDispatcher()
+	disp.results["c1"] = &model.CampaignMetrics{Conversions: &zero, ConversionValue: &zero}
+	s := newBriefMetricsService(t, disp, campaignOn("c1", model.ProviderGoogleAds))
+	s.SetClock(func() time.Time { return metricsNow })
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+	got := res.Rows[0].Metrics
+	if got.ConversionsStatus != "no_conversions" || got.Conversions != nil || got.ConversionValue != nil || got.Roas != nil {
+		t.Errorf("row = status %q conversions %v value %v roas %v, want no_conversions with none of the three",
+			got.ConversionsStatus, got.Conversions, got.ConversionValue, got.Roas)
+	}
+
+	camp := &model.Campaign{ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1}
+	one := &model.CampaignMetrics{Conversions: &zero, ConversionValue: &zero}
+	row, err := newMetricsService(camp, &metricsOnlyDispatcher{metrics: one}).GetCampaignMetrics(context.Background(),
+		&briefs.GetCampaignMetricsPayload{ProjectID: "cncf", BriefID: "b1", CampaignID: "c1"})
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if row.ConversionValue != nil || row.Roas != nil {
+		t.Errorf("campaign route published value %v / roas %v beside no_conversions", row.ConversionValue, row.Roas)
 	}
 }
