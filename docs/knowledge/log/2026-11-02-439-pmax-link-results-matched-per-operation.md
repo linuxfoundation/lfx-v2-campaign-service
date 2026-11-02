@@ -10,10 +10,14 @@ is what the activation gate trusts.
 - `isAssetGroupAssetLink` replaces `isAssetGroupAssetOf`. The response is index-aligned
   with the operations, so result `i` must be exactly
   `customers/<cid>/assetGroupAssets/<groupId>~<assetId>~<fieldType>`, with the asset id
-  and field type of operation `i`. Any other name keeps the group and records zero links
-  (UNCONFIRMED), as before.
+  and field type of operation `i`. The ids are compared exactly and the field type
+  case-insensitively, as the extension-link check in `assets.go` does, since a casing
+  change is a spelling of Google's own enum and not the wrong link. Any other name keeps
+  the group and records zero links (UNCONFIRMED), as before. A response with more link
+  results than operations is UNCONFIRMED too, without indexing past the operations.
 - The test fake now echoes each operation's asset and field type, and the link-result
-  tests cover a truncated name, a repeated name, another asset and another field type.
+  tests cover a truncated name, a repeated name, an extra result, another asset, another
+  field type, and a lower-cased field type that still confirms.
 
 Real-world risk was low: with `partialFailure` off a 2xx already means every operation
 applied, and Google generates these names itself. Raised by the review bots on #438.

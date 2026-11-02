@@ -859,6 +859,70 @@ func TestCreatePerformanceMaxCampaign_RepeatedLinkResultIsUnconfirmed(t *testing
 	}
 }
 
+// More link results than link operations is not a description of this request: the extra
+// result has no operation to match, and must neither panic the loop nor count (#439).
+func TestCreatePerformanceMaxCampaign_ExtraLinkResultIsUnconfirmed(t *testing.T) {
+	assetH, _ := okPMaxAssets()
+	groupH := func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req groupMutateBody
+		_ = json.Unmarshal(raw, &req)
+		parts := []string{`{"assetGroupResult":{"resourceName":"customers/1234567890/assetGroups/555"}}`}
+		last := ""
+		for i := 1; i < len(req.MutateOperations); i++ {
+			last = linkNameFor(req.MutateOperations[i])
+			parts = append(parts, `{"assetGroupAssetResult":{"resourceName":"`+last+`"}}`)
+		}
+		parts = append(parts, `{"assetGroupAssetResult":{"resourceName":"`+last+`"}}`)
+		_, _ = io.WriteString(w, `{"mutateOperationResponses":[`+strings.Join(parts, ",")+`]}`)
+	}
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH))
+	c := demandGenClient(t, srv)
+	in := demandGenInput()
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Fatalf("error = %v, want UNCONFIRMED — the response describes one link more than was sent", err)
+	}
+	if res == nil || res.AssetGroupID != "555" {
+		t.Fatalf("result = %+v, want the group kept", res)
+	}
+	if res.AssetGroupAssetLinks == nil || *res.AssetGroupAssetLinks != 0 {
+		t.Errorf("AssetGroupAssetLinks = %v, want a recorded 0", res.AssetGroupAssetLinks)
+	}
+}
+
+// The field type is Google's enum name echoed back, compared case-insensitively as the
+// extension links are: a casing change is not the wrong link, so the group still confirms.
+func TestCreatePerformanceMaxCampaign_LinkFieldTypeCaseIsNotARefusal(t *testing.T) {
+	assetH, _ := okPMaxAssets()
+	groupH := func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req groupMutateBody
+		_ = json.Unmarshal(raw, &req)
+		parts := []string{`{"assetGroupResult":{"resourceName":"customers/1234567890/assetGroups/555"}}`}
+		for i := 1; i < len(req.MutateOperations); i++ {
+			name := linkNameFor(req.MutateOperations[i])
+			cut := strings.LastIndex(name, "~") + 1
+			parts = append(parts, `{"assetGroupAssetResult":{"resourceName":"`+name[:cut]+strings.ToLower(name[cut:])+`"}}`)
+		}
+		_, _ = io.WriteString(w, `{"mutateOperationResponses":[`+strings.Join(parts, ",")+`]}`)
+	}
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH))
+	c := demandGenClient(t, srv)
+	in := demandGenInput()
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("error = %v, want none — a lower-cased field type is the same link", err)
+	}
+	if res == nil || res.AssetGroupAssetLinks == nil || *res.AssetGroupAssetLinks == 0 {
+		t.Fatalf("AssetGroupAssetLinks = %v, want every link confirmed", res)
+	}
+}
+
 func TestCreatePerformanceMaxCampaign_ShortAssetResponseIsUnconfirmed(t *testing.T) {
 	// A 2xx describing FEWER assets than were sent leaves assets unaccounted for.
 	shortH := func(w http.ResponseWriter, _ *http.Request) {

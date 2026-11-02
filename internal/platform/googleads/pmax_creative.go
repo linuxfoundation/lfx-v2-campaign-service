@@ -797,6 +797,11 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 // composite — does not describe the link its operation created, so it is not counted as
 // confirmed: the same reasoning the ad-group-ad results apply to their own composite names.
 // requireNumericID is false because the trailing segment is composite.
+//
+// The ids are compared exactly and the field type case-insensitively, as the extension-link
+// check in assets.go does: the field type is Google's own enum name echoed back, so a casing
+// difference would be a change in how the API spells it rather than the wrong link, and
+// recording zero links for a correct group would be an over-refusal at activation.
 func (c *Client) isAssetGroupAssetLink(name, groupID, assetID, fieldType string) bool {
 	if groupID == "" || assetID == "" || fieldType == "" {
 		return false
@@ -804,7 +809,8 @@ func (c *Client) isAssetGroupAssetLink(name, groupID, assetID, fieldType string)
 	if c.validateResourceKind("assetGroupAssets", name, false) != nil {
 		return false
 	}
-	return resourceID(name) == groupID+"~"+assetID+"~"+fieldType
+	parts := strings.Split(resourceID(name), "~")
+	return len(parts) == 3 && parts[0] == groupID && parts[1] == assetID && strings.EqualFold(parts[2], fieldType)
 }
 
 // performanceMaxTempAssetGroupID is the TEMPORARY id the asset group carries inside the one
