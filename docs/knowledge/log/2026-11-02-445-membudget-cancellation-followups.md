@@ -3,10 +3,12 @@
 **Fix** — `membudget.Budget` granted capacity on its fast path without checking the caller's
 context, and a queued grant that raced with cancellation was returned as admitted. A disconnected
 upload could therefore still read its body and run `image.Decode` (which cannot be cancelled),
-holding up to 80 MiB of the per-pod upload budget. Both stages now refuse a caller whose context is
+holding its wire charge (up to 112 MiB) and then its pixel charge (up to 80 MiB) of the per-pod
+upload budget. Both stages now refuse a caller whose context is
 already done, and a grant that lands as the context is cancelled is given back
 (`TestBudget_CancelledContextIsRefusedWithCapacityFree`,
-`TestBudget_GrantRacingCancellationIsGivenBack`).
+`TestBudget_GrantRacingCancellationIsGivenBack`,
+`TestBudget_GrantAndCancelBothReadyBeforeWaitIsGivenBack`).
 
 `TestUploadAdmission_ProductionConstantsAdmitConcurrentUploads` now builds the budget as the
 container does, with the 80 MiB pixel reserve, and asserts the 15 concurrent small uploads the

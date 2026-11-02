@@ -326,9 +326,12 @@ func TestBudget_CancelledContextIsRefusedWithCapacityFree(t *testing.T) {
 }
 
 // A queued request granted in the same moment its caller is cancelled gives the charge back
-// instead of returning it (#445 review). The hook lands the grant deterministically in the window
-// between the waiter waking on ctx.Done and settling its outcome under the lock.
+// instead of returning it (#445 review). This case covers a grant that lands AFTER the waiter has
+// woken on ctx.Done: the hook places it deterministically between the wake and settling the
+// outcome under the lock. TestBudget_GrantAndCancelBothReadyBeforeWaitIsGivenBack covers the
+// other window.
 func TestBudget_GrantRacingCancellationIsGivenBack(t *testing.T) {
+	t.Cleanup(func() { testHookAfterWait = nil })
 	for _, second := range []bool{false, true} {
 		b := NewWithReserve(205, 80)
 		hold, ok := b.AcquireSecondStage(context.Background(), 205, time.Second)
@@ -361,6 +364,9 @@ func TestBudget_GrantRacingCancellationIsGivenBack(t *testing.T) {
 		cancel()
 		<-woke
 		hold() // grants the 50 to the waiter, which has already woken on ctx.Done
+		if inUse := b.InUse(); inUse != 50 {
+			t.Fatalf("second=%v: premise: the grant must land while the waiter is held after waking; InUse = %d", second, inUse)
+		}
 		close(proceed)
 		got := <-result
 		testHookAfterWait = nil
@@ -369,6 +375,34 @@ func TestBudget_GrantRacingCancellationIsGivenBack(t *testing.T) {
 		}
 		if inUse := b.InUse(); inUse != 0 {
 			t.Errorf("second=%v: the racing grant was not given back; InUse = %d", second, inUse)
+		}
+	}
+}
+
+// The other racing window: the grant and the cancellation are both in place before the waiter's
+// select runs, so select picks either case at random. Whichever it picks, the caller is gone and
+// the charge must be given back. An early return on the ready case would admit about half of
+// these, so 100 rounds fail it with near certainty.
+func TestBudget_GrantAndCancelBothReadyBeforeWaitIsGivenBack(t *testing.T) {
+	t.Cleanup(func() { testHookBeforeWait = nil })
+	for i := range 100 {
+		b := NewWithReserve(205, 80)
+		hold, ok := b.AcquireSecondStage(context.Background(), 205, time.Second)
+		if !ok {
+			t.Fatal("premise: the whole budget is held")
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		testHookBeforeWait = func() {
+			cancel()
+			hold() // grants the 50 to the queued waiter before it waits
+		}
+		rel, ok := b.Acquire(ctx, 50, 5*time.Second)
+		if ok {
+			rel()
+			t.Fatalf("round %d: a request granted as its caller was cancelled was admitted", i)
+		}
+		if inUse := b.InUse(); inUse != 0 {
+			t.Fatalf("round %d: the racing grant was not given back; InUse = %d", i, inUse)
 		}
 	}
 }

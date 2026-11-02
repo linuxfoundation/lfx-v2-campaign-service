@@ -46,9 +46,11 @@ which release when their decode returns. `TestBudget_SecondStageIsNotQueuedBehin
 stages even when capacity is free, and a queued request that is granted in the same moment its
 caller is cancelled gives the charge back instead of returning it (#445 review). Otherwise a
 disconnected upload would still read its body and run `image.Decode`, which cannot be cancelled,
-holding up to 80 MiB a live upload could use. Every queued outcome is settled under the budget's
+holding its wire charge (up to 112 MiB) and then its pixel charge (up to 80 MiB) — one
+worst-case upload, 192 MiB — that a live upload could use. Every queued outcome is settled under the budget's
 lock, so a racing grant is seen exactly once. `TestBudget_CancelledContextIsRefusedWithCapacityFree`
-and `TestBudget_GrantRacingCancellationIsGivenBack` pin this; the hold-and-wait tests wait for the
+and `TestBudget_GrantRacingCancellationIsGivenBack` and
+`TestBudget_GrantAndCancelBothReadyBeforeWaitIsGivenBack` pin this; the hold-and-wait tests wait for the
 queue to hold the expected waiters (`awaitWaiters`) rather than sleeping, so they cannot pass
 before the request they are ordering has queued.
 

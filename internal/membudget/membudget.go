@@ -140,6 +140,11 @@ func (b *Budget) AcquireSecondStage(ctx context.Context, want int64, wait time.D
 
 func noop() {}
 
+// testHookBeforeWait, when set by a test, runs after an acquire has queued and released the lock
+// and before it waits, so a test can have the grant and the cancellation both land before the
+// wait's select runs. Always nil in production.
+var testHookBeforeWait func()
+
 // testHookAfterWait, when set by a test, runs after a queued acquire wakes and before it takes the
 // lock to settle the outcome, so a test can land a grant in exactly that window. Always nil in
 // production.
@@ -183,6 +188,9 @@ func (b *Budget) acquire(ctx context.Context, want int64, wait time.Duration, se
 		b.first = append(b.first, w)
 	}
 	b.mu.Unlock()
+	if testHookBeforeWait != nil {
+		testHookBeforeWait()
+	}
 
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
