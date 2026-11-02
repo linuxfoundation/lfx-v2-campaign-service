@@ -377,3 +377,26 @@ func TestResolvedConversionsStatus(t *testing.T) {
 		})
 	}
 }
+
+// conversion_value and roas ride with the total (#175 review): beside a status that publishes no
+// total — a Google no-rows window reclassified to no_conversions, an incomplete read — they are
+// withheld too.
+func TestReportedConversionValueAndRoasFollowTheStatus(t *testing.T) {
+	zero, value, roas := 0.0, 120.0, 2.4
+	quiet := &CampaignMetrics{Conversions: &zero, ConversionValue: &zero}
+	if quiet.ReportedConversionValue() != nil || quiet.ReportedRoas() != nil {
+		t.Error("a zero-click no_conversions window must not publish a conversion value or roas")
+	}
+	incomplete := &CampaignMetrics{Clicks: 80, Conversions: &zero, ConversionValue: &value, Roas: &roas, ConversionsStatus: ConversionsIncomplete}
+	if incomplete.ReportedConversionValue() != nil || incomplete.ReportedRoas() != nil {
+		t.Error("an incomplete read must not publish a conversion value or roas")
+	}
+	two := 2.0
+	reported := &CampaignMetrics{Clicks: 80, Conversions: &two, ConversionValue: &value, Roas: &roas}
+	if v := reported.ReportedConversionValue(); v == nil || *v != 120 {
+		t.Errorf("ReportedConversionValue = %v, want 120", v)
+	}
+	if r := reported.ReportedRoas(); r == nil || *r != 2.4 {
+		t.Errorf("ReportedRoas = %v, want 2.4", r)
+	}
+}

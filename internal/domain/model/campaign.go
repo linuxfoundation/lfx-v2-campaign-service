@@ -1013,3 +1013,23 @@ func (m *CampaignMetrics) ReportedConversions() *float64 {
 	}
 	return m.Conversions
 }
+
+// ReportedConversionValue and ReportedRoas publish ConversionValue and Roas under the same rule
+// as ReportedConversions: only when the resolved status is ConversionsReported. Both describe
+// the conversions the total counts, so a value or a return beside a status that publishes no
+// total (a zero-click window reclassified to no_conversions, an incomplete read) would describe
+// conversions the response says it has no number for.
+func (m *CampaignMetrics) ReportedConversionValue() *float64 {
+	if m.ReportedConversions() == nil {
+		return nil
+	}
+	return m.ConversionValue
+}
+
+// ReportedRoas: see ReportedConversionValue.
+func (m *CampaignMetrics) ReportedRoas() *float64 {
+	if m.ReportedConversions() == nil {
+		return nil
+	}
+	return m.Roas
+}

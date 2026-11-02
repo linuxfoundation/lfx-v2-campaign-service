@@ -1325,11 +1325,11 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 		// unmeasured count is omitted rather than serialized as 0, and the status says why.
 		Conversions:       m.ReportedConversions(),
 		ConversionsStatus: string(m.ResolvedConversionsStatus()),
-		// Same pass-through, same reason. Roas is the one most likely to be absent on a real
-		// response — every zero-spend window withholds it — so a consumer that renders a
-		// missing field as 0 will see it here first.
-		ConversionValue: m.ConversionValue,
-		Roas:            m.Roas,
+		// Same rule, same reason: published only with a reported conversions status, since
+		// both describe the conversions the total counts. Roas is also the one most likely to
+		// be absent on a real response — every zero-spend window withholds it.
+		ConversionValue: m.ReportedConversionValue(),
+		Roas:            m.ReportedRoas(),
 		Email:           emailMetricsResult(m.Email),
 	}, nil
 }
@@ -2912,8 +2912,8 @@ func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []b
 				Ctr:                r.metrics.Ctr,
 				Conversions:        r.metrics.ReportedConversions(),
 				ConversionsStatus:  string(r.metrics.ResolvedConversionsStatus()),
-				ConversionValue:    r.metrics.ConversionValue,
-				Roas:               r.metrics.Roas,
+				ConversionValue:    r.metrics.ReportedConversionValue(),
+				Roas:               r.metrics.ReportedRoas(),
 				Email:              emailMetricsResult(r.metrics.Email),
 			}
 			out.OKCount++

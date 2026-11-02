@@ -1668,7 +1668,8 @@ LinkedIn and Microsoft set it explicitly; the other adapters are classified by
 `ResolvedConversionsStatus` (a total is `reported`, none is `unavailable`), which also applies the
 channel-wide rules: `reported` with zero clicks and a zero total is `no_conversions` (Google's
 no-rows branch, a zero-click Microsoft report), and `reported` with no total is `unavailable`.
-`ReportedConversions` publishes the total only with `reported`. Only three of
+`ReportedConversions` publishes the total only with `reported`, and `ReportedConversionValue` /
+`ReportedRoas` hold `conversion_value` and `roas` to the same rule. Only three of
 the seven adapters populate it, and which three was settled field-by-field against each vendor's
 published reference rather than inferred from what the clients happened to request:
 

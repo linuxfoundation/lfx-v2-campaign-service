@@ -5870,6 +5870,8 @@ func TestBriefService_GetCampaignMetrics_ConversionValueAndRoasPassThrough(t *te
 		disp := &metricsOnlyDispatcher{metrics: &model.CampaignMetrics{
 			CampaignID: "ga-1", Window: model.MetricsWindowLast30Days,
 			Impressions: 100, Clicks: 10, CostMicros: 25_000_000, Ctr: 0.1,
+			// A reported total: since #175 value and roas ride only with one.
+			Conversions:     func() *float64 { v := 1.0; return &v }(),
 			ConversionValue: value, Roas: roas,
 		}}
 		res, err := newMetricsService(camp, disp).GetCampaignMetrics(context.Background(),

@@ -792,8 +792,9 @@ type GetCampaignMetricsResponseBody struct {
 	// conversion was impossible: a zero-click window that reports a conversion
 	// (LinkedIn counts view-through conversions) is `reported`.
 	ConversionsStatus *string `form:"conversions_status,omitempty" json:"conversions_status,omitempty" xml:"conversions_status,omitempty"`
-	// Summed monetary value of the conversions above, over the window, in WHOLE
-	// units of the ad account's currency — NOT micros, deliberately unlike
+	// Present only when conversions_status is `reported`, like conversions itself
+	// (#175). Summed monetary value of the conversions above, over the window, in
+	// WHOLE units of the ad account's currency — NOT micros, deliberately unlike
 	// cost_micros, because the platforms report it as a decimal amount and scaling
 	// it would invent precision. The currency is the ad account's and is NOT
 	// carried in this response, so a figure rendered with a currency symbol is
@@ -803,19 +804,20 @@ type GetCampaignMetricsResponseBody struct {
 	// cost_micros — the units differ, and the zero-cost case has one right answer,
 	// given below.
 	ConversionValue *float64 `form:"conversion_value,omitempty" json:"conversion_value,omitempty" xml:"conversion_value,omitempty"`
-	// Return on ad spend: conversion_value divided by cost over the same window
-	// and in the same currency, so it is DIMENSIONLESS and is the only figure here
-	// comparable across accounts in different currencies. Derived upstream so
-	// every consumer gets the same answer. ABSENT whenever that division would not
-	// be a measurement — no conversion value, no spend in the window, or a
-	// reported cost below zero. A campaign that earned value without spending has
-	// an UNDEFINED return on ad spend, not an infinite one and not a zero one;
-	// rendering absent as 0 would state the opposite of what happened. A RATIO,
-	// not a percentage: 2.41 means 2.41 units of value per unit spent (241%), the
-	// scale Google's own target ROAS uses. Absence carries no meaning of its own
-	// beyond "not computed": which of the three cases applies is read from the
-	// sibling fields (conversion_value absent; cost_micros 0; cost_micros below
-	// 0), so a consumer never has to interpret it, and it says nothing about
+	// Present only when conversions_status is `reported`, like conversions itself
+	// (#175). Return on ad spend: conversion_value divided by cost over the same
+	// window and in the same currency, so it is DIMENSIONLESS and is the only
+	// figure here comparable across accounts in different currencies. Derived
+	// upstream so every consumer gets the same answer. ABSENT whenever that
+	// division would not be a measurement — no conversion value, no spend in the
+	// window, or a reported cost below zero. A campaign that earned value without
+	// spending has an UNDEFINED return on ad spend, not an infinite one and not a
+	// zero one; rendering absent as 0 would state the opposite of what happened. A
+	// RATIO, not a percentage: 2.41 means 2.41 units of value per unit spent
+	// (241%), the scale Google's own target ROAS uses. Absence carries no meaning
+	// of its own beyond "not computed": which of the three cases applies is read
+	// from the sibling fields (conversion_value absent; cost_micros 0; cost_micros
+	// below 0), so a consumer never has to interpret it, and it says nothing about
 	// whether the channel can report a return. A PRESENT 0 is a real measurement:
 	// the campaign spent and earned no conversion value.
 	Roas *float64 `form:"roas,omitempty" json:"roas,omitempty" xml:"roas,omitempty"`
@@ -4832,8 +4834,9 @@ type CampaignMetricsResponseBody struct {
 	// conversion was impossible: a zero-click window that reports a conversion
 	// (LinkedIn counts view-through conversions) is `reported`.
 	ConversionsStatus *string `form:"conversions_status,omitempty" json:"conversions_status,omitempty" xml:"conversions_status,omitempty"`
-	// Summed monetary value of the conversions above, over the window, in WHOLE
-	// units of the ad account's currency — NOT micros, deliberately unlike
+	// Present only when conversions_status is `reported`, like conversions itself
+	// (#175). Summed monetary value of the conversions above, over the window, in
+	// WHOLE units of the ad account's currency — NOT micros, deliberately unlike
 	// cost_micros, because the platforms report it as a decimal amount and scaling
 	// it would invent precision. The currency is the ad account's and is NOT
 	// carried in this response, so a figure rendered with a currency symbol is
@@ -4843,19 +4846,20 @@ type CampaignMetricsResponseBody struct {
 	// cost_micros — the units differ, and the zero-cost case has one right answer,
 	// given below.
 	ConversionValue *float64 `form:"conversion_value,omitempty" json:"conversion_value,omitempty" xml:"conversion_value,omitempty"`
-	// Return on ad spend: conversion_value divided by cost over the same window
-	// and in the same currency, so it is DIMENSIONLESS and is the only figure here
-	// comparable across accounts in different currencies. Derived upstream so
-	// every consumer gets the same answer. ABSENT whenever that division would not
-	// be a measurement — no conversion value, no spend in the window, or a
-	// reported cost below zero. A campaign that earned value without spending has
-	// an UNDEFINED return on ad spend, not an infinite one and not a zero one;
-	// rendering absent as 0 would state the opposite of what happened. A RATIO,
-	// not a percentage: 2.41 means 2.41 units of value per unit spent (241%), the
-	// scale Google's own target ROAS uses. Absence carries no meaning of its own
-	// beyond "not computed": which of the three cases applies is read from the
-	// sibling fields (conversion_value absent; cost_micros 0; cost_micros below
-	// 0), so a consumer never has to interpret it, and it says nothing about
+	// Present only when conversions_status is `reported`, like conversions itself
+	// (#175). Return on ad spend: conversion_value divided by cost over the same
+	// window and in the same currency, so it is DIMENSIONLESS and is the only
+	// figure here comparable across accounts in different currencies. Derived
+	// upstream so every consumer gets the same answer. ABSENT whenever that
+	// division would not be a measurement — no conversion value, no spend in the
+	// window, or a reported cost below zero. A campaign that earned value without
+	// spending has an UNDEFINED return on ad spend, not an infinite one and not a
+	// zero one; rendering absent as 0 would state the opposite of what happened. A
+	// RATIO, not a percentage: 2.41 means 2.41 units of value per unit spent
+	// (241%), the scale Google's own target ROAS uses. Absence carries no meaning
+	// of its own beyond "not computed": which of the three cases applies is read
+	// from the sibling fields (conversion_value absent; cost_micros 0; cost_micros
+	// below 0), so a consumer never has to interpret it, and it says nothing about
 	// whether the channel can report a return. A PRESENT 0 is a real measurement:
 	// the campaign spent and earned no conversion value.
 	Roas *float64 `form:"roas,omitempty" json:"roas,omitempty" xml:"roas,omitempty"`

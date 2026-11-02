@@ -18,7 +18,9 @@ cells are blank. The other adapters are classified by `ResolvedConversionsStatus
 Google's no-rows window and a zero-click Microsoft report are `no_conversions`. A `reported` with no
 total is downgraded to `unavailable`. `cmd/verify-metrics` prints the status too.
 
-The brief service publishes, and passes the rules, only `ReportedConversions()`. So the
+The brief service publishes, and passes the rules, only `ReportedConversions()`. `conversion_value`
+and `roas` follow the same rule (`ReportedConversionValue`, `ReportedRoas`), because both describe
+the conversions the total counts. So the
 `no_conversions` action item never fires on a non-reported status, and #357's click floor is kept.
 `zero_delivery` remains the finding for a window with no delivery.
 

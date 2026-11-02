@@ -1661,16 +1661,11 @@ func TestGetCampaignMetrics_AbsentConversionsIsNilNotZero(t *testing.T) {
 }
 
 // A campaign with no activity returns an empty elements array. The client always names
-// externalWebsiteConversions in `fields`, so LinkedIn WAS asked for the metric and answered
-// that the campaign did nothing — an answered zero, not an unmeasured window. The count is
-// therefore a non-nil zero, matching googleads' no-rows branch.
-//
-// This assertion was previously inverted, on the reasoning that an empty array "says nothing
-// about conversions having been MEASURED" and that a zero here was one "the rule would act
-// on". Both halves were wrong: the metric was requested and the window was answered, and
-// no_conversions is gated on Clicks >= minClicksForConversions (50) while this branch reports
-// zero clicks, so the rule cannot fire on it either way.
-func TestGetCampaignMetrics_NoElementsIsAnAnsweredZero(t *testing.T) {
+// externalWebsiteConversions in `fields`, so LinkedIn WAS asked for the metric and answered that
+// the campaign did nothing: an answered window, so neither unavailable nor incomplete. Since #175
+// it is ConversionsNoConversions with NO total (before, a non-nil 0): a zero against zero clicks
+// is not a conversion finding, and only a reported status carries a number.
+func TestGetCampaignMetrics_NoElementsIsNoConversions(t *testing.T) {
 	c, _ := linkedinConvServer(t, `{"elements":[]}`)
 	m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
 	if err != nil {
@@ -1805,17 +1800,14 @@ func TestGetCampaignMetrics_ConversionsWithdrawnWhenOmissionFollowsAValue(t *tes
 	}
 }
 
-// TestGetCampaignMetrics_NoActivityConversionsIsMeasuredZero pins the convention that a
-// well-formed empty `elements` array is an ANSWERED zero-activity window, not an unmeasured
-// one. The client always names externalWebsiteConversions in `fields`, so LinkedIn was asked
-// for the metric and replied that nothing happened.
-//
-// The assertion is deliberately two-sided: non-nil AND exactly zero. Asserting only
-// non-nilness would pass on any garbage value, and asserting only nilness (the previous
-// behaviour) is the bug this test exists to prevent regressing to. The fixture returns a real
-// empty array over HTTP rather than constructing a struct, so the empty-elements branch is
-// genuinely executed.
-func TestGetCampaignMetrics_NoActivityConversionsIsMeasuredZero(t *testing.T) {
+// TestGetCampaignMetrics_NoActivityIsNoConversions pins the #175 answer for a well-formed empty
+// `elements` array over a real HTTP round trip: status no_conversions and NO total. The client
+// always names externalWebsiteConversions in `fields`, so LinkedIn was asked for the metric and
+// replied that nothing happened — which is why the status is no_conversions, not unavailable.
+// Both halves are asserted: the status (a regression to unavailable would re-merge the cases
+// #175 separated) and the absent total (a regression to the old non-nil 0 would publish a
+// number for a status that carries none).
+func TestGetCampaignMetrics_NoActivityIsNoConversions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Prove the metric really was requested: if the client stopped naming it, a nil
 		// Conversions would be the honest answer and this test's premise would be void.
