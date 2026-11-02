@@ -6,10 +6,10 @@ currency. A EUR or INR account's spend was called dollars, and lfx-self-serve (w
 same amounts currency-neutral since linuxfoundation/lfx-self-serve#4807) showed `1,234.50` under
 Spend beside `spent $1234.50` in the issue text.
 
-Each amount now renders as `<n> in account currency`, the wording the Meta (`metaMoney`) and X
-(`xMoney`) monitors already used: `googleMoney` in `monitor_google.go`, `msMoney` in
-`monitor_microsoft.go` (its nominal `msAmountPrefix = "$"` is gone), and the one Reddit
-underspending line. Sentences that read "$N/day" now say "a daily budget of N in account
+Each amount now renders as `<n> in account currency`, the wording the Meta and X monitors
+already used, through one shared `accountMoney` in `monitor_shared.go` that replaces the five
+per-platform copies (`metaMoney`, `xMoney`, and Microsoft's nominal `msAmountPrefix = "$"` among
+them), so no monitor can drift back to a symbol. Sentences that read "$N/day" now say "a daily budget of N in account
 currency". The Goa examples in `design/account_monitor_examples.go` and `design/connection.go`,
 documented as exactly what the rule engine emits, were updated and the OpenAPI regenerated.
 

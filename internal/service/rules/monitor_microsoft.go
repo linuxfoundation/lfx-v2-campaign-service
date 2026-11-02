@@ -65,12 +65,6 @@ const (
 	msHighCpcMinClicks = 10
 )
 
-// msMoney renders an amount for an item's text (#435). The figures are in the ACCOUNT'S OWN
-// CURRENCY as Microsoft reports it and no FX conversion happens anywhere on this path, so a "$"
-// would call a non-USD account's amounts dollars. The currency code is not carried on the row, so
-// the text says "in account currency", as the Google, Meta and X monitors do.
-func msMoney(v float64) string { return fmt.Sprintf("%.2f in account currency", v) }
-
 // EvaluateMicrosoftMonitor computes each row's pacing percentage/label and the account's action
 // items for a Microsoft Advertising account.
 //
@@ -148,7 +142,7 @@ func microsoftActionItems(m model.AccountCampaignMetrics, pacingPct float64, lab
 		// A shared-budget campaign has no per-campaign amount (BudgetDay is 0 by construction),
 		// so naming a zero daily budget would present an unknown allowance as a measured zero. Name the
 		// shared budget instead, and point the remedy at the pool rather than the campaign.
-		issue := fmt.Sprintf("Campaign paused by Microsoft — budget exhausted (daily budget %s)", msMoney(m.BudgetDay))
+		issue := fmt.Sprintf("Campaign paused by Microsoft — budget exhausted (daily budget %s)", accountMoney(m.BudgetDay))
 		action := "Raise the daily budget, or check whether an account-level budget or monthly cap has been reached"
 		if m.PacingUnknown {
 			issue = "Campaign paused by Microsoft — its shared budget is exhausted"
@@ -162,31 +156,31 @@ func microsoftActionItems(m model.AccountCampaignMetrics, pacingPct float64, lab
 	// Shared-budget rows carry BudgetDay 0 by construction; that is not a placeholder.
 	if !m.PacingUnknown && active && m.BudgetDay <= msPlaceholderBudgetMax {
 		add(model.MonitorPriorityHigh,
-			fmt.Sprintf("Daily budget is %s — this is a placeholder and won't generate meaningful traffic", msMoney(m.BudgetDay)),
+			fmt.Sprintf("Daily budget is %s — this is a placeholder and won't generate meaningful traffic", accountMoney(m.BudgetDay)),
 			"Set a real daily budget (typically $10-50/day for events) before expecting results")
 	}
 
 	// MED
 	if status == msStatusPaused {
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("Campaign is paused — spent %s before pause", msMoney(m.Spend)),
+			fmt.Sprintf("Campaign is paused — spent %s before pause", accountMoney(m.Spend)),
 			"Check if this was intentionally paused or if the event is still upcoming and needs reactivation")
 	}
 	if label == model.MonitorPacingUnderspending && active {
 		add(model.MonitorPriorityMed,
 			fmt.Sprintf("Only spending %.0f%% of a daily budget of %s — %s spent vs %s expected",
-				pacingPct, msMoney(m.BudgetDay), msMoney(m.Spend), msMoney(m.BudgetDay*float64(days))),
+				pacingPct, accountMoney(m.BudgetDay), accountMoney(m.Spend), accountMoney(m.BudgetDay*float64(days))),
 			"Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions")
 	}
 	if label == model.MonitorPacingConstrained && active {
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("Spending %.0f%% of budget — demand exceeds the daily cap of %s, ads stop showing mid-day", pacingPct, msMoney(m.BudgetDay)),
+			fmt.Sprintf("Spending %.0f%% of budget — demand exceeds the daily cap of %s, ads stop showing mid-day", pacingPct, accountMoney(m.BudgetDay)),
 			"Increase daily budget to capture missed impressions, or narrow targeting to focus spend on highest-value audiences")
 	}
 	if label == model.MonitorPacingOverspending && active {
 		add(model.MonitorPriorityMed,
 			fmt.Sprintf("Spending %.0f%% of budget — %s spent vs %s expected at a daily budget of %s; Microsoft can deliver up to 2x the daily budget on a single day",
-				pacingPct, msMoney(m.Spend), msMoney(m.BudgetDay*float64(days)), msMoney(m.BudgetDay)),
+				pacingPct, accountMoney(m.Spend), accountMoney(m.BudgetDay*float64(days)), accountMoney(m.BudgetDay)),
 			"Confirm the overdelivery is acceptable; lower the daily budget or bids if the window's total spend must stay on plan")
 	}
 	if m.IsSearchChannel && m.Ctr < msSearchLowCtrPct && m.Clicks > msSearchMinClicks {
@@ -201,13 +195,13 @@ func microsoftActionItems(m model.AccountCampaignMetrics, pacingPct float64, lab
 	}
 	if m.Clicks > msClicksNoConversions && m.Conversions != nil && *m.Conversions == 0 {
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("%d clicks (%s spent) but 0 conversions — traffic is not converting", m.Clicks, msMoney(m.Spend)),
+			fmt.Sprintf("%d clicks (%s spent) but 0 conversions — traffic is not converting", m.Clicks, accountMoney(m.Spend)),
 			"Verify the UET tag and conversion goals are firing correctly, check landing page load speed, and review if the CTA matches the ad promise")
 	}
 	if m.Clicks > msHighCpcMinClicks {
 		if avgCpc := m.Spend / float64(m.Clicks); avgCpc > msHighAvgCpc {
 			add(model.MonitorPriorityMed,
-				fmt.Sprintf("Avg CPC is %s — spending %s for only %d clicks", msMoney(avgCpc), msMoney(m.Spend), m.Clicks),
+				fmt.Sprintf("Avg CPC is %s — spending %s for only %d clicks", accountMoney(avgCpc), accountMoney(m.Spend), m.Clicks),
 				"Switch to a Target CPA or Maximize Clicks bid strategy, add long-tail keywords with lower competition")
 		}
 	}

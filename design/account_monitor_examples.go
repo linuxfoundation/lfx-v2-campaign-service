@@ -41,8 +41,9 @@ const (
 	accountMonitorExampleWindowFrom = "2026-09-06"
 	accountMonitorExampleWindowTo   = "2026-10-05"
 	accountMonitorExampleDays       = 30
-	// accountMonitorExampleCurrency is the currency every non-Google example reports. USD
-	// because the action items' "$" amounts (Meta, Reddit, Microsoft) are printed in it.
+	// accountMonitorExampleCurrency is the ISO 4217 code every non-Google example reports in its
+	// currency field. Action-item text prints amounts as "N.NN in account currency", never with a
+	// symbol (#435).
 	accountMonitorExampleCurrency = "USD"
 )
 

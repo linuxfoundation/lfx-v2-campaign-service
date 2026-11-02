@@ -135,27 +135,27 @@ func googleActionItems(m model.AccountCampaignMetrics, pacingPct float64, label 
 
 	if status == googleStatusLimited {
 		add(model.MonitorPriorityHigh,
-			fmt.Sprintf("Campaign limited by Google — only %d impressions on a daily budget of %s", m.Impressions, googleMoney(m.BudgetDay)),
+			fmt.Sprintf("Campaign limited by Google — only %d impressions on a daily budget of %s", m.Impressions, accountMoney(m.BudgetDay)),
 			"Switch bid strategy to Maximize Clicks, or expand keyword match types to increase eligible auctions")
 	}
 	if m.BudgetDay <= 1 && status == googleStatusEnabled {
 		add(model.MonitorPriorityHigh,
-			fmt.Sprintf("Daily budget is %s — this is a placeholder and won't generate meaningful traffic", googleMoney(m.BudgetDay)),
+			fmt.Sprintf("Daily budget is %s — this is a placeholder and won't generate meaningful traffic", accountMoney(m.BudgetDay)),
 			"Set a real daily budget (typically $10-50/day for events) before expecting results")
 	}
 	if status == googleStatusPaused {
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("Campaign is paused — spent %s before pause", googleMoney(m.Spend)),
+			fmt.Sprintf("Campaign is paused — spent %s before pause", accountMoney(m.Spend)),
 			"Check if this was intentionally paused or if the event is still upcoming and needs reactivation")
 	}
 	if label == model.MonitorPacingUnderspending && status == googleStatusEnabled {
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("Only spending %.0f%% of a daily budget of %s — %s spent vs %s expected", pacingPct, googleMoney(m.BudgetDay), googleMoney(m.Spend), googleMoney(m.BudgetDay*float64(days))),
+			fmt.Sprintf("Only spending %.0f%% of a daily budget of %s — %s spent vs %s expected", pacingPct, accountMoney(m.BudgetDay), accountMoney(m.Spend), accountMoney(m.BudgetDay*float64(days))),
 			"Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions")
 	}
 	if label == model.MonitorPacingConstrained && status == googleStatusEnabled {
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("Spending %.0f%% of budget — demand exceeds the daily cap of %s, ads stop showing mid-day", pacingPct, googleMoney(m.BudgetDay)),
+			fmt.Sprintf("Spending %.0f%% of budget — demand exceeds the daily cap of %s, ads stop showing mid-day", pacingPct, accountMoney(m.BudgetDay)),
 			"Increase daily budget to capture missed impressions, or narrow targeting to focus spend on highest-value audiences")
 	}
 	if m.IsSearchChannel && m.Ctr < 2 && m.Clicks > 10 {
@@ -170,7 +170,7 @@ func googleActionItems(m model.AccountCampaignMetrics, pacingPct float64, label 
 	}
 	if m.Clicks > 20 && m.Conversions != nil && *m.Conversions == 0 {
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("%d clicks (%s spent) but 0 conversions — traffic is not converting", m.Clicks, googleMoney(m.Spend)),
+			fmt.Sprintf("%d clicks (%s spent) but 0 conversions — traffic is not converting", m.Clicks, accountMoney(m.Spend)),
 			"Verify conversion tracking is firing correctly, check landing page load speed, and review if the CTA matches the ad promise")
 	}
 	avgCpc := 0.0
@@ -179,7 +179,7 @@ func googleActionItems(m model.AccountCampaignMetrics, pacingPct float64, label 
 	}
 	if avgCpc > 5 && m.Clicks > 10 {
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("Avg CPC is %s — spending %s for only %d clicks", googleMoney(avgCpc), googleMoney(m.Spend), m.Clicks),
+			fmt.Sprintf("Avg CPC is %s — spending %s for only %d clicks", accountMoney(avgCpc), accountMoney(m.Spend), m.Clicks),
 			"Switch to a Target CPA or Maximize Clicks bid strategy, add long-tail keywords with lower competition")
 	}
 	if m.Impressions > 0 && m.Clicks == 0 {
@@ -189,17 +189,11 @@ func googleActionItems(m model.AccountCampaignMetrics, pacingPct float64, label 
 	}
 	if status == googleStatusDraft {
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("Campaign is still in draft — a daily budget of %s allocated but not running", googleMoney(m.BudgetDay)),
+			fmt.Sprintf("Campaign is still in draft — a daily budget of %s allocated but not running", accountMoney(m.BudgetDay)),
 			"Upload creative assets, review ad groups, publish the campaign (then pause if not ready to go live)")
 	}
 	return items
 }
-
-// googleMoney renders an amount for action-item text (#435). Google reports spend and budgets in
-// the connected ad account's own currency and this service performs no FX conversion, so a "$"
-// would call a EUR or INR amount dollars. The currency code is not carried on the row, so the text
-// says "in account currency", as the Meta and X monitors do.
-func googleMoney(v float64) string { return fmt.Sprintf("%.2f in account currency", v) }
 
 // isScratchCampaignName reports whether a campaign name uses the operator convention of
 // prefixing throwaway campaigns with "zz" so they sort last and can be ignored.
