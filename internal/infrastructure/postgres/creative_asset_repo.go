@@ -195,10 +195,11 @@ const creativeAssetQuotaQuery = `SELECT count(*), COALESCE(sum(byte_size), 0),
 // lockBriefForAssetWriteQuery is the brief row lock every write that can affect a brief's asset
 // library takes first. The one exception is PruneArchivedBriefAssets, which deletes only under
 // briefs archived long ago, whose bytes nothing serves; see its doc comment. CreateAsset takes it
-// to order itself against a concurrent ArchiveBrief; DeleteAsset takes it to order itself against a concurrent dispatch claim (see
-// deleteCreativeAssetQuery); campaign_repo.go's ReplaceCampaign takes the same ROW lock through
-// lockBriefRowByIDQuery below, because it rewrites config_snapshot, the column DeleteAsset reads
-// to decide whether an asset is still referenced.
+// to order itself against a concurrent ArchiveBrief; DeleteAsset takes it to order itself
+// against a concurrent dispatch claim (see deleteCreativeAssetQuery); campaign_repo.go's
+// ReplaceCampaign takes the same ROW lock through lockBriefRowByIDQuery below, because it
+// rewrites config_snapshot, the column DeleteAsset reads to decide whether an asset is still
+// referenced.
 //
 // FOR UPDATE is the strength that matters, because of what it conflicts with rather than what it
 // excludes here: claimCampaignDispatchQuery's INSERT takes FOR KEY SHARE on this same brief row as
