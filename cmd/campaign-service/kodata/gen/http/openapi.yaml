@@ -11955,7 +11955,7 @@ definitions:
             issue:
                 type: string
                 description: What the rule engine flagged.
-                example: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
+                example: Only spending 42% of a daily budget of 150.00 in account currency — 1890.00 in account currency spent vs 4500.00 in account currency expected
             priority:
                 type: string
                 description: The rule engine's priority band for this item.
@@ -11968,7 +11968,7 @@ definitions:
             action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
             campaign_id: "24183781329"
             campaign_name: KubeCon NA 2026 - Search
-            issue: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
+            issue: Only spending 42% of a daily budget of 150.00 in account currency — 1890.00 in account currency spent vs 4500.00 in account currency expected
             priority: MED
         required:
             - priority

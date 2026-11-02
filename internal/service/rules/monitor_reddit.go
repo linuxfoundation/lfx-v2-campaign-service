@@ -180,7 +180,7 @@ func redditActionItems(m model.AccountCampaignMetrics, pacingPct float64, label 
 	zeroDelivery := m.Impressions == 0 && m.Clicks == 0
 	if label == model.MonitorPacingUnderspending && m.Status == "ACTIVE" && !(zeroDelivery && pacingPct == 0) {
 		add(model.MonitorPriorityHigh,
-			fmt.Sprintf("Underspending at %.0f%% of budget — $%.2f spent", pacingPct, m.Spend),
+			fmt.Sprintf("Underspending at %.0f%% of budget — %.2f in account currency spent", pacingPct, m.Spend),
 			"Broaden targeting (add subreddits/interests), increase bid, or expand geographic targeting")
 	}
 	if m.Impressions > redditMinImpressions && m.Ctr < redditLowCtrPct && m.Status == "ACTIVE" {

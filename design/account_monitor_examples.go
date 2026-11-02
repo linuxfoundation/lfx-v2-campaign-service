@@ -168,7 +168,7 @@ func googleAccountMonitorExample() map[string]any {
 		},
 	}, []map[string]any{{
 		"campaign_id": "24183781329", "campaign_name": "KubeCon NA 2026 - Search", "priority": "MED",
-		"issue":  "Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected",
+		"issue":  "Only spending 42% of a daily budget of 150.00 in account currency — 1890.00 in account currency spent vs 4500.00 in account currency expected",
 		"action": "Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions",
 	}}, false, "")
 }
@@ -244,7 +244,7 @@ func redditAccountMonitorExample() map[string]any {
 		},
 	}, []map[string]any{{
 		"campaign_id": "2045000000000000001", "campaign_name": "KubeCon NA 2026 - r/kubernetes", "priority": "HIGH",
-		"issue":  "Underspending at 40% of budget — $600.00 spent",
+		"issue":  "Underspending at 40% of budget — 600.00 in account currency spent",
 		"action": "Broaden targeting (add subreddits/interests), increase bid, or expand geographic targeting",
 	}}, false, accountMonitorExampleCurrency)
 }
@@ -265,7 +265,7 @@ func microsoftAccountMonitorExample() map[string]any {
 		},
 	}, []map[string]any{{
 		"campaign_id": "516000001", "campaign_name": "KubeCon NA 2026 - Search", "priority": "MED",
-		"issue":  "Only spending 40% of $60.00/day budget — $720.00 spent vs $1800.00 expected",
+		"issue":  "Only spending 40% of a daily budget of 60.00 in account currency — 720.00 in account currency spent vs 1800.00 in account currency expected",
 		"action": "Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions",
 	}}, true, accountMonitorExampleCurrency)
 }
