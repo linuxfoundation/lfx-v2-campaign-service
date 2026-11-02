@@ -1190,7 +1190,17 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	// budget+campaign already committed (inside createAdGroupAndAd, which runs
 	// last) would orphan a real paid campaign for what amounts to a bad
 	// RegistrationURL, over-length name, or invalid targeting value.
-	finalURL, headlines, descriptions, adGroupName, keywords, audienceSegments, err := precomputeAdGroupAdInputs(in)
+	//
+	// Top-level Headlines/Descriptions are Search's responsive search ad copy, judged only where
+	// they can be sent (#441). Off Search they never are, and on Search they are not when every
+	// requested ad group brings its own Ads, since each group's ads then replace them
+	// (validateAdGroupPlans). Composing them there could refuse a create over copy nothing
+	// sends. EventName is required above, so the defaults always compose.
+	adIn := in
+	if kind != campaignKindSearch || everyAdGroupBringsAds(in.AdGroups) {
+		adIn.Headlines, adIn.Descriptions = nil, nil
+	}
+	finalURL, ad, adGroupName, keywords, audienceSegments, err := precomputeAdGroupAdInputs(adIn)
 	if err != nil {
 		return nil, err
 	}
@@ -1329,7 +1339,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		cpcBidMicros:     cpcBidMicros,
 		keywords:         keywords,
 		audienceSegments: audienceSegments,
-		ads:              []adPlan{{headlines: headlines, descriptions: descriptions}},
+		ads:              []adPlan{ad},
 	})
 	if err != nil {
 		return nil, err
@@ -1340,8 +1350,8 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		campaignName:     campaignName,
 		finalURL:         finalURL,
 		adGroupName:      adGroupName,
-		headlines:        headlines,
-		descriptions:     descriptions,
+		headlines:        ad.headlines,
+		descriptions:     ad.descriptions,
 		keywords:         keywords,
 		audienceSegments: audienceSegments,
 		geo:              geo,

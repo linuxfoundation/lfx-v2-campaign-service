@@ -67,7 +67,7 @@ func TestPrecomputeAdGroupAdInputs_NameMeasuredInRunesNotBytes(t *testing.T) {
 	// count is well over 255 while rune count stays under 255.
 	multibyte := strings.Repeat("é", 200)
 	in := CampaignInput{Project: "CNCF", EventName: multibyte, RegistrationURL: "https://example.com/event"}
-	_, _, _, adGroupName, _, _, err := precomputeAdGroupAdInputs(in)
+	_, _, adGroupName, _, _, err := precomputeAdGroupAdInputs(in)
 	if err != nil {
 		t.Fatalf("a multibyte ad group name under 255 characters must be accepted (rune-measured), got: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestPrecomputeAdGroupAdInputs_NameMeasuredInRunesNotBytes(t *testing.T) {
 // cap altogether.
 func TestPrecomputeAdGroupAdInputs_OversizedNameRejected(t *testing.T) {
 	in := CampaignInput{Project: "CNCF", EventName: strings.Repeat("x", 300), RegistrationURL: "https://example.com/event"}
-	_, _, _, _, _, _, err := precomputeAdGroupAdInputs(in)
+	_, _, _, _, _, err := precomputeAdGroupAdInputs(in)
 	if err == nil || !strings.Contains(err.Error(), "name exceeds") {
 		t.Errorf("an over-length ad group name must be rejected preflight, got: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestPrecomputeAdGroupAdInputs_OversizedFinalURLRejected(t *testing.T) {
 		EventName:       "KubeCon",
 		RegistrationURL: "https://example.com/" + longPath,
 	}
-	finalURL, _, _, _, _, _, err := precomputeAdGroupAdInputs(in)
+	finalURL, _, _, _, _, err := precomputeAdGroupAdInputs(in)
 	if err == nil {
 		t.Fatalf("an over-length composed final URL must be rejected preflight, got finalURL=%q", finalURL)
 	}
@@ -811,5 +811,106 @@ func TestCheckStatusMutateResults_MatchesNamesNotCounts(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+// What composeAdCopy changed reaches the result's steps (#441): an operator who wrote one
+// headline sees, beside the ad, every line they did not write, and a duplicate they did write
+// that was dropped.
+func TestCreateCampaign_StepsNameEveryCopyChange(t *testing.T) {
+	c := newCampaignClient(t, okBudget, okCampaign)
+	in := sampleInput()
+	in.Headlines = []string{"Learn Kubernetes", "Learn Kubernetes"}
+	in.Descriptions = []string{"Three days of talks.", "Workshops and the hallway track."}
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	steps := strings.Join(res.Steps, "\n")
+	if !strings.Contains(steps, `Ad copy: dropped 1 duplicate headline(s), first "Learn Kubernetes"`) {
+		t.Errorf("steps do not report the dropped duplicate:\n%s", steps)
+	}
+	if n := strings.Count(steps, "Ad copy: added default headline"); n != minHeadlines-1 {
+		t.Errorf("steps report %d added headlines, want %d:\n%s", n, minHeadlines-1, steps)
+	}
+	if strings.Contains(steps, "added default description") {
+		t.Errorf("steps report a padded description the caller supplied enough of:\n%s", steps)
+	}
+}
+
+// With several ads in a group, each ad's changes are labelled with its number, so an operator
+// can tell which ad got the default lines.
+func TestCreateCampaign_MultiAdGroupLabelsEachAdsCopyChanges(t *testing.T) {
+	c := newCascadeClient(t, &adGroupCascade{})
+	in := sampleInput()
+	full := AdSpec{Headlines: []string{"H1", "H2", "H3"}, Descriptions: []string{"D1", "D2"}}
+	short := AdSpec{Headlines: []string{"Only one"}, Descriptions: []string{"D1", "D2"}}
+	in.AdGroups = []AdGroupSpec{{Name: "Training", Ads: []AdSpec{full, short}}}
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	steps := strings.Join(res.Steps, "\n")
+	if !strings.Contains(steps, "Ad 2 copy: added default headline") {
+		t.Errorf("steps do not label the second ad's padding:\n%s", steps)
+	}
+	if strings.Contains(steps, "Ad 1 copy:") {
+		t.Errorf("steps report a change to the first ad, whose copy was complete:\n%s", steps)
+	}
+}
+
+// Top-level RSA copy is Search's alone. Off Search it is never sent, so an over-wide line
+// there must not refuse a create (#441); on Search the same input is refused before any
+// request. Each kind's input is first proved valid as it stands, so a pass means the copy was
+// skipped, not that the preflight failed earlier for another reason.
+func TestValidateCampaignInputKind_RefusesOverWideCopyOnlyOnSearch(t *testing.T) {
+	c := NewClient(testCreds(), testAccount(), WithClock(fixedClock()))
+	wide := []string{strings.Repeat("x", maxHeadlineWeight+1)}
+
+	search := sampleInput()
+	if err := c.ValidateCampaignInputKind(campaignKindSearch, search); err != nil {
+		t.Fatalf("search input must validate before the copy is widened: %v", err)
+	}
+	search.Headlines = wide
+	if err := c.ValidateCampaignInputKind(campaignKindSearch, search); err == nil || !strings.Contains(err.Error(), "display width") {
+		t.Errorf("search: err = %v, want the over-wide headline refused", err)
+	}
+
+	for _, tc := range []struct {
+		kind string
+		in   CampaignInput
+	}{
+		{campaignKindDemandGen, creativeInput(fullCreative())},
+		{campaignKindDisplay, displayInput("https://cdn.example.com")},
+		{campaignKindPerformanceMax, pmaxInput(fullPMaxCreative())},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			if err := c.ValidateCampaignInputKind(tc.kind, tc.in); err != nil {
+				t.Fatalf("input must validate before the copy is widened: %v", err)
+			}
+			tc.in.Headlines = wide
+			if err := c.ValidateCampaignInputKind(tc.kind, tc.in); err != nil {
+				t.Errorf("refused Search copy this channel never sends: %v", err)
+			}
+		})
+	}
+}
+
+// When every requested ad group brings its own Ads, the top-level copy is replaced in each
+// group and never sent, so an over-wide line there must not refuse the create. One group that
+// inherits it brings the check back.
+func TestValidateCampaignInputKind_SkipsTopLevelCopyEveryAdGroupReplaces(t *testing.T) {
+	c := NewClient(testCreds(), testAccount(), WithClock(fixedClock()))
+	own := AdSpec{Headlines: []string{"H1", "H2", "H3"}, Descriptions: []string{"D1", "D2"}}
+	in := sampleInput()
+	in.Headlines = []string{strings.Repeat("x", maxHeadlineWeight+1)}
+	in.AdGroups = []AdGroupSpec{{Name: "Training", Ads: []AdSpec{own}}, {Name: "Talks", Ads: []AdSpec{own}}}
+	if err := c.ValidateCampaignInputKind(campaignKindSearch, in); err != nil {
+		t.Errorf("every group replaces the top-level copy, so it must not be judged: %v", err)
+	}
+
+	in.AdGroups[1].Ads = nil
+	if err := c.ValidateCampaignInputKind(campaignKindSearch, in); err == nil || !strings.Contains(err.Error(), "display width") {
+		t.Errorf("err = %v, want the over-wide headline refused once a group inherits it", err)
 	}
 }

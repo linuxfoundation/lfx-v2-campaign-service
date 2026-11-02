@@ -822,21 +822,23 @@ channel?: string                — OPTIONAL which Google Ads campaign type to c
                                   CREATE is refused: Google cannot create Video campaigns. It remains a
                                   legal value because `adoptExisting` and monitoring do work on Video.
 headlines?: string[]            — Optional Responsive Search Ad headlines (≤30 WEIGHTED chars
-                                  each, 3-15 after padding). Trimmed, truncated, and de-duplicated;
-                                  caller-supplied entries are accepted up to 15 (later entries
-                                  beyond that are silently dropped). Padded with deterministic
-                                  eventName-derived placeholders up to the minimum of 3 when fewer
-                                  are supplied (or omitted entirely).
+                                  each, CJK/full-width counting double; 3-15 after padding). Trimmed,
+                                  blanks skipped. A headline over 30 is REFUSED before anything is
+                                  created, never cut (#441), wherever this copy is sent: on Search,
+                                  unless every `adGroups` entry brings its own `ads`, which replace
+                                  it. Duplicates and rows past 15 are dropped, and fewer than 3 are
+                                  padded with deterministic eventName-derived lines; each of those
+                                  changes is reported in the result's steps ("Ad copy: …").
 descriptions?: string[]         — Optional Responsive Search Ad descriptions (≤90 WEIGHTED chars
-                                  each, 2-4 after padding). Same trim/truncate/dedupe/pad rules as
-                                  headlines, with caller-supplied entries accepted up to 4 (later
-                                  entries beyond that are silently dropped).
+                                  each, 2-4 after padding). Same rules as headlines: over 90 is
+                                  refused, duplicates and entries past 4 are dropped, fewer than 2
+                                  are padded, and each change is reported in the steps.
 
                                   WEIGHTED, not plain runes: matching Google Ads' own counting,
                                   CJK and full-width characters (Hangul, Kana, CJK ideographs,
                                   Fullwidth Forms) each count as TWO. All-wide-character copy
                                   therefore fits 15 headline / 45 description characters, not
-                                  30 / 90, and is truncated at that point. Latin text is
+                                  30 / 90, and anything wider is refused. Latin text is
                                   unaffected — one character, one unit.
 keywords?: {text, matchType}[]  — OPTIONAL positive Search keyword criteria (GA-4), attached to the
                                   ad group created above. `text` ≤80 runes; `matchType` one of EXACT,
