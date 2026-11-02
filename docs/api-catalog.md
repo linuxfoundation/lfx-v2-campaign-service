@@ -1104,8 +1104,10 @@ conversionActions?: string[]    — OPTIONAL the conversion actions THIS campaig
                                   not what it bids for, and the step line says so.
 
                                   Both writes follow the campaign create, so a failure is a PARTIAL
-                                  result: the campaign exists, PAUSED, bidding toward the account's
-                                  goals, and the error says the goal was NOT applied. The earlier
+                                  result: the campaign exists, PAUSED. A definite refusal says the
+                                  goal was NOT applied and the campaign bids toward the account's
+                                  goals; a config update whose outcome is unknown (a 5xx, a timeout,
+                                  an exhausted 429) says UNCONFIRMED. The earlier
                                   create-time field, `campaign.selective_optimization`, is no longer
                                   sent: Google documents it for App campaigns only.
 

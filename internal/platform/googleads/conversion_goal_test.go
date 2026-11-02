@@ -249,6 +249,41 @@ func TestApplyCampaignConversionGoal_FailuresSayTheGoalWasNotApplied(t *testing.
 	}
 }
 
+// A config update whose outcome is unknown may already have pointed the campaign at the goal,
+// so it is UNCONFIRMED, never "NOT applied": a 5xx, which is not retried, and a definite 400
+// that follows a retried 429, which the first attempt may already have applied.
+func TestApplyCampaignConversionGoal_AnUnknownConfigOutcomeIsUnconfirmed(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	for name, config := range map[string]http.HandlerFunc{
+		"5xx": func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"error":{"code":13,"status":"INTERNAL"}}`)
+		},
+		"400 after a retried 429": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			calls++
+			first := calls == 1
+			mu.Unlock()
+			if first {
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = io.WriteString(w, `{"error":{"code":8,"status":"RESOURCE_EXHAUSTED"}}`)
+				return
+			}
+			gaqlError(http.StatusBadRequest, "conversionGoalCampaignConfigError", "INVALID_GOAL_CONFIG_LEVEL")(w, r)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &goalFake{searches: []string{goalRow("ENABLED", goalTestAction1)}, config: config}
+			c := goalClient(t, f)
+			_, err := c.applyCampaignConversionGoal(context.Background(), "222", goalPlan(biddingMaximizeConversions, goalTestAction1))
+			if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") || strings.Contains(err.Error(), "NOT applied") {
+				t.Fatalf("err = %v, want an UNCONFIRMED goal, not NOT applied", err)
+			}
+		})
+	}
+}
+
 // A 2xx that names another campaign's config is not taken as this campaign's goal.
 func TestApplyCampaignConversionGoal_AConfigResultForAnotherCampaignIsUnconfirmed(t *testing.T) {
 	f := &goalFake{
@@ -296,9 +331,9 @@ func TestCustomConversionGoalName_IgnoresOrder(t *testing.T) {
 // Every channel applies the goal right after its campaign create (#436). The goal create is
 // refused here, so each channel must come back with its campaign id and an error saying the
 // goal was not applied, and must build nothing further on the campaign. One subtest per
-// channel, so dropping the call from any one of them fails by name. Video is wired the same
-// way but absent here: CreateVideoCampaign refuses before any mutate, because the Google Ads
-// API cannot create Video campaigns.
+// channel, so dropping the call from any one of them fails by name. Video runs through the
+// unexported cascade, since CreateVideoCampaign refuses before any mutate (the Google Ads API
+// cannot create Video campaigns) and the cascade is kept tested against the day it can.
 func TestEveryChannelAppliesTheConversionGoalAfterItsCampaign(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -314,6 +349,11 @@ func TestEveryChannelAppliesTheConversionGoalAfterItsCampaign(t *testing.T) {
 			in := displayInput(base)
 			in.ConversionActions = []string{"11"}
 			return c.CreateDisplayCampaign(context.Background(), in)
+		}},
+		{"video", nil, func(c *Client, _ string) (*CampaignResult, error) {
+			in := videoInput()
+			in.ConversionActions = []string{"11"}
+			return c.createVideoCampaignCascade(context.Background(), in)
 		}},
 		{"demand gen", nil, func(c *Client, _ string) (*CampaignResult, error) {
 			in := demandGenInput()

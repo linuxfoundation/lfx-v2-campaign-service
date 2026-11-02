@@ -2114,7 +2114,9 @@ CAMPAIGN with that goal. A goal found REMOVED, or holding a different set, is re
 the set its name stands for; a create that loses a `DUPLICATE_NAME` race looks the winner
 up and uses it. It runs first among the post-create steps, with the geo step's partial-result
 contract: a failure returns the campaign id with an error saying the goal was NOT applied.
-A config update whose 2xx names another campaign's config is UNCONFIRMED. Under a click
+A config update whose outcome is unknown (a 5xx, a transport failure, an exhausted 429, or a
+refusal after a retried 429, through `retriedUnconfirmed`) is UNCONFIRMED, as is one whose 2xx
+names another campaign's config. Under a click
 strategy (manual CPC, maximize clicks, and Demand Gen's only strategy) the step line says
 the goal sets what counts as a conversion, not what the campaign bids for.
 

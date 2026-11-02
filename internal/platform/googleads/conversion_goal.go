@@ -22,8 +22,10 @@ package googleads
 // Performance Max included.
 //
 // Both writes happen after the campaign create, so a failure is a PARTIAL result like the geo
-// and extension steps: the campaign exists, PAUSED, bidding toward the account's goals, and
-// the error says the goal was not applied rather than reporting the operator's choice as done.
+// and extension steps: the campaign exists, PAUSED, and the error says the goal was NOT applied
+// (a definite refusal, or any failure before the config update, which alone changes what the
+// campaign bids toward) or is UNCONFIRMED (a config update whose outcome is unknown), rather
+// than reporting the operator's choice as done.
 
 import (
 	"context"
@@ -105,8 +107,15 @@ func (c *Client) applyCampaignConversionGoal(ctx context.Context, campaignID str
 		},
 		UpdateMask: "goal_config_level,custom_conversion_goal",
 	}}}
-	resp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("conversionGoalCampaignConfigs:mutate"), req, true)
+	resp, retries, err := c.doRequestCounted(ctx, http.MethodPost, c.customerPath("conversionGoalCampaignConfigs:mutate"), req, true)
 	if err != nil {
+		// Only a definite refusal proves the campaign still bids toward the account's goals. A
+		// 5xx, a transport failure, an exhausted 429 or a refusal after a retried 429 may have
+		// been applied, so it is reported UNCONFIRMED, as the geo step reports an unknown outcome.
+		err = retriedUnconfirmed("campaign conversion goal config update", retries, err)
+		if IsOutcomeUnconfirmed(err) {
+			return "", fmt.Errorf("google-ads conversion goal UNCONFIRMED for campaign %s (the campaign's goal config may already point at custom goal %s; verify its conversion goals in Google Ads before retrying): %w", campaignID, goalResource, err)
+		}
 		return "", fmt.Errorf("google-ads conversion goal NOT applied to campaign %s (custom goal %s exists; the campaign bids toward the account's conversion goals until it is pointed at that goal in Google Ads): %w", campaignID, goalResource, err)
 	}
 	// The result must name THIS campaign's config. A 2xx naming another one would report a

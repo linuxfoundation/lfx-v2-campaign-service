@@ -19,7 +19,10 @@ Behaviour:
   contract: a failure returns the campaign id and an error saying the goal was NOT applied.
 - A goal found REMOVED, or holding a different set, is restored to the set its name stands
   for; a create that loses a `DUPLICATE_NAME` race looks the winner up and uses it.
-- A config update whose 2xx names another campaign's config is UNCONFIRMED.
+- A config update whose outcome is unknown (a 5xx, a transport failure, an exhausted 429, or
+  a refusal after a retried 429) is UNCONFIRMED, as is one whose 2xx names another
+  campaign's config. A failure before the config update stays NOT applied: only that update
+  changes what the campaign bids toward.
 - Under a click strategy (manual CPC, maximize clicks, and Demand Gen's only strategy) the
   step line says the goal sets what counts as a conversion, not what the campaign bids for.
 
