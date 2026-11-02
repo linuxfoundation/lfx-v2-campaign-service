@@ -20,6 +20,12 @@ unauthenticated for the same reason those are — the scraper carries no bearer 
 and is likewise absent from the chart's HTTPRoute and RuleSet, so it is reachable only
 in-cluster. See [internal/infrastructure/metrics](internal-infrastructure-metrics.md).
 
+Goa's HTTP transport brings in `github.com/go-chi/chi/v5` indirectly. The
+service pins chi to v5.4.0 or later to address GHSA-j6qf-3m9c-vwj3
+(CVE-2026-114437); none of this service's Go code installs the affected
+`ClientIPFromXFF` middleware, so the specific client-IP spoofing preconditions
+are not present in the service's own handler chain.
+
 `debug.LogPayloads()` is intentionally not applied to any
 service: payloads carry bearer tokens and (for connections) plaintext provider
 credentials, so DEBUG payload logging would leak secrets. `debug.HTTP()` is
