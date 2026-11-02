@@ -159,6 +159,30 @@ refuses `new_version` synchronously (400, before a job exists) for any platform 
 `model.ProviderSupportsSlotVersions` — today Microsoft only, because the other providers reuse
 campaigns by a name that does not yet vary by slot version (see the dispatch concept).
 
+**Multi-campaign per event: compare-and-set and labels (cs-1).** A `new_version` request must
+also carry `expected_slot_versions` — per platform, the slot version of the latest live campaign
+the caller saw, `0` for none — or `CreateCampaigns` refuses it (400, before a job exists;
+`expectedSlotVersions` also refuses the map without `new_version`, an unselected key or a negative
+value). It reaches `dispatchPlatform` as `StartOptions.ExpectedSlotVersions`, and the new_version
+arm claims `max(latest, maxUsed)+1` ONLY while the latest live campaign is complete AND its slot
+version equals the expectation; otherwise (`!hasExpected || expected != existing.SlotVersion`) the
+latest campaign is returned as a reuse and nothing is claimed. Concurrent submits were already
+deduplicated by the claim; this closes SEQUENTIAL repeats (a double click after the job finished, a
+reload, a second tab, a late replay), each of which carries the stale expectation it was built
+from. With no live campaign the expectation is not compared — there is nothing to duplicate.
+`funnel_stage` and `tactic` (design Enums, re-checked by `campaignLabels`) become
+`StartOptions.Labels` and are passed to the claim, which writes them only on a row it INSERTS
+(migration `000054`); a slot version that already has a row keeps its labels. The dispatcher
+gets the CLAIMED ROW's labels on the context (`model.WithDispatchLabels`), never the request's,
+so a name is always composed from what the row stores and an unlabelled row composes its legacy
+name byte for byte. Every `platformResult` now names its row (`reuseResult` / `identifyRow`):
+`campaign_row_id`, `slot_version`, `variant`, the stored `funnel_stage` / `tactic`, and `reused`
+(true on every reuse path: a retry, a stale new_version, a claim lost to a completed row);
+`campaign_id` stays the platform's id. `campaignResult` and the indexed `CampaignDoc` gain
+`variant`, `funnel_stage`, `tactic` and `created_at`. Pinned by
+`orchestrator_multi_campaign_test.go`, `create_multi_campaign_test.go` and, live,
+`TestLiveRepeatedNewVersionRequestsCreateExactlyOne`.
+
 Dispatch is durable (LFXV2-2665): single-flight per (brief, platform) is
 enforced by an atomic claim — `ClaimCampaignDispatch` does INSERT ... ON CONFLICT
 DO NOTHING of a `pending` campaign row, so exactly one worker across replicas

@@ -212,9 +212,22 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 			},
 		})
 	})
-	Attribute("new_version", Boolean, "Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label. Supported on microsoft-ads only for now; any other platform in the request is refused with 400. Two concurrent requests that both find the same complete campaign create one new campaign between them, not two: the second is reported as a reuse of (or skipped behind) the first.", func() {
+	Attribute("new_version", Boolean, "Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label. Supported on microsoft-ads only for now; any other platform in the request is refused with 400. Two concurrent requests that both find the same complete campaign create one new campaign between them, not two: the second is reported as a reuse of (or skipped behind) the first. REQUIRES expected_slot_versions for every selected platform (400 without it), which also makes a SEQUENTIAL repeat — a double click, a reload, a second tab, a replay after a lost response — return the campaign it already made instead of creating another.", func() {
 		Default(false)
 		Example(false)
+	})
+	// Multi-campaign per event (cs-1): the labels a newly claimed campaign carries, and the
+	// compare-and-set that keeps a deliberate second campaign from being created twice.
+	Attribute("funnel_stage", String, "The funnel stage the campaign(s) this request creates serve: `top`, `mid` or `lower`. Applies to every selected platform. Recorded on a campaign ONLY when this request creates it: a platform whose campaign already exists (a retry, or a new_version request with a stale expected_slot_versions) returns that campaign with the stage it was created with, never relabelled. Optional; omitted, the campaign is unlabelled. On Microsoft Advertising a labelled campaign carries the stage (ToFU, MoFU or BoFU) in its upstream name; an unlabelled one keeps the name it has always had.", func() {
+		Enum("top", "mid", "lower")
+		Example("top")
+	})
+	Attribute("tactic", String, "How the campaign(s) this request creates pursue their stage, from a controlled list (free text is refused because the label can reach campaign names). Same scope and immutability as funnel_stage. Optional.", func() {
+		Enum("prospecting", "retargeting", "lookalike", "keyword", "competitor", "content-promotion")
+		Example("retargeting")
+	})
+	Attribute("expected_slot_versions", MapOf(String, Int), "REQUIRED when new_version is true (400 without it), and refused without new_version: for EVERY selected platform, the slot_version of the latest live campaign the caller saw on that platform for this brief (from list-brief-campaigns or a previous job's platform result), or 0 when it saw none. A compare-and-set: a platform gets another campaign only while its latest live campaign is still the one the caller saw. Otherwise its latest campaign is returned with reused=true and nothing is created — which is what makes a double click, a reload, a second tab or a late replay of the same request create exactly one campaign. Keys must be the selected platforms, values 0 or more.", func() {
+		Example(map[string]int{"microsoft-ads": 1})
 	})
 	Required("platforms")
 })
@@ -305,6 +318,22 @@ var PlatformResult = Type("platform-result", func() {
 	Attribute("warnings", ArrayOf(String), "Best-effort steps of a successful create that did not apply, in operator-readable sentences. For the email channel this reports a requested hero image that could not be added; the draft exists, and its banner needs checking in the HubSpot editor (it may have none, or still carry the template's).", func() { MaxLength(10) })
 	Attribute("reconcile", ArrayOf(ReconcileIdentifier), "Present only when this dispatch's claim was lost before its result was recorded: the identifiers of what it created upstream (ids, names, urns, image hashes, X media keys — never state, platform text, URLs or other key-like fields), which this service no longer tracks, sorted by key. The only handle on an id-less partial (no campaign_id).")
 	Attribute("reconcile_truncated", Boolean, "True when the result held more identifiers than one job result may carry, so reconcile is incomplete: top-level identifiers are always kept, and only the most deeply nested or latest entries are cut")
+	// Which of the brief's campaigns this result is about, now that one platform can hold
+	// several. All OPTIONAL: absent on a failure that reached no campaign row, and on a job
+	// recorded before these fields existed.
+	Attribute("campaign_row_id", String, "This service's campaign UUID (the id get-campaign and list-brief-campaigns use), as opposed to campaign_id, the platform's. Present whenever the result names a campaign row: a create or a reuse.")
+	Attribute("slot_version", Int, "Which campaign on this platform and channel the result is: 1 for the first, 2 for the next created with new_version, and so on. Present with campaign_row_id.", func() {
+		Minimum(1)
+		Example(2)
+	})
+	Attribute("variant", String, "The platform's campaign type (the Google channel: search, demand-gen, performance-max, video, display); `default` on every other platform. Present with campaign_row_id.")
+	Attribute("funnel_stage", String, "The funnel stage the campaign was CREATED with — the stored label, not this request's. Absent on an unlabelled campaign.", func() {
+		Enum("top", "mid", "lower")
+	})
+	Attribute("tactic", String, "The tactic the campaign was CREATED with — the stored label, not this request's. Absent on an unlabelled campaign.", func() {
+		Enum("prospecting", "retargeting", "lookalike", "keyword", "competitor", "content-promotion")
+	})
+	Attribute("reused", Boolean, "true when this request did NOT create the campaign and is returning an existing one: an idempotent retry, or a new_version request whose expected_slot_versions was stale (someone — usually this same caller — already created the next campaign). Absent when the campaign was created by this request.")
 	Required("platform", "ok")
 })
 
@@ -331,6 +360,21 @@ var Campaign = Type("campaign", func() {
 	Attribute("slot_version", Int, "Which campaign this is among the brief's campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.", func() {
 		Minimum(1)
 		Example(1)
+	})
+	Attribute("variant", String, "The platform's campaign type this campaign is: the Google channel (search, demand-gen, performance-max, video, display), `default` on every other platform. With platform and slot_version it identifies the campaign among the brief's campaigns.", func() {
+		Example("default")
+	})
+	Attribute("funnel_stage", String, "The funnel stage the campaign was created to serve (top, mid or lower), set when it was created and never changed. ABSENT on a campaign created without one, created before the field existed, or adopted.", func() {
+		Enum("top", "mid", "lower")
+		Example("top")
+	})
+	Attribute("tactic", String, "The tactic the campaign was created with, set when it was created and never changed. ABSENT on a campaign created without one, created before the field existed, or adopted.", func() {
+		Enum("prospecting", "retargeting", "lookalike", "keyword", "competitor", "content-promotion")
+		Example("retargeting")
+	})
+	Attribute("created_at", String, "When this service recorded the campaign (its claim), RFC 3339.", func() {
+		Format(FormatDateTime)
+		Example("2026-11-02T18:04:05Z")
 	})
 	Attribute("bidding_strategy", String, "How the campaign was CREATED to bid, as its dispatch config asked (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft Advertising create carrying the legacy `microsoftConfig.cpcBid` with no `bidding` object is recorded as `manual` (that bid is a manual starting bid), so this does not always echo an explicit `bidding.strategy`: `automatic` (the default — the platform sets every bid) or `manual` (a manual max cost-per-click bid the update-campaign-bid endpoint can change). A record of the request, not an observation: an operator may switch the strategy in the ad platform afterwards. ABSENT when not recorded — a campaign created before this field existed, an adopted campaign, or a Google Ads or email campaign — never read as `automatic`.", func() {
 		Enum("automatic", "manual")

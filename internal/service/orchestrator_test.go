@@ -522,7 +522,7 @@ func slotVersionKey(briefID string, platform model.Provider, variant string, slo
 // ClaimNewCampaignVersion mirrors the real check: a version a deleted row holds and no live row
 // does is refused. deletedSlotVersions holds the HIGHEST deleted version per slot, so a version at
 // or below it with no live row stands in for "held by a deleted row".
-func (r *fakeCampaignRepo) ClaimNewCampaignVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+func (r *fakeCampaignRepo) ClaimNewCampaignVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor, labels model.CampaignLabels) (bool, *model.Campaign, error) {
 	r.mu.Lock()
 	v := model.NormalizeSlotVersion(slotVersion)
 	live := false
@@ -537,10 +537,10 @@ func (r *fakeCampaignRepo) ClaimNewCampaignVersion(ctx context.Context, projectI
 	if used {
 		return false, nil, domain.ErrSlotVersionUsed
 	}
-	return r.ClaimCampaignDispatch(ctx, projectID, briefID, platform, variant, slotVersion, jobID, by)
+	return r.ClaimCampaignDispatch(ctx, projectID, briefID, platform, variant, slotVersion, jobID, by, labels)
 }
 
-func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor, labels model.CampaignLabels) (bool, *model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	// Recorded BEFORE the error and conflict returns: the question the binding test asks
@@ -578,7 +578,9 @@ func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, b
 	// from the SAME $5. A fake that stamped only CreatedBy would hand every orchestrator test
 	// a claimed row production cannot create, and the creation-time updated_by invariant would
 	// have no fake capable of catching a regression in it.
-	pending := &model.Campaign{ProjectID: projectID, BriefID: briefID, Platform: platform, Variant: model.NormalizeVariant(variant), SlotVersion: slotVersion, JobID: &jobID, Status: "pending", CreatedBy: by, UpdatedBy: by}
+	// Labels are written ONLY on the row the claim inserts, as claimCampaignDispatchQuery does.
+	pending := &model.Campaign{ProjectID: projectID, BriefID: briefID, Platform: platform, Variant: model.NormalizeVariant(variant), SlotVersion: slotVersion, JobID: &jobID, Status: "pending", CreatedBy: by, UpdatedBy: by,
+		FunnelStage: labels.FunnelStage, Tactic: labels.Tactic}
 	r.storeRow(pending)
 	return true, pending, nil
 }
@@ -619,6 +621,15 @@ func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c.Version = 1
+	// The real conflict arm lands on the CLAIM row and never names funnel_stage/tactic
+	// (000054), so the row it RETURNS keeps the claim's id and stored labels.
+	if cur, err := r.latestLiveLocked(c.BriefID, c.Platform, c.Variant); err == nil &&
+		model.NormalizeSlotVersion(cur.SlotVersion) == model.NormalizeSlotVersion(c.SlotVersion) {
+		c.FunnelStage, c.Tactic = cur.FunnelStage, cur.Tactic
+		if c.ID == "" {
+			c.ID = cur.ID
+		}
+	}
 	r.upserted = append(r.upserted, c)
 	// Run the payload builder the way the real repo does — inside the "transaction", after the
 	// row is written — and record it, so a test can assert the campaign is actually indexed
@@ -1094,8 +1105,14 @@ func TestOrchestrator_SkipsAlreadyDispatchedPlatform(t *testing.T) {
 	if !strings.Contains(string(j.Result), "pc-google-ads") {
 		t.Errorf("result = %s, want it to carry the upstream campaign id pc-google-ads", j.Result)
 	}
-	if strings.Contains(string(j.Result), "existing-c1") {
-		t.Errorf("result = %s, must not leak the DB row id existing-c1", j.Result)
+	// campaign_id stays the UPSTREAM id; the row id has its own field, campaign_row_id (cs-1),
+	// and the result says the campaign was reused rather than created.
+	var got []platformResult
+	if err := json.Unmarshal(j.Result, &got); err != nil || len(got) != 1 {
+		t.Fatalf("decode result %s: %v", j.Result, err)
+	}
+	if got[0].CampaignID != "pc-google-ads" || got[0].CampaignRowID != "existing-c1" || !got[0].Reused {
+		t.Errorf("result = %+v, want campaign_id pc-google-ads, campaign_row_id existing-c1, reused", got[0])
 	}
 }
 
@@ -1435,7 +1452,7 @@ func TestClaimCampaignDispatch_ConcurrentSingleWinner(t *testing.T) {
 			defer wg.Done()
 			<-start // release all goroutines at once to maximize contention
 			claimed, row, err := repo.ClaimCampaignDispatch(
-				context.Background(), "cncf", "b1", model.ProviderGoogleAds, model.VariantDefault, model.FirstSlotVersion, "job1", nil)
+				context.Background(), "cncf", "b1", model.ProviderGoogleAds, model.VariantDefault, model.FirstSlotVersion, "job1", nil, model.CampaignLabels{})
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -1631,7 +1648,7 @@ type claimCountingCampaignRepo struct {
 	claims int
 }
 
-func (r *claimCountingCampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, p model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+func (r *claimCountingCampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, p model.Provider, variant string, slotVersion int, jobID string, by *model.Actor, labels model.CampaignLabels) (bool, *model.Campaign, error) {
 	r.cmu.Lock()
 	r.claims++
 	r.cmu.Unlock()
@@ -1639,7 +1656,7 @@ func (r *claimCountingCampaignRepo) ClaimCampaignDispatch(ctx context.Context, p
 	// the slot key would claim the default slot for every dispatch routed through it and
 	// hide exactly the variant-routing regression this PR exists to prevent — the same
 	// "a fake that does not model the key hides the bug" class the PR argues elsewhere.
-	return r.fakeCampaignRepo.ClaimCampaignDispatch(ctx, projectID, briefID, p, variant, slotVersion, jobID, by)
+	return r.fakeCampaignRepo.ClaimCampaignDispatch(ctx, projectID, briefID, p, variant, slotVersion, jobID, by, labels)
 }
 
 // TestOrchestrator_DispatchGoesThroughClaim verifies each per-platform dispatch

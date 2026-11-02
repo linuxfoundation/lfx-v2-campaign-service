@@ -54,6 +54,12 @@ func completedSlot1() *fakeCampaignRepo {
 	return camps
 }
 
+// newVersionSaw is a new_version request from a caller that saw slot version n as the latest
+// live campaign (0: none). See StartOptions.ExpectedSlotVersions.
+func newVersionSaw(n int) StartOptions {
+	return StartOptions{NewVersion: true, ExpectedSlotVersions: map[model.Provider]int{model.ProviderGoogleAds: n}}
+}
+
 func startAndWait(t *testing.T, orch *Orchestrator, jobs *fakeJobRepo, opts StartOptions) *model.CampaignJob {
 	t.Helper()
 	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
@@ -70,7 +76,7 @@ func TestOrchestrator_NewVersionCreatesASecondCampaignOnACompletedSlot(t *testin
 	disp := &slotRecordingDispatcher{}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 
-	j := startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+	j := startAndWait(t, orch, jobs, newVersionSaw(1))
 
 	if j.Status != model.JobSucceeded {
 		t.Fatalf("status = %s (%s), want succeeded", j.Status, j.Result)
@@ -97,7 +103,7 @@ func TestOrchestrator_NewVersionSkipsADeletedCampaignsSlotVersion(t *testing.T) 
 	disp := &slotRecordingDispatcher{}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 
-	j := startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+	j := startAndWait(t, orch, jobs, newVersionSaw(1))
 
 	if j.Status != model.JobSucceeded {
 		t.Fatalf("status = %s (%s), want succeeded", j.Status, j.Result)
@@ -121,7 +127,7 @@ func TestOrchestrator_NewVersionAfterEveryVersionWasDeletedSkipsThemAll(t *testi
 	disp := &slotRecordingDispatcher{}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 
-	j := startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+	j := startAndWait(t, orch, jobs, newVersionSaw(0))
 
 	if j.Status != model.JobSucceeded {
 		t.Fatalf("status = %s (%s), want succeeded", j.Status, j.Result)
@@ -154,7 +160,7 @@ func TestOrchestrator_ConcurrentNewVersionsTargetTheSameSlot(t *testing.T) {
 	disp := &slotRecordingDispatcher{}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 
-	startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+	startAndWait(t, orch, jobs, newVersionSaw(1))
 
 	if got := camps.claimSlotVersions; len(got) != 1 || got[0] != 2 {
 		t.Fatalf("claimed slot versions %v, want [2]: a concurrent new_version must target the version "+
@@ -176,7 +182,7 @@ func TestOrchestrator_NewVersionDoesNotReclaimAVersionAConcurrentRequestUsedAndD
 	disp := &slotRecordingDispatcher{}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 
-	j := startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+	j := startAndWait(t, orch, jobs, newVersionSaw(1))
 
 	if got := disp.seen(); len(got) != 0 {
 		t.Fatalf("dispatcher saw slot versions %v, want none: slot 2 belongs to a concurrent request's "+
@@ -215,7 +221,7 @@ func TestOrchestrator_NewVersionOnAnEmptySlotCreatesTheFirst(t *testing.T) {
 	disp := &slotRecordingDispatcher{}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 
-	startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+	startAndWait(t, orch, jobs, newVersionSaw(0))
 
 	if got := disp.seen(); len(got) != 1 || got[0] != model.FirstSlotVersion {
 		t.Fatalf("dispatcher saw slot versions %v, want [1]", got)
@@ -235,7 +241,7 @@ func TestOrchestrator_NewVersionDoesNotBuildOnAnUnfinishedCampaign(t *testing.T)
 	disp := &slotRecordingDispatcher{}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 
-	j := startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+	j := startAndWait(t, orch, jobs, newVersionSaw(1))
 
 	if got := disp.seen(); len(got) != 0 {
 		t.Fatalf("dispatcher called with slot versions %v, want no call beside an unfinished campaign", got)
@@ -256,7 +262,7 @@ func TestOrchestrator_ReleasingASlot2ClaimLeavesSlot1Live(t *testing.T) {
 	camps := completedSlot1()
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: preCreateErrDispatcher{}})
 
-	startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+	startAndWait(t, orch, jobs, newVersionSaw(1))
 
 	latest, err := camps.GetCampaignByPlatform(context.Background(), "cncf", "b1", model.ProviderGoogleAds, model.VariantDefault)
 	if err != nil {
@@ -279,7 +285,7 @@ func TestOrchestrator_NewVersionOnAnEmptySlotDoesNotReclaimAConcurrentlyDeletedS
 	disp := &slotRecordingDispatcher{}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 
-	j := startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+	j := startAndWait(t, orch, jobs, newVersionSaw(0))
 
 	if got := disp.seen(); len(got) != 0 {
 		t.Fatalf("dispatcher saw slot versions %v, want none: slot 1 was used and deleted since the read", got)
@@ -308,7 +314,7 @@ func TestOrchestrator_NewVersionOnAnUnfinishedSlotDoesNotReclaimItOnceDeleted(t 
 	disp := &slotRecordingDispatcher{}
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
 
-	j := startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+	j := startAndWait(t, orch, jobs, newVersionSaw(1))
 
 	if got := disp.seen(); len(got) != 0 {
 		t.Fatalf("dispatcher saw slot versions %v, want none: slot 1 was completed and deleted since the read", got)

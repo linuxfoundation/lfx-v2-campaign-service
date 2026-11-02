@@ -517,6 +517,19 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `TestCampaignMonitorHistoryIndex_Live`, and the final snapshot assertions in
   `TestListProjectPlatformDeletedCampaignIDs_Live`.
 
+- `000054` — `campaigns.funnel_stage` (`top`/`mid`/`lower`) and `campaigns.tactic` (a closed
+  list: `prospecting`, `retargeting`, `lookalike`, `keyword`, `competitor`,
+  `content-promotion`), both NULLABLE with NO default and each with a CHECK; NULL is a legacy,
+  unlabelled or adopted campaign. EXPAND-only (the N-1 binary names its columns and ignores
+  them). Written ONLY by `claimCampaignDispatchQuery`'s INSERT (`$8`, `$9`): its conflict arm
+  does nothing, and neither the upsert's conflict arm nor `replaceCampaignQuery` names the
+  columns, so the labels are immutable after the claim and a retry carrying different labels
+  gets the stored ones back. Not in the slot's unique key — a label is not identity, and keying
+  on it would let a relabelled retry claim a second slot. No index. The down always applies and
+  discards the labels (see the deployment concept's rollback runbook). Pinned by
+  `TestLiveClaimWritesLabelsOnlyOnInsert` and `TestLiveCampaignLabelChecksMatchTheModel` (under
+  `dbtest/`), and by the scan-order tests in `campaign_repo_test.go`.
+
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
 
 `campaign_jobs` is append-only — nothing else in the service deletes a row — so it

@@ -41,7 +41,7 @@ func TestLiveClaimAndReleaseDriveTheRealRepoMethods(t *testing.T) {
 	)
 
 	// First claim wins and inserts the pending row.
-	claimed, existing, err := repo.ClaimCampaignDispatch(ctx, project, briefID, model.ProviderGoogleAds, variant, model.FirstSlotVersion, jobID, nil)
+	claimed, existing, err := repo.ClaimCampaignDispatch(ctx, project, briefID, model.ProviderGoogleAds, variant, model.FirstSlotVersion, jobID, nil, model.CampaignLabels{})
 	if err != nil {
 		t.Fatalf("ClaimCampaignDispatch: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestLiveClaimAndReleaseDriveTheRealRepoMethods(t *testing.T) {
 
 	// Second claim for the SAME slot must lose — this is the single-flight guarantee the
 	// orchestrator relies on to avoid two concurrent upstream creates.
-	claimedAgain, row, err := repo.ClaimCampaignDispatch(ctx, project, briefID, model.ProviderGoogleAds, variant, model.FirstSlotVersion, jobID2, nil)
+	claimedAgain, row, err := repo.ClaimCampaignDispatch(ctx, project, briefID, model.ProviderGoogleAds, variant, model.FirstSlotVersion, jobID2, nil, model.CampaignLabels{})
 	if err != nil {
 		t.Fatalf("second ClaimCampaignDispatch: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestLiveClaimAndReleaseDriveTheRealRepoMethods(t *testing.T) {
 
 	// A DIFFERENT variant on the same (brief, platform) is a different slot and must win.
 	// This is the whole point of the third column: Search and Demand Gen coexist.
-	claimedOther, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, model.ProviderGoogleAds, model.VariantDefault, model.FirstSlotVersion, jobID3, nil)
+	claimedOther, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, model.ProviderGoogleAds, model.VariantDefault, model.FirstSlotVersion, jobID3, nil, model.CampaignLabels{})
 	if err != nil {
 		t.Fatalf("claim on the default slot: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestLiveClaimAndReleaseDriveTheRealRepoMethods(t *testing.T) {
 	if err := repo.DeleteDispatchClaim(ctx, briefID, model.ProviderGoogleAds, variant, model.FirstSlotVersion, jobID); err != nil {
 		t.Fatalf("DeleteDispatchClaim: %v", err)
 	}
-	reclaimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, model.ProviderGoogleAds, variant, model.FirstSlotVersion, jobID4, nil)
+	reclaimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, model.ProviderGoogleAds, variant, model.FirstSlotVersion, jobID4, nil, model.CampaignLabels{})
 	if err != nil {
 		t.Fatalf("re-claim after release: %v", err)
 	}

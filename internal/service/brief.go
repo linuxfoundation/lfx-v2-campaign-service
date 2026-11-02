@@ -242,7 +242,12 @@ func campaignDoc(c *briefs.Campaign) indexer.CampaignDoc {
 		BiddingStrategy: c.BiddingStrategy,
 		MaxCPCBid:       c.MaxCpcBid,
 		Adopted:         c.Adopted != nil && *c.Adopted,
-		Version:         c.Version,
+		// Which of the brief's campaigns on this platform it is (cs-1), as the API returns it.
+		Variant:     derefStr(c.Variant),
+		FunnelStage: c.FunnelStage,
+		Tactic:      c.Tactic,
+		CreatedAt:   c.CreatedAt,
+		Version:     c.Version,
 	}
 }
 
@@ -731,6 +736,14 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 			}
 		}
 	}
+	expected, err := expectedSlotVersions(p.Input.NewVersion, p.Input.ExpectedSlotVersions, platforms)
+	if err != nil {
+		return nil, err
+	}
+	labels, err := campaignLabels(p.Input.FunnelStage, p.Input.Tactic)
+	if err != nil {
+		return nil, err
+	}
 	config := marshalAny(p.Input.Config)
 	// The create-time `bidding` object exists only on the platforms that implement it; on any
 	// other selected platform it is refused rather than silently ignored.
@@ -753,7 +766,12 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 	//
 	// NewVersion is what separates "make another campaign" from "retry the one I asked for":
 	// without it a repeat create is idempotent and returns the campaign the slot already has.
-	jobID, err := orch.StartWithOptions(ctx, brief, brief.Version, platforms, config, StartOptions{NewVersion: p.Input.NewVersion})
+	//
+	// ExpectedSlotVersions is the compare-and-set that keeps a new_version request from creating
+	// twice, and Labels are what a newly claimed campaign is labelled with (cs-1).
+	jobID, err := orch.StartWithOptions(ctx, brief, brief.Version, platforms, config, StartOptions{
+		NewVersion: p.Input.NewVersion, ExpectedSlotVersions: expected, Labels: labels,
+	})
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
@@ -2024,6 +2042,13 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 			// unexpected shape is skipped rather than failing the whole poll.
 			Reconcile          map[string]json.RawMessage `json:"reconcile"`
 			ReconcileTruncated bool                       `json:"reconcile_truncated"`
+			// The campaign row's identity (cs-1): see the orchestrator's platformResult.
+			CampaignRowID string `json:"campaign_row_id"`
+			SlotVersion   int    `json:"slot_version"`
+			Variant       string `json:"variant"`
+			FunnelStage   string `json:"funnel_stage"`
+			Tactic        string `json:"tactic"`
+			Reused        bool   `json:"reused"`
 		}
 		if err := json.Unmarshal(j.Result, &stored); err != nil {
 			// A persisted result that won't decode is corruption, not a valid empty
@@ -2044,6 +2069,20 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 		resp.Result = make([]*briefs.PlatformResult, 0, len(stored))
 		for _, r := range stored {
 			pr := &briefs.PlatformResult{Platform: r.Platform, OK: r.OK}
+			// Which of the brief's campaigns this is (cs-1); every field absent on a job
+			// recorded before they existed, or on a failure that reached no row.
+			pr.CampaignRowID = optStr(r.CampaignRowID)
+			if r.SlotVersion > 0 {
+				sv := r.SlotVersion
+				pr.SlotVersion = &sv
+			}
+			pr.Variant = optStr(r.Variant)
+			pr.FunnelStage = optStr(r.FunnelStage)
+			pr.Tactic = optStr(r.Tactic)
+			if r.Reused {
+				reused := true
+				pr.Reused = &reused
+			}
 			if r.CampaignID != "" {
 				id := r.CampaignID
 				pr.CampaignID = &id
@@ -2185,6 +2224,71 @@ func briefResult(b *model.CampaignBrief) *briefs.Brief {
 // a client can round-trip the returned validator.
 func briefETag(version int64) string { return `"` + strconv.FormatInt(version, 10) + `"` }
 
+// expectedSlotVersions validates the create input's expected_slot_versions against new_version
+// and the selected platforms (cs-1).
+//
+// With new_version it is REQUIRED for every selected platform: it is the compare-and-set that
+// makes a repeat of the request (a double click, a reload, a second tab, a replay after a lost
+// response) return the campaign it already made instead of creating another, so a request without
+// it is refused rather than run without that protection. This tightens the contract for
+// new_version callers; none existed in this service's clients when it landed. Without
+// new_version it is refused: a plain create is already a retry, and silently ignoring a
+// compare-and-set the caller believes is in force would be worse than saying so. A key that is
+// not a selected platform, or a negative value, is refused too.
+func expectedSlotVersions(newVersion bool, in map[string]int, platforms []model.Provider) (map[model.Provider]int, error) {
+	if !newVersion {
+		if len(in) > 0 {
+			return nil, &briefs.BadRequestError{Code: "400", Message: "expected_slot_versions applies only with new_version; omit it, or set new_version to create another campaign"}
+		}
+		return nil, nil
+	}
+	selected := make(map[model.Provider]bool, len(platforms))
+	for _, p := range platforms {
+		selected[p] = true
+	}
+	out := make(map[model.Provider]int, len(in))
+	for k, v := range in {
+		prov := model.Provider(k)
+		if !selected[prov] {
+			return nil, &briefs.BadRequestError{Code: "400", Message: fmt.Sprintf("expected_slot_versions names %q, which is not a selected platform", k)}
+		}
+		if v < 0 {
+			return nil, &briefs.BadRequestError{Code: "400", Message: fmt.Sprintf("expected_slot_versions[%s] must be 0 or more", k)}
+		}
+		out[prov] = v
+	}
+	for _, p := range platforms {
+		if _, ok := out[p]; !ok {
+			return nil, &briefs.BadRequestError{Code: "400", Message: fmt.Sprintf(
+				"new_version requires expected_slot_versions for every selected platform; missing %s (the slot_version of the latest campaign you saw on it, or 0 for none)", p)}
+		}
+	}
+	return out, nil
+}
+
+// campaignLabels validates the create input's funnel_stage and tactic (cs-1). The design Enums
+// already refuse anything else at the HTTP boundary; this re-checks them so no caller of the
+// service — and no future transport — can put an unlisted value on a campaign row or into an
+// upstream name, and so the refusal happens before any job or upstream call.
+func campaignLabels(stage, tactic *string) (model.CampaignLabels, error) {
+	var l model.CampaignLabels
+	if stage != nil {
+		s := model.FunnelStage(*stage)
+		if !s.Valid() {
+			return l, &briefs.BadRequestError{Code: "400", Message: "funnel_stage must be one of top, mid, lower"}
+		}
+		l.FunnelStage = &s
+	}
+	if tactic != nil {
+		t := model.Tactic(*tactic)
+		if !t.Valid() {
+			return l, &briefs.BadRequestError{Code: "400", Message: "tactic must be one of prospecting, retargeting, lookalike, keyword, competitor, content-promotion"}
+		}
+		l.Tactic = &t
+	}
+	return l, nil
+}
+
 func campaignResult(c *model.Campaign) *briefs.Campaign {
 	return &briefs.Campaign{
 		ID:                 c.ID,
@@ -2195,12 +2299,43 @@ func campaignResult(c *model.Campaign) *briefs.Campaign {
 		CampaignName:       c.CampaignName,
 		Status:             c.Status,
 		SlotVersion:        model.NormalizeSlotVersion(c.SlotVersion),
+		Variant:            optStr(model.NormalizeVariant(c.Variant)),
+		FunnelStage:        funnelStageResult(c.FunnelStage),
+		Tactic:             tacticResult(c.Tactic),
+		CreatedAt:          createdAtResult(c.CreatedAt),
 		BiddingStrategy:    biddingStrategyResult(c.BiddingStrategy),
 		MaxCpcBid:          c.MaxCPCBid,
 		Adopted:            adoptedFlag(c),
 		Version:            c.Version,
 		Etag:               optStr(briefETag(c.Version)),
 	}
+}
+
+// funnelStageResult, tacticResult and createdAtResult render the stored labels and claim time;
+// an unlabelled row stays absent rather than "", and a zero time (a row built in memory, never
+// read back) is absent rather than year 1.
+func funnelStageResult(s *model.FunnelStage) *string {
+	if s == nil {
+		return nil
+	}
+	v := string(*s)
+	return &v
+}
+
+func tacticResult(t *model.Tactic) *string {
+	if t == nil {
+		return nil
+	}
+	v := string(*t)
+	return &v
+}
+
+func createdAtResult(t time.Time) *string {
+	if t.IsZero() {
+		return nil
+	}
+	v := t.UTC().Format(time.RFC3339)
+	return &v
 }
 
 // biddingStrategyResult renders the recorded create-time bidding strategy; nil (not recorded)

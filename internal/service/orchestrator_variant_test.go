@@ -121,7 +121,7 @@ func TestClaimDoesNotReturnAnotherVariantsCampaign(t *testing.T) {
 	})
 
 	claimed, existing, err := repo.ClaimCampaignDispatch(
-		context.Background(), "cncf", "b1", model.ProviderGoogleAds, "demand-gen", model.FirstSlotVersion, "job-1", nil)
+		context.Background(), "cncf", "b1", model.ProviderGoogleAds, "demand-gen", model.FirstSlotVersion, "job-1", nil, model.CampaignLabels{})
 	if err != nil {
 		t.Fatalf("ClaimCampaignDispatch: %v", err)
 	}

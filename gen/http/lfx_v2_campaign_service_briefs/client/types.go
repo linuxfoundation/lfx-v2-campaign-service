@@ -644,6 +644,21 @@ type AdoptCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// The platform's campaign type this campaign is: the Google channel (search,
+	// demand-gen, performance-max, video, display), `default` on every other
+	// platform. With platform and slot_version it identifies the campaign among
+	// the brief's campaigns.
+	Variant *string `form:"variant,omitempty" json:"variant,omitempty" xml:"variant,omitempty"`
+	// The funnel stage the campaign was created to serve (top, mid or lower), set
+	// when it was created and never changed. ABSENT on a campaign created without
+	// one, created before the field existed, or adopted.
+	FunnelStage *string `form:"funnel_stage,omitempty" json:"funnel_stage,omitempty" xml:"funnel_stage,omitempty"`
+	// The tactic the campaign was created with, set when it was created and never
+	// changed. ABSENT on a campaign created without one, created before the field
+	// existed, or adopted.
+	Tactic *string `form:"tactic,omitempty" json:"tactic,omitempty" xml:"tactic,omitempty"`
+	// When this service recorded the campaign (its claim), RFC 3339.
+	CreatedAt *string `form:"created_at,omitempty" json:"created_at,omitempty" xml:"created_at,omitempty"`
 	// How the campaign was CREATED to bid, as its dispatch config asked
 	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
 	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
@@ -699,6 +714,21 @@ type GetCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// The platform's campaign type this campaign is: the Google channel (search,
+	// demand-gen, performance-max, video, display), `default` on every other
+	// platform. With platform and slot_version it identifies the campaign among
+	// the brief's campaigns.
+	Variant *string `form:"variant,omitempty" json:"variant,omitempty" xml:"variant,omitempty"`
+	// The funnel stage the campaign was created to serve (top, mid or lower), set
+	// when it was created and never changed. ABSENT on a campaign created without
+	// one, created before the field existed, or adopted.
+	FunnelStage *string `form:"funnel_stage,omitempty" json:"funnel_stage,omitempty" xml:"funnel_stage,omitempty"`
+	// The tactic the campaign was created with, set when it was created and never
+	// changed. ABSENT on a campaign created without one, created before the field
+	// existed, or adopted.
+	Tactic *string `form:"tactic,omitempty" json:"tactic,omitempty" xml:"tactic,omitempty"`
+	// When this service recorded the campaign (its claim), RFC 3339.
+	CreatedAt *string `form:"created_at,omitempty" json:"created_at,omitempty" xml:"created_at,omitempty"`
 	// How the campaign was CREATED to bid, as its dispatch config asked
 	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
 	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
@@ -905,6 +935,21 @@ type UpdateCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// The platform's campaign type this campaign is: the Google channel (search,
+	// demand-gen, performance-max, video, display), `default` on every other
+	// platform. With platform and slot_version it identifies the campaign among
+	// the brief's campaigns.
+	Variant *string `form:"variant,omitempty" json:"variant,omitempty" xml:"variant,omitempty"`
+	// The funnel stage the campaign was created to serve (top, mid or lower), set
+	// when it was created and never changed. ABSENT on a campaign created without
+	// one, created before the field existed, or adopted.
+	FunnelStage *string `form:"funnel_stage,omitempty" json:"funnel_stage,omitempty" xml:"funnel_stage,omitempty"`
+	// The tactic the campaign was created with, set when it was created and never
+	// changed. ABSENT on a campaign created without one, created before the field
+	// existed, or adopted.
+	Tactic *string `form:"tactic,omitempty" json:"tactic,omitempty" xml:"tactic,omitempty"`
+	// When this service recorded the campaign (its claim), RFC 3339.
+	CreatedAt *string `form:"created_at,omitempty" json:"created_at,omitempty" xml:"created_at,omitempty"`
 	// How the campaign was CREATED to bid, as its dispatch config asked
 	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
 	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
@@ -961,6 +1006,21 @@ type ToggleCampaignStatusResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// The platform's campaign type this campaign is: the Google channel (search,
+	// demand-gen, performance-max, video, display), `default` on every other
+	// platform. With platform and slot_version it identifies the campaign among
+	// the brief's campaigns.
+	Variant *string `form:"variant,omitempty" json:"variant,omitempty" xml:"variant,omitempty"`
+	// The funnel stage the campaign was created to serve (top, mid or lower), set
+	// when it was created and never changed. ABSENT on a campaign created without
+	// one, created before the field existed, or adopted.
+	FunnelStage *string `form:"funnel_stage,omitempty" json:"funnel_stage,omitempty" xml:"funnel_stage,omitempty"`
+	// The tactic the campaign was created with, set when it was created and never
+	// changed. ABSENT on a campaign created without one, created before the field
+	// existed, or adopted.
+	Tactic *string `form:"tactic,omitempty" json:"tactic,omitempty" xml:"tactic,omitempty"`
+	// When this service recorded the campaign (its claim), RFC 3339.
+	CreatedAt *string `form:"created_at,omitempty" json:"created_at,omitempty" xml:"created_at,omitempty"`
 	// How the campaign was CREATED to bid, as its dispatch config asked
 	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
 	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
@@ -1017,6 +1077,21 @@ type UpdateCampaignBudgetResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// The platform's campaign type this campaign is: the Google channel (search,
+	// demand-gen, performance-max, video, display), `default` on every other
+	// platform. With platform and slot_version it identifies the campaign among
+	// the brief's campaigns.
+	Variant *string `form:"variant,omitempty" json:"variant,omitempty" xml:"variant,omitempty"`
+	// The funnel stage the campaign was created to serve (top, mid or lower), set
+	// when it was created and never changed. ABSENT on a campaign created without
+	// one, created before the field existed, or adopted.
+	FunnelStage *string `form:"funnel_stage,omitempty" json:"funnel_stage,omitempty" xml:"funnel_stage,omitempty"`
+	// The tactic the campaign was created with, set when it was created and never
+	// changed. ABSENT on a campaign created without one, created before the field
+	// existed, or adopted.
+	Tactic *string `form:"tactic,omitempty" json:"tactic,omitempty" xml:"tactic,omitempty"`
+	// When this service recorded the campaign (its claim), RFC 3339.
+	CreatedAt *string `form:"created_at,omitempty" json:"created_at,omitempty" xml:"created_at,omitempty"`
 	// How the campaign was CREATED to bid, as its dispatch config asked
 	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
 	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
@@ -1073,6 +1148,21 @@ type UpdateCampaignBidResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// The platform's campaign type this campaign is: the Google channel (search,
+	// demand-gen, performance-max, video, display), `default` on every other
+	// platform. With platform and slot_version it identifies the campaign among
+	// the brief's campaigns.
+	Variant *string `form:"variant,omitempty" json:"variant,omitempty" xml:"variant,omitempty"`
+	// The funnel stage the campaign was created to serve (top, mid or lower), set
+	// when it was created and never changed. ABSENT on a campaign created without
+	// one, created before the field existed, or adopted.
+	FunnelStage *string `form:"funnel_stage,omitempty" json:"funnel_stage,omitempty" xml:"funnel_stage,omitempty"`
+	// The tactic the campaign was created with, set when it was created and never
+	// changed. ABSENT on a campaign created without one, created before the field
+	// existed, or adopted.
+	Tactic *string `form:"tactic,omitempty" json:"tactic,omitempty" xml:"tactic,omitempty"`
+	// When this service recorded the campaign (its claim), RFC 3339.
+	CreatedAt *string `form:"created_at,omitempty" json:"created_at,omitempty" xml:"created_at,omitempty"`
 	// How the campaign was CREATED to bid, as its dispatch config asked
 	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
 	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
@@ -5116,6 +5206,30 @@ type PlatformResultResponseBody struct {
 	// reconcile is incomplete: top-level identifiers are always kept, and only the
 	// most deeply nested or latest entries are cut
 	ReconcileTruncated *bool `form:"reconcile_truncated,omitempty" json:"reconcile_truncated,omitempty" xml:"reconcile_truncated,omitempty"`
+	// This service's campaign UUID (the id get-campaign and list-brief-campaigns
+	// use), as opposed to campaign_id, the platform's. Present whenever the result
+	// names a campaign row: a create or a reuse.
+	CampaignRowID *string `form:"campaign_row_id,omitempty" json:"campaign_row_id,omitempty" xml:"campaign_row_id,omitempty"`
+	// Which campaign on this platform and channel the result is: 1 for the first,
+	// 2 for the next created with new_version, and so on. Present with
+	// campaign_row_id.
+	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// The platform's campaign type (the Google channel: search, demand-gen,
+	// performance-max, video, display); `default` on every other platform. Present
+	// with campaign_row_id.
+	Variant *string `form:"variant,omitempty" json:"variant,omitempty" xml:"variant,omitempty"`
+	// The funnel stage the campaign was CREATED with — the stored label, not this
+	// request's. Absent on an unlabelled campaign.
+	FunnelStage *string `form:"funnel_stage,omitempty" json:"funnel_stage,omitempty" xml:"funnel_stage,omitempty"`
+	// The tactic the campaign was CREATED with — the stored label, not this
+	// request's. Absent on an unlabelled campaign.
+	Tactic *string `form:"tactic,omitempty" json:"tactic,omitempty" xml:"tactic,omitempty"`
+	// true when this request did NOT create the campaign and is returning an
+	// existing one: an idempotent retry, or a new_version request whose
+	// expected_slot_versions was stale (someone — usually this same caller —
+	// already created the next campaign). Absent when the campaign was created by
+	// this request.
+	Reused *bool `form:"reused,omitempty" json:"reused,omitempty" xml:"reused,omitempty"`
 }
 
 // ReconcileIdentifierResponseBody is used to define fields on response body
@@ -5275,7 +5389,35 @@ type CampaignCreateInputRequestBody struct {
 	// platform in the request is refused with 400. Two concurrent requests that
 	// both find the same complete campaign create one new campaign between them,
 	// not two: the second is reported as a reuse of (or skipped behind) the first.
+	// REQUIRES expected_slot_versions for every selected platform (400 without
+	// it), which also makes a SEQUENTIAL repeat — a double click, a reload, a
+	// second tab, a replay after a lost response — return the campaign it already
+	// made instead of creating another.
 	NewVersion bool `form:"new_version" json:"new_version" xml:"new_version"`
+	// The funnel stage the campaign(s) this request creates serve: `top`, `mid` or
+	// `lower`. Applies to every selected platform. Recorded on a campaign ONLY
+	// when this request creates it: a platform whose campaign already exists (a
+	// retry, or a new_version request with a stale expected_slot_versions) returns
+	// that campaign with the stage it was created with, never relabelled.
+	// Optional; omitted, the campaign is unlabelled. On Microsoft Advertising a
+	// labelled campaign carries the stage (ToFU, MoFU or BoFU) in its upstream
+	// name; an unlabelled one keeps the name it has always had.
+	FunnelStage *string `form:"funnel_stage,omitempty" json:"funnel_stage,omitempty" xml:"funnel_stage,omitempty"`
+	// How the campaign(s) this request creates pursue their stage, from a
+	// controlled list (free text is refused because the label can reach campaign
+	// names). Same scope and immutability as funnel_stage. Optional.
+	Tactic *string `form:"tactic,omitempty" json:"tactic,omitempty" xml:"tactic,omitempty"`
+	// REQUIRED when new_version is true (400 without it), and refused without
+	// new_version: for EVERY selected platform, the slot_version of the latest
+	// live campaign the caller saw on that platform for this brief (from
+	// list-brief-campaigns or a previous job's platform result), or 0 when it saw
+	// none. A compare-and-set: a platform gets another campaign only while its
+	// latest live campaign is still the one the caller saw. Otherwise its latest
+	// campaign is returned with reused=true and nothing is created — which is what
+	// makes a double click, a reload, a second tab or a late replay of the same
+	// request create exactly one campaign. Keys must be the selected platforms,
+	// values 0 or more.
+	ExpectedSlotVersions map[string]int `form:"expected_slot_versions,omitempty" json:"expected_slot_versions,omitempty" xml:"expected_slot_versions,omitempty"`
 }
 
 // SendWorkflowInputRequestBody is used to define fields on request body types.
@@ -7138,6 +7280,10 @@ func NewAdoptCampaignCampaignCreated(body *AdoptCampaignResponseBody, etag *stri
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		Variant:            body.Variant,
+		FunnelStage:        body.FunnelStage,
+		Tactic:             body.Tactic,
+		CreatedAt:          body.CreatedAt,
 		BiddingStrategy:    body.BiddingStrategy,
 		MaxCpcBid:          body.MaxCpcBid,
 		Adopted:            body.Adopted,
@@ -7239,6 +7385,10 @@ func NewGetCampaignCampaignOK(body *GetCampaignResponseBody, etag *string) *lfxv
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		Variant:            body.Variant,
+		FunnelStage:        body.FunnelStage,
+		Tactic:             body.Tactic,
+		CreatedAt:          body.CreatedAt,
 		BiddingStrategy:    body.BiddingStrategy,
 		MaxCpcBid:          body.MaxCpcBid,
 		Adopted:            body.Adopted,
@@ -7758,6 +7908,10 @@ func NewUpdateCampaignCampaignOK(body *UpdateCampaignResponseBody, etag *string)
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		Variant:            body.Variant,
+		FunnelStage:        body.FunnelStage,
+		Tactic:             body.Tactic,
+		CreatedAt:          body.CreatedAt,
 		BiddingStrategy:    body.BiddingStrategy,
 		MaxCpcBid:          body.MaxCpcBid,
 		Adopted:            body.Adopted,
@@ -7882,6 +8036,10 @@ func NewToggleCampaignStatusCampaignOK(body *ToggleCampaignStatusResponseBody, e
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		Variant:            body.Variant,
+		FunnelStage:        body.FunnelStage,
+		Tactic:             body.Tactic,
+		CreatedAt:          body.CreatedAt,
 		BiddingStrategy:    body.BiddingStrategy,
 		MaxCpcBid:          body.MaxCpcBid,
 		Adopted:            body.Adopted,
@@ -8010,6 +8168,10 @@ func NewUpdateCampaignBudgetCampaignOK(body *UpdateCampaignBudgetResponseBody, e
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		Variant:            body.Variant,
+		FunnelStage:        body.FunnelStage,
+		Tactic:             body.Tactic,
+		CreatedAt:          body.CreatedAt,
 		BiddingStrategy:    body.BiddingStrategy,
 		MaxCpcBid:          body.MaxCpcBid,
 		Adopted:            body.Adopted,
@@ -8138,6 +8300,10 @@ func NewUpdateCampaignBidCampaignOK(body *UpdateCampaignBidResponseBody, etag *s
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		Variant:            body.Variant,
+		FunnelStage:        body.FunnelStage,
+		Tactic:             body.Tactic,
+		CreatedAt:          body.CreatedAt,
 		BiddingStrategy:    body.BiddingStrategy,
 		MaxCpcBid:          body.MaxCpcBid,
 		Adopted:            body.Adopted,
@@ -10554,6 +10720,19 @@ func ValidateAdoptCampaignResponseBody(body *AdoptCampaignResponseBody) (err err
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
 		}
 	}
+	if body.FunnelStage != nil {
+		if !(*body.FunnelStage == "top" || *body.FunnelStage == "mid" || *body.FunnelStage == "lower") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.funnel_stage", *body.FunnelStage, []any{"top", "mid", "lower"}))
+		}
+	}
+	if body.Tactic != nil {
+		if !(*body.Tactic == "prospecting" || *body.Tactic == "retargeting" || *body.Tactic == "lookalike" || *body.Tactic == "keyword" || *body.Tactic == "competitor" || *body.Tactic == "content-promotion") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.tactic", *body.Tactic, []any{"prospecting", "retargeting", "lookalike", "keyword", "competitor", "content-promotion"}))
+		}
+	}
+	if body.CreatedAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.created_at", *body.CreatedAt, goa.FormatDateTime))
+	}
 	if body.BiddingStrategy != nil {
 		if !(*body.BiddingStrategy == "automatic" || *body.BiddingStrategy == "manual") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.bidding_strategy", *body.BiddingStrategy, []any{"automatic", "manual"}))
@@ -10593,6 +10772,19 @@ func ValidateGetCampaignResponseBody(body *GetCampaignResponseBody) (err error) 
 		if *body.SlotVersion < 1 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
 		}
+	}
+	if body.FunnelStage != nil {
+		if !(*body.FunnelStage == "top" || *body.FunnelStage == "mid" || *body.FunnelStage == "lower") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.funnel_stage", *body.FunnelStage, []any{"top", "mid", "lower"}))
+		}
+	}
+	if body.Tactic != nil {
+		if !(*body.Tactic == "prospecting" || *body.Tactic == "retargeting" || *body.Tactic == "lookalike" || *body.Tactic == "keyword" || *body.Tactic == "competitor" || *body.Tactic == "content-promotion") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.tactic", *body.Tactic, []any{"prospecting", "retargeting", "lookalike", "keyword", "competitor", "content-promotion"}))
+		}
+	}
+	if body.CreatedAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.created_at", *body.CreatedAt, goa.FormatDateTime))
 	}
 	if body.BiddingStrategy != nil {
 		if !(*body.BiddingStrategy == "automatic" || *body.BiddingStrategy == "manual") {
@@ -10780,6 +10972,19 @@ func ValidateUpdateCampaignResponseBody(body *UpdateCampaignResponseBody) (err e
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
 		}
 	}
+	if body.FunnelStage != nil {
+		if !(*body.FunnelStage == "top" || *body.FunnelStage == "mid" || *body.FunnelStage == "lower") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.funnel_stage", *body.FunnelStage, []any{"top", "mid", "lower"}))
+		}
+	}
+	if body.Tactic != nil {
+		if !(*body.Tactic == "prospecting" || *body.Tactic == "retargeting" || *body.Tactic == "lookalike" || *body.Tactic == "keyword" || *body.Tactic == "competitor" || *body.Tactic == "content-promotion") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.tactic", *body.Tactic, []any{"prospecting", "retargeting", "lookalike", "keyword", "competitor", "content-promotion"}))
+		}
+	}
+	if body.CreatedAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.created_at", *body.CreatedAt, goa.FormatDateTime))
+	}
 	if body.BiddingStrategy != nil {
 		if !(*body.BiddingStrategy == "automatic" || *body.BiddingStrategy == "manual") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.bidding_strategy", *body.BiddingStrategy, []any{"automatic", "manual"}))
@@ -10819,6 +11024,19 @@ func ValidateToggleCampaignStatusResponseBody(body *ToggleCampaignStatusResponse
 		if *body.SlotVersion < 1 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
 		}
+	}
+	if body.FunnelStage != nil {
+		if !(*body.FunnelStage == "top" || *body.FunnelStage == "mid" || *body.FunnelStage == "lower") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.funnel_stage", *body.FunnelStage, []any{"top", "mid", "lower"}))
+		}
+	}
+	if body.Tactic != nil {
+		if !(*body.Tactic == "prospecting" || *body.Tactic == "retargeting" || *body.Tactic == "lookalike" || *body.Tactic == "keyword" || *body.Tactic == "competitor" || *body.Tactic == "content-promotion") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.tactic", *body.Tactic, []any{"prospecting", "retargeting", "lookalike", "keyword", "competitor", "content-promotion"}))
+		}
+	}
+	if body.CreatedAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.created_at", *body.CreatedAt, goa.FormatDateTime))
 	}
 	if body.BiddingStrategy != nil {
 		if !(*body.BiddingStrategy == "automatic" || *body.BiddingStrategy == "manual") {
@@ -10860,6 +11078,19 @@ func ValidateUpdateCampaignBudgetResponseBody(body *UpdateCampaignBudgetResponse
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
 		}
 	}
+	if body.FunnelStage != nil {
+		if !(*body.FunnelStage == "top" || *body.FunnelStage == "mid" || *body.FunnelStage == "lower") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.funnel_stage", *body.FunnelStage, []any{"top", "mid", "lower"}))
+		}
+	}
+	if body.Tactic != nil {
+		if !(*body.Tactic == "prospecting" || *body.Tactic == "retargeting" || *body.Tactic == "lookalike" || *body.Tactic == "keyword" || *body.Tactic == "competitor" || *body.Tactic == "content-promotion") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.tactic", *body.Tactic, []any{"prospecting", "retargeting", "lookalike", "keyword", "competitor", "content-promotion"}))
+		}
+	}
+	if body.CreatedAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.created_at", *body.CreatedAt, goa.FormatDateTime))
+	}
 	if body.BiddingStrategy != nil {
 		if !(*body.BiddingStrategy == "automatic" || *body.BiddingStrategy == "manual") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.bidding_strategy", *body.BiddingStrategy, []any{"automatic", "manual"}))
@@ -10899,6 +11130,19 @@ func ValidateUpdateCampaignBidResponseBody(body *UpdateCampaignBidResponseBody) 
 		if *body.SlotVersion < 1 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
 		}
+	}
+	if body.FunnelStage != nil {
+		if !(*body.FunnelStage == "top" || *body.FunnelStage == "mid" || *body.FunnelStage == "lower") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.funnel_stage", *body.FunnelStage, []any{"top", "mid", "lower"}))
+		}
+	}
+	if body.Tactic != nil {
+		if !(*body.Tactic == "prospecting" || *body.Tactic == "retargeting" || *body.Tactic == "lookalike" || *body.Tactic == "keyword" || *body.Tactic == "competitor" || *body.Tactic == "content-promotion") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.tactic", *body.Tactic, []any{"prospecting", "retargeting", "lookalike", "keyword", "competitor", "content-promotion"}))
+		}
+	}
+	if body.CreatedAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.created_at", *body.CreatedAt, goa.FormatDateTime))
 	}
 	if body.BiddingStrategy != nil {
 		if !(*body.BiddingStrategy == "automatic" || *body.BiddingStrategy == "manual") {
@@ -16049,6 +16293,21 @@ func ValidatePlatformResultResponseBody(body *PlatformResultResponseBody) (err e
 			}
 		}
 	}
+	if body.SlotVersion != nil {
+		if *body.SlotVersion < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
+		}
+	}
+	if body.FunnelStage != nil {
+		if !(*body.FunnelStage == "top" || *body.FunnelStage == "mid" || *body.FunnelStage == "lower") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.funnel_stage", *body.FunnelStage, []any{"top", "mid", "lower"}))
+		}
+	}
+	if body.Tactic != nil {
+		if !(*body.Tactic == "prospecting" || *body.Tactic == "retargeting" || *body.Tactic == "lookalike" || *body.Tactic == "keyword" || *body.Tactic == "competitor" || *body.Tactic == "content-promotion") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.tactic", *body.Tactic, []any{"prospecting", "retargeting", "lookalike", "keyword", "competitor", "content-promotion"}))
+		}
+	}
 	return
 }
 
@@ -16069,6 +16328,21 @@ func validatePlatformResultResponseBody(body *PlatformResultResponseBody, path s
 			if err2 := validateReconcileIdentifierResponseBody(e, path+".reconcile[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
+		}
+	}
+	if body.SlotVersion != nil {
+		if *body.SlotVersion < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError(path+".slot_version", *body.SlotVersion, 1, true))
+		}
+	}
+	if body.FunnelStage != nil {
+		if !(*body.FunnelStage == "top" || *body.FunnelStage == "mid" || *body.FunnelStage == "lower") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".funnel_stage", *body.FunnelStage, []any{"top", "mid", "lower"}))
+		}
+	}
+	if body.Tactic != nil {
+		if !(*body.Tactic == "prospecting" || *body.Tactic == "retargeting" || *body.Tactic == "lookalike" || *body.Tactic == "keyword" || *body.Tactic == "competitor" || *body.Tactic == "content-promotion") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".tactic", *body.Tactic, []any{"prospecting", "retargeting", "lookalike", "keyword", "competitor", "content-promotion"}))
 		}
 	}
 	return
@@ -16197,6 +16471,16 @@ func ValidateCampaignCreateInputRequestBody(body *CampaignCreateInputRequestBody
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.platforms[*]", e, []any{"google-ads", "linkedin-ads", "meta-ads", "reddit-ads", "twitter-ads", "microsoft-ads", "hubspot"}))
 		}
 	}
+	if body.FunnelStage != nil {
+		if !(*body.FunnelStage == "top" || *body.FunnelStage == "mid" || *body.FunnelStage == "lower") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.funnel_stage", *body.FunnelStage, []any{"top", "mid", "lower"}))
+		}
+	}
+	if body.Tactic != nil {
+		if !(*body.Tactic == "prospecting" || *body.Tactic == "retargeting" || *body.Tactic == "lookalike" || *body.Tactic == "keyword" || *body.Tactic == "competitor" || *body.Tactic == "content-promotion") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.tactic", *body.Tactic, []any{"prospecting", "retargeting", "lookalike", "keyword", "competitor", "content-promotion"}))
+		}
+	}
 	return
 }
 
@@ -16212,6 +16496,16 @@ func validateCampaignCreateInputRequestBody(body *CampaignCreateInputRequestBody
 	for _, e := range body.Platforms {
 		if !(e == "google-ads" || e == "linkedin-ads" || e == "meta-ads" || e == "reddit-ads" || e == "twitter-ads" || e == "microsoft-ads" || e == "hubspot") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".platforms[*]", e, []any{"google-ads", "linkedin-ads", "meta-ads", "reddit-ads", "twitter-ads", "microsoft-ads", "hubspot"}))
+		}
+	}
+	if body.FunnelStage != nil {
+		if !(*body.FunnelStage == "top" || *body.FunnelStage == "mid" || *body.FunnelStage == "lower") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".funnel_stage", *body.FunnelStage, []any{"top", "mid", "lower"}))
+		}
+	}
+	if body.Tactic != nil {
+		if !(*body.Tactic == "prospecting" || *body.Tactic == "retargeting" || *body.Tactic == "lookalike" || *body.Tactic == "keyword" || *body.Tactic == "competitor" || *body.Tactic == "content-promotion") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".tactic", *body.Tactic, []any{"prospecting", "retargeting", "lookalike", "keyword", "competitor", "content-promotion"}))
 		}
 	}
 	return

@@ -33,7 +33,7 @@ func TestLiveClaimThenUpsertStampsPlatformBoundAt(t *testing.T) {
 	jobID := uuid.NewString()
 
 	claimed, _, err := repo.ClaimCampaignDispatch(ctx, projectID, briefID,
-		model.ProviderGoogleAds, "", model.FirstSlotVersion, jobID, nil)
+		model.ProviderGoogleAds, "", model.FirstSlotVersion, jobID, nil, model.CampaignLabels{})
 	if err != nil {
 		t.Fatalf("ClaimCampaignDispatch: %v", err)
 	}

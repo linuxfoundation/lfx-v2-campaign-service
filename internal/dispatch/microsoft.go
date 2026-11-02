@@ -252,6 +252,11 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		// the first campaign does not hold. Without it the second campaign would compose the
 		// first one's name and be refused as a duplicate or matched to the first by name.
 		NameSuffix: model.SlotNameSuffix(brief.ID, model.DispatchSlotVersion(ctx)),
+		// The funnel-stage token of a LABELLED campaign (cs-1), read from the claimed row's
+		// stored stage (model.DispatchLabels), never from the request: a retry of that row
+		// composes the same name, and an unlabelled (legacy) row composes the name it always
+		// had, with no stage segment at all.
+		StageToken: microsoftStageToken(model.DispatchLabels(ctx)),
 	}
 
 	// customer_id is the OPTIONAL parent manager (MCC) account the ad account is accessed
@@ -1187,4 +1192,13 @@ func (d *MicrosoftDispatcher) ReadMetrics(ctx context.Context, projectID string,
 		return nil, fmt.Errorf("get campaign metrics from microsoft: %w", err)
 	}
 	return metrics, nil
+}
+
+// microsoftStageToken is the name token for the claimed row's funnel stage, or "" for an
+// unlabelled row (cs-1).
+func microsoftStageToken(l model.CampaignLabels) string {
+	if l.FunnelStage == nil {
+		return ""
+	}
+	return l.FunnelStage.NameToken()
 }

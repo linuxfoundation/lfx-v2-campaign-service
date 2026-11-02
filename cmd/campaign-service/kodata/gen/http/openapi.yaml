@@ -14809,6 +14809,19 @@ definitions:
                 type: string
                 description: Campaign name
                 example: Impedit eligendi nihil placeat temporibus aut eveniet.
+            created_at:
+                type: string
+                description: When this service recorded the campaign (its claim), RFC 3339.
+                example: "2026-11-02T18:04:05Z"
+                format: date-time
+            funnel_stage:
+                type: string
+                description: The funnel stage the campaign was created to serve (top, mid or lower), set when it was created and never changed. ABSENT on a campaign created without one, created before the field existed, or adopted.
+                example: top
+                enum:
+                    - top
+                    - mid
+                    - lower
             id:
                 type: string
                 description: Campaign UUID
@@ -14840,6 +14853,21 @@ definitions:
                 type: string
                 description: Campaign status
                 example: Accusamus dolorem animi aut.
+            tactic:
+                type: string
+                description: The tactic the campaign was created with, set when it was created and never changed. ABSENT on a campaign created without one, created before the field existed, or adopted.
+                example: retargeting
+                enum:
+                    - prospecting
+                    - retargeting
+                    - lookalike
+                    - keyword
+                    - competitor
+                    - content-promotion
+            variant:
+                type: string
+                description: 'The platform''s campaign type this campaign is: the Google channel (search, demand-gen, performance-max, video, display), `default` on every other platform. With platform and slot_version it identifies the campaign among the brief''s campaigns.'
+                example: default
             version:
                 type: integer
                 description: Optimistic-concurrency version
@@ -14850,6 +14878,8 @@ definitions:
             bidding_strategy: manual
             brief_id: Id natus molestias quo.
             campaign_name: Impedit eligendi nihil placeat temporibus aut eveniet.
+            created_at: "2026-11-02T18:04:05Z"
+            funnel_stage: top
             id: Odit ipsam sit.
             max_cpc_bid: 1.25
             platform: Quas corrupti id optio inventore quasi.
@@ -14857,6 +14887,8 @@ definitions:
             project_id: Et aspernatur voluptas vel ipsa delectus.
             slot_version: 1
             status: Accusamus dolorem animi aut.
+            tactic: retargeting
+            variant: default
             version: 6608946778758359400
         required:
             - id
@@ -14950,9 +14982,26 @@ definitions:
                             - kubernetes
                         variants:
                             - headline: Join us
+            expected_slot_versions:
+                type: object
+                description: 'REQUIRED when new_version is true (400 without it), and refused without new_version: for EVERY selected platform, the slot_version of the latest live campaign the caller saw on that platform for this brief (from list-brief-campaigns or a previous job''s platform result), or 0 when it saw none. A compare-and-set: a platform gets another campaign only while its latest live campaign is still the one the caller saw. Otherwise its latest campaign is returned with reused=true and nothing is created — which is what makes a double click, a reload, a second tab or a late replay of the same request create exactly one campaign. Keys must be the selected platforms, values 0 or more.'
+                example:
+                    microsoft-ads: 1
+                additionalProperties:
+                    type: integer
+                    example: 805960598387975811
+                    format: int64
+            funnel_stage:
+                type: string
+                description: 'The funnel stage the campaign(s) this request creates serve: `top`, `mid` or `lower`. Applies to every selected platform. Recorded on a campaign ONLY when this request creates it: a platform whose campaign already exists (a retry, or a new_version request with a stale expected_slot_versions) returns that campaign with the stage it was created with, never relabelled. Optional; omitted, the campaign is unlabelled. On Microsoft Advertising a labelled campaign carries the stage (ToFU, MoFU or BoFU) in its upstream name; an unlabelled one keeps the name it has always had.'
+                example: top
+                enum:
+                    - top
+                    - mid
+                    - lower
             new_version:
                 type: boolean
-                description: 'Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label. Supported on microsoft-ads only for now; any other platform in the request is refused with 400. Two concurrent requests that both find the same complete campaign create one new campaign between them, not two: the second is reported as a reuse of (or skipped behind) the first.'
+                description: 'Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label. Supported on microsoft-ads only for now; any other platform in the request is refused with 400. Two concurrent requests that both find the same complete campaign create one new campaign between them, not two: the second is reported as a reuse of (or skipped behind) the first. REQUIRES expected_slot_versions for every selected platform (400 without it), which also makes a SEQUENTIAL repeat — a double click, a reload, a second tab, a replay after a lost response — return the campaign it already made instead of creating another.'
                 default: false
                 example: false
             platforms:
@@ -14973,6 +15022,17 @@ definitions:
                     - reddit-ads
                     - meta-ads
                 minItems: 1
+            tactic:
+                type: string
+                description: How the campaign(s) this request creates pursue their stage, from a controlled list (free text is refused because the label can reach campaign names). Same scope and immutability as funnel_stage. Optional.
+                example: retargeting
+                enum:
+                    - prospecting
+                    - retargeting
+                    - lookalike
+                    - keyword
+                    - competitor
+                    - content-promotion
         example:
             config:
                 hsToken: hs-abc123
@@ -15000,10 +15060,14 @@ definitions:
                         - kubernetes
                     variants:
                         - headline: Join us
+            expected_slot_versions:
+                microsoft-ads: 1
+            funnel_stage: top
             new_version: false
             platforms:
                 - reddit-ads
                 - meta-ads
+            tactic: retargeting
         required:
             - platforms
     CampaignMetrics:
@@ -17410,7 +17474,9 @@ definitions:
                 description: Per-platform results, written once when the job reaches a terminal state
                 example:
                     - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
+                      campaign_row_id: Qui eum aut.
                       error: Eaque omnis quo fugit eum.
+                      funnel_stage: top
                       hubspot_url: Ab magnam quis qui labore.
                       ok: false
                       platform: Omnis mollitia sed.
@@ -17452,12 +17518,18 @@ definitions:
                             - Aspernatur odio recusandae.
                             - Labore dolorem cupiditate vero.
                       reconcile_truncated: false
+                      reused: false
+                      slot_version: 2
+                      tactic: lookalike
+                      variant: Nam voluptatem magnam vero veritatis.
                       warnings:
                         - Ducimus aut laudantium.
                         - Et consequatur blanditiis eaque.
                         - A sint dolorum consequatur at et.
                     - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
+                      campaign_row_id: Qui eum aut.
                       error: Eaque omnis quo fugit eum.
+                      funnel_stage: top
                       hubspot_url: Ab magnam quis qui labore.
                       ok: false
                       platform: Omnis mollitia sed.
@@ -17499,12 +17571,18 @@ definitions:
                             - Aspernatur odio recusandae.
                             - Labore dolorem cupiditate vero.
                       reconcile_truncated: false
+                      reused: false
+                      slot_version: 2
+                      tactic: lookalike
+                      variant: Nam voluptatem magnam vero veritatis.
                       warnings:
                         - Ducimus aut laudantium.
                         - Et consequatur blanditiis eaque.
                         - A sint dolorum consequatur at et.
                     - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
+                      campaign_row_id: Qui eum aut.
                       error: Eaque omnis quo fugit eum.
+                      funnel_stage: top
                       hubspot_url: Ab magnam quis qui labore.
                       ok: false
                       platform: Omnis mollitia sed.
@@ -17546,6 +17624,10 @@ definitions:
                             - Aspernatur odio recusandae.
                             - Labore dolorem cupiditate vero.
                       reconcile_truncated: false
+                      reused: false
+                      slot_version: 2
+                      tactic: lookalike
+                      variant: Nam voluptatem magnam vero veritatis.
                       warnings:
                         - Ducimus aut laudantium.
                         - Et consequatur blanditiis eaque.
@@ -17565,7 +17647,9 @@ definitions:
             job_id: Quos et repellat debitis.
             result:
                 - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
+                  campaign_row_id: Qui eum aut.
                   error: Eaque omnis quo fugit eum.
+                  funnel_stage: top
                   hubspot_url: Ab magnam quis qui labore.
                   ok: false
                   platform: Omnis mollitia sed.
@@ -17607,12 +17691,18 @@ definitions:
                         - Aspernatur odio recusandae.
                         - Labore dolorem cupiditate vero.
                   reconcile_truncated: false
+                  reused: false
+                  slot_version: 2
+                  tactic: lookalike
+                  variant: Nam voluptatem magnam vero veritatis.
                   warnings:
                     - Ducimus aut laudantium.
                     - Et consequatur blanditiis eaque.
                     - A sint dolorum consequatur at et.
                 - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
+                  campaign_row_id: Qui eum aut.
                   error: Eaque omnis quo fugit eum.
+                  funnel_stage: top
                   hubspot_url: Ab magnam quis qui labore.
                   ok: false
                   platform: Omnis mollitia sed.
@@ -17654,12 +17744,18 @@ definitions:
                         - Aspernatur odio recusandae.
                         - Labore dolorem cupiditate vero.
                   reconcile_truncated: false
+                  reused: false
+                  slot_version: 2
+                  tactic: lookalike
+                  variant: Nam voluptatem magnam vero veritatis.
                   warnings:
                     - Ducimus aut laudantium.
                     - Et consequatur blanditiis eaque.
                     - A sint dolorum consequatur at et.
                 - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
+                  campaign_row_id: Qui eum aut.
                   error: Eaque omnis quo fugit eum.
+                  funnel_stage: top
                   hubspot_url: Ab magnam quis qui labore.
                   ok: false
                   platform: Omnis mollitia sed.
@@ -17701,6 +17797,10 @@ definitions:
                         - Aspernatur odio recusandae.
                         - Labore dolorem cupiditate vero.
                   reconcile_truncated: false
+                  reused: false
+                  slot_version: 2
+                  tactic: lookalike
+                  variant: Nam voluptatem magnam vero veritatis.
                   warnings:
                     - Ducimus aut laudantium.
                     - Et consequatur blanditiis eaque.
@@ -18844,10 +18944,14 @@ definitions:
                             - kubernetes
                         variants:
                             - headline: Join us
+                expected_slot_versions:
+                    microsoft-ads: 1
+                funnel_stage: top
                 new_version: false
                 platforms:
                     - reddit-ads
                     - meta-ads
+                tactic: retargeting
         required:
             - input
     LfxV2CampaignServiceBriefsCreateSendWorkflowRequestBody:
@@ -21450,10 +21554,22 @@ definitions:
                 type: string
                 description: Upstream platform campaign id. Present when ok; also set on the specific failure where the upstream campaign was created but recording it failed, so the orphaned id isn't lost.
                 example: Expedita id soluta minus quaerat ullam voluptas.
+            campaign_row_id:
+                type: string
+                description: 'This service''s campaign UUID (the id get-campaign and list-brief-campaigns use), as opposed to campaign_id, the platform''s. Present whenever the result names a campaign row: a create or a reuse.'
+                example: Qui eum aut.
             error:
                 type: string
                 description: 'Failure reason (present when not ok). For a failed campaign dispatch it says WHY without quoting the platform: a refusal this service raised before anything was sent is given verbatim (e.g. a missing Reddit conversion pixel, or a budget under the platform minimum), with any caller value it names quoted, truncated, or withheld when it looks like a URL; anything else is a fixed sentence per class, naming at most a connection reason token or the HTTP status the platform answered — no connection, connection unusable, credentials undecryptable, token refresh failed, refused or not answered by the platform before anything was created (HTTP status only), or could not be confirmed (something may have been created; verify before retrying). An unclassified failure reads "platform campaign creation failed". Never contains a platform response body, URL, query or token. A Google Ads dispatch failure the dispatcher could classify replaces the could-not-be-confirmed sentence with one naming what is in the ad account: a budget of the name this service composes already exists and nothing new was created, a campaign of that name already exists, a budget was created or reused and the campaign was then refused or left unconfirmed, or the campaign was created and its setup could not be confirmed. Each is a fixed sentence chosen by a service-authored token and never built from it, so it too carries no platform text. No other provider is classified beyond the classes above.'
                 example: Eaque omnis quo fugit eum.
+            funnel_stage:
+                type: string
+                description: The funnel stage the campaign was CREATED with — the stored label, not this request's. Absent on an unlabelled campaign.
+                example: top
+                enum:
+                    - top
+                    - mid
+                    - lower
             hubspot_url:
                 type: string
                 description: Deep link to this campaign's email in the HubSpot editor. Present only for the email (HubSpot) channel, and only once the portal that created it is known.
@@ -21512,6 +21628,31 @@ definitions:
                 type: boolean
                 description: 'True when the result held more identifiers than one job result may carry, so reconcile is incomplete: top-level identifiers are always kept, and only the most deeply nested or latest entries are cut'
                 example: false
+            reused:
+                type: boolean
+                description: 'true when this request did NOT create the campaign and is returning an existing one: an idempotent retry, or a new_version request whose expected_slot_versions was stale (someone — usually this same caller — already created the next campaign). Absent when the campaign was created by this request.'
+                example: false
+            slot_version:
+                type: integer
+                description: 'Which campaign on this platform and channel the result is: 1 for the first, 2 for the next created with new_version, and so on. Present with campaign_row_id.'
+                example: 2
+                format: int64
+                minimum: 1
+            tactic:
+                type: string
+                description: The tactic the campaign was CREATED with — the stored label, not this request's. Absent on an unlabelled campaign.
+                example: lookalike
+                enum:
+                    - prospecting
+                    - retargeting
+                    - lookalike
+                    - keyword
+                    - competitor
+                    - content-promotion
+            variant:
+                type: string
+                description: 'The platform''s campaign type (the Google channel: search, demand-gen, performance-max, video, display); `default` on every other platform. Present with campaign_row_id.'
+                example: Nam voluptatem magnam vero veritatis.
             warnings:
                 type: array
                 items:
@@ -21525,7 +21666,9 @@ definitions:
                 maxItems: 10
         example:
             campaign_id: Expedita id soluta minus quaerat ullam voluptas.
+            campaign_row_id: Qui eum aut.
             error: Eaque omnis quo fugit eum.
+            funnel_stage: top
             hubspot_url: Ab magnam quis qui labore.
             ok: false
             platform: Omnis mollitia sed.
@@ -21567,6 +21710,10 @@ definitions:
                     - Aspernatur odio recusandae.
                     - Labore dolorem cupiditate vero.
             reconcile_truncated: false
+            reused: false
+            slot_version: 2
+            tactic: lookalike
+            variant: Nam voluptatem magnam vero veritatis.
             warnings:
                 - Ducimus aut laudantium.
                 - Et consequatur blanditiis eaque.

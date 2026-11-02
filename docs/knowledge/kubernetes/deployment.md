@@ -283,4 +283,24 @@ and its platform name (on Microsoft, the name lookup returns the deleted upstrea
 Operators should not send `new_version` for such a slot until the image is rolled forward. First
 creates, re-dispatches, and `new_version` on slots with no deleted version are unaffected.
 
+**Rolling back past the multi-campaign release (cs-1, `000054`).** `000054` only ADDS two
+nullable columns (`campaigns.funnel_stage`, `campaigns.tactic`) and their CHECKs, so the image
+before it boots on the new schema (one version newer, clean — see above) and never reads or
+writes them; leave the schema in place. What an image-only rollback DOES lose is the duplicate
+protection this release added to `new_version`: the older binary ignores
+`expected_slot_versions`, so a repeat of a `new_version` request (a double click after the job
+finished, a reload, a second tab) creates ANOTHER campaign, and it ignores `funnel_stage` and
+`tactic`, so campaigns it creates are unlabelled. The runbook is therefore, in order:
+
+1. **Turn off the self-serve multi-campaign flag first** — remove every platform from
+   `LFX_CUTOVER_CAMPAIGN_SERVICE_MULTI_CAMPAIGN_PLATFORMS` (argocd values) and let self-serve roll,
+   so no `new_version` request is sent while the older image serves.
+2. Then roll the campaign-service image back.
+3. Do NOT run `000054`'s down unless the labels are being abandoned: it always applies, and it
+   discards every stored stage and tactic (a Microsoft campaign created with a stage keeps the
+   stage token in its upstream name, which is then the only record of it).
+
+Rolling forward again needs no data step: labelled rows keep their labels, and rows created while
+rolled back are unlabelled (legacy).
+
 See [charts/lfx-v2-campaign-service/templates/deployment.yaml](../../../charts/lfx-v2-campaign-service/templates/deployment.yaml).

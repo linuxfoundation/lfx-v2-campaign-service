@@ -1315,6 +1315,18 @@ type platformResult struct {
 	Skipped    bool   `json:"skipped,omitempty"`
 	CampaignID string `json:"campaign_id,omitempty"`
 	Error      string `json:"error,omitempty"`
+	// CampaignRowID, SlotVersion, Variant, FunnelStage and Tactic identify WHICH of the
+	// brief's campaigns this result is about — this service's row, not the platform's id —
+	// now that one platform can hold several (one per funnel stage or tactic). Set whenever
+	// the result names a campaign row (a create, a reuse); empty on a failure that reached no
+	// row. Reused is true when the campaign was NOT created by this request: an idempotent
+	// retry, or a new_version request whose expected slot version was stale.
+	CampaignRowID string `json:"campaign_row_id,omitempty"`
+	SlotVersion   int    `json:"slot_version,omitempty"`
+	Variant       string `json:"variant,omitempty"`
+	FunnelStage   string `json:"funnel_stage,omitempty"`
+	Tactic        string `json:"tactic,omitempty"`
+	Reused        bool   `json:"reused,omitempty"`
 	// HubspotURL is set only for the HubSpot email channel, read back out of the
 	// campaign's own persisted Result blob (see hubspotURLFromResult) — nothing
 	// upstream of the campaign row carries it.
@@ -1397,6 +1409,18 @@ type StartOptions struct {
 	// completed one, instead of the idempotent reuse a repeat create otherwise gets. See
 	// dispatchPlatform for exactly when it applies.
 	NewVersion bool
+	// ExpectedSlotVersions is, per platform, the slot version of the latest live campaign the
+	// caller SAW when it asked for another one (0 when it saw none). With NewVersion it is a
+	// compare-and-set: the next version is claimed only while the slot's latest live campaign
+	// is still that one, and otherwise the latest campaign is returned as a reuse. That is what
+	// makes a double click, a reload, a second tab or a late replay of a new_version request
+	// create exactly one campaign: every repeat carries a stale expectation. Required for every
+	// platform when NewVersion is set (the service refuses the request otherwise); ignored
+	// without NewVersion, where a repeat is already a retry.
+	ExpectedSlotVersions map[model.Provider]int
+	// Labels is what a newly claimed campaign is labelled with (funnel stage, tactic). Written
+	// only on a row this request's claim INSERTS; an existing slot version keeps its labels.
+	Labels model.CampaignLabels
 }
 
 // Start is StartWithOptions with the zero StartOptions: a repeat create is a retry.
@@ -1796,7 +1820,20 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		existing, lerr = o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p, variant)
 	}
 	slotVersion := model.FirstSlotVersion
+	// The compare-and-set a new_version request carries: the slot version of the latest live
+	// campaign the caller saw (0 for none). See StartOptions.ExpectedSlotVersions.
+	expected, hasExpected := opts.ExpectedSlotVersions[p]
 	switch {
+	case lerr == nil && isReusableCampaign(existing) && opts.NewVersion && (!hasExpected || expected != existing.SlotVersion):
+		// A new_version request whose expectation is STALE: the latest live campaign is not the
+		// one the caller saw, so this is a double click, a reload, a second tab or a late replay
+		// of a request that already made its campaign. Return the latest campaign as a reuse —
+		// the same answer a plain retry gets — and claim nothing. A missing expectation is
+		// treated as stale too: the service refuses a new_version request without one, so only
+		// a direct caller of the orchestrator can reach here without it, and the safe reading
+		// of "I did not say which campaign I saw" is "do not make another".
+		reuseResult(&res, existing)
+		return res
 	case lerr == nil && isReusableCampaign(existing) && opts.NewVersion:
 		// The caller asked for ANOTHER campaign and the latest one is complete, so this is
 		// the deliberate second create the slot version exists for — not a retry. Claim the
@@ -1816,10 +1853,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// re-dispatch can't repair a degraded sub-step). Reuse it idempotently. A
 		// retained partial orphan (group_created/unconfirmed, or an id-less row) is NOT
 		// terminal, so it falls through to the claim/reconcile path below.
-		res.OK = true
-		res.CampaignID = existing.PlatformCampaignID
-		res.HubspotURL = hubspotURLFromResult(existing.Result)
-		res.Warnings = hubspotWarningsFromResult(existing.Result)
+		reuseResult(&res, existing)
 		return res
 	case lerr == nil:
 		// The latest campaign is unfinished, so claim ITS slot version, new-version request
@@ -1868,7 +1902,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	if opts.NewVersion {
 		claim = o.campaigns.ClaimNewCampaignVersion
 	}
-	claimed, existing, err := claim(ctx, brief.ProjectID, brief.ID, p, variant, slotVersion, jobID, by)
+	claimed, existing, err := claim(ctx, brief.ProjectID, brief.ID, p, variant, slotVersion, jobID, by, opts.Labels)
 	if errors.Is(err, domain.ErrSlotVersionUsed) {
 		// A concurrent request took this version, completed and was deleted between our read and
 		// our claim: the losing half of a double submit, so skipped like any other.
@@ -1888,10 +1922,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			// reuse it (idempotent). A non-terminal row WITH an id (a retained partial
 			// orphan) is not a success, so it falls through to the skip path below rather
 			// than being reported as a completed campaign.
-			res.OK = true
-			res.CampaignID = existing.PlatformCampaignID
-			res.HubspotURL = hubspotURLFromResult(existing.Result)
-			res.Warnings = hubspotWarningsFromResult(existing.Result)
+			reuseResult(&res, existing)
 			return res
 		}
 		// A retained partial ORPHAN is distinguishable from a claim held by a still-
@@ -1956,8 +1987,12 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	callCtx, cancelCall := context.WithTimeout(ctx, providerCallTimeout)
 	defer cancelCall()
 	// The slot version rides the context so a dispatcher that must give each campaign a
-	// unique upstream name can tell slot 2 from slot 1 (model.SlotNameSuffix).
-	campaign, derr := d.Dispatch(model.WithDispatchSlotVersion(callCtx, slotVersion), brief, p, config)
+	// unique upstream name can tell slot 2 from slot 1 (model.SlotNameSuffix). So do the
+	// labels, read from the row the claim RETURNED rather than from the request: a name is
+	// always composed from what the row stores (model.WithDispatchLabels), and an unlabelled
+	// row composes the legacy name byte for byte.
+	dispatchCtx := model.WithDispatchLabels(model.WithDispatchSlotVersion(callCtx, slotVersion), existing)
+	campaign, derr := d.Dispatch(dispatchCtx, brief, p, config)
 	if derr != nil {
 		// A dispatch error usually does NOT prove the provider rejected the create —
 		// a timeout or dropped connection can leave a campaign created upstream — so
@@ -2226,7 +2261,8 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// while still bounding it so it can never hang shutdown.
 	persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 	defer cancelPersist()
-	if _, uerr := o.campaigns.UpsertCampaign(persistCtx, campaign, o.campaignIndexPayload(indexer.ActionCreated)); uerr != nil {
+	persisted, uerr := o.campaigns.UpsertCampaign(persistCtx, campaign, o.campaignIndexPayload(indexer.ActionCreated))
+	if uerr != nil {
 		if errors.Is(uerr, domain.ErrDispatchClaimLost) {
 			// Checked FIRST: unlike the fallthrough below, the pending claim is NOT retained —
 			// it was cleared and another row (an adoption, or a later dispatch's claim) now
@@ -2264,7 +2300,44 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	res.CampaignID = campaign.PlatformCampaignID
 	res.HubspotURL = hubspotURLFromResult(campaign.Result)
 	res.Warnings = hubspotWarningsFromResult(campaign.Result)
+	// The persisted row, not the dispatcher's struct: the row carries the id, slot version and
+	// labels the claim stored. A repository that returns no row still leaves the claimed row's
+	// identity, which is the same campaign.
+	row := persisted
+	if row == nil {
+		row = existing
+	}
+	identifyRow(&res, row)
 	return res
+}
+
+// reuseResult reports an existing COMPLETED campaign as this request's result: OK, not created
+// by this request (Reused), and identified by its row so a caller can tell which of a
+// platform's campaigns came back.
+func reuseResult(res *platformResult, c *model.Campaign) {
+	res.OK = true
+	res.Reused = true
+	res.CampaignID = c.PlatformCampaignID
+	res.HubspotURL = hubspotURLFromResult(c.Result)
+	res.Warnings = hubspotWarningsFromResult(c.Result)
+	identifyRow(res, c)
+}
+
+// identifyRow copies the campaign row's identity onto a result: which row, which slot version
+// on which variant, and the labels the row stores (never the request's).
+func identifyRow(res *platformResult, c *model.Campaign) {
+	if c == nil {
+		return
+	}
+	res.CampaignRowID = c.ID
+	res.SlotVersion = c.SlotVersion
+	res.Variant = c.Variant
+	if c.FunnelStage != nil {
+		res.FunnelStage = string(*c.FunnelStage)
+	}
+	if c.Tactic != nil {
+		res.Tactic = string(*c.Tactic)
+	}
 }
 
 // lostClaimResultError and lostClaimNoIDResultError are the job result's messages for

@@ -516,6 +516,17 @@ model.DispatchSlotVersion(ctx))`: slot 1 is the bare brief id (every existing na
 byte-identical) and slot 2+ appends `-<n>` — an internal identifier where the brief id already
 sat, not a version label.
 
+**Funnel-stage token (cs-1).** A Microsoft campaign whose CLAIMED ROW carries a funnel stage also
+gets the stage as its own name segment before the suffix — `LFX | Search Campaign | <project> |
+<event> | ToFU | <brief id>[-<n>]` (`MoFU` / `BoFU` for mid / lower, the vocabulary the data
+pipeline's name parser reads) — via `CampaignInput.StageToken`, set from
+`model.DispatchLabels(ctx)`, which the orchestrator fills from the claimed row, never the request.
+An unlabelled row (every campaign before `000054`, and any created without a stage) sets no token
+and composes its legacy name byte for byte; a retry of a labelled row composes the same name
+again. The tactic never reaches the Microsoft name. Pinned by
+`TestMicrosoft_StageTokenComesFromTheClaimedRow` (golden names). The other providers do not read
+the labels yet; the allowlist is unchanged.
+
 Every other provider still composes the same name for every slot, and most look campaigns up by
 it: Google (`FindCampaignByName`, `DUPLICATE_CAMPAIGN_NAME`), LinkedIn
 (`findCampaignByNameInGroup`, which would also push new creatives onto the live campaign), X and

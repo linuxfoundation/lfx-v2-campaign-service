@@ -256,6 +256,17 @@ type CampaignDoc struct {
 	// marker was stamped on every platform carries none — and documents indexed before this
 	// field existed keep their old shape until the campaign's next write, exactly as with
 	// every other additive field here.
-	Adopted bool  `json:"adopted,omitempty"`
-	Version int64 `json:"version"`
+	Adopted bool `json:"adopted,omitempty"`
+	// Variant, FunnelStage, Tactic and CreatedAt mirror the campaign resource's fields of the
+	// same names (multi-campaign cs-1): with SlotVersion they tell a brief's several campaigns
+	// on one platform apart — which channel, which funnel stage, which tactic, and when each
+	// was made. Variant is always emitted (every row has one); FunnelStage and Tactic are
+	// OMITTED, never null, on an unlabelled (legacy, adopted) campaign, matching the API;
+	// CreatedAt is omitted only on a row that was never read back. A document indexed before
+	// these fields existed keeps its old shape until the campaign's next write.
+	Variant     string  `json:"variant"`
+	FunnelStage *string `json:"funnel_stage,omitempty"`
+	Tactic      *string `json:"tactic,omitempty"`
+	CreatedAt   *string `json:"created_at,omitempty"`
+	Version     int64   `json:"version"`
 }
