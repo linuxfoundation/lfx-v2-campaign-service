@@ -18,7 +18,9 @@ import (
 // remainder of the shared one must be refused, and an admitted one must show in the shared
 // budget's InUse (which the gauge reports).
 func TestDecodeReserver_SharesTheUploadBudget(t *testing.T) {
-	budget := membudget.New(constants.UploadMemoryBudgetFallbackBytes)
+	// The production shape: the container keeps a pixel reserve the wire stage cannot touch, and
+	// the decode reservation must be able to use it (it is a SECOND-stage charge).
+	budget := membudget.NewWithReserve(constants.UploadMemoryBudgetFallbackBytes, constants.CreativeDecodePeakBytes)
 	d := NewSharedDecodeReserver(budget)
 
 	wire, ok := budget.Acquire(context.Background(), constants.UploadAdmissionWeightBytes, time.Second)

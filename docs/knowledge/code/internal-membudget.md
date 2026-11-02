@@ -30,11 +30,24 @@ plus pixel reservation); raising it is logged as a warning.
 
 ## Behaviour
 
-`Acquire` waits at most the given duration (250 ms at both call sites), refuses a want above the
-whole budget at once, and returns an idempotent release. The semaphore is FIFO, so an upload that
-already holds its wire charge and waits for its pixel charge is not overtaken by new arrivals. On
-exhaustion both call sites answer `503` with `Retry-After: 1` (the middleware adds the header to
-the handler's own `503`). `InUse()` feeds `campaign_upload_memory_budget_in_use_bytes`.
+**Two stages, no hold-and-wait.** An upload takes its wire charge with `Acquire` (first stage)
+and holds it for the whole handler, then asks for its pixel charge with `AcquireSecondStage`
+while still holding it. On a single FIFO semaphore that was hold-and-wait: the pixel request
+queued behind a new upload's wire request, which could not be admitted until the first upload
+finished, so admitted uploads whose bodies were already read stalled and shed. Now the first
+stage may fill the budget only up to `Total - reserve` (`FirstStageLimit`; the container sets the
+reserve to `CreativeDecodePeakBytes`, 80 MiB), and second-stage requests queue ahead of, and are
+never blocked by, first-stage waiters. A pixel request therefore waits only on other pixel holders,
+which release when their decode returns. `TestBudget_SecondStageIsNotQueuedBehindAWaitingFirstStage`,
+`TestBudget_FirstStageAlwaysLeavesRoomForOnePixelCharge` and
+`TestBudget_ReleaseServesSecondStageFirst` pin this.
+
+Both stages wait at most the given duration (250 ms each, so at most ~500 ms per upload), refuse
+a want above their limit at once, and return an idempotent release. On exhaustion both call sites
+answer `503` with `Retry-After: 1` (the middleware adds the header to the handler's own `503`).
+`InUse()` feeds `campaign_upload_memory_budget_in_use_bytes`. The bound is on live charges: a
+pixel buffer is released when `image.Decode` returns but freed by the next GC, a lag the 60% of
+the limit outside the budget absorbs.
 
 Not covered: the dispatch-side `dispatch.AssetReserver`, which bounds asset bytes held by
 background dispatches, remains its own budget.

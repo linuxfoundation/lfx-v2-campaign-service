@@ -283,11 +283,12 @@ func buildServer(cfg *config.Config, handler http.Handler) *http.Server {
 //     close the pool, and let that straggler touch a closing pool.
 //
 // budget is the per-pod upload memory budget the brief service's DecodeReserver also charges
-// (container.UploadBudget, #179). A nil budget — only tests pass one — gets a private budget of
-// the fallback size, so the chain is never ungated.
+// (container.UploadBudget, #179). It is REQUIRED: a nil budget panics rather than falling back to
+// a private one, because a private budget here silently splits the wire charge from the pixel
+// charge again, which compiles, serves and passes every request-level test.
 func buildHandler(mux http.Handler, cfg *config.Config, inflight *middleware.InflightTracker, budget *membudget.Budget) http.Handler {
 	if budget == nil {
-		budget = membudget.New(constants.UploadMemoryBudgetFallbackBytes)
+		panic("buildHandler: nil upload memory budget; pass the container's UploadBudget")
 	}
 	handler := mux
 	handler = middleware.MaxBodyBytesPerRoute(constants.MaxRequestBodyBytes, constants.MaxNonUploadRequestBodyBytes)(handler)

@@ -25,28 +25,67 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
-
-	"golang.org/x/sync/semaphore"
 )
 
-// Budget is a weighted, process-wide byte budget with a bounded wait.
+// Budget is a process-wide byte budget with two admission stages and a bounded wait.
 //
-// The zero value is not usable; build one with New. A nil *Budget admits everything and holds
-// nothing, so a construction that wires no budget keeps working.
+// # Two stages, because one upload asks twice
+//
+// An upload takes its WIRE charge before the body is read (Acquire) and holds it for the whole
+// handler, then asks for its PIXEL charge after the image header is read (AcquireSecondStage)
+// while still holding the first. On one plain FIFO semaphore that is hold-and-wait: an admitted
+// upload's pixel request queued behind a NEW upload's wire request, which could not be admitted
+// until the admitted upload finished, which could not finish without its pixels. Only the wait
+// timeouts broke the cycle, so admitted uploads whose bodies were already read stalled and shed
+// with 503. Two rules remove it:
+//
+//   - Acquire (first stage) may only fill the budget up to Total - reserve. With reserve set to
+//     the largest second-stage charge (constants.CreativeDecodePeakBytes), there is always room
+//     for at least one pixel charge, whatever the first stage has admitted.
+//   - AcquireSecondStage queues AHEAD of every first-stage waiter and is never blocked by one;
+//     first-stage requests wait while any second-stage request is waiting.
+//
+// So a second-stage request only ever waits on other second-stage holders, which release as soon
+// as their decode returns, and admitted work always drains.
+//
+// The bound is on LIVE charges: a pixel buffer is released when image.Decode returns, but the Go
+// heap frees it on the next GC. The budget is a minority share of the memory limit (40%) partly
+// so that this lag, like the body buffer's, fits in the remainder.
+//
+// The zero value is not usable; build one with New or NewWithReserve. A nil *Budget admits
+// everything and holds nothing, so a construction that wires no budget keeps working.
 type Budget struct {
-	sem   *semaphore.Weighted
-	total int64
-	inUse atomic.Int64
+	mu      sync.Mutex
+	total   int64
+	reserve int64
+	used    int64
+	second  []*waiter // second-stage waiters, FIFO, served first
+	first   []*waiter // first-stage waiters, FIFO
 }
 
-// New returns a budget of total bytes, or nil when total is not positive.
-func New(total int64) *Budget {
+type waiter struct {
+	want  int64
+	ready chan struct{}
+}
+
+// New returns a budget of total bytes with no second-stage reserve, or nil when total is not
+// positive.
+func New(total int64) *Budget { return NewWithReserve(total, 0) }
+
+// NewWithReserve returns a budget of total bytes whose first stage may only fill it up to
+// total - reserve (see Budget). Returns nil when total is not positive; a reserve outside
+// [0, total) is clamped to 0.
+func NewWithReserve(total, reserve int64) *Budget {
 	if total <= 0 {
 		return nil
 	}
-	return &Budget{sem: semaphore.NewWeighted(total), total: total}
+	if reserve < 0 || reserve >= total {
+		reserve = 0
+	}
+	return &Budget{total: total, reserve: reserve}
 }
 
 // Total is the budget's size in bytes; 0 for a nil budget.
@@ -57,50 +96,148 @@ func (b *Budget) Total() int64 {
 	return b.total
 }
 
-// InUse is the bytes currently held by admitted callers; 0 for a nil budget. It is what the
-// campaign_upload_memory_budget_in_use_bytes gauge reports.
+// FirstStageLimit is the most the first stage may hold in total (Total - reserve), and so the
+// largest single first-stage charge that can ever be admitted; 0 for a nil budget.
+func (b *Budget) FirstStageLimit() int64 {
+	if b == nil {
+		return 0
+	}
+	return b.total - b.reserve
+}
+
+// InUse is the bytes currently held by admitted callers of either stage; 0 for a nil budget. It
+// is what the campaign_upload_memory_budget_in_use_bytes gauge reports.
 func (b *Budget) InUse() int64 {
 	if b == nil {
 		return 0
 	}
-	return b.inUse.Load()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.used
 }
 
-// Acquire waits at most wait for want bytes and reports whether it got them. The returned
-// release gives back exactly what was taken and is safe to call more than once; it is a no-op
-// when ok is false.
+// Acquire takes a FIRST-STAGE charge: it waits at most wait for want bytes and reports whether it
+// got them. The returned release gives back exactly what was taken and is safe to call more than
+// once; it is a no-op when ok is false.
 //
-// A want above the whole budget is refused at once rather than after the wait: it could never be
-// admitted, so waiting only delays the same answer. A non-positive want is admitted holding
-// nothing. The wait derives from ctx, so a cancelled caller still returns promptly — it only ever
-// makes the wait shorter. It is bounded here rather than by ctx because net/http gives a
-// handler's r.Context() no deadline, and an unbounded wait converts a memory bound into goroutine
-// exhaustion.
-//
-// semaphore.Weighted is FIFO: a large waiter at the head blocks smaller ones behind it. That is
-// the right order here. An upload already holding its wire charge and waiting for its pixel
-// charge is not overtaken by new uploads arriving after it, so admitted work drains before more
-// is admitted.
+// A want above FirstStageLimit is refused at once rather than after the wait: it could never be
+// admitted. A non-positive want is admitted holding nothing. The wait derives from ctx, so a
+// cancelled caller still returns promptly. It is bounded here rather than by ctx because net/http
+// gives a handler's r.Context() no deadline, and an unbounded wait converts a memory bound into
+// goroutine exhaustion.
 func (b *Budget) Acquire(ctx context.Context, want int64, wait time.Duration) (release func(), ok bool) {
+	return b.acquire(ctx, want, wait, false)
+}
+
+// AcquireSecondStage takes a SECOND-STAGE charge, for a caller that already holds a first-stage
+// one. It may use the whole budget including the reserve, and it is never queued behind a
+// first-stage waiter. Otherwise it behaves like Acquire; a want above Total is refused at once.
+func (b *Budget) AcquireSecondStage(ctx context.Context, want int64, wait time.Duration) (release func(), ok bool) {
+	return b.acquire(ctx, want, wait, true)
+}
+
+func noop() {}
+
+func (b *Budget) limit(second bool) int64 {
+	if second {
+		return b.total
+	}
+	return b.total - b.reserve
+}
+
+func (b *Budget) acquire(ctx context.Context, want int64, wait time.Duration, second bool) (func(), bool) {
 	if b == nil || want <= 0 {
-		return func() {}, true
+		return noop, true
 	}
-	if want > b.total {
-		return func() {}, false
+	if want > b.limit(second) {
+		return noop, false
 	}
-	actx, cancel := context.WithTimeout(ctx, wait)
-	defer cancel()
-	if err := b.sem.Acquire(actx, want); err != nil {
-		return func() {}, false
+
+	b.mu.Lock()
+	ahead := len(b.second) > 0
+	if !second {
+		ahead = ahead || len(b.first) > 0
 	}
-	b.inUse.Add(want)
+	if !ahead && b.used+want <= b.limit(second) {
+		b.used += want
+		b.mu.Unlock()
+		return b.releaser(want), true
+	}
+	w := &waiter{want: want, ready: make(chan struct{})}
+	if second {
+		b.second = append(b.second, w)
+	} else {
+		b.first = append(b.first, w)
+	}
+	b.mu.Unlock()
+
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-w.ready:
+		return b.releaser(want), true
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	select {
+	case <-w.ready:
+		// Granted between the timeout and taking the lock: it is ours.
+		return b.releaser(want), true
+	default:
+	}
+	if second {
+		b.second = remove(b.second, w)
+	} else {
+		b.first = remove(b.first, w)
+	}
+	// Leaving the head of a queue can unblock the waiters behind it.
+	b.grantLocked()
+	return noop, false
+}
+
+func remove(q []*waiter, w *waiter) []*waiter {
+	for i, x := range q {
+		if x == w {
+			return append(q[:i], q[i+1:]...)
+		}
+	}
+	return q
+}
+
+// grantLocked admits waiters in order: second-stage first, and first-stage only once no
+// second-stage request is waiting. Each queue is FIFO, so a large head is not overtaken by a
+// smaller request behind it.
+func (b *Budget) grantLocked() {
+	for len(b.second) > 0 && b.used+b.second[0].want <= b.limit(true) {
+		w := b.second[0]
+		b.second = b.second[1:]
+		b.used += w.want
+		close(w.ready)
+	}
+	if len(b.second) > 0 {
+		return
+	}
+	for len(b.first) > 0 && b.used+b.first[0].want <= b.limit(false) {
+		w := b.first[0]
+		b.first = b.first[1:]
+		b.used += w.want
+		close(w.ready)
+	}
+}
+
+func (b *Budget) releaser(want int64) func() {
 	var once atomic.Bool
 	return func() {
 		if once.CompareAndSwap(false, true) {
-			b.inUse.Add(-want)
-			b.sem.Release(want)
+			b.mu.Lock()
+			b.used -= want
+			b.grantLocked()
+			b.mu.Unlock()
 		}
-	}, true
+	}
 }
 
 // EnvBudgetBytes is the environment variable that sets the budget explicitly, in bytes, or as a

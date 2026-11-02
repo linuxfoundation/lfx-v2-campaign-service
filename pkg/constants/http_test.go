@@ -123,6 +123,10 @@ func TestUploadMemoryBudgetComposes(t *testing.T) {
 		t.Fatalf("UploadWorstCaseBytes = %d, want wire weight + pixel peak = %d",
 			UploadWorstCaseBytes, UploadAdmissionWeightBytes+CreativeDecodePeakBytes)
 	}
+	// The wire stage may only fill the budget up to Total - CreativeDecodePeakBytes (the reserve
+	// that keeps one pixel charge always available, internal/membudget), so wire concurrency is
+	// computed against that limit, not the whole budget.
+	wireLimit := UploadMemoryBudgetFallbackBytes - CreativeDecodePeakBytes
 	if n := UploadMemoryBudgetFallbackBytes / UploadWorstCaseBytes; n < 1 {
 		t.Errorf("effective worst-case concurrency = %d: a %d MiB budget cannot hold one %d MiB "+
 			"(wire %d + pixels %d) upload", n, UploadMemoryBudgetFallbackBytes>>20,
@@ -131,13 +135,13 @@ func TestUploadMemoryBudgetComposes(t *testing.T) {
 
 	// Undeclared (chunked) bodies are charged the full wire weight, and on a default pod they run
 	// one at a time: the documented trade in UploadAdmissionWeightFor.
-	if n := UploadMemoryBudgetFallbackBytes / UploadAdmissionWeightFor(-1); n != 1 {
+	if n := wireLimit / UploadAdmissionWeightFor(-1); n != 1 {
 		t.Errorf("effective undeclared concurrency = %d, want 1 (see UploadAdmissionWeightFor)", n)
 	}
 
 	// Small declared uploads must share it widely, or the budget is a throughput regression.
-	if n := UploadMemoryBudgetFallbackBytes / UploadAdmissionWeightFor(64<<10); n < 16 {
-		t.Errorf("effective small-upload concurrency = %d, want at least 16", n)
+	if n := wireLimit / UploadAdmissionWeightFor(64<<10); n < 15 {
+		t.Errorf("effective small-upload concurrency = %d, want at least 15", n)
 	}
 }
 

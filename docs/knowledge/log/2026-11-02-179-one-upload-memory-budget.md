@@ -19,3 +19,8 @@ var is documented in `values.yaml` and the README.
 `TestDecodeReserver_SharesTheUploadBudget`, `TestUploadAdmissionShared_ChargesTheSharedBudget` and
 `TestBuildHandler_ChargesTheContainersUploadBudget` pin that both admission points charge the same
 instance.
+
+The budget has two admission stages so the two charges of one upload cannot deadlock each other.
+The wire stage may fill it only up to its size less an 80 MiB reserve, and pixel requests queue
+ahead of wire requests. On a single FIFO semaphore, an admitted upload's pixel request waited
+behind new uploads' wire requests and shed after its body had already been read.

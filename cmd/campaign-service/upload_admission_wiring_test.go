@@ -49,7 +49,7 @@ func TestUploadAdmission_IsWiredIntoTheRealChain(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	chain := buildHandler(inner, &config.Config{}, middleware.NewInflightTracker(), nil)
+	chain := buildHandler(inner, &config.Config{}, middleware.NewInflightTracker(), membudget.New(constants.UploadMemoryBudgetFallbackBytes))
 
 	// The parked requests below stream a body of UNKNOWN length (blockingBody carries no
 	// Content-Length), which constants.UploadAdmissionWeightFor prices at the worst-case
@@ -245,7 +245,7 @@ func TestDeclaredOversizeUploadGets413NotShed(t *testing.T) {
 			<-blockUntil
 		}
 		w.WriteHeader(http.StatusOK)
-	}), &config.Config{}, middleware.NewInflightTracker(), nil)
+	}), &config.Config{}, middleware.NewInflightTracker(), membudget.New(constants.UploadMemoryBudgetFallbackBytes))
 
 	// Park a legitimate upload inside the chain so it holds an admission permit.
 	var parked sync.WaitGroup
@@ -299,4 +299,15 @@ func TestBuildHandler_ChargesTheContainersUploadBudget(t *testing.T) {
 	if got := budget.InUse(); got != 0 {
 		t.Fatalf("InUse after the request = %d, want 0", got)
 	}
+}
+
+// TestBuildHandler_RefusesANilBudget: a nil budget used to fall back to a private one, which
+// silently split the wire charge from the pixel charge (#179). It must fail loudly instead.
+func TestBuildHandler_RefusesANilBudget(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("buildHandler accepted a nil upload memory budget")
+		}
+	}()
+	buildHandler(http.NotFoundHandler(), &config.Config{}, middleware.NewInflightTracker(), nil)
 }

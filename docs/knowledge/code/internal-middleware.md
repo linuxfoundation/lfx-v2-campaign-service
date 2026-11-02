@@ -142,7 +142,7 @@ The weight is PRICED per request, not charged flat, by `constants.UploadAdmissio
 flat charge equal to the budget made effective concurrency exactly 1 — a 200 KiB logo held the
 same permit as a 30 MiB image. Declared sizes are charged proportionally
 (`UploadAdmissionAmplification`) between a floor (`UploadAdmissionMinWeightBytes`, 8 MiB) and the
-worst-case ceiling, so ordinary uploads that DECLARE a length run up to ~25 at a time against the
+worst-case ceiling, so ordinary uploads that DECLARE a length run up to ~15 at a time against the ~125 MiB wire share of the
 default ~205 MiB budget. The floor applies to declared lengths only — see below for the undeclared case,
 which is charged the ceiling and therefore serializes.
 

@@ -29,13 +29,13 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/metrics"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/membudget"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/snowflake"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/membudget"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -1679,5 +1679,7 @@ func newUploadBudget(getenv func(string) string, readLimit func() (int64, bool))
 	} else {
 		slog.Info("upload memory budget", attrs...)
 	}
-	return membudget.New(res.Bytes), nil
+	// The reserve keeps one worst-case pixel charge always available to uploads that already
+	// hold their wire charge, so wire admission can never starve the decode stage.
+	return membudget.NewWithReserve(res.Bytes, constants.CreativeDecodePeakBytes), nil
 }

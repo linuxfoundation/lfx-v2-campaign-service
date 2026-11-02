@@ -220,8 +220,8 @@ app:
     # limit it reads from the cgroup, so overriding resources.limits.memory resizes the budget
     # with it. Set it only to pin a size: a byte count or a binary quantity (e.g. 256Mi). A
     # malformed value stops the pod at startup. Never below 192Mi (one worst-case upload); a
-    # smaller value is raised to that and logged. Uploads beyond the budget wait briefly, then
-    # get 503 with Retry-After; usage is exported as campaign_upload_memory_budget_in_use_bytes.
+    # smaller value is raised to that and logged. 80Mi of it is kept for decoded pixel buffers.
+    # Uploads beyond the budget wait briefly (at most ~500ms), then get 503 with Retry-After; usage is exported as campaign_upload_memory_budget_in_use_bytes.
     # UPLOAD_MEMORY_BUDGET_BYTES:
     #   value: 256Mi
 

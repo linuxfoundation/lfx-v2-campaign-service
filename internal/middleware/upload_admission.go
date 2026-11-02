@@ -118,7 +118,8 @@ func UploadAdmission(budgetBytes int64, maxBodyBytes int64, weightFor func(conte
 // writes when the decode reservation could not be had: both are the same budget being busy, and
 // the remedy (retry shortly) is the same.
 func UploadAdmissionShared(budget *membudget.Budget, maxBodyBytes int64, weightFor func(contentLength int64) int64, wait time.Duration) func(http.Handler) http.Handler {
-	budgetBytes := budget.Total()
+	// The most the wire stage may ever hold: the budget less the reserve kept for pixel charges.
+	budgetBytes := budget.FirstStageLimit()
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !isUploadRequest(r) {
@@ -228,9 +229,10 @@ func writeUploadShed(w http.ResponseWriter) {
 }
 
 // retryAfterOn503 adds Retry-After to a 503 the upload handler writes without one. The handler's
-// own 503 on this route is the decode reservation shedding against the same per-pod budget this
-// middleware charges (service.DecodeReserver), so it is transient by the same construction and
-// owes the client the same hint. A header the handler set itself is left alone.
+// 503s on this route are transient: the decode reservation shedding against the same per-pod
+// budget this middleware charges (service.DecodeReserver), or the asset store not yet bound
+// during a cold start. Both owe the client the same hint. A header the handler set itself is
+// left alone.
 type retryAfterOn503 struct {
 	http.ResponseWriter
 }

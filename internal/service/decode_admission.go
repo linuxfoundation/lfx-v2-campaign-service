@@ -110,7 +110,9 @@ func (d *DecodeReserver) reserve(ctx context.Context, want int64) (func(), bool)
 	if want <= 0 || want > d.budget.Total() {
 		return func() {}, false
 	}
-	return d.budget.Acquire(ctx, want, constants.DecodeAdmissionWait)
+	// SECOND stage: the caller already holds its wire charge, so this must not queue behind
+	// new uploads' wire requests (see membudget.Budget).
+	return d.budget.AcquireSecondStage(ctx, want, constants.DecodeAdmissionWait)
 }
 
 // decodeReserver snapshots the reserver under the read lock, matching creativeAssetRepo and the
@@ -127,6 +129,15 @@ func (s *BriefService) SetDecodeReserver(d *DecodeReserver) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.decodeReserve = d
+}
+
+// SharesUploadBudget reports whether the bound decode reserver charges exactly b — identity, not
+// presence. DecodeReserverIsSet is true for a private budget too, and a private budget is the
+// defect #179 removed: the pixel charge and the wire charge must come out of the same budget.
+// Exported for the container's wiring test, like DecodeReserverIsSet.
+func (s *BriefService) SharesUploadBudget(b *membudget.Budget) bool {
+	d := s.decodeReserver()
+	return d != nil && b != nil && d.budget == b
 }
 
 // DecodeReserverIsSet reports whether an aggregate decode budget is bound.

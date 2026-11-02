@@ -178,3 +178,100 @@ func TestParseBytes(t *testing.T) {
 		t.Errorf("an overflowing quantity must be refused, got %v", err)
 	}
 }
+
+// The three hold-and-wait scenarios that a single FIFO semaphore produced (#179 review), on the
+// production shape: a ~205 MiB budget with an 80 MiB second-stage reserve, 112 MiB worst-case
+// wire charges, 80 MiB worst-case pixel charges. Units are MiB here.
+
+// Scenario 1/2: an admitted upload's pixel request must not wait behind a NEW upload's queued wire
+// request when the budget has room for the pixels.
+func TestBudget_SecondStageIsNotQueuedBehindAWaitingFirstStage(t *testing.T) {
+	b := NewWithReserve(205, 80)
+	wireA, ok := b.Acquire(context.Background(), 112, time.Second)
+	if !ok {
+		t.Fatal("premise: A's wire charge fits")
+	}
+	defer wireA()
+
+	queued := make(chan bool, 1)
+	go func() { // B: a second worst-case wire request, which cannot fit beside A's
+		rel, ok := b.Acquire(context.Background(), 112, 300*time.Millisecond)
+		rel()
+		queued <- ok
+	}()
+	time.Sleep(20 * time.Millisecond) // let B queue
+
+	start := time.Now()
+	pixA, ok := b.AcquireSecondStage(context.Background(), 80, 250*time.Millisecond)
+	if !ok {
+		t.Fatal("A's pixel charge was shed although 93 MiB were free: it queued behind B's wire request")
+	}
+	if waited := time.Since(start); waited > 50*time.Millisecond {
+		t.Fatalf("A's pixel charge waited %v behind a first-stage waiter", waited)
+	}
+	pixA()
+	if <-queued {
+		t.Fatal("B's wire charge must not be admitted beside A's: it would exceed the first-stage limit")
+	}
+}
+
+// Scenario 3: two admitted uploads that each need pixels must not shed each other. The first-stage
+// limit (Total - reserve) refuses the second wire charge up front, before its body is read, so
+// the one admitted upload always gets its pixels.
+func TestBudget_FirstStageAlwaysLeavesRoomForOnePixelCharge(t *testing.T) {
+	b := NewWithReserve(205, 80)
+	if got := b.FirstStageLimit(); got != 125 {
+		t.Fatalf("FirstStageLimit = %d, want 125", got)
+	}
+	wireA, ok := b.Acquire(context.Background(), 102, time.Second)
+	if !ok {
+		t.Fatal("premise: the first 102 MiB wire charge fits")
+	}
+	defer wireA()
+	if rel, ok := b.Acquire(context.Background(), 102, 30*time.Millisecond); ok {
+		rel()
+		t.Fatal("a second 102 MiB wire charge was admitted; the two uploads would then starve each other's pixels")
+	}
+	pix, ok := b.AcquireSecondStage(context.Background(), 80, 30*time.Millisecond)
+	if !ok {
+		t.Fatal("the admitted upload must always get a worst-case pixel charge")
+	}
+	pix()
+	if rel, ok := b.Acquire(context.Background(), 126, time.Hour); ok {
+		rel()
+		t.Fatal("a first-stage want above FirstStageLimit must be refused at once")
+	}
+}
+
+// When budget frees, a waiting second-stage request is served before a first-stage one queued
+// earlier.
+func TestBudget_ReleaseServesSecondStageFirst(t *testing.T) {
+	b := NewWithReserve(200, 80)
+	hold, _ := b.Acquire(context.Background(), 120, time.Second)           // first stage full
+	pix1, _ := b.AcquireSecondStage(context.Background(), 70, time.Second) // 190 of 200
+
+	order := make(chan string, 2)
+	go func() {
+		if rel, ok := b.Acquire(context.Background(), 10, time.Second); ok {
+			order <- "first"
+			rel()
+		}
+	}()
+	time.Sleep(20 * time.Millisecond)
+	go func() {
+		if rel, ok := b.AcquireSecondStage(context.Background(), 60, time.Second); ok {
+			order <- "second"
+			time.Sleep(20 * time.Millisecond)
+			rel()
+		}
+	}()
+	time.Sleep(20 * time.Millisecond)
+	pix1() // frees 70: the second-stage waiter (60) fits and must go first
+	if got := <-order; got != "second" {
+		t.Fatalf("first grant after release went to the %s stage, want second", got)
+	}
+	hold()
+	if got := <-order; got != "first" {
+		t.Fatalf("got %q", got)
+	}
+}

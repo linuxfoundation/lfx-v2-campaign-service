@@ -393,7 +393,10 @@ exceed it in total.
   readable. It is never below 192Mi, the cost of one maximum-size upload (a smaller value is
   raised and logged). A malformed value stops the service at startup.
 
-When the budget is exhausted an upload waits up to 250ms, then gets `503` with `Retry-After: 1`.
+The wire side may use the budget only up to its size less 80Mi, which is kept so an upload that
+has already been admitted can always get its pixel charge. When the budget is exhausted an upload
+waits up to 250ms at each of the two stages (so at most ~500ms), then gets `503` with
+`Retry-After: 1`.
 The budget's size and current use are exported at `/metrics` as
 `campaign_upload_memory_budget_bytes` and `campaign_upload_memory_budget_in_use_bytes`.
 

@@ -19,6 +19,7 @@ import (
 	briefsc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/client"
 	briefsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/membudget"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/middleware"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/uploadclient"
@@ -66,7 +67,7 @@ func startUploadHarness(t *testing.T) *uploadHarness {
 			`"brief_id":"6ba7b810-9dad-11d1-80b4-00c04fd430c8","mime_type":"image/png",`+
 			`"byte_size":3072,"checksum":"00","created":"true"}`)
 	})
-	srv := httptest.NewServer(buildHandler(inner, &config.Config{}, middleware.NewInflightTracker(), nil))
+	srv := httptest.NewServer(buildHandler(inner, &config.Config{}, middleware.NewInflightTracker(), membudget.New(constants.UploadMemoryBudgetFallbackBytes)))
 	t.Cleanup(srv.Close)
 	// Registered after srv.Close, so it runs first: parked handlers return before Close waits.
 	t.Cleanup(release)

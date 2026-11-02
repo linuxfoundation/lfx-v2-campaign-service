@@ -160,7 +160,8 @@ const UploadAdmissionAmplification int64 = 3
 // cost is unknown until it has been read and the permit is taken before the read. See that
 // function for why the floor was tried for the undeclared case and reverted.
 //
-// 8 MiB admits 25 concurrent small DECLARED uploads against the ~205 MiB fallback budget —
+// 8 MiB admits 15 concurrent small DECLARED uploads against the ~125 MiB the wire stage may use of
+// the ~205 MiB fallback budget (the rest is reserved for pixel charges, internal/membudget) —
 // enough that ordinary traffic never sheds, few enough that the aggregate stays a minority of
 // the pod.
 const UploadAdmissionMinWeightBytes int64 = 8 << 20 // 8 MiB
