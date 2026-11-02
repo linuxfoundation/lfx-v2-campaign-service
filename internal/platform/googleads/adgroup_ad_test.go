@@ -67,7 +67,7 @@ func TestPrecomputeAdGroupAdInputs_NameMeasuredInRunesNotBytes(t *testing.T) {
 	// count is well over 255 while rune count stays under 255.
 	multibyte := strings.Repeat("é", 200)
 	in := CampaignInput{Project: "CNCF", EventName: multibyte, RegistrationURL: "https://example.com/event"}
-	_, _, _, adGroupName, _, _, err := precomputeAdGroupAdInputs(in)
+	_, _, adGroupName, _, _, err := precomputeAdGroupAdInputs(in)
 	if err != nil {
 		t.Fatalf("a multibyte ad group name under 255 characters must be accepted (rune-measured), got: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestPrecomputeAdGroupAdInputs_NameMeasuredInRunesNotBytes(t *testing.T) {
 // cap altogether.
 func TestPrecomputeAdGroupAdInputs_OversizedNameRejected(t *testing.T) {
 	in := CampaignInput{Project: "CNCF", EventName: strings.Repeat("x", 300), RegistrationURL: "https://example.com/event"}
-	_, _, _, _, _, _, err := precomputeAdGroupAdInputs(in)
+	_, _, _, _, _, err := precomputeAdGroupAdInputs(in)
 	if err == nil || !strings.Contains(err.Error(), "name exceeds") {
 		t.Errorf("an over-length ad group name must be rejected preflight, got: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestPrecomputeAdGroupAdInputs_OversizedFinalURLRejected(t *testing.T) {
 		EventName:       "KubeCon",
 		RegistrationURL: "https://example.com/" + longPath,
 	}
-	finalURL, _, _, _, _, _, err := precomputeAdGroupAdInputs(in)
+	finalURL, _, _, _, _, err := precomputeAdGroupAdInputs(in)
 	if err == nil {
 		t.Fatalf("an over-length composed final URL must be rejected preflight, got finalURL=%q", finalURL)
 	}
@@ -811,5 +811,29 @@ func TestCheckStatusMutateResults_MatchesNamesNotCounts(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+// What composeAdCopy changed reaches the result's steps (#441): an operator who wrote one
+// headline sees, beside the ad, every line they did not write, and a duplicate they did write
+// that was dropped.
+func TestCreateCampaign_StepsNameEveryCopyChange(t *testing.T) {
+	c := newCampaignClient(t, okBudget, okCampaign)
+	in := sampleInput()
+	in.Headlines = []string{"Learn Kubernetes", "Learn Kubernetes"}
+	in.Descriptions = []string{"Three days of talks.", "Workshops and the hallway track."}
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	steps := strings.Join(res.Steps, "\n")
+	if !strings.Contains(steps, `Ad copy: dropped duplicate headline "Learn Kubernetes"`) {
+		t.Errorf("steps do not report the dropped duplicate:\n%s", steps)
+	}
+	if n := strings.Count(steps, "Ad copy: added default headline"); n != minHeadlines-1 {
+		t.Errorf("steps report %d added headlines, want %d:\n%s", n, minHeadlines-1, steps)
+	}
+	if strings.Contains(steps, "added default description") {
+		t.Errorf("steps report a padded description the caller supplied enough of:\n%s", steps)
 	}
 }

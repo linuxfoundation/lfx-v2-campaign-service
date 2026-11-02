@@ -703,12 +703,12 @@ budget's.
 
 `ad_copy.go` holds the pure, side-effect-free helpers GA-3's ad-group/ad
 creation cascade consumes: `composeAdCopy` resolves caller-supplied
-headlines/descriptions into a valid RSA content set (trimmed, weight-capped —
-CJK/full-width runes count double, see `truncateWeighted` — deduped, padded
-with deterministic `eventName`/`project`-derived placeholders
-up to the minimum, capped at the maximum — never silently dropping down to
-zero, but empties/duplicates ARE dropped and the count IS capped, so a caller
-should not assume its exact input list survives verbatim), and
+headlines/descriptions into a valid RSA content set and reports every change it
+made (#441): caller copy over Google's weight (CJK/full-width runes count double)
+is REFUSED, never cut; blanks are skipped; duplicates and lines past the count cap
+are dropped; a short set is padded with deterministic `eventName`/`project`-derived
+lines. Each drop and each added line is an `adPlan.copyNotes` entry, which the
+cascade reports as an "Ad copy: …" step beside the ad, and
 `buildAdFinalURL` builds the ad's destination URL from the brief's
 registration URL, UTM-tagging it: `utm_source`/`utm_medium` are set
 unconditionally to `google`/`cpc` (a Google CPC click must attribute to this
@@ -827,19 +827,24 @@ construction and `firstResourceName`'s extraction on ad create would silently
 misbehave.
 
 **Ad copy** (`composeAdCopy`) accepts caller-supplied `Headlines`/
-`Descriptions`, trims/rune-truncates/dedupes them (`boundedUniqueCopy`), then
-pads with deterministic eventName/project-derived placeholders
-(`defaultHeadlines`/`defaultDescriptions` via `padUnique`) up to Google's v23
-RSA minimums (3 headlines ≤30, 2 descriptions ≤90). Caller-supplied entries are
-accepted up to the maximum (15 headlines, 4 descriptions), with later entries
-beyond those limits silently dropped. A caller with zero usable copy AND an
-empty EventName is a hard error (there is nothing to advertise).
+`Descriptions` (#441). `callerCopy` trims them, skips blanks, REFUSES a line over
+the weight limit in the pure preflight (before the budget mutate), and drops a
+duplicate or a line past the maximum (15 headlines, 4 descriptions) — dropped
+rather than refused because lfx-self-serve's Add buttons have no cap and the
+create works today. `padUnique` then tops the set up from deterministic
+eventName/project-derived lines (`defaultHeadlines`/`defaultDescriptions`) to
+Google's v23 RSA minimums (3 headlines ≤30, 2 descriptions ≤90); only these
+service-written lines are ever truncated. Every drop and every added line is a
+note on the `adPlan`, reported as an "Ad copy: …" step (or "Ad N copy: …" when a
+group has several ads). A caller with zero usable copy AND an empty EventName is
+a hard error (there is nothing to advertise).
 
 Those limits are WEIGHTED character counts, not plain rune counts:
 `googleAdsCharWeight` scores CJK/full-width runes (Hangul Jamo and Syllables,
 CJK Radicals through Yi, CJK Compatibility Ideographs and Forms, Fullwidth
-Forms and Signs, CJK Ext. B-G) as 2 and everything else as 1, and
-`truncateWeighted` cuts to that budget on a rune boundary. All-wide-character
+Forms and Signs, CJK Ext. B-G) as 2 and everything else as 1; `textWeight`
+measures caller copy against that budget, and `truncateWeighted` cuts only the
+service's own default lines to it on a rune boundary. All-wide-character
 copy therefore fits 15 headline / 45 description characters. This matches the
 Microsoft client's equivalent rule rather than differing from it — an earlier
 version of this file claimed there was no double-width halving here, which

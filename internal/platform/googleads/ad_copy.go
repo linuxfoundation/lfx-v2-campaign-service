@@ -57,67 +57,79 @@ func textAssets(ss []string) []adTextAsset {
 	return out
 }
 
-// composeAdCopy resolves the caller-supplied headlines/descriptions (if any)
-// into a valid Responsive Search Ad content set: each entry trimmed and
-// weight-capped to its limit (see truncateWeighted — CJK/full-width runes
-// count double toward Google's character weight), empties dropped, and
-// duplicates (after trimming and weight-truncation) removed — Google rejects
-// both an over-limit asset and a duplicate one within the same ad. If fewer
-// than the minimum survive, deterministic placeholders derived from eventName
-// are appended (never removed) until the minimum is met; the result is also
-// capped at the maximum count. An eventName so long none of its truncations
-// are useful should not happen in practice (EventName is capped upstream via
-// the campaign name validation), but a caller supplying zero usable text and
-// an empty eventName is a hard error — there is nothing to advertise.
-func composeAdCopy(callerHeadlines, callerDescriptions []string, eventName, project string) (headlines, descriptions []string, err error) {
-	headlines = boundedUniqueCopy(callerHeadlines, maxHeadlineWeight, maxHeadlines)
-	descriptions = boundedUniqueCopy(callerDescriptions, maxDescriptionWeight, maxDescriptions)
+// composeAdCopy resolves the caller-supplied headlines/descriptions (if any) into a valid
+// Responsive Search Ad content set, and says in notes everything it changed (#441).
+//
+// Caller copy is never cut: a line over Google's display width (see googleAdsCharWeight —
+// CJK/full-width runes count double) is REFUSED here, in the pure preflight before the budget
+// mutate, as the Display, Demand Gen and Performance Max creatives refuse theirs. Google would
+// refuse it anyway, after the campaign exists.
+//
+// Three changes are still made, and each is reported in notes for the result's steps:
+//   - a duplicate line (Google refuses one within an ad) is dropped;
+//   - lines past the count cap (15 headlines, 4 descriptions) are dropped. lfx-self-serve's
+//     Add buttons have no cap, so refusing would fail a create that works today;
+//   - a set below Google's minimum (3 headlines, 2 descriptions) is padded with
+//     deterministic lines derived from eventName. Refusing it instead would fail every
+//     Implement-tab create with one headline, which lfx-self-serve does not prevent.
+//
+// Blank lines are skipped without a note: an empty form row is not copy. A caller with
+// no usable text and an empty eventName is a hard error — there is nothing to advertise.
+func composeAdCopy(callerHeadlines, callerDescriptions []string, eventName, project string) (adPlan, error) {
+	var notes []string
+	headlines, err := callerCopy("headline", callerHeadlines, maxHeadlineWeight, maxHeadlines, &notes)
+	if err != nil {
+		return adPlan{}, err
+	}
+	descriptions, err := callerCopy("description", callerDescriptions, maxDescriptionWeight, maxDescriptions, &notes)
+	if err != nil {
+		return adPlan{}, err
+	}
 
-	headlines = padUnique(headlines, defaultHeadlines(eventName), maxHeadlineWeight, minHeadlines, maxHeadlines)
-	descriptions = padUnique(descriptions, defaultDescriptions(eventName, project), maxDescriptionWeight, minDescriptions, maxDescriptions)
+	headlines = padUnique("headline", headlines, defaultHeadlines(eventName), maxHeadlineWeight, minHeadlines, maxHeadlines, &notes)
+	descriptions = padUnique("description", descriptions, defaultDescriptions(eventName, project), maxDescriptionWeight, minDescriptions, maxDescriptions, &notes)
 
 	if len(headlines) < minHeadlines {
-		return nil, nil, fmt.Errorf("google-ads ad requires at least %d usable headline(s), got %d (need a non-empty eventName or caller-supplied headlines)", minHeadlines, len(headlines))
+		return adPlan{}, fmt.Errorf("google-ads ad requires at least %d usable headline(s), got %d (need a non-empty eventName or caller-supplied headlines)", minHeadlines, len(headlines))
 	}
 	if len(descriptions) < minDescriptions {
-		return nil, nil, fmt.Errorf("google-ads ad requires at least %d usable description(s), got %d (need a non-empty eventName or at least %d caller-supplied description(s))", minDescriptions, len(descriptions), minDescriptions)
+		return adPlan{}, fmt.Errorf("google-ads ad requires at least %d usable description(s), got %d (need a non-empty eventName or at least %d caller-supplied description(s))", minDescriptions, len(descriptions), minDescriptions)
 	}
-	return headlines, descriptions, nil
+	return adPlan{headlines: headlines, descriptions: descriptions, copyNotes: notes}, nil
 }
 
-// boundedUniqueCopy trims each candidate, weight-truncates it to maxWeight
-// (see truncateWeighted), drops empties, de-duplicates (case-sensitive,
-// post-truncation), and caps the result at maxCount entries.
-func boundedUniqueCopy(candidates []string, maxWeight, maxCount int) []string {
+// callerCopy trims the caller's lines, skips blanks, refuses a line over maxWeight, and drops
+// (and notes) an exact duplicate and every usable line past maxCount.
+func callerCopy(label string, candidates []string, maxWeight, maxCount int, notes *[]string) ([]string, error) {
 	seen := map[string]struct{}{}
 	var out []string
-	for _, s := range candidates {
-		s = strings.TrimSpace(s)
+	for _, raw := range candidates {
+		s := strings.TrimSpace(raw)
 		if s == "" {
 			continue
 		}
-		s = truncateWeighted(s, maxWeight)
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
+		if w := textWeight(s); w > maxWeight {
+			return nil, fmt.Errorf("google-ads search ad %s %q has a display width of %d, exceeding the %d limit (CJK and full-width characters count double); shorten it", label, capForError(s), w, maxWeight)
 		}
 		if _, dup := seen[s]; dup {
+			*notes = append(*notes, fmt.Sprintf("dropped duplicate %s %q", label, s))
 			continue
 		}
 		seen[s] = struct{}{}
-		out = append(out, s)
 		if len(out) >= maxCount {
-			break
+			*notes = append(*notes, fmt.Sprintf("dropped %s %q (Google takes at most %d)", label, s, maxCount))
+			continue
 		}
+		out = append(out, s)
 	}
-	return out
+	return out, nil
 }
 
-// padUnique appends entries from fallback (already-ordered candidates) to base
-// until base reaches min entries or fallback is exhausted, skipping any
-// fallback entry that duplicates one already present (post-truncation). The
-// result is capped at max.
-func padUnique(base, fallback []string, maxWeight, min, max int) []string {
+// padUnique appends entries from fallback (already-ordered candidates) to base until base
+// reaches min entries or fallback is exhausted, skipping any fallback entry that duplicates
+// one already present (post-truncation), and notes each line it adds. Only these
+// service-written defaults are ever truncated. The result is capped at max.
+func padUnique(label string, base, fallback []string, maxWeight, min, max int, notes *[]string) []string {
 	seen := map[string]struct{}{}
 	for _, s := range base {
 		seen[s] = struct{}{}
@@ -137,6 +149,7 @@ func padUnique(base, fallback []string, maxWeight, min, max int) []string {
 		}
 		seen[s] = struct{}{}
 		base = append(base, s)
+		*notes = append(*notes, fmt.Sprintf("added default %s %q (Google needs at least %d)", label, s, min))
 	}
 	return base
 }

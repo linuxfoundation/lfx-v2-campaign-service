@@ -1190,7 +1190,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	// budget+campaign already committed (inside createAdGroupAndAd, which runs
 	// last) would orphan a real paid campaign for what amounts to a bad
 	// RegistrationURL, over-length name, or invalid targeting value.
-	finalURL, headlines, descriptions, adGroupName, keywords, audienceSegments, err := precomputeAdGroupAdInputs(in)
+	finalURL, ad, adGroupName, keywords, audienceSegments, err := precomputeAdGroupAdInputs(in)
 	if err != nil {
 		return nil, err
 	}
@@ -1329,7 +1329,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		cpcBidMicros:     cpcBidMicros,
 		keywords:         keywords,
 		audienceSegments: audienceSegments,
-		ads:              []adPlan{{headlines: headlines, descriptions: descriptions}},
+		ads:              []adPlan{ad},
 	})
 	if err != nil {
 		return nil, err
@@ -1340,8 +1340,8 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		campaignName:     campaignName,
 		finalURL:         finalURL,
 		adGroupName:      adGroupName,
-		headlines:        headlines,
-		descriptions:     descriptions,
+		headlines:        ad.headlines,
+		descriptions:     ad.descriptions,
 		keywords:         keywords,
 		audienceSegments: audienceSegments,
 		geo:              geo,

@@ -89,10 +89,12 @@ type AdGroupSpec struct {
 }
 
 // adPlan is one validated ad: the copy composeAdCopy produced, padded to
-// Google's minimums and ready to send.
+// Google's minimums and ready to send. copyNotes says what composeAdCopy changed
+// (a dropped duplicate, an added default line), reported in the result's steps (#441).
 type adPlan struct {
 	headlines    []string
 	descriptions []string
+	copyNotes    []string
 }
 
 // adGroupPlan is one validated ad group and everything that hangs off it. Every
@@ -200,11 +202,11 @@ func validateAdSpecs(adGroupName string, specs []AdSpec, in CampaignInput) ([]ad
 	}
 	ads := make([]adPlan, 0, len(specs))
 	for i, spec := range specs {
-		headlines, descriptions, err := composeAdCopy(spec.Headlines, spec.Descriptions, in.EventName, in.Project)
+		ad, err := composeAdCopy(spec.Headlines, spec.Descriptions, in.EventName, in.Project)
 		if err != nil {
 			return nil, fmt.Errorf("google-ads campaign creation aborted before any request (ad group %q ad %d has invalid ad copy): %w", adGroupName, i+1, err)
 		}
-		ads = append(ads, adPlan{headlines: headlines, descriptions: descriptions})
+		ads = append(ads, ad)
 	}
 	return ads, nil
 }
