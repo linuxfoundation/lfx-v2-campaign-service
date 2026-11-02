@@ -9,7 +9,8 @@ ago (`domain.ArchivedBriefAssetRetention`, a constant). The container binds it t
 Each pass deletes batches of 100 until one comes back short, capped at 50 batches. Each batch is
 one transaction under `pg_try_advisory_xact_lock("CAPR", 0)`, so one replica prunes at a time and
 the others skip rather than wait. The archival time is the archived brief's `updated_at`, which
-nothing changes after archival. Deleted counts are logged at info, a held lock at debug, and a
-failure at error, retried on the next tick. There is no migration and no new index.
+nothing changes after archival. Deleted counts are logged at info, a held lock at debug, a pass
+that runs out of its 2-minute budget at warn, and any other failure at error, retried on the next
+tick. There is no migration and no new index.
 
 The per-brief upload cap shipped in #388 (100 assets / 512 MiB, one 409) is unchanged.
