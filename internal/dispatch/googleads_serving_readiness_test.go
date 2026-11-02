@@ -23,6 +23,9 @@ type servingCapture struct {
 	campaign         []byte
 	campaignCriteria []byte
 	adGroup          []byte
+	// customGoal and goalConfig are the two conversion-goal writes (#436).
+	customGoal []byte
+	goalConfig []byte
 }
 
 // servingServers is geoServers' sibling for the three serving-readiness fields:
@@ -65,6 +68,18 @@ func servingServers(t *testing.T) ([]googleads.Option, *servingCapture) {
 		case strings.HasSuffix(r.URL.Path, "adGroupCriteria:mutate"):
 			body, _ := io.ReadAll(r.Body)
 			writeCriteria(t, w, body, "adGroupCriteria", "333")
+		case strings.HasSuffix(r.URL.Path, "customConversionGoals:mutate"):
+			body, _ := io.ReadAll(r.Body)
+			cap.mu.Lock()
+			cap.customGoal = body
+			cap.mu.Unlock()
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/customConversionGoals/777"}]}`)
+		case strings.HasSuffix(r.URL.Path, "conversionGoalCampaignConfigs:mutate"):
+			body, _ := io.ReadAll(r.Body)
+			cap.mu.Lock()
+			cap.goalConfig = body
+			cap.mu.Unlock()
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/conversionGoalCampaignConfigs/222"}]}`)
 		default:
 			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
 		}
@@ -85,6 +100,23 @@ func writeCriteria(t *testing.T, w http.ResponseWriter, body []byte, kind, paren
 		return
 	}
 	_, _ = io.WriteString(w, out)
+}
+
+// servingUpdate is servingCreate for an update operation.
+func servingUpdate(t *testing.T, body []byte) map[string]any {
+	t.Helper()
+	var req struct {
+		Operations []struct {
+			Update map[string]any `json:"update"`
+		} `json:"operations"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatalf("decode request: %v (body=%s)", err, body)
+	}
+	if len(req.Operations) == 0 {
+		t.Fatalf("no operations in body %s", body)
+	}
+	return req.Operations[0].Update
 }
 
 func servingCreate(t *testing.T, body []byte) map[string]any {
