@@ -567,7 +567,9 @@ conversion-capable campaign looked like Meta. The adapter now sets
 | no element carries it | `unavailable` | none |
 
 An empty array is LinkedIn stating the campaign had no activity: the metric WAS asked for and
-the window WAS answered, so it is neither `unavailable` nor `incomplete`. Before #175 it
+the window WAS answered, so it is neither `unavailable` nor `incomplete`. `no_conversions` does
+not claim conversion was impossible (LinkedIn counts view-through conversions, and a zero-click
+window that reports one is `reported`); it says a zero against zero clicks is not a finding. Before #175 it
 materialised a non-nil zero; `no_conversions` says the same without publishing a 0 a consumer
 could read as a finding. The `no_conversions` rule never fires on it: the rule reads only a
 reported total (via `ReportedConversions`) and is also gated on

@@ -8,13 +8,15 @@ or the read came back incomplete. A LinkedIn campaign with one element that omit
 - `reported` is the ONLY status that carries `conversions`;
 - `unavailable` is a channel or account that reports no count;
 - `incomplete` means part of the response omitted the metric;
-- `no_conversions` means the window had no clicks and no conversion was reported.
+- `no_conversions` means the window had no clicks and no conversion was reported, on any channel.
 
 LinkedIn sets all four. Its answered empty window, and a complete zero-click and zero-conversion
 response, are `no_conversions` with no total; before, they were a measured `0`. Microsoft sets
 `unavailable` when the column is missing or every cell is blank, and `incomplete` when only some
 cells are blank. The other adapters are classified by `ResolvedConversionsStatus`: a total is
-`reported`, no total is `unavailable`.
+`reported` and no total is `unavailable`. It also applies the zero-click rule channel-wide, so
+Google's no-rows window and a zero-click Microsoft report are `no_conversions`. A `reported` with no
+total is downgraded to `unavailable`. `cmd/verify-metrics` prints the status too.
 
 The brief service publishes, and passes the rules, only `ReportedConversions()`. So the
 `no_conversions` action item never fires on a non-reported status, and #357's click floor is kept.

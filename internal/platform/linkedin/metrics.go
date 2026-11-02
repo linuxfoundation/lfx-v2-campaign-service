@@ -223,8 +223,8 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 	// externalWebsiteConversions in `fields` and LinkedIn answered with a well-formed empty
 	// array, so the metric WAS asked for and the campaign simply did nothing in the window. It
 	// is therefore neither unavailable (LinkedIn can report the metric) nor incomplete (nothing
-	// was omitted). Since #175 it is ConversionsNoConversions: "answered, and nothing could have
-	// converted", with NO total. Before #175 it was a non-nil 0; the status says the same thing
+	// was omitted). Since #175 it is ConversionsNoConversions: "answered, with no clicks", with
+	// NO total. Before #175 it was a non-nil 0; the status says the same thing
 	// without publishing a zero that a consumer could read as a finding, and the total is
 	// published only with ConversionsReported.
 	//
@@ -366,8 +366,9 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 	//   - some did and some did not: incomplete — any sum would be a partial count, see the
 	//     reasoning at the accumulation site;
 	//   - every element carried it, with no clicks and no conversions: no_conversions, the
-	//     same answer as the empty-elements branch above, since the window held nothing that
-	//     could convert;
+	//     same answer as the empty-elements branch above — a zero against zero clicks is not a
+	//     conversion finding (a zero-click window that DOES report a conversion, e.g. a
+	//     view-through one, is reported);
 	//   - otherwise: reported, with the total (a 0 here is a measured 0 against real clicks).
 	switch {
 	case !conversionsMeasured:

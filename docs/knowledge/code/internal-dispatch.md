@@ -1653,9 +1653,11 @@ the orchestrator.
 
 ### Conversions: which platforms can report one (LFXV2-3314)
 
-`model.CampaignMetrics.Conversions` is a `*float64`, and the pointer is load-bearing: **absent
-means "not measured" — the platform cannot report it, or (LinkedIn, Microsoft) the read was
-incomplete — which is not the same claim as a measured zero.** The contract is stated over the
+`model.CampaignMetrics.Conversions` is a `*float64`, and the pointer is load-bearing: **absent is
+not a measured zero.** Since #175 a consumer reads the total only through `ReportedConversions`
+(absent unless `ConversionsStatus` is `reported`) and the reason for an absence from
+`ConversionsStatus`; before #175, absent meant "not measured" — the platform cannot report it, or
+(LinkedIn, Microsoft) the read was incomplete. The contract is stated over the
 READ, not the platform: LinkedIn withdraws the whole total to nil when any returned element omits
 `externalWebsiteConversions`, and Microsoft does the same on a missing column or blank
 `ConversionsQualified` cell (both below), so a nil from either is NOT evidence that the platform
@@ -1663,7 +1665,9 @@ cannot report conversions. A consumer must not classify the channel from the nil
 does not have to: `model.CampaignMetrics.ConversionsStatus` names the case (`reported`,
 `unavailable`, `incomplete`, `no_conversions`) and the API's `conversions_status` carries it.
 LinkedIn and Microsoft set it explicitly; the other adapters are classified by
-`ResolvedConversionsStatus` (a total is `reported`, none is `unavailable`), and
+`ResolvedConversionsStatus` (a total is `reported`, none is `unavailable`), which also applies the
+channel-wide rules: `reported` with zero clicks and a zero total is `no_conversions` (Google's
+no-rows branch, a zero-click Microsoft report), and `reported` with no total is `unavailable`.
 `ReportedConversions` publishes the total only with `reported`. Only three of
 the seven adapters populate it, and which three was settled field-by-field against each vendor's
 published reference rather than inferred from what the clients happened to request:

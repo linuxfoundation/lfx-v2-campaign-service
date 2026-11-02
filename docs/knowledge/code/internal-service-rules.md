@@ -236,9 +236,10 @@ impression floor would mean the rule effectively never fired on the campaigns th
 
 The floor also means `no_conversions` **never fires on a window with zero clicks**, however quiet
 the campaign: an empty or no-activity window is `zero_delivery`'s finding (gated on the flight
-having begun and on a paid-ads channel), not this rule's. Google's no-rows branch materialises a
-measured zero for such a window, and LinkedIn's (since #175) reports `conversions_status:
-no_conversions` with no total; neither makes this rule fire. The brief service passes the rule
+having begun and on a paid-ads channel), not this rule's. Since #175 such a window is
+`conversions_status: no_conversions` with no total on every channel (LinkedIn sets it;
+`ResolvedConversionsStatus` reclassifies Google's no-rows zero and a zero-click Microsoft report),
+so it cannot make this rule fire. The brief service passes the rule
 `ReportedConversions()`, so only a `reported` total ever reaches it — an `incomplete` or
 `no_conversions` status cannot fire it even if an adapter set a number beside it
 (`TestGetBriefMetrics_ConversionsStatusGatesTheTotalAndTheRule`). That settles #175's second

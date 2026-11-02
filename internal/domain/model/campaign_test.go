@@ -345,3 +345,35 @@ func TestUncomparableSettingsField_IsAlwaysUnknownWithBothSides(t *testing.T) {
 		}
 	}
 }
+
+// TestResolvedConversionsStatus pins the channel-wide #175 rules applied in one place: the
+// fallback for an adapter that sets no status, the zero-click reclassification, the downgrade of
+// a total-less `reported`, and that ReportedConversions publishes a total only with `reported`.
+func TestResolvedConversionsStatus(t *testing.T) {
+	zero, two := 0.0, 2.0
+	cases := []struct {
+		name  string
+		m     *CampaignMetrics
+		want  ConversionsStatus
+		total bool
+	}{
+		{"nil metrics", nil, ConversionsUnavailable, false},
+		{"no status, no total", &CampaignMetrics{Clicks: 80}, ConversionsUnavailable, false},
+		{"no status, a total", &CampaignMetrics{Clicks: 80, Conversions: &zero}, ConversionsReported, true},
+		{"no status, zero total, zero clicks (Google no-rows)", &CampaignMetrics{Conversions: &zero}, ConversionsNoConversions, false},
+		{"reported, zero total, zero clicks", &CampaignMetrics{Conversions: &zero, ConversionsStatus: ConversionsReported}, ConversionsNoConversions, false},
+		{"reported, conversion without clicks (view-through)", &CampaignMetrics{Conversions: &two, ConversionsStatus: ConversionsReported}, ConversionsReported, true},
+		{"reported without a total", &CampaignMetrics{Clicks: 80, ConversionsStatus: ConversionsReported}, ConversionsUnavailable, false},
+		{"incomplete with a stray total", &CampaignMetrics{Clicks: 80, Conversions: &zero, ConversionsStatus: ConversionsIncomplete}, ConversionsIncomplete, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.m.ResolvedConversionsStatus(); got != tc.want {
+				t.Errorf("ResolvedConversionsStatus = %q, want %q", got, tc.want)
+			}
+			if got := tc.m.ReportedConversions(); (got != nil) != tc.total {
+				t.Errorf("ReportedConversions = %v, want a total = %v", got, tc.total)
+			}
+		})
+	}
+}

@@ -784,11 +784,13 @@ type GetCampaignMetricsResponseBody struct {
 	// channel (LinkedIn, Microsoft) reported the metric for part of the response
 	// and omitted it for the rest, so any sum would be a partial count.
 	// `no_conversions`: the window had no clicks and no conversion was reported,
-	// so nothing could have converted — currently set by LinkedIn, whose answered
-	// empty window used to be reported as a measured 0. It carries no total and is
-	// NOT a finding: the no_conversions action item never fires on it
-	// (zero_delivery covers a campaign that delivered nothing). Google Ads always
-	// answers `reported`.
+	// on any channel (a Google window with no result rows, a Microsoft report of
+	// zero-click rows, a LinkedIn window with no activity — each used to be a
+	// measured 0). A zero against zero clicks is not a conversion finding, so it
+	// carries no total and the no_conversions action item never fires on it
+	// (zero_delivery covers a campaign that delivered nothing). It does not claim
+	// conversion was impossible: a zero-click window that reports a conversion
+	// (LinkedIn counts view-through conversions) is `reported`.
 	ConversionsStatus string `form:"conversions_status" json:"conversions_status" xml:"conversions_status"`
 	// Summed monetary value of the conversions above, over the window, in WHOLE
 	// units of the ad account's currency — NOT micros, deliberately unlike
@@ -4822,11 +4824,13 @@ type CampaignMetricsResponseBody struct {
 	// channel (LinkedIn, Microsoft) reported the metric for part of the response
 	// and omitted it for the rest, so any sum would be a partial count.
 	// `no_conversions`: the window had no clicks and no conversion was reported,
-	// so nothing could have converted — currently set by LinkedIn, whose answered
-	// empty window used to be reported as a measured 0. It carries no total and is
-	// NOT a finding: the no_conversions action item never fires on it
-	// (zero_delivery covers a campaign that delivered nothing). Google Ads always
-	// answers `reported`.
+	// on any channel (a Google window with no result rows, a Microsoft report of
+	// zero-click rows, a LinkedIn window with no activity — each used to be a
+	// measured 0). A zero against zero clicks is not a conversion finding, so it
+	// carries no total and the no_conversions action item never fires on it
+	// (zero_delivery covers a campaign that delivered nothing). It does not claim
+	// conversion was impossible: a zero-click window that reports a conversion
+	// (LinkedIn counts view-through conversions) is `reported`.
 	ConversionsStatus string `form:"conversions_status" json:"conversions_status" xml:"conversions_status"`
 	// Summed monetary value of the conversions above, over the window, in WHOLE
 	// units of the ad account's currency — NOT micros, deliberately unlike

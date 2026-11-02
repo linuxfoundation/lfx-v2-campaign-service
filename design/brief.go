@@ -380,8 +380,8 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 	// Microsoft report a campaign-level conversion count; Meta and X expose conversions only
 	// as per-action-type structures with no scalar to read, Reddit's reporting contract is
 	// undocumented, and the email channel has no conversion concept at all. On those four the
-	// attribute is ABSENT rather than 0, and it is also absent when a LinkedIn or Microsoft
-	// read came back incomplete (see model.CampaignMetrics.Conversions). A 0 in either case
+	// attribute is ABSENT rather than 0, and since #175 it is absent for EVERY status other than
+	// `reported` — conversions_status below names which (see model.ConversionsStatus). A 0 in either case
 	// would be indistinguishable from a campaign that genuinely converted nobody, which is the
 	// same substitution the row `status` field and `pacing.pct` already refuse to make
 	// elsewhere in this contract.
@@ -390,7 +390,7 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 	// `conversions` being absent. Absence used to carry two meanings (the channel cannot report
 	// a count; the read came back incomplete) and a consumer could not tell a LinkedIn campaign
 	// with one incomplete element from Meta. REQUIRED: every row says which case it is.
-	Attribute("conversions_status", String, "What this read established about conversions. `reported`: a complete measurement, carried in `conversions` (the ONLY status that carries it). `unavailable`: the channel, or this account on it, reports no campaign-level conversion count — Meta, X, Reddit and the email channel never do; LinkedIn when no returned analytics element carried externalWebsiteConversions; Microsoft when the ConversionsQualified column is missing or every cell is blank (no Universal Event Tracking). `incomplete`: a conversion-capable channel (LinkedIn, Microsoft) reported the metric for part of the response and omitted it for the rest, so any sum would be a partial count. `no_conversions`: the window had no clicks and no conversion was reported, so nothing could have converted — currently set by LinkedIn, whose answered empty window used to be reported as a measured 0. It carries no total and is NOT a finding: the no_conversions action item never fires on it (zero_delivery covers a campaign that delivered nothing). Google Ads always answers `reported`.", func() {
+	Attribute("conversions_status", String, "What this read established about conversions. `reported`: a complete measurement, carried in `conversions` (the ONLY status that carries it). `unavailable`: the channel, or this account on it, reports no campaign-level conversion count — Meta, X, Reddit and the email channel never do; LinkedIn when no returned analytics element carried externalWebsiteConversions; Microsoft when the ConversionsQualified column is missing or every cell is blank (no Universal Event Tracking). `incomplete`: a conversion-capable channel (LinkedIn, Microsoft) reported the metric for part of the response and omitted it for the rest, so any sum would be a partial count. `no_conversions`: the window had no clicks and no conversion was reported, on any channel (a Google window with no result rows, a Microsoft report of zero-click rows, a LinkedIn window with no activity — each used to be a measured 0). A zero against zero clicks is not a conversion finding, so it carries no total and the no_conversions action item never fires on it (zero_delivery covers a campaign that delivered nothing). It does not claim conversion was impossible: a zero-click window that reports a conversion (LinkedIn counts view-through conversions) is `reported`.", func() {
 		Enum("reported", "unavailable", "incomplete", "no_conversions")
 		Example("reported")
 	})
