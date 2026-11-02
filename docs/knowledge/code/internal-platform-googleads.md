@@ -834,9 +834,11 @@ rather than refused because lfx-self-serve's Add buttons have no cap and the
 create works today. `padUnique` then tops the set up from deterministic
 eventName/project-derived lines (`defaultHeadlines`/`defaultDescriptions`) to
 Google's v23 RSA minimums (3 headlines ≤30, 2 descriptions ≤90); only these
-service-written lines are ever truncated. Every drop and every added line is a
-note on the `adPlan`, reported as an "Ad copy: …" step (or "Ad N copy: …" when a
-group has several ads). A caller with zero usable copy AND an empty EventName is
+service-written lines are ever truncated. Every added line is a note on the
+`adPlan`, reported as an "Ad copy: …" step (or "Ad N copy: …" when a group has
+several ads); drops are one note for the duplicates and one for the overflow, and
+the walk stops at the cap, so the steps stay bounded. Off Search the preflight does
+not compose the caller's top-level copy at all, since only Search sends it. A caller with zero usable copy AND an empty EventName is
 a hard error (there is nothing to advertise).
 
 Those limits are WEIGHTED character counts, not plain rune counts:
@@ -1804,9 +1806,9 @@ Text limits are RUNE counts, not the double-width WEIGHT `ad_copy.go` uses for R
 copy: Google applies the same CJK doubling to extension text, so a 25-rune
 Japanese sitelink is refused upstream. That is deliberate under-refusal — counting
 weight locally would refuse mixed-script text Google might accept. And over-long
-extension text is REFUSED rather than truncated, inverting the RSA path's
-behaviour, because generated ad copy may be cut (this service wrote it) while
-extension text was written by a human for a reason.
+extension text is REFUSED rather than truncated, as caller RSA copy is since #441:
+only the RSA path's own generated default lines may be cut (this service wrote them),
+while extension text was written by a human for a reason.
 
 A sitelink needs both description lines or neither: Google renders one line as if
 it had none, silently discarding copy. A structured snippet needs 3..10 distinct
@@ -2029,10 +2031,10 @@ Logos sit outside it, 1–5 and at least one required. At least one of
 reciprocal (each required when the other is absent), so neither alone is
 mandatory and the pair is.
 
-**Over-long copy is REFUSED, not truncated**, which is the opposite of the RSA
-path's deliberate truncate-and-pad. An RSA composes copy the service generated; a
-Demand Gen ad is built from exactly what the caller named, and silently shortening
-a headline there publishes something nobody wrote.
+**Over-long copy is REFUSED, not truncated**, as caller RSA copy is since #441. Only
+the RSA path pads, with lines the service generated; a Demand Gen ad is built from
+exactly what the caller named, and silently shortening a headline there publishes
+something nobody wrote.
 
 **The ad is sent under the Ad oneof FIELD name, `demandGenMultiAssetAd`** (`ad.proto`,
 `demand_gen_multi_asset_ad = 62`), not under the name of the message it carries. Until #437

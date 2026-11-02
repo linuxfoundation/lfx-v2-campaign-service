@@ -827,7 +827,7 @@ func TestCreateCampaign_StepsNameEveryCopyChange(t *testing.T) {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
 	steps := strings.Join(res.Steps, "\n")
-	if !strings.Contains(steps, `Ad copy: dropped duplicate headline "Learn Kubernetes"`) {
+	if !strings.Contains(steps, `Ad copy: dropped 1 duplicate headline(s), first "Learn Kubernetes"`) {
 		t.Errorf("steps do not report the dropped duplicate:\n%s", steps)
 	}
 	if n := strings.Count(steps, "Ad copy: added default headline"); n != minHeadlines-1 {
@@ -835,5 +835,41 @@ func TestCreateCampaign_StepsNameEveryCopyChange(t *testing.T) {
 	}
 	if strings.Contains(steps, "added default description") {
 		t.Errorf("steps report a padded description the caller supplied enough of:\n%s", steps)
+	}
+}
+
+// With several ads in a group, each ad's changes are labelled with its number, so an operator
+// can tell which ad got the default lines.
+func TestCreateCampaign_MultiAdGroupLabelsEachAdsCopyChanges(t *testing.T) {
+	c := newCascadeClient(t, &adGroupCascade{})
+	in := sampleInput()
+	full := AdSpec{Headlines: []string{"H1", "H2", "H3"}, Descriptions: []string{"D1", "D2"}}
+	short := AdSpec{Headlines: []string{"Only one"}, Descriptions: []string{"D1", "D2"}}
+	in.AdGroups = []AdGroupSpec{{Name: "Training", Ads: []AdSpec{full, short}}}
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	steps := strings.Join(res.Steps, "\n")
+	if !strings.Contains(steps, "Ad 2 copy: added default headline") {
+		t.Errorf("steps do not label the second ad's padding:\n%s", steps)
+	}
+	if strings.Contains(steps, "Ad 1 copy:") {
+		t.Errorf("steps report a change to the first ad, whose copy was complete:\n%s", steps)
+	}
+}
+
+// Top-level RSA copy is Search's alone. Off Search it is never sent, so an over-wide line
+// there must not refuse a create (#441); on Search the same input is refused before any
+// request.
+func TestValidateCampaignInputKind_RefusesOverWideCopyOnlyOnSearch(t *testing.T) {
+	c := biddingClient()
+	in := sampleInput()
+	in.Headlines = []string{strings.Repeat("x", maxHeadlineWeight+1)}
+	if err := c.ValidateCampaignInputKind(campaignKindSearch, in); err == nil || !strings.Contains(err.Error(), "display width") {
+		t.Errorf("search: err = %v, want the over-wide headline refused", err)
+	}
+	if err := c.ValidateCampaignInputKind(campaignKindDemandGen, in); err != nil && strings.Contains(err.Error(), "search ad headline") {
+		t.Errorf("demand gen refused Search copy it never sends: %v", err)
 	}
 }

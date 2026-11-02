@@ -14,10 +14,15 @@ Now:
 - Duplicates and lines past the cap (15 headlines, 4 descriptions) are still dropped, and a
   short set is still padded: refusing either would fail Implement-tab creates that work
   today, since its Add buttons have no cap and it does not require the minimums.
-- Each drop and each added line is a note on the `adPlan` (`copyNotes`), reported as an
-  "Ad copy: …" step beside the ad ("Ad N copy: …" when a group has several ads).
+- Each added line is a note on the `adPlan` (`copyNotes`), reported as an "Ad copy: …"
+  step beside the ad ("Ad N copy: …" when a group has several ads). Drops are bounded: one
+  note for the duplicates and one for the overflow, and the walk stops at the cap, so a
+  long list cannot write a step per line.
+- Off Search, top-level Headlines/Descriptions are never sent, so the preflight no longer
+  composes them there: an over-wide line cannot refuse a Display or Performance Max create.
 
 `precomputeAdGroupAdInputs` now returns the `adPlan` instead of the two lists, and
-`boundedUniqueCopy` is replaced by `callerCopy`. Tests cover the refusal, the drop and pad
-notes, group copy following the same rule, and the notes reaching a real create's steps;
+`boundedUniqueCopy` is replaced by `callerCopy`. Tests cover the refusal (Search only), the drop and pad
+notes, the bounded note count on a 1,000-line list, group copy following the same rule, and
+the notes reaching a real create's steps, single-ad and multi-ad;
 the refusal and the step reporting are each mutation-checked.

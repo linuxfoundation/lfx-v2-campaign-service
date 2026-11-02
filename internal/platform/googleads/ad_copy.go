@@ -25,7 +25,8 @@ import (
 // headline/description limits (effective 15/45 for CJK-heavy text), the same
 // doubling Microsoft documents explicitly. Google's API does not surface this,
 // so text that fits by plain rune count can still be rejected upstream with
-// LINE_TOO_WIDE — see googleAdsCharWeight/truncateWeighted.
+// LINE_TOO_WIDE — callerCopy refuses caller text over these weights (textWeight), and
+// truncateWeighted cuts only the service's own default lines to them.
 const (
 	minHeadlines         = 3
 	maxHeadlines         = 15
@@ -68,7 +69,8 @@ func textAssets(ss []string) []adTextAsset {
 // Three changes are still made, and each is reported in notes for the result's steps:
 //   - a duplicate line (Google refuses one within an ad) is dropped;
 //   - lines past the count cap (15 headlines, 4 descriptions) are dropped. lfx-self-serve's
-//     Add buttons have no cap, so refusing would fail a create that works today;
+//     Add buttons have no cap, so refusing would fail a create that works today. The walk
+//     stops at the cap, so an over-long list costs one note, not one per extra line;
 //   - a set below Google's minimum (3 headlines, 2 descriptions) is padded with
 //     deterministic lines derived from eventName. Refusing it instead would fail every
 //     Implement-tab create with one headline, which lfx-self-serve does not prevent.
@@ -98,29 +100,38 @@ func composeAdCopy(callerHeadlines, callerDescriptions []string, eventName, proj
 	return adPlan{headlines: headlines, descriptions: descriptions, copyNotes: notes}, nil
 }
 
-// callerCopy trims the caller's lines, skips blanks, refuses a line over maxWeight, and drops
-// (and notes) an exact duplicate and every usable line past maxCount.
+// callerCopy trims the caller's lines, skips blanks, refuses a line over maxWeight, drops an
+// exact duplicate, and stops at maxCount. Each kind of drop is ONE note naming the first line
+// dropped, so the steps stay bounded however long the caller's list is.
 func callerCopy(label string, candidates []string, maxWeight, maxCount int, notes *[]string) ([]string, error) {
 	seen := map[string]struct{}{}
 	var out []string
+	dups, firstDup := 0, ""
 	for _, raw := range candidates {
 		s := strings.TrimSpace(raw)
 		if s == "" {
 			continue
 		}
+		if len(out) >= maxCount {
+			// Past the cap nothing is sent, so nothing past it is measured or hashed.
+			*notes = append(*notes, fmt.Sprintf("dropped every %s after the %d Google takes, from %q on", label, maxCount, capForError(s)))
+			break
+		}
 		if w := textWeight(s); w > maxWeight {
 			return nil, fmt.Errorf("google-ads search ad %s %q has a display width of %d, exceeding the %d limit (CJK and full-width characters count double); shorten it", label, capForError(s), w, maxWeight)
 		}
 		if _, dup := seen[s]; dup {
-			*notes = append(*notes, fmt.Sprintf("dropped duplicate %s %q", label, s))
+			if dups == 0 {
+				firstDup = s
+			}
+			dups++
 			continue
 		}
 		seen[s] = struct{}{}
-		if len(out) >= maxCount {
-			*notes = append(*notes, fmt.Sprintf("dropped %s %q (Google takes at most %d)", label, s, maxCount))
-			continue
-		}
 		out = append(out, s)
+	}
+	if dups > 0 {
+		*notes = append(*notes, fmt.Sprintf("dropped %d duplicate %s(s), first %q", dups, label, firstDup))
 	}
 	return out, nil
 }

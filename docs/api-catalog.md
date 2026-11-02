@@ -837,7 +837,7 @@ descriptions?: string[]         — Optional Responsive Search Ad descriptions (
                                   CJK and full-width characters (Hangul, Kana, CJK ideographs,
                                   Fullwidth Forms) each count as TWO. All-wide-character copy
                                   therefore fits 15 headline / 45 description characters, not
-                                  30 / 90, and is truncated at that point. Latin text is
+                                  30 / 90, and anything wider is refused. Latin text is
                                   unaffected — one character, one unit.
 keywords?: {text, matchType}[]  — OPTIONAL positive Search keyword criteria (GA-4), attached to the
                                   ad group created above. `text` ≤80 runes; `matchType` one of EXACT,

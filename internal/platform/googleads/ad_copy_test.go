@@ -6,6 +6,7 @@ package googleads
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -98,7 +99,8 @@ func TestCallerCopy(t *testing.T) {
 		{"drops a duplicate with a note", []string{"abc", "abc", "d"}, 10, 10, []string{"abc", "d"}, 1, ""},
 		{"refuses a line over the width, never cuts it", []string{"abcdef"}, 3, 10, nil, 0, "display width of 6, exceeding the 3 limit"},
 		{"counts CJK double", []string{"日本語"}, 5, 10, nil, 0, "display width of 6"},
-		{"drops lines past the cap with a note each", []string{"a", "b", "c", "d"}, 10, 2, []string{"a", "b"}, 2, ""},
+		{"drops lines past the cap with one note", []string{"a", "b", "c", "d"}, 10, 2, []string{"a", "b"}, 1, ""},
+		{"a line past the cap is not measured", []string{"a", "b", "far too wide to send"}, 3, 2, []string{"a", "b"}, 1, ""},
 		{"a duplicate does not count toward the cap", []string{"a", "a", "b"}, 10, 2, []string{"a", "b"}, 1, ""},
 		{"nil input", nil, 10, 10, nil, 0, ""},
 	}
@@ -184,6 +186,27 @@ func TestDefaultHeadlinesAndDescriptions(t *testing.T) {
 	}
 	if len(withoutProject) >= len(withProject) || withProject[0] == withoutProject[0] {
 		t.Errorf("omitting the project should drop the project-specific description")
+	}
+}
+
+// However long the caller's list, the notes stay bounded: one for the duplicates, one for
+// the overflow. Each note becomes a persisted step, so a per-line note would let one
+// request write thousands of them.
+func TestCallerCopy_NotesStayBoundedForALongList(t *testing.T) {
+	var lines []string
+	for i := 0; i < 1000; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i), fmt.Sprintf("line %d", i))
+	}
+	var notes []string
+	got, err := callerCopy("headline", lines, maxHeadlineWeight, maxHeadlines, &notes)
+	if err != nil {
+		t.Fatalf("callerCopy: %v", err)
+	}
+	if len(got) != maxHeadlines {
+		t.Errorf("kept %d headlines, want %d", len(got), maxHeadlines)
+	}
+	if len(notes) > 2 {
+		t.Errorf("got %d notes for one long list, want at most 2: %v", len(notes), notes)
 	}
 }
 
