@@ -320,7 +320,8 @@ result shape (and so the persisted status: `not_created`, `pending`, `created_de
 the deferred campaign-context sentence is rendered at Step 4. `classifyAuthorFailure` and
 `classifyAdFailure` share one ordered rule (caller cancel + ambiguous → in flight; other cancel
 → before send; ambiguous → unconfirmed; `*apiError` → rejected; else pre-send). `CreateCampaign`
-only classifies and renders; it no longer carries the strings. Four rounds on PR #158 each fixed
+only classifies and renders; it no longer carries the AdWarning and runbook strings (the returned
+error texts and the ad-created step are still built inline). Four rounds on PR #158 each fixed
 one arm and broke another; `TestReddit_PromoOutcomeTable` (internal/dispatch) now drives every
 row end to end through the real dispatcher against a fake Reddit, asserts each expectation as a
 literal, and fails when a row has no scenario or a row's `Persisted` column disagrees with what

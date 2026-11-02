@@ -5,9 +5,9 @@
 the persisted status it produces, the exact `AdWarning`, the runbook step, and whether Step 4
 appends the deferred campaign-context sentence. `CreateCampaign` classifies the error with
 `classifyAuthorFailure` / `classifyAdFailure`, which share one ordered rule, and renders the row.
-It no longer carries any of the strings inline.
+It no longer carries the AdWarning or runbook strings inline.
 
-Behaviour is unchanged. `TestReddit_PromoOutcomeTable` (21 scenarios covering all 14 rows)
+Behaviour is unchanged. `TestReddit_PromoOutcomeTable` (22 scenarios covering all 14 rows)
 passes against the pre-refactor `client.go` as well as the new one. It drives every row through
 `RedditDispatcher.Dispatch` against a fake Reddit, covering 5xx, 429, mutating 3xx, transport
 errors, malformed 2xx, 4xx, refused dials and caller cancellation both in flight and before

@@ -47,6 +47,11 @@ type promoScenario struct {
 	wantStep string
 	// wantNoStep must appear in no persisted Step.
 	wantNoStep []string
+	// wantErrIs must be in the returned error's chain; wantErrContains must be in its text.
+	// Callers classify a cancelled dispatch by errors.Is(err, context.Canceled)
+	// (internal/domain/dispatch_failure.go), so losing the %w is a behaviour change.
+	wantErrIs       error
+	wantErrContains string
 }
 
 const (
@@ -78,12 +83,12 @@ var promoScenarios = []promoScenario{
 	// Step 1.5: authoring.
 	{
 		name: "authoring interrupted in flight by the caller", want: reddit.PromoAuthorCanceledInFlight, leg: "author", target: "/posts", behave: "hijack_cancel",
-		wantPersisted: "pending",
-		wantStep:      "Promoted-post authoring is UNCONFIRMED (the request reached Reddit but the outcome is unknown) -- no campaign was created; check Reddit Ads Manager for a post with this headline BEFORE authoring it again to avoid a duplicate, and DELETE it if it exists and is not attached to an ad",
+		wantPersisted: "pending", wantErrContains: "reddit promoted-post authoring UNCONFIRMED (a post for campaign",
+		wantStep: "Promoted-post authoring is UNCONFIRMED (the request reached Reddit but the outcome is unknown) -- no campaign was created; check Reddit Ads Manager for a post with this headline BEFORE authoring it again to avoid a duplicate, and DELETE it if it exists and is not attached to an ad",
 	},
 	{
 		name: "authoring cancelled before send", want: reddit.PromoAuthorCanceledBeforeSend, leg: "author", target: "/posts", behave: "cancel_before",
-		wantPersisted: "not_created",
+		wantPersisted: "not_created", wantErrIs: context.Canceled, wantErrContains: "reddit campaign creation aborted during post authoring",
 	},
 	{
 		name: "authoring 5xx", want: reddit.PromoAuthorUnconfirmed, leg: "author", target: "/posts", behave: "503",
@@ -135,12 +140,12 @@ var promoScenarios = []promoScenario{
 	// Step 4: the ad.
 	{
 		name: "ad interrupted in flight by the caller", want: reddit.PromoAdCanceledInFlight, leg: "post", target: "/ads", behave: "hijack_cancel",
-		wantPersisted: "pending",
+		wantPersisted: "pending", wantErrIs: context.Canceled, wantErrContains: "ad creation interrupted, outcome UNCONFIRMED",
 		wantAdWarning: "promoted-post ad is UNCONFIRMED: the create was interrupted in flight and the ad MAY exist — verify in Reddit Ads Manager before recreating",
 	},
 	{
 		name: "ad cancelled before send", want: reddit.PromoAdCanceledBeforeSend, leg: "post", target: "/ads", behave: "cancel_before",
-		wantPersisted: "pending",
+		wantPersisted: "pending", wantErrIs: context.Canceled, wantErrContains: "ad creation aborted before send",
 	},
 	{
 		name: "ad 5xx", want: reddit.PromoAdUnconfirmed, leg: "post", target: "/ads", behave: "500",
@@ -153,6 +158,12 @@ var promoScenarios = []promoScenario{
 		wantPersisted: "created_degraded",
 		wantAdWarning: "promoted-post ad creation is UNCONFIRMED (campaign and ad group created, PAUSED); the ad request may have reached Reddit — verify whether the ad exists BEFORE creating it manually to avoid a duplicate",
 		wantStep:      "Ad creation UNCONFIRMED (HTTP 307) -- verify in Reddit Ads Manager before adding manually",
+	},
+	{
+		name: "ad 429", want: reddit.PromoAdUnconfirmed, leg: "post", target: "/ads", behave: "429",
+		wantPersisted: "created_degraded",
+		wantAdWarning: "promoted-post ad creation is UNCONFIRMED (campaign and ad group created, PAUSED); the ad request may have reached Reddit — verify whether the ad exists BEFORE creating it manually to avoid a duplicate",
+		wantStep:      "Ad creation UNCONFIRMED (HTTP 429) -- verify in Reddit Ads Manager before adding manually",
 	},
 	{
 		name: "ad transport error", want: reddit.PromoAdUnconfirmed, leg: "post", target: "/ads", behave: "hijack",
@@ -228,6 +239,15 @@ func TestReddit_PromoOutcomeTable(t *testing.T) {
 			if gotPersisted != sc.wantPersisted {
 				t.Fatalf("persisted = %q (err %v), want %q", gotPersisted, err, sc.wantPersisted)
 			}
+			if got := shapeOf(camp, err); got != row.Shape {
+				t.Errorf("result shape = %q, table row says %q", got, row.Shape)
+			}
+			if sc.wantErrIs != nil && !errors.Is(err, sc.wantErrIs) {
+				t.Errorf("err %v does not wrap %v", err, sc.wantErrIs)
+			}
+			if sc.wantErrContains != "" && (err == nil || !strings.Contains(err.Error(), sc.wantErrContains)) {
+				t.Errorf("err %v, want it to contain %q", err, sc.wantErrContains)
+			}
 			if camp == nil {
 				return
 			}
@@ -257,6 +277,22 @@ func TestReddit_PromoOutcomeTable(t *testing.T) {
 				t.Errorf("AdCount = %d, want ad created = %v", res.AdCount, wantAd)
 			}
 		})
+	}
+}
+
+// shapeOf reads the client's result shape back off what the dispatcher returned: a pre-create
+// error carries no campaign, a retained partial carries one with an error, and a success's
+// AdWarning separates degraded from clean.
+func shapeOf(camp *model.Campaign, err error) reddit.ResultShape {
+	switch {
+	case err != nil && camp == nil:
+		return reddit.ShapeNilError
+	case err != nil:
+		return reddit.ShapePartialError
+	case camp.Status == campaignStatusCreatedDegraded:
+		return reddit.ShapeDegraded
+	default:
+		return reddit.ShapeClean
 	}
 }
 

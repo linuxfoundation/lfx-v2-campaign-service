@@ -123,7 +123,9 @@ var promoOutcomeRows = []PromoOutcomeRow{
 		Step: "No ad variants or post URL provided -- add ads manually in Reddit Ads Manager",
 	},
 	{
-		// The variant lines that follow the step are rendered by CreateCampaign; %d is the count.
+		// The variant lines that follow the step are rendered by CreateCampaign. StepWithStatus
+		// is used here as a plain format whose %d is the variant COUNT, not an HTTP status;
+		// CreateCampaign formats it directly rather than through step().
 		Outcome: PromoNotRequestedVariants, Shape: ShapeClean, Persisted: PersistedCreated,
 		StepWithStatus: "%d ad variant(s) ready -- create ads in Reddit Ads Manager with these headlines (set/replace the shown utm_* params on your registration URL, keeping all its other query parameters; drop any trailing '/' from the path so it matches the automated destination):",
 	},
@@ -173,7 +175,8 @@ var promoOutcomeRows = []PromoOutcomeRow{
 		StepWithStatus: "Ad creation UNCONFIRMED (HTTP %d) -- verify in Reddit Ads Manager before adding manually",
 	},
 	{
-		// %s is the post id; CreateCampaign renders it.
+		// Step is a FORMAT whose %s is the post id: CreateCampaign renders it with fmt.Sprintf
+		// and never through step(), which would return the raw format.
 		Outcome: PromoAdNoID, Shape: ShapeDegraded, Persisted: PersistedCreatedDegraded,
 		AdWarning: "promoted-post ad creation is UNCONFIRMED (2xx response with no ad id); the ad may already exist — verify in Reddit Ads Manager BEFORE creating it manually to avoid a duplicate",
 		Step:      "Ad creation UNCONFIRMED (2xx with no ad ID, post: %s) -- verify in Reddit Ads Manager before adding manually",
