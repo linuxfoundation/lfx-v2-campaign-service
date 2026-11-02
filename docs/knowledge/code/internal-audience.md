@@ -61,6 +61,14 @@ Country values are also canonicalized through `DisplayName` before reaching a fi
 map keys are lowercase for case-insensitive LOOKUP, but `IS_ANY_OF` is an EXACT match, so raw
 keys build a list matching nobody.
 
+Every country Google Ads can target (`googleads.geoTargetConstants`) also has a marketing region:
+Austria, Belgium, Czech Republic (alias `Czechia`), Denmark, Finland and Norway were added to EMEA
+(#200) because before that a brief could run paid ads there but could not build an email
+audience. `TestEveryGeoTargetCountryHasARegion` in the `googleads` package walks the Google map
+through `CountryForCode` and `RegionFor`, so a paid-targetable country added without its audience
+mapping fails the build; a deliberate gap must be listed, with its reason, in
+`geoTargetsWithoutRegion` there (empty today).
+
 ## The master list is a UNION
 
 The email dispatcher sends to `platform_master_list_id` and nothing else, so the master MUST be

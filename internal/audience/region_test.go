@@ -188,3 +188,28 @@ func TestCountryForCodeAcceptsUKAndIsCaseInsensitive(t *testing.T) {
 		t.Error("an empty code must report false")
 	}
 }
+
+// TestSixPaidTargetableCountriesAreEMEA pins #200: Austria, Belgium, Czech Republic, Denmark,
+// Finland and Norway resolve from their ISO code to EMEA and to the exact HubSpot display value.
+// "Czechia" (the ISO short name Google uses) is an alias of the stored "Czech Republic".
+func TestSixPaidTargetableCountriesAreEMEA(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"AT": "Austria", "BE": "Belgium", "CZ": "Czech Republic",
+		"DK": "Denmark", "FI": "Finland", "NO": "Norway",
+	}
+	for code, display := range cases {
+		name, ok := CountryForCode(code)
+		require.True(t, ok, "%s must resolve to a country", code)
+		r, ok := RegionFor(name)
+		require.True(t, ok, "%s (%q) must resolve to a region", code, name)
+		assert.Equal(t, RegionEMEA, r, code)
+		assert.Equal(t, display, DisplayName(name), code)
+		assert.Contains(t, CountriesIn(RegionEMEA), display)
+	}
+	r, ok := RegionFor("Czechia")
+	require.True(t, ok)
+	assert.Equal(t, RegionEMEA, r)
+	assert.Equal(t, "Czech Republic", DisplayName("Czechia"))
+}
