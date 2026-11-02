@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -256,5 +257,33 @@ func TestOrchestrator_NewVersionWithNoLiveCampaignIgnoresTheExpectation(t *testi
 	}
 	if len(res) != 1 || res[0].Reused {
 		t.Fatalf("result = %+v, want a creation, not a reuse", res)
+	}
+}
+
+// partialDispatcher creates the campaign upstream and then fails a later step: a non-nil
+// campaign WITH an error, the partial-result shape whose claim is retained.
+type partialDispatcher struct{}
+
+func (partialDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, p model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return &model.Campaign{Platform: p, PlatformCampaignID: "pc-partial", Status: "pending", CampaignName: "n"},
+		errors.New("ad group create failed")
+}
+
+// A retained partial names the row it was recorded on (#453 review): with several campaigns on
+// one platform, the result must say WHICH one needs reconciling.
+func TestOrchestrator_ARetainedPartialNamesItsRow(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := completedSlot1()
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: partialDispatcher{}})
+	opts := newVersionSaw(1)
+	opts.Labels = model.CampaignLabels{FunnelStage: stagePtr(model.FunnelStageMid)}
+
+	res := decodeResults(t, startAndWait(t, orch, jobs, opts))
+
+	if len(res) != 1 || res[0].OK {
+		t.Fatalf("result = %+v, want the partial reported as a failure", res)
+	}
+	if !strings.HasPrefix(res[0].CampaignRowID, "claim-") || res[0].SlotVersion != 2 || res[0].FunnelStage != "mid" {
+		t.Fatalf("result = %+v, want the slot 2 claim row named, with its mid stage", res)
 	}
 }

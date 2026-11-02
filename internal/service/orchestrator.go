@@ -2197,7 +2197,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				// Index the RETAINED PARTIAL too: it is a real row an operator must be able to
 				// find in order to reconcile it. Indexing only clean successes would hide
 				// exactly the campaigns that need attention.
-				_, perr := o.campaigns.UpsertCampaign(persistCtx, campaign, o.campaignIndexPayload(indexer.ActionCreated))
+				partial, perr := o.campaigns.UpsertCampaign(persistCtx, campaign, o.campaignIndexPayload(indexer.ActionCreated))
 				switch {
 				case errors.Is(perr, domain.ErrDispatchClaimLost):
 					// The claim this partial would have been recorded on is gone and another
@@ -2214,6 +2214,9 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				default:
 					slog.ErrorContext(ctx, "platform dispatch failed after (possible) upstream create; recorded orphan on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", derr)
+					// Name the row the partial was recorded on, so a caller can tell WHICH of
+					// the platform's campaigns needs reconciling when the platform holds several.
+					identifyRow(&res, partial)
 				}
 				cancelPersist()
 			} else {

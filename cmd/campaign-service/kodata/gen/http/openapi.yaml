@@ -15035,39 +15035,15 @@ definitions:
                     - content-promotion
         example:
             config:
-                hsToken: hs-abc123
-                metaConfig:
-                    budget: 2500
-                    dsaBeneficiary: Cloud Native Computing Foundation
-                    dsaPayor: The Linux Foundation
-                    endDate: "2099-08-31"
-                    geoTargets:
-                        - US
-                        - DE
-                    instagramUserId: "17841400000000000"
-                    objective: traffic
-                    startDate: "2099-08-01"
-                    variants:
-                        - headline: KubeCon 2099
-                          primaryText: Join us at KubeCon
-                redditConfig:
-                    budgetUsd: 50
-                    endDate: "2099-08-31"
-                    objective: traffic
-                    postUrl: t3_abc123
-                    startDate: "2099-08-01"
-                    subreddits:
-                        - kubernetes
-                    variants:
-                        - headline: Join us
+                microsoftConfig:
+                    budget: 50
             expected_slot_versions:
                 microsoft-ads: 1
-            funnel_stage: top
-            new_version: false
+            funnel_stage: mid
+            new_version: true
             platforms:
-                - reddit-ads
-                - meta-ads
-            tactic: retargeting
+                - microsoft-ads
+            tactic: keyword
         required:
             - platforms
     CampaignMetrics:
@@ -18919,39 +18895,15 @@ definitions:
         example:
             input:
                 config:
-                    hsToken: hs-abc123
-                    metaConfig:
-                        budget: 2500
-                        dsaBeneficiary: Cloud Native Computing Foundation
-                        dsaPayor: The Linux Foundation
-                        endDate: "2099-08-31"
-                        geoTargets:
-                            - US
-                            - DE
-                        instagramUserId: "17841400000000000"
-                        objective: traffic
-                        startDate: "2099-08-01"
-                        variants:
-                            - headline: KubeCon 2099
-                              primaryText: Join us at KubeCon
-                    redditConfig:
-                        budgetUsd: 50
-                        endDate: "2099-08-31"
-                        objective: traffic
-                        postUrl: t3_abc123
-                        startDate: "2099-08-01"
-                        subreddits:
-                            - kubernetes
-                        variants:
-                            - headline: Join us
+                    microsoftConfig:
+                        budget: 50
                 expected_slot_versions:
                     microsoft-ads: 1
-                funnel_stage: top
-                new_version: false
+                funnel_stage: mid
+                new_version: true
                 platforms:
-                    - reddit-ads
-                    - meta-ads
-                tactic: retargeting
+                    - microsoft-ads
+                tactic: keyword
         required:
             - input
     LfxV2CampaignServiceBriefsCreateSendWorkflowRequestBody:

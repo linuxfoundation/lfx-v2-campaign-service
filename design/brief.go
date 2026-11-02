@@ -229,6 +229,18 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 	Attribute("expected_slot_versions", MapOf(String, Int), "REQUIRED when new_version is true (400 without it), and refused without new_version: for EVERY selected platform, the slot_version of the latest live campaign the caller saw on that platform for this brief (from list-brief-campaigns or a previous job's platform result), or 0 when it saw none. A compare-and-set: a platform gets another campaign only while its latest live campaign is still the one the caller saw. Otherwise its latest campaign is returned with reused=true and nothing is created — which is what makes a double click, a reload, a second tab or a late replay of the same request create exactly one campaign. One residual: if the campaign the first request created is DELETED before the replay arrives, the replay's expectation matches again and it creates another. Keys must be the selected platforms (the slot is the platform's dispatched channel), values 0 or more.", func() {
 		Example(map[string]int{"microsoft-ads": 1})
 	})
+	// A WHOLE-INPUT example, because the attribute examples above do not combine into a request
+	// the service accepts (expected_slot_versions without new_version, labels on platforms that
+	// cannot carry them). This is the deliberate, labelled second campaign the multi-campaign
+	// fields exist for: another Microsoft campaign beside slot 1, mid-funnel, by keyword.
+	Example(map[string]any{
+		"platforms":              []string{"microsoft-ads"},
+		"config":                 map[string]any{"microsoftConfig": map[string]any{"budget": 50}},
+		"new_version":            true,
+		"expected_slot_versions": map[string]int{"microsoft-ads": 1},
+		"funnel_stage":           "mid",
+		"tactic":                 "keyword",
+	})
 	Required("platforms")
 })
 

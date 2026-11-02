@@ -186,7 +186,8 @@ gets the CLAIMED ROW's labels on the context (`model.WithDispatchLabels`), never
 so a name is always composed from what the row stores and an unlabelled row composes its legacy
 name byte for byte. Every `platformResult` now names its row (`reuseResult` / `identifyRow`):
 `campaign_row_id`, `slot_version`, `variant`, the stored `funnel_stage` / `tactic`, and `reused`
-(true on every reuse path: a retry, a stale new_version, a claim lost to a completed row);
+(true on every reuse path: a retry, a stale new_version, a claim lost to a completed row), and a
+retained partial names the row it was recorded on too;
 `campaign_id` stays the platform's id. `campaignResult` and the indexed `CampaignDoc` gain
 `variant`, `funnel_stage`, `tactic` and `created_at`. Pinned by
 `orchestrator_multi_campaign_test.go`, `create_multi_campaign_test.go` and, live,
