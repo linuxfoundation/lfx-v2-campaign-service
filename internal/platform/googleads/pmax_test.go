@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -96,14 +95,17 @@ func okPMaxAssets() (http.HandlerFunc, func() string) {
 
 // groupMutateBody is the decoded googleAds:mutate request, enough to assert on its shape.
 type groupMutateBody struct {
-	MutateOperations []struct {
-		AssetGroupOperation *struct {
-			Create map[string]any `json:"create"`
-		} `json:"assetGroupOperation"`
-		AssetGroupAssetOperation *struct {
-			Create map[string]any `json:"create"`
-		} `json:"assetGroupAssetOperation"`
-	} `json:"mutateOperations"`
+	MutateOperations []groupMutateOperation `json:"mutateOperations"`
+}
+
+// groupMutateOperation is one decoded MutateOperation of groupMutateBody.
+type groupMutateOperation struct {
+	AssetGroupOperation *struct {
+		Create map[string]any `json:"create"`
+	} `json:"assetGroupOperation"`
+	AssetGroupAssetOperation *struct {
+		Create map[string]any `json:"create"`
+	} `json:"assetGroupAssetOperation"`
 }
 
 // groupMutate answers googleAds:mutate the way Google does: one response per operation, in
@@ -134,14 +136,21 @@ func groupMutate(links int) (http.HandlerFunc, func() string) {
 			case op.AssetGroupOperation != nil:
 				parts = append(parts, `{"assetGroupResult":{"resourceName":"customers/1234567890/assetGroups/555"}}`)
 			case op.AssetGroupAssetOperation != nil && (links < 0 || sent < links):
-				asset, _ := op.AssetGroupAssetOperation.Create["asset"].(string)
-				parts = append(parts, `{"assetGroupAssetResult":{"resourceName":"customers/1234567890/assetGroupAssets/555~`+resourceID(asset)+`~HEADLINE"}}`)
+				parts = append(parts, `{"assetGroupAssetResult":{"resourceName":"`+linkNameFor(op)+`"}}`)
 				sent++
 			}
 		}
 		_, _ = io.WriteString(w, `{"mutateOperationResponses":[`+strings.Join(parts, ",")+`]}`)
 	}
 	return h, read
+}
+
+// linkNameFor is the assetGroupAssets resource name Google returns for one link operation:
+// `<groupId>~<assetId>~<fieldType>`, with the group resolved to 555 (#439).
+func linkNameFor(op groupMutateOperation) string {
+	asset, _ := op.AssetGroupAssetOperation.Create["asset"].(string)
+	fieldType, _ := op.AssetGroupAssetOperation.Create["fieldType"].(string)
+	return "customers/1234567890/assetGroupAssets/555~" + resourceID(asset) + "~" + fieldType
 }
 
 func okPMaxGroup() (http.HandlerFunc, func() string) { return groupMutate(-1) }
@@ -735,7 +744,7 @@ func TestCreatePerformanceMaxCampaign_EmptyLinkResultIsUnconfirmed(t *testing.T)
 				parts = append(parts, `{}`) // one link entry carries no result
 				continue
 			}
-			parts = append(parts, `{"assetGroupAssetResult":{"resourceName":"customers/1234567890/assetGroupAssets/555~9`+strconv.Itoa(i)+`~HEADLINE"}}`)
+			parts = append(parts, `{"assetGroupAssetResult":{"resourceName":"`+linkNameFor(req.MutateOperations[i])+`"}}`)
 		}
 		_, _ = io.WriteString(w, `{"mutateOperationResponses":[`+strings.Join(parts, ",")+`]}`)
 	}
@@ -756,14 +765,28 @@ func TestCreatePerformanceMaxCampaign_EmptyLinkResultIsUnconfirmed(t *testing.T)
 	}
 }
 
-// A link result Google answered with must name a link in THIS account and in THIS group;
-// anything else does not describe a link this request created and is not counted. One bad
-// name is enough to keep the count at zero, as an empty result is above.
+// A link result Google answered with must name exactly the link its operation asked for —
+// this account, this group, the operation's asset and field type (#439); anything else does
+// not describe a link this request created and is not counted. The first link's result is
+// replaced by the case's name, built from what that operation actually sent, and every other
+// result is correct, so each case fails on its own name. One bad name keeps the count at zero,
+// as an empty result does above.
 func TestCreatePerformanceMaxCampaign_ForeignLinkResultIsUnconfirmed(t *testing.T) {
-	cases := map[string]string{
-		"another account": "customers/9999999999/assetGroupAssets/555~900~HEADLINE",
-		"another group":   "customers/1234567890/assetGroupAssets/777~900~HEADLINE",
-		"another kind":    "customers/1234567890/assets/900",
+	cases := map[string]func(right, asset, fieldType string) string{
+		"another account": func(_, asset, ft string) string {
+			return "customers/9999999999/assetGroupAssets/555~" + asset + "~" + ft
+		},
+		"another group": func(_, asset, ft string) string {
+			return "customers/1234567890/assetGroupAssets/777~" + asset + "~" + ft
+		},
+		"another kind":  func(_, asset, _ string) string { return "customers/1234567890/assets/" + asset },
+		"another asset": func(_, _, ft string) string { return "customers/1234567890/assetGroupAssets/555~1~" + ft },
+		"another field type": func(_, asset, _ string) string {
+			return "customers/1234567890/assetGroupAssets/555~" + asset + "~NOT_THIS_FIELD"
+		},
+		"group only":         func(_, _, _ string) string { return "customers/1234567890/assetGroupAssets/555~" },
+		"no field type":      func(_, asset, _ string) string { return "customers/1234567890/assetGroupAssets/555~" + asset },
+		"a trailing segment": func(right, _, _ string) string { return right + "~EXTRA" },
 	}
 	for name, bad := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -774,9 +797,12 @@ func TestCreatePerformanceMaxCampaign_ForeignLinkResultIsUnconfirmed(t *testing.
 				_ = json.Unmarshal(raw, &req)
 				parts := []string{`{"assetGroupResult":{"resourceName":"customers/1234567890/assetGroups/555"}}`}
 				for i := 1; i < len(req.MutateOperations); i++ {
-					link := "customers/1234567890/assetGroupAssets/555~9" + strconv.Itoa(i) + "~HEADLINE"
+					op := req.MutateOperations[i]
+					link := linkNameFor(op)
 					if i == 1 {
-						link = bad
+						asset, _ := op.AssetGroupAssetOperation.Create["asset"].(string)
+						fieldType, _ := op.AssetGroupAssetOperation.Create["fieldType"].(string)
+						link = bad(link, resourceID(asset), fieldType)
 					}
 					parts = append(parts, `{"assetGroupAssetResult":{"resourceName":"`+link+`"}}`)
 				}
@@ -789,7 +815,7 @@ func TestCreatePerformanceMaxCampaign_ForeignLinkResultIsUnconfirmed(t *testing.
 
 			res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
 			if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
-				t.Fatalf("error = %v, want UNCONFIRMED — link result %q is not this group's", err, bad)
+				t.Fatalf("error = %v, want UNCONFIRMED — link result for the %s case is not the link its operation asked for", err, name)
 			}
 			if res == nil || res.AssetGroupID != "555" {
 				t.Fatalf("result = %+v, want the group kept", res)
@@ -798,6 +824,102 @@ func TestCreatePerformanceMaxCampaign_ForeignLinkResultIsUnconfirmed(t *testing.
 				t.Errorf("AssetGroupAssetLinks = %v, want a recorded 0", res.AssetGroupAssetLinks)
 			}
 		})
+	}
+}
+
+// The response is index-aligned, so one valid link name repeated for every result describes
+// one link, not all of them (#439): each result is matched against its own operation.
+func TestCreatePerformanceMaxCampaign_RepeatedLinkResultIsUnconfirmed(t *testing.T) {
+	assetH, _ := okPMaxAssets()
+	groupH := func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req groupMutateBody
+		_ = json.Unmarshal(raw, &req)
+		parts := []string{`{"assetGroupResult":{"resourceName":"customers/1234567890/assetGroups/555"}}`}
+		first := linkNameFor(req.MutateOperations[1])
+		for i := 1; i < len(req.MutateOperations); i++ {
+			parts = append(parts, `{"assetGroupAssetResult":{"resourceName":"`+first+`"}}`)
+		}
+		_, _ = io.WriteString(w, `{"mutateOperationResponses":[`+strings.Join(parts, ",")+`]}`)
+	}
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH))
+	c := demandGenClient(t, srv)
+	in := demandGenInput()
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Fatalf("error = %v, want UNCONFIRMED — one link name repeated describes one link", err)
+	}
+	if res == nil || res.AssetGroupID != "555" {
+		t.Fatalf("result = %+v, want the group kept", res)
+	}
+	if res.AssetGroupAssetLinks == nil || *res.AssetGroupAssetLinks != 0 {
+		t.Errorf("AssetGroupAssetLinks = %v, want a recorded 0", res.AssetGroupAssetLinks)
+	}
+}
+
+// More link results than link operations is not a description of this request: the extra
+// result has no operation to match, and must neither panic the loop nor count (#439).
+func TestCreatePerformanceMaxCampaign_ExtraLinkResultIsUnconfirmed(t *testing.T) {
+	assetH, _ := okPMaxAssets()
+	groupH := func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req groupMutateBody
+		_ = json.Unmarshal(raw, &req)
+		parts := []string{`{"assetGroupResult":{"resourceName":"customers/1234567890/assetGroups/555"}}`}
+		last := ""
+		for i := 1; i < len(req.MutateOperations); i++ {
+			last = linkNameFor(req.MutateOperations[i])
+			parts = append(parts, `{"assetGroupAssetResult":{"resourceName":"`+last+`"}}`)
+		}
+		parts = append(parts, `{"assetGroupAssetResult":{"resourceName":"`+last+`"}}`)
+		_, _ = io.WriteString(w, `{"mutateOperationResponses":[`+strings.Join(parts, ",")+`]}`)
+	}
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH))
+	c := demandGenClient(t, srv)
+	in := demandGenInput()
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Fatalf("error = %v, want UNCONFIRMED — the response describes one link more than was sent", err)
+	}
+	if res == nil || res.AssetGroupID != "555" {
+		t.Fatalf("result = %+v, want the group kept", res)
+	}
+	if res.AssetGroupAssetLinks == nil || *res.AssetGroupAssetLinks != 0 {
+		t.Errorf("AssetGroupAssetLinks = %v, want a recorded 0", res.AssetGroupAssetLinks)
+	}
+}
+
+// The field type is Google's enum name echoed back, compared case-insensitively as the
+// extension links are: a casing change is not the wrong link, so the group still confirms.
+func TestCreatePerformanceMaxCampaign_LinkFieldTypeCaseIsNotARefusal(t *testing.T) {
+	assetH, _ := okPMaxAssets()
+	groupH := func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req groupMutateBody
+		_ = json.Unmarshal(raw, &req)
+		parts := []string{`{"assetGroupResult":{"resourceName":"customers/1234567890/assetGroups/555"}}`}
+		for i := 1; i < len(req.MutateOperations); i++ {
+			name := linkNameFor(req.MutateOperations[i])
+			cut := strings.LastIndex(name, "~") + 1
+			parts = append(parts, `{"assetGroupAssetResult":{"resourceName":"`+name[:cut]+strings.ToLower(name[cut:])+`"}}`)
+		}
+		_, _ = io.WriteString(w, `{"mutateOperationResponses":[`+strings.Join(parts, ",")+`]}`)
+	}
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH))
+	c := demandGenClient(t, srv)
+	in := demandGenInput()
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("error = %v, want none — a lower-cased field type is the same link", err)
+	}
+	if res == nil || res.AssetGroupAssetLinks == nil || *res.AssetGroupAssetLinks == 0 {
+		t.Fatalf("AssetGroupAssetLinks = %v, want every link confirmed", res)
 	}
 }
 

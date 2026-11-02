@@ -2246,8 +2246,8 @@ and written even when it is zero, which is what lets the gate tell the two apart
 created before it has no such key, and reading absence as zero would refuse activation on
 correctly provisioned campaigns, which is an over-refusal and the one failure mode these
 guards must never have. A non-nil zero is the refusal. An UNCONFIRMED link outcome — a
-2xx whose response does not describe every link as one of this group's, in this account —
-records zero rather than nothing:
+2xx whose response does not name, at each index, exactly the link that operation asked for
+(`<groupId>~<assetId>~<fieldType>` in this account, #439) — records zero rather than nothing:
 links may exist, this client cannot say they do, and "cannot say" belongs in the Google
 Ads UI, not in a claimed launch.
 
