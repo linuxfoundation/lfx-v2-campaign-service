@@ -193,7 +193,8 @@ const creativeAssetQuotaQuery = `SELECT count(*), COALESCE(sum(byte_size), 0),
 	FROM creative_assets WHERE brief_id = $1`
 
 // lockBriefForAssetWriteQuery is the brief row lock every write that can affect a brief's asset
-// library takes first. CreateAsset takes it to order itself against a concurrent ArchiveBrief;
+// library takes first. The one exception is PruneArchivedBriefAssets, which deletes only under
+// briefs archived long ago, whose assets nothing reads; see its doc comment. CreateAsset takes it to order itself against a concurrent ArchiveBrief;
 // DeleteAsset takes it to order itself against a concurrent dispatch claim (see
 // deleteCreativeAssetQuery); campaign_repo.go's ReplaceCampaign takes the same ROW lock through
 // lockBriefRowByIDQuery below, because it rewrites config_snapshot, the column DeleteAsset reads
@@ -827,16 +828,18 @@ var _ domain.ArchivedCreativeAssetPruner = (*CreativeAssetRepo)(nil)
 
 // archivedAssetPruneLockClass is the first key of the two-int advisory lock one prune batch
 // takes: "CAPR". The two-int form is a separate key space from the one-bigint form
-// ClaimCampaignVersion uses, and the class differs from keywordTargetingLockClass ("RKTW") and
-// statsJobLeaseClass ("XSTJ"), so none of them can collide.
+// ClaimCampaignVersion uses, and the class differs from every other two-int class in this package
+// — campaignSlotLockNamespace ("slot"), keywordTargetingLockClass ("RKTW") and statsJobLeaseClass
+// ("XSTJ") — so none of them can collide.
 const archivedAssetPruneLockClass int32 = 0x43415052
 
 // archivedAssetPruneLockKey is the second key: there is one prune lock for the whole cluster.
 const archivedAssetPruneLockKey int32 = 0
 
-// archivedAssetPruneBatchLimit bounds ONE delete. Each row can carry up to 30 MiB of BYTEA, so
-// the batch is far smaller than jobPrunePassLimit: a backlog of large images drains over several
-// batches instead of in one long transaction.
+// archivedAssetPruneBatchLimit bounds ONE delete, and is both the default and the ceiling for the
+// caller's limit. Each row can carry up to 30 MiB of BYTEA, so the batch is far smaller than
+// jobPrunePassLimit: a backlog of large images drains over several batches instead of in one long
+// transaction, whatever limit a future caller passes.
 const archivedAssetPruneBatchLimit = 100
 
 // tryArchivedAssetPruneLockQuery takes the cluster-wide prune lock for the batch's transaction.
@@ -870,16 +873,21 @@ const pruneArchivedAssetsQuery = `DELETE FROM creative_assets WHERE id IN (
 // PruneArchivedBriefAssets implements domain.ArchivedCreativeAssetPruner: one bounded batch,
 // under a transaction-scoped try-lock so only one replica prunes at a time.
 //
-// No reference check against live campaigns, unlike DeleteAsset. DeleteAsset refuses an asset a
-// campaign's config_snapshot still names because a dispatch or retry may still read it. Under an
-// archived brief nothing can: every asset read (GetAsset, GetAssetSize, the signed-URL read) is
-// scoped to a non-archived parent, as is every dispatch path that reaches them, so the bytes are
-// already unreachable and deleting them changes no read.
+// No reference check against live campaigns, and no brief row lock, unlike DeleteAsset. DeleteAsset
+// refuses an asset a campaign's config_snapshot still names, under the brief lock, because a
+// dispatch or retry may still read it. Under an archived brief nothing serves or dispatches the
+// bytes: every byte and size read (GetAsset, GetAssetSize, GetAssetMetadata, ListAssets, the
+// signed-URL read) and every dispatch path is scoped to a non-archived parent. The one read that
+// is not, presentCreativeAssetsQuery, is an existence check: after a prune, a ReplaceCampaign on an
+// archived brief's campaign that newly names a pruned asset is refused instead of accepted, and a
+// replace racing the prune can keep a snapshot reference to an asset that is gone. Both concern
+// bytes nothing can read either way, which is why this delete is the deliberate exception to
+// lockBriefForAssetWriteQuery's "every write takes the brief lock first".
 func (r *CreativeAssetRepo) PruneArchivedBriefAssets(ctx context.Context, olderThan time.Duration, limit int) (int64, bool, error) {
 	if olderThan <= 0 {
 		olderThan = domain.ArchivedBriefAssetRetention
 	}
-	if limit <= 0 {
+	if limit <= 0 || limit > archivedAssetPruneBatchLimit {
 		limit = archivedAssetPruneBatchLimit
 	}
 	tx, err := r.db.Begin(ctx)

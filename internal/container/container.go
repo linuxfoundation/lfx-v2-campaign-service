@@ -987,6 +987,15 @@ func (c *Container) startStuckClaimSweeper(repo stuckClaimScanner) {
 	}()
 }
 
+// startArchivedAssetRetention binds the creative-asset repository as the orchestrator's
+// archived-asset pruner and starts its retention sweeper (#171). One helper for both live paths
+// (wireLiveBackends and retryDatabaseInit), so the two cannot drift; both call sites are pinned by
+// TestContainer_BothStartupPathsStartArchivedAssetRetention.
+func startArchivedAssetRetention(orch *service.Orchestrator, pool *postgres.Pool) {
+	orch.SetArchivedAssetPruner(postgres.NewCreativeAssetRepo(pool))
+	orch.StartArchivedAssetRetentionSweeper()
+}
+
 // logMissingDispatchers warns about providers that have no adapter yet — those channels
 // record jobs that finish "failed" with "no dispatcher registered".
 //
@@ -1123,8 +1132,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 
 	// creative_assets is never pruned by any request: delete the assets of briefs archived
 	// longer than domain.ArchivedBriefAssetRetention (#171), on the same sweeper lifetime.
-	orch.SetArchivedAssetPruner(postgres.NewCreativeAssetRepo(pool))
-	orch.StartArchivedAssetRetentionSweeper()
+	startArchivedAssetRetention(orch, pool)
 
 	// Drain the index outbox: rows co-committed with their resource whose publish never
 	// landed. Without this a dropped message is lost, and a terminal write (archiving a
@@ -1217,8 +1225,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// Same retention sweeper as the fast path (see wireLiveBackends).
 			orch.SetJobRetention(cfg.CampaignJobRetention)
 			orch.StartJobRetentionSweeper()
-			orch.SetArchivedAssetPruner(postgres.NewCreativeAssetRepo(pool))
-			orch.StartArchivedAssetRetentionSweeper()
+			startArchivedAssetRetention(orch, pool)
 
 			// Same relay as the fast path (see wireLiveBackends). Written under c.mu: this runs
 			// on the init goroutine while Close may be reading the field concurrently.

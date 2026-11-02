@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -80,9 +81,16 @@ func (o *Orchestrator) runArchivedAssetPrune() int64 {
 	for batches < archivedAssetMaxBatchesPerPass {
 		n, ran, err := o.assetPruner.PruneArchivedBriefAssets(ctx, domain.ArchivedBriefAssetRetention, archivedAssetBatchSize)
 		if err != nil {
-			// Cancellation at Shutdown is expected, not a failure. Otherwise a failed prune costs
-			// disk, never correctness: log it and try again next tick.
-			if o.sweeperCtx.Err() == nil {
+			switch {
+			case o.sweeperCtx.Err() != nil:
+				// Cancellation at Shutdown is expected, not a failure.
+			case errors.Is(ctx.Err(), context.DeadlineExceeded):
+				// The pass ran out of time while draining a backlog: progress, not a failure.
+				// The next tick carries on from where this one stopped.
+				slog.WarnContext(o.sweeperCtx, "archived creative asset retention sweep hit its pass timeout; continuing next tick",
+					"deleted", total, "batches", batches, "timeout", archivedAssetPassTimeout.String())
+			default:
+				// A failed prune costs disk, never correctness: log it and try again next tick.
 				slog.ErrorContext(o.sweeperCtx, "archived creative asset retention sweep failed",
 					"error", err, "deleted", total, "batches", batches)
 			}
@@ -105,7 +113,8 @@ func (o *Orchestrator) runArchivedAssetPrune() int64 {
 	return total
 }
 
-// archivedAssetBatchSize is the batch the sweeper asks for. It must equal what the repository
-// actually deletes per batch, because a batch shorter than it is how the pass knows the backlog is
-// drained; the sweeper passes it explicitly rather than 0 for that reason.
+// archivedAssetBatchSize is the limit the sweeper asks each batch for. A batch that deletes fewer
+// than the limit it was asked for is how the pass knows the backlog is drained, so the pass
+// compares against this value and passes it explicitly rather than 0. It must not exceed the
+// repository's ceiling (100), which would make every batch look short.
 const archivedAssetBatchSize = 100

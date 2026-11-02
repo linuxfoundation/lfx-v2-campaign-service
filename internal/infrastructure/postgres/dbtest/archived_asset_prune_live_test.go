@@ -26,10 +26,15 @@ func ageBrief(ctx context.Context, t *testing.T, pool *pgxpool.Pool, briefID, st
 	}
 }
 
-// drainArchivedAssetPrune runs batches until one comes back short, as one sweeper pass does.
-func drainArchivedAssetPrune(ctx context.Context, t *testing.T, repo *postgres.CreativeAssetRepo) {
+// drainArchivedAssetPrune runs batches of two until one comes back short, as one sweeper pass
+// does, and returns how many batches ran.
+//
+// The prune is cluster-global, not scoped to a test's rows, so the tests in this file must stay
+// NON-parallel: a concurrent test's long-archived assets would be deleted too and change the
+// batch counts asserted here.
+func drainArchivedAssetPrune(ctx context.Context, t *testing.T, repo *postgres.CreativeAssetRepo) int {
 	t.Helper()
-	for range 1000 {
+	for i := range 1000 {
 		n, ran, err := repo.PruneArchivedBriefAssets(ctx, domain.ArchivedBriefAssetRetention, 2)
 		if err != nil {
 			t.Fatalf("PruneArchivedBriefAssets: %v", err)
@@ -38,10 +43,11 @@ func drainArchivedAssetPrune(ctx context.Context, t *testing.T, repo *postgres.C
 			t.Fatal("the prune lock was held although no other pruner is running")
 		}
 		if n < 2 {
-			return
+			return i + 1
 		}
 	}
 	t.Fatal("the prune never drained")
+	return 0
 }
 
 // TestLivePruneArchivedBriefAssetsDeletesOnlyPastTheWindow (#171): assets of a brief archived 91
@@ -68,7 +74,9 @@ func TestLivePruneArchivedBriefAssetsDeletesOnlyPastTheWindow(t *testing.T) {
 	ageBrief(ctx, t, pool, recentBrief, "archived", 89*24*time.Hour)
 	ageBrief(ctx, t, pool, activeBrief, "approved", 200*24*time.Hour)
 
-	drainArchivedAssetPrune(ctx, t, repo)
+	if batches := drainArchivedAssetPrune(ctx, t, repo); batches < 2 {
+		t.Errorf("the prune drained in %d batch(es); three assets at a limit of two need at least two", batches)
+	}
 
 	for _, id := range expired {
 		if assetExists(ctx, t, pool, id) {
@@ -129,5 +137,33 @@ func TestLivePruneArchivedBriefAssetsSkipsWhileAnotherReplicaPrunes(t *testing.T
 	drainArchivedAssetPrune(ctx, t, repo)
 	if assetExists(ctx, t, pool, asset) {
 		t.Error("the asset survived once the lock was released")
+	}
+}
+
+// TestLivePruneArchivedBriefAssetsZeroArgumentsFallBack: a zero window must fall back to the 90-day
+// retention, never "archived at all", and a zero limit to the batch bound, never LIMIT 0. With
+// the lock free, (0, 0) deletes the asset of a brief archived 91 days ago (so the limit is not 0)
+// and keeps the one archived 89 days ago (so the window is not 0).
+func TestLivePruneArchivedBriefAssetsZeroArgumentsFallBack(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := postgres.NewCreativeAssetRepo(&postgres.Pool{Pool: pool})
+
+	oldBrief, oldProject := insertApprovedBrief(ctx, t, pool)
+	recentBrief, recentProject := insertApprovedBrief(ctx, t, pool)
+	expired := insertCreativeAsset(ctx, t, repo, oldProject, oldBrief, 1200, 628, "p171e1").ID
+	recent := insertCreativeAsset(ctx, t, repo, recentProject, recentBrief, 1200, 628, "p171e2").ID
+	ageBrief(ctx, t, pool, oldBrief, "archived", 91*24*time.Hour)
+	ageBrief(ctx, t, pool, recentBrief, "archived", 89*24*time.Hour)
+
+	n, ran, err := repo.PruneArchivedBriefAssets(ctx, 0, 0)
+	if err != nil || !ran {
+		t.Fatalf("PruneArchivedBriefAssets(0, 0) = (%d, %v, %v)", n, ran, err)
+	}
+	if n < 1 || assetExists(ctx, t, pool, expired) {
+		t.Errorf("a zero limit deleted %d rows and left the expired asset: it must fall back to the batch bound, not LIMIT 0", n)
+	}
+	if !assetExists(ctx, t, pool, recent) {
+		t.Error("a zero window deleted an asset archived 89 days ago: it must fall back to 90 days, not 0")
 	}
 }
