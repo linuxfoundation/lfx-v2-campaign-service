@@ -31,6 +31,12 @@ const (
 // countries LF events actually draw from, and the groupings are marketing regions rather than
 // continents (e.g. Israel/UAE/Saudi Arabia sit in EMEA). Adding a country here widens a real
 // audience, so entries should come from the runbook rather than from geographic intuition.
+//
+// Exception (#200): Austria, Belgium, Czech Republic, Denmark, Finland and Norway were added to
+// EMEA beyond the runbook because Google Ads can already target them (googleads.geoTargetConstants)
+// and LF runs events there; without them a brief could run paid ads in those countries but could
+// not build an email audience. TestEveryGeoTargetCountryHasARegion (googleads package) keeps every
+// paid-targetable country reachable here.
 var countryToRegion = map[string]Region{
 	// APAC
 	"south korea": RegionAPAC, "japan": RegionAPAC, "china": RegionAPAC,
@@ -45,6 +51,8 @@ var countryToRegion = map[string]Region{
 	"ireland": RegionEMEA, "switzerland": RegionEMEA, "sweden": RegionEMEA,
 	"poland": RegionEMEA, "south africa": RegionEMEA, "israel": RegionEMEA,
 	"uae": RegionEMEA, "saudi arabia": RegionEMEA,
+	"austria": RegionEMEA, "belgium": RegionEMEA, "czech republic": RegionEMEA,
+	"denmark": RegionEMEA, "finland": RegionEMEA, "norway": RegionEMEA,
 
 	// NA
 	"united states": RegionNA, "canada": RegionNA, "mexico": RegionNA,
@@ -66,6 +74,7 @@ var countryAliases = map[string]string{
 	"korea": "south korea", "republic of korea": "south korea",
 	"united arab emirates": "uae",
 	"holland":              "netherlands",
+	"czechia":              "czech republic",
 }
 
 // RegionFor resolves a country name to its marketing region. The second return is false when
@@ -96,6 +105,7 @@ var displayNames = map[string]string{
 	"new zealand":    "New Zealand",
 	"hong kong":      "Hong Kong",
 	"saudi arabia":   "Saudi Arabia",
+	"czech republic": "Czech Republic",
 }
 
 // DisplayName returns the country in the form HubSpot stores it, ready to use as an exact
@@ -175,6 +185,8 @@ var iso2ToCountry = map[string]string{
 	"es": "spain", "it": "italy", "ie": "ireland", "ch": "switzerland",
 	"se": "sweden", "pl": "poland", "za": "south africa", "il": "israel",
 	"ae": "uae", "sa": "saudi arabia",
+	"at": "austria", "be": "belgium", "cz": "czech republic", "dk": "denmark",
+	"fi": "finland", "no": "norway",
 
 	// NA
 	"us": "united states", "ca": "canada", "mx": "mexico",
