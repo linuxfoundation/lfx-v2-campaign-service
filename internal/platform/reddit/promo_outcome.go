@@ -182,8 +182,6 @@ var promoOutcomeRows = []PromoOutcomeRow{
 		StepWithStatus: "Ad creation UNCONFIRMED (HTTP %d) -- verify in Reddit Ads Manager before adding manually",
 	},
 	{
-		// Step is a FORMAT whose %s is the post id: CreateCampaign renders it with fmt.Sprintf
-		// and never through step(), which would return the raw format.
 		Outcome: PromoAdNoID, Shape: ShapeDegraded, Persisted: PersistedCreatedDegraded,
 		AdWarning: "promoted-post ad creation is UNCONFIRMED (2xx response with no ad id); the ad may already exist — verify in Reddit Ads Manager BEFORE creating it manually to avoid a duplicate",
 		// StepFormat's %s is the post id.
