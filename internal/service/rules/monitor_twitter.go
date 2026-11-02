@@ -43,13 +43,6 @@ const (
 	xMinImpressions = 1000
 )
 
-// xMoney renders an amount for an item's text. The figures are in the ACCOUNT'S OWN CURRENCY as
-// X reports it (*_local_micro) and nothing on this path converts, so no currency symbol is
-// printed: a "$" would misstate every non-USD account's amounts. X's account object carries no
-// currency (it lives on the funding instrument, a further read per campaign), so the text names
-// the unit instead of guessing its code.
-func xMoney(v float64) string { return fmt.Sprintf("%.2f in account currency", v) }
-
 // EvaluateTwitterMonitor computes each row's pacing percentage/label and the account's action
 // items for an X Ads account.
 //
@@ -280,14 +273,14 @@ func twitterActionItems(m model.AccountCampaignMetrics, pacingPct float64, label
 	}
 	if active && m.BudgetDay > 0 && m.BudgetDay <= xPlaceholderBudgetMax {
 		add(model.MonitorPriorityHigh,
-			fmt.Sprintf("Daily budget is %s — this is a placeholder and won't generate meaningful traffic", xMoney(m.BudgetDay)),
+			fmt.Sprintf("Daily budget is %s — this is a placeholder and won't generate meaningful traffic", accountMoney(m.BudgetDay)),
 			"Set a realistic daily budget for the campaign's goal and audience before expecting results")
 	}
 
 	// MED
 	if m.Status == xStatusPaused {
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("Campaign is paused — spent %s in the window", xMoney(m.Spend)),
+			fmt.Sprintf("Campaign is paused — spent %s in the window", accountMoney(m.Spend)),
 			"Check if this was intentionally paused or if the event is still upcoming and needs reactivation")
 	}
 	// Not when the zero-delivery item above already fired for a campaign that spent nothing:
@@ -295,7 +288,7 @@ func twitterActionItems(m model.AccountCampaignMetrics, pacingPct float64, label
 	// billable clicks) still gets this item — the Reddit monitor's settled rule.
 	if label == model.MonitorPacingUnderspending && active && !(zeroDelivery && pacingPct == 0) {
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("Underspending at %.0f%% of budget — %s spent in the window", pacingPct, xMoney(m.Spend)),
+			fmt.Sprintf("Underspending at %.0f%% of budget — %s spent in the window", pacingPct, accountMoney(m.Spend)),
 			"Broaden targeting (keywords, follower look-alikes, locations) or raise the bid so the line items win more auctions")
 	}
 	if (label == model.MonitorPacingConstrained || label == model.MonitorPacingOverspending) && active {
