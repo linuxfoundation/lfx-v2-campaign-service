@@ -822,3 +822,85 @@ func scanCreativeAssetWithInserted(row pgx.Row) (*model.CreativeAsset, bool, err
 	a.CreatedBy = createdBy
 	return &a, inserted, nil
 }
+
+var _ domain.ArchivedCreativeAssetPruner = (*CreativeAssetRepo)(nil)
+
+// archivedAssetPruneLockClass is the first key of the two-int advisory lock one prune batch
+// takes: "CAPR". The two-int form is a separate key space from the one-bigint form
+// ClaimCampaignVersion uses, and the class differs from keywordTargetingLockClass ("RKTW") and
+// statsJobLeaseClass ("XSTJ"), so none of them can collide.
+const archivedAssetPruneLockClass int32 = 0x43415052
+
+// archivedAssetPruneLockKey is the second key: there is one prune lock for the whole cluster.
+const archivedAssetPruneLockKey int32 = 0
+
+// archivedAssetPruneBatchLimit bounds ONE delete. Each row can carry up to 30 MiB of BYTEA, so
+// the batch is far smaller than jobPrunePassLimit: a backlog of large images drains over several
+// batches instead of in one long transaction.
+const archivedAssetPruneBatchLimit = 100
+
+// tryArchivedAssetPruneLockQuery takes the cluster-wide prune lock for the batch's transaction.
+// TRANSACTION-scoped (xact) and TRY: it is released by the batch's commit or rollback whatever
+// happens, so a crashed pod or a severed connection can never leave it held, and a replica that
+// finds it taken skips the batch rather than waiting behind a delete it would only repeat.
+const tryArchivedAssetPruneLockQuery = `SELECT pg_try_advisory_xact_lock($1, $2)`
+
+// pruneArchivedAssetsQuery deletes one bounded batch of assets whose brief was archived more than
+// $1 ago.
+//
+// campaign_briefs.updated_at IS the archival time for an archived brief: archiveBriefQuery sets it
+// with the status flip, and every other UPDATE of campaign_briefs (replace, approve) is guarded by
+// status <> 'archived', so nothing moves it afterwards. ArchiveBrief is one-way, so an archived
+// brief never becomes readable again.
+//
+// The join is on (id, project_id), the composite foreign key 000028 declares, so it can only ever
+// match an asset to its own brief. Deleting by id through an ordered, LIMITed subquery keeps the
+// statement short and its row set predictable, exactly as pruneTerminalJobsQuery does. The inner
+// SELECT reads the brief table (one row per brief, small) and reaches assets through the
+// UNIQUE (brief_id, checksum) index's leftmost column, so it needs no new index, and it never
+// reads the BYTEA.
+const pruneArchivedAssetsQuery = `DELETE FROM creative_assets WHERE id IN (
+	SELECT a.id FROM creative_assets a
+	JOIN campaign_briefs b ON b.id = a.brief_id AND b.project_id = a.project_id
+	WHERE b.status = 'archived' AND b.updated_at < now() - $1::interval
+	ORDER BY b.updated_at, a.id
+	LIMIT $2
+)`
+
+// PruneArchivedBriefAssets implements domain.ArchivedCreativeAssetPruner: one bounded batch,
+// under a transaction-scoped try-lock so only one replica prunes at a time.
+//
+// No reference check against live campaigns, unlike DeleteAsset. DeleteAsset refuses an asset a
+// campaign's config_snapshot still names because a dispatch or retry may still read it. Under an
+// archived brief nothing can: every asset read (GetAsset, GetAssetSize, the signed-URL read) is
+// scoped to a non-archived parent, as is every dispatch path that reaches them, so the bytes are
+// already unreachable and deleting them changes no read.
+func (r *CreativeAssetRepo) PruneArchivedBriefAssets(ctx context.Context, olderThan time.Duration, limit int) (int64, bool, error) {
+	if olderThan <= 0 {
+		olderThan = domain.ArchivedBriefAssetRetention
+	}
+	if limit <= 0 {
+		limit = archivedAssetPruneBatchLimit
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return 0, false, fmt.Errorf("prune archived creative assets: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var locked bool
+	if err := tx.QueryRow(ctx, tryArchivedAssetPruneLockQuery, archivedAssetPruneLockClass, archivedAssetPruneLockKey).Scan(&locked); err != nil {
+		return 0, false, fmt.Errorf("prune archived creative assets: lock: %w", err)
+	}
+	if !locked {
+		return 0, false, nil
+	}
+	tag, err := tx.Exec(ctx, pruneArchivedAssetsQuery, olderThan.String(), limit)
+	if err != nil {
+		return 0, true, fmt.Errorf("prune archived creative assets: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, true, fmt.Errorf("prune archived creative assets: commit: %w", err)
+	}
+	return tag.RowsAffected(), true, nil
+}

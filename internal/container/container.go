@@ -1121,6 +1121,11 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	orch.SetJobRetention(cfg.CampaignJobRetention)
 	orch.StartJobRetentionSweeper()
 
+	// creative_assets is never pruned by any request: delete the assets of briefs archived
+	// longer than domain.ArchivedBriefAssetRetention (#171), on the same sweeper lifetime.
+	orch.SetArchivedAssetPruner(postgres.NewCreativeAssetRepo(pool))
+	orch.StartArchivedAssetRetentionSweeper()
+
 	// Drain the index outbox: rows co-committed with their resource whose publish never
 	// landed. Without this a dropped message is lost, and a terminal write (archiving a
 	// brief) has no later write to repair the index.
@@ -1212,6 +1217,8 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// Same retention sweeper as the fast path (see wireLiveBackends).
 			orch.SetJobRetention(cfg.CampaignJobRetention)
 			orch.StartJobRetentionSweeper()
+			orch.SetArchivedAssetPruner(postgres.NewCreativeAssetRepo(pool))
+			orch.StartArchivedAssetRetentionSweeper()
 
 			// Same relay as the fast path (see wireLiveBackends). Written under c.mu: this runs
 			// on the init goroutine while Close may be reading the field concurrently.
