@@ -192,6 +192,18 @@ func ProviderSupportsSlotVersions(p Provider) bool {
 	return p == ProviderMicrosoftAds
 }
 
+// ProviderNamesByStage reports whether p's dispatcher puts a campaign's funnel stage in its
+// upstream name, and so whether a create may label campaigns on p (cs-1). Microsoft only today.
+//
+// Labels are refused elsewhere rather than stored silently because a later change will make that
+// platform's name carry the stage: a row labelled BEFORE that change, then re-dispatched after it
+// (a cleared claim, a retained partial, a name-keyed reconciliation), would compose a name its
+// upstream campaign does not have, miss it, and create a duplicate. A provider joins this set in
+// the same change that adds the stage to its name.
+func ProviderNamesByStage(p Provider) bool {
+	return p == ProviderMicrosoftAds
+}
+
 type dispatchSlotVersionKey struct{}
 
 // WithDispatchSlotVersion returns ctx carrying the slot version one platform dispatch is

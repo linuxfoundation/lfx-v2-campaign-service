@@ -12,10 +12,11 @@
 -- model.FunnelStage / model.Tactic mirror both lists; TestLiveCampaignLabelChecksMatchTheModel
 -- pins them.
 --
--- SET AT CLAIM, IMMUTABLE AFTER: the dispatch claim INSERT writes them and no UPDATE names them
--- (the upsert's conflict arm and replaceCampaignQuery leave both columns alone), so a retry that
--- carries a different stage can never relabel — or, through the name, rename — a campaign that
--- already exists. Upstream names are composed from the CLAIMED ROW's values, never the request.
+-- SET AT CLAIM, IMMUTABLE AFTER: the dispatch claim INSERT writes them, the upsert's INSERT arm
+-- carries the claimed row's values forward when it recreates a row whose claim was cleared
+-- mid-flight, and no UPDATE names them (the upsert's conflict arm and replaceCampaignQuery leave
+-- both columns alone), so a retry that carries a different stage can never relabel — or, through
+-- the name, rename — a campaign that already exists. Upstream names are composed from the CLAIMED ROW's values, never the request.
 --
 -- NOT in the slot's unique key (brief_id, platform, variant, slot_version): two campaigns on one
 -- platform are told apart by slot_version, and the stage is a label on each, not part of its

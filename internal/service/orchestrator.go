@@ -2145,6 +2145,10 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				campaign.BriefID = brief.ID
 				campaign.ProjectID = brief.ProjectID
 				campaign.Platform = p
+				// The claimed row's labels (000054), so that if this upsert takes its INSERT
+				// arm (the claim was cleared and the slot is empty) the recreated row keeps
+				// the stage its upstream name was composed from. The conflict arm ignores them.
+				campaign.FunnelStage, campaign.Tactic = existing.FunnelStage, existing.Tactic
 				// Both, not just UpdatedBy. Reaching here means we OWN the claim, so a
 				// live 'pending' row for this (brief, platform) existed a moment ago and
 				// this upsert normally takes the conflict arm. That covers the
@@ -2249,6 +2253,8 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	campaign.BriefID = brief.ID
 	campaign.ProjectID = brief.ProjectID
 	campaign.Platform = p
+	// The claimed row's labels — see the retained-partial path above.
+	campaign.FunnelStage, campaign.Tactic = existing.FunnelStage, existing.Tactic
 	campaign.CreatedBy = by
 	campaign.UpdatedBy = by
 	// Persist the successful result on a context DETACHED from the dispatch ctx.

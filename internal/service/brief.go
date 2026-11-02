@@ -740,7 +740,7 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 	if err != nil {
 		return nil, err
 	}
-	labels, err := campaignLabels(p.Input.FunnelStage, p.Input.Tactic)
+	labels, err := campaignLabels(p.Input.FunnelStage, p.Input.Tactic, platforms)
 	if err != nil {
 		return nil, err
 	}
@@ -2270,8 +2270,21 @@ func expectedSlotVersions(newVersion bool, in map[string]int, platforms []model.
 // already refuse anything else at the HTTP boundary; this re-checks them so no caller of the
 // service — and no future transport — can put an unlisted value on a campaign row or into an
 // upstream name, and so the refusal happens before any job or upstream call.
-func campaignLabels(stage, tactic *string) (model.CampaignLabels, error) {
+//
+// Labels are accepted only when every selected platform names campaigns by stage
+// (model.ProviderNamesByStage, Microsoft today): stored on another platform now, they would
+// mismatch the name that platform composes once it adds the stage, and a re-dispatch would then
+// miss the existing campaign and create a duplicate.
+func campaignLabels(stage, tactic *string, platforms []model.Provider) (model.CampaignLabels, error) {
 	var l model.CampaignLabels
+	if stage != nil || tactic != nil {
+		for _, p := range platforms {
+			if !model.ProviderNamesByStage(p) {
+				return l, &briefs.BadRequestError{Code: "400", Message: fmt.Sprintf(
+					"funnel_stage and tactic are not supported for %s yet; omit them, or create %s campaigns in a separate request", p, p)}
+			}
+		}
+	}
 	if stage != nil {
 		s := model.FunnelStage(*stage)
 		if !s.Valid() {

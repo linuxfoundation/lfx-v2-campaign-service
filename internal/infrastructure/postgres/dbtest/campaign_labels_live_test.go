@@ -57,6 +57,8 @@ func TestLiveClaimWritesLabelsOnlyOnInsert(t *testing.T) {
 		ProjectID: project, BriefID: briefID, JobID: &jobID, Platform: p, Variant: model.VariantDefault,
 		SlotVersion: model.FirstSlotVersion, CampaignName: dbtest.UniqueID(t, "campaign"),
 		Status: model.CampaignStatusCreated, PlatformCampaignID: dbtest.UniqueID(t, "upstream"),
+		// Different labels on the upsert: its conflict arm must ignore them.
+		FunnelStage: liveStage(model.FunnelStageLower), Tactic: liveTactic(model.TacticKeyword),
 	}, nil)
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
@@ -68,6 +70,40 @@ func TestLiveClaimWritesLabelsOnlyOnInsert(t *testing.T) {
 	unlabelled := createSlotVersion(ctx, t, repo, project, briefID, p, 2)
 	if unlabelled.FunnelStage != nil || unlabelled.Tactic != nil {
 		t.Fatalf("an unlabelled claim stored %v/%v, want NULL (legacy)", unlabelled.FunnelStage, unlabelled.Tactic)
+	}
+}
+
+// TestLiveUpsertInsertArmKeepsTheClaimedLabels: when a labelled claim is cleared mid-flight and
+// the slot is left empty, the dispatch's upsert takes its INSERT arm. The orchestrator hands it
+// the claimed row's labels, and the recreated row must keep them — its upstream name was composed
+// from that stage.
+func TestLiveUpsertInsertArmKeepsTheClaimedLabels(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
+	briefID, project := insertApprovedBrief(ctx, t, pool)
+	p := model.ProviderMicrosoftAds
+	jobID := uuid.NewString()
+	labels := model.CampaignLabels{FunnelStage: liveStage(model.FunnelStageMid), Tactic: liveTactic(model.TacticCompetitor)}
+
+	if claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, jobID, nil, labels); err != nil || !claimed {
+		t.Fatalf("claim: claimed=%v err=%v", claimed, err)
+	}
+	// The operator clears the stuck claim; the slot is now empty.
+	if err := repo.DeleteDispatchClaim(ctx, briefID, p, model.VariantDefault, model.FirstSlotVersion, jobID); err != nil {
+		t.Fatalf("clear claim: %v", err)
+	}
+	row, err := repo.UpsertCampaign(ctx, &model.Campaign{
+		ProjectID: project, BriefID: briefID, JobID: &jobID, Platform: p, Variant: model.VariantDefault,
+		SlotVersion: model.FirstSlotVersion, CampaignName: dbtest.UniqueID(t, "campaign"),
+		Status: model.CampaignStatusCreated, PlatformCampaignID: dbtest.UniqueID(t, "upstream"),
+		FunnelStage: labels.FunnelStage, Tactic: labels.Tactic,
+	}, nil)
+	if err != nil {
+		t.Fatalf("upsert into the empty slot: %v", err)
+	}
+	if row.FunnelStage == nil || *row.FunnelStage != model.FunnelStageMid || row.Tactic == nil || *row.Tactic != model.TacticCompetitor {
+		t.Fatalf("recreated row labels = %v/%v, want mid/competitor", row.FunnelStage, row.Tactic)
 	}
 }
 

@@ -295,8 +295,15 @@ finished, a reload, a second tab) creates ANOTHER campaign, and it ignores `funn
 1. **Turn off the self-serve multi-campaign flag first** — remove every platform from
    `LFX_CUTOVER_CAMPAIGN_SERVICE_MULTI_CAMPAIGN_PLATFORMS` (argocd values) and let self-serve roll,
    so no `new_version` request is sent while the older image serves.
-2. Then roll the campaign-service image back.
-3. Do NOT run `000054`'s down unless the labels are being abandoned: it always applies, and it
+2. **Resolve in-flight labelled Microsoft rows.** The older image composes Microsoft names without
+   the stage token, so a labelled row it later re-dispatches (a cleared stuck claim, a retained
+   partial) would miss its `| ToFU |`-named upstream campaign and create a duplicate. List them —
+   `SELECT id, brief_id, slot_version, status, platform_campaign_id FROM campaigns WHERE platform =
+   'microsoft-ads' AND funnel_stage IS NOT NULL AND status NOT IN ('created', 'created_degraded',
+   'deleted')` — and settle each (confirm the upstream campaign and record it, or delete the row)
+   before the rollback, and do not clear any such claim while rolled back.
+3. Then roll the campaign-service image back.
+4. Do NOT run `000054`'s down unless the labels are being abandoned: it always applies, and it
    discards every stored stage and tactic (a Microsoft campaign created with a stage keeps the
    stage token in its upstream name, which is then the only record of it).
 

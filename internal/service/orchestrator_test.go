@@ -579,7 +579,7 @@ func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, b
 	// a claimed row production cannot create, and the creation-time updated_by invariant would
 	// have no fake capable of catching a regression in it.
 	// Labels are written ONLY on the row the claim inserts, as claimCampaignDispatchQuery does.
-	pending := &model.Campaign{ProjectID: projectID, BriefID: briefID, Platform: platform, Variant: model.NormalizeVariant(variant), SlotVersion: slotVersion, JobID: &jobID, Status: "pending", CreatedBy: by, UpdatedBy: by,
+	pending := &model.Campaign{ID: fmt.Sprintf("claim-%s-%d", jobID, slotVersion), ProjectID: projectID, BriefID: briefID, Platform: platform, Variant: model.NormalizeVariant(variant), SlotVersion: slotVersion, JobID: &jobID, Status: "pending", CreatedBy: by, UpdatedBy: by,
 		FunnelStage: labels.FunnelStage, Tactic: labels.Tactic}
 	r.storeRow(pending)
 	return true, pending, nil
@@ -621,16 +621,19 @@ func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c.Version = 1
-	// The real conflict arm lands on the CLAIM row and never names funnel_stage/tactic
-	// (000054), so the row it RETURNS keeps the claim's id and stored labels.
+	r.upserted = append(r.upserted, c)
+	// The real statement RETURNS a freshly scanned row, never the caller's struct: when its
+	// conflict arm lands on the CLAIM row, that row keeps the claim's id and stored labels
+	// (000054 — the arm never names funnel_stage/tactic). Returned as a COPY so a caller that
+	// read identity from its own struct instead of the returned row would be caught.
+	ret := *c
 	if cur, err := r.latestLiveLocked(c.BriefID, c.Platform, c.Variant); err == nil &&
 		model.NormalizeSlotVersion(cur.SlotVersion) == model.NormalizeSlotVersion(c.SlotVersion) {
-		c.FunnelStage, c.Tactic = cur.FunnelStage, cur.Tactic
-		if c.ID == "" {
-			c.ID = cur.ID
+		ret.FunnelStage, ret.Tactic = cur.FunnelStage, cur.Tactic
+		if ret.ID == "" {
+			ret.ID = cur.ID
 		}
 	}
-	r.upserted = append(r.upserted, c)
 	// Run the payload builder the way the real repo does — inside the "transaction", after the
 	// row is written — and record it, so a test can assert the campaign is actually indexed
 	// rather than merely persisted.
@@ -644,8 +647,8 @@ func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, 
 	// Mirror the real ON CONFLICT (brief_id, platform) DO UPDATE: the (brief,
 	// platform) row is updated in place, so a subsequent lookup sees the new
 	// platform_campaign_id/status.
-	r.storeRow(c)
-	return c, nil
+	r.storeRow(&ret)
+	return &ret, nil
 }
 
 // AdoptCampaign mirrors CampaignRepo.AdoptCampaign: an INSERT that DECLINES rather than

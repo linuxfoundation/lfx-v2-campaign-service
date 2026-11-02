@@ -169,10 +169,19 @@ version equals the expectation; otherwise (`!hasExpected || expected != existing
 latest campaign is returned as a reuse and nothing is claimed. Concurrent submits were already
 deduplicated by the claim; this closes SEQUENTIAL repeats (a double click after the job finished, a
 reload, a second tab, a late replay), each of which carries the stale expectation it was built
-from. With no live campaign the expectation is not compared — there is nothing to duplicate.
+from. With no live campaign the expectation is not compared — there is nothing to duplicate. One
+residual is accepted rather than closed: if the campaign a request created is DELETED before a
+replay of that request arrives, the latest live campaign is the one the replay expected again, and
+it creates another. Comparing against the highest version ever used instead would need the caller
+to know deleted versions, which no read exposes, and would block every later deliberate create.
+`campaignLabels` also refuses labels unless every selected platform names campaigns by stage
+(`model.ProviderNamesByStage`, Microsoft only): a row labelled on Google today would compose a
+different name once Google adds the stage, and a re-dispatch would miss its upstream campaign.
 `funnel_stage` and `tactic` (design Enums, re-checked by `campaignLabels`) become
 `StartOptions.Labels` and are passed to the claim, which writes them only on a row it INSERTS
-(migration `000054`); a slot version that already has a row keeps its labels. The dispatcher
+(migration `000054`); a slot version that already has a row keeps its labels. Both persists after
+the dispatch copy the CLAIMED row's labels onto the campaign, so an upsert that takes its INSERT
+arm (the claim was cleared mid-flight) recreates the row with the stage its name was composed from. The dispatcher
 gets the CLAIMED ROW's labels on the context (`model.WithDispatchLabels`), never the request's,
 so a name is always composed from what the row stores and an unlabelled row composes its legacy
 name byte for byte. Every `platformResult` now names its row (`reuseResult` / `identifyRow`):

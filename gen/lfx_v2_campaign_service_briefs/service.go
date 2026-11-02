@@ -1141,13 +1141,16 @@ type CampaignCreateInput struct {
 	// when this request creates it: a platform whose campaign already exists (a
 	// retry, or a new_version request with a stale expected_slot_versions) returns
 	// that campaign with the stage it was created with, never relabelled.
-	// Optional; omitted, the campaign is unlabelled. On Microsoft Advertising a
-	// labelled campaign carries the stage (ToFU, MoFU or BoFU) in its upstream
-	// name; an unlabelled one keeps the name it has always had.
+	// Optional; omitted, the campaign is unlabelled. Supported on microsoft-ads
+	// only for now (400 if any other platform is selected), because a label must
+	// be part of the platform's campaign name before it is stored there; a
+	// Microsoft Advertising campaign carries the stage (ToFU, MoFU or BoFU) in its
+	// upstream name, and an unlabelled one keeps the name it has always had.
 	FunnelStage *string
 	// How the campaign(s) this request creates pursue their stage, from a
 	// controlled list (free text is refused because the label can reach campaign
-	// names). Same scope and immutability as funnel_stage. Optional.
+	// names). Same scope, platform support and immutability as funnel_stage.
+	// Optional.
 	Tactic *string
 	// REQUIRED when new_version is true (400 without it), and refused without
 	// new_version: for EVERY selected platform, the slot_version of the latest
@@ -1157,8 +1160,10 @@ type CampaignCreateInput struct {
 	// latest live campaign is still the one the caller saw. Otherwise its latest
 	// campaign is returned with reused=true and nothing is created — which is what
 	// makes a double click, a reload, a second tab or a late replay of the same
-	// request create exactly one campaign. Keys must be the selected platforms,
-	// values 0 or more.
+	// request create exactly one campaign. One residual: if the campaign the first
+	// request created is DELETED before the replay arrives, the replay's
+	// expectation matches again and it creates another. Keys must be the selected
+	// platforms (the slot is the platform's dispatched channel), values 0 or more.
 	ExpectedSlotVersions map[string]int
 }
 

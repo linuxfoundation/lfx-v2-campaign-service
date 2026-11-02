@@ -521,9 +521,10 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   list: `prospecting`, `retargeting`, `lookalike`, `keyword`, `competitor`,
   `content-promotion`), both NULLABLE with NO default and each with a CHECK; NULL is a legacy,
   unlabelled or adopted campaign. EXPAND-only (the N-1 binary names its columns and ignores
-  them). Written ONLY by `claimCampaignDispatchQuery`'s INSERT (`$8`, `$9`): its conflict arm
-  does nothing, and neither the upsert's conflict arm nor `replaceCampaignQuery` names the
-  columns, so the labels are immutable after the claim and a retry carrying different labels
+  them). Written by `claimCampaignDispatchQuery`'s INSERT (`$8`, `$9`) and by
+  `upsertCampaignQuery`'s INSERT arm (`$21`, `$22`, the claimed row's values, for a row whose
+  claim was cleared mid-flight); the claim's conflict arm does nothing, and neither the upsert's
+  conflict arm nor `replaceCampaignQuery` names the columns, so the labels are immutable after the claim and a retry carrying different labels
   gets the stored ones back. Not in the slot's unique key — a label is not identity, and keying
   on it would let a relabelled retry claim a second slot. No index. The down always applies and
   discards the labels (see the deployment concept's rollback runbook). Pinned by

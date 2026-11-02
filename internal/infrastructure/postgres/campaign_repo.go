@@ -87,9 +87,11 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 // INSERT wins the claim cleanly. Pinned by
 // TestCampaignRepo_OnConflictCarriesLivePredicate.
 //
-// funnel_stage and tactic (000054) are written here and NOWHERE else: on a conflict the INSERT
-// does nothing, so a slot version that already has a row keeps that row's labels, and no UPDATE
-// names the two columns. That is what makes them immutable after the claim.
+// funnel_stage and tactic (000054) are written by this INSERT, and otherwise only by the INSERT
+// arm of upsertCampaignQuery (which recreates a row whose claim was cleared mid-flight, carrying
+// the claimed row's labels): on a conflict the INSERT does nothing, so a slot version that already
+// has a row keeps that row's labels, and no UPDATE names the two columns. That is what makes them
+// immutable after the claim.
 const claimCampaignDispatchQuery = `INSERT INTO campaigns
 	(project_id, brief_id, job_id, platform, variant, slot_version, campaign_name, status, created_by, updated_by,
 	 funnel_stage, tactic)
@@ -909,9 +911,11 @@ func (r *CampaignRepo) getCampaignBySlot(ctx context.Context, projectID, briefID
 const upsertCampaignQuery = `INSERT INTO campaigns
 	(project_id, brief_id, job_id, platform, variant, platform_campaign_id, campaign_name, status,
 	 budget_amount, budget_type, start_date, end_date, config_snapshot, result, created_by, updated_by,
-	 ran_on_system_account, slot_version, max_cpc_bid, bidding_strategy, platform_bound_at)
+	 ran_on_system_account, slot_version, max_cpc_bid, bidding_strategy, platform_bound_at,
+	 funnel_stage, tactic)
 	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17,$18,$19,$20,
-	        CASE WHEN NULLIF($5::text, '') IS NOT NULL THEN clock_timestamp() END)
+	        CASE WHEN NULLIF($5::text, '') IS NOT NULL THEN clock_timestamp() END,
+	        $21, $22)
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO UPDATE SET
 		job_id=EXCLUDED.job_id, platform_campaign_id=EXCLUDED.platform_campaign_id,
 		-- platform_bound_at (000048) is stamped when this write gives the row an upstream id it
@@ -1150,6 +1154,10 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 		// value here would land the result on a different campaign of the same slot.
 		model.NormalizeSlotVersion(c.SlotVersion),
 		c.MaxCPCBid, biddingStrategyArg(c.BiddingStrategy),
+		// The labels (000054) reach ONLY the INSERT arm — a claim cleared mid-flight leaves the
+		// slot empty, and the recreated row must keep the stage its upstream name carries. The
+		// conflict arm does not name them, so an existing row's labels never change.
+		funnelStageArg(c.FunnelStage), tacticArg(c.Tactic),
 	)
 	upserted, err := scanCampaign(row)
 	if err != nil {

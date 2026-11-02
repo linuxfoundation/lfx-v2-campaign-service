@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 
@@ -124,6 +125,15 @@ func TestOrchestrator_LabelsReachTheClaimTheDispatchAndTheResult(t *testing.T) {
 	if len(res) != 1 || res[0].FunnelStage != "lower" || res[0].Tactic != "retargeting" || res[0].Variant != model.VariantDefault {
 		t.Fatalf("result = %+v, want funnel_stage lower, tactic retargeting, variant default", res)
 	}
+	// The row id is the PERSISTED row's (the claim's), which the dispatcher's struct never has.
+	if res[0].CampaignRowID == "" || !strings.HasPrefix(res[0].CampaignRowID, "claim-") {
+		t.Fatalf("campaign_row_id = %q, want the claimed row's id", res[0].CampaignRowID)
+	}
+	// The persist carries the CLAIMED row's labels, so an upsert that takes its INSERT arm (the
+	// claim was cleared mid-flight) recreates the row with the stage its name was composed from.
+	if len(camps.upserted) != 1 || camps.upserted[0].FunnelStage == nil || *camps.upserted[0].FunnelStage != model.FunnelStageLower {
+		t.Fatalf("upserted %+v, want the claimed row's lower stage on the persisted campaign", camps.upserted)
+	}
 }
 
 // A retry that carries a DIFFERENT stage returns the campaign with the stage it was created
@@ -174,5 +184,77 @@ func TestOrchestrator_DispatchLabelsComeFromTheClaimedRow(t *testing.T) {
 
 	if len(disp.labels) != 1 || disp.labels[0].FunnelStage == nil || *disp.labels[0].FunnelStage != model.FunnelStageMid {
 		t.Fatalf("dispatch labels = %+v, want the claimed row's mid stage, not the request's lower", disp.labels)
+	}
+}
+
+// A claim lost to a COMPLETED row (another request created slot 1 between this request's read and
+// its claim) is a reuse: reused=true, the winner's row id and its stored labels, no dispatch.
+func TestOrchestrator_AClaimLostToACompletedRowIsAReuse(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	camps.afterSlotRead = func() {
+		camps.afterSlotRead = nil
+		camps.storeRow(&model.Campaign{
+			ID: "winner", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+			Variant: model.VariantDefault, SlotVersion: 1, PlatformCampaignID: "pc-winner", Status: "created",
+			FunnelStage: stagePtr(model.FunnelStageTop),
+		})
+	}
+	disp := &labelRecordingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+
+	res := decodeResults(t, startAndWait(t, orch, jobs, newVersionSaw(0)))
+
+	if len(disp.labels) != 0 {
+		t.Fatalf("dispatched %d times, want none", len(disp.labels))
+	}
+	if len(res) != 1 || !res[0].Reused || res[0].CampaignRowID != "winner" || res[0].FunnelStage != "top" {
+		t.Fatalf("result = %+v, want the winner reused with its stored top stage", res)
+	}
+}
+
+// An UNFINISHED latest campaign is never built on, whatever the expectation: the request claims
+// that campaign's own slot version and is reported as skipped behind it — not as a reuse, since
+// nothing complete came back.
+func TestOrchestrator_NewVersionBehindAnUnfinishedCampaignIsSkippedNotReused(t *testing.T) {
+	for _, expected := range []int{0, 1, 2} {
+		jobs := newFakeJobRepo()
+		camps := &fakeCampaignRepo{}
+		camps.storeRow(&model.Campaign{
+			ID: "inflight", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+			Variant: model.VariantDefault, SlotVersion: 1, Status: "pending",
+		})
+		disp := &slotRecordingDispatcher{}
+		orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+
+		res := decodeResults(t, startAndWait(t, orch, jobs, newVersionSaw(expected)))
+
+		if got := disp.seen(); len(got) != 0 {
+			t.Fatalf("expected %d: dispatched %v, want nothing beside an unfinished campaign", expected, got)
+		}
+		if len(res) != 1 || !res[0].Skipped || res[0].Reused {
+			t.Fatalf("expected %d: result = %+v, want skipped and not reused", expected, res)
+		}
+	}
+}
+
+// The accepted residual, pinned so it is a decision rather than an accident: with every live
+// version gone the expectation is NOT compared — there is no live campaign a repeat could
+// duplicate — so a request that expected slot 1 still creates the next version past the deleted
+// ones. The same holds for a replay arriving after the campaign it created was deleted.
+func TestOrchestrator_NewVersionWithNoLiveCampaignIgnoresTheExpectation(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	camps.deletedSlotVersions = map[string]int{slotKey("b1", model.ProviderGoogleAds, model.VariantDefault): 2}
+	disp := &slotRecordingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+
+	res := decodeResults(t, startAndWait(t, orch, jobs, newVersionSaw(1)))
+
+	if got := disp.seen(); len(got) != 1 || got[0] != 3 {
+		t.Fatalf("dispatched %v, want slot 3 created past the deleted versions", got)
+	}
+	if len(res) != 1 || res[0].Reused {
+		t.Fatalf("result = %+v, want a creation, not a reuse", res)
 	}
 }

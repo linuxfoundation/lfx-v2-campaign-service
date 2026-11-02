@@ -188,3 +188,22 @@ func TestCampaignDoc_CarriesVariantLabelsAndCreatedAt(t *testing.T) {
 		t.Errorf("an unlabelled campaign's document must omit the labels, got %+v", legacy)
 	}
 }
+
+// Labels are accepted only where the platform names campaigns by stage (Microsoft today): stored
+// elsewhere, they would mismatch the name that platform composes once it adds the stage.
+func TestBriefService_CreateCampaigns_RefusesLabelsOnPlatformsWithoutStageNames(t *testing.T) {
+	for _, pl := range []string{"google-ads", "linkedin-ads", "meta-ads", "reddit-ads", "twitter-ads"} {
+		s, jobs, _ := approvedPaidBriefService(t)
+		_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+			ProjectID: "cncf", BriefID: "b1",
+			Input: &briefs.CampaignCreateInput{Platforms: []string{"microsoft-ads", pl}, FunnelStage: strp("top")},
+		})
+		var bad *briefs.BadRequestError
+		if !errors.As(err, &bad) || !strings.Contains(bad.Message, "not supported for "+pl) {
+			t.Errorf("%s: got %T (%v), want a 400 naming the platform", pl, err, err)
+		}
+		if len(jobs.jobs) != 0 {
+			t.Errorf("%s: a job was created for a refused request", pl)
+		}
+	}
+}
