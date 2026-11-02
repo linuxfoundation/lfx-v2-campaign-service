@@ -25,6 +25,7 @@ import (
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/membudget"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/middleware"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
@@ -47,7 +48,7 @@ func realChain(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatalf("buildMux: %v", err)
 	}
-	return buildHandler(mux, &config.Config{}, middleware.NewInflightTracker())
+	return buildHandler(mux, &config.Config{}, middleware.NewInflightTracker(), membudget.New(constants.UploadMemoryBudgetFallbackBytes))
 }
 
 const uploadRoute = "/projects/cncf/briefs/6ba7b810-9dad-11d1-80b4-00c04fd430c8/creative-assets"

@@ -209,6 +209,62 @@ type Registry struct {
 	// observable callbacks registered below may already be reading it.
 	mu        sync.RWMutex
 	poolStats PoolStatsFunc
+	// uploadBudget is the per-pod upload memory budget (#179), also guarded by mu.
+	uploadBudget UploadBudgetSource
+}
+
+// UploadBudgetSource is what the upload-budget gauges read: *membudget.Budget satisfies it.
+// Declared here as an interface so this package does not depend on the budget's.
+type UploadBudgetSource interface {
+	InUse() int64
+	Total() int64
+}
+
+// SetUploadBudget wires the per-pod upload memory budget into the
+// campaign_upload_memory_budget_* gauges. A nil source observes nothing, for the same reason the
+// pool gauges observe nothing without a pool: a zero would read as a measurement.
+func (r *Registry) SetUploadBudget(b UploadBudgetSource) {
+	r.mu.Lock()
+	r.uploadBudget = b
+	r.mu.Unlock()
+}
+
+func (r *Registry) currentUploadBudget() UploadBudgetSource {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.uploadBudget
+}
+
+// registerUploadBudgetGauges registers the upload memory budget observables: its size and the
+// bytes currently held by admitted uploads (wire charges plus pixel reservations). No labels, so
+// no cardinality concern.
+func (r *Registry) registerUploadBudgetGauges(meter metric.Meter) error {
+	inUse, err := meter.Int64ObservableGauge(
+		"campaign_upload_memory_budget_in_use_bytes",
+		metric.WithDescription("Bytes of the per-pod upload memory budget currently held by admitted creative-asset uploads (wire charge plus pixel reservation)."),
+		metric.WithUnit("By"),
+	)
+	if err != nil {
+		return err
+	}
+	total, err := meter.Int64ObservableGauge(
+		"campaign_upload_memory_budget_bytes",
+		metric.WithDescription("Size of the per-pod upload memory budget."),
+		metric.WithUnit("By"),
+	)
+	if err != nil {
+		return err
+	}
+	_, err = meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+		b := r.currentUploadBudget()
+		if b == nil || b.Total() <= 0 {
+			return nil
+		}
+		o.ObserveInt64(inUse, b.InUse())
+		o.ObserveInt64(total, b.Total())
+		return nil
+	}, inUse, total)
+	return err
 }
 
 // upstreamDurationBoundaries are the explicit bucket boundaries, in SECONDS, for
@@ -314,6 +370,9 @@ func New() (*Registry, error) {
 	}
 
 	if err := r.registerPoolGauges(meter); err != nil {
+		return nil, err
+	}
+	if err := r.registerUploadBudgetGauges(meter); err != nil {
 		return nil, err
 	}
 

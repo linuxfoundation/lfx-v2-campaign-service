@@ -214,6 +214,17 @@ app:
     LOG_ADD_SOURCE:
       value: true
 
+    # UPLOAD_MEMORY_BUDGET_BYTES sizes the ONE per-pod memory budget that creative-asset
+    # uploads draw on (the wire side of each upload plus its decoded pixel buffer, #179).
+    # Optional and normally left UNSET: the service then uses 40% of the container memory
+    # limit it reads from the cgroup, so overriding resources.limits.memory resizes the budget
+    # with it. Set it only to pin a size: a byte count or a binary quantity (e.g. 256Mi). A
+    # malformed value stops the pod at startup. Never below 192Mi (one worst-case upload); a
+    # smaller value is raised to that and logged. 80Mi of it is kept for decoded pixel buffers.
+    # Uploads beyond the budget wait briefly (at most ~500ms), then get 503 with Retry-After; usage is exported as campaign_upload_memory_budget_in_use_bytes.
+    # UPLOAD_MEMORY_BUDGET_BYTES:
+    #   value: 256Mi
+
     # JWKS_URL is the URL to the JSON Web Key Set endpoint for JWT validation
     # Required unless JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL is set
     JWKS_URL:

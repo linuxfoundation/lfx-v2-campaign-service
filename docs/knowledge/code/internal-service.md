@@ -287,9 +287,10 @@ amplification over 900x, admitted deliberately by the dimension gate). Wire-pric
 charges such an image the floor, so without a second bound enough of them decode concurrently to
 exhaust the pod while the upload budget still reads as unspent. `DecodeReserver` therefore
 reserves the DECLARED pixel cost — the same figure stage 2 computes from the header — against
-`constants.DecodeAdmissionBudgetBytes` (128 MiB, a quarter of the pod, sized like the upload
-budget and for the same reason). The two budgets are additive in the worst case and together cap
-uploads at half the pod. The wait is bounded by `DecodeAdmissionWait` rather than by the caller's
+the per-pod upload memory budget (`internal/membudget`, #179) — the SAME budget the upload
+middleware charges for the wire side, via `NewSharedDecodeReserver(Container.UploadBudget)`. The
+wire weight excludes the pixel buffer, so the two charges do not overlap and together bound the
+process. The wait is bounded by `DecodeAdmissionWait` rather than by the caller's
 context, because net/http gives a handler's `r.Context()` no deadline — `ReadTimeout`/
 `WriteTimeout` are SOCKET deadlines — so an unbounded acquisition would hold the request's outer
 upload permit until the client disconnected, converting a memory guard into permit exhaustion.
