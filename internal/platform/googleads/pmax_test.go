@@ -6,7 +6,9 @@ package googleads
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -50,10 +52,17 @@ func pmaxImages(t *testing.T) map[string][]byte {
 const pmaxAssetCount = 10
 
 // pmaxCascade routes the two campaign-shell mutates to their happy handlers and
-// leaves the three asset-group mutates to the caller, so each test varies only the
-// part it is about. Any ad-group or ad path is a FAILURE rather than a default:
+// leaves the two asset-group mutates to the caller — assets:mutate, and the one
+// googleAds:mutate that creates the group with its links — so each test varies only
+// the part it is about. Any ad-group or ad path is a FAILURE rather than a default:
 // Performance Max has neither, and a cascade that grew one would otherwise pass.
-func pmaxCascade(t *testing.T, images map[string][]byte, assetH, groupH, linkH http.HandlerFunc) http.HandlerFunc {
+//
+// A STANDALONE assetGroups:mutate or assetGroupAssets:mutate create is refused the way
+// Google refuses it (#437): a non-retail Performance Max asset group cannot be created in
+// isolation, only together with its links in one GoogleAdsService.Mutate. This fake
+// accepted the standalone shape for as long as the client sent it, which is how every
+// create with creative reached production failing at that step.
+func pmaxCascade(t *testing.T, images map[string][]byte, assetH, groupH http.HandlerFunc) http.HandlerFunc {
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
 		if body, ok := images[r.URL.Path]; ok {
@@ -65,10 +74,11 @@ func pmaxCascade(t *testing.T, images map[string][]byte, assetH, groupH, linkH h
 			okBudget(w, r)
 		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
 			okCampaign(w, r)
-		case strings.HasSuffix(r.URL.Path, "assetGroupAssets:mutate"):
-			linkH(w, r)
-		case strings.HasSuffix(r.URL.Path, "assetGroups:mutate"):
+		case strings.HasSuffix(r.URL.Path, "googleAds:mutate"):
 			groupH(w, r)
+		case strings.HasSuffix(r.URL.Path, "assetGroupAssets:mutate"), strings.HasSuffix(r.URL.Path, "assetGroups:mutate"):
+			t.Errorf("standalone %s: Google refuses a Performance Max asset group created apart from its links", r.URL.Path)
+			gaqlError(http.StatusBadRequest, "assetGroupError", "NOT_ENOUGH_HEADLINE_ASSET")(w, r)
 		case strings.HasSuffix(r.URL.Path, "assets:mutate"):
 			assetH(w, r)
 		default:
@@ -84,21 +94,68 @@ func okPMaxAssets() (http.HandlerFunc, func() string) {
 	})
 }
 
-func okPMaxGroup() (http.HandlerFunc, func() string) {
-	return capturedMutate(1, func(int) string { return "customers/1234567890/assetGroups/555" })
+// groupMutateBody is the decoded googleAds:mutate request, enough to assert on its shape.
+type groupMutateBody struct {
+	MutateOperations []struct {
+		AssetGroupOperation *struct {
+			Create map[string]any `json:"create"`
+		} `json:"assetGroupOperation"`
+		AssetGroupAssetOperation *struct {
+			Create map[string]any `json:"create"`
+		} `json:"assetGroupAssetOperation"`
+	} `json:"mutateOperations"`
 }
 
-func okPMaxLinks() (http.HandlerFunc, func() string) {
-	return capturedMutate(pmaxAssetCount, func(i int) string {
-		return "customers/1234567890/assetGroupAssets/555~" + []string{"900", "901", "902", "903", "904", "905", "906", "907", "908", "909"}[i] + "~HEADLINE"
-	})
+// groupMutate answers googleAds:mutate the way Google does: one response per operation, in
+// order, each carrying the result arm of its own operation. `links` caps how many link
+// results are returned (-1 for all of them), so a test can describe fewer than were sent.
+// The asset group resolves to id 555. Returns the handler and a reader for the request body.
+func groupMutate(links int) (http.HandlerFunc, func() string) {
+	var (
+		mu   sync.Mutex
+		body string
+	)
+	read := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return body
+	}
+	h := func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		body = string(raw)
+		mu.Unlock()
+		var req groupMutateBody
+		_ = json.Unmarshal(raw, &req)
+		parts := make([]string, 0, len(req.MutateOperations))
+		sent := 0
+		for _, op := range req.MutateOperations {
+			switch {
+			case op.AssetGroupOperation != nil:
+				parts = append(parts, `{"assetGroupResult":{"resourceName":"customers/1234567890/assetGroups/555"}}`)
+			case op.AssetGroupAssetOperation != nil && (links < 0 || sent < links):
+				asset, _ := op.AssetGroupAssetOperation.Create["asset"].(string)
+				parts = append(parts, `{"assetGroupAssetResult":{"resourceName":"customers/1234567890/assetGroupAssets/555~`+resourceID(asset)+`~HEADLINE"}}`)
+				sent++
+			}
+		}
+		_, _ = io.WriteString(w, `{"mutateOperationResponses":[`+strings.Join(parts, ",")+`]}`)
+	}
+	return h, read
+}
+
+func okPMaxGroup() (http.HandlerFunc, func() string) { return groupMutate(-1) }
+
+// groupMutateOK is groupMutate(-1) for a caller that needs no capture of the body.
+func groupMutateOK(w http.ResponseWriter, r *http.Request) {
+	h, _ := groupMutate(-1)
+	h(w, r)
 }
 
 func TestCreatePerformanceMaxCampaign_HappyPath(t *testing.T) {
 	assetH, readAssets := okPMaxAssets()
 	groupH, readGroup := okPMaxGroup()
-	linkH, readLinks := okPMaxLinks()
-	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH, linkH))
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH))
 	c := demandGenClient(t, srv)
 
 	in := demandGenInput()
@@ -124,7 +181,7 @@ func TestCreatePerformanceMaxCampaign_HappyPath(t *testing.T) {
 	// what Google CONFIRMED, not what was sent, so it is asserted against the number of
 	// link results the server returned.
 	if res.AssetGroupAssetLinks == nil {
-		t.Fatal("AssetGroupAssetLinks is nil after a successful link mutate; the activation gate needs a recorded count")
+		t.Fatal("AssetGroupAssetLinks is nil after a successful asset group mutate; the activation gate needs a recorded count")
 	}
 	if *res.AssetGroupAssetLinks != pmaxAssetCount {
 		t.Errorf("AssetGroupAssetLinks = %d, want %d — one per confirmed link", *res.AssetGroupAssetLinks, pmaxAssetCount)
@@ -135,6 +192,31 @@ func TestCreatePerformanceMaxCampaign_HappyPath(t *testing.T) {
 	}
 
 	group := readGroup()
+	// ONE request carrying the group first and then every link, each link naming the group
+	// by the request's temporary resource name — the shape Google requires (#437).
+	var req groupMutateBody
+	if err := json.Unmarshal([]byte(group), &req); err != nil {
+		t.Fatalf("googleAds:mutate body is not JSON: %v", err)
+	}
+	if n := len(req.MutateOperations); n != 1+pmaxAssetCount {
+		t.Fatalf("googleAds:mutate carries %d operation(s), want the group plus %d links", n, pmaxAssetCount)
+	}
+	head := req.MutateOperations[0].AssetGroupOperation
+	if head == nil {
+		t.Fatalf("the first operation must create the asset group: %s", group)
+	}
+	const tempGroup = "customers/1234567890/assetGroups/-1"
+	if head.Create["resourceName"] != tempGroup {
+		t.Errorf("asset group resourceName = %v, want the temporary %s", head.Create["resourceName"], tempGroup)
+	}
+	for i, op := range req.MutateOperations[1:] {
+		if op.AssetGroupAssetOperation == nil || op.AssetGroupOperation != nil {
+			t.Fatalf("operation %d must be exactly one asset-group-asset create: %s", i+1, group)
+		}
+		if op.AssetGroupAssetOperation.Create["assetGroup"] != tempGroup {
+			t.Errorf("link %d names asset group %v, want the temporary %s", i, op.AssetGroupAssetOperation.Create["assetGroup"], tempGroup)
+		}
+	}
 	if !strings.Contains(group, `"status":"PAUSED"`) {
 		t.Errorf("asset group create = %s, want status PAUSED", group)
 	}
@@ -151,10 +233,9 @@ func TestCreatePerformanceMaxCampaign_HappyPath(t *testing.T) {
 
 	// Every link names the resource name Google returned, not one rebuilt from a
 	// parsed id, and carries a field type.
-	links := readLinks()
 	for _, want := range []string{"customers/1234567890/assets/900", assetFieldHeadline, assetFieldBusinessName, assetFieldLogo} {
-		if !strings.Contains(links, want) {
-			t.Errorf("assetGroupAssets:mutate body is missing %q: %s", want, links)
+		if !strings.Contains(group, want) {
+			t.Errorf("googleAds:mutate body is missing %q: %s", want, group)
 		}
 	}
 
@@ -191,12 +272,11 @@ func TestCreatePerformanceMaxCampaign_CampaignShape(t *testing.T) {
 	campaignH, readCampaign := capturedMutate(1, func(int) string { return "customers/1234567890/campaigns/222" })
 	assetH, _ := okPMaxAssets()
 	groupH, _ := okPMaxGroup()
-	linkH, _ := okPMaxLinks()
 
 	// Built on the TEST goroutine: pmaxImages renders through pngOf, which ends in
 	// t.Fatalf, and FailNow from a handler does not stop the test — it can leave the
 	// server blocked while a deferred Close runs.
-	cascade := pmaxCascade(t, pmaxImages(t), assetH, groupH, linkH)
+	cascade := pmaxCascade(t, pmaxImages(t), assetH, groupH)
 	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "campaigns:mutate") {
 			campaignH(w, r)
@@ -283,28 +363,32 @@ func TestCreatePerformanceMaxCampaign_BadImageRefusesBeforeAnyMutate(t *testing.
 	}
 }
 
-func TestCreatePerformanceMaxCampaign_LinkFailureStillReportsWhatExists(t *testing.T) {
+// The group and its links are one ATOMIC request (#437), so a definite refusal of it means
+// none of them exists: no group id may be reported, or an operator would go looking for a
+// group that is not there. The assets were created by the earlier request and must
+// survive the error — they are the only handle on that account-level litter.
+func TestCreatePerformanceMaxCampaign_GroupRefusalReportsNoGroup(t *testing.T) {
 	assetH, _ := okPMaxAssets()
-	groupH, _ := okPMaxGroup()
-	// A DEFINITE 4xx, not a 5xx: an ambiguous failure would be retried and reported
-	// UNCONFIRMED, and this test is about the partial result, not the wording.
-	linkH := gaqlError(http.StatusBadRequest, "assetGroupAssetError", "DUPLICATE_RESOURCE")
-	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH, linkH))
+	// A DEFINITE 4xx, not a 5xx: this test is about what a refusal leaves, not the wording
+	// of an ambiguous outcome (see the next test).
+	groupH := gaqlError(http.StatusBadRequest, "assetGroupError", "DUPLICATE_NAME")
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH))
 	c := demandGenClient(t, srv)
 	in := demandGenInput()
 	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
 
 	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
 	if err == nil {
-		t.Fatal("a failed link mutate must be reported")
+		t.Fatal("a refused asset group mutate must be reported")
 	}
 	if res == nil {
 		t.Fatal("past the campaign create the error must come ALONGSIDE a result, never (nil, err)")
 	}
-	// Both halves have to survive: a group that exists with no assets attached is
-	// the state an operator most needs to find, and the assets are orphaned.
-	if res.AssetGroupID != "555" {
-		t.Errorf("AssetGroupID = %q, want 555 — the group exists", res.AssetGroupID)
+	if strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("error = %q — a definite refusal of an atomic request applied nothing and must not read as unconfirmed", err)
+	}
+	if res.AssetGroupID != "" {
+		t.Errorf("AssetGroupID = %q, want empty — the request was atomic and refused, so no group exists", res.AssetGroupID)
 	}
 	if len(res.CreativeAssetIDs) != pmaxAssetCount {
 		t.Errorf("CreativeAssetIDs = %d, want %d — the assets exist", len(res.CreativeAssetIDs), pmaxAssetCount)
@@ -312,16 +396,56 @@ func TestCreatePerformanceMaxCampaign_LinkFailureStillReportsWhatExists(t *testi
 	if res.CampaignID == "" {
 		t.Error("CampaignID must be carried on the partial result")
 	}
-	// And the count that tells the ACTIVATION GATE those two facts apart. The group id above
-	// is kept deliberately, so the gate cannot read it as "ready to serve" — a RECORDED zero
-	// is what distinguishes "the group exists and is empty" from "no group was created".
-	// Nil here would be read as a row predating the field and the campaign would activate
-	// with nothing attached.
-	if res.AssetGroupAssetLinks == nil {
-		t.Fatal("AssetGroupAssetLinks is nil on a failed link mutate; nil means 'not recorded' and the activation gate would let this campaign activate empty")
+	// Recorded as a ZERO, not left nil: nil would read as a row predating the field.
+	if res.AssetGroupAssetLinks == nil || *res.AssetGroupAssetLinks != 0 {
+		t.Errorf("AssetGroupAssetLinks = %v, want a recorded 0", res.AssetGroupAssetLinks)
 	}
-	if *res.AssetGroupAssetLinks != 0 {
-		t.Errorf("AssetGroupAssetLinks = %d, want 0 — no link was confirmed", *res.AssetGroupAssetLinks)
+}
+
+// An AMBIGUOUS outcome of the same request — a 5xx, which may have been applied — reports
+// UNCONFIRMED and still records no group id and zero links: this client cannot say the
+// group exists, and the activation gate must refuse until an operator has looked.
+func TestCreatePerformanceMaxCampaign_AmbiguousGroupMutateIsUnconfirmed(t *testing.T) {
+	assetH, _ := okPMaxAssets()
+	groupH := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH))
+	c := demandGenClient(t, srv)
+	in := demandGenInput()
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("a 5xx on the asset group mutate must be reported")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("error = %q, want UNCONFIRMED — the group and its links may exist", err)
+	}
+	if res == nil || res.AssetGroupID != "" {
+		t.Fatalf("result = %+v, want a partial with no asset group id", res)
+	}
+	if res.AssetGroupAssetLinks == nil || *res.AssetGroupAssetLinks != 0 {
+		t.Errorf("AssetGroupAssetLinks = %v, want a recorded 0", res.AssetGroupAssetLinks)
+	}
+}
+
+// A 2xx with no asset group result in first place cannot confirm the group, so no id is
+// invented from it.
+func TestCreatePerformanceMaxCampaign_MissingGroupResultIsUnconfirmed(t *testing.T) {
+	assetH, _ := okPMaxAssets()
+	groupH := func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"mutateOperationResponses":[{"assetGroupAssetResult":{"resourceName":"customers/1234567890/assetGroupAssets/555~900~HEADLINE"}}]}`)
+	}
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH))
+	c := demandGenClient(t, srv)
+	in := demandGenInput()
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Fatalf("error = %v, want UNCONFIRMED", err)
+	}
+	if res == nil || res.AssetGroupID != "" {
+		t.Errorf("result = %+v, want no asset group id", res)
 	}
 }
 
@@ -533,16 +657,15 @@ func TestCreatePerformanceMaxCampaign_ExpansionStepPerCampaignCreateArm(t *testi
 // back there.
 func TestCreatePerformanceMaxCampaign_PartialFailureStillReportsExpansion(t *testing.T) {
 	assetH, _ := okPMaxAssets()
-	groupH, _ := okPMaxGroup()
-	linkH := gaqlError(http.StatusBadRequest, "assetGroupAssetError", "DUPLICATE_RESOURCE")
-	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH, linkH))
+	groupH := gaqlError(http.StatusBadRequest, "assetGroupError", "DUPLICATE_NAME")
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH))
 	c := demandGenClient(t, srv)
 	in := demandGenInput()
 	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
 
 	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
 	if err == nil {
-		t.Fatal("a failed link mutate must be reported")
+		t.Fatal("a failed asset group mutate must be reported")
 	}
 	if res == nil || res.CampaignID == "" {
 		t.Fatalf("a campaign was created; the partial result must carry it: %+v", res)
@@ -562,36 +685,119 @@ func TestCreatePerformanceMaxCampaign_PartialFailureStillReportsExpansion(t *tes
 }
 
 // TestCreatePerformanceMaxCampaign_ShortLinkResponseRecordsZero covers the AMBIGUOUS
-// half of the link outcome: a 2xx that describes fewer links than were sent. Some links
-// may well exist, but this client cannot say which, and "cannot say" must record zero
-// rather than nothing — recording nothing would be indistinguishable from a row written
-// before the field existed, and the activation gate would let the campaign serve on the
-// strength of a group whose contents nobody has confirmed.
+// half of the link outcome: a 2xx that describes the group and fewer links than were sent.
+// The request was atomic and answered 2xx, so the group exists and its id is kept; but
+// this client cannot say which links do, and "cannot say" must record zero rather than
+// nothing — recording nothing would be indistinguishable from a row written before the
+// field existed, and the activation gate would let the campaign serve on the strength of a
+// group whose contents nobody has confirmed.
 func TestCreatePerformanceMaxCampaign_ShortLinkResponseRecordsZero(t *testing.T) {
 	assetH, _ := okPMaxAssets()
-	groupH, _ := okPMaxGroup()
-	shortLinkH := func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"results": []map[string]string{{"resourceName": "customers/1234567890/assetGroupAssets/555~900~HEADLINE"}},
-		})
-	}
-	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH, shortLinkH))
+	groupH, _ := groupMutate(1)
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH))
 	c := demandGenClient(t, srv)
 	in := demandGenInput()
 	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
 
 	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
 	if err == nil {
-		t.Fatal("a short link mutate response must be reported, not treated as success")
+		t.Fatal("a short link response must be reported, not treated as success")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("error = %q, want UNCONFIRMED", err)
 	}
 	if res == nil {
 		t.Fatal("past the campaign create the error must come ALONGSIDE a result, never (nil, err)")
 	}
+	if res.AssetGroupID != "555" {
+		t.Errorf("AssetGroupID = %q, want 555 — a 2xx on an atomic request means the group exists", res.AssetGroupID)
+	}
 	if res.AssetGroupAssetLinks == nil {
-		t.Fatal("AssetGroupAssetLinks is nil on an unconfirmed link mutate; the ambiguous case must record zero, not nothing")
+		t.Fatal("AssetGroupAssetLinks is nil on an unconfirmed link outcome; the ambiguous case must record zero, not nothing")
 	}
 	if *res.AssetGroupAssetLinks != 0 {
-		t.Errorf("AssetGroupAssetLinks = %d, want 0 — nothing was confirmed", *res.AssetGroupAssetLinks)
+		t.Errorf("AssetGroupAssetLinks = %d, want 0 — not every link was confirmed", *res.AssetGroupAssetLinks)
+	}
+}
+
+// A response with the RIGHT NUMBER of entries can still fail to describe a link: an entry
+// with no assetGroupAssetResult is not a confirmed link, and counting entries alone would
+// read it as one. The group is kept, the count stays zero.
+func TestCreatePerformanceMaxCampaign_EmptyLinkResultIsUnconfirmed(t *testing.T) {
+	assetH, _ := okPMaxAssets()
+	groupH := func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req groupMutateBody
+		_ = json.Unmarshal(raw, &req)
+		parts := []string{`{"assetGroupResult":{"resourceName":"customers/1234567890/assetGroups/555"}}`}
+		for i := 1; i < len(req.MutateOperations); i++ {
+			if i == 1 {
+				parts = append(parts, `{}`) // one link entry carries no result
+				continue
+			}
+			parts = append(parts, `{"assetGroupAssetResult":{"resourceName":"customers/1234567890/assetGroupAssets/555~9`+strconv.Itoa(i)+`~HEADLINE"}}`)
+		}
+		_, _ = io.WriteString(w, `{"mutateOperationResponses":[`+strings.Join(parts, ",")+`]}`)
+	}
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH))
+	c := demandGenClient(t, srv)
+	in := demandGenInput()
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Fatalf("error = %v, want UNCONFIRMED — one link was not described", err)
+	}
+	if res == nil || res.AssetGroupID != "555" {
+		t.Fatalf("result = %+v, want the group kept", res)
+	}
+	if res.AssetGroupAssetLinks == nil || *res.AssetGroupAssetLinks != 0 {
+		t.Errorf("AssetGroupAssetLinks = %v, want a recorded 0", res.AssetGroupAssetLinks)
+	}
+}
+
+// A link result Google answered with must name a link in THIS account and in THIS group;
+// anything else does not describe a link this request created and is not counted. One bad
+// name is enough to keep the count at zero, as an empty result is above.
+func TestCreatePerformanceMaxCampaign_ForeignLinkResultIsUnconfirmed(t *testing.T) {
+	cases := map[string]string{
+		"another account": "customers/9999999999/assetGroupAssets/555~900~HEADLINE",
+		"another group":   "customers/1234567890/assetGroupAssets/777~900~HEADLINE",
+		"another kind":    "customers/1234567890/assets/900",
+	}
+	for name, bad := range cases {
+		t.Run(name, func(t *testing.T) {
+			assetH, _ := okPMaxAssets()
+			groupH := func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				var req groupMutateBody
+				_ = json.Unmarshal(raw, &req)
+				parts := []string{`{"assetGroupResult":{"resourceName":"customers/1234567890/assetGroups/555"}}`}
+				for i := 1; i < len(req.MutateOperations); i++ {
+					link := "customers/1234567890/assetGroupAssets/555~9" + strconv.Itoa(i) + "~HEADLINE"
+					if i == 1 {
+						link = bad
+					}
+					parts = append(parts, `{"assetGroupAssetResult":{"resourceName":"`+link+`"}}`)
+				}
+				_, _ = io.WriteString(w, `{"mutateOperationResponses":[`+strings.Join(parts, ",")+`]}`)
+			}
+			srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH))
+			c := demandGenClient(t, srv)
+			in := demandGenInput()
+			in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+			res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+			if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+				t.Fatalf("error = %v, want UNCONFIRMED — link result %q is not this group's", err, bad)
+			}
+			if res == nil || res.AssetGroupID != "555" {
+				t.Fatalf("result = %+v, want the group kept", res)
+			}
+			if res.AssetGroupAssetLinks == nil || *res.AssetGroupAssetLinks != 0 {
+				t.Errorf("AssetGroupAssetLinks = %v, want a recorded 0", res.AssetGroupAssetLinks)
+			}
+		})
 	}
 }
 
@@ -602,8 +808,7 @@ func TestCreatePerformanceMaxCampaign_ShortAssetResponseIsUnconfirmed(t *testing
 			"results": []map[string]string{{"resourceName": "customers/1234567890/assets/900"}},
 		})
 	}
-	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), shortH,
-		failHandler(t, "assetGroups:mutate"), failHandler(t, "assetGroupAssets:mutate")))
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), shortH, failHandler(t, "googleAds:mutate")))
 	c := demandGenClient(t, srv)
 	in := demandGenInput()
 	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
@@ -633,8 +838,7 @@ func TestCreatePerformanceMaxCampaign_WrongAccountAssetIsUnconfirmed(t *testing.
 		}
 		return "customers/1234567890/assets/90" + string(rune('0'+i))
 	})
-	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), wrongH,
-		failHandler(t, "assetGroups:mutate"), failHandler(t, "assetGroupAssets:mutate")))
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), wrongH, failHandler(t, "googleAds:mutate")))
 	c := demandGenClient(t, srv)
 	in := demandGenInput()
 	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
@@ -658,8 +862,7 @@ func TestCreatePerformanceMaxCampaign_WrongAccountAssetIsUnconfirmed(t *testing.
 func TestCreatePerformanceMaxCampaign_NoAssetGroupSaysSoLoudly(t *testing.T) {
 	// No creative at all — legal, because adoption of a hand-built asset group must
 	// not be refused — but the campaign cannot serve, and the step list has to say it.
-	srv := demandGenTLSServer(t, pmaxCascade(t, nil,
-		failHandler(t, "assets:mutate"), failHandler(t, "assetGroups:mutate"), failHandler(t, "assetGroupAssets:mutate")))
+	srv := demandGenTLSServer(t, pmaxCascade(t, nil, failHandler(t, "assets:mutate"), failHandler(t, "googleAds:mutate")))
 	c := demandGenClient(t, srv)
 
 	res, err := c.CreatePerformanceMaxCampaign(context.Background(), demandGenInput())
@@ -753,7 +956,6 @@ func TestPreflightPerformanceMaxSplitsTheCriteria(t *testing.T) {
 func TestCreatePerformanceMaxCampaign_DuplicateBudgetReusesOrphan(t *testing.T) {
 	assetH, _ := okPMaxAssets()
 	groupH, _ := okPMaxGroup()
-	linkH, _ := okPMaxLinks()
 	images := pmaxImages(t)
 	in := demandGenInput()
 	budgetName := ComposeName(budgetKindFor(campaignKindPerformanceMax), in)
@@ -765,7 +967,7 @@ func TestCreatePerformanceMaxCampaign_DuplicateBudgetReusesOrphan(t *testing.T) 
 		searches     int
 		campaignBody map[string]any
 	)
-	cascade := pmaxCascade(t, images, assetH, groupH, linkH)
+	cascade := pmaxCascade(t, images, assetH, groupH)
 	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):

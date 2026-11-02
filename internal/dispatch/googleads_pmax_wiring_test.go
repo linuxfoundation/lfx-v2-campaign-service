@@ -23,7 +23,7 @@ import (
 // The asset-group mutates themselves are NOT exercised from here, and deliberately:
 // a non-empty asset group requires real image bytes, and the creative fetch's dial
 // guard and TLS roots are relaxable only from inside the googleads package (see
-// withImageDialGuard). Reaching those three mutates from dispatch would mean
+// withImageDialGuard). Reaching those mutates from dispatch would mean
 // exporting a test-only hole in the one fetch that must never have one. The two
 // facts this file can establish without it are the two that matter here — that the
 // channel reaches the campaign shell, and that every creative list reaches the

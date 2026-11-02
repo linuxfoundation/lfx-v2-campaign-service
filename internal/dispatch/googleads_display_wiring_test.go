@@ -143,22 +143,20 @@ func TestGoogleAds_DisplayCreativeConfigReachesTheImageFetch(t *testing.T) {
 // with headlines and the long headline merged, dropping either would still leave the
 // combined count satisfied and the ad would carry the wrong asset field types.
 //
-// The two marketing arrays are omitted TOGETHER, because the requirement is reciprocal —
-// either one alone satisfies it — and a table that omitted just one would pass against a
-// mapper that never read that array at all.
+// The two marketing arrays are omitted ONE AT A TIME, because Google requires each shape
+// on its own (#437): a mapper that dropped either array is now refused by name, where the
+// old reciprocal rule let the other array cover for it.
 func TestGoogleAds_EachDisplayFieldReachesItsOwnSlot(t *testing.T) {
 	cases := map[string]struct {
 		omit []string
 		want string
 	}{
-		"marketing images": {
-			[]string{"marketingImages", "squareMarketingImages"},
-			"needs at least one marketing image or one square marketing image",
-		},
-		"headlines":     {[]string{"headlines"}, "needs at least 1 headline"},
-		"long headline": {[]string{"longHeadline"}, "requires a long headline"},
-		"descriptions":  {[]string{"descriptions"}, "needs at least 1 description"},
-		"business name": {[]string{"businessName"}, "requires a business name"},
+		"marketing images":        {[]string{"marketingImages"}, "needs at least one marketing image (1.91:1)"},
+		"square marketing images": {[]string{"squareMarketingImages"}, "needs at least one square marketing image (1:1)"},
+		"headlines":               {[]string{"headlines"}, "needs at least 1 headline"},
+		"long headline":           {[]string{"longHeadline"}, "requires a long headline"},
+		"descriptions":            {[]string{"descriptions"}, "needs at least 1 description"},
+		"business name":           {[]string{"businessName"}, "requires a business name"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

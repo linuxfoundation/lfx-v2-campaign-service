@@ -295,39 +295,46 @@ func TestImageSlotCatalog_GeometryComesFromTheChannelTables(t *testing.T) {
 // slots. A plan that filled twenty marketing images under a fifteen-image Display ceiling
 // would be refused at the ad mutate — after the budget and the campaign exist.
 func TestImageSlotCatalog_SharedCeilingsMatchTheCreatePath(t *testing.T) {
-	want := map[string]int{
-		advertisingChannelPerformanceMax: maxPerformanceMaxMarketingImages,
-		advertisingChannelDemandGen:      maxDemandGenMarketingImages,
-		advertisingChannelDisplay:        maxDisplayMarketingImages,
+	type ceiling struct{ channel, group string }
+	want := map[ceiling]int{
+		{advertisingChannelPerformanceMax, marketingImageGroup}: maxPerformanceMaxMarketingImages,
+		{advertisingChannelDemandGen, marketingImageGroup}:      maxDemandGenMarketingImages,
+		{advertisingChannelDisplay, marketingImageGroup}:        maxDisplayMarketingImages,
+		// Display's two logo arrays share five between them (#437); no other channel
+		// caps its logos together.
+		{advertisingChannelDisplay, logoImageGroup}: maxDisplayLogos,
 	}
 	// The slots each channel counts toward that ceiling, as its validator counts them:
 	// Performance Max sums its three marketing shapes, Demand Gen all four, Display its
-	// landscape and square pair.
-	wantMembers := map[string]int{
-		advertisingChannelPerformanceMax: 3,
-		advertisingChannelDemandGen:      4,
-		advertisingChannelDisplay:        2,
+	// landscape and square pair — and, separately, its landscape and square logos.
+	wantMembers := map[ceiling]int{
+		{advertisingChannelPerformanceMax, marketingImageGroup}: 3,
+		{advertisingChannelDemandGen, marketingImageGroup}:      4,
+		{advertisingChannelDisplay, marketingImageGroup}:        2,
+		{advertisingChannelDisplay, logoImageGroup}:             2,
 	}
 
-	members := map[string]int{}
+	members := map[ceiling]int{}
 	for _, spec := range ImageSlotCatalog().Slots {
 		if spec.Group == "" {
 			continue
 		}
-		if spec.Group != marketingImageGroup {
+		key := ceiling{spec.Channel, spec.Group}
+		limit, ok := want[key]
+		if !ok {
 			t.Errorf("slot %q is in unexpected group %q", spec.Key(), spec.Group)
 			continue
 		}
-		members[spec.Channel]++
-		if spec.GroupMax != want[spec.Channel] {
-			t.Errorf("slot %q shares a ceiling of %d, but %s enforces %d",
-				spec.Key(), spec.GroupMax, spec.Channel, want[spec.Channel])
+		members[key]++
+		if spec.GroupMax != limit {
+			t.Errorf("slot %q shares a ceiling of %d, but %s enforces %d for its %s group",
+				spec.Key(), spec.GroupMax, spec.Channel, limit, spec.Group)
 		}
 	}
-	for channel, n := range wantMembers {
-		if members[channel] != n {
-			t.Errorf("%s counts %d slots toward its marketing ceiling, but the catalog groups %d",
-				channel, n, members[channel])
+	for key, n := range wantMembers {
+		if members[key] != n {
+			t.Errorf("%s counts %d slots toward its %s ceiling, but the catalog groups %d",
+				key.channel, n, key.group, members[key])
 		}
 	}
 }
@@ -336,11 +343,11 @@ func TestImageSlotCatalog_SharedCeilingsMatchTheCreatePath(t *testing.T) {
 // ceiling must publish none rather than borrow its group's.
 func TestImageSlotCatalog_PerSlotCeilingsMatchTheCreatePath(t *testing.T) {
 	want := map[string]int{
-		advertisingChannelPerformanceMax + "/" + assetFieldLogo:                                 maxPerformanceMaxLogos,
-		advertisingChannelPerformanceMax + "/" + assetFieldLandscapeLogo:                        maxPerformanceMaxLandscapeLogos,
-		advertisingChannelDemandGen + "/" + demandGenImageSlots[logoSlotIndex].jsonKey:          maxDemandGenLogos,
-		advertisingChannelDisplay + "/" + displayImageSlots[displayLogoSlotIndex].jsonKey:       maxDisplayLogos,
-		advertisingChannelDisplay + "/" + displayImageSlots[displaySquareLogoSlotIndex].jsonKey: maxDisplayLogos,
+		advertisingChannelPerformanceMax + "/" + assetFieldLogo:                        maxPerformanceMaxLogos,
+		advertisingChannelPerformanceMax + "/" + assetFieldLandscapeLogo:               maxPerformanceMaxLandscapeLogos,
+		advertisingChannelDemandGen + "/" + demandGenImageSlots[logoSlotIndex].jsonKey: maxDemandGenLogos,
+		// Display's logos publish NO per-slot ceiling: Google states only the combined one,
+		// which the logo group above carries (#437).
 	}
 	for _, spec := range ImageSlotCatalog().Slots {
 		if got := spec.MaxCount; got != want[spec.Channel+"/"+spec.Slot] {

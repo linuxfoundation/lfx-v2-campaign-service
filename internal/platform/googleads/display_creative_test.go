@@ -15,11 +15,12 @@ import (
 // fullDisplayCreative passes every local rule, so a test can vary exactly one thing.
 func fullDisplayCreative() DisplayCreative {
 	return DisplayCreative{
-		MarketingImages: []string{"https://cdn.example.org/m1.png"},
-		Headlines:       []string{"Join us at KubeCon"},
-		LongHeadline:    "KubeCon + CloudNativeCon Europe 2026, Amsterdam",
-		Descriptions:    []string{"Three days of talks, workshops and hallway track."},
-		BusinessName:    "Linux Foundation",
+		MarketingImages:       []string{"https://cdn.example.org/m1.png"},
+		SquareMarketingImages: []string{"https://cdn.example.org/sq.png"},
+		Headlines:             []string{"Join us at KubeCon"},
+		LongHeadline:          "KubeCon + CloudNativeCon Europe 2026, Amsterdam",
+		Descriptions:          []string{"Three days of talks, workshops and hallway track."},
+		BusinessName:          "Linux Foundation",
 	}
 }
 
@@ -65,7 +66,6 @@ func TestValidateDisplayCreative_RefusedOffDisplay(t *testing.T) {
 
 func TestValidateDisplayCreative_HappyPath(t *testing.T) {
 	d := fullDisplayCreative()
-	d.SquareMarketingImages = []string{"https://cdn.example.org/sq.png"}
 	d.LogoImages = []string{"https://cdn.example.org/logo.png"}
 	d.SquareLogoImages = []string{"https://cdn.example.org/sqlogo.png"}
 	d.CallToActionText = "Register"
@@ -106,30 +106,37 @@ func TestDisplayImageSlots_LabelsNameTheChannel(t *testing.T) {
 	}
 }
 
-// The marketing requirement is RECIPROCAL — Google documents each shape as required
-// when the other is absent — so either alone satisfies it and neither alone is
-// mandatory. Demanding both would be over-refusal: refusing a creative Google accepts.
-func TestValidateDisplayCreative_MarketingImagesAreReciprocal(t *testing.T) {
-	landscapeOnly := fullDisplayCreative() // marketing only
-	if _, err := validateDisplay(t, landscapeOnly); err != nil {
-		t.Errorf("a landscape marketing image alone must be accepted: %v", err)
+// BOTH marketing shapes are required, each on its own (#437). v23
+// ResponsiveDisplayAdInfo says "At least one `marketing_image` is required" and "At least
+// one square `marketing_image` is required"; the earlier reading copied Demand Gen's
+// reciprocal wording and let either shape alone through, so Google refused the ad at
+// adGroupAds:mutate — after the budget, the campaign and the ad group existed.
+func TestValidateDisplayCreative_BothMarketingShapesAreRequired(t *testing.T) {
+	if _, err := validateDisplay(t, fullDisplayCreative()); err != nil {
+		t.Errorf("one image of each marketing shape must be accepted: %v", err)
 	}
 
-	squareOnly := fullDisplayCreative()
-	squareOnly.MarketingImages = nil
-	squareOnly.SquareMarketingImages = []string{"https://cdn.example.org/sq.png"}
-	if _, err := validateDisplay(t, squareOnly); err != nil {
-		t.Errorf("a square marketing image alone must be accepted: %v", err)
+	cases := []struct {
+		name  string
+		strip func(*DisplayCreative)
+		want  string
+	}{
+		{"landscape only", func(d *DisplayCreative) { d.SquareMarketingImages = nil }, "square marketing image (1:1)"},
+		{"square only", func(d *DisplayCreative) { d.MarketingImages = nil }, "marketing image (1.91:1)"},
+		{"neither", func(d *DisplayCreative) { d.MarketingImages, d.SquareMarketingImages = nil, nil }, "marketing image (1.91:1)"},
 	}
-
-	neither := fullDisplayCreative()
-	neither.MarketingImages = nil
-	_, err := validateDisplay(t, neither)
-	if err == nil {
-		t.Fatal("a creative with neither marketing shape must be refused")
-	}
-	if !strings.Contains(err.Error(), "marketing image") {
-		t.Errorf("the refusal must name the missing field: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := fullDisplayCreative()
+			tc.strip(&d)
+			_, err := validateDisplay(t, d)
+			if err == nil {
+				t.Fatalf("a creative with %s must be refused before the budget mutate", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal must name the missing shape %q: %v", tc.want, err)
+			}
+		})
 	}
 }
 
@@ -157,37 +164,49 @@ func TestValidateDisplayCreative_MarketingCapIsCombined(t *testing.T) {
 	}
 }
 
-// Logos are capped PER ARRAY, not across the pair — and have no floor at all, which is
-// the explicit difference from Demand Gen, where Google requires a logo.
-func TestValidateDisplayCreative_LogosAreCappedPerArrayWithNoFloor(t *testing.T) {
-	noLogos := fullDisplayCreative()
-	if _, err := validateDisplay(t, noLogos); err != nil {
+// Logos share ONE ceiling across both arrays (#437) — v23 states "Combined with
+// `square_logo_images`, the maximum is 5" on each field and no per-array limit — and have
+// no floor at all, which is the explicit difference from Demand Gen, where Google requires
+// a logo.
+func TestValidateDisplayCreative_LogosAreCappedCombinedWithNoFloor(t *testing.T) {
+	if _, err := validateDisplay(t, fullDisplayCreative()); err != nil {
 		t.Errorf("Display logos are optional, unlike Demand Gen's: %v", err)
 	}
 
-	bothAtCap := fullDisplayCreative()
-	bothAtCap.LogoImages = urlsN("l", maxDisplayLogos)
-	bothAtCap.SquareLogoImages = urlsN("q", maxDisplayLogos)
-	if _, err := validateDisplay(t, bothAtCap); err != nil {
-		t.Errorf("%d logos in EACH array must be accepted — the cap is per array: %v", maxDisplayLogos, err)
+	accepted := map[string][2]int{
+		"five landscape":   {maxDisplayLogos, 0},
+		"five square":      {0, maxDisplayLogos},
+		"five across both": {3, 2},
+	}
+	for name, n := range accepted {
+		t.Run(name, func(t *testing.T) {
+			d := fullDisplayCreative()
+			d.LogoImages = urlsN("l", n[0])
+			d.SquareLogoImages = urlsN("q", n[1])
+			if _, err := validateDisplay(t, d); err != nil {
+				t.Errorf("%d + %d logos is within the combined ceiling of %d: %v", n[0], n[1], maxDisplayLogos, err)
+			}
+		})
 	}
 
-	overLandscape := fullDisplayCreative()
-	overLandscape.LogoImages = urlsN("l", maxDisplayLogos+1)
-	if _, err := validateDisplay(t, overLandscape); err == nil {
-		t.Errorf("%d logo images must be refused", maxDisplayLogos+1)
+	refused := map[string][2]int{
+		"three and three": {3, 3},
+		"six landscape":   {maxDisplayLogos + 1, 0},
+		"six square":      {0, maxDisplayLogos + 1},
 	}
-
-	overSquare := fullDisplayCreative()
-	overSquare.SquareLogoImages = urlsN("q", maxDisplayLogos+1)
-	_, err := validateDisplay(t, overSquare)
-	if err == nil {
-		t.Fatalf("%d square logo images must be refused", maxDisplayLogos+1)
-	}
-	// The two ceilings are separate checks, and a message that said "logo images" for
-	// the square array would send an operator to the wrong field.
-	if !strings.Contains(err.Error(), "square logo images") {
-		t.Errorf("the square-logo refusal must name the square array: %v", err)
+	for name, n := range refused {
+		t.Run(name, func(t *testing.T) {
+			d := fullDisplayCreative()
+			d.LogoImages = urlsN("l", n[0])
+			d.SquareLogoImages = urlsN("q", n[1])
+			_, err := validateDisplay(t, d)
+			if err == nil {
+				t.Fatalf("%d + %d logos is over the combined ceiling of %d and must be refused", n[0], n[1], maxDisplayLogos)
+			}
+			if !strings.Contains(err.Error(), "across both shapes") {
+				t.Errorf("the refusal must say the ceiling spans both logo arrays: %v", err)
+			}
+		})
 	}
 }
 
@@ -299,7 +318,6 @@ func TestValidateDisplayCreative_RefusesNonHTTPSImageURLs(t *testing.T) {
 // arrays by index, so it is the function a slot reordering breaks silently.
 func TestDisplayCreativeStep(t *testing.T) {
 	d := fullDisplayCreative()
-	d.SquareMarketingImages = []string{"https://cdn.example.org/sq.png"}
 	d.LogoImages = []string{"https://cdn.example.org/logo.png"}
 	plan, err := validateDisplay(t, d)
 	if err != nil {

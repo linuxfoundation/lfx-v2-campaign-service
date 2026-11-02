@@ -78,14 +78,20 @@ func slotFrom(channel string, s imageSlot, minCount, maxCount int, group string,
 // name is correct and cannot leak a channel's budget into another's.
 const marketingImageGroup = "marketing image"
 
+// logoImageGroup is the shared-ceiling name for logo shapes that Google caps TOGETHER.
+// Only Display uses it: its landscape and square logos are five between them. The
+// Performance Max and Demand Gen logos keep per-slot ceilings, because those are the
+// limits their create paths enforce.
+const logoImageGroup = "logo image"
+
 // performanceMaxCatalog publishes the five Performance Max slots.
 //
 // Both marketing shapes are REQUIRED here, individually — Google requires the landscape
 // and the square on every asset group, which validatePerformanceMaxCreative enforces as
 // two separate refusals — so they carry per-slot minimums and this channel states no
-// either-or rule. Demand Gen and Display, whose identically named shapes are reciprocal,
-// do state one; that contrast is a real difference in Google's rules, not an
-// inconsistency in this file.
+// either-or rule. Display requires both shapes in the same way. Demand Gen, whose
+// identically named shapes are reciprocal, does state one; that contrast is a real
+// difference in Google's rules, not an inconsistency in this file.
 func performanceMaxCatalog() creative.Catalog {
 	s := performanceMaxImageSlots
 	return creative.Catalog{
@@ -127,26 +133,21 @@ func demandGenCatalog() creative.Catalog {
 
 // displayCatalog publishes the four responsive-display slots.
 //
-// Its marketing pair is reciprocal exactly as Demand Gen's is, under a FIFTEEN-image
-// ceiling rather than twenty. Both logo arrays are optional here — the create path bounds
-// each at five and requires neither — so neither carries a minimum and no either-or rule
-// covers them.
+// Both marketing shapes are REQUIRED, individually, as on Performance Max — Google's
+// ResponsiveDisplayAdInfo requires at least one landscape and at least one square
+// marketing image — so each carries a per-slot minimum under a FIFTEEN-image shared
+// ceiling, and the channel states no either-or rule. Both logo arrays are optional and
+// share one five-image ceiling, which is how Google states it, so they sit in their own
+// group with no per-slot maximum (#437).
 func displayCatalog() creative.Catalog {
 	s := displayImageSlots
 	ch := advertisingChannelDisplay
-	landscape := slotFrom(ch, s[displayMarketingSlotIndex], 0, 0, marketingImageGroup, maxDisplayMarketingImages)
-	square := slotFrom(ch, s[displaySquareMarketingSlotIndex], 0, 0, marketingImageGroup, maxDisplayMarketingImages)
 	return creative.Catalog{
 		Slots: []creative.SlotSpec{
-			landscape,
-			square,
-			slotFrom(ch, s[displayLogoSlotIndex], 0, maxDisplayLogos, "", 0),
-			slotFrom(ch, s[displaySquareLogoSlotIndex], 0, maxDisplayLogos, "", 0),
+			slotFrom(ch, s[displayMarketingSlotIndex], 1, 0, marketingImageGroup, maxDisplayMarketingImages),
+			slotFrom(ch, s[displaySquareMarketingSlotIndex], 1, 0, marketingImageGroup, maxDisplayMarketingImages),
+			slotFrom(ch, s[displayLogoSlotIndex], 0, 0, logoImageGroup, maxDisplayLogos),
+			slotFrom(ch, s[displaySquareLogoSlotIndex], 0, 0, logoImageGroup, maxDisplayLogos),
 		},
-		AnyOf: []creative.AnyOfRule{{
-			Slots: []string{landscape.Key(), square.Key()},
-			Min:   1,
-			Label: "Display marketing image, landscape or square",
-		}},
 	}
 }

@@ -66,7 +66,7 @@ func TestCreateOutcome_ClassifiesEveryPartialShape(t *testing.T) {
 			domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed, true},
 
 		// DUPLICATE_NAME is not exclusive to CampaignBudgetError: parseErrorCodes keeps the
-		// bare enum value and drops the error family, and PMax's assetGroups:mutate runs after
+		// bare enum value and drops the error family, and PMax's asset group mutate runs after
 		// the campaign exists. The ids outrank the code everywhere past the budget step.
 		{"duplicate name past the budget step does not claim nothing was created", campaignPartial, budgetDup,
 			domain.CreateOutcomeCampaignCreatedSetupIncomplete, true},
@@ -85,7 +85,7 @@ func TestCreateOutcome_ClassifiesEveryPartialShape(t *testing.T) {
 			domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed, true},
 
 		// The cascade's LAST mutate answering 2xx with a response this client cannot read:
-		// pmax_creative.go's assetGroupAssets:mutate and demandgen_creative.go's
+		// pmax_creative.go's googleAds:mutate and demandgen_creative.go's
 		// adGroupAds:mutate both return a campaign partial with a plain fmt.Errorf whose own
 		// text says the resources MAY exist. The token is right — the campaign exists — but
 		// it is the reason DispatchFailureMessage says the setup could not be CONFIRMED

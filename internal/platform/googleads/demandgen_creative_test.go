@@ -762,6 +762,11 @@ func TestCreateDemandGenCampaign_WithCreative(t *testing.T) {
 	// The ad must reference the resource names Google returned, each in the slot its
 	// image came from — the marketing image as a marketing image, the logo as a logo.
 	adReq := readAd()
+	// The ad-type arm under the Ad oneof FIELD name (#437). The wrong spelling is refused by
+	// Google with a 400 after the campaign exists, and this fake server would accept it.
+	if !strings.Contains(adReq, `"demandGenMultiAssetAd":{`) || strings.Contains(adReq, "demandGenMultiAssetAdInfo") {
+		t.Errorf("ad is not sent under the v23 key demandGenMultiAssetAd: %s", adReq)
+	}
 	if !strings.Contains(adReq, `"marketingImages":[{"asset":"customers/1234567890/assets/900"}]`) {
 		t.Errorf("ad does not reference the marketing asset in its own slot: %s", adReq)
 	}

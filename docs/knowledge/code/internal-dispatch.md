@@ -980,9 +980,9 @@ without opening the dial-guard hole — and asserts that `channel: "display"` re
 shell as `DISPLAY` with **no** `advertisingChannelSubType` (the deliberate contrast with
 Video's pinned `VIDEO_ACTION`), with one ad group and no ad; that a complete creative gets
 past every bound and into the fetch; and that each field omitted in turn produces its own
-refusal. The two marketing arrays are omitted TOGETHER in that table, because the
-requirement is reciprocal — either one alone satisfies it — and a table that omitted just
-one would pass against a mapper that never read that array at all. The logo arrays and the
+refusal. The two marketing arrays are omitted ONE AT A TIME in that table, because Google
+requires each shape on its own (#437), so a mapper that dropped either array is refused by
+that array's own name. The logo arrays and the
 call-to-action text are omitted together too, to prove optional means optional.
 
 One thing this layer does decide for itself is the post-create "NO geo targeting" warning,
@@ -3513,9 +3513,10 @@ stops delivery. An adapter that returns an empty
 variant is refused by the service layer too, so a contract violation cannot fall back to `default`.
 
 **A Performance Max asset group id is not a serving campaign, and the gate stopped treating it as
-one.** `createPerformanceMaxAssetGroup` returns the group id even when the LINK mutate fails,
-deliberately — a group that exists with no assets attached is the state an operator most needs to
-find, and clearing the id would hide it. But the activation gate used to key on that id alone, so
+one.** `createPerformanceMaxAssetGroup` returns the group id whenever Google answered 2xx, even when not
+every link could be read back, deliberately — the group then exists, and clearing the id would hide
+it; rows written by the earlier three-call cascade can also hold a group whose link step failed
+outright (#437 made the group and its links one atomic request). But the activation gate used to key on that id alone, so
 exactly the campaign that cannot serve was the one it called provisioned: it un-paused a campaign
 whose asset group was empty and reported success. The gate now reads a second recorded fact,
 `CampaignResult.AssetGroupAssetLinks`, the number of `assetGroupAssets` links Google CONFIRMED,
