@@ -236,9 +236,14 @@ impression floor would mean the rule effectively never fired on the campaigns th
 
 The floor also means `no_conversions` **never fires on a window with zero clicks**, however quiet
 the campaign: an empty or no-activity window is `zero_delivery`'s finding (gated on the flight
-having begun and on a paid-ads channel), not this rule's. Materialising a measured zero for such a
-window (Google's no-rows branch, LinkedIn's empty `elements`) keeps the field truthful; it does
-not make this rule fire.
+having begun and on a paid-ads channel), not this rule's. Google's no-rows branch materialises a
+measured zero for such a window, and LinkedIn's (since #175) reports `conversions_status:
+no_conversions` with no total; neither makes this rule fire. The brief service passes the rule
+`ReportedConversions()`, so only a `reported` total ever reaches it — an `incomplete` or
+`no_conversions` status cannot fire it even if an adapter set a number beside it
+(`TestGetBriefMetrics_ConversionsStatusGatesTheTotalAndTheRule`). That settles #175's second
+point: the docs that called a zero-click window "the campaign the rule exists to catch" were
+wrong, and #357's behaviour (no firing below the click floor) is kept.
 
 The second floor is the one that matters more: the rule is **gated on the read having produced a
 conversion measurement** (`Conversions != nil`), the same way `zero_delivery` is gated on the

@@ -1676,12 +1676,14 @@ func TestGetCampaignMetrics_NoElementsIsAnAnsweredZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if m.Conversions == nil {
-		t.Fatal("Conversions = nil on an empty elements array; LinkedIn answered this window " +
-			"and the metric was in the fields list, so the zero is a measurement")
+	// #175: the answered empty window is now named by its status, no_conversions, and carries
+	// NO total — the total is published only when the status is reported.
+	if m.ConversionsStatus != model.ConversionsNoConversions {
+		t.Errorf("ConversionsStatus = %q on an empty elements array, want %q: LinkedIn answered "+
+			"this window and nothing in it could convert", m.ConversionsStatus, model.ConversionsNoConversions)
 	}
-	if *m.Conversions != 0 {
-		t.Errorf("Conversions = %v, want 0", *m.Conversions)
+	if m.Conversions != nil {
+		t.Errorf("Conversions = %v, want nil: only a reported status carries a total", *m.Conversions)
 	}
 }
 
@@ -1835,11 +1837,12 @@ func TestGetCampaignMetrics_NoActivityConversionsIsMeasuredZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if metrics.Conversions == nil {
-		t.Fatal("expected a non-nil Conversions for an answered zero-activity window, got nil (unmeasured)")
+	if metrics.ConversionsStatus != model.ConversionsNoConversions {
+		t.Fatalf("ConversionsStatus = %q for an answered zero-activity window, want %q (not unavailable: "+
+			"the metric was requested and answered)", metrics.ConversionsStatus, model.ConversionsNoConversions)
 	}
-	if *metrics.Conversions != 0 {
-		t.Errorf("expected Conversions 0, got %v", *metrics.Conversions)
+	if metrics.Conversions != nil {
+		t.Errorf("Conversions = %v, want nil: no_conversions carries no total (#175)", *metrics.Conversions)
 	}
 	// The sibling measurements must agree with it: all four describe the same answered window.
 	if metrics.Impressions != 0 || metrics.Clicks != 0 || metrics.CostMicros != 0 {
@@ -1917,3 +1920,55 @@ func TestGetCampaignMetrics_NilConversionsIsAnIncompleteRead(t *testing.T) {
 		})
 	}
 }
+
+// TestGetCampaignMetrics_ConversionsStatusSeparatesEachCase pins the #175 status for every shape a
+// LinkedIn response can take, and that the total is set ONLY when the status is reported. Before
+// #175 the first two cases were both a bare nil, so a consumer could not tell an incomplete read of
+// a conversion-capable campaign from a channel that cannot report conversions at all.
+func TestGetCampaignMetrics_ConversionsStatusSeparatesEachCase(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   string
+		status model.ConversionsStatus
+		total  *float64
+	}{
+		{"some elements omit the metric: incomplete",
+			`{"elements":[{"impressions":500,"clicks":40,"externalWebsiteConversions":3},{"impressions":500,"clicks":40}]}`,
+			model.ConversionsIncomplete, nil},
+		{"no element carries the metric: unavailable",
+			`{"elements":[{"impressions":500,"clicks":40},{"impressions":500,"clicks":40}]}`,
+			model.ConversionsUnavailable, nil},
+		{"every element carries it, zero clicks and zero conversions: no_conversions",
+			`{"elements":[{"impressions":500,"clicks":0,"externalWebsiteConversions":0}]}`,
+			model.ConversionsNoConversions, nil},
+		{"zero clicks but a reported conversion: reported",
+			`{"elements":[{"impressions":500,"clicks":0,"externalWebsiteConversions":2}]}`,
+			model.ConversionsReported, ptrFloat(2)},
+		{"clicks and a measured zero: reported 0",
+			`{"elements":[{"impressions":1000,"clicks":60,"externalWebsiteConversions":0}]}`,
+			model.ConversionsReported, ptrFloat(0)},
+		{"empty window: no_conversions",
+			`{"elements":[]}`,
+			model.ConversionsNoConversions, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := linkedinConvServer(t, tc.body)
+			m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if m.ConversionsStatus != tc.status {
+				t.Errorf("ConversionsStatus = %q, want %q", m.ConversionsStatus, tc.status)
+			}
+			switch {
+			case tc.total == nil && m.Conversions != nil:
+				t.Errorf("Conversions = %v, want nil: only a reported status carries a total", *m.Conversions)
+			case tc.total != nil && (m.Conversions == nil || *m.Conversions != *tc.total):
+				t.Errorf("Conversions = %v, want %v", m.Conversions, *tc.total)
+			}
+		})
+	}
+}
+
+func ptrFloat(f float64) *float64 { return &f }

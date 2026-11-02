@@ -488,8 +488,9 @@ type CampaignMetrics struct {
 	// zero" are different facts that a plain int64 cannot hold apart.
 	//
 	// nil means THIS READ PRODUCED NO COMPLETE CONVERSION MEASUREMENT; a non-nil 0 is a
-	// measurement. Two distinct situations reach nil, and a consumer must treat them the
-	// same way, which is why the contract is stated over the READ rather than the platform:
+	// measurement. Since #175, WHICH situation reached nil is named by ConversionsStatus
+	// (ResolvedConversionsStatus), and a consumer publishes the total only through
+	// ReportedConversions. The situations that reach nil are:
 	//
 	//   - the channel reports no campaign-level conversion count at all (Meta, X, Reddit,
 	//     HubSpot — see the four entries below), and
@@ -523,10 +524,11 @@ type CampaignMetrics struct {
 	//     Reporting schema), which must be named in the request's `fields` list: LinkedIn
 	//     returns only impressions and clicks by default, so an unnamed metric comes back
 	//     absent rather than zero. The client always names it, so a well-formed empty
-	//     `elements` array is an ANSWERED zero-activity window and materialises a non-nil
-	//     zero, matching Google's no-rows branch. Nil is reserved for the case where an
-	//     element LinkedIn DID return omitted the metric: that is missing data about
-	//     activity that happened, and it withdraws the whole total.
+	//     `elements` array is an ANSWERED zero-activity window. Since #175 that window, and a
+	//     complete response with no clicks and no conversions, are ConversionsNoConversions
+	//     with NO total (they used to materialise a non-nil zero). An element that omitted the
+	//     metric withdraws the whole total: ConversionsIncomplete when other elements carried
+	//     it, ConversionsUnavailable when none did.
 	//   - Microsoft populates it from the ConversionsQualified report column, NOT from
 	//     Conversions. Microsoft's own column reference marks `Conversions` deprecated as of
 	//     2022, directs callers to ConversionsQualified, and warns the legacy column's values
@@ -559,6 +561,11 @@ type CampaignMetrics struct {
 	// on a nil precisely so a platform that cannot measure conversions is never reported as
 	// a campaign that failed to earn any.
 	Conversions *float64
+	// ConversionsStatus says what the read established about conversions, so a consumer never
+	// has to infer it from Conversions being nil (#175). Conversions is set ONLY when it is
+	// ConversionsReported; every other status carries no total. An adapter that leaves it
+	// empty is read by ResolvedConversionsStatus. See ConversionsStatus for the vocabulary.
+	ConversionsStatus ConversionsStatus
 	// ConversionValue is the summed monetary value of those conversions over Window, in WHOLE
 	// units of the ad account's currency — NOT micros, and deliberately asymmetric with
 	// CostMicros above. The platforms that report a conversion value report it as a decimal
@@ -930,4 +937,55 @@ type LocalCampaignRef struct {
 	// BriefID is the brief the campaign belongs to. Required because the mutation routes are
 	// brief-scoped, and a caller holding only a platform id has no way to know it.
 	BriefID string
+}
+
+// ConversionsStatus is what one metrics read established about a campaign's conversions (#175).
+//
+// It exists because a nil Conversions used to carry two meanings — "this channel cannot report a
+// campaign-level count" and "this read came back incomplete" — and a consumer could not tell a
+// conversion-capable LinkedIn campaign with one incomplete element from Meta, which never reports
+// one. The status names each case, and the total is published only when it is ConversionsReported.
+type ConversionsStatus string
+
+const (
+	// ConversionsReported: a complete measurement; Conversions holds it (a 0 is a measured 0).
+	ConversionsReported ConversionsStatus = "reported"
+	// ConversionsUnavailable: the channel, or this account on it, does not report a
+	// campaign-level conversion count (Meta, X, Reddit, email; LinkedIn when no returned element
+	// carried the metric; Microsoft without the ConversionsQualified column or with every cell
+	// blank). No total.
+	ConversionsUnavailable ConversionsStatus = "unavailable"
+	// ConversionsIncomplete: a conversion-capable channel reported the metric for some of the
+	// returned data and omitted it for the rest, so any sum would be a partial count. No total.
+	ConversionsIncomplete ConversionsStatus = "incomplete"
+	// ConversionsNoConversions: the window had no clicks and no conversion was reported — the
+	// campaign did nothing that could convert. No total, and NOT a finding: the no_conversions
+	// rule does not fire on it (zero_delivery covers a campaign that delivered nothing).
+	ConversionsNoConversions ConversionsStatus = "no_conversions"
+)
+
+// ResolvedConversionsStatus is the status this read reports. An adapter that set one explicitly
+// gets it back; one that did not is classified by the only thing it did say, whether it published
+// a total: a total is reported, its absence is unavailable.
+func (m *CampaignMetrics) ResolvedConversionsStatus() ConversionsStatus {
+	if m == nil {
+		return ConversionsUnavailable
+	}
+	if m.ConversionsStatus != "" {
+		return m.ConversionsStatus
+	}
+	if m.Conversions != nil {
+		return ConversionsReported
+	}
+	return ConversionsUnavailable
+}
+
+// ReportedConversions is the conversion total a consumer may publish: Conversions when the
+// resolved status is ConversionsReported, nil otherwise, so no status other than reported can
+// ever carry a number even if an adapter set both.
+func (m *CampaignMetrics) ReportedConversions() *float64 {
+	if m == nil || m.ResolvedConversionsStatus() != ConversionsReported {
+		return nil
+	}
+	return m.Conversions
 }

@@ -1659,7 +1659,12 @@ incomplete — which is not the same claim as a measured zero.** The contract is
 READ, not the platform: LinkedIn withdraws the whole total to nil when any returned element omits
 `externalWebsiteConversions`, and Microsoft does the same on a missing column or blank
 `ConversionsQualified` cell (both below), so a nil from either is NOT evidence that the platform
-cannot report conversions. A consumer must not classify the channel from the nil. Only three of
+cannot report conversions. A consumer must not classify the channel from the nil. Since #175 it
+does not have to: `model.CampaignMetrics.ConversionsStatus` names the case (`reported`,
+`unavailable`, `incomplete`, `no_conversions`) and the API's `conversions_status` carries it.
+LinkedIn and Microsoft set it explicitly; the other adapters are classified by
+`ResolvedConversionsStatus` (a total is `reported`, none is `unavailable`), and
+`ReportedConversions` publishes the total only with `reported`. Only three of
 the seven adapters populate it, and which three was settled field-by-field against each vendor's
 published reference rather than inferred from what the clients happened to request:
 

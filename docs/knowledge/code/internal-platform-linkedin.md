@@ -552,22 +552,27 @@ it lands most often on exactly the responses where the field was never requested
 same discipline `microsoft/metrics.go` applies with `convIncomplete`, where one blank
 `ConversionsQualified` cell withdraws that report's entire total.
 
-An EMPTY `elements` array is the opposite case and answers a non-nil zero. The client always
-names `externalWebsiteConversions` in `fields`, and a well-formed empty array (a null/missing
-`elements` is rejected as a decode error upstream) is LinkedIn stating the campaign had no
-activity — the metric WAS asked for and the window WAS answered, so a no-activity window is a
-MEASUREMENT of zero, not an absence of one. This matches `googleads.GetCampaignMetrics`'s
-no-rows branch. Per `model.CampaignMetrics.Conversions`, nil means "not measured" — the platform
-cannot report it (Meta, X, Reddit, HubSpot), or (LinkedIn, Microsoft) the read was incomplete. An
-empty array is neither: LinkedIn can report the metric and the read is complete, so returning nil
-here would claim an incomplete read that did not happen. Conversely, a nil from this adapter is
-always the incomplete-read case, never "LinkedIn cannot report conversions". Note the two
-branches differ in what the response contains, not in how much is known: an element LinkedIn
-RETURNED without the metric is missing data about activity that happened, while an empty array
-means there was no activity to measure. `Impressions`/`Clicks`/`CostMicros` already answer 0 as
-measurements on that branch, so the pointer now agrees with its siblings instead of
-contradicting them inside one struct. The `no_conversions` rule is unaffected either way: it is
-gated on `Clicks >= minClicksForConversions` and this branch reports zero clicks.
+**Explicit conversions status (#175).** `nil` used to stand for two things — "LinkedIn did not
+report the metric" and "LinkedIn reported it for part of the response" — and the documented
+contract read nil as "the platform cannot report conversions", so an incomplete read of a
+conversion-capable campaign looked like Meta. The adapter now sets
+`model.CampaignMetrics.ConversionsStatus` on every read, and the total only with `reported`:
+
+| Response | Status | Total |
+|---|---|---|
+| empty `elements` (an answered no-activity window) | `no_conversions` | none |
+| every element carries the metric, zero clicks and zero conversions | `no_conversions` | none |
+| every element carries the metric, otherwise | `reported` | the sum (a 0 is a measured 0 against real clicks) |
+| some elements omit it | `incomplete` | none |
+| no element carries it | `unavailable` | none |
+
+An empty array is LinkedIn stating the campaign had no activity: the metric WAS asked for and
+the window WAS answered, so it is neither `unavailable` nor `incomplete`. Before #175 it
+materialised a non-nil zero; `no_conversions` says the same without publishing a 0 a consumer
+could read as a finding. The `no_conversions` rule never fires on it: the rule reads only a
+reported total (via `ReportedConversions`) and is also gated on
+`Clicks >= minClicksForConversions`; `zero_delivery` covers a campaign that delivered nothing.
+`TestGetCampaignMetrics_ConversionsStatusSeparatesEachCase` pins every row of the table.
 
 The same Rest.li-vs-transport encoding split applies to the find-or-create name filter, and
 `doRequest` handles it inline rather than by bypass. `restliEncode` produces the FINAL bytes

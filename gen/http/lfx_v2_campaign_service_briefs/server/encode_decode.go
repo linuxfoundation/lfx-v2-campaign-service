@@ -7506,6 +7506,7 @@ func marshalLfxv2campaignservicebriefsCampaignMetricsToCampaignMetricsResponseBo
 		CostMicros:         v.CostMicros,
 		Ctr:                v.Ctr,
 		Conversions:        v.Conversions,
+		ConversionsStatus:  v.ConversionsStatus,
 		ConversionValue:    v.ConversionValue,
 		Roas:               v.Roas,
 	}

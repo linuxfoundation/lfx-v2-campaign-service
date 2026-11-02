@@ -1321,9 +1321,10 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 		Clicks:      m.Clicks,
 		CostMicros:  m.CostMicros,
 		Ctr:         m.Ctr,
-		// The adapter's POINTER, passed through unchanged so an unmeasured conversion count
-		// is omitted from the response body rather than serialized as 0.
-		Conversions: m.Conversions,
+		// #175: the total rides ONLY with a reported status (ReportedConversions), so an
+		// unmeasured count is omitted rather than serialized as 0, and the status says why.
+		Conversions:       m.ReportedConversions(),
+		ConversionsStatus: string(m.ResolvedConversionsStatus()),
 		// Same pass-through, same reason. Roas is the one most likely to be absent on a real
 		// response — every zero-spend window withholds it — so a consumer that renders a
 		// missing field as 0 will see it here first.
@@ -2909,7 +2910,8 @@ func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []b
 				Clicks:             r.metrics.Clicks,
 				CostMicros:         r.metrics.CostMicros,
 				Ctr:                r.metrics.Ctr,
-				Conversions:        r.metrics.Conversions,
+				Conversions:        r.metrics.ReportedConversions(),
+				ConversionsStatus:  string(r.metrics.ResolvedConversionsStatus()),
 				ConversionValue:    r.metrics.ConversionValue,
 				Roas:               r.metrics.Roas,
 				Email:              emailMetricsResult(r.metrics.Email),
@@ -2958,8 +2960,10 @@ func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []b
 			// Passed through as the POINTER the adapter produced, never dereferenced to a
 			// value here. Flattening a nil to 0 at this boundary would erase the distinction
 			// the whole field exists for and make the no_conversions rule fire on every
-			// campaign running on a platform that cannot report conversions.
-			Conversions: r.metrics.Conversions,
+			// campaign running on a platform that cannot report conversions. Only a REPORTED
+			// total reaches the rule (#175): no_conversions, incomplete and unavailable carry
+			// none, so the no_conversions item cannot fire on a zero-click window.
+			Conversions: r.metrics.ReportedConversions(),
 			Pacing:      r.pacing,
 			// Only a paid-ads channel bills per delivery. HubSpot charges nothing per send and
 			// its adapter always reports CostMicros=0, so "no spend" there is the normal state

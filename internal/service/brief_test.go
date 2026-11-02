@@ -5901,3 +5901,35 @@ func TestBriefService_GetCampaignMetrics_ConversionValueAndRoasPassThrough(t *te
 			got.ConversionValue, got.Roas)
 	}
 }
+
+// #175 on the campaign-scoped route, which maps CampaignMetrics separately from the brief-wide
+// one: the status is reported, and a non-reported status never carries a total.
+func TestBriefService_GetCampaignMetrics_ConversionsStatus(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderLinkedInAds,
+		PlatformCampaignID: "li-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	zero := 0.0
+	for _, tc := range []struct {
+		m          *model.CampaignMetrics
+		wantStatus string
+		wantTotal  bool
+	}{
+		{&model.CampaignMetrics{Clicks: 0, ConversionsStatus: model.ConversionsNoConversions}, "no_conversions", false},
+		{&model.CampaignMetrics{Clicks: 80, Conversions: &zero, ConversionsStatus: model.ConversionsIncomplete}, "incomplete", false},
+		{&model.CampaignMetrics{Clicks: 80, ConversionsStatus: model.ConversionsUnavailable}, "unavailable", false},
+		{&model.CampaignMetrics{Clicks: 80, Conversions: &zero, ConversionsStatus: model.ConversionsReported}, "reported", true},
+	} {
+		res, err := newMetricsService(camp, &metricsOnlyDispatcher{metrics: tc.m}).GetCampaignMetrics(context.Background(),
+			&briefs.GetCampaignMetricsPayload{ProjectID: "cncf", BriefID: "b1", CampaignID: "c1"})
+		if err != nil {
+			t.Fatalf("GetCampaignMetrics: %v", err)
+		}
+		if res.ConversionsStatus != tc.wantStatus {
+			t.Errorf("conversions_status = %q, want %q", res.ConversionsStatus, tc.wantStatus)
+		}
+		if (res.Conversions != nil) != tc.wantTotal {
+			t.Errorf("status %q: conversions = %v, want a total only with reported", tc.wantStatus, res.Conversions)
+		}
+	}
+}

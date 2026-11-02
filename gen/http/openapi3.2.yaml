@@ -5586,6 +5586,7 @@ paths:
                             example:
                                 campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                 clicks: 212
+                                conversions_status: unavailable
                                 cost_micros: 0
                                 ctr: 0.1152
                                 email:
@@ -7261,6 +7262,7 @@ paths:
                                       metrics:
                                         campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                         clicks: 212
+                                        conversions_status: unavailable
                                         cost_micros: 0
                                         ctr: 0.1152
                                         email:
@@ -7283,6 +7285,7 @@ paths:
                                       metrics:
                                         campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                         clicks: 212
+                                        conversions_status: unavailable
                                         cost_micros: 0
                                         ctr: 0.1152
                                         email:
@@ -20489,6 +20492,7 @@ components:
                           metrics:
                             campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                             clicks: 212
+                            conversions_status: unavailable
                             cost_micros: 0
                             ctr: 0.1152
                             email:
@@ -20511,6 +20515,7 @@ components:
                           metrics:
                             campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                             clicks: 212
+                            conversions_status: unavailable
                             cost_micros: 0
                             ctr: 0.1152
                             email:
@@ -20574,6 +20579,7 @@ components:
                       metrics:
                         campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                         clicks: 212
+                        conversions_status: unavailable
                         cost_micros: 0
                         ctr: 0.1152
                         email:
@@ -20596,6 +20602,7 @@ components:
                       metrics:
                         campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                         clicks: 212
+                        conversions_status: unavailable
                         cost_micros: 0
                         ctr: 0.1152
                         email:
@@ -20655,6 +20662,7 @@ components:
                 metrics:
                     campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                     clicks: 212
+                    conversions_status: unavailable
                     cost_micros: 0
                     ctr: 0.1152
                     email:
@@ -20913,9 +20921,18 @@ components:
                     format: double
                 conversions:
                     type: number
-                    description: 'Conversions attributed to this campaign over the window. FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold 0.4 of a conversion — do not round it to a whole number, and in particular do not treat a value below 1 as zero. ABSENT means "not measured" — the platform cannot report it, or (LinkedIn, Microsoft) the read was incomplete. The first case covers channels that do not report a campaign-level conversion count at all (Meta, X, Reddit and the email channel never do). The second covers the two conversion-capable channels whose read can come back partial: LinkedIn whenever ANY returned analytics element omits externalWebsiteConversions, and Microsoft whenever the ConversionsQualified column is missing from the report or ANY row''s conversion cell is blank (that column is only populated for accounts wired for Universal Event Tracking). On either, summing only the elements or rows that did carry a value would publish a partial count as a complete one and report a campaign''s conversions as lower than they are, so the whole total is withdrawn instead. Absence therefore does NOT by itself identify a platform that cannot report conversions, and it is NOT the same as a measured 0: a consumer must not render it as zero or fold it into a conversion total.'
+                    description: 'Conversions attributed to this campaign over the window. Present ONLY when conversions_status is `reported`, and ABSENT for every other status — read conversions_status to learn why it is absent, never this field''s absence. FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold 0.4 of a conversion — do not round it to a whole number, and in particular do not treat a value below 1 as zero. A present 0 is a measured zero against real delivery. A consumer must not render an absent value as zero or fold it into a conversion total.'
                     example: 37
                     format: double
+                conversions_status:
+                    type: string
+                    description: 'What this read established about conversions. `reported`: a complete measurement, carried in `conversions` (the ONLY status that carries it). `unavailable`: the channel, or this account on it, reports no campaign-level conversion count — Meta, X, Reddit and the email channel never do; LinkedIn when no returned analytics element carried externalWebsiteConversions; Microsoft when the ConversionsQualified column is missing or every cell is blank (no Universal Event Tracking). `incomplete`: a conversion-capable channel (LinkedIn, Microsoft) reported the metric for part of the response and omitted it for the rest, so any sum would be a partial count. `no_conversions`: the window had no clicks and no conversion was reported, so nothing could have converted — currently set by LinkedIn, whose answered empty window used to be reported as a measured 0. It carries no total and is NOT a finding: the no_conversions action item never fires on it (zero_delivery covers a campaign that delivered nothing). Google Ads always answers `reported`.'
+                    example: reported
+                    enum:
+                        - reported
+                        - unavailable
+                        - incomplete
+                        - no_conversions
                 cost_micros:
                     type: integer
                     description: 'Cost over the window, in micro-units of the platform''s native currency (platform-dependent: USD for LinkedIn/Reddit, X''s billing unit for Twitter, the ad account''s own currency for Google Ads — the same currency conversion_value is reported in — etc.). Always 0 on the email channel, which bills no per-send cost — do not blend that 0 into a cross-channel cost-per-acquisition.'
@@ -20957,6 +20974,7 @@ components:
             example:
                 campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                 clicks: 212
+                conversions_status: unavailable
                 cost_micros: 0
                 ctr: 0.1152
                 email:
@@ -20977,6 +20995,7 @@ components:
                 - clicks
                 - cost_micros
                 - ctr
+                - conversions_status
         CampaignPacing:
             type: object
             properties:

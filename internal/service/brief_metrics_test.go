@@ -1033,3 +1033,64 @@ func TestGetBriefMetrics_RowCarriesConversionValueAndRoas(t *testing.T) {
 		t.Errorf("idle row roas = %v, want absent: a return on zero spend is undefined, not %v", *m.Roas, *m.Roas)
 	}
 }
+
+// #175: both metrics routes report conversions_status, carry a total ONLY with `reported`, and
+// the no_conversions item never fires on a status that is not reported — even when an adapter
+// set a zero total beside it, which ReportedConversions withholds.
+func TestGetBriefMetrics_ConversionsStatusGatesTheTotalAndTheRule(t *testing.T) {
+	zero := 0.0
+	cases := []struct {
+		name       string
+		metrics    *model.CampaignMetrics
+		wantStatus string
+		wantTotal  bool
+		wantFire   bool
+	}{
+		{"reported zero against real clicks fires",
+			&model.CampaignMetrics{Impressions: 40000, Clicks: 800, Ctr: 0.02, Conversions: &zero, ConversionsStatus: model.ConversionsReported},
+			"reported", true, true},
+		{"incomplete with a stray zero total: no total, no item",
+			&model.CampaignMetrics{Impressions: 40000, Clicks: 800, Ctr: 0.02, Conversions: &zero, ConversionsStatus: model.ConversionsIncomplete},
+			"incomplete", false, false},
+		{"zero-click window: no_conversions, no total, no item",
+			&model.CampaignMetrics{Impressions: 500, Clicks: 0, ConversionsStatus: model.ConversionsNoConversions},
+			"no_conversions", false, false},
+		{"adapter that sets no status and no total: unavailable",
+			&model.CampaignMetrics{Impressions: 40000, Clicks: 800, Ctr: 0.02},
+			"unavailable", false, false},
+		{"adapter that sets no status but a total: reported",
+			&model.CampaignMetrics{Impressions: 40000, Clicks: 800, Ctr: 0.02, Conversions: &zero},
+			"reported", true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			disp := newPerCampaignDispatcher()
+			disp.results["c1"] = tc.metrics
+			s := newBriefMetricsService(t, disp, campaignOn("c1", model.ProviderLinkedInAds))
+			s.SetClock(func() time.Time { return metricsNow })
+			res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+			if err != nil {
+				t.Fatalf("GetBriefMetrics: %v", err)
+			}
+			if len(res.Rows) != 1 || res.Rows[0].Metrics == nil {
+				t.Fatalf("expected one ok row carrying metrics, got %+v", res.Rows)
+			}
+			got := res.Rows[0].Metrics
+			if got.ConversionsStatus != tc.wantStatus {
+				t.Errorf("conversions_status = %q, want %q", got.ConversionsStatus, tc.wantStatus)
+			}
+			if (got.Conversions != nil) != tc.wantTotal {
+				t.Errorf("conversions = %v, want a total only with reported", got.Conversions)
+			}
+			fired := false
+			for _, item := range res.ActionItems {
+				if item.Rule == "no_conversions" {
+					fired = true
+				}
+			}
+			if fired != tc.wantFire {
+				t.Errorf("no_conversions fired = %v, want %v", fired, tc.wantFire)
+			}
+		})
+	}
+}
