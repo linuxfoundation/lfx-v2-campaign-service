@@ -86,74 +86,67 @@ const MaxNonUploadRequestBodyBytes int64 = 4 << 20 // 4 MiB
 // moves without this constant. Change one and the test names the other.
 const PodMemoryLimitBytes int64 = 512 << 20 // 512 MiB
 
-// UploadAdmissionBudgetBytes is the total in-flight upload allocation the process will admit at
-// once, across all concurrent uploads.
+// UploadMemoryBudgetFallbackBytes is the per-pod upload memory budget used when neither
+// UPLOAD_MEMORY_BUDGET_BYTES nor a cgroup memory limit is available: 40% of PodMemoryLimitBytes
+// (~205 MiB). In a container the budget is normally 40% of the limit read from the cgroup, so a
+// deployment that overrides resources.limits.memory gets a budget sized for the limit it actually
+// runs under (internal/membudget.Resolve).
 //
-// DERIVED, not chosen: it is one quarter of PodMemoryLimitBytes. The reasoning it encodes is
-// that the pod's memory serves more than uploads — the Go runtime, the Postgres pool, the
-// platform clients, the metrics registry and every non-upload request all live in the same
-// limit — so uploads may claim only a minority share of it. A budget set near the pod limit
-// would bound uploads against each other while still letting them starve everything else.
-//
-// The relationship is expressed as arithmetic on PodMemoryLimitBytes rather than written out as
-// a literal, so raising the chart's limit raises this in step and cannot leave a stale figure
-// behind. TestUploadAdmissionBudgetLeavesHeadroom asserts the headroom property directly.
-const UploadAdmissionBudgetBytes int64 = PodMemoryLimitBytes / 4 // 128 MiB
+// ONE budget, drawn on by both upload admission points (#179): middleware.UploadAdmission charges
+// the WIRE side, UploadAdmissionWeightFor, before the body is read; service.DecodeReserver charges
+// the PIXEL buffer, after the header is read and before image.Decode allocates. The two charges do
+// not overlap (see UploadAdmissionWeightBytes), so the sum of what every admitted upload holds can
+// never exceed the budget. Before #179 each had its own quarter-of-the-pod semaphore and the wire
+// weight also counted the pixel buffer, so neither "half the pod" nor any other process-wide figure
+// actually held. TestUploadMemoryBudgetComposes asserts the composed property and its effective
+// concurrency.
+const UploadMemoryBudgetFallbackBytes int64 = PodMemoryLimitBytes / 100 * 40
 
-// UploadAdmissionWeightBytes is the weight ONE upload takes from the budget.
+// CreativeDecodePeakBytes is the largest pixel buffer one creative-asset decode may allocate. It
+// mirrors maxCreativeDecodedBytes in internal/service, which is the enforcing constant; a service
+// test fails if they drift.
+const CreativeDecodePeakBytes int64 = 80 << 20 // 80 MiB
+
+// UploadAdmissionWeightBytes is the WIRE-side weight of the worst legal upload: what
+// middleware.UploadAdmission charges before the body is read, and holds for the whole handler.
 //
-// Priced at the peak that PROVABLY coexists, not at a steady state. An earlier revision charged
-// 64 MiB on the reasoning that the body buffer is released before the decode peaks. That was
-// wrong in a way the code contradicts directly: the ~30 MiB decoded slice is the decode's own
-// input and cannot be collected while it runs, and the 80 MiB pixel buffer is allocated on top
-// of it.
+// It deliberately EXCLUDES the pixel buffer. That buffer is charged separately, against the same
+// budget, by service.DecodeReserver, because compression severs it from the wire size (a flat
+// 4000x4000 PNG is ~68 KiB on the wire and 61 MiB decoded). Before #179 this figure was 128 MiB
+// and included the 80 MiB pixel buffer while the decode reservation charged it again, so the two
+// bounds double-counted it and could not be added up to reason about the pod.
 //
-// The tally, and what keeps it at three allocations rather than four. The wire attribute is a
-// base64 STRING (design/brief.go), so the request now carries a ~40 MiB string that the older
-// Goa Bytes attribute never materialised separately — goa decoded during JSON decoding. Left
-// reachable it would coexist with the pixel buffer and push the peak to ~192 MiB, past this
-// figure. UploadCreativeAsset therefore clears p.Bytes the moment the decode returns, which is
-// the only point it stops being needed, so what provably coexists is:
+// What it covers, at its peak — the base64 decode in UploadCreativeAsset, before any pixel is
+// allocated:
 //
 //	~42 MiB  the Goa decoder's body buffer (Go frees on GC, not on last use)
-//	~30 MiB  the decoded slice, live for the whole decode — it is the decode's own input
-//	~80 MiB  the pixel buffer, allocated on top of the decoded slice
-//	 = ~128 MiB
+//	~40 MiB  the base64 STRING the JSON decoder materialises (design/brief.go)
+//	~30 MiB  the base64-decoded slice
+//	 = ~112 MiB
 //
-// That clearing is load-bearing, not tidiness: the payload struct keeps p reachable for the
-// whole handler (it is read again for ProjectID/BriefID), so without it the string outlives the
-// decode. TestUploadAdmissionWeightCoversTheCoexistingPeak pins this figure against the
-// per-image ceilings, and the service test pins the release.
-//
-// Charging less than the real peak lets two permits admit more than the budget — a bound that
-// under-counts precisely when it matters, which is worse than no bound because it reads as
-// protection.
+// UploadCreativeAsset clears the string once decoded, so while the pixel buffer is live what
+// coexists is the body buffer, the decoded slice and the pixels: 42 + 30 + 80 = 152 MiB, which is
+// below this weight plus CreativeDecodePeakBytes (192 MiB). The composed charge therefore covers
+// both peaks of one upload. TestUploadAdmissionWeightCoversTheCoexistingPeak pins both inequalities.
 //
 // It is the weight of the WORST LEGAL upload, and it is charged only to an upload that is
-// actually that large. Charging it flat to every upload was a real defect rather than a
-// conservative choice: budget/weight is then exactly 1, so the service admitted ONE upload at a
-// time no matter how small, and a 200 KiB logo held the same permit as a 30 MiB image. See
-// UploadAdmissionWeightFor, which prices a request from its declared size against this ceiling.
-const UploadAdmissionWeightBytes int64 = 128 << 20 // 128 MiB
+// actually that large; see UploadAdmissionWeightFor, which prices a request from its declared size.
+const UploadAdmissionWeightBytes int64 = 112 << 20 // 112 MiB
 
-// UploadAdmissionAmplification is how many bytes of peak resident memory one byte of request
-// body may cause this route to allocate.
+// UploadWorstCaseBytes is what ONE worst-case legal upload holds against the shared budget at
+// once: its wire weight plus its pixel reservation. The resolved budget is never smaller than
+// this (internal/membudget.Resolve), so a maximum-size upload is always admittable on an idle pod.
+const UploadWorstCaseBytes = UploadAdmissionWeightBytes + CreativeDecodePeakBytes // 192 MiB
+
+// UploadAdmissionAmplification is how many bytes of WIRE-side resident memory one byte of request
+// body may cause this route to allocate before the pixel decode.
 //
-// It is the same arithmetic that produced UploadAdmissionWeightBytes, expressed as a ratio so it
-// can price a request smaller than the worst case. The worst legal upload is 42 MiB on the wire
-// (MaxRequestBodyBytes) and provably peaks at ~128 MiB resident — the ~30 MiB decoded slice
-// live for the whole decode, the pixel buffer allocated on top of it, and the body buffer not
-// yet collected. 128/42 is just over 3, so 4 is the next whole ratio above the measured worst
-// case: it keeps a small upload's charge proportional while never pricing ANY request below
-// what the worst case proves it can cost.
-//
-// The ratio survives the base64-string wire attribute only because UploadCreativeAsset clears
-// p.Bytes once decoded (see UploadAdmissionWeightBytes). Were that string left reachable across
-// the pixel decode the peak would be ~192 MiB and this ratio would have to be 5.
-//
-// Deliberately a whole number, and deliberately an over-estimate. This multiplies a
+// The same arithmetic that produced UploadAdmissionWeightBytes, as a ratio so it can price a
+// request smaller than the worst case: the worst legal upload is 42 MiB on the wire
+// (MaxRequestBodyBytes) and peaks at ~112 MiB wire-side, 112/42 is just under 2.7, so 3 is the
+// next whole ratio above it. Deliberately a whole number and an over-estimate: this multiplies a
 // CALLER-SUPPLIED length, so every source of error in it must round against the caller.
-const UploadAdmissionAmplification int64 = 4
+const UploadAdmissionAmplification int64 = 3
 
 // UploadAdmissionMinWeightBytes floors what any single upload is charged.
 //
@@ -167,8 +160,9 @@ const UploadAdmissionAmplification int64 = 4
 // cost is unknown until it has been read and the permit is taken before the read. See that
 // function for why the floor was tried for the undeclared case and reverted.
 //
-// 8 MiB admits 16 concurrent small DECLARED uploads against the 128 MiB budget — enough that
-// ordinary traffic never sheds, few enough that the aggregate stays a minority of the pod.
+// 8 MiB admits 25 concurrent small DECLARED uploads against the ~205 MiB fallback budget —
+// enough that ordinary traffic never sheds, few enough that the aggregate stays a minority of
+// the pod.
 const UploadAdmissionMinWeightBytes int64 = 8 << 20 // 8 MiB
 
 // UploadAdmissionWeightFor prices ONE upload against the budget from its DECLARED body size.
@@ -185,9 +179,9 @@ const UploadAdmissionMinWeightBytes int64 = 8 << 20 // 8 MiB
 //     A liar therefore buys a cheap permit and still cannot spend more than the ceiling this
 //     function would have charged it.
 //
-// Absent or chunked (ContentLength < 0) is charged the WORST-CASE CEILING. Because that ceiling
-// equals UploadAdmissionBudgetBytes, one undeclared request takes the entire budget and
-// undeclared uploads run strictly ONE AT A TIME.
+// Absent or chunked (ContentLength < 0) is charged the WORST-CASE CEILING. Two of those exceed
+// the fallback budget (2 x 112 MiB > ~205 MiB), so on a default pod undeclared uploads run
+// strictly ONE AT A TIME.
 //
 // That cost is real and was accepted deliberately, so do not "fix" it by lowering the charge
 // without re-reading this block. goa's stock goahttp.RequestEncoder never sets ContentLength, so
@@ -196,7 +190,7 @@ const UploadAdmissionMinWeightBytes int64 = 8 << 20 // 8 MiB
 // which declares the encoded length (issue #183); any client that still sends chunked -- a
 // stock-encoder Go caller or a third party -- is serialized here, by design.
 //
-// The floor was tried here and reverted. Charging the floor (8 MiB) admits 16 concurrent
+// The floor was tried here and reverted (when the budget was 128 MiB). Charging the floor (8 MiB) admitted 16 concurrent
 // undeclared uploads, and the aggregate that produces is not survivable:
 //
 //   - internal/service's UploadCreativeAsset holds the base64-DECODED slice (the output of
@@ -205,7 +199,7 @@ const UploadAdmissionMinWeightBytes int64 = 8 << 20 // 8 MiB
 //     admitted uploads coexist holding ~480 MiB of decoded slices alone, on a 512 MiB pod,
 //     before any wire buffer.
 //   - Neither other control bounds that aggregate. MaxBodyBytes caps ONE body, not the sum.
-//     DecodeAdmissionBudgetBytes reserves only the PIXEL buffer and releases the instant
+//     The decode reservation covers only the PIXEL buffer and releases the instant
 //     image.Decode returns — it never covers p.Bytes.
 //   - What is reachable PRE-AUTH is the buffered body plus the ~40 MiB base64 STRING goa
 //     materialises, because the generated handler decodes the request before the endpoint
@@ -230,8 +224,8 @@ const UploadAdmissionMinWeightBytes int64 = 8 << 20 // 8 MiB
 // for clients that do not declare, not a correctness one.
 func UploadAdmissionWeightFor(contentLength int64) int64 {
 	if contentLength < 0 {
-		// Unknown length is charged the WORST CASE, which equals the whole budget, so
-		// undeclared uploads run strictly one at a time. See the doc comment: the server
+		// Unknown length is charged the WORST CASE, so on a default pod undeclared uploads
+		// run strictly one at a time. See the doc comment: the server
 		// cannot know what a chunked body will spend until it has read it, and the permit is
 		// the only bound that runs BEFORE the read.
 		return UploadAdmissionWeightBytes
@@ -248,28 +242,6 @@ func UploadAdmissionWeightFor(contentLength int64) int64 {
 	}
 	return w
 }
-
-// DecodeAdmissionBudgetBytes is the total PIXEL-BUFFER memory concurrent creative-asset decodes
-// may allocate at once.
-//
-// It is a second, independent bound, and it exists because UploadAdmissionBudgetBytes cannot
-// cover this. That budget is spent against a weight priced from Content-Length, which bounds
-// what arrives on the socket; image compression severs the link between wire bytes and decoded
-// bytes. A flat 4000x4000 PNG is ~68 KiB on the wire and 61 MiB decoded — over 900x — and it is
-// legal, admitted deliberately by the dimension gate. Wire-priced admission charges it the
-// floor, so without this bound enough of them decode concurrently to exhaust the pod while the
-// upload budget still reads as unspent.
-//
-// Sized like the upload budget and for the same reason: a quarter of the pod, because the
-// runtime, the pool and every non-upload request share the limit. The two budgets are additive
-// in the worst case — a request can hold an upload permit and a decode reservation at once — so
-// together they cap uploads at half the pod, which is the same ceiling
-// TestUploadAdmissionBudgetLeavesHeadroom asserts for uploads alone.
-//
-// At maxCreativeDecodedBytes (80 MiB) per worst-case image this admits one of them at a time and
-// many ordinary ones, which is the same shape as the upload bound: priced for the worst legal
-// input, shared by everything smaller.
-const DecodeAdmissionBudgetBytes int64 = PodMemoryLimitBytes / 4 // 128 MiB
 
 // DecodeAdmissionWait is how long a request will wait for DECODE budget before it is shed
 // with 503.

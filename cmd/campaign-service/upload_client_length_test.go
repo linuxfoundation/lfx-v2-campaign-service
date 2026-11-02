@@ -66,7 +66,7 @@ func startUploadHarness(t *testing.T) *uploadHarness {
 			`"brief_id":"6ba7b810-9dad-11d1-80b4-00c04fd430c8","mime_type":"image/png",`+
 			`"byte_size":3072,"checksum":"00","created":"true"}`)
 	})
-	srv := httptest.NewServer(buildHandler(inner, &config.Config{}, middleware.NewInflightTracker()))
+	srv := httptest.NewServer(buildHandler(inner, &config.Config{}, middleware.NewInflightTracker(), nil))
 	t.Cleanup(srv.Close)
 	// Registered after srv.Close, so it runs first: parked handlers return before Close waits.
 	t.Cleanup(release)
@@ -136,8 +136,8 @@ func newUploadEndpoint(h *uploadHarness, enc func(*http.Request) goahttp.Encoder
 func TestUploadClient_DeclaredLengthUploadsRunConcurrently(t *testing.T) {
 	// Independent precondition: two small declared uploads must fit together, or this test
 	// could not distinguish "serialized" from "over budget".
-	if w := constants.UploadAdmissionWeightFor(64 << 10); 2*w > constants.UploadAdmissionBudgetBytes {
-		t.Fatalf("two 64 KiB declared uploads (%d each) exceed the budget %d", w, constants.UploadAdmissionBudgetBytes)
+	if w := constants.UploadAdmissionWeightFor(64 << 10); 2*w > constants.UploadMemoryBudgetFallbackBytes {
+		t.Fatalf("two 64 KiB declared uploads (%d each) exceed the budget %d", w, constants.UploadMemoryBudgetFallbackBytes)
 	}
 
 	h := startUploadHarness(t)

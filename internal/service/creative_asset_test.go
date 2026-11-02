@@ -1202,8 +1202,9 @@ func TestUploadCreativeAsset_EncodedAndDecodedCeilingsAgree(t *testing.T) {
 // goa decoded during JSON decoding. The payload struct keeps `p` reachable for the whole handler
 // (it is read again for ProjectID/BriefID), so unless the string is explicitly dropped it stays
 // resident THROUGH the 80 MiB pixel decode. That puts the coexisting peak at roughly
-// 42 + 40 + 30 + 80 = 192 MiB, past the ~128 MiB `UploadAdmissionWeightBytes` charges for one
-// upload — the admission bound would then under-count exactly when it matters.
+// 42 + 40 + 30 + 80 = 192 MiB, past the 192 MiB that `UploadAdmissionWeightBytes` (112 MiB wire) plus the pixel reservation
+// (80 MiB) charge one upload against the shared budget — the bound would then under-count exactly
+// when it matters.
 //
 // Asserting the field is cleared is the only observable proxy for "the string became
 // collectable": Go gives no way to assert reachability directly. It is a weaker signal than a

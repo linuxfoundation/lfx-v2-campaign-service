@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/membudget"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/middleware"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
@@ -48,13 +49,13 @@ func TestUploadAdmission_IsWiredIntoTheRealChain(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	chain := buildHandler(inner, &config.Config{}, middleware.NewInflightTracker())
+	chain := buildHandler(inner, &config.Config{}, middleware.NewInflightTracker(), nil)
 
 	// The parked requests below stream a body of UNKNOWN length (blockingBody carries no
 	// Content-Length), which constants.UploadAdmissionWeightFor prices at the worst-case
 	// CEILING — the server cannot know what a chunked body will spend until it has read it,
-	// and the permit is taken before the read. That ceiling equals the whole budget, so ONE
-	// parked request saturates admission.
+	// and the permit is taken before the read. Two ceilings exceed the default budget, so ONE
+	// parked request saturates admission for undeclared uploads.
 	//
 	// The saturation count is nonetheless computed from that same pricing function rather
 	// than hardcoded to 1, so it tracks the rule the chain actually applies instead of
@@ -77,7 +78,7 @@ func TestUploadAdmission_IsWiredIntoTheRealChain(t *testing.T) {
 	// TestUploadAdmission_UndeclaredLengthUploadsSerialize in internal/middleware, which
 	// compare against literal expected weights; those are the tests that fail when the floor
 	// changes. Do not add pricing assertions here — add them there.
-	admits := int(constants.UploadAdmissionBudgetBytes / constants.UploadAdmissionWeightFor(-1))
+	admits := int(constants.UploadMemoryBudgetFallbackBytes / constants.UploadAdmissionWeightFor(-1))
 
 	release := make(chan struct{})
 	var reading int64
@@ -105,9 +106,13 @@ func TestUploadAdmission_IsWiredIntoTheRealChain(t *testing.T) {
 		t.Fatalf("only %d of %d permits were taken; cannot test saturation", got, admits)
 	}
 
-	// The budget is now fully occupied. One more upload must be shed by admission.
+	// The budget can no longer fit another undeclared upload. One more must be shed by
+	// admission. The probe is ALSO undeclared (io.NopCloser hides the length from
+	// httptest.NewRequest), so it is priced at the same ceiling: since #179 the per-pod budget
+	// (~205 MiB) is larger than one ceiling (112 MiB), and a small declared probe would fit in
+	// the remainder and prove nothing.
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, uploadRoute, strings.NewReader(`{}`))
+	req := httptest.NewRequest(http.MethodPost, uploadRoute, io.NopCloser(strings.NewReader(`{}`)))
 	req.Header.Set("Content-Type", "application/json")
 	chain.ServeHTTP(rec, req)
 
@@ -118,7 +123,7 @@ func TestUploadAdmission_IsWiredIntoTheRealChain(t *testing.T) {
 		t.Errorf("saturated chain answered %d, want %d: UploadAdmission is not wired into "+
 			"buildHandler (budget %d MiB, weight %d MiB, %d permits held)",
 			rec.Code, http.StatusServiceUnavailable,
-			constants.UploadAdmissionBudgetBytes>>20,
+			constants.UploadMemoryBudgetFallbackBytes>>20,
 			constants.UploadAdmissionWeightBytes>>20, admits)
 	}
 	if !strings.Contains(rec.Body.String(), "upload capacity") {
@@ -240,7 +245,7 @@ func TestDeclaredOversizeUploadGets413NotShed(t *testing.T) {
 			<-blockUntil
 		}
 		w.WriteHeader(http.StatusOK)
-	}), &config.Config{}, middleware.NewInflightTracker())
+	}), &config.Config{}, middleware.NewInflightTracker(), nil)
 
 	// Park a legitimate upload inside the chain so it holds an admission permit.
 	var parked sync.WaitGroup
@@ -269,5 +274,29 @@ func TestDeclaredOversizeUploadGets413NotShed(t *testing.T) {
 			"cap (%d): its size is known from the headers, so it must be refused as too large "+
 			"rather than shed as a capacity problem it can never retry past",
 			rec.Code, http.StatusRequestEntityTooLarge, over, constants.MaxRequestBodyBytes)
+	}
+}
+
+// TestBuildHandler_ChargesTheContainersUploadBudget pins #179's server wiring: the chain charges
+// the budget it is handed (the container's, which the decode reservation also charges), not a
+// private one of its own. A request parked in the handler must show in that budget's InUse.
+func TestBuildHandler_ChargesTheContainersUploadBudget(t *testing.T) {
+	budget := membudget.New(constants.UploadMemoryBudgetFallbackBytes)
+	var seen int64
+	chain := buildHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		seen = budget.InUse()
+		w.WriteHeader(http.StatusCreated)
+	}), &config.Config{}, middleware.NewInflightTracker(), budget)
+
+	req := httptest.NewRequest(http.MethodPost, uploadRoute, strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	chain.ServeHTTP(rec, req)
+
+	if want := constants.UploadAdmissionWeightFor(2); seen != want {
+		t.Fatalf("container budget InUse during the upload = %d, want %d: buildHandler is not charging the budget it was given", seen, want)
+	}
+	if got := budget.InUse(); got != 0 {
+		t.Fatalf("InUse after the request = %d, want 0", got)
 	}
 }

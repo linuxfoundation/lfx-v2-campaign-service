@@ -98,86 +98,86 @@ func TestPodMemoryLimitIsRenderedByTheDeployment(t *testing.T) {
 	}
 
 	// Guard the derivation itself, so the relationship the budget documents is checked against the
-	// number the chart declares rather than assumed. This is the invariant an override breaks.
-	if UploadAdmissionBudgetBytes != PodMemoryLimitBytes/4 {
-		t.Errorf("upload budget %d MiB is not a quarter of the %d MiB pod limit; the constant's "+
+	// number the chart declares rather than assumed.
+	if UploadMemoryBudgetFallbackBytes != PodMemoryLimitBytes/100*40 {
+		t.Errorf("fallback upload budget %d MiB is not 40%% of the %d MiB pod limit; the constant's "+
 			"documented derivation no longer holds",
-			UploadAdmissionBudgetBytes>>20, PodMemoryLimitBytes>>20)
+			UploadMemoryBudgetFallbackBytes>>20, PodMemoryLimitBytes>>20)
 	}
 }
 
-// TestUploadAdmissionBudgetLeavesHeadroom asserts the PROPERTY the budget exists to hold, rather
-// than restating its formula.
-//
-// Deriving the expectation from UploadAdmissionBudgetBytes itself would prove nothing: any value
-// satisfies its own definition. The independent bound is the pod limit — whatever the budget is,
-// concurrent uploads must not be able to claim the whole pod, because the runtime, the DB pool
-// and every non-upload request share it.
-func TestUploadAdmissionBudgetLeavesHeadroom(t *testing.T) {
-	if UploadAdmissionBudgetBytes >= PodMemoryLimitBytes {
-		t.Fatalf("upload budget %d MiB >= pod limit %d MiB: uploads alone could OOM the pod",
-			UploadAdmissionBudgetBytes>>20, PodMemoryLimitBytes>>20)
+// TestUploadMemoryBudgetComposes asserts the property #179 exists for: ONE budget that the wire
+// charge and the pixel reservation draw on together, sized so it leaves the majority of the pod to
+// everything else and still admits a worst-case upload. It asserts the QUOTIENTS (effective
+// concurrency), not just the terms, because each constant of the old pair was individually
+// well-derived and nobody derived budget / weight.
+func TestUploadMemoryBudgetComposes(t *testing.T) {
+	if UploadMemoryBudgetFallbackBytes > PodMemoryLimitBytes/2 {
+		t.Errorf("upload budget %d MiB exceeds half the %d MiB pod; the runtime, DB pool and "+
+			"non-upload traffic share this limit", UploadMemoryBudgetFallbackBytes>>20, PodMemoryLimitBytes>>20)
 	}
 
-	// Uploads must leave the MAJORITY of the pod to everything else. Stated as an absolute
-	// fraction of the pod limit, independent of how the budget happens to be computed.
-	if UploadAdmissionBudgetBytes > PodMemoryLimitBytes/2 {
-		t.Errorf("upload budget %d MiB exceeds half the %d MiB pod limit; "+
-			"the runtime, DB pool and non-upload traffic share this limit",
-			UploadAdmissionBudgetBytes>>20, PodMemoryLimitBytes>>20)
+	// One worst-case upload holds its wire weight AND its pixel reservation at once, against the
+	// same budget. If that sum exceeds the budget, every maximum-size upload sheds forever.
+	if UploadWorstCaseBytes != UploadAdmissionWeightBytes+CreativeDecodePeakBytes {
+		t.Fatalf("UploadWorstCaseBytes = %d, want wire weight + pixel peak = %d",
+			UploadWorstCaseBytes, UploadAdmissionWeightBytes+CreativeDecodePeakBytes)
+	}
+	if n := UploadMemoryBudgetFallbackBytes / UploadWorstCaseBytes; n < 1 {
+		t.Errorf("effective worst-case concurrency = %d: a %d MiB budget cannot hold one %d MiB "+
+			"(wire %d + pixels %d) upload", n, UploadMemoryBudgetFallbackBytes>>20,
+			UploadWorstCaseBytes>>20, UploadAdmissionWeightBytes>>20, CreativeDecodePeakBytes>>20)
 	}
 
-	// The budget must admit at least one maximum-size upload, or the endpoint is bricked:
-	// every upload would shed regardless of load.
-	if UploadAdmissionBudgetBytes < UploadAdmissionWeightBytes {
-		t.Errorf("budget %d MiB < single-upload weight %d MiB: no upload could ever be admitted",
-			UploadAdmissionBudgetBytes>>20, UploadAdmissionWeightBytes>>20)
+	// Undeclared (chunked) bodies are charged the full wire weight, and on a default pod they run
+	// one at a time: the documented trade in UploadAdmissionWeightFor.
+	if n := UploadMemoryBudgetFallbackBytes / UploadAdmissionWeightFor(-1); n != 1 {
+		t.Errorf("effective undeclared concurrency = %d, want 1 (see UploadAdmissionWeightFor)", n)
 	}
 
-	// The per-upload weight must cover the largest body the server will actually read,
-	// otherwise the weight understates what one request costs and the bound does not bind.
-	if UploadAdmissionWeightBytes < MaxRequestBodyBytes {
-		t.Errorf("upload weight %d MiB < max request body %d MiB: the weight understates one upload",
-			UploadAdmissionWeightBytes>>20, MaxRequestBodyBytes>>20)
+	// Small declared uploads must share it widely, or the budget is a throughput regression.
+	if n := UploadMemoryBudgetFallbackBytes / UploadAdmissionWeightFor(64<<10); n < 16 {
+		t.Errorf("effective small-upload concurrency = %d, want at least 16", n)
 	}
 }
 
-// TestUploadAdmissionWeightCoversTheCoexistingPeak pins the weight to memory that PROVABLY
-// coexists during one upload, derived from the service's own limits rather than from the weight
-// under test.
+// TestUploadAdmissionWeightCoversTheCoexistingPeak pins the wire weight and the pixel reservation
+// to memory that PROVABLY coexists during one upload, derived from the service's own limits
+// rather than from the weights under test. One upload has two peaks:
 //
-// The independent bound: UploadCreativeAsset calls image.Decode(bytes.NewReader(p.Bytes)), so the
-// decoded slice is the decode's INPUT and is necessarily live for the decode's whole duration.
-// The pixel buffer is allocated on top of it. Any weight below their sum lets two permits admit
-// more bytes than the budget names — a bound that under-counts exactly when it matters.
+//   - before the pixel decode (the base64 decode): body buffer + base64 string + decoded slice;
+//   - during the pixel decode: body buffer + decoded slice + pixel buffer (the string is cleared).
 //
-// A previous revision charged 64 MiB on the reasoning that the body buffer is released before the
-// decode peaks; that argument does not apply to the decoded slice, and this test is what would
-// have caught it.
+// The wire weight alone must cover the first, and wire weight + pixel reservation the second.
+// The wire weight must NOT include the pixel buffer: that is the double-count #179 removed, and
+// it is what made the old pair impossible to add up.
 func TestUploadAdmissionWeightCoversTheCoexistingPeak(t *testing.T) {
-	// Both figures come from the service's declared limits, NOT from UploadAdmissionWeightBytes:
-	//   - maxCreativeStoredBytes, the handler's stored-file ceiling in internal/service
-	//     (30 MiB decoded; the design's MaxLength(41943040) is that same bound expressed in
-	//     base64 characters, which is not the unit this peak is measured in);
-	//   - maxCreativeDecodedBytes, the decode budget in internal/service (80 MiB).
-	const maxDecodedPayload int64 = 30 << 20
-	const maxDecodedPixels int64 = 80 << 20
-	mustCoexist := maxDecodedPayload + maxDecodedPixels // ~110 MiB
-
-	if UploadAdmissionWeightBytes < mustCoexist {
-		t.Errorf("weight %d MiB is below the %d MiB that provably coexists during one upload "+
-			"(%d MiB decoded payload held live as image.Decode's input + %d MiB pixel buffer): "+
-			"two permits would admit ~%d MiB against a %d MiB budget",
-			UploadAdmissionWeightBytes>>20, mustCoexist>>20,
-			maxDecodedPayload>>20, maxDecodedPixels>>20,
-			(2*mustCoexist)>>20, UploadAdmissionBudgetBytes>>20)
+	const (
+		bodyBuffer    int64 = 42 << 20 // MaxRequestBodyBytes, the buffered body
+		base64String  int64 = 40 << 20 // the design's MaxLength(41943040) string
+		decodedSlice  int64 = 30 << 20 // maxCreativeStoredBytes in internal/service
+		decodedPixels int64 = 80 << 20 // maxCreativeDecodedBytes in internal/service
+	)
+	if UploadAdmissionWeightBytes < bodyBuffer+base64String+decodedSlice {
+		t.Errorf("wire weight %d MiB is below the %d MiB wire-side peak (body + base64 string + decoded slice)",
+			UploadAdmissionWeightBytes>>20, (bodyBuffer+base64String+decodedSlice)>>20)
 	}
-
-	// The budget must still admit at least one upload at that honest weight, or the endpoint
-	// sheds unconditionally.
-	if UploadAdmissionBudgetBytes < UploadAdmissionWeightBytes {
-		t.Errorf("budget %d MiB cannot admit a single %d MiB upload",
-			UploadAdmissionBudgetBytes>>20, UploadAdmissionWeightBytes>>20)
+	if UploadAdmissionWeightBytes+CreativeDecodePeakBytes < bodyBuffer+decodedSlice+decodedPixels {
+		t.Errorf("wire weight + pixel reservation %d MiB is below the %d MiB decode-time peak",
+			(UploadAdmissionWeightBytes+CreativeDecodePeakBytes)>>20, (bodyBuffer+decodedSlice+decodedPixels)>>20)
+	}
+	if UploadAdmissionWeightBytes >= bodyBuffer+decodedSlice+decodedPixels {
+		t.Errorf("wire weight %d MiB covers the pixel buffer too; the decode reservation charges it "+
+			"against the same budget, so this double-counts it (#179)", UploadAdmissionWeightBytes>>20)
+	}
+	if CreativeDecodePeakBytes != decodedPixels {
+		t.Errorf("CreativeDecodePeakBytes = %d MiB, want %d MiB", CreativeDecodePeakBytes>>20, decodedPixels>>20)
+	}
+	// The amplification must price the worst body at or above the wire weight.
+	if MaxRequestBodyBytes*UploadAdmissionAmplification < UploadAdmissionWeightBytes {
+		t.Errorf("amplification %d prices a %d MiB body at %d MiB, below the %d MiB wire weight",
+			UploadAdmissionAmplification, MaxRequestBodyBytes>>20,
+			(MaxRequestBodyBytes*UploadAdmissionAmplification)>>20, UploadAdmissionWeightBytes>>20)
 	}
 }
 
