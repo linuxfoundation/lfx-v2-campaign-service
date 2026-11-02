@@ -837,8 +837,11 @@ Google's v23 RSA minimums (3 headlines ≤30, 2 descriptions ≤90); only these
 service-written lines are ever truncated. Every added line is a note on the
 `adPlan`, reported as an "Ad copy: …" step (or "Ad N copy: …" when a group has
 several ads); drops are one note for the duplicates and one for the overflow, and
-the walk stops at the cap, so the steps stay bounded. Off Search the preflight does
-not compose the caller's top-level copy at all, since only Search sends it. A caller with zero usable copy AND an empty EventName is
+the walk stops at the cap: the rows after it are counted, never read past the first,
+so both the steps and the work stay bounded. The preflight composes the caller's
+top-level copy only where it can be sent: not off Search, and not on Search when
+every requested ad group brings its own Ads (`everyAdGroupBringsAds`), since each
+group's ads then replace it. A caller with zero usable copy AND an empty EventName is
 a hard error (there is nothing to advertise).
 
 Those limits are WEIGHTED character counts, not plain rune counts:

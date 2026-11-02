@@ -1191,12 +1191,13 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	// last) would orphan a real paid campaign for what amounts to a bad
 	// RegistrationURL, over-length name, or invalid targeting value.
 	//
-	// Top-level Headlines/Descriptions are Search's responsive search ad copy. Off Search they
-	// are never sent, so they are not judged either (#441): composing them there could refuse
-	// a Display or Performance Max create over copy that channel ignores. EventName is required
-	// above, so the defaults always compose.
+	// Top-level Headlines/Descriptions are Search's responsive search ad copy, judged only where
+	// they can be sent (#441). Off Search they never are, and on Search they are not when every
+	// requested ad group brings its own Ads, since each group's ads then replace them
+	// (validateAdGroupPlans). Composing them there could refuse a create over copy nothing
+	// sends. EventName is required above, so the defaults always compose.
 	adIn := in
-	if kind != campaignKindSearch {
+	if kind != campaignKindSearch || everyAdGroupBringsAds(in.AdGroups) {
 		adIn.Headlines, adIn.Descriptions = nil, nil
 	}
 	finalURL, ad, adGroupName, keywords, audienceSegments, err := precomputeAdGroupAdInputs(adIn)

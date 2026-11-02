@@ -861,15 +861,56 @@ func TestCreateCampaign_MultiAdGroupLabelsEachAdsCopyChanges(t *testing.T) {
 
 // Top-level RSA copy is Search's alone. Off Search it is never sent, so an over-wide line
 // there must not refuse a create (#441); on Search the same input is refused before any
-// request.
+// request. Each kind's input is first proved valid as it stands, so a pass means the copy was
+// skipped, not that the preflight failed earlier for another reason.
 func TestValidateCampaignInputKind_RefusesOverWideCopyOnlyOnSearch(t *testing.T) {
-	c := biddingClient()
-	in := sampleInput()
-	in.Headlines = []string{strings.Repeat("x", maxHeadlineWeight+1)}
-	if err := c.ValidateCampaignInputKind(campaignKindSearch, in); err == nil || !strings.Contains(err.Error(), "display width") {
+	c := NewClient(testCreds(), testAccount(), WithClock(fixedClock()))
+	wide := []string{strings.Repeat("x", maxHeadlineWeight+1)}
+
+	search := sampleInput()
+	if err := c.ValidateCampaignInputKind(campaignKindSearch, search); err != nil {
+		t.Fatalf("search input must validate before the copy is widened: %v", err)
+	}
+	search.Headlines = wide
+	if err := c.ValidateCampaignInputKind(campaignKindSearch, search); err == nil || !strings.Contains(err.Error(), "display width") {
 		t.Errorf("search: err = %v, want the over-wide headline refused", err)
 	}
-	if err := c.ValidateCampaignInputKind(campaignKindDemandGen, in); err != nil && strings.Contains(err.Error(), "search ad headline") {
-		t.Errorf("demand gen refused Search copy it never sends: %v", err)
+
+	for _, tc := range []struct {
+		kind string
+		in   CampaignInput
+	}{
+		{campaignKindDemandGen, creativeInput(fullCreative())},
+		{campaignKindDisplay, displayInput("https://cdn.example.com")},
+		{campaignKindPerformanceMax, pmaxInput(fullPMaxCreative())},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			if err := c.ValidateCampaignInputKind(tc.kind, tc.in); err != nil {
+				t.Fatalf("input must validate before the copy is widened: %v", err)
+			}
+			tc.in.Headlines = wide
+			if err := c.ValidateCampaignInputKind(tc.kind, tc.in); err != nil {
+				t.Errorf("refused Search copy this channel never sends: %v", err)
+			}
+		})
+	}
+}
+
+// When every requested ad group brings its own Ads, the top-level copy is replaced in each
+// group and never sent, so an over-wide line there must not refuse the create. One group that
+// inherits it brings the check back.
+func TestValidateCampaignInputKind_SkipsTopLevelCopyEveryAdGroupReplaces(t *testing.T) {
+	c := NewClient(testCreds(), testAccount(), WithClock(fixedClock()))
+	own := AdSpec{Headlines: []string{"H1", "H2", "H3"}, Descriptions: []string{"D1", "D2"}}
+	in := sampleInput()
+	in.Headlines = []string{strings.Repeat("x", maxHeadlineWeight+1)}
+	in.AdGroups = []AdGroupSpec{{Name: "Training", Ads: []AdSpec{own}}, {Name: "Talks", Ads: []AdSpec{own}}}
+	if err := c.ValidateCampaignInputKind(campaignKindSearch, in); err != nil {
+		t.Errorf("every group replaces the top-level copy, so it must not be judged: %v", err)
+	}
+
+	in.AdGroups[1].Ads = nil
+	if err := c.ValidateCampaignInputKind(campaignKindSearch, in); err == nil || !strings.Contains(err.Error(), "display width") {
+		t.Errorf("err = %v, want the over-wide headline refused once a group inherits it", err)
 	}
 }

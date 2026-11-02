@@ -108,6 +108,20 @@ type adGroupPlan struct {
 	ads              []adPlan
 }
 
+// everyAdGroupBringsAds reports whether the caller asked for ad groups and every one of them
+// supplies its own Ads, so no group inherits the campaign-level ad copy.
+func everyAdGroupBringsAds(groups []AdGroupSpec) bool {
+	if len(groups) == 0 {
+		return false
+	}
+	for _, g := range groups {
+		if len(g.Ads) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // validateAdGroupPlans turns the caller's AdGroups into the list the cascade
 // creates, or returns the single default group when none were asked for.
 //

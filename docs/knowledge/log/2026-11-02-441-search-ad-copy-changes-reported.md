@@ -16,10 +16,12 @@ Now:
   today, since its Add buttons have no cap and it does not require the minimums.
 - Each added line is a note on the `adPlan` (`copyNotes`), reported as an "Ad copy: …"
   step beside the ad ("Ad N copy: …" when a group has several ads). Drops are bounded: one
-  note for the duplicates and one for the overflow, and the walk stops at the cap, so a
-  long list cannot write a step per line.
-- Off Search, top-level Headlines/Descriptions are never sent, so the preflight no longer
-  composes them there: an over-wide line cannot refuse a Display or Performance Max create.
+  note for the duplicates and one for the overflow, and the walk stops at the cap: rows
+  after it are counted, never read past the first, so a long list cannot write a step per
+  line or cost work beyond the cap.
+- Top-level Headlines/Descriptions are composed only where they can be sent. Off Search
+  they never are, and on Search they are not when every requested ad group brings its own
+  Ads, so an over-wide line there cannot refuse a create that sends none of it.
 
 `precomputeAdGroupAdInputs` now returns the `adPlan` instead of the two lists, and
 `boundedUniqueCopy` is replaced by `callerCopy`. Tests cover the refusal (Search only), the drop and pad

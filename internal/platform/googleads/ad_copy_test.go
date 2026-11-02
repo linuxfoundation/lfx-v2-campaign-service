@@ -100,6 +100,8 @@ func TestCallerCopy(t *testing.T) {
 		{"refuses a line over the width, never cuts it", []string{"abcdef"}, 3, 10, nil, 0, "display width of 6, exceeding the 3 limit"},
 		{"counts CJK double", []string{"日本語"}, 5, 10, nil, 0, "display width of 6"},
 		{"drops lines past the cap with one note", []string{"a", "b", "c", "d"}, 10, 2, []string{"a", "b"}, 1, ""},
+		{"no note when the list ends at the cap", []string{"a", "b"}, 10, 2, []string{"a", "b"}, 0, ""},
+		{"blank rows past the cap are counted, not searched", []string{"a", "b", "", "  ", "c"}, 10, 2, []string{"a", "b"}, 1, ""},
 		{"a line past the cap is not measured", []string{"a", "b", "far too wide to send"}, 3, 2, []string{"a", "b"}, 1, ""},
 		{"a duplicate does not count toward the cap", []string{"a", "a", "b"}, 10, 2, []string{"a", "b"}, 1, ""},
 		{"nil input", nil, 10, 10, nil, 0, ""},
@@ -186,6 +188,28 @@ func TestDefaultHeadlinesAndDescriptions(t *testing.T) {
 	}
 	if len(withoutProject) >= len(withProject) || withProject[0] == withoutProject[0] {
 		t.Errorf("omitting the project should drop the project-specific description")
+	}
+}
+
+// The overflow note counts every row past the cap and names the first one when it has text.
+func TestCallerCopy_OverflowNoteCountsTheRowsAfterTheCap(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		candidates []string
+		want       string
+	}{
+		{"names the first row", []string{"a", "b", "c", "d"}, `did not send the 2 headline row(s) after the 2 Google takes, from "c" on`},
+		{"a blank first row is counted but not named", []string{"a", "b", "", "c"}, "did not send the 2 headline row(s) after the 2 Google takes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var notes []string
+			if _, err := callerCopy("headline", tc.candidates, 10, 2, &notes); err != nil {
+				t.Fatalf("callerCopy: %v", err)
+			}
+			if len(notes) != 1 || notes[0] != tc.want {
+				t.Errorf("notes = %q, want [%q]", notes, tc.want)
+			}
+		})
 	}
 }
 

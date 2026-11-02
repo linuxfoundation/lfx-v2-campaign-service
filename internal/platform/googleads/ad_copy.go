@@ -70,7 +70,8 @@ func textAssets(ss []string) []adTextAsset {
 //   - a duplicate line (Google refuses one within an ad) is dropped;
 //   - lines past the count cap (15 headlines, 4 descriptions) are dropped. lfx-self-serve's
 //     Add buttons have no cap, so refusing would fail a create that works today. The walk
-//     stops at the cap, so an over-long list costs one note, not one per extra line;
+//     stops at the cap and only counts the rows after it, reading just the first to name
+//     it, so an over-long list costs one note and no work past the cap;
 //   - a set below Google's minimum (3 headlines, 2 descriptions) is padded with
 //     deterministic lines derived from eventName. Refusing it instead would fail every
 //     Implement-tab create with one headline, which lfx-self-serve does not prevent.
@@ -101,21 +102,28 @@ func composeAdCopy(callerHeadlines, callerDescriptions []string, eventName, proj
 }
 
 // callerCopy trims the caller's lines, skips blanks, refuses a line over maxWeight, drops an
-// exact duplicate, and stops at maxCount. Each kind of drop is ONE note naming the first line
-// dropped, so the steps stay bounded however long the caller's list is.
+// exact duplicate, and stops at maxCount. Each kind of drop is ONE note, so the steps stay
+// bounded however long the caller's list is.
 func callerCopy(label string, candidates []string, maxWeight, maxCount int, notes *[]string) ([]string, error) {
 	seen := map[string]struct{}{}
 	var out []string
 	dups, firstDup := 0, ""
-	for _, raw := range candidates {
+	for i, raw := range candidates {
+		if len(out) >= maxCount {
+			// Past the cap nothing is sent, so the rows after it are counted, not read: only
+			// the first is looked at, to name it. Blank rows are counted too, so the note says
+			// rows, and the work stays bounded by the cap rather than by the list.
+			rest := len(candidates) - i
+			if first := strings.TrimSpace(raw); first != "" {
+				*notes = append(*notes, fmt.Sprintf("did not send the %d %s row(s) after the %d Google takes, from %q on", rest, label, maxCount, capForError(first)))
+			} else {
+				*notes = append(*notes, fmt.Sprintf("did not send the %d %s row(s) after the %d Google takes", rest, label, maxCount))
+			}
+			break
+		}
 		s := strings.TrimSpace(raw)
 		if s == "" {
 			continue
-		}
-		if len(out) >= maxCount {
-			// Past the cap nothing is sent, so nothing past it is measured or hashed.
-			*notes = append(*notes, fmt.Sprintf("dropped every %s after the %d Google takes, from %q on", label, maxCount, capForError(s)))
-			break
 		}
 		if w := textWeight(s); w > maxWeight {
 			return nil, fmt.Errorf("google-ads search ad %s %q has a display width of %d, exceeding the %d limit (CJK and full-width characters count double); shorten it", label, capForError(s), w, maxWeight)

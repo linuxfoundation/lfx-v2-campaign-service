@@ -824,10 +824,11 @@ channel?: string                — OPTIONAL which Google Ads campaign type to c
 headlines?: string[]            — Optional Responsive Search Ad headlines (≤30 WEIGHTED chars
                                   each, CJK/full-width counting double; 3-15 after padding). Trimmed,
                                   blanks skipped. A headline over 30 is REFUSED before anything is
-                                  created, never cut (#441). Duplicates and entries past 15 are
-                                  dropped, and fewer than 3 are padded with deterministic
-                                  eventName-derived lines; each of those changes is reported in the
-                                  result's steps ("Ad copy: …").
+                                  created, never cut (#441), wherever this copy is sent: on Search,
+                                  unless every `adGroups` entry brings its own `ads`, which replace
+                                  it. Duplicates and rows past 15 are dropped, and fewer than 3 are
+                                  padded with deterministic eventName-derived lines; each of those
+                                  changes is reported in the result's steps ("Ad copy: …").
 descriptions?: string[]         — Optional Responsive Search Ad descriptions (≤90 WEIGHTED chars
                                   each, 2-4 after padding). Same rules as headlines: over 90 is
                                   refused, duplicates and entries past 4 are dropped, fewer than 2
