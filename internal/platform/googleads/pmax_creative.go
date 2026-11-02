@@ -773,9 +773,14 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 	// request was atomic and answered 2xx, so the group exists, and it is the handle an
 	// operator needs. The COUNT stays zero unless every link is accounted for, because zero
 	// is what keeps the activation gate from reading an unconfirmed group as ready to serve.
+	//
+	// Each link result is matched against the operation at its own index (#439): the
+	// response is index-aligned, so result i must name exactly the link operation i asked for.
+	// A truncated name, or one link name repeated for every result, then confirms nothing.
 	confirmed := 0
-	for _, r := range results.MutateOperationResponses[1:] {
-		if r.AssetGroupAssetResult != nil && c.isAssetGroupAssetOf(groupID, r.AssetGroupAssetResult.ResourceName) {
+	for i, r := range results.MutateOperationResponses[1:] {
+		if i < len(pending) && r.AssetGroupAssetResult != nil &&
+			c.isAssetGroupAssetLink(r.AssetGroupAssetResult.ResourceName, groupID, resourceID(assetResources[i]), pending[i].fieldType) {
 			confirmed++
 		}
 	}
@@ -785,17 +790,21 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 	return assetIDs, groupID, wantLinks, nil
 }
 
-// isAssetGroupAssetOf reports whether name is an assetGroupAssets resource in THIS account
-// whose group half is groupID: `customers/<cid>/assetGroupAssets/<groupId>~<assetId>~<fieldType>`.
-// A link result failing either check does not describe a link this request created, so it
-// is not counted as confirmed — the same reasoning the ad-group-ad results apply to their
-// own composite names. requireNumericID is false because the trailing segment is composite.
-func (c *Client) isAssetGroupAssetOf(groupID, name string) bool {
+// isAssetGroupAssetLink reports whether name is exactly the assetGroupAssets resource, in
+// THIS account, that links assetID into groupID under fieldType:
+// `customers/<cid>/assetGroupAssets/<groupId>~<assetId>~<fieldType>` (#439). A link result
+// naming anything else — another account, group, asset or field type, or a truncated
+// composite — does not describe the link its operation created, so it is not counted as
+// confirmed: the same reasoning the ad-group-ad results apply to their own composite names.
+// requireNumericID is false because the trailing segment is composite.
+func (c *Client) isAssetGroupAssetLink(name, groupID, assetID, fieldType string) bool {
+	if groupID == "" || assetID == "" || fieldType == "" {
+		return false
+	}
 	if c.validateResourceKind("assetGroupAssets", name, false) != nil {
 		return false
 	}
-	group, _, ok := strings.Cut(resourceID(name), "~")
-	return ok && group == groupID
+	return resourceID(name) == groupID+"~"+assetID+"~"+fieldType
 }
 
 // performanceMaxTempAssetGroupID is the TEMPORARY id the asset group carries inside the one
