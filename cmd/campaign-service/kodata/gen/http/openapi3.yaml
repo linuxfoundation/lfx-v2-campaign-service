@@ -8933,7 +8933,7 @@ paths:
                                     - action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
-                                      issue: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
+                                      issue: Only spending 42% of a daily budget of 150.00 in account currency — 1890.00 in account currency spent vs 4500.00 in account currency expected
                                       priority: MED
                                 campaigns:
                                     - budget_day: 150
@@ -12771,7 +12771,7 @@ paths:
                                     - action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
                                       campaign_id: "516000001"
                                       campaign_name: KubeCon NA 2026 - Search
-                                      issue: Only spending 40% of $60.00/day budget — $720.00 spent vs $1800.00 expected
+                                      issue: Only spending 40% of a daily budget of 60.00 in account currency — 720.00 in account currency spent vs 1800.00 in account currency expected
                                       priority: MED
                                 campaigns:
                                     - budget_day: 60
@@ -13675,7 +13675,7 @@ paths:
                                     - action: Broaden targeting (add subreddits/interests), increase bid, or expand geographic targeting
                                       campaign_id: "2045000000000000001"
                                       campaign_name: KubeCon NA 2026 - r/kubernetes
-                                      issue: Underspending at 40% of budget — $600.00 spent
+                                      issue: Underspending at 40% of budget — 600.00 in account currency spent
                                       priority: HIGH
                                 campaigns:
                                     - budget_day: 50
@@ -17751,7 +17751,7 @@ components:
                 issue:
                     type: string
                     description: What the rule engine flagged.
-                    example: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
+                    example: Only spending 42% of a daily budget of 150.00 in account currency — 1890.00 in account currency spent vs 4500.00 in account currency expected
                 priority:
                     type: string
                     description: The rule engine's priority band for this item.
@@ -17764,7 +17764,7 @@ components:
                 action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
                 campaign_id: "24183781329"
                 campaign_name: KubeCon NA 2026 - Search
-                issue: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
+                issue: Only spending 42% of a daily budget of 150.00 in account currency — 1890.00 in account currency spent vs 4500.00 in account currency expected
                 priority: MED
             required:
                 - priority

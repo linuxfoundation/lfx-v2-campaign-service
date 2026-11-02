@@ -35,7 +35,8 @@ raised a false zero-delivery HIGH for a window inside it
 named constants (Google's placeholder budget ≤ 1/day, the shared 0.3%/1000 low-CTR pair), add
 a HIGH zero-delivery item gated on at least one scheduled day in the window, print amounts as
 "12.50 in account currency" with no currency symbol (X's figures are in the account's own
-currency, which the read does not learn) and a currency-neutral placeholder-budget remedy,
+currency, which the read does not learn; every ad-platform monitor now prints money this way
+through the shared `accountMoney`, #435) and a currency-neutral placeholder-budget remedy,
 suppress the 0% underspend
 item that would restate it (Reddit's rule), and carry no clicks-without-conversions rule —
 X conversions are never reported. It takes no `now`: the window is the saved report's own
