@@ -316,7 +316,8 @@ shares one `start_time`/`end_time` window it becomes the row's flight and a life
 paced on it; differing or unreadable windows leave the budget `pacing_unknown`, daily or
 lifetime, since both are paced against the flight's days. An unknown budget arrives as 0/0, which the rules already report
 as not computable, and a negative campaign-level budget is unreadable rather than "no budget".
-Meta's action-item text now prints money as "N.NN in account currency", like X's, instead of `$`.
+Meta's action-item text now prints money as "N.NN in account currency", like X's, instead of `$`;
+since #435 Google, Microsoft and Reddit do too, all through the shared `rules.accountMoney`.
 **Lifetime pacing paces the window** (CBO and ABO alike): spend is the last `days` only, so the
 expectation is now the lifetime budget spread over the flight (end date inclusive — a Meta
 `stop_time`/`end_time` at exactly midnight ends the flight on the day before, `endDateOnly`) times the

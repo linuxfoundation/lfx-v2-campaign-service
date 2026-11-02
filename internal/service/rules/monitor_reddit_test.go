@@ -173,6 +173,12 @@ func TestRedditUnderspend_AlertMatchesTheLabel(t *testing.T) {
 		t.Errorf("label = %q, want underspending — the label's own boundary is <50", out[0].PacingLabel)
 	}
 	mustContainIssue(t, items, "Underspending at 45%", model.MonitorPriorityHigh)
+	// The amount is the account's own, unconverted, so it is not called dollars (#435).
+	for _, it := range items {
+		if strings.HasPrefix(it.Issue, "Underspending at") && (strings.Contains(it.Issue, "$") || !strings.Contains(it.Issue, "in account currency spent")) {
+			t.Errorf("issue %q should state the spend in account currency, with no dollar sign", it.Issue)
+		}
+	}
 }
 
 // TestEvaluateRedditMonitor_BudgetlessCampaignWithAFlightIsPacingUnknown covers the half of the

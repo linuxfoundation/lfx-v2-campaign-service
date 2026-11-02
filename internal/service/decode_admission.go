@@ -6,8 +6,7 @@ package service
 import (
 	"context"
 
-	"golang.org/x/sync/semaphore"
-
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/membudget"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -24,9 +23,10 @@ import (
 // 512 MiB pod. The aggregate memory bound the upstream middleware exists to provide would hold
 // for the socket and be defeated at the decode.
 //
-// The two bounds are therefore not redundant and neither subsumes the other. Wire bytes and
-// decoded bytes are different quantities with different worst cases, and each needs its own
-// budget:
+// The two charges are therefore not redundant and neither subsumes the other. Wire bytes and
+// decoded bytes are different quantities with different worst cases, and each is charged where
+// its cost is knowable — against ONE shared per-pod budget (internal/membudget, #179), so that
+// together they bound the process rather than each bounding its own quantity:
 //
 //   - UploadAdmission bounds the PRE-AUTH read. It must run before the body is touched, so the
 //     only thing it can know is Content-Length.
@@ -63,16 +63,23 @@ import (
 // A nil *DecodeReserver reserves nothing, so every construction that does not wire one keeps
 // working unchanged.
 type DecodeReserver struct {
-	sem    *semaphore.Weighted
-	budget int64
+	budget *membudget.Budget
 }
 
-// NewDecodeReserver returns a reserver bounding concurrent decodes to budgetBytes in total.
+// NewDecodeReserver returns a reserver bounding concurrent decodes to a PRIVATE budget of
+// budgetBytes. Production uses NewSharedDecodeReserver.
 func NewDecodeReserver(budgetBytes int64) *DecodeReserver {
-	if budgetBytes <= 0 {
+	return NewSharedDecodeReserver(membudget.New(budgetBytes))
+}
+
+// NewSharedDecodeReserver returns a reserver that charges the per-pod upload memory budget, the
+// same one middleware.UploadAdmissionShared charges for the wire side of the upload. A nil budget
+// returns nil, which reserves nothing.
+func NewSharedDecodeReserver(b *membudget.Budget) *DecodeReserver {
+	if b == nil {
 		return nil
 	}
-	return &DecodeReserver{sem: semaphore.NewWeighted(budgetBytes), budget: budgetBytes}
+	return &DecodeReserver{budget: b}
 }
 
 // reserve waits — BOUNDEDLY — for want bytes of decode budget, and reports whether it got them.
@@ -100,15 +107,12 @@ func (d *DecodeReserver) reserve(ctx context.Context, want int64) (func(), bool)
 	if d == nil {
 		return func() {}, true
 	}
-	if want <= 0 || want > d.budget {
+	if want <= 0 || want > d.budget.Total() {
 		return func() {}, false
 	}
-	ctx, cancel := context.WithTimeout(ctx, constants.DecodeAdmissionWait)
-	defer cancel()
-	if err := d.sem.Acquire(ctx, want); err != nil {
-		return func() {}, false
-	}
-	return func() { d.sem.Release(want) }, true
+	// SECOND stage: the caller already holds its wire charge, so this must not queue behind
+	// new uploads' wire requests (see membudget.Budget).
+	return d.budget.AcquireSecondStage(ctx, want, constants.DecodeAdmissionWait)
 }
 
 // decodeReserver snapshots the reserver under the read lock, matching creativeAssetRepo and the
@@ -125,6 +129,15 @@ func (s *BriefService) SetDecodeReserver(d *DecodeReserver) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.decodeReserve = d
+}
+
+// SharesUploadBudget reports whether the bound decode reserver charges exactly b — identity, not
+// presence. DecodeReserverIsSet is true for a private budget too, and a private budget is the
+// defect #179 removed: the pixel charge and the wire charge must come out of the same budget.
+// Exported for the container's wiring test, like DecodeReserverIsSet.
+func (s *BriefService) SharesUploadBudget(b *membudget.Budget) bool {
+	d := s.decodeReserver()
+	return d != nil && b != nil && d.budget == b
 }
 
 // DecodeReserverIsSet reports whether an aggregate decode budget is bound.

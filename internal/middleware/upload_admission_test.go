@@ -345,7 +345,7 @@ func TestUploadAdmission_WaitsBrieflyRatherThanShedingInstantly(t *testing.T) {
 }
 
 // TestUploadAdmission_ProductionConstantsAdmitConcurrentUploads is the regression guard for the
-// defect that flat pricing introduced: with UploadAdmissionBudgetBytes == UploadAdmissionWeightBytes,
+// defect that flat pricing introduced: with the budget == UploadAdmissionWeightBytes,
 // effective upload concurrency was exactly ONE.
 //
 // Every other test in this file supplies its own budget and weight, which is what kept the
@@ -363,13 +363,13 @@ func TestUploadAdmission_ProductionConstantsAdmitConcurrentUploads(t *testing.T)
 	// priced for. Declared via Content-Length, which is what the pricing function reads.
 	const smallUpload = 256 << 10 // 256 KiB
 
-	wantConcurrent := int(constants.UploadAdmissionBudgetBytes /
+	wantConcurrent := int(constants.UploadMemoryBudgetFallbackBytes /
 		constants.UploadAdmissionWeightFor(smallUpload))
 	if wantConcurrent < 2 {
 		t.Fatalf("production constants price a %d-byte upload at %d against a %d budget, "+
 			"admitting %d at a time: uploads cannot proceed concurrently",
 			smallUpload, constants.UploadAdmissionWeightFor(smallUpload),
-			constants.UploadAdmissionBudgetBytes, wantConcurrent)
+			constants.UploadMemoryBudgetFallbackBytes, wantConcurrent)
 	}
 
 	var arrived sync.WaitGroup
@@ -377,7 +377,7 @@ func TestUploadAdmission_ProductionConstantsAdmitConcurrentUploads(t *testing.T)
 	var admitted atomic.Int64
 
 	h := UploadAdmission(
-		constants.UploadAdmissionBudgetBytes,
+		constants.UploadMemoryBudgetFallbackBytes,
 		constants.MaxRequestBodyBytes,
 		constants.UploadAdmissionWeightFor,
 		constants.UploadAdmissionWait,
@@ -422,7 +422,7 @@ func TestUploadAdmission_ProductionConstantsAdmitConcurrentUploads(t *testing.T)
 	}
 	t.Logf("production constants admitted %d concurrent %d KiB uploads (weight %d each, budget %d)",
 		wantConcurrent, smallUpload>>10,
-		constants.UploadAdmissionWeightFor(smallUpload), constants.UploadAdmissionBudgetBytes)
+		constants.UploadAdmissionWeightFor(smallUpload), constants.UploadMemoryBudgetFallbackBytes)
 }
 
 // TestUploadAdmission_SlowBodyDoesNotPinTheWholeBudget states the availability property in the
@@ -442,7 +442,7 @@ func TestUploadAdmission_SlowBodyDoesNotPinTheWholeBudget(t *testing.T) {
 
 	var slow atomic.Bool
 	h := UploadAdmission(
-		constants.UploadAdmissionBudgetBytes,
+		constants.UploadMemoryBudgetFallbackBytes,
 		constants.MaxRequestBodyBytes,
 		constants.UploadAdmissionWeightFor,
 		constants.UploadAdmissionWait,
@@ -517,7 +517,7 @@ func TestUploadAdmissionWeightFor_PricesWithoutUnderCharging(t *testing.T) {
 		}
 		// And the consequence, asserted directly rather than left implicit: the budget admits
 		// exactly ONE undeclared upload at a time.
-		if admits := constants.UploadAdmissionBudgetBytes / constants.UploadAdmissionWeightFor(-1); admits != 1 {
+		if admits := constants.UploadMemoryBudgetFallbackBytes / constants.UploadAdmissionWeightFor(-1); admits != 1 {
 			t.Errorf("budget admits %d concurrent undeclared uploads, want exactly 1: the "+
 				"aggregate of concurrent undeclared bodies is what this pricing bounds", admits)
 		}
@@ -564,9 +564,9 @@ func TestUploadAdmissionWeightFor_PricesWithoutUnderCharging(t *testing.T) {
 
 	t.Run("a priced request never exceeds the budget", func(t *testing.T) {
 		// If any legal request priced above the budget, it could never be admitted at all.
-		if ceiling > constants.UploadAdmissionBudgetBytes {
+		if ceiling > constants.UploadMemoryBudgetFallbackBytes {
 			t.Errorf("ceiling %d exceeds budget %d: a maximum-size upload could never be admitted",
-				ceiling, constants.UploadAdmissionBudgetBytes)
+				ceiling, constants.UploadMemoryBudgetFallbackBytes)
 		}
 	})
 }
@@ -598,7 +598,7 @@ func TestUploadAdmission_UndeclaredLengthUploadsSerialize(t *testing.T) {
 
 	// Stated as an independent claim rather than derived from the constant under test: an
 	// undeclared upload must take the WHOLE budget, so exactly one fits.
-	if admits := constants.UploadAdmissionBudgetBytes / constants.UploadAdmissionWeightFor(undeclared); admits != 1 {
+	if admits := constants.UploadMemoryBudgetFallbackBytes / constants.UploadAdmissionWeightFor(undeclared); admits != 1 {
 		t.Fatalf("production constants admit %d concurrent undeclared uploads, want exactly 1: "+
 			"the aggregate of concurrent undeclared bodies would be unbounded", admits)
 	}
@@ -608,7 +608,7 @@ func TestUploadAdmission_UndeclaredLengthUploadsSerialize(t *testing.T) {
 	var admitted atomic.Int64
 
 	h := UploadAdmission(
-		constants.UploadAdmissionBudgetBytes,
+		constants.UploadMemoryBudgetFallbackBytes,
 		constants.MaxRequestBodyBytes,
 		constants.UploadAdmissionWeightFor,
 		constants.UploadAdmissionWait,

@@ -380,6 +380,26 @@ while the other half is still missing.
 
 See `docs/knowledge/architecture/signed-creative-asset-urls.md` for the security model.
 
+### Upload memory budget (`UPLOAD_MEMORY_BUDGET_BYTES`)
+
+Creative-asset uploads draw on ONE per-pod memory budget: each upload's wire side (body buffer,
+base64 string, decoded bytes; charged before the body is read) and its decoded pixel buffer
+(charged before the image is decoded) come out of the same budget, so concurrent uploads cannot
+exceed it in total.
+
+- `UPLOAD_MEMORY_BUDGET_BYTES` — optional; a byte count or a binary quantity (`256Mi`, `1Gi`).
+  Unset (the default), the budget is **40% of the container memory limit** read from the cgroup
+  (v2 `memory.max`, else v1 `memory.limit_in_bytes`), or 40% of 512Mi (~205Mi) when no limit is
+  readable. It is never below 192Mi, the cost of one maximum-size upload (a smaller value is
+  raised and logged). A malformed value stops the service at startup.
+
+The wire side may use the budget only up to its size less 80Mi, which is kept so an upload that
+has already been admitted can always get its pixel charge. When the budget is exhausted an upload
+waits up to 250ms at each of the two stages (so at most ~500ms), then gets `503` with
+`Retry-After: 1`.
+The budget's size and current use are exported at `/metrics` as
+`campaign_upload_memory_budget_bytes` and `campaign_upload_memory_budget_in_use_bytes`.
+
 ### Observability (`OTEL_*`)
 
 OpenTelemetry is opt-in. Exporters default to `none` (no collector

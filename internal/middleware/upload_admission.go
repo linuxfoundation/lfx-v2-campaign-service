@@ -4,13 +4,12 @@
 package middleware
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
 
-	"golang.org/x/sync/semaphore"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/membudget"
 )
 
 // UploadAdmission bounds the TOTAL bytes that concurrent upload requests may cause this process
@@ -102,8 +101,25 @@ import (
 // request. Dispatch-side memory is bounded by its own control on that path — the Meta dispatcher
 // resolves each distinct asset once per dispatch and caps the total distinct bytes one dispatch
 // may hold — so this middleware neither provides nor needs to claim that bound.
+//
+// The budget it charges is a PRIVATE one of budgetBytes. Production uses UploadAdmissionShared,
+// which charges the per-pod budget the decode reservation also draws on (#179).
 func UploadAdmission(budgetBytes int64, maxBodyBytes int64, weightFor func(contentLength int64) int64, wait time.Duration) func(http.Handler) http.Handler {
-	sem := semaphore.NewWeighted(budgetBytes)
+	return UploadAdmissionShared(membudget.New(budgetBytes), maxBodyBytes, weightFor, wait)
+}
+
+// UploadAdmissionShared is UploadAdmission charging a SHARED budget: the per-pod upload memory
+// budget (internal/membudget) that service.DecodeReserver charges for the pixel buffer of the
+// same uploads. The wire charge taken here and the pixel charge taken there do not overlap
+// (constants.UploadAdmissionWeightBytes), so together they bound what concurrent uploads hold
+// across the whole process rather than per quantity.
+//
+// Every 503 the upload route answers carries Retry-After, including one the handler itself
+// writes when the decode reservation could not be had: both are the same budget being busy, and
+// the remedy (retry shortly) is the same.
+func UploadAdmissionShared(budget *membudget.Budget, maxBodyBytes int64, weightFor func(contentLength int64) int64, wait time.Duration) func(http.Handler) http.Handler {
+	// The most the wire stage may ever hold: the budget less the reserve kept for pixel charges.
+	budgetBytes := budget.FirstStageLimit()
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !isUploadRequest(r) {
@@ -153,10 +169,8 @@ func UploadAdmission(budgetBytes int64, maxBodyBytes int64, weightFor func(conte
 			// connections until WriteTimeout kills them, which is a worse failure than an
 			// honest refusal. A short wait still absorbs ordinary jitter, so two uploads
 			// arriving microseconds apart do not shed one for no reason.
-			ctx, cancel := context.WithTimeout(r.Context(), wait)
-			defer cancel()
-
-			if err := sem.Acquire(ctx, weight); err != nil {
+			release, ok := budget.Acquire(r.Context(), weight, wait)
+			if !ok {
 				// SHED — and it must be unmistakably a failure. Returning 200, or an empty
 				// body, or letting the request through unadmitted, would each turn a refusal
 				// into a silent wrong answer: the caller would believe the asset was stored
@@ -166,9 +180,9 @@ func UploadAdmission(budgetBytes int64, maxBodyBytes int64, weightFor func(conte
 				writeUploadShed(w)
 				return
 			}
-			defer sem.Release(weight)
+			defer release()
 
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(retryAfterOn503{ResponseWriter: w}, r)
 		})
 	}
 }
@@ -213,3 +227,22 @@ func writeUploadShed(w http.ResponseWriter) {
 		Message: "the service is at upload capacity; retry shortly",
 	})
 }
+
+// retryAfterOn503 adds Retry-After to a 503 the upload handler writes without one. The handler's
+// 503s on this route are transient: the decode reservation shedding against the same per-pod
+// budget this middleware charges (service.DecodeReserver), or the asset store not yet bound
+// during a cold start. Both owe the client the same hint. A header the handler set itself is
+// left alone.
+type retryAfterOn503 struct {
+	http.ResponseWriter
+}
+
+func (w retryAfterOn503) WriteHeader(code int) {
+	if code == http.StatusServiceUnavailable && w.Header().Get("Retry-After") == "" {
+		w.Header().Set("Retry-After", "1")
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer.
+func (w retryAfterOn503) Unwrap() http.ResponseWriter { return w.ResponseWriter }

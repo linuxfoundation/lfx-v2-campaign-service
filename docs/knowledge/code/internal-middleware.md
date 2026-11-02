@@ -104,8 +104,8 @@ and the base64 STRING the JSON decoder materialises for one upload. It does NOT 
 the two must not be treated as one bound. The weight is priced from `Content-Length`, and image
 compression severs the link between wire bytes and decoded bytes: a flat 4000x4000 PNG is ~68 KiB
 on the wire and 61 MiB decoded, so it takes the minimum wire permit while allocating a pixel
-buffer that permit never paid for. Decoded pixels are admitted separately, against their own
-budget, by `service.DecodeReserver` (`DecodeAdmissionBudgetBytes`) — see
+buffer that permit never paid for. Decoded pixels are charged separately, against the SAME per-pod
+budget, by `service.DecodeReserver` — see
 `docs/knowledge/code/internal-service.md`. Reading this middleware as covering pixels would make
 that second reservation look redundant and invite its removal.
 
@@ -116,11 +116,18 @@ memory is bounded by its own control on that path: the Meta dispatcher resolves 
 asset once per dispatch and caps the total distinct bytes one dispatch may hold, so repeating a
 single asset across variants does not multiply what is resident.
 
-The budget is DERIVED, not chosen: `constants.UploadAdmissionBudgetBytes` is
-`PodMemoryLimitBytes / 4`, and `PodMemoryLimitBytes` mirrors the chart's
-`resources.limits.memory`. Because that number lives in a file the Go build cannot read,
-`TestPodMemoryLimitMatchesChart` parses `values.yaml` and fails when the two drift — the
-relationship is enforced rather than trusted.
+**One per-pod budget (#179).** Production installs `UploadAdmissionShared`, charging the
+`internal/membudget` budget the container builds (`Container.UploadBudget`), which
+`service.DecodeReserver` also charges for the pixel buffer. The wire weight
+(`constants.UploadAdmissionWeightBytes`, 112 MiB: body buffer + base64 string + decoded slice)
+excludes the pixels, so the two charges never overlap and their sum is a process-wide bound. The
+budget is `UPLOAD_MEMORY_BUDGET_BYTES` when set, else 40% of the cgroup memory limit, else 40% of
+`PodMemoryLimitBytes` (`UploadMemoryBudgetFallbackBytes`, ~205 MiB), and never below one
+worst-case upload (`UploadWorstCaseBytes`, 192 MiB). Its use is exported as
+`campaign_upload_memory_budget_in_use_bytes` (size: `campaign_upload_memory_budget_bytes`). Every
+`503` on the upload route carries `Retry-After`, including the handler's own when the decode
+reservation sheds. Before #179 each point had its own quarter-of-the-pod semaphore and the wire
+weight (then 128 MiB) also counted the pixel buffer.
 
 Two refusals, and their ORDER is deliberate. A body whose DECLARED `Content-Length` already
 exceeds `maxBodyBytes` is answered `413` immediately, before any permit is sought: that verdict is
@@ -135,13 +142,13 @@ The weight is PRICED per request, not charged flat, by `constants.UploadAdmissio
 flat charge equal to the budget made effective concurrency exactly 1 — a 200 KiB logo held the
 same permit as a 30 MiB image. Declared sizes are charged proportionally
 (`UploadAdmissionAmplification`) between a floor (`UploadAdmissionMinWeightBytes`, 8 MiB) and the
-worst-case ceiling, so ordinary uploads that DECLARE a length run up to ~16 at a time against the
-128 MiB budget. The floor applies to declared lengths only — see below for the undeclared case,
+worst-case ceiling, so ordinary uploads that DECLARE a length run up to ~15 at a time against the ~125 MiB wire share of the
+default ~205 MiB budget. The floor applies to declared lengths only — see below for the undeclared case,
 which is charged the ceiling and therefore serializes.
 
-Unknown length (chunked or absent, `ContentLength < 0`) is charged the worst-case CEILING. That
-ceiling equals the whole budget, so undeclared uploads run strictly ONE AT A TIME and a concurrent
-one is shed with 503.
+Unknown length (chunked or absent, `ContentLength < 0`) is charged the worst-case CEILING. Two
+ceilings exceed the default budget, so undeclared uploads run strictly ONE AT A TIME and a
+concurrent one is shed with 503.
 
 The floor was tried here and reverted, and the reason is worth keeping because both positions were
 defensible. Charging the floor bought concurrency for the generated client — goa's stock
