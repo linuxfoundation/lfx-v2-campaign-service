@@ -331,7 +331,6 @@ func TestBudget_CancelledContextIsRefusedWithCapacityFree(t *testing.T) {
 // outcome under the lock. TestBudget_GrantAndCancelBothReadyBeforeWaitIsGivenBack covers the
 // other window.
 func TestBudget_GrantRacingCancellationIsGivenBack(t *testing.T) {
-	t.Cleanup(func() { testHookAfterWait = nil })
 	for _, second := range []bool{false, true} {
 		b := NewWithReserve(205, 80)
 		hold, ok := b.AcquireSecondStage(context.Background(), 205, time.Second)
@@ -339,7 +338,7 @@ func TestBudget_GrantRacingCancellationIsGivenBack(t *testing.T) {
 			t.Fatal("premise: the whole budget is held")
 		}
 		woke, proceed := make(chan struct{}), make(chan struct{})
-		testHookAfterWait = func() {
+		b.testAfterWait = func() {
 			close(woke)
 			<-proceed
 		}
@@ -369,7 +368,6 @@ func TestBudget_GrantRacingCancellationIsGivenBack(t *testing.T) {
 		}
 		close(proceed)
 		got := <-result
-		testHookAfterWait = nil
 		if got {
 			t.Errorf("second=%v: a request granted as its caller was cancelled was admitted", second)
 		}
@@ -384,7 +382,6 @@ func TestBudget_GrantRacingCancellationIsGivenBack(t *testing.T) {
 // the charge must be given back. An early return on the ready case would admit about half of
 // these, so 100 rounds fail it with near certainty.
 func TestBudget_GrantAndCancelBothReadyBeforeWaitIsGivenBack(t *testing.T) {
-	t.Cleanup(func() { testHookBeforeWait = nil })
 	for i := range 100 {
 		b := NewWithReserve(205, 80)
 		hold, ok := b.AcquireSecondStage(context.Background(), 205, time.Second)
@@ -392,7 +389,7 @@ func TestBudget_GrantAndCancelBothReadyBeforeWaitIsGivenBack(t *testing.T) {
 			t.Fatal("premise: the whole budget is held")
 		}
 		ctx, cancel := context.WithCancel(context.Background())
-		testHookBeforeWait = func() {
+		b.testBeforeWait = func() {
 			cancel()
 			hold() // grants the 50 to the queued waiter before it waits
 		}

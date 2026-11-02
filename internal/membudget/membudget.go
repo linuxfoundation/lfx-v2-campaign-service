@@ -64,6 +64,14 @@ type Budget struct {
 	used    int64
 	second  []*waiter // second-stage waiters, FIFO, served first
 	first   []*waiter // first-stage waiters, FIFO
+
+	// Test hooks, nil in production and scoped to one budget so no other test sees them.
+	// testBeforeWait runs after an acquire has queued and released the lock, before it waits,
+	// so a test can have the grant and the cancellation both land before the wait's select.
+	// testAfterWait runs after a queued acquire wakes, before it takes the lock to settle the
+	// outcome, so a test can land a grant in exactly that window. Set before the budget is used.
+	testBeforeWait func()
+	testAfterWait  func()
 }
 
 type waiter struct {
@@ -140,16 +148,6 @@ func (b *Budget) AcquireSecondStage(ctx context.Context, want int64, wait time.D
 
 func noop() {}
 
-// testHookBeforeWait, when set by a test, runs after an acquire has queued and released the lock
-// and before it waits, so a test can have the grant and the cancellation both land before the
-// wait's select runs. Always nil in production.
-var testHookBeforeWait func()
-
-// testHookAfterWait, when set by a test, runs after a queued acquire wakes and before it takes the
-// lock to settle the outcome, so a test can land a grant in exactly that window. Always nil in
-// production.
-var testHookAfterWait func()
-
 func (b *Budget) limit(second bool) int64 {
 	if second {
 		return b.total
@@ -188,8 +186,8 @@ func (b *Budget) acquire(ctx context.Context, want int64, wait time.Duration, se
 		b.first = append(b.first, w)
 	}
 	b.mu.Unlock()
-	if testHookBeforeWait != nil {
-		testHookBeforeWait()
+	if b.testBeforeWait != nil {
+		b.testBeforeWait()
 	}
 
 	timer := time.NewTimer(wait)
@@ -199,8 +197,8 @@ func (b *Budget) acquire(ctx context.Context, want int64, wait time.Duration, se
 	case <-ctx.Done():
 	case <-timer.C:
 	}
-	if testHookAfterWait != nil {
-		testHookAfterWait()
+	if b.testAfterWait != nil {
+		b.testAfterWait()
 	}
 
 	// Every outcome is settled under the lock, so a grant that raced with cancellation or the
