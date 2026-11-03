@@ -321,11 +321,10 @@ type googleAdsConfig struct {
 	// resource names. Absent means the campaign inherits the ACCOUNT's conversion
 	// goals, which is what every Google campaign this service has created does.
 	//
-	// Search, Video and Display — campaign.selective_optimization is the create-time
-	// conversion selection field and those three accept it. Demand Gen and Performance
-	// Max select conversions through a campaign-conversion-goal resource this client
-	// does not yet write, so the list is REFUSED there rather than dropped. The ids come
-	// from the client's ListConversionActions read.
+	// Every channel (#436). After the campaign is created they become a campaign-level
+	// conversion goal: one custom goal per action set, shared across campaigns, with the
+	// campaign's goal config pointed at it. A failure there is a partial result that says
+	// the goal was not applied. The ids come from the client's ListConversionActions read.
 	ConversionActions []string `json:"conversionActions"`
 	// StartDate/EndDate are the campaign's flight window as YYYY-MM-DD, spelled exactly
 	// as the meta and reddit configs spell them. Each is independently optional: an
@@ -478,8 +477,8 @@ type googleAdsConfig struct {
 	// AdoptExisting opts THIS dispatch in to adopting a campaign that already carries the
 	// composed name instead of creating one. It defaults to FALSE, and the default is the
 	// safety property, not a convenience: ComposeName is deterministic in
-	// Project/EventName/NameSuffix and does NOT change when the local campaign row is
-	// soft-deleted, while getCampaignByPlatformQuery excludes deleted rows — so after a
+	// Project/EventName/NameSuffix (and the claimed row's stage and tactic) and does NOT
+	// change when the local campaign row is soft-deleted, while getCampaignByPlatformQuery excludes deleted rows — so after a
 	// delete the orchestrator reads the pair as "never dispatched" and takes the fresh-claim
 	// path. An unconditional lookup would then silently re-attach to the still-live upstream
 	// campaign the delete was meant to walk away from, and persist THIS request's
@@ -656,7 +655,25 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		// errCodeDuplicateBudgetName / errCodeDuplicateCampaignName). Either is reported
 		// UNCONFIRMED-already-exists rather than creating a second paid campaign — a
 		// poor-man's idempotency key until LFXV2-2665 lands provider idempotency keys.
-		NameSuffix: brief.ID,
+		//
+		// The slot version extends the suffix for a deliberate SECOND campaign on the same
+		// slot (model.SlotNameSuffix), exactly as on Microsoft: slot 1 keeps the bare brief
+		// id, so every existing campaign's budget, campaign and ad group names — and every
+		// retry of one — are unchanged, while slot 2 composes names the first campaign does
+		// not hold. Without it slot 2 would compose slot 1's names, and every name-keyed path
+		// below would bind it to slot 1: DUPLICATE_CAMPAIGN_NAME reported as "slot 2 already
+		// exists", the budget reuse after DUPLICATE_NAME attaching slot 2 to slot 1's
+		// budget, and adoptExisting adopting slot 1 as slot 2.
+		NameSuffix: model.SlotNameSuffix(brief.ID, model.DispatchSlotVersion(ctx)),
+		// The funnel-stage token and tactic of a LABELLED campaign, read from the claimed
+		// row's stored labels (model.DispatchLabels), never from the request: a retry of that
+		// row composes the same names, and an unlabelled (legacy) row composes the names it
+		// always had, with no stage or tactic segment.
+		StageToken: googleAdsStageToken(model.DispatchLabels(ctx)),
+		Tactic:     googleAdsTactic(model.DispatchLabels(ctx)),
+		// utm_campaign's last-resort fallback stays the bare brief id on every slot: it is
+		// event-level attribution, and NameSuffix now varies by slot.
+		UTMCampaignFallback: brief.ID,
 	}
 
 	// login_customer_id is the OPTIONAL manager (MCC) account the ad account is accessed
@@ -835,6 +852,34 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return campaignFromGoogleAds(ctx, result, cfg), withCreateOutcome(fmt.Errorf("google-ads dispatch: %w", cerr), outcome)
 	}
 	return campaignFromGoogleAds(ctx, result, cfg), nil
+}
+
+// googleAdsStageToken is the name token for the claimed row's funnel stage, or "" for an
+// unlabelled row.
+func googleAdsStageToken(l model.CampaignLabels) string {
+	if l.FunnelStage == nil {
+		return ""
+	}
+	return l.FunnelStage.NameToken()
+}
+
+// googleAdsTactic is the claimed row's tactic token for the name, or "" when the row has
+// none. Only a listed tactic is returned: the column's CHECK and the service already refuse
+// anything else, and a name segment must never carry a value nobody validated.
+//
+// The token is the tactic's slug except content-promotion, which is named "content-promo": the
+// data pipeline classifies a campaign's ad format by substring over the whole name, and
+// "content-proMOTION" would file a Demand Gen campaign under the Motion format. Every other slug
+// is free of the pipeline's format, funnel and channel words. The mapping is fixed forever once a
+// campaign carries it — a retry must compose the same name.
+func googleAdsTactic(l model.CampaignLabels) string {
+	if l.Tactic == nil || !l.Tactic.Valid() {
+		return ""
+	}
+	if *l.Tactic == model.TacticContentPromotion {
+		return "content-promo"
+	}
+	return string(*l.Tactic)
 }
 
 // googleAdsKeywords maps the wire-shaped keyword config to the platform client's

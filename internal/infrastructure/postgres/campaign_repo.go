@@ -86,9 +86,16 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 // reusable: a deleted row sits outside the index, so it does not conflict and this
 // INSERT wins the claim cleanly. Pinned by
 // TestCampaignRepo_OnConflictCarriesLivePredicate.
+//
+// funnel_stage and tactic (000054) are written by this INSERT, and otherwise only by the INSERT
+// arm of upsertCampaignQuery (which recreates a row whose claim was cleared mid-flight, carrying
+// the claimed row's labels): on a conflict the INSERT does nothing, so a slot version that already
+// has a row keeps that row's labels, and no UPDATE names the two columns. That is what makes them
+// immutable after the claim.
 const claimCampaignDispatchQuery = `INSERT INTO campaigns
-	(project_id, brief_id, job_id, platform, variant, slot_version, campaign_name, status, created_by, updated_by)
-	VALUES ($1, $2, $3, $4, $5, $7, '', 'pending', $6, $6)
+	(project_id, brief_id, job_id, platform, variant, slot_version, campaign_name, status, created_by, updated_by,
+	 funnel_stage, tactic)
+	VALUES ($1, $2, $3, $4, $5, $7, '', 'pending', $6, $6, $8, $9)
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO NOTHING`
 
 // deletedSlotVersionExistsQuery reports whether one slot version is held by a SOFT-DELETED row and
@@ -285,24 +292,24 @@ func refuseLegacyBinding(ctx context.Context, tx pgx.Tx, op string, c *model.Cam
 // after logging a warning — when the request carries no authenticated principal. NULL then
 // means "not recorded", which is the honest value; inventing a placeholder actor would make
 // the audit trail claim a principal that never acted.
-func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
-	return r.claimDispatch(ctx, projectID, briefID, platform, variant, slotVersion, jobID, by, false)
+func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor, labels model.CampaignLabels) (bool, *model.Campaign, error) {
+	return r.claimDispatch(ctx, projectID, briefID, platform, variant, slotVersion, jobID, by, labels, false)
 }
 
 // ClaimNewCampaignVersion is ClaimCampaignDispatch that also refuses, under the slot lock, a
 // slot version a soft-deleted row already holds (domain.ErrSlotVersionUsed). See the port.
-func (r *CampaignRepo) ClaimNewCampaignVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
-	return r.claimDispatch(ctx, projectID, briefID, platform, variant, slotVersion, jobID, by, true)
+func (r *CampaignRepo) ClaimNewCampaignVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor, labels model.CampaignLabels) (bool, *model.Campaign, error) {
+	return r.claimDispatch(ctx, projectID, briefID, platform, variant, slotVersion, jobID, by, labels, true)
 }
 
-func (r *CampaignRepo) claimDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor, freshVersion bool) (bool, *model.Campaign, error) {
+func (r *CampaignRepo) claimDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor, labels model.CampaignLabels, freshVersion bool) (bool, *model.Campaign, error) {
 	variant = model.NormalizeVariant(variant)
 	slotVersion = model.NormalizeSlotVersion(slotVersion)
 	createdBy, err := marshalActor(by)
 	if err != nil {
 		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
 	}
-	claimed, err := r.insertDispatchClaim(ctx, projectID, briefID, platform, variant, slotVersion, jobID, createdBy, freshVersion)
+	claimed, err := r.insertDispatchClaim(ctx, projectID, briefID, platform, variant, slotVersion, jobID, createdBy, labels, freshVersion)
 	if errors.Is(err, domain.ErrSlotVersionUsed) {
 		return false, nil, err
 	}
@@ -352,7 +359,7 @@ func (r *CampaignRepo) claimDispatch(ctx context.Context, projectID, briefID str
 // per-slot advisory lock and reports whether this caller's row went in. The read-back stays
 // OUTSIDE the transaction, as it always was: the lock is released at COMMIT, so the winner's
 // row — ours or a concurrent claimant's — is committed and visible by then.
-func (r *CampaignRepo) insertDispatchClaim(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, createdBy []byte, freshVersion bool) (bool, error) {
+func (r *CampaignRepo) insertDispatchClaim(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, createdBy []byte, labels model.CampaignLabels, freshVersion bool) (bool, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return false, fmt.Errorf("begin tx: %w", err)
@@ -372,7 +379,8 @@ func (r *CampaignRepo) insertDispatchClaim(ctx context.Context, projectID, brief
 			return false, domain.ErrSlotVersionUsed
 		}
 	}
-	tag, err := tx.Exec(ctx, claimCampaignDispatchQuery, projectID, briefID, jobID, string(platform), variant, createdBy, slotVersion)
+	tag, err := tx.Exec(ctx, claimCampaignDispatchQuery, projectID, briefID, jobID, string(platform), variant, createdBy, slotVersion,
+		funnelStageArg(labels.FunnelStage), tacticArg(labels.Tactic))
 	if err != nil {
 		return false, err
 	}
@@ -494,7 +502,8 @@ func (r *CampaignRepo) ClearDispatchClaim(ctx context.Context, briefID string, p
 
 const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, variant, slot_version, platform_campaign_id, campaign_name,
 	status, budget_amount, budget_type, start_date, end_date, config_snapshot, result, version,
-	created_by, updated_by, ran_on_system_account, created_at, updated_at, max_cpc_bid::float8, bidding_strategy`
+	created_by, updated_by, ran_on_system_account, created_at, updated_at, max_cpc_bid::float8, bidding_strategy,
+	funnel_stage, tactic`
 
 // getCampaignQuery and getCampaignByPlatformQuery both exclude soft-deleted rows;
 // pinned by TestCampaignRepo_ReadsExcludeSoftDeleted.
@@ -902,9 +911,11 @@ func (r *CampaignRepo) getCampaignBySlot(ctx context.Context, projectID, briefID
 const upsertCampaignQuery = `INSERT INTO campaigns
 	(project_id, brief_id, job_id, platform, variant, platform_campaign_id, campaign_name, status,
 	 budget_amount, budget_type, start_date, end_date, config_snapshot, result, created_by, updated_by,
-	 ran_on_system_account, slot_version, max_cpc_bid, bidding_strategy, platform_bound_at)
+	 ran_on_system_account, slot_version, max_cpc_bid, bidding_strategy, platform_bound_at,
+	 funnel_stage, tactic)
 	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17,$18,$19,$20,
-	        CASE WHEN NULLIF($5::text, '') IS NOT NULL THEN clock_timestamp() END)
+	        CASE WHEN NULLIF($5::text, '') IS NOT NULL THEN clock_timestamp() END,
+	        $21, $22)
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO UPDATE SET
 		job_id=EXCLUDED.job_id, platform_campaign_id=EXCLUDED.platform_campaign_id,
 		-- platform_bound_at (000048) is stamped when this write gives the row an upstream id it
@@ -1143,6 +1154,10 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 		// value here would land the result on a different campaign of the same slot.
 		model.NormalizeSlotVersion(c.SlotVersion),
 		c.MaxCPCBid, biddingStrategyArg(c.BiddingStrategy),
+		// The labels (000054) reach ONLY the INSERT arm — a claim cleared mid-flight leaves the
+		// slot empty, and the recreated row must keep the stage its upstream name carries. The
+		// conflict arm does not name them, so an existing row's labels never change.
+		funnelStageArg(c.FunnelStage), tacticArg(c.Tactic),
 	)
 	upserted, err := scanCampaign(row)
 	if err != nil {
@@ -2321,14 +2336,18 @@ func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 		budgetType *string
 		// bidding_strategy (000050): NULL on a legacy or adopted row.
 		biddingStrategy *string
-		createdBy       []byte
-		updatedBy       []byte
+		// funnel_stage / tactic (000054): NULL on a legacy, unlabelled or adopted row.
+		funnelStage *string
+		tactic      *string
+		createdBy   []byte
+		updatedBy   []byte
 	)
 	err := row.Scan(
 		&c.ID, &c.ProjectID, &c.BriefID, &c.JobID, &platform, &c.Variant, &c.SlotVersion, &pcID, &c.CampaignName,
 		&c.Status, &c.BudgetAmount, &budgetType, &c.StartDate, &c.EndDate,
 		&c.ConfigSnapshot, &c.Result, &c.Version, &createdBy, &updatedBy, &c.RanOnSystemAccount,
 		&c.CreatedAt, &c.UpdatedAt, &c.MaxCPCBid, &biddingStrategy,
+		&funnelStage, &tactic,
 	)
 	if err != nil {
 		return nil, err
@@ -2351,7 +2370,32 @@ func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 		bs := model.BiddingStrategy(*biddingStrategy)
 		c.BiddingStrategy = &bs
 	}
+	if funnelStage != nil {
+		fs := model.FunnelStage(*funnelStage)
+		c.FunnelStage = &fs
+	}
+	if tactic != nil {
+		t := model.Tactic(*tactic)
+		c.Tactic = &t
+	}
 	return &c, nil
+}
+
+// funnelStageArg and tacticArg bind an optional label as NULL when unset.
+func funnelStageArg(s *model.FunnelStage) *string {
+	if s == nil {
+		return nil
+	}
+	v := string(*s)
+	return &v
+}
+
+func tacticArg(t *model.Tactic) *string {
+	if t == nil {
+		return nil
+	}
+	v := string(*t)
+	return &v
 }
 
 // biddingStrategyArg passes a nil strategy as SQL NULL ("not recorded") rather than "".

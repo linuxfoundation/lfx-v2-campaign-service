@@ -387,42 +387,26 @@ func TestBiddingPlan_UnverifiedRefusalsDoNotClaimLiveVerification(t *testing.T) 
 	}
 }
 
-// Conversion actions are ACCEPTED on Video and on Display, and the subtests run EVERY
-// admitted kind rather than one representative. campaign.selective_optimization is defined
-// for SEARCH, DISPLAY and VIDEO, so the Search-only fence that refuses them on Demand Gen
-// would be an over-refusal on either — a create Google would have taken, rejected by this
-// client for no reason. Over-refusal is the failure that matters: under-refusal costs an
-// HTTP 400, over-refusal costs a feature nobody can reach.
-//
-// One kind per subtest, because the fence is a chain of `kind !=` arms and a test that
-// exercises only Video stays green when the Display arm is deleted — the fence would then
-// refuse Display, and nothing in the suite would say so.
-func TestValidateConversionActions_AcceptedOnEveryAdmittedKind(t *testing.T) {
-	for _, kind := range []string{campaignKindSearch, campaignKindVideo, campaignKindDisplay} {
+// Conversion actions are ACCEPTED on every channel (#436), one kind per subtest so a fence
+// re-added for any one of them fails by name. They reach Google as a campaign-level
+// conversion goal after the create (conversion_goal.go), so the plan must CARRY them, and
+// the create payload must NOT: campaign.selective_optimization is App-campaign only.
+func TestValidateConversionActions_AcceptedOnEveryKind(t *testing.T) {
+	for _, kind := range []string{campaignKindSearch, campaignKindVideo, campaignKindDisplay, campaignKindDemandGen, campaignKindPerformanceMax} {
 		t.Run(kind, func(t *testing.T) {
-			names, err := validateConversionActions(kind, biddingTestCustomer, []string{"555"})
-			if err != nil {
-				t.Fatalf("refused conversion actions on %s, which takes selective_optimization: %v", kind, err)
-			}
-			if len(names) != 1 {
-				t.Fatalf("got %d resource names, want 1: %v", len(names), names)
-			}
-			if !strings.HasSuffix(names[0], "/conversionActions/555") {
-				t.Errorf("resource name %q is not the action the caller named", names[0])
-			}
-
-			// And the plan must actually CARRY them to the wire — accepting the list and then
-			// dropping it is the same silent-drop defect the Demand Gen refusal exists to prevent.
 			plan, err := validateBiddingPlan(kind, biddingTestCustomer, CampaignInput{ConversionActions: []string{"555"}})
 			if err != nil {
-				t.Fatalf("validateBiddingPlan: %v", err)
+				t.Fatalf("refused conversion actions on %s: %v", kind, err)
+			}
+			if len(plan.conversionActions) != 1 || !strings.HasSuffix(plan.conversionActions[0], "/conversionActions/555") {
+				t.Fatalf("plan carries %v, want the one action the caller named", plan.conversionActions)
 			}
 			raw, err := json.Marshal(plan.fields())
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
-			if !strings.Contains(string(raw), "selectiveOptimization") {
-				t.Errorf("payload %s drops the conversion actions the preflight accepted", raw)
+			if strings.Contains(string(raw), "selectiveOptimization") {
+				t.Errorf("create payload %s carries selectiveOptimization, which Google takes on App campaigns only", raw)
 			}
 		})
 	}
@@ -556,7 +540,7 @@ func TestValidateTargetROAS_Bounds(t *testing.T) {
 // Both spellings of a conversion action resolve to the same resource name, so a caller can
 // paste an id off the Google Ads UI or feed back what ListConversionActions returned.
 func TestValidateConversionActions_AcceptsBothSpellings(t *testing.T) {
-	got, err := validateConversionActions(campaignKindSearch, biddingTestCustomer, []string{
+	got, err := validateConversionActions(biddingTestCustomer, []string{
 		"  987654321 ",
 		"customers/" + biddingTestCustomer + "/conversionActions/111222333",
 	})
@@ -581,7 +565,7 @@ func TestValidateConversionActions_AcceptsBothSpellings(t *testing.T) {
 // point the campaign at an id that does not exist on this account, and Google would say so
 // only after the budget mutate.
 func TestValidateConversionActions_RefusesAForeignAccountsAction(t *testing.T) {
-	_, err := validateConversionActions(campaignKindSearch, biddingTestCustomer, []string{"customers/9999999999/conversionActions/1"})
+	_, err := validateConversionActions(biddingTestCustomer, []string{"customers/9999999999/conversionActions/1"})
 	if err == nil {
 		t.Fatal("accepted a conversion action belonging to another customer")
 	}
@@ -591,10 +575,9 @@ func TestValidateConversionActions_RefusesAForeignAccountsAction(t *testing.T) {
 }
 
 // Duplicates are DEDUPLICATED, not refused: naming the same conversion twice is a harmless
-// paste, while Google rejects a selective_optimization list containing a duplicate — after
-// the budget mutate.
+// paste, and it would otherwise name a different goal for the same set (conversion_goal.go).
 func TestValidateConversionActions_DeduplicatesAcrossSpellings(t *testing.T) {
-	got, err := validateConversionActions(campaignKindSearch, biddingTestCustomer, []string{
+	got, err := validateConversionActions(biddingTestCustomer, []string{
 		"555",
 		"customers/" + biddingTestCustomer + "/conversionActions/555",
 		"555",
@@ -617,7 +600,7 @@ func TestValidateConversionActions_RefusesMalformedAndEmpty(t *testing.T) {
 		{"customers/" + biddingTestCustomer + "/campaigns/555"},
 	}
 	for _, tc := range cases {
-		if _, err := validateConversionActions(campaignKindSearch, biddingTestCustomer, tc); err == nil {
+		if _, err := validateConversionActions(biddingTestCustomer, tc); err == nil {
 			t.Errorf("accepted %q, which cannot address a conversion action", tc)
 		}
 	}
@@ -625,42 +608,20 @@ func TestValidateConversionActions_RefusesMalformedAndEmpty(t *testing.T) {
 	for i := range over {
 		over[i] = "1000" + strings.Repeat("0", i%3) + string(rune('0'+i%10))
 	}
-	if _, err := validateConversionActions(campaignKindSearch, biddingTestCustomer, over); err == nil {
+	if _, err := validateConversionActions(biddingTestCustomer, over); err == nil {
 		t.Errorf("accepted %d conversion actions, over the %d cap", len(over), maxConversionActions)
 	}
 }
 
-// Refused on Demand Gen rather than dropped. The channel does not take
-// campaign.selective_optimization, so accepting the list would validate every name and then
-// discard the lot — leaving the operator believing the campaign bids toward the conversions
-// they chose. Same rule every other Search-only input in this preflight follows.
-func TestValidateConversionActions_RefusedOnDemandGen(t *testing.T) {
-	_, err := validateConversionActions(campaignKindDemandGen, biddingTestCustomer, []string{"555"})
-	if err == nil {
-		t.Fatal("accepted conversion actions on Demand Gen, where they would be silently dropped")
-	}
-	// An EMPTY list must still be fine there: refusing it would refuse every Demand Gen
-	// create that predates this field.
-	if _, err := validateConversionActions(campaignKindDemandGen, biddingTestCustomer, nil); err != nil {
-		t.Errorf("refused an absent conversion-action list on Demand Gen: %v", err)
-	}
-}
-
-// selective_optimization is OMITTED when no actions were named, not sent empty. An empty list
-// means "optimize toward nothing" and would stop the campaign bidding at all; an absent field
-// means "inherit the account's conversion goals", which is what every campaign created before
-// this field existed does.
-func TestBiddingPlan_NoConversionActionsOmitsSelectiveOptimization(t *testing.T) {
+// No actions named means no goal: the plan carries none, so the campaign inherits the
+// account's conversion goals, as every campaign created before #436 does.
+func TestBiddingPlan_NoConversionActionsMeansNoGoal(t *testing.T) {
 	plan, err := validateBiddingPlan(campaignKindSearch, biddingTestCustomer, CampaignInput{})
 	if err != nil {
 		t.Fatalf("validateBiddingPlan: %v", err)
 	}
-	raw, err := json.Marshal(plan.fields())
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if strings.Contains(string(raw), "selectiveOptimization") {
-		t.Errorf("payload %s carries selectiveOptimization with no actions named", raw)
+	if len(plan.conversionActions) != 0 {
+		t.Errorf("plan carries %v with no actions named", plan.conversionActions)
 	}
 }
 

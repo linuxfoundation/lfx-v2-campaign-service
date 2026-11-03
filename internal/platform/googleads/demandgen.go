@@ -269,6 +269,17 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		return r
 	}
 
+	// The campaign-level conversion goal (#436), first of the post-create steps so a failure
+	// leaves as little built on the campaign as possible. Demand Gen bids for clicks here, so
+	// the goal sets what the campaign counts as a conversion, and the step line says so.
+	goalStep, goalErr := c.applyCampaignConversionGoal(ctx, campaignID, pf.bidding)
+	if goalErr != nil {
+		return campaignPartial(), goalErr
+	}
+	if goalStep != "" {
+		steps = append(steps, goalStep)
+	}
+
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return campaignPartial(), fmt.Errorf("google-ads demand gen creation aborted after campaign %s created (context done before ad group create): %w", campaignID, ctxErr)
 	}

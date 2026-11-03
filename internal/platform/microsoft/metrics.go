@@ -781,8 +781,19 @@ func foldReportRows(records [][]string, campaignID string, window model.MetricsW
 	}
 	// Published only if EVERY row carried a value. One blank cell anywhere in the column
 	// leaves Conversions nil — see the reasoning at the accumulation site.
-	if !convIncomplete {
+	//
+	// #175: the status names which absence it is. No column, or a column with every cell
+	// blank, is unavailable — the account does not report conversions (typically no Universal
+	// Event Tracking). Some cells carrying a value and some blank is incomplete — a partial
+	// count. Otherwise the total is reported.
+	switch {
+	case !convOK || convTotal == nil:
+		out.ConversionsStatus = model.ConversionsUnavailable
+	case convIncomplete:
+		out.ConversionsStatus = model.ConversionsIncomplete
+	default:
 		out.Conversions = convTotal
+		out.ConversionsStatus = model.ConversionsReported
 	}
 	if out.Impressions > 0 {
 		out.Ctr = float64(out.Clicks) / float64(out.Impressions)

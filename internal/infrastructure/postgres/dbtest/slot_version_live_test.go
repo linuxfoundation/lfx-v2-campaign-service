@@ -46,7 +46,7 @@ func countLive(ctx context.Context, t *testing.T, pool *pgxpool.Pool, briefID st
 func createSlotVersion(ctx context.Context, t *testing.T, repo *postgres.CampaignRepo, project, briefID string, p model.Provider, slotVersion int) *model.Campaign {
 	t.Helper()
 	jobID := uuid.NewString()
-	claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, slotVersion, jobID, nil)
+	claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, slotVersion, jobID, nil, model.CampaignLabels{})
 	if err != nil {
 		t.Fatalf("claim slot %d: %v", slotVersion, err)
 	}
@@ -102,7 +102,7 @@ func TestLiveNewVersionCreatesSlotVersion2(t *testing.T) {
 	}
 
 	retried, row, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p,
-		model.VariantDefault, model.FirstSlotVersion, uuid.NewString(), nil)
+		model.VariantDefault, model.FirstSlotVersion, uuid.NewString(), nil, model.CampaignLabels{})
 	if err != nil {
 		t.Fatalf("retry claim of slot 1: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestLiveNewVersionClaimRefusesAVersionAConcurrentRequestUsedAndDeleted(t *t
 		t.Fatalf("soft-delete the winner's campaign: %v", err)
 	}
 
-	claimed, row, err := repo.ClaimNewCampaignVersion(ctx, project, briefID, p, model.VariantDefault, 2, uuid.NewString(), nil)
+	claimed, row, err := repo.ClaimNewCampaignVersion(ctx, project, briefID, p, model.VariantDefault, 2, uuid.NewString(), nil, model.CampaignLabels{})
 	if !errors.Is(err, domain.ErrSlotVersionUsed) || claimed || row != nil {
 		t.Fatalf("new-version claim of a deleted version: claimed=%v row=%v err=%v, want ErrSlotVersionUsed and nothing claimed", claimed, row, err)
 	}
@@ -154,7 +154,7 @@ func TestLiveNewVersionClaimRefusesAVersionAConcurrentRequestUsedAndDeleted(t *t
 		t.Fatalf("live campaigns on the slot = %d, want 1: the refused claim must write nothing", live)
 	}
 
-	claimed, _, err = repo.ClaimNewCampaignVersion(ctx, project, briefID, p, model.VariantDefault, 3, uuid.NewString(), nil)
+	claimed, _, err = repo.ClaimNewCampaignVersion(ctx, project, briefID, p, model.VariantDefault, 3, uuid.NewString(), nil, model.CampaignLabels{})
 	if err != nil || !claimed {
 		t.Fatalf("new-version claim of an unused version: claimed=%v err=%v, want it claimed", claimed, err)
 	}
@@ -176,7 +176,7 @@ func TestLiveNewVersionClaimHandsBackALiveRowBesideADeletedOne(t *testing.T) {
 	}
 	again := createSlotVersion(ctx, t, repo, project, briefID, p, model.FirstSlotVersion)
 
-	claimed, row, err := repo.ClaimNewCampaignVersion(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, uuid.NewString(), nil)
+	claimed, row, err := repo.ClaimNewCampaignVersion(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, uuid.NewString(), nil, model.CampaignLabels{})
 	if err != nil || claimed || row == nil || row.ID != again.ID {
 		t.Fatalf("new-version claim of a version with a live row: claimed=%v row=%v err=%v, want the live row %s handed back", claimed, row, err, again.ID)
 	}
@@ -218,7 +218,7 @@ func raceClaims(ctx context.Context, repo *postgres.CampaignRepo, project, brief
 			defer wg.Done()
 			<-start
 			claimed, row, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p,
-				model.VariantDefault, slotVersion, uuid.NewString(), nil)
+				model.VariantDefault, slotVersion, uuid.NewString(), nil, model.CampaignLabels{})
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
@@ -273,7 +273,7 @@ func TestLiveConcurrentNewVersionClaims(t *testing.T) {
 			defer wg.Done()
 			<-start
 			claimed, row, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p,
-				model.VariantDefault, v, uuid.NewString(), nil)
+				model.VariantDefault, v, uuid.NewString(), nil, model.CampaignLabels{})
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
@@ -337,7 +337,7 @@ func TestLiveConcurrentClaimAndAdoptLeaveOneLiveRow(t *testing.T) {
 			defer wg.Done()
 			<-start
 			claimed, claimRow, claimErr = repo.ClaimCampaignDispatch(ctx, project, briefID, p,
-				model.VariantDefault, model.FirstSlotVersion, uuid.NewString(), nil)
+				model.VariantDefault, model.FirstSlotVersion, uuid.NewString(), nil, model.CampaignLabels{})
 		}()
 		go func() {
 			defer wg.Done()
@@ -438,7 +438,7 @@ func TestLiveClaimAndAdoptWaitForTheSlotLock(t *testing.T) {
 	}
 	claimDone := make(chan claimResult, 1)
 	go func() {
-		c, _, cerr := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, 2, uuid.NewString(), nil)
+		c, _, cerr := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, 2, uuid.NewString(), nil, model.CampaignLabels{})
 		claimDone <- claimResult{c, cerr}
 	}()
 

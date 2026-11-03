@@ -212,9 +212,34 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 			},
 		})
 	})
-	Attribute("new_version", Boolean, "Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label. Supported on microsoft-ads only for now; any other platform in the request is refused with 400. Two concurrent requests that both find the same complete campaign create one new campaign between them, not two: the second is reported as a reuse of (or skipped behind) the first.", func() {
+	Attribute("new_version", Boolean, "Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label. Supported on microsoft-ads and google-ads for now; any other platform in the request is refused with 400. On google-ads the slot is the dispatched channel (Search, Demand Gen, Performance Max, Video or Display), so another campaign is another campaign of that channel. Two concurrent requests that both find the same complete campaign create one new campaign between them, not two: the second is reported as a reuse of (or skipped behind) the first. REQUIRES expected_slot_versions for every selected platform (400 without it), which also makes a SEQUENTIAL repeat — a double click, a reload, a second tab, a replay after a lost response — return the campaign it already made instead of creating another.", func() {
 		Default(false)
 		Example(false)
+	})
+	// Multi-campaign per event (cs-1): the labels a newly claimed campaign carries, and the
+	// compare-and-set that keeps a deliberate second campaign from being created twice.
+	Attribute("funnel_stage", String, "The funnel stage the campaign(s) this request creates serve: `top`, `mid` or `lower`. Applies to every selected platform. Recorded on a campaign ONLY when this request creates it: a platform whose campaign already exists (a retry, or a new_version request with a stale expected_slot_versions) returns that campaign with the stage it was created with, never relabelled. Optional; omitted, the campaign is unlabelled. Supported on microsoft-ads and google-ads for now (400 if any other platform is selected), because a label must be part of the platform's campaign name before it is stored there. A Microsoft Advertising campaign carries the stage (ToFU, MoFU or BoFU) in its upstream name; a Google Ads campaign carries the stage and the tactic in its budget and campaign names (and, on Search, its ad group name). An unlabelled campaign keeps the names it has always had.", func() {
+		Enum("top", "mid", "lower")
+		Example("top")
+	})
+	Attribute("tactic", String, "How the campaign(s) this request creates pursue their stage, from a controlled list (free text is refused because the label can reach campaign names). Same scope, platform support and immutability as funnel_stage. Optional.", func() {
+		Enum("prospecting", "retargeting", "lookalike", "keyword", "competitor", "content-promotion")
+		Example("retargeting")
+	})
+	Attribute("expected_slot_versions", MapOf(String, Int), "REQUIRED when new_version is true (400 without it), and refused without new_version: for EVERY selected platform, the slot_version of the latest live campaign the caller saw in the slot this request dispatches to for this brief — on google-ads the campaigns of the same googleAdsConfig.channel (Search is variant default), not the platform's highest version, which would read as stale; elsewhere the platform's campaigns — taken from list-brief-campaigns or a previous job's platform result, or 0 when it saw none. A compare-and-set: a platform gets another campaign only while its latest live campaign is still the one the caller saw. Otherwise its latest campaign is returned with reused=true and nothing is created — which is what makes a double click, a reload, a second tab or a late replay of the same request create exactly one campaign. One residual: if the campaign the first request created is DELETED before the replay arrives, the replay's expectation matches again and it creates another. Keys must be the selected platforms (the slot is the platform's dispatched channel), values 0 or more.", func() {
+		Example(map[string]int{"microsoft-ads": 1})
+	})
+	// A WHOLE-INPUT example, because the attribute examples above do not combine into a request
+	// the service accepts (expected_slot_versions without new_version, labels on platforms that
+	// cannot carry them). This is the deliberate, labelled second campaign the multi-campaign
+	// fields exist for: another Microsoft campaign beside slot 1, mid-funnel, by keyword.
+	Example(map[string]any{
+		"platforms":              []string{"microsoft-ads"},
+		"config":                 map[string]any{"microsoftConfig": map[string]any{"budget": 50}},
+		"new_version":            true,
+		"expected_slot_versions": map[string]int{"microsoft-ads": 1},
+		"funnel_stage":           "mid",
+		"tactic":                 "keyword",
 	})
 	Required("platforms")
 })
@@ -305,6 +330,22 @@ var PlatformResult = Type("platform-result", func() {
 	Attribute("warnings", ArrayOf(String), "Best-effort steps of a successful create that did not apply, in operator-readable sentences. For the email channel this reports a requested hero image that could not be added; the draft exists, and its banner needs checking in the HubSpot editor (it may have none, or still carry the template's).", func() { MaxLength(10) })
 	Attribute("reconcile", ArrayOf(ReconcileIdentifier), "Present only when this dispatch's claim was lost before its result was recorded: the identifiers of what it created upstream (ids, names, urns, image hashes, X media keys — never state, platform text, URLs or other key-like fields), which this service no longer tracks, sorted by key. The only handle on an id-less partial (no campaign_id).")
 	Attribute("reconcile_truncated", Boolean, "True when the result held more identifiers than one job result may carry, so reconcile is incomplete: top-level identifiers are always kept, and only the most deeply nested or latest entries are cut")
+	// Which of the brief's campaigns this result is about, now that one platform can hold
+	// several. All OPTIONAL: absent on a failure that reached no campaign row, and on a job
+	// recorded before these fields existed.
+	Attribute("campaign_row_id", String, "This service's campaign UUID (the id get-campaign and list-brief-campaigns use), as opposed to campaign_id, the platform's. Present whenever the result names a campaign row: a create or a reuse.")
+	Attribute("slot_version", Int, "Which campaign on this platform and channel the result is: 1 for the first, 2 for the next created with new_version, and so on. Present with campaign_row_id.", func() {
+		Minimum(1)
+		Example(2)
+	})
+	Attribute("variant", String, "The platform's campaign type (the Google channel: search, demand-gen, performance-max, video, display); `default` on every other platform. Present with campaign_row_id.")
+	Attribute("funnel_stage", String, "The funnel stage the campaign was CREATED with — the stored label, not this request's. Absent on an unlabelled campaign.", func() {
+		Enum("top", "mid", "lower")
+	})
+	Attribute("tactic", String, "The tactic the campaign was CREATED with — the stored label, not this request's. Absent on an unlabelled campaign.", func() {
+		Enum("prospecting", "retargeting", "lookalike", "keyword", "competitor", "content-promotion")
+	})
+	Attribute("reused", Boolean, "true when this request did NOT create the campaign and is returning an existing one: an idempotent retry, or a new_version request whose expected_slot_versions was stale (someone — usually this same caller — already created the next campaign). Absent when the campaign was created by this request.")
 	Required("platform", "ok")
 })
 
@@ -331,6 +372,21 @@ var Campaign = Type("campaign", func() {
 	Attribute("slot_version", Int, "Which campaign this is among the brief's campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.", func() {
 		Minimum(1)
 		Example(1)
+	})
+	Attribute("variant", String, "The platform's campaign type this campaign is: the Google channel (search, demand-gen, performance-max, video, display), `default` on every other platform. With platform and slot_version it identifies the campaign among the brief's campaigns.", func() {
+		Example("default")
+	})
+	Attribute("funnel_stage", String, "The funnel stage the campaign was created to serve (top, mid or lower), set when it was created and never changed. ABSENT on a campaign created without one, created before the field existed, or adopted.", func() {
+		Enum("top", "mid", "lower")
+		Example("top")
+	})
+	Attribute("tactic", String, "The tactic the campaign was created with, set when it was created and never changed. ABSENT on a campaign created without one, created before the field existed, or adopted.", func() {
+		Enum("prospecting", "retargeting", "lookalike", "keyword", "competitor", "content-promotion")
+		Example("retargeting")
+	})
+	Attribute("created_at", String, "When this service recorded the campaign (its claim), RFC 3339.", func() {
+		Format(FormatDateTime)
+		Example("2026-11-02T18:04:05Z")
 	})
 	Attribute("bidding_strategy", String, "How the campaign was CREATED to bid, as its dispatch config asked (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft Advertising create carrying the legacy `microsoftConfig.cpcBid` with no `bidding` object is recorded as `manual` (that bid is a manual starting bid), so this does not always echo an explicit `bidding.strategy`: `automatic` (the default — the platform sets every bid) or `manual` (a manual max cost-per-click bid the update-campaign-bid endpoint can change). A record of the request, not an observation: an operator may switch the strategy in the ad platform afterwards. ABSENT when not recorded — a campaign created before this field existed, an adopted campaign, or a Google Ads or email campaign — never read as `automatic`.", func() {
 		Enum("automatic", "manual")
@@ -380,12 +436,20 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 	// Microsoft report a campaign-level conversion count; Meta and X expose conversions only
 	// as per-action-type structures with no scalar to read, Reddit's reporting contract is
 	// undocumented, and the email channel has no conversion concept at all. On those four the
-	// attribute is ABSENT rather than 0, and it is also absent when a LinkedIn or Microsoft
-	// read came back incomplete (see model.CampaignMetrics.Conversions). A 0 in either case
-	// would be indistinguishable from a campaign that genuinely converted nobody, which is the
-	// same substitution the row `status` field and `pacing.pct` already refuse to make
-	// elsewhere in this contract.
-	Attribute("conversions", Float64, "Conversions attributed to this campaign over the window. FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold 0.4 of a conversion — do not round it to a whole number, and in particular do not treat a value below 1 as zero. ABSENT means \"not measured\" — the platform cannot report it, or (LinkedIn, Microsoft) the read was incomplete. The first case covers channels that do not report a campaign-level conversion count at all (Meta, X, Reddit and the email channel never do). The second covers the two conversion-capable channels whose read can come back partial: LinkedIn whenever ANY returned analytics element omits externalWebsiteConversions, and Microsoft whenever the ConversionsQualified column is missing from the report or ANY row's conversion cell is blank (that column is only populated for accounts wired for Universal Event Tracking). On either, summing only the elements or rows that did carry a value would publish a partial count as a complete one and report a campaign's conversions as lower than they are, so the whole total is withdrawn instead. Absence therefore does NOT by itself identify a platform that cannot report conversions, and it is NOT the same as a measured 0: a consumer must not render it as zero or fold it into a conversion total.", func() { Example(37.0) })
+	// attribute is ABSENT rather than 0, and since #175 it is absent for EVERY status other than
+	// `reported` — conversions_status below names which (see model.ConversionsStatus). A 0 in
+	// any of those cases would be indistinguishable from a campaign that genuinely converted
+	// nobody, which is the same substitution the row `status` field and `pacing.pct` already
+	// refuse to make elsewhere in this contract.
+	Attribute("conversions", Float64, "Conversions attributed to this campaign over the window. Present ONLY when conversions_status is `reported`, and ABSENT for every other status — read conversions_status to learn why it is absent, never this field's absence. FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold 0.4 of a conversion — do not round it to a whole number, and in particular do not treat a value below 1 as zero. A present 0 is a measured zero against real delivery. A consumer must not render an absent value as zero or fold it into a conversion total.", func() { Example(37.0) })
+	// #175: what the read established about conversions, named rather than inferred from
+	// `conversions` being absent. Absence used to carry two meanings (the channel cannot report
+	// a count; the read came back incomplete) and a consumer could not tell a LinkedIn campaign
+	// with one incomplete element from Meta. REQUIRED: every row says which case it is.
+	Attribute("conversions_status", String, "What this read established about conversions. `reported`: a complete measurement, carried in `conversions` (the ONLY status that carries it). `unavailable`: the channel, or this account on it, reports no campaign-level conversion count — Meta, X, Reddit and the email channel never do; LinkedIn when no returned analytics element carried externalWebsiteConversions; Microsoft when the ConversionsQualified column is missing or every cell is blank (no Universal Event Tracking). `incomplete`: a conversion-capable channel (LinkedIn, Microsoft) reported the metric for part of the response and omitted it for the rest, so any sum would be a partial count. `no_conversions`: the window had no clicks and no conversion was reported, on any channel (a Google window with no result rows, a Microsoft report of zero-click rows, a LinkedIn window with no activity — each used to be a measured 0). A zero against zero clicks is not a conversion finding, so it carries no total and the no_conversions action item never fires on it (zero_delivery covers a campaign that delivered nothing). It does not claim conversion was impossible: a zero-click window that reports a conversion (LinkedIn counts view-through conversions) is `reported`.", func() {
+		Enum("reported", "unavailable", "incomplete", "no_conversions")
+		Example("reported")
+	})
 	// Both OPTIONAL, both excluded from Required, and both omitted from the pinned object
 	// example below for the same reason `conversions` is: that example is the EMAIL shape, and
 	// the email channel reports neither a conversion value nor a return on ad spend.
@@ -394,10 +458,10 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 	// statement about the channel. Here it is only a statement about this read: Google Ads is
 	// the one channel that reports them today, so a consumer must treat absent as "not
 	// measured" and must not infer that another channel could never report them.
-	Attribute("conversion_value", Float64, "Summed monetary value of the conversions above, over the window, in WHOLE units of the ad account's currency — NOT micros, deliberately unlike cost_micros, because the platforms report it as a decimal amount and scaling it would invent precision. The currency is the ad account's and is NOT carried in this response, so a figure rendered with a currency symbol is asserting something this contract does not say. Reported by Google Ads only at present; ABSENT on every other channel, and absent means \"not measured here\", never a measured 0. Use `roas` rather than dividing this by cost_micros — the units differ, and the zero-cost case has one right answer, given below.", func() { Example(4820.5) })
-	Attribute("roas", Float64, "Return on ad spend: conversion_value divided by cost over the same window and in the same currency, so it is DIMENSIONLESS and is the only figure here comparable across accounts in different currencies. Derived upstream so every consumer gets the same answer. ABSENT whenever that division would not be a measurement — no conversion value, no spend in the window, or a reported cost below zero. A campaign that earned value without spending has an UNDEFINED return on ad spend, not an infinite one and not a zero one; rendering absent as 0 would state the opposite of what happened. A RATIO, not a percentage: 2.41 means 2.41 units of value per unit spent (241%), the scale Google's own target ROAS uses. Absence carries no meaning of its own beyond \"not computed\": which of the three cases applies is read from the sibling fields (conversion_value absent; cost_micros 0; cost_micros below 0), so a consumer never has to interpret it, and it says nothing about whether the channel can report a return. A PRESENT 0 is a real measurement: the campaign spent and earned no conversion value.", func() { Example(2.41) })
+	Attribute("conversion_value", Float64, "Present only when conversions_status is `reported`, like conversions itself (#175). Summed monetary value of the conversions above, over the window, in WHOLE units of the ad account's currency — NOT micros, deliberately unlike cost_micros, because the platforms report it as a decimal amount and scaling it would invent precision. The currency is the ad account's and is NOT carried in this response, so a figure rendered with a currency symbol is asserting something this contract does not say. Reported by Google Ads only at present; ABSENT on every other channel, and absent means \"not measured here\", never a measured 0. Use `roas` rather than dividing this by cost_micros — the units differ, and the zero-cost case has one right answer, given below.", func() { Example(4820.5) })
+	Attribute("roas", Float64, "Present only when conversions_status is `reported`, like conversions itself (#175). Return on ad spend: conversion_value divided by cost over the same window and in the same currency, so it is DIMENSIONLESS and is the only figure here comparable across accounts in different currencies. Derived upstream so every consumer gets the same answer. ABSENT whenever that division would not be a measurement — no conversion value, no spend in the window, or a reported cost below zero. A campaign that earned value without spending has an UNDEFINED return on ad spend, not an infinite one and not a zero one; rendering absent as 0 would state the opposite of what happened. A RATIO, not a percentage: 2.41 means 2.41 units of value per unit spent (241%), the scale Google's own target ROAS uses. Absence carries no meaning of its own beyond \"not computed\": which of the three cases applies is read from the sibling fields (conversion_value absent; cost_micros 0; cost_micros below 0), so a consumer never has to interpret it, and it says nothing about whether the channel can report a return. A PRESENT 0 is a real measurement: the campaign spent and earned no conversion value.", func() { Example(2.41) })
 	Attribute("email", EmailMetrics, "Email-channel counters. Present only for the email channel (HubSpot); absent for every ad platform.")
-	Required("campaign_id", "platform_campaign_id", "window", "impressions", "clicks", "cost_micros", "ctr")
+	Required("campaign_id", "platform_campaign_id", "window", "impressions", "clicks", "cost_micros", "ctr", "conversions_status")
 	// An EXPLICIT object example, because the attribute-level examples above cannot produce a
 	// coherent one on their own. Goa emits EVERY attribute into a generated object example,
 	// including the two that are mutually exclusive: `email` is present only on the email
@@ -423,6 +487,7 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 		"clicks":               212,
 		"cost_micros":          0,
 		"ctr":                  0.1152,
+		"conversions_status":   "unavailable",
 		"email": map[string]any{
 			"sent": 9400, "delivered": 9268, "opens": 1840,
 			"clicks": 212, "bounces": 95, "unsubscribes": 17,

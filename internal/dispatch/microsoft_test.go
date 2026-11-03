@@ -846,3 +846,52 @@ func TestMicrosoft_SlotVersionExtendsTheNameSuffix(t *testing.T) {
 		}
 	}
 }
+
+// Golden names for the funnel-stage token (cs-1, AC 11 and AC 19). The stage comes from the
+// CLAIMED ROW (model.DispatchLabels), and:
+//   - an unlabelled (legacy) row composes EXACTLY the name every campaign had before stages —
+//     no stage segment, byte for byte, on slot 1 and slot 2 alike;
+//   - a labelled row carries ToFU / MoFU / BoFU as its own segment before the suffix, and a
+//     retry of that row (same stored stage) composes the same name again;
+//   - a tactic never reaches the Microsoft name.
+func TestMicrosoft_StageTokenComesFromTheClaimedRow(t *testing.T) {
+	stage := func(s model.FunnelStage) *model.FunnelStage { return &s }
+	tactic := model.TacticRetargeting
+	const legacy = "LFX | Search Campaign | cncf | KubeCon NA 2026 | brief-1"
+	for _, tc := range []struct {
+		name string
+		slot int
+		row  *model.Campaign
+		want string
+	}{
+		{"legacy row, slot 1: the pre-stage name, byte for byte", model.FirstSlotVersion, &model.Campaign{}, legacy},
+		{"no labels on the context at all: the same legacy name", model.FirstSlotVersion, nil, legacy},
+		{"legacy row, slot 2: only the slot suffix changes", 2, &model.Campaign{}, legacy + "-2"},
+		{"top-funnel row, slot 1", model.FirstSlotVersion, &model.Campaign{FunnelStage: stage(model.FunnelStageTop)},
+			"LFX | Search Campaign | cncf | KubeCon NA 2026 | ToFU | brief-1"},
+		{"mid-funnel row with a tactic, slot 2: the tactic is not in the name", 2,
+			&model.Campaign{FunnelStage: stage(model.FunnelStageMid), Tactic: &tactic},
+			"LFX | Search Campaign | cncf | KubeCon NA 2026 | MoFU | brief-1-2"},
+		{"lower-funnel row, slot 3", 3, &model.Campaign{FunnelStage: stage(model.FunnelStageLower)},
+			"LFX | Search Campaign | cncf | KubeCon NA 2026 | BoFU | brief-1-3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, _ := microsoftServers(t)
+			d := NewMicrosoftDispatcher(fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{}, opts...)
+			ctx := model.WithDispatchSlotVersion(context.Background(), tc.slot)
+			if tc.row != nil {
+				ctx = model.WithDispatchLabels(ctx, tc.row)
+			}
+			// Dispatched twice: a retry of the same row must compose the same name.
+			for attempt := 1; attempt <= 2; attempt++ {
+				camp, err := d.Dispatch(ctx, testBrief(), model.ProviderMicrosoftAds, json.RawMessage(`{"microsoftConfig":{"budget":50}}`))
+				if err != nil {
+					t.Fatalf("attempt %d: Dispatch: %v", attempt, err)
+				}
+				if camp.CampaignName != tc.want {
+					t.Errorf("attempt %d: campaign name %q, want %q", attempt, camp.CampaignName, tc.want)
+				}
+			}
+		})
+	}
+}

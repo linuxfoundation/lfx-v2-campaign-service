@@ -821,7 +821,7 @@ flight day too many — a 10-day, 1,000 lifetime flight spending exactly 700 ove
 paced ~110%, a false overspend (PR #316 review). `CreateCampaign`'s `23:59:59` end is unchanged. An unknown budget is 0/0, which `metaPacingPct` already reports as not
 computable. A negative campaign-level budget is unreadable (`FetchFailed`), never "no budget" sent
 to the ad-set fallback. `rules/monitor_meta.go` changed in two ways: its action-item text prints
-money as "N.NN in account currency" (`metaMoney`, like X's `xMoney`), never `$`; and lifetime
+money as "N.NN in account currency" (the shared `rules.accountMoney`, #435), never `$`; and lifetime
 pacing (`metaExpectedSpend`) prorates the budget over the flight (end date inclusive) and expects
 only the requested window's flight days — spend covers only that window, so the old
 flight-to-date expectation reported every lifetime campaign past its first week as underspending.
