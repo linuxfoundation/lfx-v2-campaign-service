@@ -256,6 +256,16 @@ into the drain budget. Both run on every replica with no leader election.
   costs disk, never correctness — and the goroutine keeps running rather than exiting
   on the first transient error. See the postgres concept for why only terminal
   statuses are eligible and why they are an allow-list.
+- `StartArchivedAssetRetentionSweeper` (hourly, #171) deletes the creative assets of
+  briefs archived more than `domain.ArchivedBriefAssetRetention` (90 days, a constant)
+  ago, through `domain.ArchivedCreativeAssetPruner`, which the container binds to
+  `CreativeAssetRepo` with `SetArchivedAssetPruner` on both wiring paths (unbound, the
+  sweeper is inert). One pass (`runArchivedAssetPrune`) asks for batches of 100 until a
+  batch comes back short, another replica holds the prune lock, 50 batches have run, or
+  a batch fails; it logs the count deleted, a pass that runs out of its 2-minute budget
+  while draining a backlog is a warning (progress, not a failure), and any other failure
+  is an error retried next tick. The per-brief upload cap from #388 (100 assets / 512 MiB) is unchanged: the cap
+  bounds a live brief, the prune reclaims an archived one.
 
 
 ## Creative asset upload (LFXV2-3295)

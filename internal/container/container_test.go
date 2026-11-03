@@ -1397,6 +1397,31 @@ func TestContainer_BothStartupPathsInjectTheOrchestrator(t *testing.T) {
 			"before the database was reachable serves 503s for account discovery for its whole life")
 }
 
+// TestContainer_BothStartupPathsStartArchivedAssetRetention pins the archived-asset prune's call
+// sites (#171): the sweeper's own tests drive a hand-built Orchestrator, so deleting the call from
+// either live path would leave them green while that path prunes nothing. Asserted on the source
+// for the reason the test above gives: both paths need a live pool.
+func TestContainer_BothStartupPathsStartArchivedAssetRetention(t *testing.T) {
+	src, err := os.ReadFile("container.go")
+	require.NoError(t, err)
+	body := func(sig string) string {
+		i := strings.Index(string(src), sig)
+		require.NotEqual(t, -1, i, "%s not found; update this test if it was renamed", sig)
+		rest := string(src)[i+len(sig):]
+		if j := strings.Index(rest, "\nfunc "); j != -1 {
+			rest = rest[:j]
+		}
+		return rest
+	}
+	for _, sig := range []string{"func (c *Container) wireLiveBackends(", "func (c *Container) retryDatabaseInit("} {
+		assert.Contains(t, body(sig), "startArchivedAssetRetention(orch, pool)",
+			"%s must start the archived-asset retention sweeper, or a pod on that path never prunes", sig)
+	}
+	helper := body("func startArchivedAssetRetention(")
+	assert.Contains(t, helper, "orch.SetArchivedAssetPruner(postgres.NewCreativeAssetRepo(pool))")
+	assert.Contains(t, helper, "orch.StartArchivedAssetRetentionSweeper()")
+}
+
 // TestEventFetcherNAT64PrefixesReachTheDialer closes the END of the config chain.
 //
 // eventurl's own tests prove WithNAT64Prefixes reaches the dial hook, and config's tests
