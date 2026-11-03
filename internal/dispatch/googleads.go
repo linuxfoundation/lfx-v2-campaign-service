@@ -278,13 +278,17 @@ type googleAdsConfig struct {
 	// NegativeKeywords are optional CAMPAIGN-level keyword exclusions — queries the
 	// campaign must never pay for, however broadly Keywords match. SEARCH ONLY, and
 	// REFUSED on every other channel rather than ignored — as Keywords and
-	// AudienceSegments now are too: all four of the Search-only fields here refuse
-	// off Search rather than being dropped. See
+	// AudienceSegments now are too: every Search-only field here refuses off Search
+	// rather than being dropped. See
 	// googleads.CampaignInput.NegativeKeywords.
 	//
 	// Left empty, no exclusions are created, which is the behaviour of every caller
 	// that predates this field.
 	NegativeKeywords []googleAdsKeywordConfig `json:"negativeKeywords"`
+	// SearchPartners opts a Search campaign into the Search partner network as well as
+	// Google Search (#457). SEARCH ONLY, refused on every other channel. Absent or false
+	// keeps Google Search only, as every caller before this field.
+	SearchPartners bool `json:"searchPartners"`
 	// CPCBid is an optional manual CPC bid for the ad group, in whole units of the ad
 	// ACCOUNT's currency (no FX conversion, same as Budget). Search only — no other
 	// channel here has a manual bidding strategy, and their ad-group payloads carry no
@@ -603,6 +607,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		Descriptions:     cfg.Descriptions,
 		Keywords:         googleAdsKeywords(cfg.Keywords),
 		NegativeKeywords: googleAdsKeywords(cfg.NegativeKeywords),
+		SearchPartners:   cfg.SearchPartners,
 		AudienceSegments: cfg.AudienceSegments,
 		GeoTargets:       cfg.GeoTargets,
 		CPCBid:           cfg.CPCBid,

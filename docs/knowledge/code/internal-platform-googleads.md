@@ -388,10 +388,10 @@ any undeclared campaign has ALL mutate calls rejected). It also sets
 explicitly false): a SEARCH campaign that targets NO network — which is what an
 omitted `networkSettings` resolves to (proto3 bools default false) — is rejected with
 `CampaignError.CAMPAIGN_MUST_TARGET_AT_LEAST_ONE_NETWORK` AFTER the budget mutate has
-committed, an avoidable orphan. Google Search only is the conservative choice for a
-PAUSED broker shell; `targetSearchNetwork` stays false because true would opt into
-Search Partners (and requires `targetGoogleSearch`), which a generic broker shouldn't
-assume. (Search is not the only channel that sends this field — Display does too, and the
+committed, an avoidable orphan. Google Search only is the conservative default for a
+PAUSED broker shell; `targetSearchNetwork` (Search partners, which requires
+`targetGoogleSearch`) is sent true only when the caller sets `CampaignInput.SearchPartners`
+(#457), and that field is refused on every other channel. (Search is not the only channel that sends this field — Display does too, and the
 other three reject it; see the Display section for the full matrix.) Both resource ids are
 surfaced (`campaignBudgetId` + `campaignId`) via `firstResourceName`, which decodes
 `results[0].resourceName` and returns both the resource name and its trailing-id
