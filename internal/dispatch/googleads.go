@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // storedCustomerIDRE is the shape a STORED Google Ads account id must have: digits
@@ -293,6 +295,9 @@ type googleAdsConfig struct {
 	// like DemandGenCreative, and singular because Google admits one Audience per Demand
 	// Gen ad group; the custom segments and user lists go INSIDE that Audience, built in
 	// the Google Ads UI. See googleads.CampaignInput.DemandGenAudience.
+	//
+	// Refused outright unless GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED is "true" — see
+	// googleAdsDemandGenAudienceEnabled.
 	DemandGenAudience string `json:"demandGenAudience"`
 	// NegativeKeywords are optional CAMPAIGN-level keyword exclusions — queries the
 	// campaign must never pay for, however broadly Keywords match. SEARCH ONLY, and
@@ -522,6 +527,19 @@ type googleAdsConfig struct {
 	AdoptExisting bool `json:"adoptExisting"`
 }
 
+// googleAdsDemandGenAudienceEnabled reports whether this deployment opted in to
+// googleAdsConfig.demandGenAudience. Read per call, like REDDIT_KEYWORD_TARGETING_WRITES_ENABLED,
+// so it flips without a rebuild.
+//
+// The gate is here, in Dispatch, rather than in lfx-self-serve's form or the client's preflight,
+// because the gap it closes (#468) is a caller who reaches this service directly: the gateway
+// authorizes a create on the project's campaign_manager relation and cannot see the body, and the
+// client's check is account-scoped, so on the shared LF customer it would accept another
+// foundation's Audience. Off, no caller can attach an Audience at all.
+func googleAdsDemandGenAudienceEnabled() bool {
+	return os.Getenv(constants.EnvGoogleAdsDemandGenAudienceEnabled) == "true"
+}
+
 // GoogleAdsDispatcher creates Google Ads campaigns for the orchestrator.
 type GoogleAdsDispatcher struct {
 	creds *credsSource
@@ -596,6 +614,12 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err := unmarshalPlatformConfig(config, "googleAdsConfig", &cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// Any non-empty value is refused while the gate is off, whitespace included, so the
+	// refusal never depends on the client's own validation of the value.
+	if cfg.DemandGenAudience != "" && !googleAdsDemandGenAudienceEnabled() {
+		return nil, notCreated(fmt.Errorf("google-ads: demandGenAudience is disabled on this deployment (%s is not \"true\") until an Audience can be checked against the calling foundation, not only the account (#468); omit demandGenAudience",
+			constants.EnvGoogleAdsDemandGenAudienceEnabled))
+	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -639,8 +663,8 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		NegativeKeywords: googleAdsKeywords(cfg.NegativeKeywords),
 		SearchPartners:   cfg.SearchPartners,
 		AudienceSegments: cfg.AudienceSegments,
-		// Mapped verbatim, as AudienceSegments and GeoTargets are: the channel fence and
-		// the account check are the client's preflight's.
+		// Mapped verbatim once the deployment gate above has passed, as AudienceSegments and
+		// GeoTargets are: the channel fence and the account check are the client's preflight's.
 		DemandGenAudience: cfg.DemandGenAudience,
 		GeoTargets:        cfg.GeoTargets,
 		CPCBid:            cfg.CPCBid,

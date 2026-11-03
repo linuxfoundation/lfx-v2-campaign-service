@@ -30,3 +30,14 @@ Tests: `demandgen_targeting_test.go` (payload, refusals, partials),
 `TestValidateCriteriaPlan_AcceptsLanguagesOnDemandGen`, and
 `TestGoogleAds_DemandGenAudienceAndLanguagesReachTheAdGroup` /
 `TestGoogleAds_DemandGenAudienceRefusalsArePreCreate` through dispatch.
+
+**Gate (#468).** `validateDemandGenAudience` checks the Audience against the Google Ads
+account only, and the LF account is shared by every foundation, so one project could target
+with another foundation's Audience. lfx-self-serve's root-only form does not stop a caller who
+reaches the service directly. `demandGenAudience` is therefore OFF by default:
+`GoogleAdsDispatcher.Dispatch` refuses any non-empty value as not-created, before the budget,
+unless `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`. The chart sets
+`"false"`. Languages and the rest of Demand Gen are not gated. The gate goes away when #468
+adds a foundation-scoped check. Tested by `TestGoogleAds_DemandGenAudienceGate`. Reverting
+the gate fails all six of its refusal cases, and a case-insensitive comparison fails the
+`TRUE` case.

@@ -921,11 +921,13 @@ demandGenAudience?: string      — OPTIONAL one EXISTING Google Ads Audience,
                                   refuses the foreign one too, but only after the budget.
 
                                   That check is ACCOUNT-scoped, not foundation-scoped: on the shared
-                                  LF Google Ads customer a project can name another foundation's
+                                  LF Google Ads customer a project could name another foundation's
                                   Audience, which on Demand Gen restricts who the ad group reaches.
-                                  This is an accepted risk for now (lfx-self-serve offers Google
-                                  audience inputs only to root principals); a follow-up issue tracks
-                                  enforcement in this service.
+                                  So the field is OFF by default: unless the deployment sets
+                                  GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED to exactly "true", a create
+                                  naming it is refused before the budget mutate, whatever the value.
+                                  It stays off until this service can check the Audience against the
+                                  calling foundation (#468).
 
                                   DEMAND GEN ONLY, and REFUSED on every other `channel`. It shares
                                   one atomic `adGroupCriteria:mutate` with `languages`, after the geo

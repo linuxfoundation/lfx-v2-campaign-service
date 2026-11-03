@@ -77,9 +77,9 @@ type adGroupCriterionDemandGenCreate struct {
 //
 // The check is ACCOUNT-scoped, not foundation-scoped, and is not tenancy protection: on
 // the shared LF Google Ads customer a project can name another foundation's Audience,
-// and on Demand Gen that Audience restricts who the ad group reaches. That is an accepted
-// risk for now — lfx-self-serve offers Google audience inputs only to root principals
-// (isRootCampaignPrincipal) — and a follow-up issue tracks enforcement in this service.
+// and on Demand Gen that Audience restricts who the ad group reaches. So the dispatch
+// adapter keeps the field off by default (GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED, see
+// dispatch.googleAdsDemandGenAudienceEnabled) until #468 adds a foundation-scoped check.
 func validateDemandGenAudience(kind, customerID, audience string) (string, error) {
 	if audience == "" {
 		return "", nil

@@ -2151,9 +2151,9 @@ but `customers/<id>/audiences/<id>` with a positive canonical id, and refuses a
 resource under another customer — the `validateConversionActions` check, for the same
 reason. That check is ACCOUNT-scoped, not foundation-scoped, and is not tenancy
 protection: on the shared LF Google Ads customer a project can name another foundation's
-Audience, which on Demand Gen restricts who the ad group reaches. That is an accepted risk
-for now — lfx-self-serve offers Google audience inputs only to root principals
-(`isRootCampaignPrincipal`) — and a follow-up issue tracks enforcement in this service.
+Audience, which on Demand Gen restricts who the ad group reaches. So the dispatch adapter
+refuses the field unless `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`, and
+the chart sets it to `"false"` until #468 adds a foundation-scoped check.
 This client never creates the Audience. `AudienceSegments` stays refused on
 Demand Gen, now with a message that says why (audience-grouped) and names
 `DemandGenAudience`; the other channels keep their Search-cascade reason.

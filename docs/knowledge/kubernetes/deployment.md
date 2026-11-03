@@ -50,6 +50,13 @@ diagnosed — whether a proxy and key are configured at all.
 exercised against a live ad account. Only exactly `"true"` enables them; the keyword-targeting
 read is not gated.
 
+`GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is a plain feature gate, defaulting to `"false"`
+(#459): it opts a cluster in to `googleAdsConfig.demandGenAudience`, one existing Google Ads
+Audience on a Demand Gen ad group. The service checks that Audience against the Google Ads
+account only, and the LF account is shared by every foundation, so it stays off until the
+service can check it against the calling foundation (#468). Only exactly `"true"` enables it;
+off, a create naming one is refused before anything upstream exists.
+
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
 default `1841232183`: the LF Research survey-promo workflow a survey send series
 (`send-workflows`) is copied from when a request names none. That id exists only in the LF

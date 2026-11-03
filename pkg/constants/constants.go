@@ -139,6 +139,17 @@ const (
 	// away.
 	EnvTwitterMetricsEnabled = "TWITTER_METRICS_ENABLED"
 
+	// EnvGoogleAdsDemandGenAudienceEnabled opts a deployment IN to googleAdsConfig.demandGenAudience
+	// (#459): one existing Google Ads Audience attached to a Demand Gen ad group. Only the exact
+	// value "true" enables it; unset or any other value fails closed, and a create naming one is
+	// refused before anything upstream exists.
+	//
+	// Default-off because the only ownership check is ACCOUNT-scoped (#468): on the shared LF
+	// Google Ads customer a project could name another foundation's Audience, and on Demand Gen
+	// that Audience restricts who the ad group reaches. Keep it off until this service can scope
+	// an Audience to the calling foundation; that fix removes this gate and this constant.
+	EnvGoogleAdsDemandGenAudienceEnabled = "GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any

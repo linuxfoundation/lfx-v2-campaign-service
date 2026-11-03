@@ -6,6 +6,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // The dispatch-layer half of LFXV2-2665: every targeting, extension and ad-group
@@ -998,6 +1000,7 @@ func TestGoogleAdsToggleTargets_BlobShapes(t *testing.T) {
 // one adGroupCriteria:mutate carrying the Audience and then the language, and no
 // campaign-level criteria at all.
 func TestGoogleAds_DemandGenAudienceAndLanguagesReachTheAdGroup(t *testing.T) {
+	t.Setenv(constants.EnvGoogleAdsDemandGenAudienceEnabled, "true")
 	opts, cap := targetingServers(t)
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"demand-gen",` +
@@ -1034,8 +1037,10 @@ func TestGoogleAds_DemandGenAudienceAndLanguagesReachTheAdGroup(t *testing.T) {
 
 // demandGenAudience is refused BEFORE the budget on every channel but demand-gen, and
 // on demand-gen when it names another account; audienceSegments on demand-gen are
-// refused with the reason and the field to use instead.
+// refused with the reason and the field to use instead. The deployment gate is ON here,
+// so these are the client's own refusals; the gate is TestGoogleAds_DemandGenAudienceGate.
 func TestGoogleAds_DemandGenAudienceRefusalsArePreCreate(t *testing.T) {
+	t.Setenv(constants.EnvGoogleAdsDemandGenAudienceEnabled, "true")
 	cases := []struct {
 		name, cfg, wantSub string
 	}{
@@ -1066,4 +1071,64 @@ func TestGoogleAds_DemandGenAudienceRefusalsArePreCreate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// With GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED anything but exactly "true", a create naming a
+// demandGenAudience is refused in Dispatch before the budget, even one the client would accept
+// (#468: the client's check is account-scoped only). The rest of Demand Gen is not gated:
+// languages still reach the ad group with no Audience.
+func TestGoogleAds_DemandGenAudienceGate(t *testing.T) {
+	const valid = `"channel":"demand-gen","demandGenAudience":"customers/1234567890/audiences/4242"`
+	cases := []struct {
+		name, env, cfg string
+	}{
+		{"unset", "", valid},
+		{"false", "false", valid},
+		{"wrong case", "TRUE", valid},
+		{"one", "1", valid},
+		{"blank audience", "", `"channel":"demand-gen","demandGenAudience":"  "`},
+		{"off demand gen", "", `"demandGenAudience":"customers/1234567890/audiences/4242"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(constants.EnvGoogleAdsDemandGenAudienceEnabled, tc.env)
+			opts, cap := targetingServers(t)
+			d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+			cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,` + tc.cfg + `}}`)
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+			if err == nil {
+				t.Fatal("expected the dispatch to be refused while the gate is off")
+			}
+			if !strings.Contains(err.Error(), constants.EnvGoogleAdsDemandGenAudienceEnabled) || !strings.Contains(err.Error(), "#468") {
+				t.Errorf("error = %v, want it to name the gate and #468", err)
+			}
+			var pce *preCreateError
+			if !errors.As(err, &pce) {
+				t.Errorf("error = %v, want a not-created error so the claim is released", err)
+			}
+			if camp != nil {
+				t.Errorf("nothing may be created for a refused input, got %+v", camp)
+			}
+			cap.mu.Lock()
+			defer cap.mu.Unlock()
+			if cap.sawBudget {
+				t.Error("the refusal must happen BEFORE the budget mutate")
+			}
+		})
+	}
+
+	t.Run("no audience is not gated", func(t *testing.T) {
+		t.Setenv(constants.EnvGoogleAdsDemandGenAudienceEnabled, "")
+		opts, cap := targetingServers(t)
+		d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+		cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"demand-gen","languages":["EN"]}}`)
+		if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg); err != nil {
+			t.Fatalf("Dispatch: %v", err)
+		}
+		cap.mu.Lock()
+		defer cap.mu.Unlock()
+		if len(cap.adGroupCriteria) != 1 || strings.Contains(string(cap.adGroupCriteria[0]), "audience") {
+			t.Errorf("want one ad-group criteria mutate with the language and no Audience, got %q", cap.adGroupCriteria)
+		}
+	})
 }

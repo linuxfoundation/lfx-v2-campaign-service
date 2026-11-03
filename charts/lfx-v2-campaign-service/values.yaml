@@ -328,6 +328,18 @@ app:
     REDDIT_KEYWORD_TARGETING_WRITES_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to googleAdsConfig.demandGenAudience (#459): one
+    # existing Google Ads Audience on a Demand Gen ad group. Default off: the
+    # service checks that Audience against the Google Ads account only, and on
+    # the shared LF customer every foundation's Audiences sit under one account,
+    # so a project could target with another foundation's Audience (#468).
+    # While off, a create naming one is refused before anything upstream exists;
+    # the rest of Demand Gen, languages included, is unaffected. Any value other
+    # than "true" is treated as off, so a typo fails closed. Keep it off until
+    # #468 lands; that fix removes the gate and this key.
+    GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR
     # (/projects/{project_id}/connection-twitter-ads/account-monitor). Default
     # off for the same reason as MICROSOFT_METRICS_ENABLED above: the X account
