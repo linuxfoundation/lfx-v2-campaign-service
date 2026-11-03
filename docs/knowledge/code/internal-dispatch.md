@@ -1086,7 +1086,9 @@ Display's audiences and placement exclusions (#462) are five more pass-through f
 `customAffinities`, `userInterests` and `excludedPlacements` map one to one onto
 `CampaignInput`. Dispatch decides none of their rules — which channel takes them, the
 resource-name shape and the THIS-account check, the bare-domain rule — because the client's
-preflight does, on both the create and the `adoptExisting` paths.
+preflight does, on both the create and the `adoptExisting` paths. The one thing Dispatch adds
+is a deployment gate, `GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED`, described with the Demand Gen
+gate below.
 `TestGoogleAds_DisplayAudiencesAndPlacementExclusionsReachTheCriteria` proves each reaches its
 oneof arm in the ad group's criteria mutate and the placements the campaign's, and
 `TestGoogleAds_ExcludedPlacementsRefusedOnSearch` that the field reaches the preflight off
@@ -1115,7 +1117,21 @@ are all refused on Demand Gen, which takes languages on its ad group instead (#4
 (`googleAdsDemandGenAudienceEnabled`). That gate is not a channel rule. It exists because the
 client's check is account-scoped and the LF account is shared by every foundation (#468), and a
 caller can reach `Dispatch` without lfx-self-serve's root-only form. It sits in the adapter so it
-also covers direct callers. The client refuses them inside its own preflight,
+also covers direct callers.
+
+`GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` is the same gate for #462's account-owned Display
+segments (`googleAdsDisplayAudiencesEnabled`, `googleAdsDisplayAudienceFieldsSet`): unless it is
+exactly `"true"`, `Dispatch` refuses a non-empty `customAudiences` or `customAffinities` on any
+channel, and a non-empty `audienceSegments` on `display`, right after the Demand Gen gate.
+Search's `audienceSegments` are observation-only and predate it, so they are not gated.
+`userInterests` are not gated either: they are Google's own affinity and in-market categories,
+the same ids on every account. `excludedPlacements` are not gated: they are public domains, not
+account resources, and they only narrow where the campaign appears. Both gates refuse through
+`googleAdsInputDisabled`: not-created, and a `domain.PreflightRefusal`, so the asynchronous
+create job reports the gate's sentence (which input is disabled, and to omit it) instead of
+the generic "platform campaign creation failed".
+
+The client refuses the channel rules inside its own preflight,
 before its first mutate, and `Dispatch` validates unconditionally (including on the adoption
 path), so both paths already refuse in one place. A second copy in the adapter could only
 drift from it.

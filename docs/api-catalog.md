@@ -791,7 +791,8 @@ supports fetching and reporting on Video campaigns but cannot create or mutate t
 budget at the campaign step (`adoptExisting` still works, and so does monitoring, because
 only creation is impossible); `display` creates a DISPLAY campaign with NO channel
 sub-type, an ad group of type `DISPLAY_STANDARD` targeted at the audiences named in
-`audienceSegments`/`customAudiences`/`customAffinities`/`userInterests`, campaign-level
+`audienceSegments`/`customAudiences`/`customAffinities`/`userInterests` (the first three
+only where the deployment sets GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED, #468), campaign-level
 `excludedPlacements`, and (given `displayCreative`) one
 responsive display ad built from images this service fetches and uploads. **Budget is in whole units of the ad ACCOUNT's
 currency**, not USD — the service does no FX conversion (mirroring `metaConfig`).
@@ -913,8 +914,11 @@ audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTI
                                   created, the last with the field it belongs in. The account check
                                   is ACCOUNT-scoped, not foundation-scoped, and is not tenancy
                                   protection: on an account shared across foundations any
-                                  foundation's list on it passes — an accepted risk, tracked by #468
-                                  (self-serve offers these inputs only to ROOT principals).
+                                  foundation's list on it passes (#468). So on `display` the field
+                                  is OFF by default: unless the deployment sets
+                                  GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED to exactly "true", a create
+                                  naming it is refused before the budget mutate, whatever the value.
+                                  Search's observation-only use is not gated.
 
                                   REFUSED rather than ignored on every other `channel`: audience
                                   criteria are attached only on the Search and Display cascades, so an
@@ -968,9 +972,15 @@ userInterests?: string[]          `customers/{id}/customAudiences/{id}`, `custom
                                   Audience resource (`customers/{id}/audiences/{id}`) is refused in any
                                   of the four lists: a Display ad group is not audience-grouped, takes
                                   segments directly, and Google refuses an `audience` criterion on it.
-                                  The account check is ACCOUNT-scoped, not tenancy protection; see
-                                  `audienceSegments` and #468. The ad group is created with AUDIENCE
-                                  bidOnly false whenever any of the four lists is given.
+                                  The account check is ACCOUNT-scoped, not tenancy protection
+                                  (#468), so `customAudiences` and `customAffinities` are OFF by
+                                  default, like Display `audienceSegments`: unless the deployment
+                                  sets GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED to exactly "true", a
+                                  create naming either is refused before the budget mutate.
+                                  `userInterests` are not gated: they are Google's own categories,
+                                  the same ids on every account, so no foundation owns one. The ad
+                                  group is created with AUDIENCE bidOnly false whenever any of the
+                                  four lists is given.
                                   A definite refusal of the criteria mutate fails the job with the
                                   campaign and ad group recorded; an ambiguous one is UNCONFIRMED, so a
                                   retry does not attach them twice.

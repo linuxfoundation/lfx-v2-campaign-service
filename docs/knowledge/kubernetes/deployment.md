@@ -57,6 +57,13 @@ account only, and the LF account is shared by every foundation, so it stays off 
 service can check it against the calling foundation (#468). Only exactly `"true"` enables it;
 off, a create naming one is refused before anything upstream exists.
 
+`GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` is the same kind of gate, defaulting to `"false"` (#462):
+it opts a cluster in to the Display audience lists that name an account-owned segment —
+`googleAdsConfig.audienceSegments` on `display`, `customAudiences` and `customAffinities`. It
+stays off for the same reason (#468). Only exactly `"true"` enables it; off, a create naming
+one is refused before anything upstream exists. `userInterests`, `excludedPlacements` and
+Search's `audienceSegments` are not gated.
+
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
 default `1841232183`: the LF Research survey-promo workflow a survey send series
 (`send-workflows`) is copied from when a request names none. That id exists only in the LF

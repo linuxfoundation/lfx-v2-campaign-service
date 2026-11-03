@@ -245,6 +245,16 @@ openssl rand -base64 32
   calling foundation, and the LF account is shared by every foundation
   (#468). The rest of Demand Gen is not gated. The chart sets it to
   `"false"`.
+- `GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` (default unset, i.e. OFF) —
+  opts a deployment IN to the Display audience lists that name an
+  account-owned segment (#462): `googleAdsConfig.audienceSegments` on the
+  `display` channel, `customAudiences` and `customAffinities`. Only the
+  exact value `true` enables them; anything else fails closed, and a
+  create naming one is refused before the budget. Off by default for the
+  reason `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is (#468).
+  `userInterests` (Google's own categories), `excludedPlacements` (public
+  domains) and Search's observation-only `audienceSegments` are not
+  gated. The chart sets it to `"false"`.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code

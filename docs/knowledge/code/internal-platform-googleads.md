@@ -2621,8 +2621,10 @@ AUDIENCE `bidOnly: false`, together with the four criteria, was accepted.
   customer's list is not expected to be accepted (not probed); any refusal would come at the
   criteria mutate, after the ad group exists. The check is ACCOUNT-scoped, not
   foundation-scoped, and is not tenancy protection: on an account shared across foundations any
-  foundation's list on it passes. That is an accepted risk, tracked by #468; lfx-self-serve
-  offers Google audience inputs only to ROOT principals. A well-formed name of the wrong kind
+  foundation's list on it passes (#468). So the dispatch adapter refuses Display user lists,
+  custom audiences and custom affinities unless `GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` is
+  exactly `"true"`, and the chart sets it to `"false"`; user interests (Google's own
+  categories) and placements (public domains) are not gated. A well-formed name of the wrong kind
   is refused with the field it belongs in, and an Audience resource with Display's reason.
   Display's `AudienceSegments` are judged here, not by the Search validator:
   `preflightCampaignKind` clears them from the Search inputs on Display, so the off-Search

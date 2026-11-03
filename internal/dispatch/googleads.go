@@ -290,6 +290,9 @@ type googleAdsConfig struct {
 	// campaign's own account (#462, googleads.validateDisplayAudienceList). Refused on
 	// every other channel: on "demand-gen" because Google refuses a user list on an
 	// audience-grouped Demand Gen ad group — see DemandGenAudience.
+	//
+	// On "display" refused outright unless GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED is "true" —
+	// see googleAdsDisplayAudiencesEnabled. Search's observation-only use is not gated.
 	AudienceSegments []string `json:"audienceSegments"`
 	// DemandGenAudience is ONE existing Google Ads Audience resource name,
 	// `customers/<this account>/audiences/<id>`, attached to the Demand Gen ad group
@@ -306,6 +309,10 @@ type googleAdsConfig struct {
 	// customers/{id}/customInterests/{id} and customers/{id}/userInterests/{id} resource
 	// names on the campaign's own account — this dispatcher creates no audience. DISPLAY
 	// ONLY, refused on every other channel. See googleads.CampaignInput.CustomAudiences.
+	//
+	// CustomAudiences and CustomAffinities are refused outright unless
+	// GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED is "true" — see googleAdsDisplayAudiencesEnabled.
+	// UserInterests are Google's own categories, owned by no foundation, and are not gated.
 	CustomAudiences  []string `json:"customAudiences"`
 	CustomAffinities []string `json:"customAffinities"`
 	UserInterests    []string `json:"userInterests"`
@@ -555,6 +562,51 @@ func googleAdsDemandGenAudienceEnabled() bool {
 	return os.Getenv(constants.EnvGoogleAdsDemandGenAudienceEnabled) == "true"
 }
 
+// googleAdsDisplayAudiencesEnabled reports whether this deployment opted in to the Display
+// audience lists that name an account-owned segment (#462): audienceSegments on Display,
+// customAudiences and customAffinities. Read per call, like googleAdsDemandGenAudienceEnabled,
+// and in Dispatch for the same reason: the client's check is account-scoped, so on the shared
+// LF customer it would accept another foundation's user list or custom segment, and on Display
+// those TARGET, restricting who the ad group reaches.
+//
+// Two inputs are deliberately outside it. userInterests name Google's own affinity and
+// in-market categories, the same ids on every account, so no foundation owns one. And
+// excludedPlacements are public domains, not account resources, and an exclusion only narrows
+// where the campaign appears. Neither can reach another foundation's data.
+func googleAdsDisplayAudiencesEnabled() bool {
+	return os.Getenv(constants.EnvGoogleAdsDisplayAudiencesEnabled) == "true"
+}
+
+// googleAdsInputDisabled is the refusal for an input a deployment gate keeps off: not-created,
+// so the claim is released, and a domain.PreflightRefusal, so the asynchronous create job
+// copies the sentence verbatim instead of reporting a generic failure. The sentence is
+// service-authored throughout: subject and fields are fixed strings, never caller values.
+func googleAdsInputDisabled(subject, env, checked, fields string) error {
+	return notCreated(domain.PreflightRefusalf(
+		"google-ads: %s disabled on this deployment (%s is not \"true\") until %s can be "+
+			"checked against the calling foundation, not only the account (#468); omit %s",
+		subject, env, checked, fields))
+}
+
+// googleAdsDisplayAudienceFieldsSet names, in config order, the gated Display audience fields
+// this config sets. audienceSegments counts only on Display: on Search they are
+// observation-only and predate the gate. Every non-empty list counts, whatever its entries
+// hold, so the refusal never depends on the client's own validation of the values.
+func googleAdsDisplayAudienceFieldsSet(cfg googleAdsConfig) []string {
+	var set []string
+	if len(cfg.AudienceSegments) > 0 &&
+		strings.ToLower(strings.TrimSpace(cfg.Channel)) == googleAdsChannelDisplay {
+		set = append(set, "audienceSegments")
+	}
+	if len(cfg.CustomAudiences) > 0 {
+		set = append(set, "customAudiences")
+	}
+	if len(cfg.CustomAffinities) > 0 {
+		set = append(set, "customAffinities")
+	}
+	return set
+}
+
 // GoogleAdsDispatcher creates Google Ads campaigns for the orchestrator.
 type GoogleAdsDispatcher struct {
 	creds *credsSource
@@ -632,8 +684,15 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// Any non-empty value is refused while the gate is off, whitespace included, so the
 	// refusal never depends on the client's own validation of the value.
 	if cfg.DemandGenAudience != "" && !googleAdsDemandGenAudienceEnabled() {
-		return nil, notCreated(fmt.Errorf("google-ads: demandGenAudience is disabled on this deployment (%s is not \"true\") until an Audience can be checked against the calling foundation, not only the account (#468); omit demandGenAudience",
-			constants.EnvGoogleAdsDemandGenAudienceEnabled))
+		return nil, googleAdsInputDisabled("demandGenAudience is",
+			constants.EnvGoogleAdsDemandGenAudienceEnabled, "an Audience", "demandGenAudience")
+	}
+	// The Display gate, likewise before anything else is decoded or sent.
+	if set := googleAdsDisplayAudienceFieldsSet(cfg); len(set) > 0 &&
+		!googleAdsDisplayAudiencesEnabled() {
+		fields := strings.Join(set, ", ")
+		return nil, googleAdsInputDisabled("Display audience targeting ("+fields+") is",
+			constants.EnvGoogleAdsDisplayAudiencesEnabled, "a user list or custom segment", fields)
 	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
