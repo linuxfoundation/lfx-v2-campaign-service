@@ -137,7 +137,7 @@ the `project-api` rule has two `openfga_check` authorizers on relation `campaign
 paired with the correct object: `project:{{- .Outputs.project_slug_resolver_contextualizer.uid -}}`
 for the slug branch, `project:{{- .Request.URL.Captures.projectId -}}` for the UUID
 branch. This matters because the invariant is not merely "some rule matches" but "the
-campaign_manager rule (or, for the one ROOT path, the root rule) matches, with each branch's
+campaign_manager rule matches, with each branch's
 object correctly paired to its guard": a path moved into an `allow_all` / `deny_all` /
 differently-scoped rule, a downgrade of the rule's relation, or a swapped guard/object
 pairing, must FAIL the security regression test rather than silently satisfy path parity.

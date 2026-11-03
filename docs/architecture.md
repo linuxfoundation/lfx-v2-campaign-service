@@ -308,7 +308,8 @@ The service introduces **no new FGA object types** — only relations on the exi
 
 **The gateway check is project-level; data on a shared ad account is scoped in the service** —
 with one exception: the conversion-action list (#458) is account-wide on the shared Google Ads
-customer, is NOT scoped in the service, and is instead ROOT-gated at the gateway (above). A
+customer and is NOT scoped in the service, by decision (above: campaign managers are the
+internal LF team, which manages every foundation). A
 `campaign_manager` grant on one project passes the check for that project only, but on a platform
 whose single upstream account is shared by every foundation (see
 [Account Tenancy](#account-tenancy)) an account-wide read would still return other foundations'
