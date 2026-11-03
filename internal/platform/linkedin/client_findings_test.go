@@ -2216,6 +2216,9 @@ func TestCreateCampaign_StepWordingNeutralForFoundCampaign(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
 			switch {
+			case strings.HasSuffix(r.URL.Path, "adCampaignGroups/"+groupID):
+				// The reused group's schedule read: open-ended, so it covers the campaign.
+				_, _ = io.WriteString(w, `{"id":`+groupID+`,"runSchedule":{"start":1}}`)
 			case strings.Contains(r.URL.Path, "adCampaignGroups"):
 				// Group is found (ACTIVE), so no group create POST.
 				_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | tlf","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:`+groupID+`"}],"metadata":{"nextPageToken":""}}`)

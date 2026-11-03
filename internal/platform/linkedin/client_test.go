@@ -205,7 +205,7 @@ func TestFindOrCreateCampaignGroup_Idempotent(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, endMs := testScheduleMs(t, c)
-	id, err := c.findOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", "2099-01-01", endMs)
+	id, _, err := c.findOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", "2099-01-01", endMs)
 	if err != nil {
 		t.Fatalf("FindOrCreateCampaignGroup: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestFindOrCreateCampaignGroup_TransientSearchErrorNoCreate(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, endMs := testScheduleMs(t, c)
-	_, err := c.findOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", "2099-01-01", endMs)
+	_, _, err := c.findOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", "2099-01-01", endMs)
 	if err == nil {
 		t.Fatal("expected error from transient 500 during search, got nil")
 	}
@@ -297,7 +297,7 @@ func TestFindOrCreateCampaignGroup_AbsentMetadataNoCreate(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, endMs := testScheduleMs(t, c)
-	_, err := c.findOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", "2099-01-01", endMs)
+	_, _, err := c.findOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", "2099-01-01", endMs)
 
 	if err == nil {
 		t.Fatal("an unconfirmed search must not be reported as success")
