@@ -185,18 +185,24 @@ func SlotNameSuffix(base string, slotVersion int) string {
 // It is an ALLOWLIST because the hazard is per provider and silent: LinkedIn and X
 // find-or-reuse a campaign by its composed name, and their names do not yet vary by slot
 // version, so slot 2 would be bound to slot 1's live campaign (on LinkedIn, with new creatives
-// pushed onto it); Meta also looks campaigns up by name; HubSpot clones an email under the same
-// name. Microsoft and Google fold the slot version into their name suffix (SlotNameSuffix) —
-// on Google into the budget and campaign names (and the Search ad group's), so its DUPLICATE_NAME
-// budget reuse and its adoptExisting lookup key on the slot's own names. A provider is added here in
-// the same change that makes its upstream name unique per slot version.
+// pushed onto it); HubSpot clones an email under the same name. Microsoft and Google fold the
+// slot version into their name suffix (SlotNameSuffix) — on Google into the budget and campaign
+// names (and the Search ad group's), so its DUPLICATE_NAME budget reuse and its adoptExisting
+// lookup key on the slot's own names. Reddit and Meta (cs-3) put a "#<n>" slot token in their
+// name's Targeting segment from slot 2 on (SlotNameToken); neither binds a campaign by name on
+// the dispatch path (Reddit never looks one up, and Meta's by-name lookup is gated off). A
+// provider is added here in the same change that makes its upstream name unique per slot version.
 func ProviderSupportsSlotVersions(p Provider) bool {
-	return p == ProviderMicrosoftAds || p == ProviderGoogleAds
+	switch p {
+	case ProviderMicrosoftAds, ProviderGoogleAds, ProviderRedditAds, ProviderMetaAds:
+		return true
+	}
+	return false
 }
 
 // ProviderNamesByStage reports whether p's dispatcher puts a campaign's funnel stage in its
-// upstream name, and so whether a create may label campaigns on p (cs-1). Microsoft (cs-1) and
-// Google (cs-2) today.
+// upstream name, and so whether a create may label campaigns on p (cs-1). Microsoft (cs-1),
+// Google (cs-2), Reddit and Meta (cs-3) today.
 //
 // Labels are refused elsewhere rather than stored silently because a later change will make that
 // platform's name carry the stage: a row labelled BEFORE that change, then re-dispatched after it
@@ -204,7 +210,22 @@ func ProviderSupportsSlotVersions(p Provider) bool {
 // upstream campaign does not have, miss it, and create a duplicate. A provider joins this set in
 // the same change that adds the stage to its name.
 func ProviderNamesByStage(p Provider) bool {
-	return p == ProviderMicrosoftAds || p == ProviderGoogleAds
+	switch p {
+	case ProviderMicrosoftAds, ProviderGoogleAds, ProviderRedditAds, ProviderMetaAds:
+		return true
+	}
+	return false
+}
+
+// SlotNameToken is the slot-uniqueness token an 8-segment upstream name (Reddit, Meta) appends
+// to its Targeting segment: "" on slot 1, so every existing campaign keeps its exact name, and
+// "#<n>" from slot 2 on. It lives INSIDE an existing segment, never as a new one, because the data
+// pipeline parses a name positionally only when it has exactly 8 segments.
+func SlotNameToken(slotVersion int) string {
+	if n := NormalizeSlotVersion(slotVersion); n > FirstSlotVersion {
+		return fmt.Sprintf("#%d", n)
+	}
+	return ""
 }
 
 type dispatchSlotVersionKey struct{}
@@ -297,6 +318,34 @@ func (t Tactic) Valid() bool {
 		}
 	}
 	return false
+}
+
+// NameToken is the tactic's token in an upstream campaign name, or "" for an unlisted tactic: a
+// name segment never carries a value nobody validated. It is the slug, except content-promotion,
+// which is "content-promo": the data pipeline classifies a campaign's ad format by substring over
+// the whole name, and "content-proMOTION" would file it under the Motion format. Every other slug
+// is free of the pipeline's funnel, objective, format, region and program words. The mapping is
+// fixed forever once a campaign carries it — a retry must compose the same name.
+func (t Tactic) NameToken() string {
+	if !t.Valid() {
+		return ""
+	}
+	if t == TacticContentPromotion {
+		return "content-promo"
+	}
+	return string(t)
+}
+
+// NameTokens returns the stage token (ToFU, MoFU or BoFU) and tactic token these labels put in an
+// upstream name; each is "" when that label is absent (an unlabelled, legacy campaign has both "").
+func (l CampaignLabels) NameTokens() (stage, tactic string) {
+	if l.FunnelStage != nil {
+		stage = l.FunnelStage.NameToken()
+	}
+	if l.Tactic != nil {
+		tactic = l.Tactic.NameToken()
+	}
+	return stage, tactic
 }
 
 // CampaignLabels is what a create request asks a newly CLAIMED campaign to be labelled with.

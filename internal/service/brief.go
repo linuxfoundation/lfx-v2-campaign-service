@@ -2273,7 +2273,7 @@ func expectedSlotVersions(newVersion bool, in map[string]int, platforms []model.
 // upstream name, and so the refusal happens before any job or upstream call.
 //
 // Labels are accepted only when every selected platform names campaigns by stage
-// (model.ProviderNamesByStage: Microsoft and Google today): stored on another platform now, they would
+// (model.ProviderNamesByStage: Microsoft, Google, Reddit and Meta today): stored on another platform now, they would
 // mismatch the name that platform composes once it adds the stage, and a re-dispatch would then
 // miss the existing campaign and create a duplicate.
 func campaignLabels(stage, tactic *string, platforms []model.Provider) (model.CampaignLabels, error) {

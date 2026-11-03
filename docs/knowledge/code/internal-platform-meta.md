@@ -343,8 +343,12 @@ same two ways.
 
 Both names are deterministic, but they are composed differently and carry different
 uniqueness guarantees. The CAMPAIGN name is the attribution name (`Events | event |
-region | objective | Intent | Social | project | MoFU`) — deterministic for a given
-brief, but NOT brief-unique: two briefs sharing event name, region, objective and
+region | objective | Intent | Social | project | MoFU`; a labelled or later-slot campaign
+— multi-campaign cs-3 — carries its stage token in place of `MoFU` and its tactic and
+`#<slot>` token appended to `Intent`, always 8 segments, read from the claimed row via
+`CampaignInput.StageToken` / `Tactic` / `SlotToken`; such a name over 255 runes,
+`maxLabelledCampaignNameRunes`, is refused before the account GET) — deterministic for a given
+brief and slot, but NOT brief-unique: two briefs sharing event name, region, objective and
 project produce the same name. The AD-SET name is only `"<EventName> - <objective
 label>"`; it is disambiguated by the campaign it is queried under, not by the name.
 Because a name match alone therefore cannot prove a campaign belongs to this brief,

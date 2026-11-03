@@ -402,17 +402,28 @@ func TestReportedConversionValueAndRoasFollowTheStatus(t *testing.T) {
 }
 
 // The multi-campaign allowlists hold exactly the platforms whose upstream names are unique per
-// slot version AND carry the stage: Microsoft (cs-1) and Google (cs-2). They move together — a
-// platform allowed a second campaign but refused labels (or the reverse) would leave ss offering
-// a create the service refuses — and every other provider stays out until its own change.
+// slot version AND carry the stage: Microsoft (cs-1), Google (cs-2), Reddit and Meta (cs-3). They
+// move together — a platform allowed a second campaign but refused labels (or the reverse) would
+// leave ss offering a create the service refuses — and every other provider stays out until its
+// own change.
 func TestMultiCampaignAllowlists(t *testing.T) {
-	want := map[Provider]bool{ProviderMicrosoftAds: true, ProviderGoogleAds: true}
+	want := map[Provider]bool{ProviderMicrosoftAds: true, ProviderGoogleAds: true, ProviderRedditAds: true, ProviderMetaAds: true}
 	for _, p := range AllProviders() {
 		if got := ProviderSupportsSlotVersions(p); got != want[p] {
 			t.Errorf("ProviderSupportsSlotVersions(%s) = %v, want %v", p, got, want[p])
 		}
 		if got := ProviderNamesByStage(p); got != want[p] {
 			t.Errorf("ProviderNamesByStage(%s) = %v, want %v", p, got, want[p])
+		}
+	}
+}
+
+// SlotNameToken is "" for slot 1 and for every legacy or unset slot (0, negative), which is what
+// keeps an existing Reddit or Meta campaign on its exact legacy name; "#<n>" from slot 2 on.
+func TestSlotNameToken(t *testing.T) {
+	for slot, want := range map[int]string{-1: "", 0: "", 1: "", 2: "#2", 3: "#3", 12: "#12"} {
+		if got := SlotNameToken(slot); got != want {
+			t.Errorf("SlotNameToken(%d) = %q, want %q", slot, got, want)
 		}
 	}
 }

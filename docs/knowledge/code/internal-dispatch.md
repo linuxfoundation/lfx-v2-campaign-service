@@ -548,13 +548,43 @@ refuses a brief without an event name). Pinned by `TestGoogleAds_NamesComeFromTh
 `TestGoogleAds_BudgetNameIsUniquePerSlot`, `TestGoogleAds_UTMCampaignDoesNotMoveWithTheSlot`, and
 the live `TestLiveGoogleSecondCampaignThroughTheOrchestrator`.
 
-Every other provider still composes the same name for every slot, and most look campaigns up by
-it: LinkedIn (`findCampaignByNameInGroup`, which would also push new creatives onto the live
-campaign), X and Meta (`findCampaignByName`); HubSpot clones under the same email name. So
+**Reddit and Meta (cs-3).** Both names are the data pipeline's 8-segment `Program | Event |
+Region | Objective | Targeting | Ad Format | Project | Funnel` contract, which lf-dbt parses
+positionally only when a name has exactly 8 ` | ` segments. `RedditDispatcher` and
+`MetaDispatcher` set `CampaignInput.StageToken` and `CampaignInput.Tactic` from
+`model.CampaignLabels.NameTokens` (the claimed row's stored labels) and `CampaignInput.SlotToken`
+from `model.SlotNameToken(model.DispatchSlotVersion(ctx))` — `""` on slot 1, `#<n>` from slot 2
+on. The builders (`buildRedditCampaignName`, `meta.buildCampaignName`) change only two segments:
+the stage token replaces the legacy funnel (Reddit `ToFU`, Meta `MoFU`) in segment 8, and the
+tactic and slot token are appended to segment 5 (`Intent retargeting #2`). The uniqueness token
+never becomes a segment and never touches the Event (2) or Project (7) segments the pipeline joins
+on; an unlabelled slot-1 row composes its legacy name byte for byte, and a tactic-only row keeps
+the legacy funnel. Tactic tokens come from `model.Tactic.NameToken`, shared with Google
+(`content-promotion` → `content-promo`, kept off lf-dbt's substring ad-format parser). For an
+8-segment name lf-dbt reads every field BY POSITION, so its `targeting` column holds the raw
+segment — `Intent`, `Intent #2`, `Intent retargeting #2` — a distinct value per tactic and slot,
+not a normalised Prospecting / Retargeting (the substring parsers are only fallbacks for names
+that are not 8 segments). That raw segment is also what gives slot 2 its own
+`paid_ads_campaign_key`; a report grouped by targeting splits by slot until lf-dbt normalises it.
+Nothing binds slot 2 to slot 1 by name: Reddit never looks a campaign up by name on create, and Meta's `findCampaignByName` runs
+only under `CampaignInput.ReconcileByName`, which no dispatcher sets. Length: Reddit's 200-rune
+check already covers every composed name before the first request; Meta, which documents no
+campaign-name limit, refuses a LABELLED or later-slot name over 255 runes
+(`maxLabelledCampaignNameRunes`) before its account GET, and leaves unlabelled names unbounded as
+before. Pinned by `TestRedditMeta_NamesComeFromTheClaimedRow` (goldens, each dispatched twice, 8
+segments, segment 8 ∈ {ToFU, MoFU, BoFU}), `TestRedditMeta_Slot2NeverBindsSlot1`,
+`TestMeta_OverlongLabelledNameIsRefusedBeforeAnyRequest`, the client tests
+`TestBuildRedditCampaignName_LabelTokens`, `TestBuildCampaignName_LabelTokens` and
+`TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest` (both packages), and the live
+`TestLiveRedditMetaSecondCampaignThroughTheOrchestrator`.
+
+Every other provider still composes the same name for every slot, and looks campaigns up by it:
+LinkedIn (`findCampaignByNameInGroup`, which would also push new creatives onto the live
+campaign) and X (`findCampaignByName`); HubSpot clones under the same email name. So
 `model.ProviderSupportsSlotVersions` and `model.ProviderNamesByStage` are allowlists holding
-Microsoft and Google, and `create-campaigns` refuses `new_version`, `funnel_stage` and `tactic`
-with a 400 for anything else. A provider joins both in the same change that makes its name unique
-per slot version and carries the stage (cs-3: Reddit and Meta; cs-4: LinkedIn and X).
+Microsoft, Google, Reddit and Meta, and `create-campaigns` refuses `new_version`, `funnel_stage`
+and `tactic` with a 400 for anything else. A provider joins both in the same change that makes its
+name unique per slot version and carries the stage (cs-4: LinkedIn and X).
 
 ## Registration
 

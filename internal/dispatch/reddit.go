@@ -245,6 +245,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		imageURLSource = d.lateAssetURL(brief, assetID, &signedURL)
 	}
 
+	stageToken, tacticToken := model.DispatchLabels(ctx).NameTokens()
 	in := reddit.CampaignInput{
 		EventName:       bf.EventName,
 		EventSlug:       brief.EventSlug,
@@ -271,6 +272,14 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		ConversionPixelID: cfg.ConversionPixelID,
 		VideoGoal:         cfg.VideoGoal,
 		ManualCPCBid:      plan.amount,
+
+		// The name labels of the CLAIMED row (multi-campaign cs-3): its stored funnel stage and
+		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of
+		// that row composes the same name; an unlabelled slot-1 row composes its legacy name
+		// byte for byte; slot 2 on gets a "#<n>" token, so it never shares slot 1's name.
+		StageToken: stageToken,
+		Tactic:     tacticToken,
+		SlotToken:  model.SlotNameToken(model.DispatchSlotVersion(ctx)),
 	}
 
 	// The reddit client's contract: (nil, err) ONLY when NOTHING was (or may have

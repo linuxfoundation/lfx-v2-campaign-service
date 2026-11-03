@@ -42,23 +42,29 @@ func TestBriefService_CreateCampaigns_RefusesUnlistedLabelsBeforeAnyJob(t *testi
 		{"free-text tactic", nil, strp("retarget video tofu"), "tactic"},
 		{"pipe injection in the tactic", nil, strp("keyword | BoFU | x"), "tactic"},
 		{"case variant of a listed tactic", nil, strp("Retargeting"), "tactic"},
+		{"over-long tactic", nil, strp(strings.Repeat("prospecting", 30)), "tactic"},
+		{"motion-shaped tactic", nil, strp("content-promotion video"), "tactic"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s, jobs, _ := approvedPaidBriefService(t)
-			_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
-				ProjectID: "cncf", BriefID: "b1",
-				Input: &briefs.CampaignCreateInput{
-					Platforms: []string{"microsoft-ads"}, FunnelStage: tc.stage, Tactic: tc.tactic,
-				},
+		// cs-3: Reddit and Meta accept labels now, so the same refusals must hold on them, still
+		// before any job exists (and so before any upstream call).
+		for _, pl := range []string{"microsoft-ads", "reddit-ads", "meta-ads"} {
+			t.Run(pl+"/"+tc.name, func(t *testing.T) {
+				s, jobs, _ := approvedPaidBriefService(t)
+				_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+					ProjectID: "cncf", BriefID: "b1",
+					Input: &briefs.CampaignCreateInput{
+						Platforms: []string{pl}, FunnelStage: tc.stage, Tactic: tc.tactic,
+					},
+				})
+				var bad *briefs.BadRequestError
+				if !errors.As(err, &bad) || !strings.Contains(bad.Message, tc.want+" must be one of") {
+					t.Fatalf("got %T (%v), want the 400 listing the valid %s values", err, err, tc.want)
+				}
+				if n := len(jobs.jobs); n != 0 {
+					t.Fatalf("%d job(s) created for a refused request", n)
+				}
 			})
-			var bad *briefs.BadRequestError
-			if !errors.As(err, &bad) || !strings.Contains(bad.Message, tc.want) {
-				t.Fatalf("got %T (%v), want a 400 naming %s", err, err, tc.want)
-			}
-			if n := len(jobs.jobs); n != 0 {
-				t.Fatalf("%d job(s) created for a refused request", n)
-			}
-		})
+		}
 	}
 }
 
@@ -190,11 +196,11 @@ func TestCampaignDoc_CarriesVariantLabelsAndCreatedAt(t *testing.T) {
 	}
 }
 
-// Labels are accepted only where the platform names campaigns by stage (Microsoft and Google
-// today): stored elsewhere, they would mismatch the name that platform composes once it adds the
-// stage.
+// Labels are accepted only where the platform names campaigns by stage (Microsoft, Google, Reddit
+// and Meta today): stored elsewhere, they would mismatch the name that platform composes once it
+// adds the stage.
 func TestBriefService_CreateCampaigns_RefusesLabelsOnPlatformsWithoutStageNames(t *testing.T) {
-	for _, pl := range []string{"linkedin-ads", "meta-ads", "reddit-ads", "twitter-ads"} {
+	for _, pl := range []string{"linkedin-ads", "twitter-ads"} {
 		s, jobs, _ := approvedPaidBriefService(t)
 		_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
 			ProjectID: "cncf", BriefID: "b1",
@@ -280,5 +286,46 @@ func TestBriefService_CreateCampaigns_GoogleAcceptsALabelledNewVersion(t *testin
 	}
 	if len(disp.labels) != 1 || disp.labels[0].FunnelStage == nil || *disp.labels[0].FunnelStage != model.FunnelStageMid {
 		t.Fatalf("dispatch labels = %+v, want one dispatch labelled mid", disp.labels)
+	}
+}
+
+// cs-3: reddit-ads and meta-ads join both allowlists, so a labelled new_version create is accepted
+// and makes the platform's next campaign (slot 2), carrying the labels to the dispatcher.
+func TestBriefService_CreateCampaigns_RedditAndMetaAcceptALabelledNewVersion(t *testing.T) {
+	for _, p := range []model.Provider{model.ProviderRedditAds, model.ProviderMetaAds} {
+		t.Run(string(p), func(t *testing.T) {
+			repo := newFakeBriefRepo()
+			repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+				ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-na-2026", Status: model.BriefApproved,
+				DeliveryType: model.DeliveryPaidMarketing, Version: 1,
+			}
+			camps := &fakeCampaignRepo{}
+			camps.storeRow(&model.Campaign{
+				ID: "row-1", ProjectID: "cncf", BriefID: "b1", Platform: p,
+				Variant: model.VariantDefault, SlotVersion: 1, PlatformCampaignID: "up-1", Status: "created",
+			})
+			jobs := newFakeJobRepo()
+			disp := &labelRecordingDispatcher{}
+			s := NewBriefService(repo, camps, jobs, NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{p: disp}))
+
+			res, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+				ProjectID: "cncf", BriefID: "b1",
+				Input: &briefs.CampaignCreateInput{
+					Platforms: []string{string(p)}, NewVersion: true,
+					ExpectedSlotVersions: map[string]int{string(p): 1}, FunnelStage: strp("lower"), Tactic: strp("retargeting"),
+				},
+			})
+			if err != nil {
+				t.Fatalf("CreateCampaigns: %v", err)
+			}
+			got := decodeResults(t, waitForTerminal(t, jobs, res.JobID))
+			if len(got) != 1 || got[0].Reused || got[0].SlotVersion != 2 || got[0].FunnelStage != "lower" || got[0].Tactic != "retargeting" {
+				t.Fatalf("result = %+v, want slot 2 created, labelled lower/retargeting", got)
+			}
+			if len(disp.labels) != 1 || disp.labels[0].FunnelStage == nil || *disp.labels[0].FunnelStage != model.FunnelStageLower ||
+				disp.labels[0].Tactic == nil || *disp.labels[0].Tactic != model.TacticRetargeting {
+				t.Fatalf("dispatch labels = %+v, want one dispatch labelled lower/retargeting", disp.labels)
+			}
+		})
 	}
 }

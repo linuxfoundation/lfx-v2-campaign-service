@@ -5404,8 +5404,11 @@ type CampaignCreateInputRequestBody struct {
 	// latest campaign is complete gets a new campaign alongside it; a platform
 	// with none gets its first; a platform whose latest campaign is still in
 	// flight or needs reconciliation is reported exactly as a retry would be. The
-	// version is tracked by this service only and is never shown on the ad
-	// platform as a label. Supported on microsoft-ads and google-ads for now; any
+	// version is tracked by this service and is never a platform label or tag; on
+	// platforms whose campaigns need distinct names it appears only in the name of
+	// a second or later campaign: a `-<n>` suffix on microsoft-ads and google-ads,
+	// a `#<n>` token in the targeting segment on reddit-ads and meta-ads.
+	// Supported on microsoft-ads, google-ads, reddit-ads and meta-ads for now; any
 	// other platform in the request is refused with 400. On google-ads the slot is
 	// the dispatched channel (Search, Demand Gen, Performance Max, Video or
 	// Display), so another campaign is another campaign of that channel. Two
@@ -5421,13 +5424,16 @@ type CampaignCreateInputRequestBody struct {
 	// when this request creates it: a platform whose campaign already exists (a
 	// retry, or a new_version request with a stale expected_slot_versions) returns
 	// that campaign with the stage it was created with, never relabelled.
-	// Optional; omitted, the campaign is unlabelled. Supported on microsoft-ads
-	// and google-ads for now (400 if any other platform is selected), because a
-	// label must be part of the platform's campaign name before it is stored
-	// there. A Microsoft Advertising campaign carries the stage (ToFU, MoFU or
-	// BoFU) in its upstream name; a Google Ads campaign carries the stage and the
-	// tactic in its budget and campaign names (and, on Search, its ad group name).
-	// An unlabelled campaign keeps the names it has always had.
+	// Optional; omitted, the campaign is unlabelled. Supported on microsoft-ads,
+	// google-ads, reddit-ads and meta-ads for now (400 if any other platform is
+	// selected), because a label must be part of the platform's campaign name
+	// before it is stored there. A Microsoft Advertising campaign carries the
+	// stage (ToFU, MoFU or BoFU) in its upstream name; a Google Ads campaign
+	// carries the stage and the tactic in its budget and campaign names (and, on
+	// Search, its ad group name); a Reddit or Meta campaign keeps its 8-segment
+	// name, with the stage in the funnel segment and the tactic in the targeting
+	// segment (`Intent retargeting`). An unlabelled campaign keeps the names it
+	// has always had.
 	FunnelStage *string `form:"funnel_stage,omitempty" json:"funnel_stage,omitempty" xml:"funnel_stage,omitempty"`
 	// How the campaign(s) this request creates pursue their stage, from a
 	// controlled list (free text is refused because the label can reach campaign
