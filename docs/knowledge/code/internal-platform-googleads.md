@@ -2132,18 +2132,23 @@ its own (`EMPTY_CONVERSION_GOALS`); both halves together pass `validateOnly` aga
 account (2026-11-03), as does the custom goal create. The campaign goals are read first
 (`biddableCampaignConversionGoals`) and each must belong to this account and campaign.
 
-NO EXISTING GOAL IS EVER WRITTEN. The Google Ads account is shared by every foundation
-(`docs/architecture.md`, Account Tenancy), so any goal may be counting conversions for live
-campaigns in other projects, and a goal edited by hand was edited on purpose. The step only
-reads, reuses or creates. The LFX goal named for the set is reused when it is enabled and
-still holds the set. When that name is held by a goal that was REMOVED or edited to hold
-something else, it is left as it is: any enabled goal holding exactly the set is reused, or
-else a new goal is created under the set's second name (`<name> | 2`), which later campaigns
-find the same way. With the second name also held by a changed goal, the goal is NOT applied.
-A create that loses a `CUSTOM_GOAL_DUPLICATE_NAME` race uses the winner, if it holds the set.
-Google refuses a second goal holding the same action list under ANY name
-(`DUPLICATE_CONVERSION_ACTION_LIST`, confirmed live); the enabled goal holding exactly that
-set, often one made by hand, is then reused, and the step line says so. A create answered
+NO GOAL IN USE IS EVER WRITTEN. The Google Ads account is shared by every foundation
+(`docs/architecture.md`, Account Tenancy), so an enabled goal may be counting conversions for
+live campaigns in other projects, and a goal edited by hand was edited on purpose. The LFX goal
+named for the set is reused when it is enabled and still holds the set. Otherwise the goal
+holding exactly the set under ANY name is used (`goalHoldingActionSet`, enabled preferred): an
+enabled one is reused as it is; a REMOVED one, including the LFX goal itself, is re-enabled with
+a status-only update (`useGoalHoldingActionSet`). That is the one write, and it is safe: Google
+refuses to remove a goal linked to a campaign (`CANNOT_REMOVE_LINKED_CUSTOM_CONVERSION_GOAL`),
+so a removed goal counts for no campaign. The re-enable is counted for retries and must name
+that goal, or it is UNCONFIRMED and the campaign is not pointed at it. With no goal holding the
+set (the named one was edited), a new goal is created under the set's second name
+(`<name> | 2`), which later campaigns find the same way; with the second name also held by an
+edited goal, the goal is NOT applied. A create that loses a `CUSTOM_GOAL_DUPLICATE_NAME` race
+uses the winner, if it holds the set. Google refuses a second goal holding the same action list
+under ANY name (`DUPLICATE_CONVERSION_ACTION_LIST`, confirmed live against an enabled goal;
+whether a removed goal counts is unverified, and the lookup covers both); the goal holding the
+set is then used the same way, and the step line says which. A create answered
 2xx without a usable name may still have made the goal, so it is UNCONFIRMED about the goal
 while NOT applied to the campaign, which is pointed at nothing; a retry finds the goal by name.
 
