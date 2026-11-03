@@ -95,7 +95,8 @@ func badRequest(w http.ResponseWriter, _ *http.Request) {
 // The whole feature on the wire: one adGroupCriteria:mutate carrying the four segment
 // kinds in order, each in the oneof arm Google names, then one campaignCriteria:mutate of
 // negative placements — in that order, after the ad group, and with the ad group itself
-// sent WITHOUT a targetingSetting, which is what makes these criteria targeting.
+// carrying targetingSetting AUDIENCE bidOnly false (after the four demographic defaults,
+// restated unchanged), which declares them targeting.
 func TestCreateDisplayCampaign_SendsAudiencesAndPlacementExclusions(t *testing.T) {
 	rec := &pathRecorder{}
 	adGroupH, readAdGroup := capturedMutate(1, displayAdGroupResource)
@@ -120,8 +121,18 @@ func TestCreateDisplayCampaign_SendsAudiencesAndPlacementExclusions(t *testing.T
 		{"create":{"campaign":"customers/1234567890/campaigns/222","negative":true,"placement":{"url":"news.example.org"}}}
 	]}`)
 
-	if _, ok := mutateCreate(t, readAdGroup())["targetingSetting"]; ok {
-		t.Error("the Display ad group must carry no targetingSetting — with one marking AUDIENCE bidOnly, the audiences would only observe")
+	adGroup, _ := json.Marshal(mutateCreate(t, readAdGroup())["targetingSetting"])
+	wantSetting := `{"targetRestrictions":[` +
+		`{"bidOnly":true,"targetingDimension":"AGE_RANGE"},` +
+		`{"bidOnly":true,"targetingDimension":"GENDER"},` +
+		`{"bidOnly":true,"targetingDimension":"PARENTAL_STATUS"},` +
+		`{"bidOnly":true,"targetingDimension":"INCOME_RANGE"},` +
+		`{"bidOnly":false,"targetingDimension":"AUDIENCE"}]}`
+	if string(adGroup) != wantSetting {
+		t.Errorf("ad group targetingSetting = %s, want %s — audiences must TARGET, demographics keep Google's default", adGroup, wantSetting)
+	}
+	if _, ok := mutateCreate(t, readAdGroup())["optimizedTargetingEnabled"]; ok {
+		t.Error("optimizedTargetingEnabled must not be sent; it is left at Google's default")
 	}
 
 	want := []string{"campaignBudgets:mutate", "campaigns:mutate", "adGroups:mutate", "adGroupCriteria:mutate", "campaignCriteria:mutate"}
@@ -137,7 +148,7 @@ func TestCreateDisplayCampaign_SendsAudiencesAndPlacementExclusions(t *testing.T
 	}
 	steps := strings.Join(res.Steps, "\n")
 	for _, s := range []string{
-		"Audience targeting applied: 4 ad group criteria (1 user list(s); 1 custom audience(s); 1 custom affinity segment(s); 1 user interest(s)) — targeting, not observation",
+		"Audience targeting applied: 4 ad group criteria (1 user list(s); 1 custom audience(s); 1 custom affinity segment(s); 1 user interest(s)) — attached as targeting (AUDIENCE bidOnly false), not observation; optimized targeting is left at Google's default and may widen reach",
 		"Placement exclusions applied: 2 campaign negative placement criteria",
 	} {
 		if !strings.Contains(steps, s) {
@@ -151,12 +162,19 @@ func TestCreateDisplayCampaign_SendsAudiencesAndPlacementExclusions(t *testing.T
 func TestCreateDisplayCampaign_EachHalfAlone(t *testing.T) {
 	t.Run("placements only", func(t *testing.T) {
 		placementH, _ := capturedMutate(1, campaignCriterionName)
-		c := displayTargetingServer(t, &pathRecorder{}, okAdGroup, failHandler(t, "adGroupCriteria:mutate"), placementH)
+		adGroupH, readAdGroup := capturedMutate(1, displayAdGroupResource)
+		c := displayTargetingServer(t, &pathRecorder{}, adGroupH, failHandler(t, "adGroupCriteria:mutate"), placementH)
 		in := demandGenInput()
 		in.ExcludedPlacements = []string{"example.com"}
 		res, err := c.CreateDisplayCampaign(context.Background(), in)
 		if err != nil || len(res.ExcludedPlacementCriteriaIDs) != 1 || len(res.AudienceCriteriaIDs) != 0 {
 			t.Fatalf("res = %+v, err = %v", res, err)
+		}
+		// No audience input: the ad group payload is byte-identical to the pre-#462 one.
+		want := `{"operations":[{"create":{"name":"` + displayAdGroupName(in) +
+			`","campaign":"customers/1234567890/campaigns/222","status":"ENABLED","type":"DISPLAY_STANDARD"}}]}`
+		if got := readAdGroup(); got != want {
+			t.Errorf("ad group body = %s, want exactly %s", got, want)
 		}
 	})
 	t.Run("one user list only", func(t *testing.T) {
@@ -176,13 +194,17 @@ func TestCreateDisplayCampaign_EachHalfAlone(t *testing.T) {
 
 // A failure of either criteria step happens after the campaign exists, so it returns the
 // partial result with the error: definite refusals are failures, ambiguous ones
-// UNCONFIRMED, and a step after the failing one is never attempted.
+// UNCONFIRMED, and an audience failure never attempts the placement step.
 func TestCreateDisplayCampaign_TargetingFailuresKeepThePartial(t *testing.T) {
 	wrongAdGroup := func(w http.ResponseWriter, r *http.Request) {
 		h, _ := capturedMutate(4, func(int) string { return "customers/1234567890/adGroupCriteria/999~900" })
 		h(w, r)
 	}
 	shortAudience, _ := capturedMutate(1, adGroupCriterionName)
+	foreignAudience := func(w http.ResponseWriter, r *http.Request) {
+		h, _ := capturedMutate(4, func(int) string { return "customers/9999999999/adGroupCriteria/333~900" })
+		h(w, r)
+	}
 	foreignPlacement := func(w http.ResponseWriter, r *http.Request) {
 		h, _ := capturedMutate(2, func(int) string { return "customers/9999999999/campaignCriteria/222~900" })
 		h(w, r)
@@ -206,6 +228,7 @@ func TestCreateDisplayCampaign_TargetingFailuresKeepThePartial(t *testing.T) {
 		{"audience 5xx", serverError, nil, "display audience targeting UNCONFIRMED", true, 0, true},
 		{"audience short 2xx", shortAudience, nil, "display audience targeting UNCONFIRMED", true, 0, true},
 		{"audience other ad group", wrongAdGroup, nil, "reports a different ad group id", true, 0, true},
+		{"audience foreign account", foreignAudience, nil, "malformed/wrong-kind/wrong-account criterion resource name", true, 0, true},
 		{"placement 4xx", okAudience, badRequest, "placement exclusions failed", false, 4, false},
 		{"placement 5xx", okAudience, serverError, "placement exclusions UNCONFIRMED", true, 4, false},
 		{"placement foreign account", okAudience, foreignPlacement, "placement exclusions UNCONFIRMED", true, 4, false},
@@ -263,15 +286,15 @@ func TestCreateDisplayCampaign_RefusesBadTargetingBeforeAnyRequest(t *testing.T)
 		},
 		"foreign custom audience": {
 			func(in *CampaignInput) { in.CustomAudiences = []string{"customers/9999999999/customAudiences/22"} },
-			"CustomAudiences entry",
+			"is on customer 9999999999, not this campaign's account 1234567890",
 		},
 		"foreign custom affinity": {
 			func(in *CampaignInput) { in.CustomAffinities = []string{"customers/9999999999/customInterests/33"} },
-			"CustomAffinities entry",
+			"is on customer 9999999999, not this campaign's account 1234567890",
 		},
 		"foreign user interest": {
 			func(in *CampaignInput) { in.UserInterests = []string{"customers/9999999999/userInterests/44"} },
-			"UserInterests entry",
+			"is on customer 9999999999, not this campaign's account 1234567890",
 		},
 		"an Audience resource": {
 			func(in *CampaignInput) { in.AudienceSegments = []string{"customers/1234567890/audiences/55"} },
@@ -406,12 +429,12 @@ func TestValidateDisplayAudienceList(t *testing.T) {
 }
 
 func TestValidateExcludedPlacements(t *testing.T) {
-	t.Run("lower-cases and dedupes, keeping www apart", func(t *testing.T) {
-		got, err := validateExcludedPlacements([]string{" Example.com ", "example.com", "www.example.com", "xn--bcher-kva.example"})
+	t.Run("lower-cases and dedupes, sending www and bare domains as written", func(t *testing.T) {
+		got, err := validateExcludedPlacements([]string{" Example.com ", "example.com", "www.example.com", "xn--bcher-kva.example", "1password.com"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := []string{"example.com", "www.example.com", "xn--bcher-kva.example"}; !reflect.DeepEqual(got, want) {
+		if want := []string{"example.com", "www.example.com", "xn--bcher-kva.example", "1password.com"}; !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
 		}
 	})
@@ -420,16 +443,34 @@ func TestValidateExcludedPlacements(t *testing.T) {
 	// caller knows what to drop rather than reading that the entry "is not a domain".
 	for entry, want := range map[string]string{
 		"https://example.com": "carries a scheme",
-		"example.com/sports":  "with no path, query, port or credentials",
-		"example.com?x=1":     "with no path, query, port or credentials",
-		"example.com:8080":    "with no path, query, port or credentials",
-		"user@example.com":    "with no path, query, port or credentials",
+		"example.com/sports":  "with no path, query, fragment, port or credentials",
+		"example.com?x=1":     "with no path, query, fragment, port or credentials",
+		"example.com#top":     "with no path, query, fragment, port or credentials",
+		"example.com:8080":    "with no path, query, fragment, port or credentials",
+		"user@example.com":    "with no path, query, fragment, port or credentials",
 	} {
 		if _, err := validateExcludedPlacements([]string{entry}); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("validateExcludedPlacements(%q) = %v, want an error containing %q", entry, err, want)
 		}
 	}
+	// A refused entry may carry a secret in its query or credentials, and the error text
+	// reaches logs: neither may be echoed back.
+	for entry, secret := range map[string]string{
+		"example.com?x=1":               "x=1",
+		"user:pass@example.com":         "pass",
+		"https://example.com/p?token=s": "token=s",
+		"https://u:pass@example.com":    "pass",
+	} {
+		_, err := validateExcludedPlacements([]string{entry})
+		if err == nil {
+			t.Fatalf("%q accepted", entry)
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("error for %q echoes %q: %v", entry, secret, err)
+		}
+	}
 	for name, entry := range map[string]string{
+		"IPv4 literal":   "192.168.0.1",
 		"blank":          " ",
 		"scheme":         "https://example.com",
 		"path":           "example.com/sports",

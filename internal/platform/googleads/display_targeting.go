@@ -29,12 +29,16 @@ import (
 //     AUDIENCE_NOT_ALLOWED_TO_ATTACH_WHEN_AUDIENCE_GROUPED_SET_TO_FALSE — Display is not
 //     audience-grouped, so it takes segments directly rather than an Audience resource;
 //   - a negative `placement` criterion naming a bare domain is accepted at the campaign
-//     level (and at the ad group level, which this client does not use).
+//     level (and at the ad group level, which this client does not use);
+//   - a DISPLAY_STANDARD ad group created with targetingSetting AGE_RANGE, GENDER,
+//     PARENTAL_STATUS and INCOME_RANGE bidOnly true plus AUDIENCE bidOnly false,
+//     together with those four criteria, is accepted.
 //
 // This client creates no audiences. Every audience input is a list of resource names
 // the caller already has, checked for shape and for THIS account before the budget
-// mutate, because a criterion naming another account's list is refused only at the
-// adGroupCriteria:mutate — after the budget, campaign and ad group are committed.
+// mutate. A criterion naming another account's list is not expected to be accepted
+// (not probed); any refusal would come at the adGroupCriteria:mutate, after the budget,
+// the campaign and the ad group are committed.
 // ---------------------------------------------------------------------------
 
 // maxExcludedPlacements bounds the placement exclusion list so one
@@ -182,11 +186,16 @@ func validateDisplayTargeting(kind, customerID string, in CampaignInput) (displa
 // Every entry must be exactly customers/{customerId}/{collection}/{id}, both ids
 // numeric, and the customer id must be THIS client's account.
 //
-// The account check is the one validateAudienceSegments does not make, and on Display
-// it is required: the probes established these names on the campaign's own customer,
-// and a criterion naming another customer's list fails at the adGroupCriteria:mutate,
-// after the budget, the campaign and the ad group exist. A resource on another account
-// is refused here, with the account it named.
+// The account check is the one validateAudienceSegments does not make. The probes
+// established these names on the campaign's own customer; a criterion naming another
+// customer's list is not expected to be accepted (not probed), and any refusal would
+// come at the adGroupCriteria:mutate, after the budget, the campaign and the ad group
+// exist. A resource on another account is refused here, with the account it named.
+//
+// The check is ACCOUNT-scoped, not foundation-scoped, and is NOT tenancy protection:
+// on a Google Ads account shared across foundations, any foundation's list on that
+// account passes it. That is an accepted risk, tracked by #468; lfx-self-serve offers
+// Google audience inputs only to ROOT principals.
 //
 // An Audience resource (customers/{id}/audiences/{id}) is refused with its own reason:
 // Display takes segments directly, and Google refuses an audience criterion on a
@@ -245,11 +254,17 @@ func validateDisplayAudienceList(field, collection, customerID string, names []s
 //     placement Google may accept, but it is not what was probed, and an entry that
 //     fails at the campaignCriteria:mutate does so after the campaign exists;
 //   - a wildcard, a trailing dot, an underscore or a non-ASCII name is refused (an
-//     internationalised domain is written in its xn-- punycode form).
+//     internationalised domain is written in its xn-- punycode form);
+//   - an IPv4 literal (a name whose last label is all digits) is refused: it is not a
+//     domain, and no top-level domain is numeric.
 //
-// "www.example.com" and "example.com" are DIFFERENT placements and are kept apart; the
-// only folding is case, because a domain is case-insensitive and two spellings would be
-// one placement sent twice.
+// "www.example.com" and "example.com" are both sent as written; neither is folded into
+// the other (whether Google's exclusion of one covers the other is Google's rule, not
+// checked here). The only folding is case, because a domain is case-insensitive and two
+// spellings would be one placement sent twice.
+//
+// The two shape refusals render the entry through redactURLForError: an entry carrying
+// a query or credentials may carry a secret, and the error text reaches logs.
 func validateExcludedPlacements(placements []string) ([]string, error) {
 	if len(placements) == 0 {
 		return nil, nil
@@ -265,14 +280,14 @@ func validateExcludedPlacements(placements []string) ([]string, error) {
 			return nil, fmt.Errorf("google-ads: excluded placement must not be empty")
 		}
 		if strings.Contains(entry, "://") {
-			return nil, fmt.Errorf("google-ads: excluded placement %q carries a scheme; send the bare domain (example.com) — it is not stripped for you", entry)
+			return nil, fmt.Errorf("google-ads: excluded placement %s carries a scheme; send the bare domain (example.com) — it is not stripped for you", redactURLForError(entry))
 		}
 		if strings.ContainsAny(entry, "/?#:@") {
-			return nil, fmt.Errorf("google-ads: excluded placement %q must be a bare domain such as example.com, with no path, query, port or credentials", entry)
+			return nil, fmt.Errorf("google-ads: excluded placement %s must be a bare domain such as example.com, with no path, query, fragment, port or credentials", redactURLForError(entry))
 		}
 		domain := strings.ToLower(entry)
 		if !placementDomain(domain) {
-			return nil, fmt.Errorf("google-ads: excluded placement %q is not a domain name (letters, digits and hyphens in dot-separated labels, at least two labels, no trailing dot; write an internationalised domain in its xn-- form)", entry)
+			return nil, fmt.Errorf("google-ads: excluded placement %q is not a domain name (letters, digits and hyphens in dot-separated labels, at least two labels, a non-numeric last label, no trailing dot; write an internationalised domain in its xn-- form)", entry)
 		}
 		if _, dup := seen[domain]; dup {
 			continue
@@ -285,7 +300,8 @@ func validateExcludedPlacements(placements []string) ([]string, error) {
 
 // placementDomain reports whether s, already lower-cased, is a syntactically valid
 // domain name of at least two labels: each label 1..63 bytes of [a-z0-9-], neither
-// starting nor ending with a hyphen, the whole at most maxPlacementDomainBytes.
+// starting nor ending with a hyphen, the last not all digits, the whole at most
+// maxPlacementDomainBytes.
 func placementDomain(s string) bool {
 	if len(s) > maxPlacementDomainBytes {
 		return false
@@ -305,7 +321,8 @@ func placementDomain(s string) bool {
 			}
 		}
 	}
-	return true
+	// An all-digit last label makes the name an IPv4 literal, not a domain.
+	return !numericID(labels[len(labels)-1])
 }
 
 // displayAudienceStep summarises the audience criteria for the step list, naming only
@@ -327,6 +344,29 @@ func displayAudienceStep(plan displayTargetingPlan) string {
 	return strings.Join(parts, "; ")
 }
 
+// displayAudienceTargetingSetting is the Display ad group's targetingSetting when it
+// carries audience criteria: the four demographic dimensions exactly as Google sets them
+// by default, then AUDIENCE with bidOnly false, so the audience criteria target rather
+// than observe. See createDisplayAudienceCriteria for why it is sent.
+//
+// All five entries, in this order, rather than AUDIENCE alone: LFX-created Display ad
+// groups (no targetingSetting sent) read back exactly AGE_RANGE, GENDER, PARENTAL_STATUS
+// and INCOME_RANGE, each bidOnly true, and no AUDIENCE entry. Restating those four keeps
+// Google's default for the demographic dimensions instead of relying on how Google merges
+// a partial list. This exact list, with the four criteria, was accepted by a validateOnly
+// probe on 2026-11-03.
+func displayAudienceTargetingSetting() *targetingSetting {
+	return &targetingSetting{
+		TargetRestrictions: []targetRestriction{
+			{TargetingDimension: "AGE_RANGE", BidOnly: true},
+			{TargetingDimension: "GENDER", BidOnly: true},
+			{TargetingDimension: "PARENTAL_STATUS", BidOnly: true},
+			{TargetingDimension: "INCOME_RANGE", BidOnly: true},
+			{TargetingDimension: "AUDIENCE", BidOnly: false},
+		},
+	}
+}
+
 // createDisplayAudienceCriteria attaches the plan's audience segments to a
 // just-created Display ad group as ONE adGroupCriteria:mutate, in the order user
 // lists, custom audiences, custom affinities, user interests. One batch so the set
@@ -336,13 +376,18 @@ func displayAudienceStep(plan displayTargetingPlan) string {
 //
 // TARGETING, not observation — the deliberate difference from Search. On Search,
 // AudienceSegments are observation-only: createAdGroupAndAd sets the ad group's
-// targetingSetting to bidOnly for the AUDIENCE dimension so keywords keep controlling
-// reach (see targetingSetting in campaign.go). A Display ad group has no keywords; its
-// audiences ARE what decides who sees the ad, which is how the reference campaign uses
-// them. displayAdGroupCreate therefore sends no targetingSetting, and the AUDIENCE
-// dimension takes Google's default, bidOnly false: these criteria restrict the ad
-// group's reach to the named audiences. Nothing new is sent to get that — it is the
-// absence of the setting Search adds.
+// targetingSetting to bidOnly true for the AUDIENCE dimension so keywords keep
+// controlling reach (see targetingSetting in campaign.go). A Display ad group has no
+// keywords; its audiences are what the caller means to decide who sees the ad, which is
+// how the reference campaign uses them. So when any audience list is supplied,
+// CreateDisplayCampaign creates the ad group with a targetingSetting whose AUDIENCE entry
+// is bidOnly false (displayAudienceTargetingSetting, which also restates the four
+// demographic defaults) — the AUDIENCE setting the human-built reference campaign carries
+// explicitly, and accepted with these criteria by a validateOnly probe on 2026-11-03. It
+// is SENT rather than left to a default because an ad group created without it was read
+// back with no AUDIENCE restriction at all, so the default is not established.
+// Optimized targeting is left at Google's default (optimizedTargetingEnabled is not
+// sent) and may widen reach beyond the named segments; that has not been checked.
 //
 // Every criterion is created ENABLED, as Search's are, for the reason
 // createAdGroupTargeting gives. Called after the ad group create and reported by the
@@ -417,7 +462,9 @@ func (c *Client) createDisplayAudienceCriteria(ctx context.Context, adGroupResou
 // Its own mutate rather than a share of the location or the language/schedule/device
 // criteria batch, so neither failure discards the other and each failure sentence
 // names only what it left missing. Called after the campaign exists, so a failure is a
-// partial result; an ambiguous outcome is UNCONFIRMED.
+// partial result; an ambiguous outcome is UNCONFIRMED. Every criteria step runs before
+// the ad, the only step that makes the campaign servable, so ordering this after the ad
+// group leaves a paused campaign with no ad on any failure here.
 func (c *Client) createCampaignPlacementExclusions(ctx context.Context, campaignResource, campaignID string, placements []string) ([]string, error) {
 	if len(placements) == 0 {
 		return nil, nil

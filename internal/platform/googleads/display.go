@@ -87,18 +87,22 @@ type displayCampaignCreate struct {
 // refusal is a client limitation rather than an upstream one — Google does accept manual
 // CPC on Display — and displayBiddingStrategies is where that is written down.
 //
-// It carries no targetingSetting either, and that is what makes Display's audience
-// criteria TARGETING rather than observation (#462). Search's ad group sends
-// targetingSetting with bidOnly true for the AUDIENCE dimension so its segments only
-// observe; with no setting, the AUDIENCE dimension takes Google's default, bidOnly
-// false, and the criteria createDisplayAudienceCriteria attaches restrict who the ad
-// group reaches. That is the point on this channel: a Display ad group has no keywords,
-// so its audiences are what decides who sees the ad.
+// TargetingSetting is sent ONLY when the campaign carries audience criteria (#462), and
+// then with AUDIENCE bidOnly false (after the four demographic defaults, restated
+// unchanged — see displayAudienceTargetingSetting), so those criteria target rather than
+// observe — the
+// opposite of Search's ad group, which sends bidOnly true. With no audience input the
+// field is omitted and the payload is byte-identical to the one sent before #462. See
+// createDisplayAudienceCriteria for why the setting is sent rather than left to
+// Google's default.
 type displayAdGroupCreate struct {
 	Name     string `json:"name"`
 	Campaign string `json:"campaign"`
 	Status   string `json:"status"`
 	Type     string `json:"type"`
+	// TargetingSetting: see the type's doc. A pointer with omitempty so its absence is
+	// the pre-#462 payload exactly.
+	TargetingSetting *targetingSetting `json:"targetingSetting,omitempty"`
 }
 
 // CreateDisplayCampaign creates a PAUSED Display campaign: images → budget → campaign →
@@ -118,8 +122,10 @@ type displayAdGroupCreate struct {
 // that leaves open is named rather than hedged — the field shapes below are read off
 // Google's published v23 resources, and the one thing a code reading cannot settle is
 // the BIDDING SET, recorded at displayBiddingStrategies with the check that closes it.
-// #473's ad-group income-range and parental-status exclusion shapes were accepted by
-// validateOnly probes on 2026-11-03; the bidding set was not probed.
+// #473's ad-group income-range and parental-status exclusion shapes, and #462's audience
+// and placement criterion shapes and the ad group's targetingSetting, were since settled
+// by validateOnly probes on 2026-11-03 (see display_targeting.go); the bidding set was
+// not.
 //
 // The partial-result contract is the siblings', unchanged: past the campaign create
 // every failure returns the error ALONGSIDE a non-nil *CampaignResult carrying what
@@ -303,12 +309,18 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 	// that pauses its ad group, and the campaign is PAUSED regardless, so nothing
 	// serves either way.
 	adGroupName := displayAdGroupName(in)
-	adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: displayAdGroupCreate{
+	adGroupCreateVal := displayAdGroupCreate{
 		Name:     adGroupName,
 		Campaign: campaignResource,
 		Status:   "ENABLED",
 		Type:     adGroupTypeDisplayStandard,
-	}}}}
+	}
+	// Audience criteria are attached as TARGETING (#462), which this setting declares;
+	// without audience input it stays absent. See displayAdGroupCreate.
+	if pf.displayTargeting.audienceCount() > 0 {
+		adGroupCreateVal.TargetingSetting = displayAudienceTargetingSetting()
+	}
+	adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: adGroupCreateVal}}}
 	// The deterministic ad-group NAME goes on every failure arm below, as on the Demand
 	// Gen, Video and Search paths: a partial without it tells a reconciler an ad group
 	// may exist but not what to look for.
@@ -364,7 +376,7 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 		if audErr != nil {
 			return res, audErr
 		}
-		steps = append(steps, fmt.Sprintf("Audience targeting applied: %d ad group criteria (%s) — targeting, not observation: they restrict who the ad group reaches", len(audienceIDs), displayAudienceStep(pf.displayTargeting)))
+		steps = append(steps, fmt.Sprintf("Audience targeting applied: %d ad group criteria (%s) — attached as targeting (AUDIENCE bidOnly false), not observation; optimized targeting is left at Google's default and may widen reach", len(audienceIDs), displayAudienceStep(pf.displayTargeting)))
 		res.Steps = steps
 	}
 

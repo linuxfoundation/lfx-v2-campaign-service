@@ -791,7 +791,7 @@ supports fetching and reporting on Video campaigns but cannot create or mutate t
 budget at the campaign step (`adoptExisting` still works, and so does monitoring, because
 only creation is impossible); `display` creates a DISPLAY campaign with NO channel
 sub-type, an ad group of type `DISPLAY_STANDARD` targeted at the audiences named in
-`audienceSegments`/`customAudiences`/`customAffinities`/`userInterests`, the campaign's
+`audienceSegments`/`customAudiences`/`customAffinities`/`userInterests`, campaign-level
 `excludedPlacements`, and (given `displayCreative`) one
 responsive display ad built from images this service fetches and uploads. **Budget is in whole units of the ad ACCOUNT's
 currency**, not USD — the service does no FX conversion (mirroring `metaConfig`).
@@ -899,13 +899,22 @@ audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTI
                                   (customAudiences, userInterest, combinedAudience, etc.) is rejected,
                                   since Search takes no custom audiences.
 
-                                  On `display` (#462) they are TARGETING — they restrict who the ad
-                                  group reaches, which is the point on a channel with no keywords. The
-                                  Display ad group is sent with NO `targetingSetting`, so the AUDIENCE
-                                  dimension takes Google's default (bidOnly false). Each entry must be a
-                                  user list on the campaign's OWN account: a malformed name, another
-                                  customer's list, or a well-formed name of another kind is refused
-                                  before anything is created, the last with the field it belongs in.
+                                  On `display` (#462) they are attached as TARGETING, the point on a
+                                  channel with no keywords: when any Display audience list is given,
+                                  the ad group is created with `targetingSetting.targetRestrictions`
+                                  AGE_RANGE, GENDER, PARENTAL_STATUS and INCOME_RANGE bidOnly true
+                                  (Google's default for those, restated unchanged) then AUDIENCE
+                                  bidOnly false, accepted with these criteria by a validateOnly
+                                  probe. Optimized targeting is left at Google's
+                                  default and may widen reach beyond the named segments (not
+                                  checked). Each entry must be a user list on the campaign's OWN
+                                  account: a malformed name, another customer's list, or a
+                                  well-formed name of another kind is refused before anything is
+                                  created, the last with the field it belongs in. The account check
+                                  is ACCOUNT-scoped, not foundation-scoped, and is not tenancy
+                                  protection: on an account shared across foundations any
+                                  foundation's list on it passes — an accepted risk, tracked by #468
+                                  (self-serve offers these inputs only to ROOT principals).
 
                                   REFUSED rather than ignored on every other `channel`: audience
                                   criteria are attached only on the Search and Display cascades, so an
@@ -959,6 +968,9 @@ userInterests?: string[]          `customers/{id}/customAudiences/{id}`, `custom
                                   Audience resource (`customers/{id}/audiences/{id}`) is refused in any
                                   of the four lists: a Display ad group is not audience-grouped, takes
                                   segments directly, and Google refuses an `audience` criterion on it.
+                                  The account check is ACCOUNT-scoped, not tenancy protection; see
+                                  `audienceSegments` and #468. The ad group is created with AUDIENCE
+                                  bidOnly false whenever any of the four lists is given.
                                   A definite refusal of the criteria mutate fails the job with the
                                   campaign and ad group recorded; an ambiguous one is UNCONFIRMED, so a
                                   retry does not attach them twice.
@@ -969,14 +981,17 @@ excludedPlacements?: string[]   — OPTIONAL websites a Display campaign must ne
                                   atomic `campaignCriteria:mutate` after the audience criteria; the ids
                                   are returned in `excludedPlacementCriteriaIds`. At most 500 entries.
 
-                                  Entries are refused rather than rewritten: a scheme (`https://…`), a
-                                  path, query, fragment, port or credentials, a wildcard, a trailing
-                                  dot, an underscore, a single-label name, or a non-ASCII name (write
-                                  an internationalised domain in its `xn--` form). The only change made
-                                  is lower-casing, and duplicates after it are dropped. `www.example.com`
-                                  and `example.com` are different placements and both are kept. A
-                                  definite refusal of the mutate fails the job with the campaign
-                                  recorded; an ambiguous one is UNCONFIRMED.
+                                  Entries are refused rather than rewritten: a scheme (`https://…`),
+                                  a path, query, fragment, port or credentials, a wildcard, a
+                                  trailing dot, an underscore, a single-label name, an IPv4 literal,
+                                  or a non-ASCII name (write an internationalised domain in its
+                                  `xn--` form). Errors for a scheme or path never echo a query or
+                                  credentials. The only change made is lower-casing, and duplicates
+                                  after it are dropped. `www.example.com` and `example.com` are both
+                                  sent as written; neither is folded into the other (whether
+                                  Google's exclusion of one covers the other is Google's rule, not
+                                  checked here). A definite refusal of the mutate fails the job with
+                                  the campaign recorded; an ambiguous one is UNCONFIRMED.
 geoTargets?: string[]           — OPTIONAL locations the campaign should serve in (LFXV2-3283). Each
                                   entry is EITHER an ISO 3166-1 alpha-2 country code, spelled as in
                                   `metaConfig`/`redditConfig`, OR a raw numeric geo target constant id

@@ -230,9 +230,11 @@ type CampaignInput struct {
 	//   - on Search they are observation-only criteria (GA-4): see
 	//     validateAudienceSegments for the accepted shapes and createAdGroupTargeting
 	//     for why they observe rather than restrict;
-	//   - on Display they are TARGETING criteria that restrict who the ad group
-	//     reaches (#462), and each must be on this campaign's own account: see
-	//     validateDisplayAudienceList and createDisplayAudienceCriteria.
+	//   - on Display they are attached as TARGETING criteria — the ad group is created
+	//     with AUDIENCE bidOnly false, accepted by a validateOnly probe — and each must
+	//     be on this campaign's own account (#462): see validateDisplayAudienceList and
+	//     createDisplayAudienceCriteria. Optimized targeting is left at Google's default
+	//     and may widen reach beyond the named segments.
 	//
 	// Refused on every other channel.
 	AudienceSegments []string
@@ -1180,23 +1182,25 @@ func (c *Client) ValidateCampaignInput(in CampaignInput) error {
 // preflightCampaignKind used to take kind only to compose the name, so validating as
 // Search was harmless for every channel. It now GATES refusals, and those refusals are
 // PER CHANNEL rather than Search-versus-everything. Demand Gen refuses the widest set:
-// proximity targeting, four of the five criteria kinds (it takes languages, on its ad
-// group), the extension assets, the ad-group list, the CPC bid, keywords and audience
-// segments. Performance Max refuses only the half it genuinely cannot carry — device bid
-// modifiers and campaign-level demographic exclusions, plus the Search-only targeting
-// fields — and accepts proximity, languages and ad schedules at the campaign level like
-// Search. Video refuses the narrowest set of the four — the Search targeting fields
-// (keywords, audience segments, the CPC bid, negative keywords, the extension assets and
-// the ad-group list) and Display's own audience lists and placement exclusions — because
-// it carries its location and its other campaign criteria at the campaign level exactly
-// as Search does. Every channel but Display refuses those Display inputs, and Display is
-// the one non-Search channel that takes audience segments (#462). (Each channel also
-// refuses the other channels' creative fields, and every channel but Demand Gen refuses
-// DemandGenAudience.) So a Demand Gen request carrying one of the fields Demand Gen
-// refuses validates clean as Search and is then refused by CreateDemandGenCampaign. On
-// the create path that is merely a late error; on the ADOPTION path, which returns
-// before any create runs, it is the exact defect this function exists to prevent: the
-// same request accepted when a campaign happens to exist and refused when it does not.
+// proximity targeting, four of the five campaign criteria kinds (it takes languages, on
+// its ad group), the extension assets, the ad-group list, the CPC bid, keywords, audience
+// segments, and Display's custom audiences, custom affinities, user interests and
+// placement exclusions. Performance Max refuses only the half it genuinely cannot carry
+// — device bid modifiers and campaign-level demographic exclusions, plus the Search-only
+// and Display-only targeting fields — and accepts proximity, languages and ad schedules
+// at the campaign level like Search. Video refuses the Search targeting fields
+// (keywords, audience segments, the CPC bid, negative keywords, Search partners, the
+// extension assets and the ad-group list) and Display's own audience lists and placement
+// exclusions, because it carries its location and its other campaign criteria at the
+// campaign level exactly as Search does. Display refuses the narrowest set of the four:
+// the same Search fields minus audience segments, which it attaches with its own lists
+// (#462). (Each channel also refuses the other channels' creative fields, and every
+// channel but Demand Gen refuses DemandGenAudience.) So a Demand Gen request carrying
+// one of the fields Demand Gen refuses validates clean as Search and is then refused by
+// CreateDemandGenCampaign. On the create path that is merely a late error; on the
+// ADOPTION path, which returns before any create runs, it is the exact defect this
+// function exists to prevent: the same request accepted when a campaign happens to exist
+// and refused when it does not.
 //
 // The ad-group income and parental-status exclusions (#473) cut across all of this:
 // every channel but Search and Display refuses income ranges, and every channel but
@@ -1423,8 +1427,8 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	}
 	// Display's audiences and placement exclusions (#462): refused off Display, and on
 	// Display every resource name is checked for shape and for THIS account, because a
-	// foreign or malformed one is refused only at a mutate that runs after the ad group
-	// exists.
+	// malformed one — or a foreign one, which is not expected to be accepted (not probed)
+	// — would be refused only at a mutate that runs after the ad group exists.
 	displayTargeting, err := validateDisplayTargeting(kind, c.account.CustomerID, in)
 	if err != nil {
 		return nil, err
