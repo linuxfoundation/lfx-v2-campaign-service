@@ -1029,6 +1029,18 @@ that crossed `portraitImages` with `tallPortraitImages` would satisfy any count-
 — both lists non-empty, totals matching — and build the campaign with 4:5 images where
 Google wants 9:16.
 
+`demandGenVideoCreative` and `demandGenAdGroups` (#460) follow it: the video creative is a
+`*googleAdsDemandGenVideoCreativeConfig` pointer mapped by `googleAdsDemandGenVideoCreative`
+(nil to the zero value), and each `demandGenAdGroups` entry carries `name`, `audience` and
+`creative` / `videoCreative` pointers of those two config types, mapped by
+`googleAdsDemandGenAdGroups` with no checks of its own — the one-creative rule, the cap, the
+duplicate names and the audience's account are the client's preflight's. Their image lists
+are image slots like every other: `googleAdsCreativeSlots` enumerates the video logo and every
+group's five image lists and video logo (labelled `demand gen ad group N …`), so stored-asset
+entries resolve in them and `TestGoogleAdsConfigNamesItsAssetInEverySlot` counts them; and
+`googleAdsSnapshotConfig` deep-copies the video creative and the group slice, reducing every
+URL through `sanitizeSnapshotDemandGenImage` / `sanitizeSnapshotDemandGenVideo`.
+
 `performanceMaxCreative` is the same shape again — a pointer on the config, a mapper that
 validates nothing, the zero value for nil — and its test asserts nine lists into nine
 slots plus four scalars. The trap there is the three TEXT lists rather than the images:
@@ -1107,9 +1119,11 @@ exclusions still serves wherever the account allows minus a few places, which is
 what the warning exists to say out loud. A warning an operator learns to distrust is worse
 than none.
 
-The channel rules — proximity, schedules, devices, demographics, extensions and ad groups
-are all refused on Demand Gen, which takes languages on its ad group instead (#459), and
-`demandGenAudience` is refused everywhere else — are deliberately **not** restated here;
+The channel rules — proximity, schedules, devices, demographics, extensions and the Search
+ad-group list are all refused on Demand Gen, which takes languages on its ad group instead
+(#459) and its own `demandGenAdGroups` (#460), and `demandGenAudience`,
+`demandGenVideoCreative` and `demandGenAdGroups` are refused everywhere else — are
+deliberately **not** restated here;
 `demandGenAudience` is mapped verbatim onto `CampaignInput.DemandGenAudience`, as
 `audienceSegments` and `geoTargets` are, once one deployment gate has passed: unless
 `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`, `Dispatch` refuses any non-empty

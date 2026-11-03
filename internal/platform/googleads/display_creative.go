@@ -267,10 +267,10 @@ func validateDisplayCreative(kind string, in CampaignInput) (displayCreativePlan
 
 // fetchDisplayImages downloads every image this creative references, in slot order.
 //
-// A one-line wrapper over the shared fetcher, exactly as fetchDemandGenImages is, and
-// kept for the same reason: the slot TABLE is the channel-specific part, and naming the
-// channel at the call site is what keeps the caller in display.go from having to know
-// which table belongs to it.
+// A one-line wrapper over the shared fetcher, kept because the slot TABLE is the
+// channel-specific part, and naming the channel at the call site is what keeps the caller
+// in display.go from having to know which table belongs to it. (Demand Gen's own wrapper
+// became fetchDemandGenGroupImages, which walks every ad group's tables at once, #460.)
 func (c *Client) fetchDisplayImages(ctx context.Context, plan displayCreativePlan) ([]fetchedImage, error) {
 	if !plan.present {
 		return nil, nil

@@ -783,7 +783,8 @@ Google Ads per-platform config. Which campaign is created depends on `channel`. 
 (`search`) is a PAUSED search campaign with an ad group + a Responsive Search Ad (GA-3), then
 keyword/audience targeting attached to that ad group (GA-4) — without it, the ad group has zero
 criteria and the campaign can never serve, even once a human enables it. `demand-gen` creates a
-Demand Gen campaign with an ad group and (given `demandGenCreative`) one ad; `performance-max`
+Demand Gen campaign with an ad group and (given `demandGenCreative` or `demandGenVideoCreative`)
+one ad — or one ad group per `demandGenAdGroups` entry, each with its own ad; `performance-max`
 creates a Performance Max campaign with NO ad group and NO ad at all — its creative is an ASSET
 GROUP built from `performanceMaxCreative`; `video` CREATES NOTHING — the Google Ads API
 supports fetching and reporting on Video campaigns but cannot create or mutate them, so a
@@ -951,7 +952,9 @@ demandGenAudience?: string      — OPTIONAL one EXISTING Google Ads Audience,
 
                                   DEMAND GEN ONLY, and REFUSED on every other `channel`. It shares
                                   one atomic `adGroupCriteria:mutate` with `languages`, after the geo
-                                  one; the criterion id is reported in `audienceCriteriaIds`.
+                                  one; the criterion id is reported in `audienceCriteriaIds`. With
+                                  `demandGenAdGroups` it must be empty: each group names its own
+                                  `audience` instead (#460).
 customAudiences?: string[]      — OPTIONAL Display audience segments (#462), each an EXISTING resource
 customAffinities?: string[]       name on the campaign's OWN account: `customAudiences` takes
 userInterests?: string[]          `customers/{id}/customAudiences/{id}`, `customAffinities` takes
@@ -1014,7 +1017,9 @@ geoTargets?: string[]           — OPTIONAL locations the campaign should serve
                                   Each is resolved to Google's numeric geo target constant and attached
                                   as a location criterion at the level the CHANNEL requires: campaign
                                   level for Search and Performance Max, AD GROUP level for Demand Gen
-                                  (which rejects campaign-level location criteria). Case/whitespace-insensitive and
+                                  (which rejects campaign-level location criteria) — on EVERY Demand
+                                  Gen ad group when `demandGenAdGroups` names several (#460).
+                                  Case/whitespace-insensitive and
                                   de-duplicated by the RESOLVED id — "US" and "2840" are one criterion;
                                   at most 60 entries.
 
@@ -1313,7 +1318,8 @@ languages?: string[]            — OPTIONAL languages the campaign targets (LFX
                                   criteria: Demand Gen refuses a CAMPAIGN-level language and its ad
                                   group accepts `language` criteria next to its audience (validateOnly
                                   probe, 2026-11-03). They share one atomic `adGroupCriteria:mutate`
-                                  with `demandGenAudience`, and their ids are reported in
+                                  with `demandGenAudience` (with each group's `audience`, on every
+                                  `demandGenAdGroups` group, #460), and their ids are reported in
                                   `targetingCriterionIds` as adGroupCriterion ids. `adSchedules`,
                                   `deviceBidModifiers`, `excludedAgeRanges` and `excludedGenders` stay
                                   REFUSED there, by one guard: this client has not verified them on
@@ -1556,9 +1562,9 @@ leadForms?:                     — OPTIONAL lead form (LFXV2-2665). The one ext
                                   background image renders on Google's default and is servable.
 adGroups?:                      — OPTIONAL multiple themed ad groups (LFXV2-2665), each with its own
   {name, cpcBid?, keywords?,      keywords and up to 3 Responsive Search Ads. SEARCH ONLY and REFUSED on
-   audienceSegments?,             every other `channel`: Demand Gen creates its own single ad group,
-   negativeKeywords?,             and Performance Max has no ad groups at all. At most 20 groups, at
-   ads?: {headlines?,             most 3 ads per group.
+   audienceSegments?,             every other `channel`: Demand Gen takes `demandGenAdGroups`
+   negativeKeywords?,             instead, and Performance Max has no ad groups at all. At most 20
+   ads?: {headlines?,             groups, at most 3 ads per group.
           descriptions?,
           path1?, path2?}[]}[]    `negativeKeywords` (#473) are the group's OWN exclusions, attached as
                                   negative ad-group criteria in the same mutate as its keywords. They
@@ -1642,6 +1648,62 @@ demandGenCreative?:             — OPTIONAL Demand Gen ad (LFXV2-2665). DEMAND 
                                   creates. The result carries `creativeAssetIds` and `adId`; a failure
                                   after the assets upload still reports the asset ids, so a retry does
                                   not lose them. The same validation runs on the `adoptExisting` path.
+demandGenVideoCreative?:        — OPTIONAL Demand Gen VIDEO responsive ad (#460). DEMAND GEN ONLY,
+  {youtubeVideoIds?: string[],    and REFUSED on every other `channel`. The ALTERNATIVE to
+   logoImages?: ImageRef[],       `demandGenCreative` on the same ad group: setting both is
+   headlines?: string[],          REFUSED, since a Demand Gen ad group here carries one ad (use
+   longHeadlines?: string[],      `demandGenAdGroups` for an image ad and a video ad side by
+   descriptions?: string[],       side). Not the `video` channel's `videoCreative`: that is a
+   businessName?: string,         different ad type on a channel the API cannot create.
+   callToAction?: string}
+                                  `youtubeVideoIds` 1-5, bare ids — a URL is refused, as on
+                                  `videoCreative`. `logoImages` exactly ONE, 1:1 and at least
+                                  128x128, taking both `demandGenCreative` image shapes and
+                                  fetched or loaded and checked BEFORE the budget mutate under the
+                                  same rules. `headlines` 1-5 (<=30 weighted chars) and
+                                  `descriptions` 1-5 (<=90) as on `demandGenCreative`;
+                                  `longHeadlines` 1-5 (<=90), REQUIRED. `businessName` REQUIRED,
+                                  <=25. `callToAction` is optional and must be one of SIGN_UP,
+                                  LEARN_MORE, BOOK_NOW, VISIT_SITE, WATCH_NOW — a deliberately
+                                  short list of Google CallToActionType values, of which SIGN_UP
+                                  is the one exercised live; anything else is REFUSED. One logo
+                                  and a required long headline are this service's conservative
+                                  reading of the shape a validateOnly probe accepted (2026-11-03),
+                                  not Google limits cited elsewhere.
+
+                                  Built as the logo by `assets:mutate`, then ONE atomic
+                                  `googleAds:mutate` creating the YouTube and call-to-action
+                                  assets and the PAUSED ad that names them; the ad's `name` (which
+                                  Google requires for this ad type) is
+                                  `<ad group name> - Video ad`. The result carries
+                                  `creativeAssetIds` (logo, videos, call to action) and `adId`; a
+                                  failure of the atomic request means none of its assets or the ad
+                                  exist, an ambiguous one is UNCONFIRMED.
+demandGenAdGroups?:             — OPTIONAL several Demand Gen ad groups (#460). DEMAND GEN ONLY,
+  {name: string,                  and REFUSED on every other `channel`. At most 5 (a service
+   audience?: string,             bound: every group's images are held before the budget mutate,
+   creative?:                     and every group adds mutates after the campaign exists).
+     <demandGenCreative>,
+   videoCreative?:                `name` is REQUIRED and a label: the ad group is named
+     <demandGenVideoCreative>}[]  `<event name> - Display | <name>`; names equal ignoring case
+                                  are REFUSED (Google refuses `DUPLICATE_ADGROUP_NAME`, but only
+                                  after the earlier groups exist). Each group takes EXACTLY ONE of
+                                  `creative` / `videoCreative`, under those fields' rules, and an
+                                  optional `audience` under `demandGenAudience`'s. `geoTargets`,
+                                  `excludedGeoTargets` and `languages` apply to EVERY group. With
+                                  this list, `demandGenCreative`, `demandGenVideoCreative` and
+                                  `demandGenAudience` must be empty. Every image across every
+                                  group is fetched in one pre-budget phase that shares the 64 MiB
+                                  total.
+
+                                  Omitted/empty, the single ad group is created exactly as before.
+                                  The groups are created in order; each is reported in `adGroups`
+                                  (`name`, `id`, `adIds`, `audienceCriteriaIds`,
+                                  `geoCriterionIds`, `targetingCriterionIds`, `creativeAssetIds`),
+                                  appended before its mutate, so a failure on group k returns
+                                  groups 1..k-1 complete and what exists of k. `adGroupId`/`adId`
+                                  and the other scalar fields are the FIRST group's. Launch flips
+                                  every group's ad.
 performanceMaxCreative?:        — OPTIONAL Performance Max ASSET GROUP (LFXV2-2665). PERFORMANCE MAX
   {marketingImages?: ImageRef[],  ONLY, and REFUSED on every other `channel`. Performance Max has no ad
    squareMarketingImages?:        groups and no ads: this field IS its creative. Omitted, the campaign

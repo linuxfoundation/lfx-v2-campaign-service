@@ -18,7 +18,7 @@ import (
 
 // Google creative assets, resolved from the library rather than fetched (LFXV2-2665).
 //
-// This is MetaDispatcher.resolveVariantAssets applied to Google's fourteen image slots, and it is
+// This is MetaDispatcher.resolveVariantAssets applied to Google's image slots, and it is
 // deliberately the same shape rather than a second scheme: dedupe by CANONICALIZED uuid, price
 // each distinct asset with GetAssetSize (one BIGINT, no BYTEA), apply the per-dispatch ceiling to
 // the SIZE, reserve against the process-wide AssetReserver BEFORE the read, then GetAsset — and
@@ -71,7 +71,7 @@ type googleAdsCreativeSlot struct {
 }
 
 // googleAdsCreativeSlots enumerates every image slot the config carries, across all three
-// creative channels.
+// creative channels and every Demand Gen ad group.
 //
 // One list rather than three loops: the budget, the dedupe and the per-dispatch ceiling are
 // properties of the DISPATCH, not of a channel, and a config may name the same asset from two
@@ -88,6 +88,27 @@ func googleAdsCreativeSlots(cfg *googleAdsConfig) []googleAdsCreativeSlot {
 			googleAdsCreativeSlot{"demand gen tallPortraitImages", &c.TallPortraitImages},
 			googleAdsCreativeSlot{"demand gen logoImages", &c.LogoImages},
 		)
+	}
+	// The Demand Gen video ad's logo and every Demand Gen ad group's creatives (#460),
+	// labelled by position so a refusal names the entry the caller wrote.
+	if c := cfg.DemandGenVideoCreative; c != nil {
+		out = append(out, googleAdsCreativeSlot{"demand gen video logoImages", &c.LogoImages})
+	}
+	for i := range cfg.DemandGenAdGroups {
+		g := &cfg.DemandGenAdGroups[i]
+		prefix := fmt.Sprintf("demand gen ad group %d ", i+1)
+		if c := g.Creative; c != nil {
+			out = append(out,
+				googleAdsCreativeSlot{prefix + "marketingImages", &c.MarketingImages},
+				googleAdsCreativeSlot{prefix + "squareMarketingImages", &c.SquareMarketingImages},
+				googleAdsCreativeSlot{prefix + "portraitImages", &c.PortraitImages},
+				googleAdsCreativeSlot{prefix + "tallPortraitImages", &c.TallPortraitImages},
+				googleAdsCreativeSlot{prefix + "logoImages", &c.LogoImages},
+			)
+		}
+		if c := g.VideoCreative; c != nil {
+			out = append(out, googleAdsCreativeSlot{prefix + "video logoImages", &c.LogoImages})
+		}
 	}
 	if c := cfg.PerformanceMaxCreative; c != nil {
 		out = append(out,
