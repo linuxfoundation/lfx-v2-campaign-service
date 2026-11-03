@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/membudget"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -363,21 +364,26 @@ func TestUploadAdmission_ProductionConstantsAdmitConcurrentUploads(t *testing.T)
 	// priced for. Declared via Content-Length, which is what the pricing function reads.
 	const smallUpload = 256 << 10 // 256 KiB
 
-	wantConcurrent := int(constants.UploadMemoryBudgetFallbackBytes /
-		constants.UploadAdmissionWeightFor(smallUpload))
-	if wantConcurrent < 2 {
-		t.Fatalf("production constants price a %d-byte upload at %d against a %d budget, "+
-			"admitting %d at a time: uploads cannot proceed concurrently",
-			smallUpload, constants.UploadAdmissionWeightFor(smallUpload),
-			constants.UploadMemoryBudgetFallbackBytes, wantConcurrent)
+	// The budget exactly as production builds it (container.newUploadBudget): the fallback size
+	// with the 80 MiB pixel reserve held back from the wire stage. A reserveless budget would
+	// let this test admit ~25 and miss a change that shrinks the wire share production actually
+	// has (#445 review).
+	budget := membudget.NewWithReserve(constants.UploadMemoryBudgetFallbackBytes, constants.CreativeDecodePeakBytes)
+	wantConcurrent := int(budget.FirstStageLimit() / constants.UploadAdmissionWeightFor(smallUpload))
+	// 15 is the concurrency the constants promise a default pod (UploadAdmissionMinWeightBytes).
+	if wantConcurrent < 15 {
+		t.Fatalf("production constants price a %d-byte upload at %d against a %d wire share "+
+			"(budget %d less reserve), admitting %d at a time; the default pod promises 15",
+			smallUpload, constants.UploadAdmissionWeightFor(smallUpload), budget.FirstStageLimit(),
+			budget.Total(), wantConcurrent)
 	}
 
 	var arrived sync.WaitGroup
 	arrived.Add(wantConcurrent)
 	var admitted atomic.Int64
 
-	h := UploadAdmission(
-		constants.UploadMemoryBudgetFallbackBytes,
+	h := UploadAdmissionShared(
+		budget,
 		constants.MaxRequestBodyBytes,
 		constants.UploadAdmissionWeightFor,
 		constants.UploadAdmissionWait,
@@ -420,9 +426,9 @@ func TestUploadAdmission_ProductionConstantsAdmitConcurrentUploads(t *testing.T)
 	if got := admitted.Load(); got != int64(wantConcurrent) {
 		t.Errorf("admitted %d uploads, want %d", got, wantConcurrent)
 	}
-	t.Logf("production constants admitted %d concurrent %d KiB uploads (weight %d each, budget %d)",
+	t.Logf("production constants admitted %d concurrent %d KiB uploads (weight %d each, wire share %d of budget %d)",
 		wantConcurrent, smallUpload>>10,
-		constants.UploadAdmissionWeightFor(smallUpload), constants.UploadMemoryBudgetFallbackBytes)
+		constants.UploadAdmissionWeightFor(smallUpload), budget.FirstStageLimit(), budget.Total())
 }
 
 // TestUploadAdmission_SlowBodyDoesNotPinTheWholeBudget states the availability property in the

@@ -42,6 +42,18 @@ which release when their decode returns. `TestBudget_SecondStageIsNotQueuedBehin
 `TestBudget_FirstStageAlwaysLeavesRoomForOnePixelCharge` and
 `TestBudget_ReleaseServesSecondStageFirst` pin this.
 
+**Cancelled callers hold nothing.** A caller whose context is already done is refused by both
+stages even when capacity is free, and a queued request that is granted in the same moment its
+caller is cancelled gives the charge back instead of returning it (#445 review). Otherwise a
+disconnected upload would still read its body and run `image.Decode`, which cannot be cancelled,
+holding its wire charge (up to 112 MiB) and then its pixel charge (up to 80 MiB) — one
+worst-case upload, 192 MiB — that a live upload could use. Every queued outcome is settled under the budget's
+lock, so a racing grant is seen exactly once. `TestBudget_CancelledContextIsRefusedWithCapacityFree`
+and `TestBudget_GrantRacingCancellationIsGivenBack` and
+`TestBudget_GrantAndCancelBothReadyBeforeWaitIsGivenBack` pin this; the hold-and-wait tests wait for the
+queue to hold the expected waiters (`awaitWaiters`) rather than sleeping, so they cannot pass
+before the request they are ordering has queued.
+
 Both stages wait at most the given duration (250 ms each, so at most ~500 ms per upload), refuse
 a want above their limit at once, and return an idempotent release. On exhaustion both call sites
 answer `503` with `Retry-After: 1` (the middleware adds the header to the handler's own `503`).

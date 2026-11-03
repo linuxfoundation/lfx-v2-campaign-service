@@ -64,6 +64,14 @@ type Budget struct {
 	used    int64
 	second  []*waiter // second-stage waiters, FIFO, served first
 	first   []*waiter // first-stage waiters, FIFO
+
+	// Test hooks, nil in production and scoped to one budget so no other test sees them.
+	// testBeforeWait runs after an acquire has queued and released the lock, before it waits,
+	// so a test can have the grant and the cancellation both land before the wait's select.
+	// testAfterWait runs after a queued acquire wakes, before it takes the lock to settle the
+	// outcome, so a test can land a grant in exactly that window. Set before the budget is used.
+	testBeforeWait func()
+	testAfterWait  func()
 }
 
 type waiter struct {
@@ -121,8 +129,10 @@ func (b *Budget) InUse() int64 {
 // once; it is a no-op when ok is false.
 //
 // A want above FirstStageLimit is refused at once rather than after the wait: it could never be
-// admitted. A non-positive want is admitted holding nothing. The wait derives from ctx, so a
-// cancelled caller still returns promptly. It is bounded here rather than by ctx because net/http
+// admitted. A non-positive want is admitted holding nothing. A caller whose ctx is already done
+// is refused even when capacity is free, and a grant that lands as ctx is cancelled is given
+// back rather than returned. The wait derives from ctx, so a cancelled caller still returns
+// promptly. It is bounded here rather than by ctx because net/http
 // gives a handler's r.Context() no deadline, and an unbounded wait converts a memory bound into
 // goroutine exhaustion.
 func (b *Budget) Acquire(ctx context.Context, want int64, wait time.Duration) (release func(), ok bool) {
@@ -152,6 +162,12 @@ func (b *Budget) acquire(ctx context.Context, want int64, wait time.Duration, se
 	if want > b.limit(second) {
 		return noop, false
 	}
+	// A caller that is already gone is refused before admission, even with capacity free: the
+	// upload behind it would otherwise go on to read its body and run image.Decode, which
+	// cannot be cancelled, holding budget that a live upload could use.
+	if ctx.Err() != nil {
+		return noop, false
+	}
 
 	b.mu.Lock()
 	ahead := len(b.second) > 0
@@ -170,22 +186,37 @@ func (b *Budget) acquire(ctx context.Context, want int64, wait time.Duration, se
 		b.first = append(b.first, w)
 	}
 	b.mu.Unlock()
+	if b.testBeforeWait != nil {
+		b.testBeforeWait()
+	}
 
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case <-w.ready:
-		return b.releaser(want), true
 	case <-ctx.Done():
 	case <-timer.C:
 	}
+	if b.testAfterWait != nil {
+		b.testAfterWait()
+	}
 
+	// Every outcome is settled under the lock, so a grant that raced with cancellation or the
+	// timeout is seen exactly once.
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	select {
 	case <-w.ready:
-		// Granted between the timeout and taking the lock: it is ours.
-		return b.releaser(want), true
+		if ctx.Err() == nil {
+			// Granted (possibly between the timeout and taking the lock): it is ours.
+			return b.releaser(want), true
+		}
+		// Granted, but the caller was cancelled concurrently: give the charge back rather
+		// than admit an upload nobody is waiting for. grantLocked already took w off its
+		// queue, so only the charge needs undoing.
+		b.used -= want
+		b.grantLocked()
+		return noop, false
 	default:
 	}
 	if second {
