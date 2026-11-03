@@ -465,8 +465,12 @@ object) from the FULL error body in `doRequest` and retained on
 Google error JSON exceeds `maxErrorBodyChars`, so parsing the truncated snapshot
 would silently drop the codes). Codes are length/count bounded; the raw body is
 never surfaced by `apiError.Error()`. Composed names are deterministic (`LFX |
-<kind> | Project | Event | NameSuffix`) so a retry with the same `NameSuffix`
-collides on the duplicate code rather than double-creating. NOTE: a non-shared
+<kind> | Project | Event | NameSuffix`, with `StageToken` and `Tactic` as their own
+segments before the suffix when set — a labelled campaign, cs-2) so a retry with the
+same inputs collides on the duplicate code rather than double-creating. The
+dispatcher passes `NameSuffix` = the brief id on slot 1 and `<brief id>-<n>` on slot
+≥2, so a second campaign's budget, campaign and Search ad group names never equal the
+first's. NOTE: a non-shared
 budget's name syncs to the campaign name once attached; Google does NOT document
 that the original budget name is then freed for reuse, so for at-most-once retries
 callers should pass a stable-per-logical-campaign `NameSuffix` (which makes the
@@ -857,7 +861,8 @@ contradicted `ad_copy.go` and is corrected.
 
 **The ad's final URL** (`buildAdFinalURL`) is the brief's `RegistrationURL`
 tagged with `utm_source=google`, `utm_medium=cpc`, `utm_campaign` (from
-EventSlug, falling back to EventName then NameSuffix), and `utm_content`
+EventSlug, falling back to EventName, then `UTMCampaignFallback` — the bare brief
+id the dispatcher passes on every slot — or, when that is unset, NameSuffix), and `utm_content`
 (from Project). `utm_source` and `utm_medium` are set UNCONDITIONALLY
 (`q.Set`), overwriting any values the registration URL carried — a click on
 a Google CPC ad must be attributed to Google/CPC, never to an earlier

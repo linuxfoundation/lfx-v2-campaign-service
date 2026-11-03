@@ -374,7 +374,7 @@ func validatePromotionExtensions(in CampaignInput) ([]assetCreate, error) {
 			return nil, err
 		}
 
-		finalURL, err := buildTaggedFinalURL(fmt.Sprintf("promotion extension %q destination URL", target), p.FinalURL, in.EventSlug, in.EventName, in.Project, in.NameSuffix)
+		finalURL, err := buildTaggedFinalURL(fmt.Sprintf("promotion extension %q destination URL", target), p.FinalURL, in.EventSlug, in.EventName, in.Project, in.utmCampaignFallback())
 		if err != nil {
 			return nil, fmt.Errorf("google-ads promotion extension %d is unservable: %w", i, err)
 		}
@@ -462,7 +462,7 @@ func validatePriceExtensions(in CampaignInput) ([]assetCreate, error) {
 				row.Unit = u
 			}
 
-			finalURL, err := buildTaggedFinalURL(label+" destination URL", o.FinalURL, in.EventSlug, in.EventName, in.Project, in.NameSuffix)
+			finalURL, err := buildTaggedFinalURL(label+" destination URL", o.FinalURL, in.EventSlug, in.EventName, in.Project, in.utmCampaignFallback())
 			if err != nil {
 				return nil, fmt.Errorf("google-ads %s is unservable: %w", label, err)
 			}

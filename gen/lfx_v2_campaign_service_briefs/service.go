@@ -1127,14 +1127,16 @@ type CampaignCreateInput struct {
 	// with none gets its first; a platform whose latest campaign is still in
 	// flight or needs reconciliation is reported exactly as a retry would be. The
 	// version is tracked by this service only and is never shown on the ad
-	// platform as a label. Supported on microsoft-ads only for now; any other
-	// platform in the request is refused with 400. Two concurrent requests that
-	// both find the same complete campaign create one new campaign between them,
-	// not two: the second is reported as a reuse of (or skipped behind) the first.
-	// REQUIRES expected_slot_versions for every selected platform (400 without
-	// it), which also makes a SEQUENTIAL repeat — a double click, a reload, a
-	// second tab, a replay after a lost response — return the campaign it already
-	// made instead of creating another.
+	// platform as a label. Supported on microsoft-ads and google-ads for now; any
+	// other platform in the request is refused with 400. On google-ads the slot is
+	// the dispatched channel (Search, Demand Gen, Performance Max, Video or
+	// Display), so another campaign is another campaign of that channel. Two
+	// concurrent requests that both find the same complete campaign create one new
+	// campaign between them, not two: the second is reported as a reuse of (or
+	// skipped behind) the first. REQUIRES expected_slot_versions for every
+	// selected platform (400 without it), which also makes a SEQUENTIAL repeat — a
+	// double click, a reload, a second tab, a replay after a lost response —
+	// return the campaign it already made instead of creating another.
 	NewVersion bool
 	// The funnel stage the campaign(s) this request creates serve: `top`, `mid` or
 	// `lower`. Applies to every selected platform. Recorded on a campaign ONLY
@@ -1142,10 +1144,12 @@ type CampaignCreateInput struct {
 	// retry, or a new_version request with a stale expected_slot_versions) returns
 	// that campaign with the stage it was created with, never relabelled.
 	// Optional; omitted, the campaign is unlabelled. Supported on microsoft-ads
-	// only for now (400 if any other platform is selected), because a label must
-	// be part of the platform's campaign name before it is stored there; a
-	// Microsoft Advertising campaign carries the stage (ToFU, MoFU or BoFU) in its
-	// upstream name, and an unlabelled one keeps the name it has always had.
+	// and google-ads for now (400 if any other platform is selected), because a
+	// label must be part of the platform's campaign name before it is stored
+	// there. A Microsoft Advertising campaign carries the stage (ToFU, MoFU or
+	// BoFU) in its upstream name; a Google Ads campaign carries the stage and the
+	// tactic in its budget, campaign and ad group names. An unlabelled campaign
+	// keeps the names it has always had.
 	FunnelStage *string
 	// How the campaign(s) this request creates pursue their stage, from a
 	// controlled list (free text is refused because the label can reach campaign

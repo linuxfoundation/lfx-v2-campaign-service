@@ -524,17 +524,34 @@ pipeline's name parser reads) — via `CampaignInput.StageToken`, set from
 An unlabelled row (every campaign before `000054`, and any created without a stage) sets no token
 and composes its legacy name byte for byte; a retry of a labelled row composes the same name
 again. The tactic never reaches the Microsoft name. Pinned by
-`TestMicrosoft_StageTokenComesFromTheClaimedRow` (golden names). The other providers do not read
-the labels yet; the allowlist is unchanged.
+`TestMicrosoft_StageTokenComesFromTheClaimedRow` (golden names).
+
+**Google (cs-2).** `GoogleAdsDispatcher` sets the same `NameSuffix: model.SlotNameSuffix(brief.ID,
+model.DispatchSlotVersion(ctx))`, plus `CampaignInput.StageToken` and `CampaignInput.Tactic` from
+`model.DispatchLabels(ctx)`. `googleads.ComposeName` builds the budget, campaign AND Search ad group
+names from them, so a labelled slot-2 campaign is the 7-segment `LFX | Search Campaign | <project> |
+<event> | MoFU | retargeting | <brief id>-2` (budget `LFX | Budget | …`, ad group `LFX | Ad Group |
+…`); a stage without a tactic drops the tactic segment, and an unlabelled slot-1 row composes its
+legacy 5-segment names byte for byte. Because every name-keyed Google path takes the composed
+name, slot 2 never meets slot 1's: a `DUPLICATE_CAMPAIGN_NAME` on slot 2 means a prior slot-2
+attempt (the partial names slot 2, with no id), the budget reuse after `DUPLICATE_NAME` looks up
+slot 2's budget name only, and `adoptExisting` searches slot 2's campaign name. The Demand Gen,
+Video and Display ad groups keep their event-named `<event> - Display` style names, which only
+need to be unique inside their own campaign. The ad, sitelink and extension URLs' `utm_campaign`
+last-resort fallback reads `CampaignInput.UTMCampaignFallback` (the bare brief id), not
+`NameSuffix`, so it does not move with the slot (unreachable from the dispatcher today, which
+refuses a brief without an event name). Pinned by `TestGoogleAds_NamesComeFromTheClaimedRow`
+(goldens, each dispatched twice), `TestGoogleAds_Slot2NeverBindsSlot1ByName`,
+`TestGoogleAds_BudgetNameIsUniquePerSlot`, `TestGoogleAds_UTMCampaignDoesNotMoveWithTheSlot`, and
+the live `TestLiveGoogleSecondCampaignThroughTheOrchestrator`.
 
 Every other provider still composes the same name for every slot, and most look campaigns up by
-it: Google (`FindCampaignByName`, `DUPLICATE_CAMPAIGN_NAME`), LinkedIn
-(`findCampaignByNameInGroup`, which would also push new creatives onto the live campaign), X and
-Meta (`findCampaignByName`); HubSpot clones under the same email name. So
-`model.ProviderSupportsSlotVersions` is an allowlist holding only Microsoft, and `create-campaigns`
-refuses `new_version` with a 400 for anything else. A provider joins it in the same change that
-makes its name unique per slot version. Google and LinkedIn are owned by the Google-readiness
-workstream (LFXV2-2665).
+it: LinkedIn (`findCampaignByNameInGroup`, which would also push new creatives onto the live
+campaign), X and Meta (`findCampaignByName`); HubSpot clones under the same email name. So
+`model.ProviderSupportsSlotVersions` and `model.ProviderNamesByStage` are allowlists holding
+Microsoft and Google, and `create-campaigns` refuses `new_version`, `funnel_stage` and `tactic`
+with a 400 for anything else. A provider joins both in the same change that makes its name unique
+per slot version and carries the stage (cs-3: Reddit and Meta; cs-4: LinkedIn and X).
 
 ## Registration
 
