@@ -1638,3 +1638,35 @@ func TestGetCampaignMetrics_BlankSpendCellIsStillZeroSpend(t *testing.T) {
 		t.Errorf("Conversions = %v, want 2: the conversions change leaked into the spend path", got.Conversions)
 	}
 }
+
+// TestFoldReportRows_ConversionsStatus pins the #175 status for each shape of the
+// ConversionsQualified column, and that only reported carries a total.
+func TestFoldReportRows_ConversionsStatus(t *testing.T) {
+	head := []string{"CampaignId", "Impressions", "Clicks", "Spend", "ConversionsQualified"}
+	row := func(conv string) []string { return []string{"1234567", "200", "5", "10.00", conv} }
+	cases := []struct {
+		name    string
+		records [][]string
+		status  model.ConversionsStatus
+		total   bool
+	}{
+		{"no column: unavailable", [][]string{head[:4], row("")[:4]}, model.ConversionsUnavailable, false},
+		{"every cell blank: unavailable", [][]string{head, row(""), row("")}, model.ConversionsUnavailable, false},
+		{"some cells blank: incomplete", [][]string{head, row("1.5"), row("")}, model.ConversionsIncomplete, false},
+		{"every cell carries a value: reported", [][]string{head, row("1.5"), row("0")}, model.ConversionsReported, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := foldReportRows(tc.records, "1234567", model.MetricsWindowToday)
+			if err != nil {
+				t.Fatalf("foldReportRows: %v", err)
+			}
+			if got.ConversionsStatus != tc.status {
+				t.Errorf("ConversionsStatus = %q, want %q", got.ConversionsStatus, tc.status)
+			}
+			if (got.Conversions != nil) != tc.total {
+				t.Errorf("Conversions = %v, want a total only when reported", got.Conversions)
+			}
+		})
+	}
+}

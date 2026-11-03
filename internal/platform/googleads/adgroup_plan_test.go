@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"unicode/utf8"
 )
 
 // samplePlanBase is the group preflightCampaignKind derives from the
@@ -391,24 +390,28 @@ func TestValidateAdGroupPlans_AllowsDuplicateCopyAcrossAdsInAGroup(t *testing.T)
 }
 
 // A group's copy goes through the SAME composeAdCopy the campaign-level copy
-// does, so it inherits that contract exactly: over-long assets are truncated to
-// Google's weight limit and short lists are padded to the minimum, rather than
-// refused. A second, stricter rule for per-group copy would refuse briefs the
-// single-group path accepts.
+// does, so it inherits that contract exactly (#441): an over-long asset is
+// refused before any request rather than cut, and a short list is padded to the
+// minimum with a note per added line. A second rule for per-group copy would
+// accept or refuse briefs differently from the single-group path.
 func TestValidateAdGroupPlans_ComposesGroupCopyLikeTheCampaignsOwn(t *testing.T) {
 	in := sampleInput()
 	in.AdGroups = []AdGroupSpec{{Name: "Training", Ads: []AdSpec{{Headlines: []string{strings.Repeat("x", 500)}}}}}
+	if _, err := validateAdGroupPlans(campaignKindSearch, in, samplePlanBase()); err == nil || !strings.Contains(err.Error(), "before any request") {
+		t.Fatalf("err = %v, want an over-long headline refused before any request", err)
+	}
+
+	in.AdGroups = []AdGroupSpec{{Name: "Training", Ads: []AdSpec{{Headlines: []string{"Learn Kubernetes"}}}}}
 	plans, err := validateAdGroupPlans(campaignKindSearch, in, samplePlanBase())
 	if err != nil {
-		t.Fatalf("over-long copy is truncated, not refused: %v", err)
+		t.Fatalf("validateAdGroupPlans: %v", err)
 	}
 	ad := plans[0].ads[0]
 	if len(ad.headlines) < minHeadlines || len(ad.descriptions) < minDescriptions {
 		t.Fatalf("got %d headlines and %d descriptions, want padding to Google's minimums", len(ad.headlines), len(ad.descriptions))
 	}
-	// The headline is pure ASCII, so its Google character weight is its rune count.
-	if n := utf8.RuneCountInString(ad.headlines[0]); n > maxHeadlineWeight {
-		t.Errorf("headline is %d runes, over the %d weight limit; it should have been truncated", n, maxHeadlineWeight)
+	if want := (len(ad.headlines) - 1) + len(ad.descriptions); len(ad.copyNotes) != want {
+		t.Errorf("notes = %v, want one per added line (%d)", ad.copyNotes, want)
 	}
 }
 

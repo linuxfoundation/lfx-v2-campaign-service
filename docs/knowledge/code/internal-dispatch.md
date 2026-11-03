@@ -516,14 +516,45 @@ model.DispatchSlotVersion(ctx))`: slot 1 is the bare brief id (every existing na
 byte-identical) and slot 2+ appends `-<n>` — an internal identifier where the brief id already
 sat, not a version label.
 
+**Funnel-stage token (cs-1).** A Microsoft campaign whose CLAIMED ROW carries a funnel stage also
+gets the stage as its own name segment before the suffix — `LFX | Search Campaign | <project> |
+<event> | ToFU | <brief id>[-<n>]` (`MoFU` / `BoFU` for mid / lower, the vocabulary the data
+pipeline's name parser reads) — via `CampaignInput.StageToken`, set from
+`model.DispatchLabels(ctx)`, which the orchestrator fills from the claimed row, never the request.
+An unlabelled row (every campaign before `000054`, and any created without a stage) sets no token
+and composes its legacy name byte for byte; a retry of a labelled row composes the same name
+again. The tactic never reaches the Microsoft name. Pinned by
+`TestMicrosoft_StageTokenComesFromTheClaimedRow` (golden names).
+
+**Google (cs-2).** `GoogleAdsDispatcher` sets the same `NameSuffix: model.SlotNameSuffix(brief.ID,
+model.DispatchSlotVersion(ctx))`, plus `CampaignInput.StageToken` and `CampaignInput.Tactic` from
+`model.DispatchLabels(ctx)`. `googleads.ComposeName` builds the budget, campaign AND Search ad group
+names from them, so a labelled slot-2 campaign is the 7-segment `LFX | Search Campaign | <project> |
+<event> | MoFU | retargeting | <brief id>-2` (budget `LFX | Budget | …`, ad group `LFX | Ad Group |
+…`); a stage without a tactic drops the tactic segment, and an unlabelled slot-1 row composes its
+legacy 5-segment names byte for byte. Unlike Microsoft, Google's name carries the tactic (the plan's
+7-segment Google shape), as its slug except `content-promotion`, written `content-promo` because the
+data pipeline's ad-format parser matches `MOTION` anywhere in a name (`googleAdsTactic`); the other
+slugs contain none of its format, funnel or channel words. Because every name-keyed Google path takes the composed
+name, slot 2 never meets slot 1's: a `DUPLICATE_CAMPAIGN_NAME` on slot 2 means a prior slot-2
+attempt (the partial names slot 2, with no id), the budget reuse after `DUPLICATE_NAME` looks up
+slot 2's budget name only, and `adoptExisting` searches slot 2's campaign name. The Demand Gen,
+Video and Display ad groups keep their event-named `<event> - Display` style names, which only
+need to be unique inside their own campaign. The ad, sitelink and extension URLs' `utm_campaign`
+last-resort fallback reads `CampaignInput.UTMCampaignFallback` (the bare brief id), not
+`NameSuffix`, so it does not move with the slot (unreachable from the dispatcher today, which
+refuses a brief without an event name). Pinned by `TestGoogleAds_NamesComeFromTheClaimedRow`
+(goldens, each dispatched twice), `TestGoogleAds_Slot2NeverBindsSlot1ByName`,
+`TestGoogleAds_BudgetNameIsUniquePerSlot`, `TestGoogleAds_UTMCampaignDoesNotMoveWithTheSlot`, and
+the live `TestLiveGoogleSecondCampaignThroughTheOrchestrator`.
+
 Every other provider still composes the same name for every slot, and most look campaigns up by
-it: Google (`FindCampaignByName`, `DUPLICATE_CAMPAIGN_NAME`), LinkedIn
-(`findCampaignByNameInGroup`, which would also push new creatives onto the live campaign), X and
-Meta (`findCampaignByName`); HubSpot clones under the same email name. So
-`model.ProviderSupportsSlotVersions` is an allowlist holding only Microsoft, and `create-campaigns`
-refuses `new_version` with a 400 for anything else. A provider joins it in the same change that
-makes its name unique per slot version. Google and LinkedIn are owned by the Google-readiness
-workstream (LFXV2-2665).
+it: LinkedIn (`findCampaignByNameInGroup`, which would also push new creatives onto the live
+campaign), X and Meta (`findCampaignByName`); HubSpot clones under the same email name. So
+`model.ProviderSupportsSlotVersions` and `model.ProviderNamesByStage` are allowlists holding
+Microsoft and Google, and `create-campaigns` refuses `new_version`, `funnel_stage` and `tactic`
+with a 400 for anything else. A provider joins both in the same change that makes its name unique
+per slot version and carries the stage (cs-3: Reddit and Meta; cs-4: LinkedIn and X).
 
 ## Registration
 
@@ -1653,13 +1684,23 @@ the orchestrator.
 
 ### Conversions: which platforms can report one (LFXV2-3314)
 
-`model.CampaignMetrics.Conversions` is a `*float64`, and the pointer is load-bearing: **absent
-means "not measured" — the platform cannot report it, or (LinkedIn, Microsoft) the read was
-incomplete — which is not the same claim as a measured zero.** The contract is stated over the
+`model.CampaignMetrics.Conversions` is a `*float64`, and the pointer is load-bearing: **absent is
+not a measured zero.** Since #175 a consumer reads the total only through `ReportedConversions`
+(absent unless `ConversionsStatus` is `reported`) and the reason for an absence from
+`ConversionsStatus`; before #175, absent meant "not measured" — the platform cannot report it, or
+(LinkedIn, Microsoft) the read was incomplete. The contract is stated over the
 READ, not the platform: LinkedIn withdraws the whole total to nil when any returned element omits
 `externalWebsiteConversions`, and Microsoft does the same on a missing column or blank
 `ConversionsQualified` cell (both below), so a nil from either is NOT evidence that the platform
-cannot report conversions. A consumer must not classify the channel from the nil. Only three of
+cannot report conversions. A consumer must not classify the channel from the nil. Since #175 it
+does not have to: `model.CampaignMetrics.ConversionsStatus` names the case (`reported`,
+`unavailable`, `incomplete`, `no_conversions`) and the API's `conversions_status` carries it.
+LinkedIn and Microsoft set it explicitly; the other adapters are classified by
+`ResolvedConversionsStatus` (a total is `reported`, none is `unavailable`), which also applies the
+channel-wide rules: `reported` with zero clicks and a zero total is `no_conversions` (Google's
+no-rows branch, a zero-click Microsoft report), and `reported` with no total is `unavailable`.
+`ReportedConversions` publishes the total only with `reported`, and `ReportedConversionValue` /
+`ReportedRoas` hold `conversion_value` and `roas` to the same rule. Only three of
 the seven adapters populate it, and which three was settled field-by-field against each vendor's
 published reference rather than inferred from what the clients happened to request:
 

@@ -64,7 +64,7 @@ func TestLiveStaleDispatchUpsertNeverOverwritesAnAdoption(t *testing.T) {
 	p := model.ProviderMicrosoftAds
 	staleJob := uuid.NewString()
 
-	claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, staleJob, nil)
+	claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, staleJob, nil, model.CampaignLabels{})
 	if err != nil || !claimed {
 		t.Fatalf("claim: claimed=%v err=%v, want the claim won", claimed, err)
 	}
@@ -112,13 +112,13 @@ func TestLiveStaleDispatchUpsertNeverFinalizesAnotherJobsClaim(t *testing.T) {
 	p := model.ProviderMicrosoftAds
 	staleJob, newJob := uuid.NewString(), uuid.NewString()
 
-	if claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, staleJob, nil); err != nil || !claimed {
+	if claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, staleJob, nil, model.CampaignLabels{}); err != nil || !claimed {
 		t.Fatalf("first claim: claimed=%v err=%v", claimed, err)
 	}
 	if err := repo.ClearDispatchClaim(ctx, briefID, p, model.VariantDefault, model.FirstSlotVersion); err != nil {
 		t.Fatalf("clear the pending claim: %v", err)
 	}
-	claimed, newClaim, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, newJob, nil)
+	claimed, newClaim, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, newJob, nil, model.CampaignLabels{})
 	if err != nil || !claimed {
 		t.Fatalf("second claim: claimed=%v err=%v", claimed, err)
 	}
@@ -154,13 +154,13 @@ func TestLiveStaleClaimReleaseNeverDeletesASuccessorsClaim(t *testing.T) {
 	p := model.ProviderMicrosoftAds
 	jobA, jobB := uuid.NewString(), uuid.NewString()
 
-	if claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, jobA, nil); err != nil || !claimed {
+	if claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, jobA, nil, model.CampaignLabels{}); err != nil || !claimed {
 		t.Fatalf("A's claim: claimed=%v err=%v", claimed, err)
 	}
 	if err := repo.ClearDispatchClaim(ctx, briefID, p, model.VariantDefault, model.FirstSlotVersion); err != nil {
 		t.Fatalf("operator clear of A's claim: %v", err)
 	}
-	claimed, bClaim, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, jobB, nil)
+	claimed, bClaim, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, jobB, nil, model.CampaignLabels{})
 	if err != nil || !claimed {
 		t.Fatalf("B's claim: claimed=%v err=%v", claimed, err)
 	}
@@ -211,7 +211,7 @@ func TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim(t *testing.T) {
 		t.Fatalf("soft-delete slot 1: %v", err)
 	}
 	staleJob := uuid.NewString()
-	if claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, 2, staleJob, nil); err != nil || !claimed {
+	if claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, 2, staleJob, nil, model.CampaignLabels{}); err != nil || !claimed {
 		t.Fatalf("slot-2 claim: claimed=%v err=%v", claimed, err)
 	}
 	if err := repo.ClearDispatchClaim(ctx, briefID, p, model.VariantDefault, 2); err != nil {
@@ -264,7 +264,7 @@ func TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex(t *testing.T) {
 	t.Run("claim slot 2, clear, adopt slot 1, stale slot-2 upsert", func(t *testing.T) {
 		briefID, project := insertApprovedBrief(ctx, t, pool)
 		staleJob := uuid.NewString()
-		if claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, 2, staleJob, nil); err != nil || !claimed {
+		if claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, 2, staleJob, nil, model.CampaignLabels{}); err != nil || !claimed {
 			t.Fatalf("slot-2 claim: claimed=%v err=%v", claimed, err)
 		}
 		if err := repo.ClearDispatchClaim(ctx, briefID, p, model.VariantDefault, 2); err != nil {

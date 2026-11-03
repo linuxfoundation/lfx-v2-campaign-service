@@ -182,14 +182,29 @@ func SlotNameSuffix(base string, slotVersion int) string {
 // ProviderSupportsSlotVersions reports whether a deliberate second campaign on one slot
 // (new_version) is safe to dispatch on p.
 //
-// It is an ALLOWLIST because the hazard is per provider and silent: Google, LinkedIn and X
+// It is an ALLOWLIST because the hazard is per provider and silent: LinkedIn and X
 // find-or-reuse a campaign by its composed name, and their names do not yet vary by slot
 // version, so slot 2 would be bound to slot 1's live campaign (on LinkedIn, with new creatives
 // pushed onto it); Meta also looks campaigns up by name; HubSpot clones an email under the same
-// name. Microsoft folds the slot version into its name suffix (SlotNameSuffix). A provider is
-// added here in the same change that makes its upstream name unique per slot version.
+// name. Microsoft and Google fold the slot version into their name suffix (SlotNameSuffix) —
+// on Google into the budget and campaign names (and the Search ad group's), so its DUPLICATE_NAME
+// budget reuse and its adoptExisting lookup key on the slot's own names. A provider is added here in
+// the same change that makes its upstream name unique per slot version.
 func ProviderSupportsSlotVersions(p Provider) bool {
-	return p == ProviderMicrosoftAds
+	return p == ProviderMicrosoftAds || p == ProviderGoogleAds
+}
+
+// ProviderNamesByStage reports whether p's dispatcher puts a campaign's funnel stage in its
+// upstream name, and so whether a create may label campaigns on p (cs-1). Microsoft (cs-1) and
+// Google (cs-2) today.
+//
+// Labels are refused elsewhere rather than stored silently because a later change will make that
+// platform's name carry the stage: a row labelled BEFORE that change, then re-dispatched after it
+// (a cleared claim, a retained partial, a name-keyed reconciliation), would compose a name its
+// upstream campaign does not have, miss it, and create a duplicate. A provider joins this set in
+// the same change that adds the stage to its name.
+func ProviderNamesByStage(p Provider) bool {
+	return p == ProviderMicrosoftAds || p == ProviderGoogleAds
 }
 
 type dispatchSlotVersionKey struct{}
@@ -212,6 +227,108 @@ func DispatchSlotVersion(ctx context.Context) int {
 		return n
 	}
 	return FirstSlotVersion
+}
+
+// FunnelStage is the funnel stage a campaign serves (migration 000054). The set mirrors the
+// campaigns_funnel_stage_valid CHECK and the create input's design Enum.
+type FunnelStage string
+
+const (
+	FunnelStageTop   FunnelStage = "top"
+	FunnelStageMid   FunnelStage = "mid"
+	FunnelStageLower FunnelStage = "lower"
+)
+
+// FunnelStages is every valid FunnelStage, in funnel order.
+func FunnelStages() []FunnelStage {
+	return []FunnelStage{FunnelStageTop, FunnelStageMid, FunnelStageLower}
+}
+
+// Valid reports whether s is one of FunnelStages.
+func (s FunnelStage) Valid() bool {
+	for _, v := range FunnelStages() {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// NameToken is the stage's token in an upstream campaign name: the ToFU / MoFU / BoFU
+// vocabulary the data pipeline's name parser already reads, so a staged name is attributed to
+// the right stage. Empty for an invalid stage.
+func (s FunnelStage) NameToken() string {
+	switch s {
+	case FunnelStageTop:
+		return "ToFU"
+	case FunnelStageMid:
+		return "MoFU"
+	case FunnelStageLower:
+		return "BoFU"
+	}
+	return ""
+}
+
+// Tactic is how a campaign pursues its stage (migration 000054). A CONTROLLED list, not free
+// text: the label can reach upstream names, and the data pipeline's fallback parsers match words
+// such as "retarget" anywhere in a name. The set mirrors the campaigns_tactic_valid CHECK and the
+// create input's design Enum.
+type Tactic string
+
+const (
+	TacticProspecting      Tactic = "prospecting"
+	TacticRetargeting      Tactic = "retargeting"
+	TacticLookalike        Tactic = "lookalike"
+	TacticKeyword          Tactic = "keyword"
+	TacticCompetitor       Tactic = "competitor"
+	TacticContentPromotion Tactic = "content-promotion"
+)
+
+// Tactics is every valid Tactic.
+func Tactics() []Tactic {
+	return []Tactic{TacticProspecting, TacticRetargeting, TacticLookalike, TacticKeyword, TacticCompetitor, TacticContentPromotion}
+}
+
+// Valid reports whether t is one of Tactics.
+func (t Tactic) Valid() bool {
+	for _, v := range Tactics() {
+		if t == v {
+			return true
+		}
+	}
+	return false
+}
+
+// CampaignLabels is what a create request asks a newly CLAIMED campaign to be labelled with.
+// The claim writes it on the row it inserts and ignores it otherwise: a slot version that
+// already has a row keeps that row's labels. Both nil is an unlabelled (legacy) campaign.
+type CampaignLabels struct {
+	FunnelStage *FunnelStage
+	Tactic      *Tactic
+}
+
+type dispatchLabelsKey struct{}
+
+// WithDispatchLabels returns ctx carrying the CLAIMED row's labels for one platform dispatch.
+// The orchestrator sets it from the row the claim returned, never from the request, so a name a
+// dispatcher composes from it is the name that row's campaign has always had. A context value for
+// the reason WithDispatchSlotVersion gives: only the dispatchers that put a stage in the name
+// read it, and its absence (no labels) means the legacy name.
+func WithDispatchLabels(ctx context.Context, c *Campaign) context.Context {
+	var l CampaignLabels
+	if c != nil {
+		l = CampaignLabels{FunnelStage: c.FunnelStage, Tactic: c.Tactic}
+	}
+	return context.WithValue(ctx, dispatchLabelsKey{}, l)
+}
+
+// DispatchLabels returns the labels set by WithDispatchLabels, or the zero CampaignLabels
+// (a legacy, unlabelled campaign) when none were set.
+func DispatchLabels(ctx context.Context) CampaignLabels {
+	if l, ok := ctx.Value(dispatchLabelsKey{}).(CampaignLabels); ok {
+		return l
+	}
+	return CampaignLabels{}
 }
 
 type Campaign struct {
@@ -258,11 +375,19 @@ type Campaign struct {
 	// BiddingStrategy is the strategy the create path asked for (migration 000050). nil means the
 	// row predates the column or was ADOPTED — not recorded, NOT "automatic".
 	BiddingStrategy *BiddingStrategy
-	StartDate       *time.Time
-	EndDate         *time.Time
-	ConfigSnapshot  json.RawMessage
-	Result          json.RawMessage
-	Version         int64
+	// FunnelStage and Tactic label the campaign among several on one platform for one event
+	// (migration 000054): which funnel stage it serves and by what tactic. Set at CLAIM from the
+	// create request and never changed afterwards. nil means a LEGACY campaign (created before
+	// the columns, created without a label, or adopted), whose upstream name is the one it has
+	// always had. A dispatcher composes names from these STORED values (DispatchLabels), never
+	// from a request, so a retry carrying a different stage cannot rename a campaign.
+	FunnelStage    *FunnelStage
+	Tactic         *Tactic
+	StartDate      *time.Time
+	EndDate        *time.Time
+	ConfigSnapshot json.RawMessage
+	Result         json.RawMessage
+	Version        int64
 	// CreatedBy / UpdatedBy name the human behind the write, with the same three
 	// causes for nil as CampaignBrief.CreatedBy — read that doc first, it is the
 	// canonical statement and is not repeated here.
@@ -487,20 +612,27 @@ type CampaignMetrics struct {
 	// and is a POINTER because "this platform cannot tell us" and "this platform measured
 	// zero" are different facts that a plain int64 cannot hold apart.
 	//
-	// nil means THIS READ PRODUCED NO COMPLETE CONVERSION MEASUREMENT; a non-nil 0 is a
-	// measurement. Two distinct situations reach nil, and a consumer must treat them the
-	// same way, which is why the contract is stated over the READ rather than the platform:
+	// nil means NO TOTAL IS PUBLISHED for this read; a non-nil 0 is a measured zero. Since
+	// #175 ConversionsStatus (ResolvedConversionsStatus) says WHY there is no total, and a
+	// consumer publishes the total only through ReportedConversions. The cases that reach nil:
 	//
-	//   - the channel reports no campaign-level conversion count at all (Meta, X, Reddit,
-	//     HubSpot — see the four entries below), and
-	//   - a conversion-capable channel returned a response this client could not complete:
-	//     LinkedIn when any element it returned omitted externalWebsiteConversions (one
-	//     omission withdraws the whole total), and Microsoft when the ConversionsQualified
-	//     cell is blank because the account has no Universal Event Tracking.
+	//   - ConversionsUnavailable: the channel reports no campaign-level conversion count at all
+	//     (Meta, X, Reddit, HubSpot — see the four entries below), or this account on it does
+	//     not (LinkedIn when no returned element carried externalWebsiteConversions; Microsoft
+	//     when the ConversionsQualified column is missing or every cell is blank, typically no
+	//     Universal Event Tracking);
+	//   - ConversionsIncomplete: a conversion-capable channel reported the metric for part of
+	//     the response and omitted it for the rest (LinkedIn when some elements omitted
+	//     externalWebsiteConversions; Microsoft when some ConversionsQualified cells are
+	//     blank), so one omission withdraws the whole total;
+	//   - ConversionsNoConversions: the window had no clicks and no conversion was reported (on
+	//     LinkedIn, no elements; on any channel, a zero total against zero clicks, which
+	//     ResolvedConversionsStatus reclassifies). The read answered, but a zero against zero
+	//     clicks is not a finding, so ReportedConversions publishes no total. An adapter may
+	//     still carry the zero here; consumers read it only through ReportedConversions.
 	//
-	// Reading nil as "this platform cannot measure conversions" would therefore be wrong for
-	// the second group, and a consumer that special-cased the channel on that basis would
-	// misclassify a LinkedIn campaign whose response was merely incomplete.
+	// Reading nil as "this platform cannot measure conversions" is therefore wrong for the
+	// last two; read ConversionsStatus instead of special-casing the channel.
 	//
 	// Only three of the seven adapters set it, and which three is a statement about the
 	// VENDOR APIS, verified field by field against each vendor's published reference rather
@@ -523,10 +655,11 @@ type CampaignMetrics struct {
 	//     Reporting schema), which must be named in the request's `fields` list: LinkedIn
 	//     returns only impressions and clicks by default, so an unnamed metric comes back
 	//     absent rather than zero. The client always names it, so a well-formed empty
-	//     `elements` array is an ANSWERED zero-activity window and materialises a non-nil
-	//     zero, matching Google's no-rows branch. Nil is reserved for the case where an
-	//     element LinkedIn DID return omitted the metric: that is missing data about
-	//     activity that happened, and it withdraws the whole total.
+	//     `elements` array is an ANSWERED zero-activity window. Since #175 that window, and a
+	//     complete response with no clicks and no conversions, are ConversionsNoConversions
+	//     with NO total (they used to materialise a non-nil zero). An element that omitted the
+	//     metric withdraws the whole total: ConversionsIncomplete when other elements carried
+	//     it, ConversionsUnavailable when none did.
 	//   - Microsoft populates it from the ConversionsQualified report column, NOT from
 	//     Conversions. Microsoft's own column reference marks `Conversions` deprecated as of
 	//     2022, directs callers to ConversionsQualified, and warns the legacy column's values
@@ -559,6 +692,11 @@ type CampaignMetrics struct {
 	// on a nil precisely so a platform that cannot measure conversions is never reported as
 	// a campaign that failed to earn any.
 	Conversions *float64
+	// ConversionsStatus says what the read established about conversions, so a consumer never
+	// has to infer it from Conversions being nil (#175). Conversions is set ONLY when it is
+	// ConversionsReported; every other status carries no total. An adapter that leaves it
+	// empty is read by ResolvedConversionsStatus. See ConversionsStatus for the vocabulary.
+	ConversionsStatus ConversionsStatus
 	// ConversionValue is the summed monetary value of those conversions over Window, in WHOLE
 	// units of the ad account's currency — NOT micros, and deliberately asymmetric with
 	// CostMicros above. The platforms that report a conversion value report it as a decimal
@@ -930,4 +1068,93 @@ type LocalCampaignRef struct {
 	// BriefID is the brief the campaign belongs to. Required because the mutation routes are
 	// brief-scoped, and a caller holding only a platform id has no way to know it.
 	BriefID string
+}
+
+// ConversionsStatus is what one metrics read established about a campaign's conversions (#175).
+//
+// It exists because a nil Conversions used to carry two meanings — "this channel cannot report a
+// campaign-level count" and "this read came back incomplete" — and a consumer could not tell a
+// conversion-capable LinkedIn campaign with one incomplete element from Meta, which never reports
+// one. The status names each case, and the total is published only when it is ConversionsReported.
+type ConversionsStatus string
+
+const (
+	// ConversionsReported: a complete measurement; Conversions holds it (a 0 is a measured 0).
+	ConversionsReported ConversionsStatus = "reported"
+	// ConversionsUnavailable: the channel, or this account on it, does not report a
+	// campaign-level conversion count (Meta, X, Reddit, email; LinkedIn when no returned element
+	// carried the metric; Microsoft without the ConversionsQualified column or with every cell
+	// blank). No total.
+	ConversionsUnavailable ConversionsStatus = "unavailable"
+	// ConversionsIncomplete: a conversion-capable channel reported the metric for some of the
+	// returned data and omitted it for the rest, so any sum would be a partial count. No total.
+	ConversionsIncomplete ConversionsStatus = "incomplete"
+	// ConversionsNoConversions: the window had no clicks and no conversion was reported, on any
+	// channel. A count of zero against zero clicks is not a conversion finding, so it publishes
+	// no total and the no_conversions rule does not fire on it (zero_delivery covers a campaign
+	// that delivered nothing). It does not claim conversion was impossible: LinkedIn counts
+	// view-through conversions, and a zero-click window that reports one is `reported`.
+	ConversionsNoConversions ConversionsStatus = "no_conversions"
+)
+
+// ResolvedConversionsStatus is the status this read reports, and the single place the
+// channel-wide rules are applied:
+//
+//   - an adapter that set no status is classified by whether it published a total (a total is
+//     reported, none is unavailable);
+//   - reported with NO total is unavailable, so `reported` never reaches a consumer without the
+//     number it promises;
+//   - reported with a zero total and zero clicks is no_conversions (#175): a zero-click window
+//     is not a conversion finding on any channel, whether the adapter is Google's no-rows
+//     branch, a Microsoft report of zero-click rows, or LinkedIn.
+//
+// Every other explicit status is returned as set.
+func (m *CampaignMetrics) ResolvedConversionsStatus() ConversionsStatus {
+	if m == nil {
+		return ConversionsUnavailable
+	}
+	status := m.ConversionsStatus
+	if status == "" {
+		status = ConversionsReported
+	}
+	if status != ConversionsReported {
+		return status
+	}
+	switch {
+	case m.Conversions == nil:
+		return ConversionsUnavailable
+	case m.Clicks == 0 && *m.Conversions == 0:
+		return ConversionsNoConversions
+	}
+	return ConversionsReported
+}
+
+// ReportedConversions is the conversion total a consumer may publish: Conversions when the
+// resolved status is ConversionsReported, nil otherwise, so no status other than reported can
+// ever carry a number even if an adapter set both.
+func (m *CampaignMetrics) ReportedConversions() *float64 {
+	if m == nil || m.ResolvedConversionsStatus() != ConversionsReported {
+		return nil
+	}
+	return m.Conversions
+}
+
+// ReportedConversionValue and ReportedRoas publish ConversionValue and Roas under the same rule
+// as ReportedConversions: only when the resolved status is ConversionsReported. Both describe
+// the conversions the total counts, so a value or a return beside a status that publishes no
+// total (a zero-click window reclassified to no_conversions, an incomplete read) would describe
+// conversions the response says it has no number for.
+func (m *CampaignMetrics) ReportedConversionValue() *float64 {
+	if m.ReportedConversions() == nil {
+		return nil
+	}
+	return m.ConversionValue
+}
+
+// ReportedRoas: see ReportedConversionValue.
+func (m *CampaignMetrics) ReportedRoas() *float64 {
+	if m.ReportedConversions() == nil {
+		return nil
+	}
+	return m.Roas
 }

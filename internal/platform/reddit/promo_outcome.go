@@ -13,13 +13,16 @@ import (
 // authors a post from an ImageURL, and Step 4, which creates the ad from that post or from a
 // caller-supplied PostURL.
 //
-// Every way that leg can end is ONE row of promoOutcomes, and the row alone decides what the
-// caller gets back: the result shape (and so the status the dispatcher persists), the
-// AdWarning, and the runbook step. #173 is why: four review rounds on PR #158 each fixed one arm
-// of a switch and broke another, because the guidance was assembled as prose at each step, by
-// whoever remembered which facts were settled at that line. Classification (classifyAuthorFailure,
-// classifyAdFailure) and rendering (render) are now separate; a change to the text of one class
-// cannot reach another, and the dispatcher's table-driven test pins every row.
+// Every way that leg can end is ONE row of promoOutcomes. The row is the single source of the
+// AdWarning and the runbook step text. Its Shape and Persisted columns are DESCRIPTIVE: they
+// record the result shape CreateCampaign returns for the class (its own switch on the outcome
+// implements it) and the status the dispatcher persists, and TestReddit_PromoOutcomeTable keeps
+// the columns and that behaviour in sync. #173 is why: four review rounds on PR #158 each fixed
+// one arm of a switch and broke another, because the guidance was assembled as prose at each
+// step, by whoever remembered which facts were settled at that line. Classification
+// (classifyAuthorFailure, classifyAdFailure) and rendering (PromoOutcomeRow.step and stepf) are
+// now separate; a change to the text of one class cannot reach another, and the dispatcher's
+// table-driven test pins every row.
 type PromoOutcome string
 
 // The outcome classes. "Unconfirmed" means the request may have reached Reddit and the object
@@ -98,12 +101,17 @@ type PromoOutcomeRow struct {
 	Shape     ResultShape
 	Persisted string
 	// AdWarning is the exact CampaignResult.AdWarning, "" for none. For the three non-fatal
-	// authoring classes it is extended at Step 4 by CampaignContextWarning (see below).
+	// authoring classes it is extended at Step 4 by campaignContextWarning (see below).
 	AdWarning string
 	// Step is the runbook step appended for the outcome, "" for none. StepWithStatus, when
 	// set, replaces it when the error carried an HTTP status, which it formats with %d.
 	Step           string
 	StepWithStatus string
+	// StepFormat, when set, is the row's step as a format whose arguments are NOT an HTTP
+	// status (the variant count for PromoNotRequestedVariants, the post id for PromoAdNoID).
+	// It is rendered only by stepf; step() panics on such a row, so routing it through the
+	// status path fails loudly in tests instead of emitting a raw verb.
+	StepFormat string
 	// CampaignContext marks the classes whose shortfall happened BEFORE the paid campaign
 	// existed (Step 1.5 runs ahead of Step 2). Their runbook cannot name the campaign at the
 	// point of failure, because it does not exist yet; Step 4 renders it once both the campaign
@@ -123,11 +131,10 @@ var promoOutcomeRows = []PromoOutcomeRow{
 		Step: "No ad variants or post URL provided -- add ads manually in Reddit Ads Manager",
 	},
 	{
-		// The variant lines that follow the step are rendered by CreateCampaign. StepWithStatus
-		// is used here as a plain format whose %d is the variant COUNT, not an HTTP status;
-		// CreateCampaign formats it directly rather than through step().
+		// The variant lines that follow the step are rendered by CreateCampaign. StepFormat's
+		// %d is the variant COUNT.
 		Outcome: PromoNotRequestedVariants, Shape: ShapeClean, Persisted: PersistedCreated,
-		StepWithStatus: "%d ad variant(s) ready -- create ads in Reddit Ads Manager with these headlines (set/replace the shown utm_* params on your registration URL, keeping all its other query parameters; drop any trailing '/' from the path so it matches the automated destination):",
+		StepFormat: "%d ad variant(s) ready -- create ads in Reddit Ads Manager with these headlines (set/replace the shown utm_* params on your registration URL, keeping all its other query parameters; drop any trailing '/' from the path so it matches the automated destination):",
 	},
 	{
 		// The step names the ad, the post and the click URL; CreateCampaign renders it.
@@ -175,11 +182,10 @@ var promoOutcomeRows = []PromoOutcomeRow{
 		StepWithStatus: "Ad creation UNCONFIRMED (HTTP %d) -- verify in Reddit Ads Manager before adding manually",
 	},
 	{
-		// Step is a FORMAT whose %s is the post id: CreateCampaign renders it with fmt.Sprintf
-		// and never through step(), which would return the raw format.
 		Outcome: PromoAdNoID, Shape: ShapeDegraded, Persisted: PersistedCreatedDegraded,
 		AdWarning: "promoted-post ad creation is UNCONFIRMED (2xx response with no ad id); the ad may already exist — verify in Reddit Ads Manager BEFORE creating it manually to avoid a duplicate",
-		Step:      "Ad creation UNCONFIRMED (2xx with no ad ID, post: %s) -- verify in Reddit Ads Manager before adding manually",
+		// StepFormat's %s is the post id.
+		StepFormat: "Ad creation UNCONFIRMED (2xx with no ad ID, post: %s) -- verify in Reddit Ads Manager before adding manually",
 	},
 	{
 		Outcome: PromoAdRejected, Shape: ShapeDegraded, Persisted: PersistedCreatedDegraded,
@@ -224,10 +230,22 @@ func promoRow(o PromoOutcome) PromoOutcomeRow {
 // step renders the row's runbook step. status is the HTTP status when the error carried one
 // (hasStatus), and is used only when the row has a StepWithStatus.
 func (r PromoOutcomeRow) step(status int, hasStatus bool) string {
+	if r.StepFormat != "" {
+		panic("reddit: promo outcome row " + string(r.Outcome) + " has a StepFormat; render it with stepf")
+	}
 	if hasStatus && r.StepWithStatus != "" {
 		return fmt.Sprintf(r.StepWithStatus, status)
 	}
 	return r.Step
+}
+
+// stepf renders a StepFormat row with its own arguments. A row without a StepFormat is a
+// programming error: its step goes through step().
+func (r PromoOutcomeRow) stepf(args ...any) string {
+	if r.StepFormat == "" {
+		panic("reddit: promo outcome row " + string(r.Outcome) + " has no StepFormat; render it with step")
+	}
+	return fmt.Sprintf(r.StepFormat, args...)
 }
 
 // classifyAuthorFailure maps an authoring (Step 1.5) error to its outcome class.

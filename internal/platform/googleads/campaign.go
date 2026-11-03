@@ -110,6 +110,24 @@ type CampaignInput struct {
 	// retry then reuses the same name and Google rejects it with DUPLICATE_NAME,
 	// which the client reports as UNCONFIRMED-already-exists rather than re-creating.
 	NameSuffix string
+	// StageToken and Tactic, when non-empty, are a LABELLED campaign's funnel-stage token
+	// (ToFU, MoFU or BoFU — model.FunnelStage.NameToken) and tactic token (the model.Tactic
+	// slug, with content-promotion shortened to content-promo by the dispatcher).
+	// ComposeName gives each its own segment, stage first, just before NameSuffix, so a
+	// campaign labelled with both composes the 7-segment
+	// `LFX | <kind> | <project> | <event> | <stage> | <tactic> | <suffix>`. The dispatcher
+	// reads them from the STORED campaign row (model.DispatchLabels), never from a request,
+	// so a retry composes the same budget, campaign and ad group names; both are empty for an
+	// unlabelled campaign, whose names are byte-identical to the names it had before labels.
+	StageToken string
+	Tactic     string
+	// UTMCampaignFallback is the utm_campaign value the ad, sitelink and extension URLs
+	// fall back to when neither EventSlug nor EventName is set. Empty means NameSuffix,
+	// the fallback every caller had before slot versions. The dispatcher sets it to the
+	// bare brief id because NameSuffix now carries the slot version ("<brief>-2"):
+	// utm_campaign is EVENT-level attribution, so a second campaign on the same event must
+	// not move it.
+	UTMCampaignFallback string
 	// Keywords are positive Search keyword criteria attached to the ad group
 	// (GA-4). Optional: an ad group created with none still exists but matches
 	// no query, so a caller that wants the campaign to actually serve once
@@ -170,9 +188,9 @@ type CampaignInput struct {
 	// names. Empty means the campaign inherits the ACCOUNT's conversion goals, which
 	// is what every campaign created before this field existed does.
 	//
-	// SEARCH, VIDEO and DISPLAY, and REFUSED rather than dropped on Demand Gen and
-	// Performance Max — neither takes campaign.selective_optimization. See
-	// validateConversionActions.
+	// Every channel. Applied after the campaign exists as a campaign-level conversion goal
+	// (conversion_goal.go, #436); a failure there is a partial result, never reported as
+	// applied.
 	ConversionActions []string
 	// StartDate / EndDate are the campaign's flight window as YYYY-MM-DD, matching
 	// the vocabulary the meta and reddit dispatch configs already use. Each is
@@ -1190,7 +1208,17 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	// budget+campaign already committed (inside createAdGroupAndAd, which runs
 	// last) would orphan a real paid campaign for what amounts to a bad
 	// RegistrationURL, over-length name, or invalid targeting value.
-	finalURL, headlines, descriptions, adGroupName, keywords, audienceSegments, err := precomputeAdGroupAdInputs(in)
+	//
+	// Top-level Headlines/Descriptions are Search's responsive search ad copy, judged only where
+	// they can be sent (#441). Off Search they never are, and on Search they are not when every
+	// requested ad group brings its own Ads, since each group's ads then replace them
+	// (validateAdGroupPlans). Composing them there could refuse a create over copy nothing
+	// sends. EventName is required above, so the defaults always compose.
+	adIn := in
+	if kind != campaignKindSearch || everyAdGroupBringsAds(in.AdGroups) {
+		adIn.Headlines, adIn.Descriptions = nil, nil
+	}
+	finalURL, ad, adGroupName, keywords, audienceSegments, err := precomputeAdGroupAdInputs(adIn)
 	if err != nil {
 		return nil, err
 	}
@@ -1329,7 +1357,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		cpcBidMicros:     cpcBidMicros,
 		keywords:         keywords,
 		audienceSegments: audienceSegments,
-		ads:              []adPlan{{headlines: headlines, descriptions: descriptions}},
+		ads:              []adPlan{ad},
 	})
 	if err != nil {
 		return nil, err
@@ -1340,8 +1368,8 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		campaignName:     campaignName,
 		finalURL:         finalURL,
 		adGroupName:      adGroupName,
-		headlines:        headlines,
-		descriptions:     descriptions,
+		headlines:        ad.headlines,
+		descriptions:     ad.descriptions,
 		keywords:         keywords,
 		audienceSegments: audienceSegments,
 		geo:              geo,
@@ -1561,13 +1589,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// "manual CPC" on a campaign created with maximize-conversions would be the only
 	// record of the bid an operator ever reads, and it would be wrong.
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, SEARCH, %s, %s)", campaignID, pf.bidding.describe(), flightWindowStep(startDateTime, endDateTime)))
-	if n := len(pf.bidding.conversionActions); n > 0 {
-		steps = append(steps, fmt.Sprintf("Conversion actions attached: %d (campaign optimizes toward these instead of the account goals)", n))
-	}
 
 	res := budgetPartial()
 	res.CampaignID = campaignID
 	res.Steps = steps
+
+	// The campaign-level conversion goal (#436), first of the post-create steps so a failure
+	// leaves as little built on the campaign as possible. Same partial-result contract as geo.
+	goalStep, goalErr := c.applyCampaignConversionGoal(ctx, campaignID, pf.bidding)
+	if goalErr != nil {
+		return res, goalErr
+	}
+	if goalStep != "" {
+		steps = append(steps, goalStep)
+		res.Steps = steps
+	}
 
 	// Location criteria go on the CAMPAIGN for Search (Demand Gen differs — see
 	// geo.go). Attached here, immediately after the campaign create and BEFORE the
@@ -1734,10 +1770,28 @@ func ComposeName(kind string, in CampaignInput) string {
 	if e := sanitizeNamePart(in.EventName); e != "" {
 		parts = append(parts, e)
 	}
+	// A labelled campaign's stage and tactic segments, between the event and the suffix.
+	// Absent on an unlabelled campaign, so its names keep the exact legacy shape.
+	if st := sanitizeNamePart(in.StageToken); st != "" {
+		parts = append(parts, st)
+	}
+	if t := sanitizeNamePart(in.Tactic); t != "" {
+		parts = append(parts, t)
+	}
 	if s := sanitizeNamePart(in.NameSuffix); s != "" {
 		parts = append(parts, s)
 	}
 	return strings.Join(parts, " | ")
+}
+
+// utmCampaignFallback is the utm_campaign value used when the input has neither an event
+// slug nor an event name: UTMCampaignFallback when set, otherwise NameSuffix (see
+// CampaignInput.UTMCampaignFallback).
+func (in CampaignInput) utmCampaignFallback() string {
+	if in.UTMCampaignFallback != "" {
+		return in.UTMCampaignFallback
+	}
+	return in.NameSuffix
 }
 
 // sanitizeNamePart trims a caller-supplied name segment and strips the "|"
@@ -1771,7 +1825,7 @@ func validateEntityName(kind, name string, measuredLen, maxLen int, unit string)
 		return fmt.Errorf("google-ads %s name is empty", kind)
 	}
 	if measuredLen > maxLen {
-		return fmt.Errorf("google-ads %s name exceeds %d %s (%d): shorten EventName/Project/NameSuffix", kind, maxLen, unit, measuredLen)
+		return fmt.Errorf("google-ads %s name exceeds %d %s (%d): shorten EventName/Project (the stage, tactic and brief-id suffix are fixed)", kind, maxLen, unit, measuredLen)
 	}
 	return nil
 }

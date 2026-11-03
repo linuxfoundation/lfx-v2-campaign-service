@@ -611,9 +611,9 @@ func stripSQLComments(sql string) string {
 // it, because that arm only moves updated_by when it has a non-NULL actor to move.
 func TestClaimCampaignDispatchStampsBothActorColumns(t *testing.T) {
 	q := normalizeWS(claimCampaignDispatchQuery)
-	require.Contains(t, q, "created_by, updated_by)",
+	require.Contains(t, q, "created_by, updated_by,",
 		"the claim INSERT must name both actor columns:\n%s", claimCampaignDispatchQuery)
-	assert.Contains(t, q, "$6, $6)",
+	assert.Contains(t, q, "$6, $6,",
 		"both actor columns must be written from the SAME placeholder; two placeholders would "+
 			"let a caller set them independently at creation time, when there is only one actor")
 }
@@ -640,6 +640,7 @@ var campaignColumnOrder = []string{
 	"campaign_name", "status", "budget_amount", "budget_type", "start_date", "end_date",
 	"config_snapshot", "result", "version", "created_by", "updated_by", "ran_on_system_account",
 	"created_at", "updated_at", "max_cpc_bid", "bidding_strategy",
+	"funnel_stage", "tactic",
 }
 
 // fakeCampaignRow is a pgx.Row handing scanCampaign a fixed, positionally ordered result set.
@@ -702,6 +703,7 @@ func TestScanCampaign_MapsEachColumnToItsField(t *testing.T) {
 	ranOnSystem := true
 	bid := 1.75
 	biddingStrategy := "manual"
+	funnelStage, tactic := "lower", "retargeting"
 
 	c, err := scanCampaign(fakeCampaignRow{vals: []any{
 		"c1", "cncf", "b1", &jobID, "google-ads", "demand-gen", 3, &pcID, "Spring launch", "created",
@@ -709,10 +711,17 @@ func TestScanCampaign_MapsEachColumnToItsField(t *testing.T) {
 		json.RawMessage(`{"cfg":1}`), json.RawMessage(`{"res":2}`), int64(9),
 		[]byte(`{"email":"ada@lf.dev"}`), []byte(`{"email":"grace@lf.dev"}`), &ranOnSystem,
 		created, updated, &bid, &biddingStrategy,
+		&funnelStage, &tactic,
 	}})
 	require.NoError(t, err)
 	require.NotNil(t, c.BiddingStrategy)
 	assert.Equal(t, model.BiddingManual, *c.BiddingStrategy)
+	// funnel_stage and tactic (000054) are both nullable text, so a destination swap would scan
+	// cleanly; distinct values are what make it visible.
+	require.NotNil(t, c.FunnelStage)
+	assert.Equal(t, model.FunnelStageLower, *c.FunnelStage)
+	require.NotNil(t, c.Tactic)
+	assert.Equal(t, model.TacticRetargeting, *c.Tactic)
 
 	assert.Equal(t, "c1", c.ID)
 	// max_cpc_bid (000039) and budget_amount are both *float64, so a destination swap would
@@ -773,6 +782,7 @@ func TestScanCampaign_NullActorsDecodeToNil(t *testing.T) {
 		"c1", "cncf", "b1", nil, "google-ads", "default", 1, nil, "n", "created",
 		nil, nil, nil, nil, nil, nil, int64(1),
 		nil, nil, nil, time.Time{}, time.Time{}, nil, nil,
+		nil, nil,
 	}})
 	require.NoError(t, err)
 	// A NULL max_cpc_bid means "never set through update-campaign-bid", which is nil.
@@ -807,6 +817,7 @@ func TestScanCampaign_MalformedActorJSONIsAnError(t *testing.T) {
 			"c1", "cncf", "b1", nil, "google-ads", "default", 1, nil, "n", "created",
 			nil, nil, nil, nil, nil, nil, int64(1),
 			createdBy, updatedBy, nil, time.Time{}, time.Time{}, nil, nil,
+			nil, nil,
 		}
 	}
 	_, err := scanCampaign(fakeCampaignRow{vals: base([]byte(`["not","an","actor"]`), nil)})

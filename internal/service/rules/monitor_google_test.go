@@ -214,8 +214,8 @@ func TestGoogleActionItems_UnderspendingTextUsesRequestedDays(t *testing.T) {
 	for _, it := range items {
 		if strings.Contains(it.Issue, "Only spending") {
 			found = true
-			if !strings.Contains(it.Issue, "$70.00 expected") {
-				t.Errorf("issue text = %q, want it to reflect days=7 ($10/day * 7 = $70.00 expected), not a hardcoded 30-day window", it.Issue)
+			if !strings.Contains(it.Issue, "70.00 in account currency expected") {
+				t.Errorf("issue text = %q, want it to reflect days=7 (10/day * 7 = 70.00 expected), not a hardcoded 30-day window", it.Issue)
 			}
 		}
 	}
@@ -268,3 +268,40 @@ func itemIDs(items []model.AccountMonitorActionItem) []string {
 }
 
 func floatPtr(f float64) *float64 { return &f }
+
+// No Google action item calls an amount dollars (#435). The figures are the connected account's
+// own, unconverted, so a "$" on a EUR or INR account would misstate them. Every amount-bearing arm
+// fires on one of these rows; the advice text's "$10-50/day" guidance is an Action, not an amount
+// read off the account, and is not checked here.
+func TestGoogleActionItems_NoAmountIsCalledDollars(t *testing.T) {
+	zero := 0.0
+	rows := []struct {
+		row    model.AccountCampaignMetrics
+		label  model.MonitorPacingLabel
+		pacing float64
+	}{
+		{model.AccountCampaignMetrics{Status: "LIMITED", BudgetDay: 25, Impressions: 3}, model.MonitorPacingNormal, 50},
+		{model.AccountCampaignMetrics{Status: "ENABLED", BudgetDay: 1}, model.MonitorPacingNormal, 50},
+		{model.AccountCampaignMetrics{Status: "PAUSED", Spend: 12.5}, model.MonitorPacingNormal, 50},
+		{model.AccountCampaignMetrics{Status: "ENABLED", BudgetDay: 10, Spend: 20}, model.MonitorPacingUnderspending, 20},
+		{model.AccountCampaignMetrics{Status: "ENABLED", BudgetDay: 10, Spend: 95}, model.MonitorPacingConstrained, 95},
+		{model.AccountCampaignMetrics{Status: "ENABLED", BudgetDay: 10, Spend: 300, Clicks: 30, Conversions: &zero}, model.MonitorPacingNormal, 50},
+		{model.AccountCampaignMetrics{Status: "DRAFT", BudgetDay: 10}, model.MonitorPacingNormal, 50},
+	}
+	issues := 0
+	for _, r := range rows {
+		for _, it := range googleActionItems(r.row, r.pacing, r.label, 7) {
+			issues++
+			if strings.Contains(it.Issue, "$") {
+				t.Errorf("issue %q calls an account-currency amount dollars", it.Issue)
+			}
+			// The advice beside it is in the account's currency too, so it names no dollar figure.
+			if strings.Contains(it.Action, "$") {
+				t.Errorf("action %q gives advice in dollars", it.Action)
+			}
+		}
+	}
+	if issues < len(rows) {
+		t.Fatalf("only %d items fired across %d rows; a row no longer reaches its arm", issues, len(rows))
+	}
+}

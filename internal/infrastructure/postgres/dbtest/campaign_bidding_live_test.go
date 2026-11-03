@@ -31,7 +31,7 @@ func TestLiveCampaignBiddingStrategyRoundTrips(t *testing.T) {
 	// Every upsert finalises this job's claim, as Orchestrator.dispatchPlatform does: an
 	// upsert on a slot another live row holds is a lost claim (LFXV2-2023).
 	claimed, _, err := repo.ClaimCampaignDispatch(ctx, projectID, briefID,
-		model.ProviderMetaAds, "", model.FirstSlotVersion, jobID, nil)
+		model.ProviderMetaAds, "", model.FirstSlotVersion, jobID, nil, model.CampaignLabels{})
 	if err != nil {
 		t.Fatalf("ClaimCampaignDispatch: %v", err)
 	}

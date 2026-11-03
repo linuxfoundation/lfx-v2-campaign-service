@@ -39,6 +39,20 @@ func TestMicrosoftBaseRowFiresNothing(t *testing.T) {
 
 // TestMicrosoftActionItems pins every rule, each on both sides of its boundary. Strict (>, <)
 // boundaries are exclusive; the placeholder budget's <= 1 is inclusive.
+// No Microsoft action item prints a "$": the amounts are the account's own currency (#435),
+// and so is the advice beside them.
+func TestMicrosoftActionItems_NoDollarSign(t *testing.T) {
+	items := microsoftActionItems(model.AccountCampaignMetrics{Status: "Active", BudgetDay: 1}, 50, model.MonitorPacingNormal, 7)
+	if len(items) == 0 {
+		t.Fatal("the placeholder-budget rule did not fire")
+	}
+	for _, it := range items {
+		if strings.Contains(it.Issue, "$") || strings.Contains(it.Action, "$") {
+			t.Errorf("item %q / %q prints a dollar sign", it.Issue, it.Action)
+		}
+	}
+}
+
 func TestMicrosoftActionItems(t *testing.T) {
 	high, med := model.MonitorPriorityHigh, model.MonitorPriorityMed
 	tests := []struct {
@@ -68,7 +82,7 @@ func TestMicrosoftActionItems(t *testing.T) {
 		{"shared budget is never a placeholder", func(m *model.AccountCampaignMetrics) { m.BudgetDay = 0; m.PacingUnknown = true }, "placeholder", false, high},
 
 		// Paused
-		{"Paused is MED with spend", func(m *model.AccountCampaignMetrics) { m.Status = "Paused"; m.Spend = 12.34 }, "Campaign is paused — spent $12.34", true, med},
+		{"Paused is MED with spend", func(m *model.AccountCampaignMetrics) { m.Status = "Paused"; m.Spend = 12.34 }, "Campaign is paused — spent 12.34 in account currency", true, med},
 
 		// Pacing (BudgetDay 50, days 1: Spend == 2*pct/100*50)
 		{"49% underspending fires", func(m *model.AccountCampaignMetrics) { m.Spend = 24.5 }, "Only spending 49%", true, med},
@@ -126,7 +140,7 @@ func TestMicrosoftActionItems(t *testing.T) {
 		// Avg CPC (> 5, clicks > 10)
 		{"avg CPC 5.09 with 11 clicks fires", func(m *model.AccountCampaignMetrics) {
 			m.Clicks, m.Impressions, m.Spend = 11, 500, 56
-		}, "Avg CPC is $5.09", true, med},
+		}, "Avg CPC is 5.09 in account currency", true, med},
 		{"avg CPC exactly 5 does not fire", func(m *model.AccountCampaignMetrics) {
 			m.Clicks, m.Impressions, m.Spend = 11, 500, 55
 		}, "Avg CPC is", false, med},
@@ -268,8 +282,8 @@ func TestEvaluateMicrosoftMonitor_UnderspendTextUsesDays(t *testing.T) {
 	_, items := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{
 		{PlatformCampaignID: "1", Status: "Active", BudgetDay: 10, Spend: 20},
 	}, 7)
-	if it := msFind(items, "Only spending 29%"); it == nil || !strings.Contains(it.Issue, "$70.00 expected") {
-		t.Errorf("want an underspend item reading 29%% and $70.00 expected, got %+v", items)
+	if it := msFind(items, "Only spending 29%"); it == nil || !strings.Contains(it.Issue, "70.00 in account currency expected") {
+		t.Errorf("want an underspend item reading 29%% and 70.00 expected, got %+v", items)
 	}
 }
 
@@ -295,12 +309,12 @@ func TestEvaluateMicrosoftMonitor_SortsHighBeforeMed(t *testing.T) {
 func TestMicrosoftBudgetPausedSharedBudgetDoesNotClaimZero(t *testing.T) {
 	shared := model.AccountCampaignMetrics{PlatformCampaignID: "1", Name: "s", Status: "BudgetPaused", PacingUnknown: true}
 	_, items := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{shared}, 7)
-	if len(items) == 0 || !strings.Contains(items[0].Issue, "shared budget") || strings.Contains(items[0].Issue, "$0.00") {
-		t.Errorf("shared-budget items = %+v, want the shared budget named and no $0.00", items)
+	if len(items) == 0 || !strings.Contains(items[0].Issue, "shared budget") || strings.Contains(items[0].Issue, "0.00 in account currency") {
+		t.Errorf("shared-budget items = %+v, want the shared budget named and no zero amount", items)
 	}
 	own := model.AccountCampaignMetrics{PlatformCampaignID: "2", Name: "o", Status: "BudgetPaused", BudgetDay: 25}
 	_, items = EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{own}, 7)
-	if len(items) == 0 || !strings.Contains(items[0].Issue, "$25.00/day") {
+	if len(items) == 0 || !strings.Contains(items[0].Issue, "daily budget 25.00 in account currency") {
 		t.Errorf("own-budget items = %+v, want the daily amount named", items)
 	}
 }

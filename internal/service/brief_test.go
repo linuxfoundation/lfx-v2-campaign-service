@@ -552,10 +552,11 @@ func TestBriefService_CreateCampaigns_RejectsDuplicatePlatforms(t *testing.T) {
 }
 
 // new_version is refused synchronously for any platform that is not on the slot-version
-// allowlist. Google, LinkedIn and X reuse campaigns by name, so a "new" campaign there would be
+// allowlist. LinkedIn and X reuse campaigns by name (Meta can, and Reddit's names do not yet vary
+// by slot), so a "new" campaign there would be
 // bound to the existing one upstream; the 400 must come before a job exists.
 func TestBriefService_CreateCampaigns_NewVersionRefusedOutsideTheAllowlist(t *testing.T) {
-	for _, pl := range []string{"google-ads", "linkedin-ads", "twitter-ads"} {
+	for _, pl := range []string{"linkedin-ads", "twitter-ads", "meta-ads", "reddit-ads"} {
 		repo := newFakeBriefRepo()
 		repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
 			ID: "b1", ProjectID: "cncf", Status: model.BriefApproved, DeliveryType: model.DeliveryPaidMarketing,
@@ -847,10 +848,10 @@ func (r *campaignEditRepo) GetCampaignByPlatform(context.Context, string, string
 func (r *campaignEditRepo) GetCampaignByPlatformWithMaxSlotVersion(context.Context, string, string, model.Provider, string) (*model.Campaign, int, error) {
 	return nil, 0, domain.ErrNotFound
 }
-func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string, int, string, *model.Actor) (bool, *model.Campaign, error) {
+func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string, int, string, *model.Actor, model.CampaignLabels) (bool, *model.Campaign, error) {
 	return true, nil, nil
 }
-func (r *campaignEditRepo) ClaimNewCampaignVersion(context.Context, string, string, model.Provider, string, int, string, *model.Actor) (bool, *model.Campaign, error) {
+func (r *campaignEditRepo) ClaimNewCampaignVersion(context.Context, string, string, model.Provider, string, int, string, *model.Actor, model.CampaignLabels) (bool, *model.Campaign, error) {
 	return true, nil, nil
 }
 func (r *campaignEditRepo) DeleteDispatchClaim(context.Context, string, model.Provider, string, int, string) error {
@@ -5870,6 +5871,8 @@ func TestBriefService_GetCampaignMetrics_ConversionValueAndRoasPassThrough(t *te
 		disp := &metricsOnlyDispatcher{metrics: &model.CampaignMetrics{
 			CampaignID: "ga-1", Window: model.MetricsWindowLast30Days,
 			Impressions: 100, Clicks: 10, CostMicros: 25_000_000, Ctr: 0.1,
+			// A reported total: since #175 value and roas ride only with one.
+			Conversions:     func() *float64 { v := 1.0; return &v }(),
 			ConversionValue: value, Roas: roas,
 		}}
 		res, err := newMetricsService(camp, disp).GetCampaignMetrics(context.Background(),
@@ -5899,5 +5902,37 @@ func TestBriefService_GetCampaignMetrics_ConversionValueAndRoasPassThrough(t *te
 	if got := row(t, nil, nil); got.ConversionValue != nil || got.Roas != nil {
 		t.Errorf("conversion_value=%v roas=%v for a platform that reports neither, want both absent",
 			got.ConversionValue, got.Roas)
+	}
+}
+
+// #175 on the campaign-scoped route, which maps CampaignMetrics separately from the brief-wide
+// one: the status is reported, and a non-reported status never carries a total.
+func TestBriefService_GetCampaignMetrics_ConversionsStatus(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderLinkedInAds,
+		PlatformCampaignID: "li-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	zero := 0.0
+	for _, tc := range []struct {
+		m          *model.CampaignMetrics
+		wantStatus string
+		wantTotal  bool
+	}{
+		{&model.CampaignMetrics{Clicks: 0, ConversionsStatus: model.ConversionsNoConversions}, "no_conversions", false},
+		{&model.CampaignMetrics{Clicks: 80, Conversions: &zero, ConversionsStatus: model.ConversionsIncomplete}, "incomplete", false},
+		{&model.CampaignMetrics{Clicks: 80, ConversionsStatus: model.ConversionsUnavailable}, "unavailable", false},
+		{&model.CampaignMetrics{Clicks: 80, Conversions: &zero, ConversionsStatus: model.ConversionsReported}, "reported", true},
+	} {
+		res, err := newMetricsService(camp, &metricsOnlyDispatcher{metrics: tc.m}).GetCampaignMetrics(context.Background(),
+			&briefs.GetCampaignMetricsPayload{ProjectID: "cncf", BriefID: "b1", CampaignID: "c1"})
+		if err != nil {
+			t.Fatalf("GetCampaignMetrics: %v", err)
+		}
+		if res.ConversionsStatus != tc.wantStatus {
+			t.Errorf("conversions_status = %q, want %q", res.ConversionsStatus, tc.wantStatus)
+		}
+		if (res.Conversions != nil) != tc.wantTotal {
+			t.Errorf("status %q: conversions = %v, want a total only with reported", tc.wantStatus, res.Conversions)
+		}
 	}
 }
