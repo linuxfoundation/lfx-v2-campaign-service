@@ -556,6 +556,23 @@ func (c *Client) parsedAssetIDs(resp mutateResponse) []string {
 	return out
 }
 
+// parsedMutateAssetIDs is parsedAssetIDs for a googleAds:mutate response: every
+// assetResult whose resource name assetID accepts, in order. Any other result kind is
+// skipped, so an ad or link result is never recorded as an asset, and so is any asset
+// name in another account or of the wrong shape.
+func (c *Client) parsedMutateAssetIDs(resp googleAdsMutateResponse) []string {
+	out := make([]string, 0, len(resp.MutateOperationResponses))
+	for _, r := range resp.MutateOperationResponses {
+		if r.AssetResult == nil {
+			continue
+		}
+		if id := c.assetID(r.AssetResult.ResourceName); id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // assetID applies to an Asset resource name the same four checks
 // campaignCriterionID applies to a criterion: exactly four segments, the
 // "assets" kind, THIS client's customer id, and a numeric trailing id. Returns

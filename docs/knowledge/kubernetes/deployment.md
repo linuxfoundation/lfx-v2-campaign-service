@@ -54,8 +54,10 @@ read is not gated.
 (#459): it opts a cluster in to `googleAdsConfig.demandGenAudience`, one existing Google Ads
 Audience on a Demand Gen ad group. The service checks that Audience against the Google Ads
 account only, and the LF account is shared by every foundation, so it stays off until the
-service can check it against the calling foundation (#468). Only exactly `"true"` enables it;
-off, a create naming one is refused before anything upstream exists.
+service can check it against the calling foundation (#468). It also gates each
+`googleAdsConfig.demandGenAdGroups[].audience` (#460), the same input on a named ad group. Only
+exactly `"true"` enables them; off, a create naming one is refused before anything upstream
+exists, and a Demand Gen ad group without an audience is unaffected.
 
 `GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` is the same kind of gate, defaulting to `"false"` (#462):
 it opts a cluster in to the Display audience lists that name an account-owned segment —

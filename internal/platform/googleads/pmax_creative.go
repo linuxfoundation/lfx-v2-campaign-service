@@ -844,8 +844,9 @@ func (c *Client) isAssetGroupAssetLink(name, groupID, assetID, fieldType string)
 const performanceMaxTempAssetGroupID = "-1"
 
 // googleAdsMutateRequest is the body of GoogleAdsService.Mutate (googleAds:mutate): a list of
-// typed operations over different resources, applied together. Only the two operation kinds
-// the Performance Max asset group needs are modelled.
+// typed operations over different resources, applied together. Only the operation kinds this
+// client sends are modelled: the Performance Max asset group and its links, and the Demand Gen
+// video ad with its assets (demandgen_video_creative.go, #460).
 type googleAdsMutateRequest struct {
 	MutateOperations []googleAdsMutateOperation `json:"mutateOperations"`
 }
@@ -856,6 +857,8 @@ type googleAdsMutateRequest struct {
 type googleAdsMutateOperation struct {
 	AssetGroupOperation      *mutateOperation `json:"assetGroupOperation,omitempty"`
 	AssetGroupAssetOperation *mutateOperation `json:"assetGroupAssetOperation,omitempty"`
+	AssetOperation           *mutateOperation `json:"assetOperation,omitempty"`
+	AdGroupAdOperation       *mutateOperation `json:"adGroupAdOperation,omitempty"`
 }
 
 // googleAdsMutateResponse is the (subset of the) GoogleAdsService.Mutate response consumed
@@ -865,6 +868,8 @@ type googleAdsMutateResponse struct {
 	MutateOperationResponses []struct {
 		AssetGroupResult      *resourceNameResult `json:"assetGroupResult"`
 		AssetGroupAssetResult *resourceNameResult `json:"assetGroupAssetResult"`
+		AssetResult           *resourceNameResult `json:"assetResult"`
+		AdGroupAdResult       *resourceNameResult `json:"adGroupAdResult"`
 	} `json:"mutateOperationResponses"`
 }
 

@@ -1999,8 +1999,9 @@ caller written before this field still sends.
 guarantee depends on everything being decidable before the first budget mutate
 spends money. Image bytes cannot be validated without fetching them, so the
 locally-decidable half (`validateDemandGenCreative`, counts, copy widths, URL
-shape) runs in the preflight, and the fetch (`fetchDemandGenImages(ctx, plan)`)
-runs in the cascade but **still before the budget mutate**. A bad image therefore
+shape) runs in the preflight, and the fetch (`fetchDemandGenGroupImages`, which since
+#460 walks every ad group's images in one `fetchSlotImages` call) runs in the cascade
+but **still before the budget mutate**. A bad image therefore
 fails with `result == nil` and nothing created, which
 `TestCreateDemandGenCampaign_BadImageFailsBeforeAnyMutate` pins.
 
@@ -2154,8 +2155,9 @@ resource under another customer — the `validateConversionActions` check, for t
 reason. That check is ACCOUNT-scoped, not foundation-scoped, and is not tenancy
 protection: on the shared LF Google Ads customer a project can name another foundation's
 Audience, which on Demand Gen restricts who the ad group reaches. So the dispatch adapter
-refuses the field unless `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`, and
-the chart sets it to `"false"` until #468 adds a foundation-scoped check.
+refuses the field — and, since #460, every `demandGenAdGroups[].audience` — unless
+`GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`, and the chart sets it to
+`"false"` until #468 adds a foundation-scoped check.
 This client never creates the Audience. `AudienceSegments` stays refused on
 Demand Gen, now with a message that says why (audience-grouped) and names
 `DemandGenAudience`; Performance Max and Video keep the generic reason (audience criteria
@@ -2185,6 +2187,98 @@ was asked for. `demandGenClosingStep`'s two no-geo arms now say "add geo targeti
 rather than "add targeting": an audience or languages may already be attached, so the
 advice names the half that is actually missing.
 
+
+## Demand Gen video ads and multiple ad groups (#460)
+
+The live KubeCon NA 2026 YouTube campaign is a Demand Gen campaign with video
+responsive ads in two ad groups (Retargeting, Prospecting). Neither could be built here.
+Both shapes were checked by **validateOnly** probes on 2026-11-03 at v23 (nothing was
+created); the code encodes what those accepted and claims nothing beyond it.
+
+**The video ad.** `demandgen_video_creative.go`. `CampaignInput.DemandGenVideoCreative`
+(dispatch `demandGenVideoCreative`) becomes an Ad whose oneof arm is
+`demandGenVideoResponsiveAd` — not the Video channel's `videoResponsiveAd`, which hangs off
+a campaign type the API cannot create. The probe fixed the shape: `videos` and
+`logoImages` as `[{asset}]`, the three text lists as `[{text}]`, `businessName` as an
+AdTextAsset **object**, optional `callToActions` as `[{asset}]` naming a CALL_TO_ACTION
+asset, and a **required `ad.name`** (Google refuses the ad without it). The name is
+deterministic: `<ad group name> - Video ad`, and `validateDemandGenVideoAdName` refuses it
+before the budget when it passes Google's 255-character Ad.name limit (probed: 256 is
+TOO_LONG).
+
+`validateDemandGenVideoCreative` runs in the pure preflight beside the other creatives:
+refused off Demand Gen, and refused beside `DemandGenCreative` — this client builds one ad
+per Demand Gen ad group and records one `AdID` for it. YouTube ids go through the shared
+`validateYouTubeVideoIDs` (bare ids only, 1-5, the length not pinned — the same answer the
+Video and Performance Max creatives give). Headlines are 1-5 at width 40
+(`maxDemandGenVideoHeadlineWeight`: a probe accepted 40 and refused 41 — the image ad keeps
+30, its own limit unprobed); descriptions 1-5 at 90; long headlines 1-5 at 90 and required
+(the probe accepted 90 for both); the business name is required at 25. The call to action
+is limited to SIGN_UP, LEARN_MORE, BOOK_NOW, VISIT_SITE and WATCH_NOW, each accepted by the
+2026-11-03 probe, which also showed REGISTER and GET_STARTED are not CallToActionType values
+at all. Two choices are deliberately conservative and say so in the code: exactly ONE logo
+(the probe sent one, and no cited source gives this ad type's range) and a required long
+headline (the probed shape).
+
+The logo is an image, so it is fetched before the budget mutate by `fetchSlotImages`
+(`demandGenVideoLogoSlot`: the image ad's logo geometry under its own label) and uploaded
+by `assets:mutate`, exactly as the image ad's images are. Then `createDemandGenVideoAd`
+sends ONE `googleAds:mutate`, `partialFailure` false: an `assetOperation` per YouTube
+video and one for the call to action, each under a temporary `customers/<cid>/assets/-N`
+name, then the `adGroupAdOperation` whose ad references those names and the logo's
+returned resource name. The probe accepted the YouTube and call-to-action assets created
+by temporary name in the same request; an IMAGE asset created that way was not probed,
+which is why the logo goes first in its own call. A definite failure of the atomic request
+means none of its assets or the ad exist (the logo does); a 5xx, a short or malformed 2xx,
+an asset result that is not this account's asset, or an ad naming another ad group is
+UNCONFIRMED. `CreativeAssetIDs` carries the logo, then the videos, then the call to action.
+A short 2xx that parsed still records every asset id it carried that passes `assetID`'s
+account and shape checks (`parsedMutateAssetIDs`, #481), as the logo upload's short arm
+records `parsedAssetIDs`; a foreign-account or malformed name, and any non-asset result,
+is not recorded. An unparseable 2xx records the logo only.
+`googleAdsMutateOperation`/`googleAdsMutateResponse` gained the `assetOperation` and
+`adGroupAdOperation` arms; the Performance Max request is unchanged because the new arms are
+omitted when nil.
+
+**Several ad groups.** `demandgen_adgroups.go`. `CampaignInput.DemandGenAdGroups`
+(dispatch `demandGenAdGroups`) names up to `maxDemandGenAdGroups` (5, a service bound:
+every group's images are held before the budget mutate and every group adds mutates after
+the campaign exists). Each `DemandGenAdGroup` has a `Name` label, an optional `Audience`
+under `validateDemandGenAudience`'s rules (shape and this account only — not a tenancy
+check, so the dispatch adapter refuses any group's Audience unless
+`GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`, as it does
+`DemandGenAudience`; #468), and exactly one of `Creative` / `VideoCreative`
+— a named group with no ad cannot serve, and the list has no older callers to keep. Names
+are `sanitizeNamePart`ed and appended to the single group's name
+(`<event> - Display | <label>`, as the Search list does); a duplicate ignoring case is
+refused before the budget, because Google's `DUPLICATE_ADGROUP_NAME` arrives after the
+earlier groups exist. With the list, the campaign-level `DemandGenCreative`,
+`DemandGenVideoCreative` and `DemandGenAudience` must be empty. Geo and languages stay
+campaign-level and are attached to EVERY group: Demand Gen takes both only on the ad group,
+and a group created without them would serve worldwide in every language. The Search
+`AdGroups` list on Demand Gen is refused with a message naming `DemandGenAdGroups`.
+
+`validateDemandGenAdGroups` returns `pf.demandGenGroups` — the ONE group the
+campaign-level fields describe when the list is empty — so `CreateDemandGenCampaign` walks
+one shape: per group, the ad group, geo, the Audience and languages, then the image or
+video ad. For the single group every request, step line and result field is what the
+cascade produced before (the existing Demand Gen tests are unchanged). With a list, each
+group's `AdGroupResult` (now also carrying `GeoCriterionIDs`, `TargetingCriterionIDs` and
+`CreativeAssetIDs`) is appended BEFORE its mutate, so a failure on group k returns groups
+1..k-1 complete and what exists of k; the scalar fields stay the FIRST group's; each
+group step line ends `[ad group "<name>"]`; and a context that ends between groups stops
+before the next group with `aborted after k of N ad group(s)`. `AdGroups` is left empty for
+the single group, as before. The launch toggle already reads `AdGroups` entries and their
+`AdIDs`, so activation flips every group's ad. `fetchDemandGenGroupImages` fetches every
+group's images in one walk, sharing one fetch-phase deadline and the 64 MiB total, and
+re-indexes each image to its slot within its own creative. The closing step reads the first
+group and is true for all: every group gets the same geo, every named group must have an
+ad, and the loop returns on the first failure.
+
+Click tracking (#476) needs nothing per group: every group's ad, image or video, takes
+`pf.finalURL`, which the preflight tagged with Demand Gen's `utm_medium=display`, and the
+`utmcampaign` custom parameter is set once on the campaign create, which every ad group and
+ad under it inherits. `TestCreateDemandGenCampaign_TwoAdGroups` pins both.
 
 ## Bidding strategies and conversion actions (LFXV2-2665)
 

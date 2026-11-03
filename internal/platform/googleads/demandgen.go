@@ -16,7 +16,8 @@ const (
 	advertisingChannelDemandGen = "DEMAND_GEN"
 )
 
-// demandGenAdGroupName composes this channel's single ad group name.
+// demandGenAdGroupName composes this channel's ad group name: the single group's, and the
+// prefix every DemandGenAdGroups entry's label is appended to (#460).
 //
 // It exists as a function rather than an inline expression so the Display channel's test
 // can assert the two names DIFFER by calling both compositions, instead of re-deriving
@@ -93,10 +94,11 @@ type demandGenAdGroupCreate struct {
 }
 
 // CreateDemandGenCampaign creates a PAUSED Demand Gen campaign: budget → campaign →
-// ad group → ad-group-level geo → ad-group-level audience and languages (#459). It is a
-// port of the legacy Express implementation (`lfx-self-serve`
-// `campaign-proxy.service.ts`'s `createDemandGenCampaign`), which is what serves this
-// channel today and is the behavioural reference.
+// ad group → ad-group-level geo → ad-group-level audience and languages (#459) → ad,
+// repeated per ad group when DemandGenAdGroups names several (#460). It is a port of the
+// legacy Express implementation (`lfx-self-serve` `campaign-proxy.service.ts`'s
+// `createDemandGenCampaign`), which is what serves this channel today and is the
+// behavioural reference.
 //
 // It creates NO KEYWORDS: Demand Gen has no keyword criteria, and the preflight
 // refuses them rather than dropping them.
@@ -110,7 +112,9 @@ type demandGenAdGroupCreate struct {
 // needing image assets is not a reason a human must supply them interactively. The
 // real obstacle was that ImageAsset.data is bytes and Google will not fetch a URL,
 // so the service has to download the images itself — which it now does, before the
-// budget mutate, in fetchDemandGenImages. See demandgen_creative.go.
+// budget mutate, in fetchDemandGenGroupImages. See demandgen_creative.go. It can also
+// create a VIDEO ad instead, from CampaignInput.DemandGenVideoCreative (#460); see
+// demandgen_video_creative.go.
 //
 // With no creative supplied the old behaviour stands unchanged: campaign, ad group
 // and geo, no ad, and a closing step that says the campaign cannot serve until an
@@ -134,7 +138,9 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	// pure validators in preflightCampaignKind give, extended over the one check that
 	// genuinely needs the network. Nothing has been created yet, so this returns
 	// (nil, err) like the preflight above and unlike every step after it.
-	images, err := c.fetchDemandGenImages(ctx, pf.creative)
+	// Every ad group's images, and a video ad's logo, in one walk (#460); see
+	// fetchDemandGenGroupImages.
+	groupImages, err := c.fetchDemandGenGroupImages(ctx, pf.demandGenGroups)
 	if err != nil {
 		return nil, err // pre-create: nothing was sent
 	}
@@ -292,107 +298,174 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		return campaignPartial(), fmt.Errorf("google-ads demand gen creation aborted after campaign %s created (context done before ad group create): %w", campaignID, ctxErr)
 	}
 
-	// Step 3: the ad group. Demand Gen ad groups take no explicit type.
-	adGroupName := demandGenAdGroupName(in)
-	adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: demandGenAdGroupCreate{
-		Name:     adGroupName,
-		Campaign: campaignResource,
-		Status:   "ENABLED",
-	}}}}
-	// namePartial carries the deterministic ad-group NAME on every failure arm below. A
-	// partial without it tells a reconciler an ad group may exist but not what to look
-	// for, which is the difference between "verify this name in Google Ads" and a manual
-	// hunt. Mirrors the Search path (adgroup_ad.go), whose messages all name the ad group.
-	adGroupPartial := func() *CampaignResult {
-		r := campaignPartial()
-		r.AdGroupName = adGroupName
-		return r
-	}
-	adGroupResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), adGroupReq, false)
-	if err != nil {
-		// Classify exactly as the Search path and the budget/campaign steps above do: a
-		// duplicate name and an ambiguous transport failure both mean the ad group MAY
-		// exist, so neither may be reported as a clean failure — the caller decides
-		// whether to retry, and a flat "failed" invites a duplicate.
-		switch {
-		case isDuplicateAdGroupNameErr(err):
-			return adGroupPartial(), fmt.Errorf("google-ads demand gen ad group %q already exists (DUPLICATE_ADGROUP_NAME) — a prior attempt likely created it; verify in Google Ads before retrying (campaign %s created): %w", adGroupName, campaignID, err)
-		case createOutcomeAmbiguous(err):
-			return adGroupPartial(), fmt.Errorf("google-ads demand gen ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying; campaign %s created): %w", adGroupName, campaignID, err)
-		default:
-			return adGroupPartial(), fmt.Errorf("google-ads demand gen ad group creation failed (campaign %s created): %w", campaignID, err)
-		}
-	}
-	adGroupResource, adGroupID, err := firstResourceName(adGroupResp)
-	if err != nil {
-		return adGroupPartial(), fmt.Errorf("google-ads demand gen ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying; campaign %s created): %w", adGroupName, campaignID, err)
-	}
-	// firstResourceName only extracts a trailing id; it does not check resource kind or
-	// account. Without this, a malformed or wrong-account 2xx (another customer's adGroups
-	// resource) would be accepted as confirmed and its id persisted as AdGroupID.
-	if verr := c.validateResourceKind("adGroups", adGroupResource, true); verr != nil {
-		return adGroupPartial(), fmt.Errorf("google-ads demand gen ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying; campaign %s created): %w", adGroupName, campaignID, verr)
-	}
-	res := adGroupPartial()
-	res.AdGroupID = adGroupID
-	steps = append(steps, fmt.Sprintf("Ad group created: %s", adGroupID))
-	res.Steps = steps
-
-	// Step 4: geo. Location criteria go on the AD GROUP here, NOT the campaign —
-	// Demand Gen rejects campaign-level location criteria, which is why this is a
-	// different call from the Search path's (see geo.go). Both channels now resolve
-	// the same caller-supplied country codes through the same map, so neither has
-	// targeting the other lacks (LFXV2-3283).
+	// Steps 3-6, once per ad group (#460): the ad group, its geo, its Audience and
+	// languages, and its ad. pf.demandGenGroups holds ONE group when the caller named none,
+	// built from the campaign-level fields, and for that group every request, step line and
+	// result field is what this cascade produced before the list existed.
 	//
-	// A failure is returned ALONGSIDE the non-nil res, like every step past the
-	// campaign create: the campaign and ad group exist and are reconcilable either way.
-	if !pf.geo.empty() {
-		geoIDs, geoErr := c.createAdGroupGeoTargeting(ctx, adGroupResource, adGroupID, pf.geo)
-		if geoErr != nil {
-			return res, geoErr
-		}
-		res.GeoCriterionIDs = geoIDs
-		steps = append(steps, fmt.Sprintf("Geo targeting applied: %d ad-group location criteria (%s)", len(geoIDs), geoStep(in, pf.geo)))
+	// With a list, each group gets an AdGroups entry appended BEFORE its mutate, as on the
+	// Search cascade, so a failure on group k returns groups 1..k-1 complete and what
+	// exists of k; the scalar ad group fields stay the FIRST group's. Every failure below is
+	// returned ALONGSIDE the non-nil res: the campaign exists either way.
+	multi := len(in.DemandGenAdGroups) > 0
+	var res *CampaignResult
+	fail := func(err error) (*CampaignResult, error) {
 		res.Steps = steps
+		return res, err
 	}
-
-	// Step 5: the Audience and the languages (#459), on the AD GROUP — the only level
-	// Demand Gen takes either at (see demandgen_targeting.go for the probe facts). Its
-	// own mutate after geo rather than inside geo's; createDemandGenAdGroupTargeting says
-	// why. Same partial-result contract as geo: a failure comes back with the non-nil res.
-	if pf.demandGenAudience != "" || len(pf.criteria.languages) > 0 {
-		audienceIDs, languageIDs, targetErr := c.createDemandGenAdGroupTargeting(ctx, adGroupResource, adGroupID, pf.demandGenAudience, pf.criteria.languages)
-		if targetErr != nil {
-			return res, targetErr
+	for k, g := range pf.demandGenGroups {
+		if k > 0 {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return fail(fmt.Errorf("google-ads demand gen creation aborted after %d of %d ad group(s) were created (campaign %s; context done before ad group %q): %w", k, len(pf.demandGenGroups), campaignID, g.name, ctxErr))
+			}
 		}
-		res.AudienceCriteriaIDs = audienceIDs
-		res.TargetingCriterionIDs = languageIDs
-		steps = append(steps, fmt.Sprintf("Audience and language targeting applied: %d ad-group criteria (%s)", len(audienceIDs)+len(languageIDs), demandGenTargetingStep(pf.demandGenAudience, pf.criteria.languages)))
-		res.Steps = steps
-	}
+		tag := demandGenGroupStep(multi, g.name)
 
-	// Step 6: the creative. Images first as account-level assets, then the ad that
-	// references them — two mutates, because Google has no call that does both.
-	//
-	// Like the geo step, a failure is returned ALONGSIDE the non-nil res: the campaign
-	// and ad group exist either way, and the asset ids are carried even when the ad
-	// itself failed so the operator can find images created with nothing referencing
-	// them.
-	if pf.creative.present {
-		assetIDs, adID, adErr := c.createDemandGenAd(ctx, adGroupResource, adGroupID, pf.finalURL, pf.creative, images)
-		res.CreativeAssetIDs = assetIDs
-		if adErr != nil {
-			return res, adErr
+		// Step 3: the ad group. Demand Gen ad groups take no explicit type.
+		adGroupName := g.name
+		adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: demandGenAdGroupCreate{
+			Name:     adGroupName,
+			Campaign: campaignResource,
+			Status:   "ENABLED",
+		}}}}
+		// The result carries the deterministic ad-group NAME on every failure arm below. A
+		// partial without it tells a reconciler an ad group may exist but not what to look
+		// for, which is the difference between "verify this name in Google Ads" and a manual
+		// hunt. Mirrors the Search path (adgroup_ad.go), whose messages all name the ad group.
+		if res == nil {
+			res = campaignPartial()
+			res.AdGroupName = adGroupName
 		}
-		res.AdID = adID
-		steps = append(steps, fmt.Sprintf("Demand Gen ad created: %s (PAUSED, %s)", adID, demandGenCreativeStep(pf.creative)))
+		var entry *AdGroupResult
+		if multi {
+			res.AdGroups = append(res.AdGroups, AdGroupResult{Name: adGroupName})
+			entry = &res.AdGroups[len(res.AdGroups)-1]
+		}
+		adGroupResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), adGroupReq, false)
+		if err != nil {
+			// Classify exactly as the Search path and the budget/campaign steps above do: a
+			// duplicate name and an ambiguous transport failure both mean the ad group MAY
+			// exist, so neither may be reported as a clean failure — the caller decides
+			// whether to retry, and a flat "failed" invites a duplicate.
+			switch {
+			case isDuplicateAdGroupNameErr(err):
+				return fail(fmt.Errorf("google-ads demand gen ad group %q already exists (DUPLICATE_ADGROUP_NAME) — a prior attempt likely created it; verify in Google Ads before retrying (campaign %s created): %w", adGroupName, campaignID, err))
+			case createOutcomeAmbiguous(err):
+				return fail(fmt.Errorf("google-ads demand gen ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying; campaign %s created): %w", adGroupName, campaignID, err))
+			default:
+				return fail(fmt.Errorf("google-ads demand gen ad group creation failed (campaign %s created): %w", campaignID, err))
+			}
+		}
+		adGroupResource, adGroupID, err := firstResourceName(adGroupResp)
+		if err != nil {
+			return fail(fmt.Errorf("google-ads demand gen ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying; campaign %s created): %w", adGroupName, campaignID, err))
+		}
+		// firstResourceName only extracts a trailing id; it does not check resource kind or
+		// account. Without this, a malformed or wrong-account 2xx (another customer's adGroups
+		// resource) would be accepted as confirmed and its id persisted as AdGroupID.
+		if verr := c.validateResourceKind("adGroups", adGroupResource, true); verr != nil {
+			return fail(fmt.Errorf("google-ads demand gen ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying; campaign %s created): %w", adGroupName, campaignID, verr))
+		}
+		if k == 0 {
+			res.AdGroupID = adGroupID
+		}
+		if entry != nil {
+			entry.ID = adGroupID
+		}
+		steps = append(steps, fmt.Sprintf("Ad group created: %s", adGroupID)+tag)
 		res.Steps = steps
+
+		// Step 4: geo. Location criteria go on the AD GROUP here, NOT the campaign —
+		// Demand Gen rejects campaign-level location criteria, which is why this is a
+		// different call from the Search path's (see geo.go). Both channels now resolve
+		// the same caller-supplied country codes through the same map, so neither has
+		// targeting the other lacks (LFXV2-3283). The same geo goes on EVERY group; see
+		// DemandGenAdGroup for why.
+		if !pf.geo.empty() {
+			geoIDs, geoErr := c.createAdGroupGeoTargeting(ctx, adGroupResource, adGroupID, pf.geo)
+			if geoErr != nil {
+				return fail(geoErr)
+			}
+			if k == 0 {
+				res.GeoCriterionIDs = geoIDs
+			}
+			if entry != nil {
+				entry.GeoCriterionIDs = geoIDs
+			}
+			steps = append(steps, fmt.Sprintf("Geo targeting applied: %d ad-group location criteria (%s)", len(geoIDs), geoStep(in, pf.geo))+tag)
+			res.Steps = steps
+		}
+
+		// Step 5: the group's Audience and the campaign's languages (#459), on the AD GROUP —
+		// the only level Demand Gen takes either at (see demandgen_targeting.go for the probe
+		// facts). Its own mutate after geo rather than inside geo's;
+		// createDemandGenAdGroupTargeting says why.
+		if g.audience != "" || len(pf.criteria.languages) > 0 {
+			audienceIDs, languageIDs, targetErr := c.createDemandGenAdGroupTargeting(ctx, adGroupResource, adGroupID, g.audience, pf.criteria.languages)
+			if targetErr != nil {
+				return fail(targetErr)
+			}
+			if k == 0 {
+				res.AudienceCriteriaIDs = audienceIDs
+				res.TargetingCriterionIDs = languageIDs
+			}
+			if entry != nil {
+				entry.AudienceCriteriaIDs = audienceIDs
+				entry.TargetingCriterionIDs = languageIDs
+			}
+			steps = append(steps, fmt.Sprintf("Audience and language targeting applied: %d ad-group criteria (%s)", len(audienceIDs)+len(languageIDs), demandGenTargetingStep(g.audience, pf.criteria.languages))+tag)
+			res.Steps = steps
+		}
+
+		// Step 6: the creative — the image ad (images first as account-level assets, then
+		// the ad that references them) or the video ad (#460; logo first, then the videos,
+		// the call to action and the ad in one atomic googleAds:mutate). The preflight
+		// admits at most one of the two per group.
+		//
+		// The asset ids are carried even when the ad itself failed, so the operator can find
+		// assets created with nothing referencing them.
+		if g.creative.present || g.video.present {
+			var (
+				assetIDs []string
+				adID     string
+				adErr    error
+				adStep   string
+			)
+			if g.creative.present {
+				assetIDs, adID, adErr = c.createDemandGenAd(ctx, adGroupResource, adGroupID, pf.finalURL, g.creative, groupImages[k].images)
+				adStep = fmt.Sprintf("Demand Gen ad created: %s (PAUSED, %s)", adID, demandGenCreativeStep(g.creative))
+			} else {
+				assetIDs, adID, adErr = c.createDemandGenVideoAd(ctx, adGroupResource, adGroupID, demandGenVideoAdName(adGroupName), pf.finalURL, g.video, groupImages[k].logos)
+				adStep = fmt.Sprintf("Demand Gen video ad created: %s (PAUSED, %s)", adID, demandGenVideoCreativeStep(g.video))
+			}
+			if k == 0 {
+				res.CreativeAssetIDs = assetIDs
+			}
+			if entry != nil {
+				entry.CreativeAssetIDs = assetIDs
+			}
+			if adErr != nil {
+				return fail(adErr)
+			}
+			if k == 0 {
+				res.AdID = adID
+			}
+			if entry != nil {
+				entry.AdIDs = []string{adID}
+			}
+			steps = append(steps, adStep+tag)
+			res.Steps = steps
+		}
 	}
 
 	// The closing step reports what is actually true of this campaign rather than a
 	// fixed string. It used to say "no geo targeting set" unconditionally, which
 	// became a lie on every targeted create; the same correction now applies to the
 	// ad, which is no longer always absent.
+	//
+	// It reads the FIRST group's fields, and that is true for every group (#460): the same
+	// geo goes on each, every named group must carry a creative, and the loop above
+	// returns on the first failure — so reaching here means every group got its ad.
 	steps = append(steps, demandGenClosingStep(len(res.GeoCriterionIDs) > 0, res.AdID != ""))
 	res.Steps = steps
 	return res, nil

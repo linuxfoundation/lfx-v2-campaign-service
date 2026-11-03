@@ -582,7 +582,7 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 	microsoftDispatcher := dispatch.NewMicrosoftDispatcher(repo, enc)
 	// LinkedIn too (linkedInConfig.variants[].imageAssetId, Images API thumbnails).
 	linkedinDispatcher := dispatch.NewLinkedInDispatcher(repo, enc)
-	// And Google, whose fourteen creative image slots take an imageAssetId as well as a URL
+	// And Google, whose creative image slots take an imageAssetId as well as a URL
 	// (LFXV2-2665). Built here rather than inline in the map below so it can be bound like
 	// every sibling that holds asset bytes.
 	googleDispatcher := dispatch.NewGoogleAdsDispatcher(repo, enc, googleads.WithNAT64Prefixes(nat64...))
@@ -677,7 +677,7 @@ func (c *Container) bindCreativeAssetSharing(dispatchers map[model.Provider]serv
 		if td, ok := dispatchers[model.ProviderTwitterAds].(*dispatch.TwitterDispatcher); ok {
 			td.SetAssetReserver(c.assetReserver)
 		}
-		// Google holds asset bytes too, across fourteen creative image slots, and is the heaviest
+		// Google holds asset bytes too, across its many creative image slots, and is the heaviest
 		// of them — a Performance Max config can name an asset in every one. Left out, it would
 		// charge registerDispatchers' reserver and reintroduce exactly the two-budget defect the
 		// X arm above records.

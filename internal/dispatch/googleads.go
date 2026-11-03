@@ -511,6 +511,18 @@ type googleAdsConfig struct {
 	// an ad in the Google Ads UI. Absence is accepted rather than refused only because
 	// every caller predating the field omits it; it is not a sensible configuration.
 	DemandGenCreative *googleAdsDemandGenCreativeConfig `json:"demandGenCreative"`
+	// DemandGenVideoCreative is the Demand Gen VIDEO responsive ad (#460): YouTube video
+	// ids, one logo, text and an optional call to action. DEMAND GEN ONLY, and set INSTEAD
+	// of demandGenCreative, never beside it — the client's preflight refuses both.
+	DemandGenVideoCreative *googleAdsDemandGenVideoCreativeConfig `json:"demandGenVideoCreative"`
+	// DemandGenAdGroups names several Demand Gen ad groups (#460), each with its own
+	// creative (image or video) and Audience; geo and languages apply to every one. Left
+	// empty the campaign gets the single ad group it always had, from demandGenCreative,
+	// demandGenVideoCreative and demandGenAudience — which must then be empty when this
+	// list is set. DEMAND GEN ONLY. Refusals are the client's preflight's, except one: a
+	// group's audience is refused outright unless GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED is
+	// "true", as demandGenAudience is — see googleAdsDemandGenAdGroupAudiencesSet.
+	DemandGenAdGroups []googleAdsDemandGenAdGroupConfig `json:"demandGenAdGroups"`
 	// PerformanceMaxCreative is the ASSET GROUP for a Performance Max campaign, the
 	// third member of the same family and PERFORMANCE MAX ONLY.
 	//
@@ -560,6 +572,30 @@ type googleAdsConfig struct {
 // foundation's Audience. Off, no caller can attach an Audience at all.
 func googleAdsDemandGenAudienceEnabled() bool {
 	return os.Getenv(constants.EnvGoogleAdsDemandGenAudienceEnabled) == "true"
+}
+
+// googleAdsDemandGenAdGroupAudiencesSet is the refusal's subject naming the demandGenAdGroups
+// entries that set an audience, by 1-based position ("the audience on demandGenAdGroups entry
+// 2 is", "the audiences on demandGenAdGroups entries 1, 2 are"), or "" when none does.
+// A group's audience is the same input as demandGenAudience, one existing Audience checked
+// against the account only (#468), so GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED gates both. Any
+// non-empty value counts, whitespace included, as for demandGenAudience. The positions are
+// service-derived, so the sentence still carries no caller value.
+func googleAdsDemandGenAdGroupAudiencesSet(cfg googleAdsConfig) string {
+	var set []string
+	for i, g := range cfg.DemandGenAdGroups {
+		if g.Audience != "" {
+			set = append(set, strconv.Itoa(i+1))
+		}
+	}
+	switch len(set) {
+	case 0:
+		return ""
+	case 1:
+		return "the audience on demandGenAdGroups entry " + set[0] + " is"
+	default:
+		return "the audiences on demandGenAdGroups entries " + strings.Join(set, ", ") + " are"
+	}
 }
 
 // googleAdsDisplayAudiencesEnabled reports whether this deployment opted in to the Display
@@ -687,6 +723,14 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return nil, googleAdsInputDisabled("demandGenAudience is",
 			constants.EnvGoogleAdsDemandGenAudienceEnabled, "an Audience", "demandGenAudience")
 	}
+	// The same gate for each demandGenAdGroups entry's audience (#460): the list replaces the
+	// single ad group, so without this a caller could move the gated Audience into a group.
+	if subject := googleAdsDemandGenAdGroupAudiencesSet(cfg); subject != "" &&
+		!googleAdsDemandGenAudienceEnabled() {
+		return nil, googleAdsInputDisabled(subject,
+			constants.EnvGoogleAdsDemandGenAudienceEnabled, "an Audience",
+			"the audience from each demandGenAdGroups entry")
+	}
 	// The Display gate, likewise before anything else is decoded or sent.
 	if set := googleAdsDisplayAudienceFieldsSet(cfg); len(set) > 0 &&
 		!googleAdsDisplayAudiencesEnabled() {
@@ -777,6 +821,8 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		LeadForms:                googleAdsLeadForms(cfg.LeadForms),
 		AdGroups:                 googleAdsAdGroups(cfg.AdGroups),
 		DemandGenCreative:        googleAdsDemandGenCreative(cfg.DemandGenCreative),
+		DemandGenVideoCreative:   googleAdsDemandGenVideoCreative(cfg.DemandGenVideoCreative),
+		DemandGenAdGroups:        googleAdsDemandGenAdGroups(cfg.DemandGenAdGroups),
 		PerformanceMaxCreative:   googleAdsPerformanceMaxCreative(cfg.PerformanceMaxCreative),
 		VideoCreative:            googleAdsVideoCreative(cfg.VideoCreative),
 		DisplayCreative:          googleAdsDisplayCreative(cfg.DisplayCreative),
@@ -1243,6 +1289,64 @@ func googleAdsDemandGenCreative(in *googleAdsDemandGenCreativeConfig) googleads.
 	}
 }
 
+// googleAdsDemandGenVideoCreativeConfig is the wire shape of the Demand Gen video ad
+// (#460). logoImages takes the same URL-or-{"imageAssetId"} entries as every image slot.
+type googleAdsDemandGenVideoCreativeConfig struct {
+	// YouTubeVideoIDs are bare YouTube video ids, 1-5; a URL is refused.
+	YouTubeVideoIDs []string `json:"youtubeVideoIds"`
+	// LogoImages is required: exactly one square image.
+	LogoImages    googleAdsImageRefs `json:"logoImages"`
+	Headlines     []string           `json:"headlines"`
+	LongHeadlines []string           `json:"longHeadlines"`
+	Descriptions  []string           `json:"descriptions"`
+	BusinessName  string             `json:"businessName"`
+	// CallToAction is an optional Google CallToActionType such as SIGN_UP.
+	CallToAction string `json:"callToAction"`
+}
+
+// googleAdsDemandGenVideoCreative maps the video creative config; nil maps to the zero
+// value, "no video creative".
+func googleAdsDemandGenVideoCreative(in *googleAdsDemandGenVideoCreativeConfig) googleads.DemandGenVideoCreative {
+	if in == nil {
+		return googleads.DemandGenVideoCreative{}
+	}
+	return googleads.DemandGenVideoCreative{
+		YouTubeVideoIDs: in.YouTubeVideoIDs,
+		LogoImages:      in.LogoImages.slotEntries(),
+		Headlines:       in.Headlines,
+		LongHeadlines:   in.LongHeadlines,
+		Descriptions:    in.Descriptions,
+		BusinessName:    in.BusinessName,
+		CallToAction:    in.CallToAction,
+	}
+}
+
+// googleAdsDemandGenAdGroupConfig is one entry of demandGenAdGroups (#460): a name, an
+// optional Audience, and exactly one of creative / videoCreative.
+type googleAdsDemandGenAdGroupConfig struct {
+	Name          string                                 `json:"name"`
+	Audience      string                                 `json:"audience"`
+	Creative      *googleAdsDemandGenCreativeConfig      `json:"creative"`
+	VideoCreative *googleAdsDemandGenVideoCreativeConfig `json:"videoCreative"`
+}
+
+// googleAdsDemandGenAdGroups maps the list verbatim; every refusal is the client's.
+func googleAdsDemandGenAdGroups(in []googleAdsDemandGenAdGroupConfig) []googleads.DemandGenAdGroup {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.DemandGenAdGroup, len(in))
+	for i, g := range in {
+		out[i] = googleads.DemandGenAdGroup{
+			Name:          g.Name,
+			Audience:      g.Audience,
+			Creative:      googleAdsDemandGenCreative(g.Creative),
+			VideoCreative: googleAdsDemandGenVideoCreative(g.VideoCreative),
+		}
+	}
+	return out
+}
+
 // googleAdsLeadForms maps the lead form config into the client's shape. Every
 // field is forwarded verbatim; the client owns every refusal, including the
 // one-per-campaign limit and the post-submit all-or-nothing pair.
@@ -1463,8 +1567,9 @@ func googleAdsDisplayCreative(in *googleAdsDisplayCreativeConfig) googleads.Disp
 // The URLs this config carries are the clickable destinations of three extension
 // types — a sitelink's finalUrl, a promotion's finalUrl and the finalUrl of EVERY
 // price offering, each row of a price table carrying its own — and the image URLs of
-// the Demand Gen creative, the Performance Max asset group and the Display creative.
-// The Video creative is the one creative with nothing to sanitize: it references a
+// the Demand Gen creative, the Demand Gen video ad's logo, every Demand Gen ad group's
+// creative (#460), the Performance Max asset group and the Display creative.
+// The Video channel's creative is the one with nothing to sanitize: it references a
 // YouTube video by bare id and carries no URL field at all, which is why it is the
 // only one absent from the early return below. Call extensions carry a phone number
 // and no URL, so they are absent for the same kind of reason.
@@ -1477,6 +1582,7 @@ func googleAdsDisplayCreative(in *googleAdsDisplayCreativeConfig) googleads.Disp
 func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 	if len(cfg.Sitelinks) == 0 && len(cfg.Promotions) == 0 && len(cfg.Prices) == 0 &&
 		len(cfg.LeadForms) == 0 && cfg.DemandGenCreative == nil &&
+		cfg.DemandGenVideoCreative == nil && len(cfg.DemandGenAdGroups) == 0 &&
 		cfg.PerformanceMaxCreative == nil && cfg.DisplayCreative == nil {
 		return cfg
 	}
@@ -1534,14 +1640,19 @@ func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 	// fetching the asset. The FULL url must still reach the client, which is why this
 	// works on a copy — and the copy has to be deep, because the pointer and both
 	// string slices are shared with the caller's config.
-	if cfg.DemandGenCreative != nil {
-		creative := *cfg.DemandGenCreative
-		creative.MarketingImages = sanitizeSnapshotImageRefs(cfg.DemandGenCreative.MarketingImages)
-		creative.SquareMarketingImages = sanitizeSnapshotImageRefs(cfg.DemandGenCreative.SquareMarketingImages)
-		creative.PortraitImages = sanitizeSnapshotImageRefs(cfg.DemandGenCreative.PortraitImages)
-		creative.TallPortraitImages = sanitizeSnapshotImageRefs(cfg.DemandGenCreative.TallPortraitImages)
-		creative.LogoImages = sanitizeSnapshotImageRefs(cfg.DemandGenCreative.LogoImages)
-		snapshot.DemandGenCreative = &creative
+	snapshot.DemandGenCreative = sanitizeSnapshotDemandGenImage(cfg.DemandGenCreative)
+	// The Demand Gen video ad's logo and every Demand Gen ad group's creatives (#460)
+	// carry image URLs with the same exposure, and are deep-copied the same way: the
+	// group slice and each creative pointer are shared with the caller's config.
+	snapshot.DemandGenVideoCreative = sanitizeSnapshotDemandGenVideo(cfg.DemandGenVideoCreative)
+	if len(cfg.DemandGenAdGroups) > 0 {
+		snapshot.DemandGenAdGroups = make([]googleAdsDemandGenAdGroupConfig, len(cfg.DemandGenAdGroups))
+		copy(snapshot.DemandGenAdGroups, cfg.DemandGenAdGroups)
+		for i := range snapshot.DemandGenAdGroups {
+			g := &snapshot.DemandGenAdGroups[i]
+			g.Creative = sanitizeSnapshotDemandGenImage(g.Creative)
+			g.VideoCreative = sanitizeSnapshotDemandGenVideo(g.VideoCreative)
+		}
 	}
 	// The Performance Max asset group carries image URLs with exactly the same
 	// exposure, so it is sanitized the same way and with the same deep copy. Missing
@@ -1568,6 +1679,32 @@ func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 		snapshot.DisplayCreative = &creative
 	}
 	return snapshot
+}
+
+// sanitizeSnapshotDemandGenImage deep-copies a Demand Gen image creative with every image
+// URL reduced for the snapshot; nil stays nil.
+func sanitizeSnapshotDemandGenImage(in *googleAdsDemandGenCreativeConfig) *googleAdsDemandGenCreativeConfig {
+	if in == nil {
+		return nil
+	}
+	creative := *in
+	creative.MarketingImages = sanitizeSnapshotImageRefs(in.MarketingImages)
+	creative.SquareMarketingImages = sanitizeSnapshotImageRefs(in.SquareMarketingImages)
+	creative.PortraitImages = sanitizeSnapshotImageRefs(in.PortraitImages)
+	creative.TallPortraitImages = sanitizeSnapshotImageRefs(in.TallPortraitImages)
+	creative.LogoImages = sanitizeSnapshotImageRefs(in.LogoImages)
+	return &creative
+}
+
+// sanitizeSnapshotDemandGenVideo is the same for the Demand Gen video ad, whose one image
+// slot is the logo; nil stays nil.
+func sanitizeSnapshotDemandGenVideo(in *googleAdsDemandGenVideoCreativeConfig) *googleAdsDemandGenVideoCreativeConfig {
+	if in == nil {
+		return nil
+	}
+	creative := *in
+	creative.LogoImages = sanitizeSnapshotImageRefs(in.LogoImages)
+	return &creative
 }
 
 // campaignFromGoogleAds maps the client result to the persistence model. The

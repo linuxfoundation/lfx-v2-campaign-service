@@ -243,8 +243,12 @@ openssl rand -base64 32
   naming one is refused before the budget. Off by default because the
   Audience is checked against the Google Ads account only, not the
   calling foundation, and the LF account is shared by every foundation
-  (#468). The rest of Demand Gen is not gated. The chart sets it to
-  `"false"`.
+  (#468). The same flag gates each `demandGenAdGroups[].audience` (#460),
+  the same input on a named ad group: off, a create naming any is refused
+  before the budget. The rest of Demand Gen, including ad groups without
+  an audience, is not gated. The chart sets it to `"false"`
+  (`app.environment.GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED.value`); enable
+  both per-environment by setting it to `"true"` in the ArgoCD overlay.
 - `GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to the Display audience lists that name an
   account-owned segment (#462): `googleAdsConfig.audienceSegments` on the

@@ -125,7 +125,7 @@ func TestGoogleAds_SearchParityFieldsAreRefusedOffChannelBeforeAnyCreate(t *test
 		{"path1 on demand gen", "demand-gen", `"path1":"kubecon"`, "display paths are not supported"},
 		{"path2 on performance max", "performance-max", `"path2":"na"`, "display paths are not supported"},
 		{"path1 on display", "display", `"path1":"kubecon"`, "display paths are not supported"},
-		{"ad group negatives on demand gen", "demand-gen", `"adGroups":[{"name":"T","negativeKeywords":[{"text":"free","matchType":"EXACT"}]}]`, "SEARCH capability"},
+		{"ad group negatives on demand gen", "demand-gen", `"adGroups":[{"name":"T","negativeKeywords":[{"text":"free","matchType":"EXACT"}]}]`, "AdGroups is the SEARCH ad-group list"},
 		{"income on demand gen", "demand-gen", `"excludedIncomeRanges":["INCOME_RANGE_0_50"]`, "income-range exclusions are not supported"},
 		{"income on performance max", "performance-max", `"excludedIncomeRanges":["INCOME_RANGE_0_50"]`, "income-range exclusions are not supported"},
 		{"parental on search", "search", `"excludedParentalStatuses":["PARENT"]`, "OPERATION_NOT_PERMITTED_FOR_CONTEXT"},

@@ -387,6 +387,15 @@ type CampaignInput struct {
 	// database still validate. A Demand Gen campaign with no ad cannot serve; the
 	// closing steps say so. See demandgen_creative.go.
 	DemandGenCreative DemandGenCreative
+	// DemandGenVideoCreative is the Demand Gen VIDEO responsive ad (#460): YouTube videos,
+	// a logo and text. DEMAND GEN ONLY, and the alternative to DemandGenCreative on the
+	// same ad group, never beside it. See demandgen_video_creative.go.
+	DemandGenVideoCreative DemandGenVideoCreative
+	// DemandGenAdGroups names several Demand Gen ad groups, each with its own creative and
+	// Audience (#460). Empty keeps the single ad group built from DemandGenCreative,
+	// DemandGenVideoCreative and DemandGenAudience. DEMAND GEN ONLY. See
+	// demandgen_adgroups.go.
+	DemandGenAdGroups []DemandGenAdGroup
 	// PerformanceMaxCreative is the asset group for a Performance Max campaign, and
 	// is the third member of the same family: optional and PERFORMANCE MAX ONLY,
 	// refused at preflight on every other channel.
@@ -460,6 +469,12 @@ type AdGroupResult struct {
 	// exclusions, with the same three-way ambiguity on empty (#473).
 	NegativeKeywordCriteriaIDs []string `json:"negativeKeywordCriteriaIds,omitempty"`
 	DemographicCriteriaIDs     []string `json:"demographicCriteriaIds,omitempty"`
+	// GeoCriterionIDs, TargetingCriterionIDs and CreativeAssetIDs are this group's own, set
+	// on a Demand Gen campaign built from DemandGenAdGroups (#460), with the meanings the
+	// CampaignResult fields of the same names document.
+	GeoCriterionIDs       []string `json:"geoCriterionIds,omitempty"`
+	TargetingCriterionIDs []string `json:"targetingCriterionIds,omitempty"`
+	CreativeAssetIDs      []string `json:"creativeAssetIds,omitempty"`
 }
 
 // CampaignResult reports what CreateCampaign created. The Google Ads hierarchy is
@@ -491,7 +506,9 @@ type CampaignResult struct {
 	// On a campaign with several ad groups these describe the FIRST one only, and
 	// AdID the first ad of it. They are kept populated so every reader that
 	// predates multi-group support keeps resolving to a real ad group rather than
-	// an empty string; AdGroups below is the complete picture.
+	// an empty string; AdGroups below is the complete picture. That holds for a Demand
+	// Gen campaign built from DemandGenAdGroups too (#460): these, and the criteria and
+	// creative fields below, are its FIRST group's.
 	AdGroupName string `json:"adGroupName,omitempty"`
 	AdGroupID   string `json:"adGroupId,omitempty"`
 	AdID        string `json:"adId,omitempty"`
@@ -500,8 +517,10 @@ type CampaignResult struct {
 	// It is the only field that says how far a multi-group cascade got: an entry
 	// is appended BEFORE the group's mutate is sent, so a group that failed is
 	// present with an empty ID, and a group never reached has no entry at all.
-	// Always at least one entry once the ad group stage started, including for a
-	// single-group campaign.
+	// On Search, always at least one entry once the ad group stage started, including for
+	// a single-group campaign. On Demand Gen, set only when the caller named
+	// DemandGenAdGroups (#460): a single Demand Gen group is reported by the scalar fields
+	// alone, as it was before the list existed.
 	AdGroups []AdGroupResult `json:"adGroups,omitempty"`
 	// KeywordCriteriaIDs/AudienceCriteriaIDs are set by the GA-4 targeting step
 	// (createAdGroupTargeting in targeting.go) when the corresponding input list
@@ -604,6 +623,8 @@ type CampaignResult struct {
 	// same assets:mutate and have the same reconcile story. What differs is the
 	// unlinked case: here it is AssetGroupID, not AdID, that is empty when the assets
 	// exist with nothing referencing them.
+	// On a Demand Gen VIDEO ad (#460) it carries the logo image, then the YouTube video
+	// assets, then the call-to-action asset.
 	CreativeAssetIDs []string `json:"creativeAssetIds,omitempty"`
 	// AssetGroupID is the Performance Max asset group, empty on every other channel
 	// and on a Performance Max campaign created without a creative. Non-empty with a
@@ -1025,8 +1046,12 @@ type campaignPreflight struct {
 	// with the rest; the image bytes themselves are fetched by the Demand Gen
 	// cascade in a separate step that still runs before the budget mutate, because
 	// whether a URL serves a 600x314 JPEG is not knowable from the string. See
-	// validateDemandGenCreative and fetchDemandGenImages.
+	// validateDemandGenCreative and fetchDemandGenGroupImages.
 	creative demandGenCreativePlan
+	// demandGenGroups are the Demand Gen ad groups the cascade creates, each with its
+	// Audience and its image or video creative — the single campaign-level group when
+	// DemandGenAdGroups is empty, nil off Demand Gen. See validateDemandGenAdGroups.
+	demandGenGroups []demandGenGroupPlan
 	// pmax is the validated Performance Max asset group — image URLs bucketed by
 	// slot, the three text field types, the business name and the group's own name
 	// and display paths. Resolved here with everything else for the same reason
@@ -1419,6 +1444,13 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	// The Demand Gen video ad (#460) is Demand Gen's second creative, refused off Demand
+	// Gen like the rest and refused beside the image creative. See
+	// demandgen_video_creative.go.
+	demandGenVideo, err := validateDemandGenVideoCreative(kind, in)
+	if err != nil {
+		return nil, err
+	}
 	// The responsive display ad is the fifth of these, and refuses off Display exactly
 	// as the four above refuse off their own channels. Its image bytes are fetched by
 	// that cascade, still before the budget mutate. See display_creative.go.
@@ -1562,6 +1594,17 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	for i := range adGroups {
 		adGroups[i].demographics = adGroupDemographics
 	}
+	// The Demand Gen ad groups (#460): the single group the campaign-level fields above
+	// describe, or the caller's named list. After every validator it draws on.
+	demandGenGroups, err := validateDemandGenAdGroups(kind, c.account.CustomerID, in, demandGenGroupPlan{
+		name:     demandGenAdGroupName(in),
+		audience: demandGenAudience,
+		creative: creative,
+		video:    demandGenVideo,
+	})
+	if err != nil {
+		return nil, err
+	}
 	return &campaignPreflight{
 		amountMicros:        amountMicros,
 		budgetName:          budgetName,
@@ -1573,6 +1616,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		keywords:            keywords,
 		audienceSegments:    audienceSegments,
 		demandGenAudience:   demandGenAudience,
+		demandGenGroups:     demandGenGroups,
 		geo:                 geo,
 		criteria:            criteria,
 		adGroupDemographics: adGroupDemographics,
