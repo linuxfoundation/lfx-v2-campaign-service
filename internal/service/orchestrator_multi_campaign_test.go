@@ -312,3 +312,37 @@ func TestOrchestrator_ARetryOfARetainedPartialNamesItsRow(t *testing.T) {
 		t.Fatalf("result = %+v, want reconciliation required on the named orphan row with its lower stage", res)
 	}
 }
+
+// #453 review: a replay (expecting slot 1) that reads an UNFINISHED slot 3 — a later request's
+// in-flight claim — must not claim slot 3 itself. If that claim is released between the read and
+// a claim here, the claim would insert slot 3 afresh and dispatch another paid campaign under a
+// stale expectation. new_version therefore never claims an unfinished version: it is skipped.
+func TestOrchestrator_NewVersionNeverReclaimsAnUnfinishedVersionReleasedAfterTheRead(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	key := slotKey("b1", model.ProviderGoogleAds, model.VariantDefault)
+	camps.storeRow(&model.Campaign{
+		ID: "row-3", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		Variant: model.VariantDefault, SlotVersion: 3, Status: "pending",
+	})
+	camps.afterSlotRead = func() {
+		camps.afterSlotRead = nil
+		// The owner's pre-create failure releases its claim right after this request read it.
+		delete(camps.existing, key)
+		delete(camps.existing, legacySlotKey("b1", model.ProviderGoogleAds))
+	}
+	disp := &slotRecordingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+
+	res := decodeResults(t, startAndWait(t, orch, jobs, newVersionSaw(1)))
+
+	if got := disp.seen(); len(got) != 0 {
+		t.Fatalf("dispatched slot versions %v, want none: a stale replay re-claimed a released version", got)
+	}
+	if got := camps.claimSlotVersions; len(got) != 0 {
+		t.Fatalf("claimed %v, want no claim", got)
+	}
+	if len(res) != 1 || !res[0].Skipped || res[0].CampaignRowID != "row-3" {
+		t.Fatalf("result = %+v, want skipped behind row-3", res)
+	}
+}

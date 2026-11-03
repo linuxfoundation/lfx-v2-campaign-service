@@ -1855,9 +1855,27 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// terminal, so it falls through to the claim/reconcile path below.
 		reuseResult(&res, existing)
 		return res
+	case lerr == nil && opts.NewVersion:
+		// A new_version request whose latest campaign is UNFINISHED claims NOTHING. A plain
+		// retry claims the unfinished version (below), but a new_version request cannot: the
+		// unfinished row may belong to a LATER request than the one this caller saw (a replay
+		// expecting slot 1 finding slot 3 in flight, with slot 2 complete in between), and if
+		// that row's claim were released between this read and a claim here, the claim would
+		// insert it afresh and dispatch another paid campaign under a stale expectation. So it
+		// answers from the row it read, exactly as the claim's !claimed branch would: an orphan
+		// that recorded something upstream needs reconciliation, a bare pending row is skipped.
+		identifyRow(&res, existing)
+		if existing.PlatformCampaignID != "" || len(existing.Result) > 0 {
+			res.CampaignID = existing.PlatformCampaignID
+			res.Error = "a prior dispatch left an incomplete campaign upstream; reconciliation required"
+			return res
+		}
+		res.Skipped = true
+		res.Error = "skipped: another campaign on this platform is still being created; retry new_version once it finishes"
+		return res
 	case lerr == nil:
-		// The latest campaign is unfinished, so claim ITS slot version, new-version request
-		// or not: starting another campaign alongside an in-flight or orphaned one would
+		// The latest campaign is unfinished, so claim ITS slot version (a plain retry; a
+		// new_version request is answered above without claiming): starting another campaign alongside an in-flight or orphaned one would
 		// spend twice while the first is still unresolved. The claim then reports it the
 		// way it always has (skipped while in flight, reconciliation required if orphaned).
 		slotVersion = existing.SlotVersion

@@ -146,9 +146,9 @@ which also refuses, under the slot lock, a version held by a soft-deleted row an
 (`domain.ErrSlotVersionUsed`, reported as skipped): a concurrent request completed and deleted it
 between this request's read and its claim, and the live-row index alone would admit a second row
 there. A live row at the version is handed back as usual. `DeleteCampaign` takes the same slot
-lock, so no delete lands between that check and the INSERT. An UNFINISHED latest campaign is never built on — the
-claim targets its own slot version and gets the skip / reconciliation-required answer a retry
-gets, because a second campaign beside an unresolved one would spend twice. The slot version
+lock, so no delete lands between that check and the INSERT. An UNFINISHED latest campaign is never built on — a retry's
+claim targets its own slot version and gets the skip / reconciliation-required answer (a
+new_version request answers the same from the row without claiming; see cs-1 below), because a second campaign beside an unresolved one would spend twice. The slot version
 reaches the dispatcher on the context (`model.WithDispatchSlotVersion`). Since `000051` dropped
 `000022`'s three-column index (one release after the per-slot adopt/claim lock shipped, so an
 image-only rollback never returns to a lock-free binary on a schema without it — see the postgres
@@ -169,7 +169,11 @@ version equals the expectation; otherwise (`!hasExpected || expected != existing
 latest campaign is returned as a reuse and nothing is claimed. Concurrent submits were already
 deduplicated by the claim; this closes SEQUENTIAL repeats (a double click after the job finished, a
 reload, a second tab, a late replay), each of which carries the stale expectation it was built
-from. With no live campaign the expectation is not compared — there is nothing to duplicate. One
+from. With no live campaign the expectation is not compared — there is nothing to duplicate. A
+new_version request whose latest campaign is UNFINISHED claims nothing at all (unlike a plain
+retry, which claims that version): it answers from the row it read — reconciliation required for
+an orphan, skipped for a bare pending claim — because the unfinished row may be a LATER request's,
+and re-claiming it after its owner released it would dispatch under a stale expectation. One
 residual is accepted rather than closed: if the campaign a request created is DELETED before a
 replay of that request arrives, the latest live campaign is the one the replay expected again, and
 it creates another. Comparing against the highest version ever used instead would need the caller
