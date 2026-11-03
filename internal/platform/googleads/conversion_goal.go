@@ -16,8 +16,9 @@ package googleads
 //     for exactly that set is reused. No goal in use is ever written: the account is shared by
 //     every foundation, so an enabled goal may be counting conversions for live campaigns
 //     elsewhere. The one write is re-enabling a REMOVED goal that holds exactly the set, even one
-//     someone removed by hand, which is safe because Google refuses to remove a goal linked to a campaign
-//     (CANNOT_REMOVE_LINKED_CUSTOM_CONVERSION_GOAL), so a removed goal counts for no campaign.
+//     someone removed by hand, which is safe because Google refuses to remove a goal linked to a
+//     campaign (CANNOT_REMOVE_LINKED_CUSTOM_CONVERSION_GOAL), so a removed goal counts for no
+//     campaign.
 //  2. the campaign's ConversionGoalCampaignConfig, updated to goal_config_level CAMPAIGN with
 //     that goal. The config exists for every campaign and is update-only, addressed as
 //     customers/<cid>/conversionGoalCampaignConfigs/<campaignId>.
@@ -68,10 +69,11 @@ const (
 	// holding the same action list already exists, whatever its name.
 	errCodeDuplicateCustomGoalActions = "DUPLICATE_CONVERSION_ACTION_LIST"
 
-	// customConversionGoalSecondName is appended to a set's name when the goal holding that
-	// name was edited to hold something else and no other goal holds the set. That goal is left
-	// as it is, and the set gets a goal of its own under this second name, which later campaigns
-	// find the same way.
+	// customConversionGoalSecondName is appended to a set's name when no goal can be used under
+	// the name itself: the goal holding it was edited to hold something else and no other goal
+	// holds the set, or Google definitely refused to re-enable the removed goal that does. That
+	// goal is left as it is, and the set gets a goal of its own under this second name, which
+	// later campaigns find the same way.
 	customConversionGoalSecondName = " | 2"
 
 	// goalHeldElsewhere is the step wording for a set some other enabled goal already holds.
@@ -280,9 +282,11 @@ func (c *Client) biddableCampaignConversionGoals(ctx context.Context, campaignID
 //   - the LFX goal named for this set, when it is enabled and still holds the set;
 //   - when that name is held by a goal that was removed or edited, the goal holding exactly the
 //     set under any name: reused when enabled, re-enabled when removed (which covers the LFX
-//     goal itself); with none, a new goal under the set's second name;
+//     goal itself); with none, or when Google definitely refuses the re-enable, a new goal
+//     under the set's second name (see useGoalNamedForSet);
 //   - when no goal has the name, a new goal under it. Google refuses one whose action list
-//     another goal already holds, and that goal is used the same way.
+//     another goal already holds, and that goal is used the same way; a create that loses the
+//     name to a concurrent one resolves the winner as the bullet above does.
 func (c *Client) ensureCustomConversionGoal(ctx context.Context, actions []string) (resource, how string, err error) {
 	name := customConversionGoalName(actions)
 	existing, err := c.customConversionGoalNamed(ctx, name)
@@ -292,8 +296,16 @@ func (c *Client) ensureCustomConversionGoal(ctx context.Context, actions []strin
 	if existing == nil {
 		return c.createCustomConversionGoal(ctx, name, "created", actions)
 	}
-	if goalHolds(existing, actions) {
-		return existing.ResourceName, "reused", nil
+	return c.useGoalNamedForSet(ctx, name, existing, actions)
+}
+
+// useGoalNamedForSet resolves the set's own name, already held by named: named is reused when it
+// is enabled and still holds the set; otherwise the goal holding exactly the set under any name is
+// used (see useGoalHoldingActionSet), and with none, or when Google definitely refuses to re-enable
+// it, a new goal is created under the set's second name.
+func (c *Client) useGoalNamedForSet(ctx context.Context, name string, named *customConversionGoalRow, actions []string) (resource, how string, err error) {
+	if goalHolds(named, actions) {
+		return named.ResourceName, "reused", nil
 	}
 	holder, err := c.goalHoldingActionSet(ctx, actions)
 	if err != nil {
@@ -314,9 +326,12 @@ func (c *Client) ensureCustomConversionGoal(ctx context.Context, actions []strin
 }
 
 // createCustomConversionGoal creates the goal name for actions. When Google refuses it because
-// another create for the same name won a race, or because another goal already holds the same
-// action list, that goal is used instead when it holds exactly the set: as it is when enabled,
-// re-enabled when removed (see useGoalHoldingActionSet).
+// another create for the same name won a race, the winner is reused when it is enabled and holds
+// the set; otherwise a race on the set's own name is resolved as useGoalNamedForSet resolves it,
+// and a removed winner under the second name that holds the set is re-enabled. When Google
+// refuses it because another goal already holds the same action list, that goal is used instead,
+// with no second-name fallback: as it is when enabled, re-enabled when removed (see
+// useGoalHoldingActionSet).
 func (c *Client) createCustomConversionGoal(ctx context.Context, name, how string, actions []string) (string, string, error) {
 	req := mutateRequest{Operations: []mutateOperation{{Create: customConversionGoalWrite{
 		Name:              name,
@@ -336,7 +351,15 @@ func (c *Client) createCustomConversionGoal(ctx context.Context, name, how strin
 				if winner != nil && goalHolds(winner, actions) {
 					return winner.ResourceName, "reused", nil
 				}
-				// A removed goal under the name that holds the set is used as any removed holder is.
+				// The set's own name was taken between the lookup and this create, so it is
+				// resolved exactly as if the lookup had seen the winner: the answer does not
+				// depend on the timing. That path creates only under the second name, which fails
+				// the own-name check, so useGoalNamedForSet is entered at most once.
+				if winner != nil && name == customConversionGoalName(actions) {
+					return c.useGoalNamedForSet(ctx, name, winner, actions)
+				}
+				// A removed winner under the second name that holds the set is used as any removed
+				// holder is.
 				if winner != nil && winner.Status == customGoalStatusRemoved && sameActionSet(winner.ConversionActions, actions) {
 					return c.useGoalHoldingActionSet(ctx, winner)
 				}
@@ -345,6 +368,9 @@ func (c *Client) createCustomConversionGoal(ctx context.Context, name, how strin
 				if fErr != nil {
 					return "", "", fErr
 				}
+				// No second-name fallback here: Google refused the list and the lookup found no
+				// enabled goal holding it, so the removed holder is what Google counted. If its
+				// re-enable is refused, a create under any name would be refused for the same list.
 				if holder != nil {
 					return c.useGoalHoldingActionSet(ctx, holder)
 				}
@@ -477,9 +503,9 @@ func definitelyRefused(err error) bool {
 }
 
 // unconfirmedGoalError marks a goal write Google ACCEPTED but did not acknowledge usably: the
-// atomic campaign write, a goal create, or a re-enable. It may have been applied, so it satisfies the
-// Unconfirmed() interface IsOutcomeUnconfirmed honours, as the bid, budget and status updates'
-// own markers do.
+// atomic campaign write, a goal create, or a re-enable. It may have been applied, so it satisfies
+// the Unconfirmed() interface IsOutcomeUnconfirmed honours, as the bid, budget and status
+// updates' own markers do.
 type unconfirmedGoalError struct{ err error }
 
 func (e *unconfirmedGoalError) Error() string     { return e.err.Error() }

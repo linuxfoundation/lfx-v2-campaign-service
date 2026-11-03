@@ -523,8 +523,9 @@ func TestApplyCampaignConversionGoal_ASecondNameThatWasAlsoEditedIsNotApplied(t 
 // A create that loses the name race to a REMOVED goal holding the set re-enables that goal, as
 // any removed holder is.
 func TestApplyCampaignConversionGoal_ANameRaceLostToARemovedGoalReenablesIt(t *testing.T) {
+	removed := goalRow("REMOVED", goalTestAction1)
 	f := &goalFake{
-		searches: []string{`{"results":[]}`, goalRow("REMOVED", goalTestAction1)},
+		searches: []string{`{"results":[]}`, removed, removed},
 		create:   gaqlError(http.StatusBadRequest, "customConversionGoalError", "CUSTOM_GOAL_DUPLICATE_NAME"),
 	}
 	c := goalClient(t, f)
@@ -534,6 +535,124 @@ func TestApplyCampaignConversionGoal_ANameRaceLostToARemovedGoalReenablesIt(t *t
 	}
 	if n := len(f.sent("reenable")); n != 1 || !strings.Contains(step, "re-enabled") {
 		t.Errorf("re-enables %d, step %q: want the removed winner re-enabled", n, step)
+	}
+}
+
+// A name race lost to a removed goal is resolved as if the first lookup had seen it, so when
+// Google definitely refuses the re-enable, the set still gets a goal under its second name.
+func TestApplyCampaignConversionGoal_ANameRaceWithARefusedReenableFallsBackToTheSecondName(t *testing.T) {
+	removed := goalRow("REMOVED", goalTestAction1)
+	var mu sync.Mutex
+	creates := 0
+	f := &goalFake{
+		searches: []string{`{"results":[]}`, removed, removed},
+		reenable: gaqlError(http.StatusBadRequest, "customConversionGoalError", "INVALID_CONVERSION_ACTION"),
+		create: func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			creates++
+			first := creates == 1
+			mu.Unlock()
+			if first {
+				gaqlError(http.StatusBadRequest, "customConversionGoalError", "CUSTOM_GOAL_DUPLICATE_NAME")(w, r)
+				return
+			}
+			okGoalCreate(w, r)
+		},
+	}
+	c := goalClient(t, f)
+	step, err := c.applyCampaignConversionGoal(context.Background(), "222", goalPlan(biddingMaximizeConversions, goalTestAction1))
+	if err != nil {
+		t.Fatalf("applyCampaignConversionGoal: %v", err)
+	}
+	wantName := customConversionGoalName([]string{goalTestAction1}) + " | 2"
+	var created bool
+	for _, b := range f.sent("goal") {
+		created = created || (strings.Contains(b, `"create":`) && strings.Contains(b, `"name":"`+wantName+`"`))
+	}
+	if !created || !strings.Contains(step, "Google refused to re-enable the removed goal") {
+		t.Errorf("goal writes %v, step %q: want a create under the second name after the refusal", f.sent("goal"), step)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if n := len(f.sent("reenable")); creates != 2 || n != 1 {
+		t.Errorf("creates %d, re-enables %d: want the own-name create, one refused re-enable, then the second name", creates, n)
+	}
+}
+
+// A name race lost to a removed goal prefers an enabled goal holding the set under another name,
+// as the first lookup does: that goal is reused as it is, and nothing is re-enabled.
+func TestApplyCampaignConversionGoal_ANameRacePrefersAnEnabledGoalToTheRemovedWinner(t *testing.T) {
+	both := `{"results":[` +
+		`{"customConversionGoal":{"resourceName":"` + goalTestGoal + `","status":"REMOVED","conversionActions":["` + goalTestAction1 + `"]}},` +
+		`{"customConversionGoal":{"resourceName":"` + goalTestHandGoal + `","status":"ENABLED","conversionActions":["` + goalTestAction1 + `"]}}]}`
+	f := &goalFake{
+		searches: []string{`{"results":[]}`, goalRow("REMOVED", goalTestAction1), both},
+		create:   gaqlError(http.StatusBadRequest, "customConversionGoalError", "CUSTOM_GOAL_DUPLICATE_NAME"),
+	}
+	c := goalClient(t, f)
+	step, err := c.applyCampaignConversionGoal(context.Background(), "222", goalPlan(biddingMaximizeConversions, goalTestAction1))
+	if err != nil {
+		t.Fatalf("applyCampaignConversionGoal: %v", err)
+	}
+	if n := len(f.sent("reenable")); n != 0 {
+		t.Errorf("sent %d re-enables, want none", n)
+	}
+	atomic := f.sent("atomic")
+	if len(atomic) != 1 || !strings.Contains(atomic[0], `"customConversionGoal":"`+goalTestHandGoal+`"`) {
+		t.Errorf("atomic writes %v, want one pointing the campaign at the enabled goal", atomic)
+	}
+	if !strings.Contains(step, "custom goal 888, "+goalHeldElsewhere) {
+		t.Errorf("step = %q, want the enabled goal named as reused", step)
+	}
+}
+
+// A race on the SECOND name lost to a removed goal holding the set re-enables that goal: the
+// own-name resolution is not entered again, and the removed winner is used as any removed holder is.
+func TestApplyCampaignConversionGoal_ASecondNameRaceLostToARemovedGoalReenablesIt(t *testing.T) {
+	f := &goalFake{
+		searches: []string{goalRow("ENABLED", goalTestAction2), `{"results":[]}`, goalRow("REMOVED", goalTestAction1)},
+		create:   gaqlError(http.StatusBadRequest, "customConversionGoalError", "CUSTOM_GOAL_DUPLICATE_NAME"),
+	}
+	c := goalClient(t, f)
+	step, err := c.applyCampaignConversionGoal(context.Background(), "222", goalPlan(biddingMaximizeConversions, goalTestAction1))
+	if err != nil {
+		t.Fatalf("applyCampaignConversionGoal: %v", err)
+	}
+	if n := len(f.sent("reenable")); n != 1 || !strings.Contains(step, "re-enabled") {
+		t.Errorf("re-enables %d, step %q: want the removed second-name winner re-enabled", n, step)
+	}
+}
+
+// If Google both counts a removed goal toward the duplicate-list check and refuses to re-enable
+// it, the fallback cannot help: the second-name create is refused for the same list, its recovery
+// reaches the same refused re-enable, and the goal is NOT applied, with no goal created or edited.
+func TestApplyCampaignConversionGoal_ARemovedGoalGoogleCountsAndWillNotReenableIsNotApplied(t *testing.T) {
+	removed := goalRow("REMOVED", goalTestAction1)
+	f := &goalFake{
+		searches: []string{removed, removed, removed},
+		reenable: gaqlError(http.StatusBadRequest, "customConversionGoalError", "INVALID_CONVERSION_ACTION"),
+		create:   gaqlError(http.StatusBadRequest, "customConversionGoalError", "DUPLICATE_CONVERSION_ACTION_LIST"),
+	}
+	c := goalClient(t, f)
+	_, err := c.applyCampaignConversionGoal(context.Background(), "222", goalPlan(biddingMaximizeConversions, goalTestAction1))
+	if err == nil || !strings.Contains(err.Error(), "NOT applied") {
+		t.Fatalf("err = %v, want the goal NOT applied", err)
+	}
+	if n := len(f.sent("atomic")); n != 0 {
+		t.Errorf("sent %d campaign writes with no goal to point at", n)
+	}
+	wantName := customConversionGoalName([]string{goalTestAction1}) + " | 2"
+	var creates int
+	for _, b := range f.sent("goal") {
+		if strings.Contains(b, `"create":`) {
+			creates++
+			if !strings.Contains(b, `"name":"`+wantName+`"`) {
+				t.Errorf("create %s, want only the second name tried", b)
+			}
+		}
+	}
+	if n := len(f.sent("reenable")); creates != 1 || n != 2 {
+		t.Errorf("creates %d, re-enables %d: want one second-name create between two refused re-enables", creates, n)
 	}
 }
 

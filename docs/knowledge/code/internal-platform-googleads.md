@@ -2138,23 +2138,33 @@ live campaigns in other projects, and a goal edited by hand was edited on purpos
 named for the set is reused when it is enabled and still holds the set. Otherwise the goal
 holding exactly the set under ANY name is used (`goalHoldingActionSet`, enabled preferred): an
 enabled one is reused as it is; a REMOVED one, including the LFX goal itself and one someone
-removed by hand, is re-enabled with a status-only update (`useGoalHoldingActionSet`). That is the
-one write, and it is safe: Google refuses to remove a goal linked to a campaign
+removed by hand, is re-enabled with a status-only update (`useGoalHoldingActionSet`). That is
+the one write, and it is safe: Google refuses to remove a goal linked to a campaign
 (`CANNOT_REMOVE_LINKED_CUSTOM_CONVERSION_GOAL`), so a removed goal counts for no campaign. The
 re-enable is counted for retries and must name that goal, or it is UNCONFIRMED and the campaign
 is not pointed at it. Whether Google lets a removed goal's status be updated is not verified
-live, so a DEFINITE refusal of the re-enable (`definitelyRefused`) falls back to the second name
-below; an unknown outcome does not. Both goal lookups ask for `status IN ('ENABLED', 'REMOVED')`
-explicitly, so neither depends on whether Google returns removed rows unasked. With no goal holding the
-set (the named one was edited), a new goal is created under the set's second name
-(`<name> | 2`), which later campaigns find the same way; with the second name also held by an
-edited goal, the goal is NOT applied. A create that loses a `CUSTOM_GOAL_DUPLICATE_NAME` race
-uses the winner, if it holds the set. Google refuses a second goal holding the same action list
-under ANY name (`DUPLICATE_CONVERSION_ACTION_LIST`, confirmed live against an enabled goal;
-whether a removed goal counts is unverified, and the lookup covers both); the goal holding the
-set is then used the same way, and the step line says which. A create answered
-2xx without a usable name may still have made the goal, so it is UNCONFIRMED about the goal
-while NOT applied to the campaign, which is pointed at nothing; a retry finds the goal by name.
+live, so a DEFINITE refusal of the re-enable (`definitelyRefused`) falls back to the second
+name below; an unknown outcome does not. Both goal lookups ask for
+`status IN ('ENABLED', 'REMOVED')` explicitly, so neither depends on whether Google returns
+removed rows unasked. With no goal holding the set (the named one was edited), a new goal is
+created under the set's second name (`<name> | 2`), which later campaigns find the same way;
+with the second name also held by an edited goal, the goal is NOT applied. A create that loses
+a `CUSTOM_GOAL_DUPLICATE_NAME` race uses the winner if it is enabled and holds the set;
+otherwise a race on the set's own name is resolved as if the first lookup had seen the winner
+(`useGoalNamedForSet`), so the answer does not depend on timing, and a removed winner under the
+second name that holds the set is re-enabled. Google refuses a second goal holding the same
+action list under ANY name (`DUPLICATE_CONVERSION_ACTION_LIST`, confirmed live against an
+enabled goal; whether a removed goal counts is unverified, and the lookup covers both); the
+goal holding the set is then used the same way, and the step line says which. That refusal
+takes no second-name fallback: Google has just refused the list and the lookup found no enabled
+goal holding it, so the removed holder is what Google counted, and a create under any name
+would be refused too. The fallback is therefore an attempt, not a guarantee: if Google both
+counts a removed goal toward the duplicate check and definitely refuses to re-enable it, the
+second-name create is refused, its recovery reaches the same refused re-enable, and the goal is
+NOT applied (the campaign stays a PAUSED partial with nothing past it built, and no goal is
+created or edited). A create answered 2xx without a usable name may still have made the goal,
+so it is UNCONFIRMED about the goal while NOT applied to the campaign, which is pointed at
+nothing; a retry finds the goal by name.
 
 The goal step runs FIRST after the campaign create and every channel returns on its
 failure, so the error also says nothing past the campaign was built (no location targeting,
