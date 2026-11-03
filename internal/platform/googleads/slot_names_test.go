@@ -65,3 +65,25 @@ func TestComposeName_LabelSegments(t *testing.T) {
 		t.Errorf("pipe-injected = %q, want %q", got, want)
 	}
 }
+
+// The sitelink destination reads the same fallback as the ad's final URL (#456 review): a slot-2
+// input with no event slug or name still tags its sitelinks with the bare brief id.
+func TestValidateSitelinks_UTMCampaignFallbackIsTheBareBriefID(t *testing.T) {
+	in := sampleInput()
+	in.EventSlug, in.EventName, in.NameSuffix, in.UTMCampaignFallback = "", "", "brief-1-2", "brief-1"
+	in.Sitelinks = []Sitelink{sampleSitelink()}
+	got, err := validateSitelinks(in)
+	if err != nil {
+		t.Fatalf("validateSitelinks: %v", err)
+	}
+	if len(got) != 1 || len(got[0].FinalURLs) != 1 {
+		t.Fatalf("got %+v, want one sitelink with one final URL", got)
+	}
+	u, err := url.Parse(got[0].FinalURLs[0])
+	if err != nil {
+		t.Fatalf("sitelink URL %q: %v", got[0].FinalURLs[0], err)
+	}
+	if c := u.Query().Get("utm_campaign"); c != "brief-1" {
+		t.Errorf("sitelink utm_campaign = %q, want the bare brief id", c)
+	}
+}
