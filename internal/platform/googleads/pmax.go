@@ -177,7 +177,8 @@ type performanceMaxCampaignCreate struct {
 }
 
 // CreatePerformanceMaxCampaign creates a PAUSED Performance Max campaign: budget →
-// campaign → campaign-level geo → campaign-level criteria → asset group.
+// campaign → campaign-level geo → campaign-level criteria → campaign-level extensions →
+// asset group → asset group signals.
 //
 // It creates NO AD GROUP AND NO AD, and that is the channel rather than a gap: a
 // Performance Max campaign has neither. Its creative is an ASSET GROUP, built by the
@@ -438,6 +439,22 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 		res.Steps = steps
 	}
 
+	// Step 4b: sitelinks, callouts and structured snippets, linked at the CAMPAIGN level
+	// by the same two mutates and the same step sentence the Search cascade uses (#461);
+	// the preflight has already refused every other extension type on this channel. After
+	// the criteria for Search's reason — this is the step that can leave something behind
+	// (unlinked assets) — and before the asset group, so a failure here strands no group.
+	if !pf.assets.empty() {
+		assetIDs, linkIDs, assetErr := c.createCampaignAssets(ctx, campaignResource, campaignID, pf.assets)
+		res.ExtensionAssetIDs = assetIDs
+		if assetErr != nil {
+			return res, assetErr
+		}
+		res.ExtensionLinkIDs = linkIDs
+		steps = append(steps, fmt.Sprintf("Ad extensions applied: %d assets (%s)", len(linkIDs), assetStep(pf.assets)))
+		res.Steps = steps
+	}
+
 	// The gate Video and Display both carry, and the one this cascade was missing. The
 	// campaign exists and is billable from here on, so a context that has already been
 	// cancelled must be reported ALONGSIDE the result rather than discovered halfway
@@ -452,7 +469,11 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 	// result even when the later request failed, so an operator can find assets created
 	// with nothing referencing them.
 	if pf.pmax.present {
-		assetIDs, groupID, links, agErr := c.createPerformanceMaxAssetGroup(ctx, campaignResource, campaignID, pf.finalURL, pf.pmax, images)
+		assetIDs, groupResource, links, agErr := c.createPerformanceMaxAssetGroup(ctx, campaignResource, campaignID, pf.finalURL, pf.pmax, images)
+		groupID := ""
+		if groupResource != "" {
+			groupID = resourceID(groupResource)
+		}
 		res.CreativeAssetIDs = assetIDs
 		res.AssetGroupID = groupID
 		// Recorded on BOTH paths, and recorded even when it is zero. The group id is kept
@@ -467,6 +488,21 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 		}
 		steps = append(steps, fmt.Sprintf("Asset group created: %s (PAUSED, %d asset(s) linked, %s)", groupID, links, performanceMaxCreativeStep(pf.pmax)))
 		res.Steps = steps
+
+		// Step 6: the asset group's signals (#461), in one atomic request on the group the
+		// step above CONFIRMED. Reached only here: the preflight refuses signals when no
+		// group is asked for, and any group failure has already returned. A failure leaves
+		// a campaign that can serve — the group and its links exist — so it is returned
+		// alongside the result like every step past the campaign create.
+		if !pf.pmaxSignals.empty() {
+			signalIDs, sigErr := c.createPerformanceMaxSignals(ctx, groupResource, groupID, pf.pmaxSignals)
+			res.AssetGroupSignalIDs = signalIDs
+			if sigErr != nil {
+				return res, sigErr
+			}
+			steps = append(steps, fmt.Sprintf("Asset group signals applied: %d signal(s) on asset group %s (%s)", len(signalIDs), groupID, performanceMaxSignalStep(pf.pmaxSignals)))
+			res.Steps = steps
+		}
 	}
 
 	steps = append(steps, performanceMaxClosingStep(len(res.GeoCriterionIDs) > 0, res.AssetGroupID != ""))

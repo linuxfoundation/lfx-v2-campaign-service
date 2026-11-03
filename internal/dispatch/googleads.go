@@ -479,10 +479,11 @@ type googleAdsConfig struct {
 	// other channel. See googleads.validateAdGroupDemographicExclusions.
 	ExcludedIncomeRanges     []string `json:"excludedIncomeRanges"`
 	ExcludedParentalStatuses []string `json:"excludedParentalStatuses"`
-	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions. All
-	// Search only except Sitelinks, which "demand-gen" takes too (#474, verified by a
-	// validateOnly probe) — refused on every other channel — and all created as
-	// account-level assets then linked to the campaign.
+	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions,
+	// created as account-level assets then linked to the campaign. Accepted on Search,
+	// on Performance Max (#461), which links them at the campaign level too, and, for
+	// Sitelinks alone, on "demand-gen" (#474); each pairing was verified by a
+	// validateOnly probe. Refused on every other channel.
 	//
 	// Left empty the ad serves as a bare headline+description, which costs more per
 	// click than the same bid with extensions attached — but it is the behaviour of
@@ -491,10 +492,10 @@ type googleAdsConfig struct {
 	Callouts           []string                           `json:"callouts"`
 	StructuredSnippets []googleAdsStructuredSnippetConfig `json:"structuredSnippets"`
 	// CallExtensions, Promotions and Prices are the other three extension types,
-	// under exactly the same rules: optional, Search only, account-level assets
-	// linked to the campaign. Image and location extensions are NOT here — see
-	// internal/platform/googleads/assets_extended.go for why each is a gap rather
-	// than an omission.
+	// under the same rules except the channel: optional, account-level assets
+	// linked to the campaign, and Search only. Image and location extensions are NOT
+	// here — see internal/platform/googleads/assets_extended.go for why each is a gap
+	// rather than an omission.
 	CallExtensions []googleAdsCallExtensionConfig `json:"callExtensions"`
 	Promotions     []googleAdsPromotionConfig     `json:"promotions"`
 	Prices         []googleAdsPriceConfig         `json:"prices"`
@@ -544,6 +545,14 @@ type googleAdsConfig struct {
 	// hand upstream looks like. That campaign cannot serve until a group exists; the
 	// result's closing step says so.
 	PerformanceMaxCreative *googleAdsPerformanceMaxCreativeConfig `json:"performanceMaxCreative"`
+	// PerformanceMaxSearchThemes and PerformanceMaxAudienceSignal are the asset group's
+	// signals (#461): search-theme text, and ONE existing Google Ads audience (a numeric
+	// id or a customers/<id>/audiences/<id> resource name in this account). PERFORMANCE
+	// MAX ONLY, and refused there too when PerformanceMaxCreative is absent, because a
+	// signal attaches to the asset group that field creates. Passed through verbatim; the
+	// client's preflight owns every rule. See googleads.CampaignInput.
+	PerformanceMaxSearchThemes   []string `json:"performanceMaxSearchThemes"`
+	PerformanceMaxAudienceSignal string   `json:"performanceMaxAudienceSignal"`
 	// VideoCreative is the responsive video ad for a Video (YouTube) campaign, the
 	// fourth member of the same family and VIDEO ONLY.
 	//
@@ -840,6 +849,9 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		PerformanceMaxCreative:   googleAdsPerformanceMaxCreative(cfg.PerformanceMaxCreative),
 		VideoCreative:            googleAdsVideoCreative(cfg.VideoCreative),
 		DisplayCreative:          googleAdsDisplayCreative(cfg.DisplayCreative),
+		// The asset group's signals (#461), verbatim like the creative they attach to.
+		PerformanceMaxSearchThemes:   cfg.PerformanceMaxSearchThemes,
+		PerformanceMaxAudienceSignal: cfg.PerformanceMaxAudienceSignal,
 		// The Display-only audience lists and placement exclusions (#462), passed through
 		// verbatim like the inputs above: the client's preflight refuses them off Display
 		// and checks every resource name against the account, before its first mutate.

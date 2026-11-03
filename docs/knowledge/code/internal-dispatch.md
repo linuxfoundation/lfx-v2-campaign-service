@@ -1068,6 +1068,17 @@ campaign shell (`PERFORMANCE_MAX`, `maximizeConversions`, no ad group and no ad)
 a complete asset group gets past every bound and into the fetch, with each list omitted in
 turn producing that list's own refusal.
 
+`performanceMaxSearchThemes` and `performanceMaxAudienceSignal` (#461) are top-level config
+fields, not members of `performanceMaxCreative`, named for the channel like it and passed
+through verbatim; the client's preflight owns every rule, including the refusal off
+Performance Max and without a creative. Their dispatch test,
+`googleads_pmax_signals_wiring_test.go`, cannot reach the signals mutate for the image-fetch
+reason above, so it proves each field mapped by a refusal only the client can produce from
+it — signals without a creative, a foreign audience, an over-long theme, either field on
+another channel — each before the budget mutate. The same file proves sitelinks, callouts
+and structured snippets on `performance-max` reach `campaignAssets:mutate` on the created
+campaign, and that a call extension there is refused before anything is created.
+
 `videoCreative` is the same shape a fourth time — a pointer, a mapper that validates nothing,
 the zero `googleads.VideoCreative` for nil — but `googleads_video_wiring_test.go` is the one
 file of the five that cannot assert a campaign body, because **the Google Ads API cannot

@@ -1913,12 +1913,15 @@ at all: it is derived from a Business Profile linked to the account. A lead form
 without a background image renders on Google's default and is servable. All are named
 gaps, not oversights.
 
-All seven extension types are SEARCH only and refused on every other channel, which
-use different asset models entirely — except sitelinks on Demand Gen (#474), verified by a
-validateOnly probe and created by the same `createCampaignAssets`; Demand Gen refuses the
-other six. The fence is `kind != campaignKindSearch && kind != campaignKindDemandGen`, so
-a channel added later refuses them automatically rather than inheriting Search's treatment
-by default.
+Sitelinks, callouts and structured snippets are accepted on Search and on Performance Max
+(#461), linked at the campaign level by the same two mutates; sitelinks alone are accepted on
+Demand Gen (#474), verified by a validateOnly probe and created by the same
+`createCampaignAssets`, and Demand Gen refuses the other six. The other four types are
+SEARCH only, and every other channel refuses all seven, since those channels use different
+asset models entirely. The fence names the three channels it admits
+(`kind != campaignKindSearch && kind != campaignKindDemandGen && kind !=
+campaignKindPerformanceMax`), so a channel added later refuses them automatically rather
+than inheriting Search's treatment by default.
 
 **Multiple ad groups and multiple RSAs (`adgroup_plan.go`).**
 `CampaignInput.AdGroups` turns the single-group cascade into one group per theme,
@@ -2612,8 +2615,8 @@ the field it replaced is gone from v23 entirely; no `networkSettings`, which Per
 Max does not take; and `maximizeConversions` by default — `defaultBiddingStrategy`
 answers a different strategy per channel, and manual CPC and maximize-clicks are both
 REFUSED here because Performance Max does not offer them. Geo is attached at CAMPAIGN
-level, as on Search, which is why proximity stays allowed on this channel while every
-other Search-only field is refused.
+level, as on Search, which is why proximity stays allowed on this channel; of the other
+Search fields only the three extension types below are accepted.
 
 **`urlExpansionOptOut` is GONE; the control it carried moved.** This shell used to send
 `urlExpansionOptOut: true` so the campaign served the final URL it was given rather than
@@ -2670,6 +2673,44 @@ guards must never have. A non-nil zero is the refusal. An UNCONFIRMED link outco
 (`<groupId>~<assetId>~<fieldType>` in this account, #439) — records zero rather than nothing:
 links may exist, this client cannot say they do, and "cannot say" belongs in the Google
 Ads UI, not in a claimed launch.
+
+**Campaign-level extensions (#461).** `Sitelinks`, `Callouts` and `StructuredSnippets` are
+accepted on this channel and run through Search's own validators, `createCampaignAssets`
+and step sentence, after the campaign criteria and BEFORE the asset group, so a failure
+there strands no group. `validateAssetPlan` admits the channel for those three and refuses
+call extensions, promotions, prices and lead forms on it. What was verified, by a
+`validateOnly` probe on 2026-11-03 (v23): `campaignAssets` creates with field types
+`SITELINK`, `CALLOUT` and `STRUCTURED_SNIPPET` on a Performance Max campaign are accepted.
+The probe created the assets and their links in one `googleAds:mutate` by temporary id;
+this client sends the same create operations as Search's two mutates, unchanged.
+
+**Asset group signals (`pmax_signals.go`, #461).** `PerformanceMaxSearchThemes` and
+`PerformanceMaxAudienceSignal` become `AssetGroupSignal`s on the group Step 5 CONFIRMED —
+`{assetGroup, searchTheme: {text}}` per theme and `{assetGroup, audience: {audience}}` for
+the one audience — in ONE `googleAds:mutate` (`assetGroupSignalOperation`), themes first in
+input order. `partialFailure` is off, so a definite refusal means no signal exists and an
+ambiguous outcome is UNCONFIRMED; either way the campaign, the group and its links exist
+and come back on the result. The group is named by the resource name Google returned for
+it, which is why `createPerformanceMaxAssetGroup` now returns that name rather than the
+bare id. Each result must be an `assetGroupSignals` name in this account whose composite
+`<groupId>~<criterionId>` names this group; anything else is UNCONFIRMED and records no id.
+Confirmed criterion ids go to `CampaignResult.AssetGroupSignalIDs`, and the step reads
+`Asset group signals applied: N signal(s) on asset group <id> (…)`, naming only what was
+asked for. A group that failed or was unconfirmed gets no signals request at all.
+
+`validatePerformanceMaxSignals` runs in the pure preflight. It refuses both fields on every
+other channel, and on Performance Max when the creative is empty, since no group will exist
+to attach them to. Themes are trimmed, must be non-empty and ≤80 runes, and duplicates
+compared case-insensitively are REFUSED, as callouts and sitelinks are, so the count in the
+UI is the count sent. At most 25 per group: that is the limit Google documents, NOT one the
+probe exercised. The audience is a bare numeric id (resolved in this account) or a
+`customers/<id>/audiences/<id>` name, and a name in another account is refused, as
+`validateConversionActions` refuses a foreign conversion action. One audience at most is
+enforced by the type, a string, because Google allows one per asset group. Verified by
+`validateOnly` probes on 2026-11-03 (v23): the theme and audience create shapes, a theme
+over 80 characters refused with `stringLengthError` `TOO_LONG`, several themes in one request,
+one audience per group (`ONE_AUDIENCE_ALLOWED_PER_ASSET_GROUP`), and themes with one
+audience in the same request.
 
 
 ## Video (YouTube) campaign creation (LFXV2-2665)
