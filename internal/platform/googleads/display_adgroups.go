@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"unicode/utf8"
 )
 
 // ---------------------------------------------------------------------------
@@ -54,7 +53,8 @@ const maxDisplayAdGroups = 5
 type DisplayAdGroup struct {
 	// Name labels the group. It is sanitized like every other name part and appended to the
 	// campaign's ad group name ("<event> - Display Network | <Name>"), as the Search
-	// ad-group list does; two names equal ignoring case are refused, because Google refuses
+	// ad-group list does; two names equal under simple case folding (adGroupNameKey, the
+	// strings.EqualFold relation) are refused, because Google refuses
 	// DUPLICATE_ADGROUP_NAME only after the earlier groups exist.
 	Name string
 	// Creative is this group's responsive display ad, under the rules of
@@ -95,7 +95,8 @@ func validateDisplayAdGroups(kind, customerID string, in CampaignInput, base dis
 		return []displayGroupPlan{base}, nil
 	}
 	if kind != campaignKindDisplay {
-		return nil, fmt.Errorf("google-ads: Display ad groups are not supported on %s; omit DisplayAdGroups (Search takes its own ad-group list, AdGroups)", kind)
+		return nil, fmt.Errorf("google-ads: Display ad groups are not supported on %s; omit "+
+			"DisplayAdGroups (%s)", kind, offDisplayAdGroupsHint(kind))
 	}
 	// The campaign-level creative and audience lists describe the ONE group the list
 	// replaces; with a list there is no single group for them to go on, and guessing would put
@@ -116,12 +117,10 @@ func validateDisplayAdGroups(kind, customerID string, in CampaignInput, base dis
 			return nil, fmt.Errorf("google-ads: Display ad group %d has no name; each ad group needs a distinct label", i+1)
 		}
 		name := base.name + " | " + label
-		if err := validateEntityName("ad group", name, utf8.RuneCountInString(name), maxAdGroupNameRunes, "characters"); err != nil {
-			// By position, and with the label named as the other thing to shorten: the
-			// shared message speaks only of EventName and Project.
-			return nil, fmt.Errorf("google-ads: Display ad group %d: %w (or shorten this group's name)", i+1, err)
+		if err := namedAdGroupNameTooLong(i+1, name); err != nil {
+			return nil, fmt.Errorf("google-ads: Display %w", err)
 		}
-		key := strings.ToLower(name)
+		key := adGroupNameKey(name)
 		if _, dup := seen[key]; dup {
 			return nil, fmt.Errorf("google-ads: Display ad group name %q is used more than once; Google refuses duplicate ad group names (DUPLICATE_ADGROUP_NAME)", name)
 		}
@@ -267,6 +266,33 @@ func displayGroupStep(multi bool, name string) string {
 	return fmt.Sprintf(" [ad group %q]", name)
 }
 
+// offDisplayAdGroupsHint names the ad-group shape a non-Display channel takes instead, so
+// the refusal of DisplayAdGroups points at that channel's own field rather than Search's.
+func offDisplayAdGroupsHint(kind string) string {
+	switch kind {
+	case campaignKindSearch:
+		return "a Search campaign takes its own ad-group list, AdGroups"
+	case campaignKindDemandGen:
+		return "a Demand Gen campaign creates one ad group, from DemandGenCreative"
+	case campaignKindVideo:
+		return "a Video campaign creates one ad group, from VideoCreative"
+	case campaignKindPerformanceMax:
+		return "a Performance Max campaign has no ad groups; its asset group comes from " +
+			"PerformanceMaxCreative"
+	default:
+		return "only a Display campaign takes it"
+	}
+}
+
+// displayGroupNames renders groups' names as a quoted, comma-separated list for an error.
+func displayGroupNames(groups []displayGroupPlan) string {
+	names := make([]string, len(groups))
+	for i, g := range groups {
+		names[i] = fmt.Sprintf("%q", g.name)
+	}
+	return strings.Join(names, ", ")
+}
+
 // adGroupNegativeUserListCreate and campaignNegativeUserListCreate are the payloads for a
 // user-list EXCLUSION on adGroupCriteria:mutate and campaignCriteria:mutate, in the shapes
 // the 2026-11-03 validateOnly probe accepted. Negative is sent explicitly (no omitempty), as
@@ -291,8 +317,8 @@ type campaignNegativeUserListCreate struct {
 // group still serves to the lists that were dropped.
 //
 // Its own mutate after the group's audience targeting, so each failure sentence names only
-// what it left missing. No targetingSetting is added for it: that setting decides whether
-// POSITIVE audience criteria target or observe, and the group's own audiences already
+// what it left missing. A group with exclusions but no audiences sends no targetingSetting —
+// not probed; the setting governs positive criteria only, and the group's own audiences
 // decide whether it is sent (displayAdGroupCreate). Called after the ad group exists, so a
 // failure is a partial result; an ambiguous outcome is UNCONFIRMED.
 func (c *Client) createAdGroupAudienceExclusions(ctx context.Context, adGroupResource, adGroupID string, userLists []string) ([]string, error) {

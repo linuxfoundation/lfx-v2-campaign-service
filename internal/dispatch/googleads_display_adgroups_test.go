@@ -198,3 +198,45 @@ func TestGoogleAdsCreativeSlots_EveryDisplayAdGroup(t *testing.T) {
 		t.Errorf("slots = %v, want %v", labels, want)
 	}
 }
+
+// A status toggle on a two-group Display campaign reaches EVERY group's ad group and ad, in
+// both directions. The blob is a CampaignResult in the shape CreateDisplayCampaign writes
+// with DisplayAdGroups set: one AdGroups entry per group, the scalars a copy of the first,
+// and no keyword criteria, which Display does not take.
+func TestGoogleAds_ToggleStatus_TwoGroupDisplayCoversEveryGroupsAd(t *testing.T) {
+	raw, err := json.Marshal(googleads.CampaignResult{
+		CustomerID: "1234567890", CampaignID: "777", AdGroupID: "333", AdID: "444",
+		AdGroups: []googleads.AdGroupResult{
+			{Name: "KubeCon - Display Network | Retargeting", ID: "333", AdIDs: []string{"444"}},
+			{Name: "KubeCon - Display Network | Prospecting", ID: "334", AdIDs: []string{"445"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	camp := &model.Campaign{
+		Platform: model.ProviderGoogleAds, PlatformCampaignID: "777",
+		Variant: googleAdsChannelDisplay, Result: raw,
+	}
+	wantGroups := "customers/1234567890/adGroups/333,customers/1234567890/adGroups/334"
+	wantAds := "customers/1234567890/adGroupAds/333~444,customers/1234567890/adGroupAds/334~445"
+	for _, status := range []string{model.CampaignRunPaused, model.CampaignRunActive} {
+		t.Run(status, func(t *testing.T) {
+			opts, cap := toggleServers(t)
+			conns := fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}
+			d := NewGoogleAdsDispatcher(conns, identityEncryptor{}, opts...)
+			ctx := context.Background()
+			err := d.ToggleStatus(ctx, "proj", model.ProviderGoogleAds, camp, status)
+			if err != nil {
+				t.Fatalf("ToggleStatus: %v", err)
+			}
+			_, groups, ads := cap.snapshot()
+			if got := strings.Join(groups, ","); got != wantGroups {
+				t.Errorf("ad group updates = %s, want both groups %s", got, wantGroups)
+			}
+			if got := strings.Join(ads, ","); got != wantAds {
+				t.Errorf("ad updates = %s, want each group's own ad %s", got, wantAds)
+			}
+		})
+	}
+}

@@ -31,6 +31,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/textfold"
 )
 
 const (
@@ -153,6 +155,25 @@ func everyAdGroupBringsAds(groups []AdGroupSpec) bool {
 	return true
 }
 
+// adGroupNameKey is the duplicate key for a named ad group's composed name, shared by the
+// Search and Display lists. It is textfold.Key — simple case folding, so two names collide
+// exactly when strings.EqualFold says they are equal — not strings.ToLower, which keeps
+// "ſ"/"s" and "ς"/"σ" apart. Google's own folding is not probed: this errs toward refusing
+// a pair Google might accept over sending one it refuses after the earlier groups exist.
+func adGroupNameKey(name string) string { return textfold.Key(name) }
+
+// namedAdGroupNameTooLong refuses a named ad group's composed "<base> | <label>" name
+// over Google's limit, naming the group by its 1-based position. Its own message, not
+// validateEntityName's: that one says to shorten EventName/Project and calls the suffix
+// fixed, but here the suffix is the caller's own label and the likeliest thing to cut.
+func namedAdGroupNameTooLong(position int, name string) error {
+	if n := utf8.RuneCountInString(name); n > maxAdGroupNameRunes {
+		return fmt.Errorf("ad group %d name %q is %d characters, over Google's limit of %d; "+
+			"shorten EventName or this group's name", position, name, n, maxAdGroupNameRunes)
+	}
+	return nil
+}
+
 // validateAdGroupPlans turns the caller's AdGroups into the list the cascade
 // creates, or returns the single default group when none were asked for.
 //
@@ -193,13 +214,14 @@ func validateAdGroupPlans(kind string, in CampaignInput, base adGroupPlan) ([]ad
 			return nil, fmt.Errorf("google-ads campaign creation aborted before any request (ad group %d has no name; each ad group needs a distinct theme label)", i+1)
 		}
 		name := base.name + " | " + label
-		if err := validateEntityName("ad group", name, utf8.RuneCountInString(name), maxAdGroupNameRunes, "characters"); err != nil {
-			return nil, err
+		if err := namedAdGroupNameTooLong(i+1, name); err != nil {
+			return nil, fmt.Errorf(
+				"google-ads campaign creation aborted before any request (%w)", err)
 		}
 		// Case-insensitive, because Google's own duplicate check is: two groups
 		// differing only in case collide at the mutate, by which point the
 		// earlier groups in this list already exist.
-		key := strings.ToLower(name)
+		key := adGroupNameKey(name)
 		if _, dup := seen[key]; dup {
 			return nil, fmt.Errorf("google-ads campaign creation aborted before any request (ad group name %q is used more than once; Google rejects duplicate ad group names)", name)
 		}

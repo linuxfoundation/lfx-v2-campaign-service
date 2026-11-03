@@ -6,12 +6,14 @@ package googleads
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 // samplePlanBase is the group preflightCampaignKind derives from the
@@ -271,6 +273,25 @@ func TestValidateAdGroupPlans_RefusesDuplicateNamesCaseInsensitively(t *testing.
 	}
 }
 
+// The duplicate key is simple case folding (adGroupNameKey), the strings.EqualFold
+// relation: LONG S folds with s and KELVIN SIGN with k, where strings.ToLower keeps
+// each pair apart and the duplicate would reach Google.
+func TestValidateAdGroupPlans_RefusesDuplicateNamesUnderSimpleFolding(t *testing.T) {
+	for name, pair := range map[string][2]string{
+		"long s":      {"\u017fale", "SALE"},
+		"kelvin sign": {"\u212aubeCon", "kubecon"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := sampleInput()
+			in.AdGroups = []AdGroupSpec{{Name: pair[0]}, {Name: pair[1]}}
+			_, err := validateAdGroupPlans(campaignKindSearch, in, samplePlanBase())
+			if err == nil || !strings.Contains(err.Error(), "more than once") {
+				t.Errorf("%q and %q fold equal and must be refused, got: %v", pair[0], pair[1], err)
+			}
+		})
+	}
+}
+
 func TestValidateAdGroupPlans_RefusesAnUnnamedGroup(t *testing.T) {
 	for name, label := range map[string]string{"empty": "", "whitespace only": "   ", "separators only": " | "} {
 		t.Run(name, func(t *testing.T) {
@@ -367,9 +388,17 @@ func TestValidateAdGroupPlans_ComposesTheNameAndBoundsItsLength(t *testing.T) {
 		t.Errorf("name = %q, want %q", plans[0].name, want)
 	}
 
-	in.AdGroups = []AdGroupSpec{{Name: strings.Repeat("x", maxAdGroupNameRunes)}}
-	if _, err := validateAdGroupPlans(campaignKindSearch, in, base); err == nil {
-		t.Fatalf("a composed name over %d runes must be refused", maxAdGroupNameRunes)
+	// The label is the caller's own, so the refusal names the group by position and says
+	// to shorten it — not validateEntityName's "the suffix is fixed".
+	long := strings.Repeat("x", maxAdGroupNameRunes)
+	in.AdGroups = []AdGroupSpec{{Name: "Training"}, {Name: long}}
+	_, err = validateAdGroupPlans(campaignKindSearch, in, base)
+	composed := base.name + " | " + long
+	want := fmt.Sprintf("ad group 2 name %q is %d characters, over Google's limit of %d; "+
+		"shorten EventName or this group's name",
+		composed, utf8.RuneCountInString(composed), maxAdGroupNameRunes)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want it to contain %q", err, want)
 	}
 }
 

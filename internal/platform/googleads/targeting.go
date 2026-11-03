@@ -371,6 +371,15 @@ func validateAudienceSegments(segments []string) ([]string, error) {
 		if field == "customAudience" {
 			return nil, fmt.Errorf("google-ads: custom audiences are not supported for SEARCH campaigns; only userLists are accepted (a Display campaign takes custom audiences in CustomAudiences)")
 		}
+		// audienceCriterionField accepts any digit run, so "customers/1/userLists/011" and
+		// ".../userLists/11" would pass the de-dupe below as two names for one list. Both
+		// ids must be canonical; the shape check above guarantees exactly four parts.
+		if parts := strings.Split(s, "/"); canonicalCampaignID(parts[1]) == "" ||
+			canonicalCampaignID(parts[3]) == "" {
+			return nil, fmt.Errorf("google-ads: audience segment %q does not spell its ids "+
+				"canonically (base-10, positive, no leading zeros); write it as Google "+
+				"returns it", s)
+		}
 		if _, dup := seen[s]; dup {
 			continue
 		}

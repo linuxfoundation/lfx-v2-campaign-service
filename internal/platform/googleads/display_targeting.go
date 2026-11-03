@@ -253,6 +253,14 @@ func validateDisplayAudienceList(field, collection, customerID string, names []s
 		if parts[1] != customerID {
 			return nil, fmt.Errorf("google-ads: %s entry %q is on customer %s, not this campaign's account %s; name a resource on the campaign's own account", field, name, parts[1], customerID)
 		}
+		// Digits alone are not the id test: "userLists/011" and "userLists/11" would pass
+		// as two names for one list, slipping past this de-dupe and refuseExcludedOverlap.
+		// The customer id needs no such check: it must equal customerID exactly, above.
+		if canonicalCampaignID(parts[3]) == "" {
+			return nil, fmt.Errorf("google-ads: %s entry %q has the id %q, which is not the "+
+				"canonical base-10 spelling of a positive id (no leading zeros); write the id "+
+				"as Google returns it", field, name, parts[3])
+		}
 		if _, dup := seen[name]; dup {
 			continue
 		}

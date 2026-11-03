@@ -499,6 +499,14 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 			res.AdGroups[k].CreativeAssetIDs = assetIDs
 		}
 		if adErr != nil {
+			// Every ad group exists before this pass starts, so a stop on group k leaves
+			// groups k+1..n created with NO ad. adGroups lists them with their ids and no
+			// adIds; the error names them too, so the caller need not infer it.
+			if later := pf.displayGroups[k+1:]; multi && len(later) > 0 {
+				return res, fmt.Errorf("google-ads display ad pass stopped at ad group %q; "+
+					"the later ad group(s) %s were created and have NO ad: %w",
+					g.name, displayGroupNames(later), adErr)
+			}
 			return res, adErr
 		}
 		if k == 0 {

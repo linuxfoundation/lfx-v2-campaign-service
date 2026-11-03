@@ -898,8 +898,11 @@ keywords?: {text, matchType}[]  — OPTIONAL positive Search keyword criteria (G
 audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTING Customer Match /
                                   remarketing user lists (`customers/{id}/userLists/{id}`) to attach to
                                   the ad group. This client does not create audiences. At most 20
-                                  entries; duplicates are deduped. SEARCH and DISPLAY, and the two use
-                                  them differently:
+                                  entries; duplicates are deduped. Each id must be in canonical form
+                                  — `userLists/011` is refused rather than deduped against
+                                  `userLists/11` (#475); this holds for every Display audience and
+                                  exclusion list too. SEARCH and DISPLAY, and the two use them
+                                  differently:
 
                                   On `search` (GA-4) they are OBSERVATION-only — bid/report on the
                                   segment without narrowing delivery to it. The client sets the ad
@@ -1641,8 +1644,9 @@ adGroups?:                      — OPTIONAL multiple themed ad groups (LFXV2-26
                                   rules above; an ad that sets neither takes the campaign-level pair.
                                   `name` is REQUIRED per group and is a THEME LABEL, not the full name:
                                   the created ad group is named `<composed campaign name> | <label>`.
-                                  Names must be distinct case-insensitively — Google rejects duplicates
-                                  at the mutate, by which point the earlier groups already exist.
+                                  Names must be distinct under simple case folding (Go's
+                                  `strings.EqualFold`) — Google rejects duplicates at the mutate, by
+                                  which point the earlier groups already exist.
 
                                   Every other key except `negativeKeywords` is a PER-FIELD override of
                                   the campaign-level value, and inheritance is per field rather than
@@ -2033,16 +2037,19 @@ displayAdGroups?:               — OPTIONAL several named Display ad groups (#4
    customAffinities?,
    userInterests?,                `name` is REQUIRED and is a label: the ad group is named
    excludedAudienceSegments?}[]   `<event> - Display Network | <name>`, at most 255 characters, and
-                                  names equal ignoring case are refused. `creative` is REQUIRED and
-                                  takes the `displayCreative` shape and rules, images included. The
-                                  four audience lists take the shapes and rules of the campaign-level
-                                  fields of the same names and are attached as TARGETING on that group
-                                  alone; every group with audiences is created with the AUDIENCE
-                                  bidOnly false targeting setting. `excludedAudienceSegments` excludes
-                                  user lists from that group alone, as negative ad-group criteria; a
-                                  list a group both targets and excludes, or that the campaign already
-                                  excludes, is refused. A refusal names the group — by its position
-                                  when the name itself is what is refused.
+                                  two names equal under simple case folding (Go's
+                                  `strings.EqualFold`, so `ſ` matches `s` and KELVIN SIGN matches
+                                  `k`) are refused, as on Search's `adGroups`. `creative` is
+                                  REQUIRED and takes the `displayCreative` shape and rules, images
+                                  included. The four audience lists take the shapes and rules of the
+                                  campaign-level fields of the same names and are attached as
+                                  TARGETING on that group alone; every group with audiences is
+                                  created with the AUDIENCE bidOnly false targeting setting.
+                                  `excludedAudienceSegments` excludes user lists from that group
+                                  alone, as negative ad-group criteria; a list a group both targets
+                                  and excludes, or that the campaign already excludes, is refused. A
+                                  refusal names the group — by its position when the name itself is
+                                  what is refused.
 
                                   With the list set, `displayCreative`, `audienceSegments`,
                                   `customAudiences`, `customAffinities` and `userInterests` must be
@@ -2052,17 +2059,21 @@ displayAdGroups?:               — OPTIONAL several named Display ad groups (#4
                                   Every group's images are fetched in ONE pass before the budget mutate,
                                   under one 64 MiB total for the whole campaign.
 
-                                  Each group's ad group, audience criteria and exclusions are created
-                                  in order, then the campaign-level exclusions, then each group's image
-                                  assets and ad, so every criteria step runs before any ad. The result
-                                  lists every group in `adGroups` ({name, id, adIds,
-                                  audienceCriteriaIds, excludedAudienceCriteriaIds, creativeAssetIds});
-                                  the scalar `adGroupId`, `adId`, `audienceCriteriaIds` and
-                                  `creativeAssetIds` are the FIRST group's. A failure returns what
-                                  exists, a group that failed is listed with no id, and an ambiguous
-                                  outcome is UNCONFIRMED. A status toggle cascades over every group's
-                                  ad. Omitted, the campaign gets the single ad group it always had,
-                                  byte-for-byte. The same validation runs on the `adoptExisting` path.
+                                  Each group's ad group, audience criteria and exclusions are
+                                  created in order, then the campaign-level exclusions, then each
+                                  group's image assets and ad, so every criteria step runs before
+                                  any ad. The result lists every group in `adGroups` ({name, id,
+                                  adIds, audienceCriteriaIds, excludedAudienceCriteriaIds,
+                                  creativeAssetIds}); the scalar `adGroupId`, `adId`,
+                                  `audienceCriteriaIds` and `creativeAssetIds` are the FIRST
+                                  group's. A failure returns what exists: a group whose ad group
+                                  create failed is listed with no id; a failure in the ad pass
+                                  leaves that group and every later one listed with its id and no
+                                  `adIds`, and the error names the later groups. An ambiguous
+                                  outcome is UNCONFIRMED. A status toggle cascades over every
+                                  group's ad. Omitted, the campaign gets the single ad group it
+                                  always had, byte-for-byte. The same validation runs on the
+                                  `adoptExisting` path.
 adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When true, the dispatcher first
                                   looks the composed campaign name up on the account and, if a single
                                   live campaign already carries it, ADOPTS that campaign instead of

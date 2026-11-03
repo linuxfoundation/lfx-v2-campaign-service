@@ -176,6 +176,16 @@ func TestValidateDisplayAdGroups_Refusals(t *testing.T) {
 		wantSub string
 	}{
 		"off display": {campaignKindSearch, withGroups(group("A")), "Display ad groups are not supported on Search Campaign"},
+		// Each channel is pointed at its OWN ad-group shape, not at Search's list.
+		"off display/search": {campaignKindSearch, withGroups(group("A")),
+			"(a Search campaign takes its own ad-group list, AdGroups)"},
+		"off display/demand gen": {campaignKindDemandGen, withGroups(group("A")),
+			"(a Demand Gen campaign creates one ad group, from DemandGenCreative)"},
+		"off display/video": {campaignKindVideo, withGroups(group("A")),
+			"(a Video campaign creates one ad group, from VideoCreative)"},
+		"off display/performance max": {campaignKindPerformanceMax, withGroups(group("A")),
+			"(a Performance Max campaign has no ad groups; its asset group comes from " +
+				"PerformanceMaxCreative)"},
 		"campaign-level creative too": {campaignKindDisplay, func(in *CampaignInput) {
 			withGroups(group("A"))(in)
 			in.DisplayCreative = displayCreativeAt(base)
@@ -200,8 +210,18 @@ func TestValidateDisplayAdGroups_Refusals(t *testing.T) {
 			"6 Display ad groups requested, limit 5"},
 		"blank name": {campaignKindDisplay, withGroups(group(" | ")), "Display ad group 1 has no name"},
 		"duplicate name ignoring case and spacing": {campaignKindDisplay, withGroups(group("Retargeting"), group("  RETARGETING ")), "is used more than once"},
-		"over-long name": {campaignKindDisplay, withGroups(group(strings.Repeat("a", 250))), "Display ad group 1: google-ads ad group name exceeds 255"},
-		"no creative":    {campaignKindDisplay, withGroups(DisplayAdGroup{Name: "A"}), "has no creative"},
+		// Simple case folding, as strings.EqualFold: LONG S folds with s and KELVIN SIGN
+		// with k, which strings.ToLower keeps apart.
+		"duplicate name under long s": {campaignKindDisplay,
+			withGroups(group("ſale"), group("SALE")), "is used more than once"},
+		"duplicate name under kelvin sign": {campaignKindDisplay,
+			withGroups(group("KubeCon"), group("kubecon")), "is used more than once"},
+		"over-long name": {campaignKindDisplay, withGroups(group(strings.Repeat("a", 250))),
+			"google-ads: Display ad group 1 name \"" + displayGroupBase + " | " +
+				strings.Repeat("a", 250) + "\" is 290 characters, over Google's limit of 255; " +
+				"shorten EventName or this group's name"},
+		"no creative": {campaignKindDisplay, withGroups(DisplayAdGroup{Name: "A"}),
+			"has no creative"},
 		"bad group creative": {campaignKindDisplay, func(in *CampaignInput) {
 			g := group("A")
 			g.Creative.BusinessName = ""
@@ -239,6 +259,14 @@ func TestValidateDisplayAdGroups_Refusals(t *testing.T) {
 			withGroups(group("B"), g)(in)
 			in.ExcludedAudienceSegments = []string{"customers/1234567890/userLists/11"}
 		}, "targets it and the campaign excludes it"},
+		// A leading zero is refused, not read as a second list: 011 and 11 are one id.
+		"non-canonical list id": {campaignKindDisplay, func(in *CampaignInput) {
+			g := group("A")
+			g.AudienceSegments = []string{"customers/1234567890/userLists/011"}
+			withGroups(g)(in)
+			in.ExcludedAudienceSegments = []string{"customers/1234567890/userLists/11"}
+		}, `AudienceSegments entry "customers/1234567890/userLists/011" has the id "011", ` +
+			"which is not the canonical base-10 spelling"},
 		"group and campaign exclude one list": {campaignKindDisplay, func(in *CampaignInput) {
 			g := group("A")
 			g.ExcludedAudienceSegments = []string{"customers/1234567890/userLists/11"}
@@ -621,6 +649,24 @@ func TestCreateDisplayCampaign_AdGroupsPartialResults(t *testing.T) {
 		"campaign exclusions on another account": {
 			map[string]func(int, []byte, http.ResponseWriter){"campaignCriteria:mutate": onCall(1, reply("customers/9999999999/campaignCriteria/222~710"), campaignCriteriaOK)},
 			want{"campaign audience exclusions UNCONFIRMED (campaign 222; malformed/wrong-kind/wrong-account", true, 2, "campaignCriteria:mutate", nil},
+		},
+		// Every ad group exists before the ad pass, so a stop on group 1's ad leaves group 2
+		// created with no ad: it is listed with its id and no adIds, and the error names it.
+		"first ad refused": {
+			map[string]func(int, []byte, http.ResponseWriter){"adGroupAds:mutate": onCall(0,
+				status(http.StatusBadRequest), reply("customers/1234567890/adGroupAds/334~556"))},
+			want{`display ad pass stopped at ad group "` + displayGroupBase + ` | Retargeting"; ` +
+				`the later ad group(s) "` + displayGroupBase + ` | Prospecting" were created and ` +
+				"have NO ad: google-ads display ad creation failed (ad group 333 and 3 image " +
+				"asset(s) created)", false, 2, "adGroupAds:mutate",
+				func(t *testing.T, res *CampaignResult) {
+					if res.AdID != "" || len(res.AdGroups[0].AdIDs) != 0 {
+						t.Errorf("res = %+v, want no ad on group 1", res)
+					}
+					if g := res.AdGroups[1]; g.ID != "334" || len(g.AdIDs) != 0 {
+						t.Errorf("group 2 = %+v, want its id and no adIds", g)
+					}
+				}},
 		},
 		"second ad unconfirmed": {
 			map[string]func(int, []byte, http.ResponseWriter){"adGroupAds:mutate": onCall(1, status(http.StatusServiceUnavailable), reply("customers/1234567890/adGroupAds/333~555"))},
