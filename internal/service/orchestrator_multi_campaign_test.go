@@ -287,3 +287,28 @@ func TestOrchestrator_ARetainedPartialNamesItsRow(t *testing.T) {
 		t.Fatalf("result = %+v, want the slot 2 claim row named, with its mid stage", res)
 	}
 }
+
+// A RETRY that meets a retained partial (an earlier dispatch created something upstream, then
+// failed) reports reconciliation and names the row (#453 review): its id, slot version and stored
+// labels, which for an id-less partial are the only handle on it.
+func TestOrchestrator_ARetryOfARetainedPartialNamesItsRow(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	camps.storeRow(&model.Campaign{
+		ID: "orphan", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		Variant: model.VariantDefault, SlotVersion: 1, Status: "pending",
+		Result: json.RawMessage(`{"campaignName":"n"}`), FunnelStage: stagePtr(model.FunnelStageLower),
+	})
+	disp := &labelRecordingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+
+	res := decodeResults(t, startAndWait(t, orch, jobs, StartOptions{}))
+
+	if len(disp.labels) != 0 {
+		t.Fatalf("a retry dispatched beside a retained partial %d times", len(disp.labels))
+	}
+	if len(res) != 1 || res[0].OK || !strings.Contains(res[0].Error, "reconciliation required") ||
+		res[0].CampaignRowID != "orphan" || res[0].SlotVersion != 1 || res[0].FunnelStage != "lower" {
+		t.Fatalf("result = %+v, want reconciliation required on the named orphan row with its lower stage", res)
+	}
+}

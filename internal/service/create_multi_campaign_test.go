@@ -207,3 +207,40 @@ func TestBriefService_CreateCampaigns_RefusesLabelsOnPlatformsWithoutStageNames(
 		}
 	}
 }
+
+// The service FORWARDS the expectation (#453 review): with the expectation matching the latest
+// live campaign (slot 1), the request creates slot 2. A service that dropped the map would make
+// the orchestrator treat the request as stale and reuse slot 1 instead.
+func TestBriefService_CreateCampaigns_AMatchingExpectationCreatesTheNextCampaign(t *testing.T) {
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-na-2026", Status: model.BriefApproved,
+		DeliveryType: model.DeliveryPaidMarketing, Version: 1,
+	}
+	camps := &fakeCampaignRepo{}
+	camps.storeRow(&model.Campaign{
+		ID: "row-1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderMicrosoftAds,
+		Variant: model.VariantDefault, SlotVersion: 1, PlatformCampaignID: "ms-1", Status: "created",
+	})
+	jobs := newFakeJobRepo()
+	disp := &labelRecordingDispatcher{}
+	s := NewBriefService(repo, camps, jobs, NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderMicrosoftAds: disp}))
+
+	res, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+		ProjectID: "cncf", BriefID: "b1",
+		Input: &briefs.CampaignCreateInput{
+			Platforms: []string{"microsoft-ads"}, NewVersion: true,
+			ExpectedSlotVersions: map[string]int{"microsoft-ads": 1}, FunnelStage: strp("lower"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaigns: %v", err)
+	}
+	got := decodeResults(t, waitForTerminal(t, jobs, res.JobID))
+	if len(got) != 1 || got[0].Reused || got[0].SlotVersion != 2 || got[0].FunnelStage != "lower" {
+		t.Fatalf("result = %+v, want slot 2 created with the lower stage", got)
+	}
+	if len(disp.labels) != 1 {
+		t.Fatalf("dispatched %d times, want once", len(disp.labels))
+	}
+}

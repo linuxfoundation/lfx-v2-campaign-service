@@ -1942,6 +1942,9 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				"platform", p, "job_id", jobID, "platform_campaign_id", existing.PlatformCampaignID, "has_result", len(existing.Result) > 0)
 			res.CampaignID = existing.PlatformCampaignID
 			res.Error = "a prior dispatch left an incomplete campaign upstream; reconciliation required"
+			// Name the row to reconcile: for an id-less partial it is the only handle a caller
+			// gets, and on a platform with several campaigns it says which one.
+			identifyRow(&res, existing)
 			return res
 		}
 		// A BARE pending claim (no upstream id AND no Result blob): typically a claim
