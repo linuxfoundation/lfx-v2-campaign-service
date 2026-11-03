@@ -2231,6 +2231,10 @@ which is why the logo goes first in its own call. A definite failure of the atom
 means none of its assets or the ad exist (the logo does); a 5xx, a short or malformed 2xx,
 an asset result that is not this account's asset, or an ad naming another ad group is
 UNCONFIRMED. `CreativeAssetIDs` carries the logo, then the videos, then the call to action.
+A short 2xx that parsed still records every asset id it carried that passes `assetID`'s
+account and shape checks (`parsedMutateAssetIDs`, #481), as the logo upload's short arm
+records `parsedAssetIDs`; a foreign-account or malformed name, and any non-asset result,
+is not recorded. An unparseable 2xx records the logo only.
 `googleAdsMutateOperation`/`googleAdsMutateResponse` gained the `assetOperation` and
 `adGroupAdOperation` arms; the Performance Max request is unchanged because the new arms are
 omitted when nil.

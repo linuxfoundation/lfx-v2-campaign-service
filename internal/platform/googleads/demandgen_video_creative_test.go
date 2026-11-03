@@ -438,6 +438,21 @@ func TestCreateDemandGenCampaign_BadVideoLogoFailsBeforeAnyMutate(t *testing.T) 
 	}
 }
 
+// atomicAnswer overrides the video ad's googleAds:mutate with a fixed 2xx body.
+func atomicAnswer(body string) map[string]func(int, []byte, http.ResponseWriter) {
+	return map[string]func(int, []byte, http.ResponseWriter){
+		"googleAds:mutate": func(_ int, _ []byte, w http.ResponseWriter) {
+			_, _ = io.WriteString(w, body)
+		},
+	}
+}
+
+// The video and call-to-action asset results a short atomic response may carry.
+const (
+	videoAsset950 = `{"assetResult":{"resourceName":"customers/1234567890/assets/950"}}`
+	ctaAsset951   = `{"assetResult":{"resourceName":"customers/1234567890/assets/951"}}`
+)
+
 // Every failure of the two video-ad steps is a partial result carrying the campaign, the
 // ad group and whatever asset ids are known, and an ambiguous one is UNCONFIRMED.
 func TestCreateDemandGenCampaign_VideoAdFailuresArePartialResults(t *testing.T) {
@@ -480,11 +495,35 @@ func TestCreateDemandGenCampaign_VideoAdFailuresArePartialResults(t *testing.T) 
 			}},
 			wantSub: "creation UNCONFIRMED", wantAssets: "900",
 		},
-		"atomic short": {
-			overrides: map[string]func(int, []byte, http.ResponseWriter){"googleAds:mutate": func(_ int, _ []byte, w http.ResponseWriter) {
-				_, _ = io.WriteString(w, `{"mutateOperationResponses":[{"assetResult":{"resourceName":"customers/1234567890/assets/950"}}]}`)
-			}},
-			wantSub: "and 1 logo asset(s) created; 2xx with a malformed/short mutate response", wantAssets: "900",
+		"atomic malformed": {
+			overrides:  atomicAnswer(`{"mutateOperationResponses":`),
+			wantSub:    "and 1 logo asset(s) created; 2xx with a malformed mutate response",
+			wantAssets: "900",
+		},
+		// A short response that PARSED keeps every same-account asset id it carried (#481).
+		"atomic short with a video id": {
+			overrides:  atomicAnswer(`{"mutateOperationResponses":[` + videoAsset950 + `]}`),
+			wantSub:    "and 1 logo asset(s) created; 2xx returned 1 result(s) for 3 operation(s)",
+			wantAssets: "900,950",
+		},
+		"atomic short with a call-to-action id": {
+			overrides:  atomicAnswer(`{"mutateOperationResponses":[{},` + ctaAsset951 + `]}`),
+			wantSub:    "2xx returned 2 result(s) for 3 operation(s)",
+			wantAssets: "900,951",
+		},
+		"atomic short with a foreign-account id": {
+			overrides: atomicAnswer(`{"mutateOperationResponses":[` +
+				`{"assetResult":{"resourceName":"customers/9999999999/assets/950"}},` +
+				ctaAsset951 + `]}`),
+			wantSub:    "2xx returned 2 result(s) for 3 operation(s)",
+			wantAssets: "900,951",
+		},
+		"atomic short with a malformed asset name and an ad": {
+			overrides: atomicAnswer(`{"mutateOperationResponses":[` +
+				`{"assetResult":{"resourceName":"customers/1234567890/assets/x9"}},` +
+				`{"adGroupAdResult":{"resourceName":"customers/1234567890/adGroupAds/333~444"}}]}`),
+			wantSub:    "2xx returned 2 result(s) for 3 operation(s)",
+			wantAssets: "900",
 		},
 		"atomic wrong-account asset": {
 			overrides: map[string]func(int, []byte, http.ResponseWriter){"googleAds:mutate": func(_ int, _ []byte, w http.ResponseWriter) {

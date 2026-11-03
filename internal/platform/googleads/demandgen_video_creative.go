@@ -372,8 +372,24 @@ func (c *Client) createDemandGenVideoAd(ctx context.Context, adGroupResource, ad
 		return assetIDs, "", fmt.Errorf("google-ads demand gen video ad %q creation failed (ad group %s and %d logo asset(s) created; the ad and its %d video/call-to-action asset(s) are created in one atomic request, so none of them exists): %w", adName, adGroupID, len(assetIDs), assetOpCount, err)
 	}
 	var results googleAdsMutateResponse
-	if uErr := json.Unmarshal(resp, &results); uErr != nil || len(results.MutateOperationResponses) != len(ops) {
-		return assetIDs, "", fmt.Errorf("google-ads demand gen video ad %q creation UNCONFIRMED (ad group %s and %d logo asset(s) created; 2xx with a malformed/short mutate response — the ad and its assets may exist — verify in Google Ads before retrying)", adName, adGroupID, len(assetIDs))
+	if uErr := json.Unmarshal(resp, &results); uErr != nil {
+		return assetIDs, "", fmt.Errorf("google-ads demand gen video ad %q creation UNCONFIRMED "+
+			"(ad group %s and %d logo asset(s) created; 2xx with a malformed mutate response — "+
+			"the ad and its assets may exist — verify in Google Ads before retrying)",
+			adName, adGroupID, len(assetIDs))
+	}
+	if len(results.MutateOperationResponses) != len(ops) {
+		// The body PARSED, so every asset id it did carry that passes assetID's account and
+		// shape checks is a real handle on an asset that may exist; it goes back WITH the
+		// error, as the logo upload's short arm returns parsedAssetIDs. The logo count is
+		// taken first so the message still counts only the logo assets.
+		logoCount := len(assetIDs)
+		assetIDs = append(assetIDs, c.parsedMutateAssetIDs(results)...)
+		return assetIDs, "", fmt.Errorf("google-ads demand gen video ad %q creation UNCONFIRMED "+
+			"(ad group %s and %d logo asset(s) created; "+
+			"2xx returned %d result(s) for %d operation(s) — "+
+			"the ad and its assets may exist — verify in Google Ads before retrying)",
+			adName, adGroupID, logoCount, len(results.MutateOperationResponses), len(ops))
 	}
 	for i, r := range results.MutateOperationResponses[:assetOpCount] {
 		id := ""

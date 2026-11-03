@@ -1685,7 +1685,8 @@ demandGenVideoCreative?:        — OPTIONAL Demand Gen VIDEO responsive ad (#46
                                   budget mutate when longer. The result carries
                                   `creativeAssetIds` (logo, videos, call to action) and `adId`; a
                                   failure of the atomic request means none of its assets or the ad
-                                  exist, an ambiguous one is UNCONFIRMED.
+                                  exist, an ambiguous one is UNCONFIRMED. A short 2xx is UNCONFIRMED
+                                  and still records each same-account asset id it carried.
 demandGenAdGroups?:             — OPTIONAL several Demand Gen ad groups (#460). DEMAND GEN ONLY,
   {name: string,                  and REFUSED on every other `channel`. At most 5 (a service
    audience?: string,             bound: every group's images are held before the budget mutate,

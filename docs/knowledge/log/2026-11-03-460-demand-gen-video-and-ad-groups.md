@@ -19,7 +19,9 @@ optional call to action from five probed CallToActionType values. The composed a
 held to Google's 255-character limit before the budget. The creative is refused off Demand
 Gen and beside `demandGenCreative`. The logo is fetched before the budget and uploaded by
 `assets:mutate`; then one atomic `googleAds:mutate` creates the YouTube and call-to-action
-assets and the PAUSED ad, named `<ad group name> - Video ad`.
+assets and the PAUSED ad, named `<ad group name> - Video ad`. A short 2xx from that request
+is UNCONFIRMED but still records each same-account video or call-to-action asset id it
+carried (#481 review), as the logo upload's short arm does.
 
 `googleAdsConfig.demandGenAdGroups` maps to `CampaignInput.DemandGenAdGroups`
 (`demandgen_adgroups.go`): up to five named groups, each with its own Audience and exactly
