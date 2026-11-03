@@ -441,14 +441,21 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 
 	// Step 4b: sitelinks, callouts and structured snippets, linked at the CAMPAIGN level
 	// by the same two mutates and the same step sentence the Search cascade uses (#461);
-	// the preflight has already refused every other extension type on this channel. After
-	// the criteria for Search's reason — this is the step that can leave something behind
-	// (unlinked assets) — and before the asset group, so a failure here strands no group.
+	// the preflight has already refused every other extension type on this channel.
+	//
+	// BEFORE the asset group, so a failure here leaves no group. That matters because
+	// googleAdsActivationGate (internal/dispatch/googleads.go) refuses to activate a
+	// Performance Max campaign with no recorded asset group id: a campaign whose
+	// extensions failed therefore cannot be un-paused by this service, and the operator
+	// re-runs the create or completes both the extensions and the group by hand. The
+	// error says the group was not attempted, so nobody goes looking for one.
 	if !pf.assets.empty() {
 		assetIDs, linkIDs, assetErr := c.createCampaignAssets(ctx, campaignResource, campaignID, pf.assets)
 		res.ExtensionAssetIDs = assetIDs
 		if assetErr != nil {
-			return res, assetErr
+			// %w keeps the chain, so IsOutcomeUnconfirmed and every errors.As predicate
+			// still read an ambiguous extension outcome as UNCONFIRMED.
+			return res, fmt.Errorf("%w; the Performance Max asset group was NOT attempted (campaign %s has no asset group)", assetErr, campaignID)
 		}
 		res.ExtensionLinkIDs = linkIDs
 		steps = append(steps, fmt.Sprintf("Ad extensions applied: %d assets (%s)", len(linkIDs), assetStep(pf.assets)))

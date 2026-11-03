@@ -3699,9 +3699,10 @@ stops delivery. An adapter that returns an empty
 variant is refused by the service layer too, so a contract violation cannot fall back to `default`.
 
 **A Performance Max asset group id is not a serving campaign, and the gate stopped treating it as
-one.** `createPerformanceMaxAssetGroup` returns the group id whenever Google answered 2xx, even when not
-every link could be read back, deliberately — the group then exists, and clearing the id would hide
-it; rows written by the earlier three-call cascade can also hold a group whose link step failed
+one.** `createPerformanceMaxAssetGroup` returns the group's resource name (`pmax.go` records the
+id) whenever Google answered 2xx, even when not every link could be read back, deliberately —
+the group then exists, and clearing the id would hide it; rows written by the earlier
+three-call cascade can also hold a group whose link step failed
 outright (#437 made the group and its links one atomic request). But the activation gate used to key on that id alone, so
 exactly the campaign that cannot serve was the one it called provisioned: it un-paused a campaign
 whose asset group was empty and reported success. The gate now reads a second recorded fact,

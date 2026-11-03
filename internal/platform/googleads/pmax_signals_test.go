@@ -57,6 +57,7 @@ func TestValidatePerformanceMaxSignals_AbsentIsAnEmptyPlan(t *testing.T) {
 }
 
 func TestValidatePerformanceMaxSignals_RefusesBadInput(t *testing.T) {
+	// maxSearchThemes+1 = 51: the probe's own refusal point.
 	tooMany := make([]string, maxSearchThemes+1)
 	for i := range tooMany {
 		tooMany[i] = "theme " + strconv.Itoa(i)
@@ -69,7 +70,7 @@ func TestValidatePerformanceMaxSignals_RefusesBadInput(t *testing.T) {
 		"empty theme":       {themes: []string{"kubecon", "  "}, want: "search theme 1 is empty"},
 		"theme over 80":     {themes: []string{strings.Repeat("k", maxSearchThemeRunes+1)}, want: "81 characters, exceeding the 80 limit"},
 		"duplicate theme":   {themes: []string{"KubeCon", "kubecon "}, want: `"kubecon" is listed more than once`},
-		"too many themes":   {themes: tooMany, want: "at most 25 search themes, got 26"},
+		"too many themes":   {themes: tooMany, want: "at most 50 search themes, got 51"},
 		"foreign audience":  {audience: "customers/9999999999/audiences/5", want: "belongs to customer 9999999999, not the campaign's account 1234567890"},
 		"user list":         {audience: "customers/1234567890/userLists/5", want: "neither a numeric audience id nor"},
 		"non-numeric id":    {audience: "customers/1234567890/audiences/abc", want: "neither a numeric audience id nor"},
@@ -335,13 +336,7 @@ func TestCreatePerformanceMaxCampaign_CreatesSignalsOnTheConfirmedGroup(t *testi
 		t.Errorf("AssetGroupSignalIDs = %s, want 7000,7001,7002", got)
 	}
 	wantStep := "Asset group signals applied: 3 signal(s) on asset group 555 (2 search theme(s), 1 audience signal)"
-	found := false
-	for _, s := range res.Steps {
-		if s == wantStep {
-			found = true
-		}
-	}
-	if !found {
+	if !hasExactStep(res.Steps, wantStep) {
 		t.Errorf("Steps = %v, want %q", res.Steps, wantStep)
 	}
 }
@@ -551,6 +546,8 @@ func TestCreatePerformanceMaxCampaign_ExtensionFailureStopsBeforeTheGroup(t *tes
 		linkH       http.HandlerFunc
 		unconfirmed bool
 	}{
+		// Only the HTTP status decides the outcome; the error code is a placeholder, not a
+		// verified Google refusal.
 		"definite": {linkH: gaqlError(http.StatusBadRequest, "campaignAssetError", "FIELD_TYPE_INCOMPATIBLE_WITH_CAMPAIGN_TYPE")},
 		"ambiguous": {
 			linkH:       func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) },
@@ -572,6 +569,14 @@ func TestCreatePerformanceMaxCampaign_ExtensionFailureStopsBeforeTheGroup(t *tes
 			}
 			if got := strings.Contains(err.Error(), "UNCONFIRMED"); got != tc.unconfirmed {
 				t.Errorf("UNCONFIRMED in %q = %v, want %v", err, got, tc.unconfirmed)
+			}
+			// The wrap that adds "not attempted" must keep the chain: the ambiguous outcome
+			// still classifies as unconfirmed through errors.As, not only by its text.
+			if got := IsOutcomeUnconfirmed(err); got != tc.unconfirmed {
+				t.Errorf("IsOutcomeUnconfirmed(%q) = %v, want %v", err, got, tc.unconfirmed)
+			}
+			if !strings.Contains(err.Error(), "asset group was NOT attempted") {
+				t.Errorf("err = %v, want it to say the asset group was not attempted", err)
 			}
 			if res == nil || res.CampaignID != "222" {
 				t.Fatalf("result = %+v, want a partial carrying the campaign", res)
@@ -608,5 +613,87 @@ func TestCreatePerformanceMaxSignals_DoneContextSendsNothing(t *testing.T) {
 	}
 	if ids != nil {
 		t.Errorf("ids = %v, want none", ids)
+	}
+}
+
+// The cap is the probed one: 50 themes validate.
+func TestValidatePerformanceMaxSignals_AcceptsFiftyThemes(t *testing.T) {
+	in := pmaxSignalInput()
+	in.PerformanceMaxSearchThemes = make([]string, 50)
+	for i := range in.PerformanceMaxSearchThemes {
+		in.PerformanceMaxSearchThemes[i] = "theme " + strconv.Itoa(i)
+	}
+	plan, err := validatePerformanceMaxSignals(campaignKindPerformanceMax, "1234567890", in, true)
+	if err != nil || len(plan.searchThemes) != 50 {
+		t.Errorf("themes = %d, err = %v, want all 50 accepted", len(plan.searchThemes), err)
+	}
+}
+
+// Google answered 2xx WITH the group's resource name but not every link could be
+// confirmed: the group id is kept and zero links recorded, and no signal is sent to a
+// group this client cannot vouch for.
+func TestCreatePerformanceMaxCampaign_UnconfirmedLinksSendNoSignals(t *testing.T) {
+	assetH, _ := okPMaxAssets()
+	groupH, _ := groupMutate(0) // the group result, no link results
+	cascade := pmaxCascade(t, pmaxImages(t), assetH, groupH)
+	var (
+		mu         sync.Mutex
+		signalSent bool
+	)
+	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(raw), "assetGroupSignalOperation") {
+			mu.Lock()
+			signalSent = true
+			mu.Unlock()
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		cascade(w, r)
+	})
+	c := demandGenClient(t, srv)
+	in := demandGenInput()
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+	in.PerformanceMaxSearchThemes = []string{"kubecon"}
+	in.PerformanceMaxAudienceSignal = "4242"
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err == nil || !strings.Contains(err.Error(), "link creation UNCONFIRMED") {
+		t.Fatalf("err = %v, want the unconfirmed-links error", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if signalSent {
+		t.Error("an assetGroupSignalOperation was sent for a group whose links are unconfirmed")
+	}
+	if res == nil || res.AssetGroupID != "555" {
+		t.Fatalf("result = %+v, want the group id kept", res)
+	}
+	if res.AssetGroupAssetLinks == nil || *res.AssetGroupAssetLinks != 0 {
+		t.Errorf("AssetGroupAssetLinks = %v, want a recorded 0", res.AssetGroupAssetLinks)
+	}
+	if res.AssetGroupSignalIDs != nil {
+		t.Errorf("AssetGroupSignalIDs = %v, want nil", res.AssetGroupSignalIDs)
+	}
+}
+
+// The defensive guard: with no group resource name or id, nothing is sent.
+func TestCreatePerformanceMaxSignals_NoGroupSendsNothing(t *testing.T) {
+	srv := demandGenTLSServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("no request may be sent without a confirmed group")
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	c := demandGenClient(t, srv)
+	plan := performanceMaxSignalPlan{searchThemes: []string{"kubecon"}}
+	for name, tc := range map[string][2]string{
+		"no resource": {"", "555"},
+		"no id":       {"customers/1234567890/assetGroups/555", ""},
+	} {
+		ids, err := c.createPerformanceMaxSignals(context.Background(), tc[0], tc[1], plan)
+		if err == nil || !strings.Contains(err.Error(), "no confirmed asset group") {
+			t.Errorf("%s: err = %v, want the no-group refusal", name, err)
+		}
+		if ids != nil {
+			t.Errorf("%s: ids = %v, want none", name, ids)
+		}
 	}
 }

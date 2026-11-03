@@ -141,7 +141,7 @@ const (
 // PerformanceMaxCreative is the asset-group creative for a Performance Max campaign. It
 // is PERFORMANCE MAX ONLY — refused at preflight on every other channel, the mirror of
 // the way DemandGenCreative is refused off Demand Gen and the extension assets off
-// Search.
+// Search and, for three types, Performance Max.
 //
 // Images are given as URLs and downloaded by this service, for the reason stated in
 // demandgen_creative.go's header: Google's ImageAsset carries bytes and will not fetch a

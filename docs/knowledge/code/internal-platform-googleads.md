@@ -2615,8 +2615,9 @@ the field it replaced is gone from v23 entirely; no `networkSettings`, which Per
 Max does not take; and `maximizeConversions` by default — `defaultBiddingStrategy`
 answers a different strategy per channel, and manual CPC and maximize-clicks are both
 REFUSED here because Performance Max does not offer them. Geo is attached at CAMPAIGN
-level, as on Search, which is why proximity stays allowed on this channel; of the other
-Search fields only the three extension types below are accepted.
+level, as on Search, which is why proximity stays allowed on this channel; of the
+Search-only fields, only the sitelink, callout and structured-snippet extensions below are
+accepted.
 
 **`urlExpansionOptOut` is GONE; the control it carried moved.** This shell used to send
 `urlExpansionOptOut: true` so the campaign served the final URL it was given rather than
@@ -2658,8 +2659,9 @@ a Performance Max campaign without one cannot serve and an operator reading a qu
 success would not know that.
 
 **A group id alone cannot answer "can this campaign serve?", so the result carries the
-LINK COUNT too.** `createPerformanceMaxAssetGroup` returns the group id whenever Google
-answered 2xx, even when not every link could be read back — the group then exists, and
+LINK COUNT too.** `createPerformanceMaxAssetGroup` returns the group's resource name
+(`pmax.go` records the id) whenever Google answered 2xx, even when not every link could be
+read back — the group then exists, and
 clearing the id would hide it (rows from the earlier three-call cascade can also hold a
 group whose link step failed outright) — but that left the one campaign that cannot serve
 looking, to the activation gate, exactly like one that can. `CampaignResult.AssetGroupAssetLinks` records
@@ -2677,7 +2679,12 @@ Ads UI, not in a claimed launch.
 **Campaign-level extensions (#461).** `Sitelinks`, `Callouts` and `StructuredSnippets` are
 accepted on this channel and run through Search's own validators, `createCampaignAssets`
 and step sentence, after the campaign criteria and BEFORE the asset group, so a failure
-there strands no group. `validateAssetPlan` admits the channel for those three and refuses
+there leaves no group. With no recorded asset group id, `googleAdsActivationGate`
+(`internal/dispatch/googleads.go`) refuses to activate the campaign, so a campaign whose
+extensions failed cannot be un-paused by this service; the operator re-runs the create or
+completes both by hand. The error says the asset group was NOT attempted, and wraps the
+extension error with `%w`, so an ambiguous extension outcome still reads as UNCONFIRMED.
+`validateAssetPlan` admits the channel for those three and refuses
 call extensions, promotions, prices and lead forms on it. What was verified, by a
 `validateOnly` probe on 2026-11-03 (v23): `campaignAssets` creates with field types
 `SITELINK`, `CALLOUT` and `STRUCTURED_SNIPPET` on a Performance Max campaign are accepted.
@@ -2696,16 +2703,23 @@ bare id. Each result must be an `assetGroupSignals` name in this account whose c
 `<groupId>~<criterionId>` names this group; anything else is UNCONFIRMED and records no id.
 Confirmed criterion ids go to `CampaignResult.AssetGroupSignalIDs`, and the step reads
 `Asset group signals applied: N signal(s) on asset group <id> (…)`, naming only what was
-asked for. A group that failed or was unconfirmed gets no signals request at all.
+asked for. A group that failed or was unconfirmed — including a 2xx naming the group
+whose links could not all be confirmed — gets no signals request at all, and
+`createPerformanceMaxSignals` itself refuses to send without a group resource name and id.
 
 `validatePerformanceMaxSignals` runs in the pure preflight. It refuses both fields on every
 other channel, and on Performance Max when the creative is empty, since no group will exist
 to attach them to. Themes are trimmed, must be non-empty and ≤80 runes, and duplicates
 compared case-insensitively are REFUSED, as callouts and sitelinks are, so the count in the
-UI is the count sent. At most 25 per group: that is the limit Google documents, NOT one the
-probe exercised. The audience is a bare numeric id (resolved in this account) or a
+UI is the count sent. At most 50 per group, verified by a `validateOnly` probe on
+2026-11-03 (a 51st theme → `resourceCountLimitExceededError` `RESOURCE_LIMIT`); Google's help
+page still says 25. The audience is a bare numeric id (resolved in this account) or a
 `customers/<id>/audiences/<id>` name, and a name in another account is refused, as
-`validateConversionActions` refuses a foreign conversion action. One audience at most is
+`validateConversionActions` refuses a foreign conversion action. That check is ACCOUNT-scoped,
+not foundation-scoped: on the shared LF Google Ads customer a project can name another
+foundation's audience — an accepted risk for now, because on Performance Max an audience is a
+signal, not a restriction, and lfx-self-serve offers Google audience inputs only to root
+principals; a follow-up issue tracks enforcement in this service. One audience at most is
 enforced by the type, a string, because Google allows one per asset group. Verified by
 `validateOnly` probes on 2026-11-03 (v23): the theme and audience create shapes, a theme
 over 80 characters refused with `stringLengthError` `TOO_LONG`, several themes in one request,

@@ -1866,14 +1866,23 @@ performanceMaxSearchThemes?:    — OPTIONAL search themes for the asset group (
                                   to Google, not keyword targeting. Each is trimmed and must be
                                   non-empty and ≤80 characters (Google refuses longer); duplicates,
                                   compared case-insensitively, are REFUSED rather than collapsed, so
-                                  the count in the Google Ads UI is the count sent. At most 25, the
-                                  per-asset-group limit Google documents.
+                                  the count in the Google Ads UI is the count sent. At most 50 per
+                                  asset group — verified by a validateOnly probe on 2026-11-03 (a
+                                  51st is refused with RESOURCE_LIMIT); Google's help page still
+                                  says 25.
 performanceMaxAudienceSignal?:  — OPTIONAL ONE audience signal for the asset group (#461): an EXISTING
   string                          Google Ads audience, as a numeric id or a
                                   `customers/<id>/audiences/<id>` resource name. This service does not
                                   build audiences. A resource name naming ANOTHER customer is REFUSED
                                   — an audience belongs to the account that built it. One, because
                                   Google allows one audience signal per asset group.
+
+                                  The check is ACCOUNT-scoped, not foundation-scoped: on the shared
+                                  LF Google Ads customer a project can name another foundation's
+                                  audience. That is an accepted risk for now — on Performance Max
+                                  an audience is a signal, not a restriction — and lfx-self-serve
+                                  offers Google audience inputs only to root principals; a
+                                  follow-up issue tracks enforcement in this service.
 
                                   Both are PERFORMANCE MAX ONLY and REFUSED on every other `channel`,
                                   and REFUSED on `performance-max` too when `performanceMaxCreative` is

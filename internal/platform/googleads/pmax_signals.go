@@ -38,12 +38,13 @@ const (
 	// assets.go is.
 	maxSearchThemeRunes = 80
 
-	// maxSearchThemes is the per-asset-group ceiling Google's documentation states for
-	// search themes. It is AS DOCUMENTED, not probed: the 2026-11-03 probes sent several
-	// themes, not a count at the limit. It is enforced here because the signals mutate
-	// runs after the campaign and its asset group exist, and a refusal there is a partial
-	// result where the same refusal here costs one corrected request.
-	maxSearchThemes = 25
+	// maxSearchThemes is the per-asset-group search-theme ceiling: 50, verified by a
+	// validateOnly probe on 2026-11-03 (a 51st theme on the group was refused with
+	// resourceCountLimitExceededError RESOURCE_LIMIT). Google's help page still says 25,
+	// which is stale. Enforced here because the signals mutate runs after the campaign
+	// and its asset group exist, and a refusal there is a partial result where the same
+	// refusal here costs one corrected request.
+	maxSearchThemes = 50
 )
 
 // audienceResourceRE and audienceIDRE pin the two spellings an audience signal may take,
@@ -81,6 +82,12 @@ func (p performanceMaxSignalPlan) count() int {
 // the same rule callouts and sitelinks take, and for their reason — an operator who
 // pasted twenty themes and finds nineteen in the Google Ads UI deserves to have been
 // told which one collapsed, and the refusal names it before anything is paid for.
+//
+// The audience check is ACCOUNT-scoped, not foundation-scoped: on the shared LF Google Ads
+// customer, a project can name another foundation's Audience as its signal. That is an
+// accepted risk for now — on Performance Max an audience is a signal, not a restriction —
+// and lfx-self-serve offers Google audience inputs only to root principals; a follow-up
+// issue tracks enforcement in this service.
 func validatePerformanceMaxSignals(kind, customerID string, in CampaignInput, assetGroup bool) (performanceMaxSignalPlan, error) {
 	if len(in.PerformanceMaxSearchThemes) == 0 && strings.TrimSpace(in.PerformanceMaxAudienceSignal) == "" {
 		return performanceMaxSignalPlan{}, nil
@@ -164,6 +171,11 @@ func (c *Client) createPerformanceMaxSignals(ctx context.Context, groupResource,
 	if plan.empty() {
 		return nil, nil
 	}
+	// Unreachable today (pmax.go calls this only with a confirmed group); refuses rather
+	// than sends a signal naming no group.
+	if groupResource == "" || groupID == "" {
+		return nil, fmt.Errorf("google-ads Performance Max asset group signals not sent: no confirmed asset group to attach %d signal(s) to", plan.count())
+	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, fmt.Errorf("google-ads Performance Max asset group signals aborted before their request (context done; asset group %s has no signals yet): %w", groupID, ctxErr)
 	}
@@ -202,7 +214,7 @@ func (c *Client) createPerformanceMaxSignals(ctx context.Context, groupResource,
 		}
 		id := c.assetGroupSignalCriterionID(name, groupID)
 		if id == "" {
-			return nil, fmt.Errorf("google-ads Performance Max asset group signals UNCONFIRMED (asset group %s created; result %d names %q, not a signal on that asset group in this account — verify in Google Ads before retrying)", groupID, i, name)
+			return nil, fmt.Errorf("google-ads Performance Max asset group signals UNCONFIRMED (asset group %s created; result %d names %q, not a signal on that asset group in this account — verify in Google Ads before retrying)", groupID, i, capForError(name))
 		}
 		ids = append(ids, id)
 	}
