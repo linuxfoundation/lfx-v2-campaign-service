@@ -969,6 +969,11 @@ proximityTargets?:              — OPTIONAL radius targeting: "everyone within 
                                   radius. `performance-max`, `video` and `display` take campaign-level
                                   geo exactly as Search does, so radius targets are accepted on all
                                   three.
+searchPartners?: boolean        — OPTIONAL. true also serves a Search campaign on the Search
+                                  partner network (`networkSettings.targetSearchNetwork`), beside
+                                  Google Search (#457). Omitted or false keeps Google Search only,
+                                  exactly as every create before this field. SEARCH ONLY, and
+                                  REFUSED on every other `channel` before any request.
 negativeKeywords?:              — OPTIONAL Search keyword EXCLUSIONS, attached at CAMPAIGN level (not
   {text, matchType}[]             ad group), so they keep applying to any ad group a human adds later.
                                   Same `text`/`matchType` rules as `keywords` above (≤80 runes; EXACT,

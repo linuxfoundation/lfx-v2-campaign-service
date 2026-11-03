@@ -153,6 +153,12 @@ type CampaignInput struct {
 	// campaign can serve a query it will never see. Neither silence is recoverable
 	// from the created campaign, so neither is defensible.
 	NegativeKeywords []Keyword
+	// SearchPartners opts a Search campaign into the Search partner network
+	// (networkSettings.targetSearchNetwork) as well as Google Search. False, the default,
+	// keeps Google Search only, which is what every campaign before #457 was. Search only:
+	// the other channels either reject networkSettings or, on Display, pin
+	// targetSearchNetwork false, so it is refused there.
+	SearchPartners bool
 	// CPCBid is the ad group's manual CPC bid in whole units of the ad ACCOUNT's
 	// currency — the same no-FX-conversion caveat Budget carries applies here.
 	//
@@ -631,10 +637,10 @@ type campaignBudgetCreate struct {
 // (which is what an omitted networkSettings resolves to — proto3 bools default false)
 // is rejected with CampaignError.CAMPAIGN_MUST_TARGET_AT_LEAST_ONE_NETWORK, AFTER the
 // budget mutate has committed (an avoidable orphan). Google documents no protective
-// default, and every official create sample sets it. We target Google Search only
-// (the conservative choice for a PAUSED broker shell); targetSearchNetwork stays false
-// because true would require targetGoogleSearch AND opt this into Search Partners,
-// which a generic broker shouldn't assume.
+// default, and every official create sample sets it. We target Google Search, and the
+// Search partner network only when the caller asks (CampaignInput.SearchPartners, #457):
+// targetSearchNetwork requires targetGoogleSearch, and a broker shouldn't opt a campaign
+// into partners it didn't ask for.
 type campaignCreate struct {
 	Name                           string               `json:"name"`
 	Status                         string               `json:"status"`
@@ -1299,6 +1305,11 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	// Search partners are a Search network setting (#457): refused off Search, as the other
+	// Search-only fields are, so asking for them never validates and then does nothing.
+	if in.SearchPartners && kind != campaignKindSearch {
+		return nil, fmt.Errorf("google-ads: Search partners are not supported on %s (the Search partner network is a Search campaign setting); omit SearchPartners, or create a Search campaign", kind)
+	}
 	// The bid is REFUSED on Demand Gen rather than dropped. demandGenAdGroupCreate has
 	// no cpcBidMicros field and demandgen.go never reads this value, so accepting the
 	// bid there would validate it, convert it, and then silently discard it — the same
@@ -1318,7 +1329,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		return nil, err
 	}
 	// Ad-group keywords and audience segments are REFUSED on every non-Search channel
-	// for the same reason the two fences above are, and they are the last pair in this
+	// for the same reason the fences above are, and they are the last pair in this
 	// preflight that still validated and then dropped. createAdGroupTargeting is called
 	// only from createAdGroupAndAd, which is on CreateCampaign's Search cascade;
 	// CreateDemandGenCampaign and CreatePerformanceMaxCampaign never read
@@ -1546,7 +1557,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		AdvertisingChannelType:         advertisingChannelSearch,
 		CampaignBudget:                 budgetResource,
 		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
-		NetworkSettings:                networkSettings{TargetGoogleSearch: true},
+		NetworkSettings:                networkSettings{TargetGoogleSearch: true, TargetSearchNetwork: in.SearchPartners},
 		// Always set, not only when geo targets are supplied: an untargeted campaign is
 		// unaffected (there are no location criteria for it to qualify), and a campaign that
 		// gains criteria later — by adoption, or by a human adding them in the Google Ads UI —

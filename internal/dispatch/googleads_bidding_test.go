@@ -281,3 +281,32 @@ func TestGoogleAdsSnapshotConfig_KeepsTheBiddingBlockVerbatim(t *testing.T) {
 		t.Errorf("snapshot carries a URL from the bidding block: %s", raw)
 	}
 }
+
+// searchPartners reaches the Search campaign's network settings (#457); absent, the create
+// keeps Google Search only, byte for byte what it sent before the field existed.
+func TestGoogleAds_SearchPartnersReachesTheSearchCampaign(t *testing.T) {
+	for name, tc := range map[string]struct {
+		cfg  string
+		want bool
+	}{
+		"set":    {`{"googleAdsConfig":{"budget":50,"searchPartners":true}}`, true},
+		"absent": {`{"googleAdsConfig":{"budget":50}}`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			opts, cap := servingServers(t)
+			d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+			if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, json.RawMessage(tc.cfg)); err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			cap.mu.Lock()
+			defer cap.mu.Unlock()
+			ns, ok := servingCreate(t, cap.campaign)["networkSettings"].(map[string]any)
+			if !ok {
+				t.Fatalf("create carries no networkSettings")
+			}
+			if ns["targetGoogleSearch"] != true || ns["targetSearchNetwork"] != tc.want || ns["targetContentNetwork"] != false {
+				t.Errorf("networkSettings = %v, want Google Search on, Search partners %v, Display off", ns, tc.want)
+			}
+		})
+	}
+}
