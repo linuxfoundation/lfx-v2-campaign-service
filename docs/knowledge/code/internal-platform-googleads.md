@@ -2187,10 +2187,14 @@ against the live account only under `validateOnly`; a real create is still unexe
 `conversions.go` is the read half and is strictly read-only:
 `ListConversionActions` is one GAQL search returning id, resource name, name,
 status, type, category and `primaryForGoal`, so a caller can build a picker
-instead of hand-copying an id out of the Google Ads UI. REMOVED actions are
-excluded in the WHERE clause rather than row-side — a removed action cannot be
-attached at all, so returning it would offer a choice guaranteed to fail — while
-PAUSED ones are kept, since a paused action is attachable. A row missing its id
+instead of hand-copying an id out of the Google Ads UI. It is served as
+`GET /projects/{project_id}/google-ads/conversion-actions` (#458; see the Google Ads
+Targeting Lookups architecture concept). Only ENABLED actions are selected, in the
+WHERE clause rather than row-side, so a dropped action never takes a slot against
+the 500-row cap: a removed action cannot be attached at all, and the picker offers
+only actions enabled now (#458 dropped PAUSED, which the read used to keep;
+`validateConversionActions` checks no status, so a paused id can still be entered
+directly). A row missing its id
 or resource name fails the WHOLE response: both are what the caller sends back on
 a create, and an absent id means the SELECT and the row struct have drifted,
 which is a fact about every row. **Creating** a conversion action is deliberately

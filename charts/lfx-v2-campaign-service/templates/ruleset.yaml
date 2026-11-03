@@ -70,16 +70,19 @@ spec:
     # Project-nested campaign API. Per the approved architecture (D2), the service
     # introduces no new FGA object types — every endpoint is nested under
     # /projects/{projectId}/… and gated on the `campaign_manager` relation of that
-    # project (reads AND writes; there is no read-only audience). The projectId is
+    # project (reads AND writes; there is no read-only audience), except the ROOT-only
+    # conversion-action list (#458, root-campaign-admin:get below). The projectId is
     # captured from the URL and the authorizer checks it against `project:{id}`.
     #
     # When OpenFGA is disabled (local dev only) all requests are allowed, matching
     # the reference-service pattern.
 
     # Every project-nested campaign path routed through the heimdall middleware in
-    # httproute.yaml is gated on the project `campaign_manager` relation. This is a
-    # SINGLE rule covering every routed family — connections, briefs, campaigns
-    # (under a brief), jobs, google-ads keywords/audience,
+    # httproute.yaml is gated on the project `campaign_manager` relation, except the one
+    # path the root-campaign-admin rule below gates on the ROOT project instead
+    # (google-ads/conversion-actions, #458). This is a
+    # SINGLE rule covering every other routed family — connections, briefs, campaigns
+    # (under a brief), jobs, the google-ads reads and create-form lookups,
     # meta-ads, reddit-ads, twitter-ads and linkedin-ads audience, reddit-ads keywords, and hubspot UTM — because they share the exact same
     # authorization (D2:
     # campaign_manager on project:{projectId}, reads AND writes). Keeping them in one
@@ -226,6 +229,8 @@ spec:
           # so this check is not the data boundary). campaign_manager reads; nothing persisted.
           - path: /projects/:projectId/google-ads/geo-targets
           - path: /projects/:projectId/google-ads/user-lists
+          # NOT here: /projects/:projectId/google-ads/conversion-actions is ruled by the
+          # root-campaign-admin rule below, which admits ROOT principals only (#458).
           # Microsoft keyword read (LFXV2-2665): the Google read's row shape, served from a
           # saved asynchronous Microsoft report. A campaign_manager read like its Google sibling.
           - path: /projects/:projectId/microsoft-ads/keywords
@@ -324,6 +329,66 @@ spec:
             values:
               relation: campaign_manager
               object: "project:{{ "{{- .Request.URL.Captures.projectId -}}" }}"
+        {{- else }}
+        - authorizer: allow_all
+        {{- end }}
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience }}
+
+    # Root-only Google Ads conversion-action list (#458). The Google Ads customer is shared
+    # by every foundation, so GET .../google-ads/conversion-actions lists EVERY foundation's
+    # conversion action names. It is therefore NOT in project-api: a campaign_manager of the
+    # project in the path must not read it. This rule admits only a cross-foundation
+    # principal — `writer_guard` OR `global_marketing_ops` on the ROOT project, the same two
+    # checks as lfx-self-serve's isRootCampaignPrincipal — in one openfga_or_check.
+    # `writer_guard`, not `writer`: the platform model says endpoints guard on the _guard
+    # relation (`writer or global_writer`), and lfx-self-serve's ROOT-writer check reads it.
+    #
+    # The ROOT project's UID comes from the chart value openfga.rootProjectUid, set per
+    # environment, NOT from project_slug_resolver_contextualizer: project-service's HTTP
+    # slug-to-uid lookup refuses the slug "ROOT" (its slug pattern is lower-case), so the
+    # resolver would fail and deny every caller. The :projectId capture is not consulted for
+    # authorization, so there is no project campaign_manager check here — a ROOT principal is
+    # cross-foundation by definition.
+    #
+    # With OpenFGA enabled and rootProjectUid EMPTY, this one route is deny_all (fail closed)
+    # rather than failing the whole render, which would block every environment's sync until
+    # the value is set. A non-empty value that is not a UUID fails the render. oidc and
+    # anonymous_authenticator are paired as in project-api, so it is openfga_or_check that
+    # rejects an anonymous subject. With OpenFGA disabled (local dev only) it is allow_all, as
+    # project-api does. GET only: the endpoint is a read.
+    {{- $rootProjectUid := toString (.Values.openfga.rootProjectUid | default "") }}
+    {{- if and $rootProjectUid (not (regexMatch "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" $rootProjectUid)) }}
+    {{- fail (printf "openfga.rootProjectUid must be the ROOT project's UUID or empty, got %q" $rootProjectUid) }}
+    {{- end }}
+    - id: "rule:lfx:lfx-v2-campaign-service:root-campaign-admin:get"
+      allow_encoded_slashes: 'off'
+      match:
+        methods:
+          - GET
+        routes:
+          - path: /projects/:projectId/google-ads/conversion-actions
+      execute:
+        - authenticator: oidc
+        - authenticator: anonymous_authenticator
+        {{- if .Values.app.use_oidc_contextualizer }}
+        - contextualizer: oidc_contextualizer
+        {{- end }}
+        {{- if .Values.openfga.enabled }}
+        {{- if $rootProjectUid }}
+        - authorizer: openfga_or_check
+          config:
+            values:
+              relation: writer_guard
+              object: "project:{{ $rootProjectUid }}"
+              or_relation: global_marketing_ops
+              or_object: "project:{{ $rootProjectUid }}"
+        {{- else }}
+        # openfga.rootProjectUid is unset for this environment: fail closed on this route only.
+        - authorizer: deny_all
+        {{- end }}
         {{- else }}
         - authorizer: allow_all
         {{- end }}

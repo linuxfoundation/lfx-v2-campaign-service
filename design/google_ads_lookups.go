@@ -8,9 +8,9 @@ import (
 	. "goa.design/goa/v3/dsl"
 )
 
-// Targeting lookups for the Google Ads create form. googleAdsConfig.geoTargets and
-// googleAdsConfig.audienceSegments both take raw Google ids; these two reads let a picker offer
-// them instead of making an operator type them. Neither persists anything.
+// Lookups for the Google Ads create form. googleAdsConfig.geoTargets, audienceSegments and
+// conversionActions take raw Google ids; these three reads let a picker offer them instead of
+// making an operator type them. None persists anything.
 
 // googleAdsGeoSuggestMax caps the suggestions returned. Google's own suggest answer is short;
 // the cap keeps the response a picker's worth whatever it sends.
@@ -65,7 +65,31 @@ var GoogleAdsUserLists = Type("google-ads-user-lists", func() {
 	Required("account_id", "user_lists", "user_list_count", "truncated")
 })
 
-// googleAdsLookupMethods declares the two reads inside the connections service. Called from
+// GoogleAdsConversionAction is one enabled conversion action on a Google Ads customer.
+var GoogleAdsConversionAction = Type("google-ads-conversion-action", func() {
+	Attribute("id", String, "The numeric conversion action id, the short form googleAdsConfig.conversionActions accepts (qualified with the campaign's own account).", func() {
+		Example("1111111111")
+	})
+	Attribute("resource_name", String, "customers/{customerId}/conversionActions/{id}, the full form googleAdsConfig.conversionActions accepts. An action belongs to its own customer and cannot be attached to a campaign on another.", func() {
+		Example("customers/1234567890/conversionActions/1111111111")
+	})
+	Attribute("name", String, "The action's display name. Not an identifier.", func() { Example("Event Registrations") })
+	Attribute("status", String, "Always ENABLED: only enabled actions are listed", func() { Example("ENABLED") })
+	Attribute("type", String, "Google's ConversionActionType, verbatim: how the conversion is measured (e.g. WEBPAGE, UPLOAD_CLICKS)", func() { Example("WEBPAGE") })
+	Attribute("category", String, "Google's ConversionActionCategory, verbatim: what the conversion means (e.g. SIGNUP, PURCHASE, LEAD)", func() { Example("SIGNUP") })
+	Attribute("primary_for_goal", Boolean, "Whether the action counts toward the account's Conversions column and so drives bidding by default. A secondary action is still selectable.", func() { Example(true) })
+	Required("id", "resource_name", "name", "status", "type", "category", "primary_for_goal")
+})
+
+// GoogleAdsConversionActions is the conversion-action read.
+var GoogleAdsConversionActions = Type("google-ads-conversion-actions", func() {
+	Attribute("account_id", String, "The Google Ads customer the actions were read from: the account a Google create for this project uses", func() { Example("1234567890") })
+	Attribute("conversion_actions", ArrayOf(GoogleAdsConversionAction), "The customer's enabled conversion actions, sorted by name")
+	Attribute("conversion_action_count", Int, "How many actions are in `conversion_actions`", func() { Example(1) })
+	Required("account_id", "conversion_actions", "conversion_action_count")
+})
+
+// googleAdsLookupMethods declares the three reads inside the connections service. Called from
 // that service's DSL so they share its security scheme and error types.
 func googleAdsLookupMethods() {
 	Method("suggest-google-ads-geo-targets", func() {
@@ -157,6 +181,43 @@ func googleAdsLookupMethods() {
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
 			Response("Conflict", StatusConflict)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("list-google-ads-conversion-actions", func() {
+		Description("List the ENABLED conversion actions on the Google Ads customer a Google create for this " +
+			"project uses, live from GAQL on conversion_action, for picking googleAdsConfig.conversionActions. " +
+			"Credentials resolve as for a create: the project's own connection, or the shared LF system " +
+			"credential when it has none (or when the deployment forces the LF account). " +
+			"ROOT PRINCIPALS ONLY: the Google Ads customer is shared by every foundation, so the response " +
+			"lists EVERY foundation's conversion action names, not only this project's. The gateway therefore " +
+			"admits only a cross-foundation principal — writer_guard or global_marketing_ops on the ROOT " +
+			"project, whose UID the deployment sets per environment (chart value openfga.rootProjectUid) — " +
+			"the same two checks as lfx-self-serve's isRootCampaignPrincipal. Until that value is set " +
+			"in an environment, the gateway denies this route there. Being a campaign_manager of " +
+			"{project_id} is not enough. {project_id} still selects which project's connection supplies " +
+			"the credential. More than 500 enabled actions on the customer fails the read with 503 " +
+			"rather than truncating it, and that 503 does not clear on retry: the account itself holds " +
+			"more actions than this endpoint publishes. " +
+			"A pure read: the only upstream call is googleAds:search, and nothing is persisted.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Required("project_id")
+		})
+		Result(GoogleAdsConversionActions)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/google-ads/conversion-actions")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})

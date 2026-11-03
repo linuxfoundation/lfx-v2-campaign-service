@@ -16,7 +16,8 @@ spec:
     - "lfx-api.{{ .Values.lfx.domain }}"
   rules:
     # Project-nested campaign API (the approved contract — every endpoint is
-    # /projects/{projectId}/…, gated on the project `campaign_manager` relation).
+    # /projects/{projectId}/…, gated on the project `campaign_manager` relation, except the
+    # ROOT-only conversion-action list, #458).
     #
     # project-service owns `PathPrefix: /projects/`, so we cannot claim that
     # prefix. The distinguishing token (connection-*, briefs, jobs, the provider
@@ -36,14 +37,16 @@ spec:
     # rather than assuming the render alone means it routes.
     #
     # The trailing wildcard is per-family and MUST mirror the RuleSet
-    # (ruleset.yaml `project-api`) exactly, or the route would forward sub-paths
+    # (ruleset.yaml `project-api`, plus `root-campaign-admin:get` for the one ROOT-only path,
+    # google-ads/conversion-actions) exactly, or the route would forward sub-paths
     # Heimdall has no rule for (a route/rule parity violation — an unruled path is
     # denied, or worse). Only briefs/jobs/hubspot carry `**` in the RuleSet, so
     # only they get the free `(/.*)?` tail here — which is also what routes every
     # per-campaign path below a brief, including the Meta ad-set read and pause/resume
     # (campaigns/{id}/meta-ad-sets[/{adSetId}/status|/{adSetId}/ads], LFXV2-2665), with no branch of its own. The connection-* family is ruled
     # for exactly the base, /test, and /set-credential sub-paths;
-    # google-ads/keywords|audience|campaign-ref|geo-targets|user-lists, microsoft-ads/keywords|audience|campaign-ref,
+    # google-ads/keywords|audience|campaign-ref|geo-targets|user-lists|conversion-actions,
+    # microsoft-ads/keywords|audience|campaign-ref,
     # (linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience, reddit-ads/keywords and (meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref are
     # ruled at the base path only. There is NO per-provider /metrics branch: the chart used to
     # route (google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics, but no design/
@@ -84,7 +87,7 @@ spec:
     - matches:
       - path:
           type: RegularExpression
-          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|send-workflows|google-ads/(keywords|audience|campaign-ref|geo-targets|user-lists)|microsoft-ads/(keywords|audience|campaign-ref)|(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience|reddit-ads/keywords|(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run|custom/(interpret|preview|create)))$
+          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|send-workflows|google-ads/(keywords|audience|campaign-ref|geo-targets|user-lists|conversion-actions)|microsoft-ads/(keywords|audience|campaign-ref)|(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience|reddit-ads/keywords|(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run|custom/(interpret|preview|create)))$
       {{- if .Values.heimdall.enabled }}
       filters:
         - type: ExtensionRef

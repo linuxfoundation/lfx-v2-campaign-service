@@ -31,8 +31,9 @@ import (
 // gateway checks the same token, so this is not the happy path working twice — the
 // gateway's guarantee stops at the cluster boundary, and these claims become the
 // created_by / updated_by of records that say who authorized paid ad spend. See
-// internal/infrastructure/auth. Authorization on the campaign_manager relation is
-// still enforced at the gateway, not here.
+// internal/infrastructure/auth. Authorization on the campaign_manager relation (or, for the
+// ROOT-only conversion-action list, #458, on the ROOT project) is still enforced at the
+// gateway, not here.
 var JWTAuth = JWTSecurity("jwt", func() {
 	Description("JWT issued by Heimdall; audience is this service.")
 })
@@ -1764,7 +1765,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
-	// Targeting lookups (design/google_ads_lookups.go): the geo target and user-list pickers.
+	// Create-form lookups (design/google_ads_lookups.go): the geo target, user-list and
+	// conversion-action pickers.
 	googleAdsLookupMethods()
 
 	Method("get-meta-ads-audience", func() {

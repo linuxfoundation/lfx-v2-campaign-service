@@ -409,6 +409,13 @@ func (d upstreamCapableDispatcher) ListUserLists(context.Context, string, model.
 	return &model.AudienceUserLists{Lists: []model.AudienceUserList{}}, nil
 }
 
+func (d upstreamCapableDispatcher) ListConversionActions(context.Context, string, model.Provider) (*model.ConversionActions, bool, error) {
+	if d.err != nil {
+		return nil, true, d.err
+	}
+	return &model.ConversionActions{Actions: []model.ConversionAction{}}, true, nil
+}
+
 func (d upstreamCapableDispatcher) SearchEmails(context.Context, string, model.Provider, string) ([]model.MarketingEmail, error) {
 	if d.err != nil {
 		return nil, d.err
@@ -649,6 +656,14 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opListUserLists,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ReadUserLists(ctx, "p1", platform, "")
+				return err
+			},
+		},
+		{
+			name: "list conversion actions",
+			op:   opListConversionActions,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadConversionActions(ctx, "p1", platform)
 				return err
 			},
 		},

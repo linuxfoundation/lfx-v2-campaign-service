@@ -16,11 +16,12 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// mockLookupDispatcher implements both targeting-lookup capabilities.
+// mockLookupDispatcher implements the three create-form lookup capabilities.
 type mockLookupDispatcher struct {
 	geo        []model.GeoTargetSuggestion
-	notCalled  bool // SuggestGeoTargets reports Google was not reached
+	notCalled  bool // SuggestGeoTargets and ListConversionActions report Google was not reached
 	lists      *model.AudienceUserLists
+	actions    *model.ConversionActions
 	err        error
 	gotQuery   model.GeoTargetQuery
 	gotAccount string
@@ -41,6 +42,11 @@ func (m *mockLookupDispatcher) ListUserLists(_ context.Context, _ string, _ mode
 	m.calls++
 	m.gotAccount = accountID
 	return m.lists, m.err
+}
+
+func (m *mockLookupDispatcher) ListConversionActions(context.Context, string, model.Provider) (*model.ConversionActions, bool, error) {
+	m.calls++
+	return m.actions, !m.notCalled, m.err
 }
 
 func lookupService(d PlatformDispatcher) *ConnectionService {
@@ -124,13 +130,14 @@ func TestSuggestGoogleAdsGeoTargets_RejectsBadInputBeforeAnyUpstreamCall(t *test
 	}
 }
 
-// Both lookups refuse the reserved LF scope with the same 404 every project_id-taking
+// Every lookup refuses the reserved LF scope with the same 404 every project_id-taking
 // connection endpoint uses, before any backend is consulted.
 func TestGoogleAdsLookups_RejectTheReservedSystemScope(t *testing.T) {
 	svc := NewConnectionService(nil, nil) // no backend: the guard must run first
 	_, gerr := svc.SuggestGoogleAdsGeoTargets(context.Background(), &conn.SuggestGoogleAdsGeoTargetsPayload{ProjectID: model.SystemProjectID, Q: "Austin"})
 	_, lerr := svc.ListGoogleAdsUserLists(context.Background(), &conn.ListGoogleAdsUserListsPayload{ProjectID: model.SystemProjectID})
-	for name, err := range map[string]error{"geo": gerr, "user lists": lerr} {
+	_, cerr := svc.ListGoogleAdsConversionActions(context.Background(), &conn.ListGoogleAdsConversionActionsPayload{ProjectID: model.SystemProjectID})
+	for name, err := range map[string]error{"geo": gerr, "user lists": lerr, "conversion actions": cerr} {
 		var nf *conn.NotFoundError
 		if !errors.As(err, &nf) {
 			t.Errorf("%s: err = %T %v, want 404", name, err, err)
@@ -148,13 +155,16 @@ func TestGoogleAdsLookups_ErrorMapping(t *testing.T) {
 		{"unusable connection is 400", fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected), "400"},
 		{"malformed account is 400", fmt.Errorf("%w: x", domain.ErrAccountIDMalformed), "400"},
 		{"upstream failure is 503", errors.New("google said no"), "503"},
+		{"stored account id not digits is 400", fmt.Errorf("%w: %w: x", domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid), "400"},
+		{"unusable LF system connection is 500", fmt.Errorf("%w: %w", domain.ErrSystemConnectionNotUsable, domain.ErrConnectionNotUsable), "500"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			d := &mockLookupDispatcher{err: tc.err}
 			_, gerr := lookupService(d).SuggestGoogleAdsGeoTargets(context.Background(), &conn.SuggestGoogleAdsGeoTargetsPayload{ProjectID: "cncf", Q: "Austin"})
 			_, lerr := lookupService(d).ListGoogleAdsUserLists(context.Background(), &conn.ListGoogleAdsUserListsPayload{ProjectID: "cncf"})
-			for name, err := range map[string]error{"geo": gerr, "user lists": lerr} {
+			_, cerr := lookupService(d).ListGoogleAdsConversionActions(context.Background(), &conn.ListGoogleAdsConversionActionsPayload{ProjectID: "cncf"})
+			for name, err := range map[string]error{"geo": gerr, "user lists": lerr, "conversion actions": cerr} {
 				if got := errCode(err); got != tc.want {
 					t.Errorf("%s: code = %q (%T %v), want %s", name, got, err, err, tc.want)
 				}
@@ -187,8 +197,9 @@ func TestGoogleAdsLookups_UnsupportedDispatcherIs400(t *testing.T) {
 	svc := lookupService(&mockDispatcher{})
 	_, gerr := svc.SuggestGoogleAdsGeoTargets(context.Background(), &conn.SuggestGoogleAdsGeoTargetsPayload{ProjectID: "cncf", Q: "Austin"})
 	_, lerr := svc.ListGoogleAdsUserLists(context.Background(), &conn.ListGoogleAdsUserListsPayload{ProjectID: "cncf"})
-	if errCode(gerr) != "400" || errCode(lerr) != "400" {
-		t.Errorf("geo=%v lists=%v, want 400 for both", gerr, lerr)
+	_, cerr := svc.ListGoogleAdsConversionActions(context.Background(), &conn.ListGoogleAdsConversionActionsPayload{ProjectID: "cncf"})
+	if errCode(gerr) != "400" || errCode(lerr) != "400" || errCode(cerr) != "400" {
+		t.Errorf("geo=%v lists=%v conversion actions=%v, want 400 for all three", gerr, lerr, cerr)
 	}
 }
 
@@ -317,6 +328,98 @@ func TestReadGeoTargetSuggestions_RecordsOnlyCallsThatReachedGoogle(t *testing.T
 			o := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: tc.d})
 			o.SetMetrics(rec)
 			_, _ = o.ReadGeoTargetSuggestions(context.Background(), "cncf", model.ProviderGoogleAds, model.GeoTargetQuery{Query: "a"})
+			if got := len(rec.upstreamCalls()); got != tc.want {
+				t.Errorf("%d upstream calls recorded, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestListGoogleAdsConversionActions_MapsEveryField(t *testing.T) {
+	d := &mockLookupDispatcher{actions: &model.ConversionActions{AccountID: "1234567890", Actions: []model.ConversionAction{
+		{ID: "111", ResourceName: "customers/1234567890/conversionActions/111", Name: "Event Registrations",
+			Status: "ENABLED", Type: "WEBPAGE", Category: "SIGNUP", PrimaryForGoal: true},
+		{ID: "222", ResourceName: "customers/1234567890/conversionActions/222", Name: "Newsletter",
+			Status: "ENABLED", Type: "UPLOAD_CLICKS", Category: "LEAD"},
+	}}}
+	res, err := lookupService(d).ListGoogleAdsConversionActions(context.Background(), &conn.ListGoogleAdsConversionActionsPayload{ProjectID: "cncf"})
+	if err != nil {
+		t.Fatalf("ListGoogleAdsConversionActions: %v", err)
+	}
+	if res.AccountID != "1234567890" || res.ConversionActionCount != 2 || len(res.ConversionActions) != 2 {
+		t.Fatalf("result = %+v", res)
+	}
+	want := []conn.GoogleAdsConversionAction{
+		{ID: "111", ResourceName: "customers/1234567890/conversionActions/111", Name: "Event Registrations",
+			Status: "ENABLED", Type: "WEBPAGE", Category: "SIGNUP", PrimaryForGoal: true},
+		{ID: "222", ResourceName: "customers/1234567890/conversionActions/222", Name: "Newsletter",
+			Status: "ENABLED", Type: "UPLOAD_CLICKS", Category: "LEAD"},
+	}
+	for i := range want {
+		if *res.ConversionActions[i] != want[i] {
+			t.Errorf("action %d = %+v, want %+v", i, *res.ConversionActions[i], want[i])
+		}
+	}
+}
+
+func TestListGoogleAdsConversionActions_EmptyIsAnEmptyArray(t *testing.T) {
+	d := &mockLookupDispatcher{actions: &model.ConversionActions{AccountID: "1234567890", Actions: []model.ConversionAction{}}}
+	res, err := lookupService(d).ListGoogleAdsConversionActions(context.Background(), &conn.ListGoogleAdsConversionActionsPayload{ProjectID: "cncf"})
+	if err != nil {
+		t.Fatalf("ListGoogleAdsConversionActions: %v", err)
+	}
+	b, _ := json.Marshal(res.ConversionActions)
+	if string(b) != "[]" || res.ConversionActionCount != 0 {
+		t.Errorf("conversion_actions = %s count=%d, want [] and 0", b, res.ConversionActionCount)
+	}
+}
+
+// Unlike the user-list read, the conversion-action read is NOT refused on a shared-tenancy
+// platform (#458): it reaches the dispatcher and answers. Its boundary is the gateway's
+// root-campaign-admin rule, which admits only ROOT principals (charts parity_test.go).
+func TestListGoogleAdsConversionActions_SharedTenancyIsNotRefused(t *testing.T) {
+	d := &sharedTenancyLookupDispatcher{mockLookupDispatcher{actions: &model.ConversionActions{
+		AccountID: "1234567890",
+		Actions:   []model.ConversionAction{{ID: "111", ResourceName: "customers/1234567890/conversionActions/111", Status: "ENABLED"}},
+	}}}
+	res, err := lookupService(d).ListGoogleAdsConversionActions(context.Background(), &conn.ListGoogleAdsConversionActionsPayload{ProjectID: "cncf"})
+	if err != nil {
+		t.Fatalf("err = %T %v, want the shared account's actions", err, err)
+	}
+	if d.calls != 1 || res.ConversionActionCount != 1 {
+		t.Errorf("calls=%d count=%d, want the dispatcher reached once and one action", d.calls, res.ConversionActionCount)
+	}
+}
+
+func TestReadConversionActions_NilResultIsAnError(t *testing.T) {
+	for name, res := range map[string]*model.ConversionActions{"nil result": nil, "nil actions": {AccountID: "1234567890"}} {
+		o := &Orchestrator{dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: &mockLookupDispatcher{actions: res}}}
+		if _, err := o.ReadConversionActions(context.Background(), "cncf", model.ProviderGoogleAds); err == nil {
+			t.Errorf("%s: must not be reported as an empty answer", name)
+		}
+	}
+}
+
+// Only a conversion-action read that reached Google is recorded: a local refusal (no or an
+// unusable connection) records nothing; a call that went out, successful or not, records one.
+func TestReadConversionActions_RecordsOnlyCallsThatReachedGoogle(t *testing.T) {
+	empty := &model.ConversionActions{AccountID: "1234567890", Actions: []model.ConversionAction{}}
+	cases := []struct {
+		name string
+		d    *mockLookupDispatcher
+		want int
+	}{
+		{"no connection", &mockLookupDispatcher{err: domain.ErrNotFound, notCalled: true}, 0},
+		{"unusable connection", &mockLookupDispatcher{err: fmt.Errorf("%w: x", domain.ErrConnectionNotUsable), notCalled: true}, 0},
+		{"success", &mockLookupDispatcher{actions: empty}, 1},
+		{"upstream failure", &mockLookupDispatcher{err: errors.New("google 500")}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingMetrics{}
+			o := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: tc.d})
+			o.SetMetrics(rec)
+			_, _ = o.ReadConversionActions(context.Background(), "cncf", model.ProviderGoogleAds)
 			if got := len(rec.upstreamCalls()); got != tc.want {
 				t.Errorf("%d upstream calls recorded, want %d", got, tc.want)
 			}

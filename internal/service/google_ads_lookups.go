@@ -37,13 +37,24 @@ type UserListReader interface {
 	ListUserLists(ctx context.Context, projectID string, platform model.Provider, accountID string) (*model.AudienceUserLists, error)
 }
 
+// ConversionActionReader is an OPTIONAL dispatcher capability: list the enabled conversion
+// actions on the ad account a campaign create for the project would use.
+//
+// A successful call MUST return a non-nil result with a non-nil Actions slice. called reports
+// whether the platform was actually contacted, as GeoTargetSuggester's does: false for a local
+// refusal before any request (no connection, an unusable one).
+type ConversionActionReader interface {
+	ListConversionActions(ctx context.Context, projectID string, platform model.Provider) (res *model.ConversionActions, called bool, err error)
+}
+
 // ErrTargetingLookupUnsupported re-exports the domain sentinel, as the siblings in
 // orchestrator.go do.
 var ErrTargetingLookupUnsupported = domain.ErrTargetingLookupUnsupported
 
 const (
-	opSuggestGeoTargets = "suggest_geo_targets"
-	opListUserLists     = "list_user_lists"
+	opSuggestGeoTargets     = "suggest_geo_targets"
+	opListUserLists         = "list_user_lists"
+	opListConversionActions = "list_conversion_actions"
 )
 
 // ReadGeoTargetSuggestions runs a geo target search through the platform's dispatcher. A pure
@@ -113,8 +124,47 @@ func (o *Orchestrator) ReadUserLists(ctx context.Context, projectID string, plat
 	return lists, nil
 }
 
-// googleAdsGeoTargetLookup and googleAdsUserListLookup reuse classifyDiscoveryError's
-// connection-state arms under their own operation nouns, as the keyword read does.
+// ReadConversionActions lists the enabled conversion actions on the account a create for the
+// project uses, through the platform's dispatcher. A pure read; nothing is persisted.
+//
+// Unlike ReadUserLists this is NOT refused on a shared-tenancy platform, by decision (#458):
+// the read exists for cross-foundation (LF admin) callers choosing the conversion actions a
+// Google create attaches, and on Google Ads those actions live on the one customer every
+// foundation shares, so the answer holds EVERY foundation's conversion action names. The
+// boundary is the gateway, which user lists do not have: the root-campaign-admin rule in
+// ruleset.yaml admits only writer_guard or global_marketing_ops on the ROOT project (the two
+// checks of lfx-self-serve's isRootCampaignPrincipal), so a project campaign_manager cannot
+// call this route. Nothing here re-checks that; a non-HTTP caller must not expose it.
+func (o *Orchestrator) ReadConversionActions(ctx context.Context, projectID string, platform model.Provider) (*model.ConversionActions, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrTargetingLookupUnsupported, platform)
+	}
+	r, ok := d.(ConversionActionReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrTargetingLookupUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	res, called, err := r.ListConversionActions(callCtx, projectID, platform)
+	// Recorded only when Google was reached, as ReadGeoTargetSuggestions does: a local refusal
+	// sent nothing, and recording it would count a connection fault as a platform error.
+	if called {
+		o.recordUpstream(ctx, platform, opListConversionActions, start, err)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if res == nil || res.Actions == nil {
+		return nil, fmt.Errorf("%s conversion action reader returned a nil result with no error", platform)
+	}
+	return res, nil
+}
+
+// googleAdsGeoTargetLookup, googleAdsUserListLookup and googleAdsConversionActionLookup reuse
+// classifyDiscoveryError's connection-state arms under their own operation nouns, as the keyword
+// read does.
 var (
 	googleAdsGeoTargetLookup = accountDiscovery{
 		provider:    model.ProviderGoogleAds,
@@ -130,6 +180,14 @@ var (
 			"every field set, that login_customer_id is digits only, and that an account_id is " +
 			"selected on the connection or passed as account_id",
 		operation: "user list lookup",
+	}
+	googleAdsConversionActionLookup = accountDiscovery{
+		provider:    model.ProviderGoogleAds,
+		displayName: "google ads",
+		notUsableRemedy: "check that it is active, that the stored credential is valid json with " +
+			"every field set, that login_customer_id is digits only, and that an account_id of " +
+			"digits only is selected on the connection",
+		operation: "conversion action lookup",
 	}
 )
 
@@ -294,5 +352,43 @@ func (s *ConnectionService) ListGoogleAdsUserLists(ctx context.Context, p *conn.
 		UserLists:     out,
 		UserListCount: len(out),
 		Truncated:     len(res.Lists) > n,
+	}, nil
+}
+
+// ListGoogleAdsConversionActions lists the enabled conversion actions on the Google Ads customer
+// a create for this project uses, for the googleAdsConfig.conversionActions picker.
+//
+// The answer is account-wide on a customer every foundation shares and is not isolated per
+// project, so the gateway admits only ROOT principals to it; see
+// Orchestrator.ReadConversionActions. The reserved LF scope stays unaddressable, as it is for
+// every connection read.
+func (s *ConnectionService) ListGoogleAdsConversionActions(ctx context.Context, p *conn.ListGoogleAdsConversionActionsPayload) (*conn.GoogleAdsConversionActions, error) {
+	if err := rejectSystemScope(p.ProjectID); err != nil {
+		return nil, err
+	}
+	_, _, orch, err := s.resolveBackendWithOrch(googleAdsConversionActionLookup.label())
+	if err != nil {
+		return nil, err
+	}
+	res, rerr := orch.ReadConversionActions(ctx, p.ProjectID, model.ProviderGoogleAds)
+	if rerr != nil {
+		return nil, s.classifyTargetingLookupError(ctx, p.ProjectID, googleAdsConversionActionLookup, rerr)
+	}
+	out := make([]*conn.GoogleAdsConversionAction, 0, len(res.Actions))
+	for _, a := range res.Actions {
+		out = append(out, &conn.GoogleAdsConversionAction{
+			ID:             a.ID,
+			ResourceName:   a.ResourceName,
+			Name:           a.Name,
+			Status:         a.Status,
+			Type:           a.Type,
+			Category:       a.Category,
+			PrimaryForGoal: a.PrimaryForGoal,
+		})
+	}
+	return &conn.GoogleAdsConversionActions{
+		AccountID:             res.AccountID,
+		ConversionActions:     out,
+		ConversionActionCount: len(out),
 	}, nil
 }

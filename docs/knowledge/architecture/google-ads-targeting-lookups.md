@@ -1,15 +1,16 @@
 ---
 type: "Architecture Doc"
 title: "Google Ads Targeting Lookups"
-description: "Two read-only pickers for the Google Ads create form: a geo target constant search (SuggestGeoTargetConstants, by name or postal code, returning the numeric id geoTargets accepts, readable through the LF system credential because it is public reference data) and a user-list read (GAQL on user_list, returning the resource name audienceSegments accepts, own connection only, and refused with 409 on a shared-tenancy platform such as Google Ads because the read is account-wide and no user list is recorded per project)."
+description: "Three read-only pickers for the Google Ads create form: a geo target constant search (SuggestGeoTargetConstants, by name or postal code, returning the numeric id geoTargets accepts, readable through the LF system credential because it is public reference data), a user-list read (GAQL on user_list, returning the resource name audienceSegments accepts, own connection only, and refused with 409 on a shared-tenancy platform such as Google Ads because the read is account-wide and no user list is recorded per project), and a conversion-action read (GAQL on conversion_action, ENABLED only, resolved as a create resolves; it lists every foundation's actions on the shared customer, so the gateway admits only ROOT writer_guard or ROOT global_marketing_ops holders, not a project campaign_manager)."
 resource: "internal/service/google_ads_lookups.go"
 ---
 
 # Google Ads Targeting Lookups
 
-`googleAdsConfig.geoTargets` and `googleAdsConfig.audienceSegments` take raw Google ids.
-These two reads let the self-serve create form offer them in a picker instead of making an
-operator type them (self-serve #4455, #4456). Neither persists anything.
+`googleAdsConfig.geoTargets`, `googleAdsConfig.audienceSegments` and
+`googleAdsConfig.conversionActions` take raw Google ids. These three reads let the self-serve
+create form offer them in a picker instead of making an operator type them (self-serve #4455,
+#4456; campaign-service #458). None persists anything.
 
 ## Geo target search
 
@@ -64,14 +65,54 @@ operator type them (self-serve #4455, #4456). Neither persists anything.
 - **Resolution, where it runs: own connection only** (`resolveOwnedGoogleAdsDiscovery`, caller-scoped
   token refresh), never the LF system fallback; a project with no connection of its own gets 404.
 
+## Conversion actions
+
+`GET /projects/{project_id}/google-ads/conversion-actions` (`list-google-ads-conversion-actions`,
+#458).
+
+- Upstream: one GAQL search, `SELECT conversion_action.id, resource_name, name, status, type,
+  category, primary_for_goal FROM conversion_action WHERE conversion_action.status = 'ENABLED'
+  ORDER BY conversion_action.name` (`googleads.ListConversionActions`). REMOVED and PAUSED
+  actions are not listed. More than 500 rows fails the read (503) rather than truncating it, and
+  that 503 does not clear on retry: the account holds more enabled actions than the read
+  publishes. A row without its id or resource name fails the read too.
+- `id` and `resource_name` are the two spellings `validateConversionActions` accepts.
+- **Resolution: as a create resolves** (`creds.resolve`, then the cached account-bound client):
+  the project's own connection, else the LF system fallback, and the LF account whenever the
+  deployment forces it. A conversion action belongs to one customer and the create refuses one
+  owned by another, so the list must come from the account the create will use. The stored
+  account id is checked for digits only before any request: 400 on the project's own row, and
+  500 on the LF system row it fell back to (`ErrSystemConnectionNotUsable`), which only an
+  operator can fix.
+- **ROOT principals only, enforced at the gateway.** Unlike user lists, this read is NOT refused
+  on a shared-tenancy platform. Google Ads is one customer shared by every foundation, so the
+  answer holds every foundation's conversion action names, and the read exists for
+  cross-foundation (LF admin) callers. It is therefore ruled by its own Heimdall rule,
+  `root-campaign-admin:get`, not `project-api`: one `openfga_or_check` admits `writer_guard` OR
+  `global_marketing_ops` on the ROOT project — the same two checks as lfx-self-serve's
+  `isRootCampaignPrincipal`. The ROOT project's UID is the chart value
+  `openfga.rootProjectUid`, set per environment in lfx-v2-argocd. It is not resolved at the
+  gateway because project-service's HTTP slug-to-uid lookup refuses the slug `ROOT`
+  (lfx-self-serve resolves it over NATS instead). Until an environment sets the value, the rule
+  is `deny_all` there, so the route answers 403 to everyone; a non-UUID value fails the render.
+  A `campaign_manager` of the path's project is not admitted, and `{project_id}` only selects
+  whose connection supplies the credential. GET only. With OpenFGA disabled (local dev) the rule
+  is `allow_all`, as `project-api` does. User lists have no such gate, which is why that read
+  refuses the shared account instead.
+
 ## Shared
 
 - Authorization: the gateway's `campaign_manager` check on `project:{projectId}`
-  (`ruleset.yaml`), JWT verified in the service, the reserved `system:linuxfoundation` scope
+  (`ruleset.yaml`) for geo targets and user lists, the ROOT check above for conversion actions;
+  JWT verified in the service, the reserved `system:linuxfoundation` scope
   refused with 404 (`rejectSystemScope`).
 - Errors: `classifyDiscoveryError` arms under each read's own operation noun, plus
   `ErrTargetingLookupUnsupported` (400) for a dispatcher without the capability
-  (`GeoTargetSuggester` / `UserListReader`). Upstream failures are 503, including Google refusing
-  a caller-supplied `country_code` or an `account_id` the credential cannot reach (the account
-  monitor behaves the same). Input lengths are counted in characters, matching the Goa decoder.
-- Metrics: `suggest_geo_targets` and `list_user_lists` upstream-call operations.
+  (`GeoTargetSuggester` / `UserListReader` / `ConversionActionReader`). Upstream failures are
+  503, including Google refusing a caller-supplied `country_code` or an `account_id` the
+  credential cannot reach (the account monitor behaves the same). Input lengths are counted in
+  characters, matching the Goa decoder.
+- Metrics: `suggest_geo_targets`, `list_user_lists` and `list_conversion_actions` upstream-call
+  operations. `suggest_geo_targets` and `list_conversion_actions` are recorded only when Google
+  was contacted (the dispatcher's `called`), never for a local refusal; `list_user_lists` is
+  recorded for every call.

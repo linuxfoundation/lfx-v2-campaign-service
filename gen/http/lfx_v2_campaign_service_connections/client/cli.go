@@ -1868,6 +1868,30 @@ func BuildListGoogleAdsUserListsPayload(lfxV2CampaignServiceConnectionsListGoogl
 	return v, nil
 }
 
+// BuildListGoogleAdsConversionActionsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-google-ads-conversion-actions
+// endpoint from CLI flags.
+func BuildListGoogleAdsConversionActionsPayload(lfxV2CampaignServiceConnectionsListGoogleAdsConversionActionsProjectID *string, lfxV2CampaignServiceConnectionsListGoogleAdsConversionActionsBearerToken *string) (*lfxv2campaignserviceconnections.ListGoogleAdsConversionActionsPayload, error) {
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListGoogleAdsConversionActionsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListGoogleAdsConversionActionsProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListGoogleAdsConversionActionsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListGoogleAdsConversionActionsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListGoogleAdsConversionActionsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildGetMetaAdsAudiencePayload builds the payload for the
 // lfx-v2-campaign-service-connections get-meta-ads-audience endpoint from CLI
 // flags.

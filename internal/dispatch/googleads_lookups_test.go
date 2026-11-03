@@ -5,6 +5,7 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,11 +18,13 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 var (
-	_ service.GeoTargetSuggester = (*GoogleAdsDispatcher)(nil)
-	_ service.UserListReader     = (*GoogleAdsDispatcher)(nil)
+	_ service.GeoTargetSuggester     = (*GoogleAdsDispatcher)(nil)
+	_ service.UserListReader         = (*GoogleAdsDispatcher)(nil)
+	_ service.ConversionActionReader = (*GoogleAdsDispatcher)(nil)
 )
 
 // pathRecorder records the API paths a fake Google server was asked for.
@@ -293,5 +296,185 @@ func TestGoogleAdsSuggestGeoTargets_LocalRefusalReportsNotCalled(t *testing.T) {
 	}
 	if reached.Load() {
 		t.Error("Google was contacted for a locally refused search")
+	}
+}
+
+const conversionActionBody = `{"results":[` +
+	`{"conversionAction":{"resourceName":"customers/1234567890/conversionActions/111","id":"111","name":"Event Registrations","status":"ENABLED","type":"WEBPAGE","category":"SIGNUP","primaryForGoal":true}}` +
+	`]}`
+
+// splitConnReader holds a project's own Google Ads connection and the LF system row, so a test
+// can tell which of the two a read resolved.
+type splitConnReader struct{ own, system *model.Connection }
+
+func (r splitConnReader) Get(_ context.Context, projectID string, _ model.Provider) (*model.Connection, error) {
+	c := r.own
+	if projectID == model.SystemProjectID {
+		c = r.system
+	}
+	if c == nil {
+		return nil, domain.ErrNotFound
+	}
+	return c, nil
+}
+
+func (splitConnReader) Disconnected(context.Context, string, model.Provider) (bool, error) {
+	return false, nil
+}
+
+// googleAdsConnFor is activeGoogleAdsConn bound to accountID.
+func googleAdsConnFor(accountID string) *model.Connection {
+	c := activeGoogleAdsConn(goodGoogleAdsCreds)
+	c.AccountID = accountID
+	return c
+}
+
+// The read is one googleAds:search on the connection's account, filtered to ENABLED actions,
+// and nothing else is sent: no mutate, no other path.
+func TestGoogleAdsListConversionActions_OneSearchOnTheConnectionsAccount(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		requests []string
+		queries  []string
+	)
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var req struct {
+			Query string `json:"query"`
+		}
+		_ = json.Unmarshal(b, &req)
+		mu.Lock()
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		queries = append(queries, req.Query)
+		mu.Unlock()
+		_, _ = io.WriteString(w, conversionActionBody)
+	})
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+
+	res, called, err := d.ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
+	if err != nil || !called {
+		t.Fatalf("ListConversionActions: err=%v called=%v, want success with Google contacted", err, called)
+	}
+	if res.AccountID != "1234567890" || len(res.Actions) != 1 {
+		t.Fatalf("res = %+v", res)
+	}
+	want := model.ConversionAction{ID: "111", ResourceName: "customers/1234567890/conversionActions/111", Name: "Event Registrations",
+		Status: "ENABLED", Type: "WEBPAGE", Category: "SIGNUP", PrimaryForGoal: true}
+	if res.Actions[0] != want {
+		t.Errorf("action = %+v, want %+v", res.Actions[0], want)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(requests) != 1 || !strings.HasPrefix(requests[0], http.MethodPost+" ") || !strings.HasSuffix(requests[0], "/customers/1234567890/googleAds:search") {
+		t.Fatalf("requests = %v, want exactly one googleAds:search on customer 1234567890", requests)
+	}
+	if !strings.Contains(queries[0], "FROM conversion_action WHERE conversion_action.status = 'ENABLED'") {
+		t.Errorf("query = %q, want the ENABLED-only conversion_action search", queries[0])
+	}
+}
+
+// A project with no connection of its own reads the LF system account, exactly as its create
+// would, so the ids it is offered are ones that create accepts.
+func TestGoogleAdsListConversionActions_UsesTheSystemFallback(t *testing.T) {
+	rec := &pathRecorder{}
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		rec.add(r.URL.Path)
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+	d := NewGoogleAdsDispatcher(splitConnReader{system: googleAdsConnFor("5555555555")}, identityEncryptor{}, opts...)
+
+	res, _, err := d.ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
+	if err != nil {
+		t.Fatalf("ListConversionActions through the system fallback: %v", err)
+	}
+	if res.AccountID != "5555555555" || res.Actions == nil || len(res.Actions) != 0 {
+		t.Errorf("res = %#v, want the system account and a non-nil empty list", res)
+	}
+	if got := rec.all(); len(got) != 1 || !strings.Contains(got[0], "/customers/5555555555/googleAds:search") {
+		t.Errorf("paths = %v", got)
+	}
+}
+
+// While the deployment forces the LF system account, a create ignores the project's own
+// connection, so this read must too: it resolves like a create, not like a read of an
+// existing campaign.
+func TestGoogleAdsListConversionActions_FollowsTheForcedSystemAccount(t *testing.T) {
+	rec := &pathRecorder{}
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		rec.add(r.URL.Path)
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+	// Set before the dispatcher is built: credsSource reads the flag at construction.
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	d := NewGoogleAdsDispatcher(splitConnReader{own: googleAdsConnFor("1234567890"), system: googleAdsConnFor("5555555555")}, identityEncryptor{}, opts...)
+
+	res, _, err := d.ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
+	if err != nil {
+		t.Fatalf("ListConversionActions: %v", err)
+	}
+	if res.AccountID != "5555555555" {
+		t.Errorf("account = %q, want the forced system account 5555555555", res.AccountID)
+	}
+	if got := rec.all(); len(got) != 1 || !strings.Contains(got[0], "/customers/5555555555/") {
+		t.Errorf("paths = %v", got)
+	}
+}
+
+// Local refusals never reach Google and report called=false: no connection anywhere is
+// ErrNotFound (404), and a project's own stored account id that is not digits only is a
+// connection to fix (400), not an upstream failure.
+func TestGoogleAdsListConversionActions_LocalRefusals(t *testing.T) {
+	opts, reached := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, conversionActionBody) })
+
+	_, called, err := NewGoogleAdsDispatcher(splitConnReader{}, identityEncryptor{}, opts...).
+		ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrNotFound) || called {
+		t.Errorf("no connection: err=%v called=%v, want ErrNotFound and called=false", err, called)
+	}
+
+	_, called, err = NewGoogleAdsDispatcher(fakeConnReader{conn: googleAdsConnFor("123-456-7890")}, identityEncryptor{}, opts...).
+		ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrConnectionNotUsable) || !errors.Is(err, domain.ErrProviderConfigInvalid) || called {
+		t.Errorf("dashed account id: err=%v called=%v, want ErrConnectionNotUsable and ErrProviderConfigInvalid, called=false", err, called)
+	}
+	if errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+		t.Errorf("dashed account id on the project's OWN row: err = %v, must not be tagged as the LF system row's defect", err)
+	}
+
+	if reached.Load() {
+		t.Error("Google was contacted for a locally refused read")
+	}
+}
+
+// An upstream failure is returned as one, never as a connection defect, so the service maps it
+// to 503.
+func TestGoogleAdsListConversionActions_UpstreamFailureIsNotAConnectionDefect(t *testing.T) {
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":400,"message":"bad","status":"INVALID_ARGUMENT"}}`)
+	})
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	_, called, err := d.ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
+	if err == nil || !called {
+		t.Fatalf("err=%v called=%v, want an error with Google contacted", err, called)
+	}
+	if errors.Is(err, domain.ErrConnectionNotUsable) || errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("err = %v, want an upstream error, not a local connection state", err)
+	}
+}
+
+// A non-digit account id on the LF system row a project fell back to is the LF row's defect, not
+// the project's: it carries ErrSystemConnectionNotUsable, which the service answers 500 (paging
+// the operator) rather than the 400 that would tell the project to edit a connection it lacks.
+func TestGoogleAdsListConversionActions_BadSystemRowAccountIsTheSystemRowsDefect(t *testing.T) {
+	opts, reached := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, conversionActionBody) })
+	d := NewGoogleAdsDispatcher(splitConnReader{system: googleAdsConnFor("123-456-7890")}, identityEncryptor{}, opts...)
+
+	_, called, err := d.ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrSystemConnectionNotUsable) || !errors.Is(err, domain.ErrProviderConfigInvalid) || called {
+		t.Errorf("err=%v called=%v, want ErrSystemConnectionNotUsable and ErrProviderConfigInvalid, called=false", err, called)
+	}
+	if reached.Load() {
+		t.Error("Google was contacted for a locally refused read")
 	}
 }
