@@ -511,3 +511,101 @@ func TestValidateExcludedPlacements(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// #462 beside #473: one Display ad group carrying both the income and parental-status
+// exclusions and the audience lists
+// ---------------------------------------------------------------------------
+
+// criteriaBodies serves every adGroupCriteria:mutate with one result per operation (via
+// criteriaEcho) and records each request body in order. failOn, when non-zero, answers
+// that call (1-based) with a definite 400 instead.
+func criteriaBodies(failOn int) (http.HandlerFunc, func() []string) {
+	var (
+		mu     sync.Mutex
+		bodies []string
+	)
+	h := func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(b))
+		n := len(bodies)
+		mu.Unlock()
+		if n == failOn {
+			badRequest(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, criteriaEcho(b))
+	}
+	return h, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), bodies...)
+	}
+}
+
+// The two ad-group criteria steps stay separate mutates on the one ad group: the
+// exclusions first (#473's step, right after the ad group), then the audiences, then
+// the placements. Each records its own ids, and the AUDIENCE targetingSetting the
+// audiences need sits beside the exclusions, which apply whatever bidOnly says.
+func TestCreateDisplayCampaign_ExclusionsAndAudiencesOnOneAdGroup(t *testing.T) {
+	rec := &pathRecorder{}
+	adGroupH, readAdGroup := capturedMutate(1, displayAdGroupResource)
+	criteriaH, bodies := criteriaBodies(0)
+	placementH, _ := capturedMutate(2, campaignCriterionName)
+	c := displayTargetingServer(t, rec, adGroupH, criteriaH, placementH)
+
+	in := displayTargetingInput()
+	in.ExcludedIncomeRanges = []string{"INCOME_RANGE_0_50"}
+	in.ExcludedParentalStatuses = []string{"PARENT"}
+	res, err := c.CreateDisplayCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []string{"campaignBudgets:mutate", "campaigns:mutate", "adGroups:mutate", "adGroupCriteria:mutate", "adGroupCriteria:mutate", "campaignCriteria:mutate"}
+	if got := rec.got(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("mutate order = %v, want %v", got, want)
+	}
+	got := bodies()
+	sameJSON(t, got[0], `{"operations":[
+		{"create":{"adGroup":"customers/1234567890/adGroups/333","negative":true,"incomeRange":{"type":"INCOME_RANGE_0_50"}}},
+		{"create":{"adGroup":"customers/1234567890/adGroups/333","negative":true,"parentalStatus":{"type":"PARENT"}}}
+	]}`)
+	if strings.Contains(got[1], "incomeRange") || strings.Contains(got[1], "parentalStatus") || !strings.Contains(got[1], `"userList"`) {
+		t.Errorf("second adGroupCriteria body = %s, want the audiences alone", got[1])
+	}
+	if _, ok := mutateCreate(t, readAdGroup())["targetingSetting"]; !ok {
+		t.Error("ad group sent no targetingSetting although audiences were asked for")
+	}
+	if w := []string{"900", "901"}; !reflect.DeepEqual(res.AdGroupDemographicCriteriaIDs, w) {
+		t.Errorf("AdGroupDemographicCriteriaIDs = %v, want %v", res.AdGroupDemographicCriteriaIDs, w)
+	}
+	if w := []string{"900", "901", "902", "903"}; !reflect.DeepEqual(res.AudienceCriteriaIDs, w) {
+		t.Errorf("AudienceCriteriaIDs = %v, want %v", res.AudienceCriteriaIDs, w)
+	}
+	if len(res.ExcludedPlacementCriteriaIDs) != 2 {
+		t.Errorf("ExcludedPlacementCriteriaIDs = %v, want 2", res.ExcludedPlacementCriteriaIDs)
+	}
+}
+
+// A refused exclusion stops the cascade before the audiences and the placements, as it
+// stops it before the creative: nothing more is built on the group.
+func TestCreateDisplayCampaign_ExclusionFailureSendsNoAudiencesOrPlacements(t *testing.T) {
+	rec := &pathRecorder{}
+	criteriaH, bodies := criteriaBodies(1)
+	c := displayTargetingServer(t, rec, okAdGroup, criteriaH, failHandler(t, "campaignCriteria:mutate"))
+
+	in := displayTargetingInput()
+	in.ExcludedIncomeRanges = []string{"INCOME_RANGE_0_50"}
+	res, err := c.CreateDisplayCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected the exclusion failure to surface")
+	}
+	if n := len(bodies()); n != 1 {
+		t.Errorf("sent %d adGroupCriteria mutates, want only the failed exclusion one", n)
+	}
+	if res == nil || res.AdGroupID == "" || len(res.AudienceCriteriaIDs) != 0 || len(res.AdGroupDemographicCriteriaIDs) != 0 {
+		t.Errorf("res = %+v, want the ad group kept and no criterion ids", res)
+	}
+}

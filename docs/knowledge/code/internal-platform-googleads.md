@@ -2648,8 +2648,9 @@ AUDIENCE `bidOnly: false`, together with the four criteria, was accepted.
   sent: optimized targeting is left at Google's default and may widen reach beyond the named
   segments (not checked).
 - **Cascade.** After the ad group (every criteria step runs before the ad, the only step that
-  makes the campaign servable, so a failure leaves a paused campaign with no ad): one atomic
-  `adGroupCriteria:mutate` of the segments (user lists, custom audiences, custom affinities,
+  makes the campaign servable, so a failure leaves a paused campaign with no ad): #473's
+  income and parental-status exclusions in their own `adGroupCriteria:mutate` when asked for,
+  then one atomic `adGroupCriteria:mutate` of the segments (user lists, custom audiences, custom affinities,
   user interests, each ENABLED), then one atomic `campaignCriteria:mutate` of negative
   placements (`negative` sent explicitly, no `omitempty`), then the image assets and the ad.
   Each step is skipped when its lists are empty, records its ids (`AudienceCriteriaIDs`,

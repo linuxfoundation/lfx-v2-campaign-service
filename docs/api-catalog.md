@@ -1420,7 +1420,7 @@ excludedParentalStatuses?:        criteria like the two above, because the ad gr
 
                                   On `search` they ride in each ad group's criteria mutate with its
                                   keywords; on `display` they are one mutate after the ad group is
-                                  created. Their ids are in `adGroupDemographicCriteriaIds` (on
+                                  created, before the audience criteria (#462). Their ids are in `adGroupDemographicCriteriaIds` (on
                                   `search` the first ad group's; every group's own are in
                                   `adGroups[].demographicCriteriaIds`; on `display` its one ad
                                   group's).
