@@ -1661,27 +1661,24 @@ func TestGetCampaignMetrics_AbsentConversionsIsNilNotZero(t *testing.T) {
 }
 
 // A campaign with no activity returns an empty elements array. The client always names
-// externalWebsiteConversions in `fields`, so LinkedIn WAS asked for the metric and answered
-// that the campaign did nothing — an answered zero, not an unmeasured window. The count is
-// therefore a non-nil zero, matching googleads' no-rows branch.
-//
-// This assertion was previously inverted, on the reasoning that an empty array "says nothing
-// about conversions having been MEASURED" and that a zero here was one "the rule would act
-// on". Both halves were wrong: the metric was requested and the window was answered, and
-// no_conversions is gated on Clicks >= minClicksForConversions (50) while this branch reports
-// zero clicks, so the rule cannot fire on it either way.
-func TestGetCampaignMetrics_NoElementsIsAnAnsweredZero(t *testing.T) {
+// externalWebsiteConversions in `fields`, so LinkedIn WAS asked for the metric and answered that
+// the campaign did nothing: an answered window, so neither unavailable nor incomplete. Since #175
+// it is ConversionsNoConversions with NO total (before, a non-nil 0): a zero against zero clicks
+// is not a conversion finding, and only a reported status carries a number.
+func TestGetCampaignMetrics_NoElementsIsNoConversions(t *testing.T) {
 	c, _ := linkedinConvServer(t, `{"elements":[]}`)
 	m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if m.Conversions == nil {
-		t.Fatal("Conversions = nil on an empty elements array; LinkedIn answered this window " +
-			"and the metric was in the fields list, so the zero is a measurement")
+	// #175: the answered empty window is now named by its status, no_conversions, and carries
+	// NO total — the total is published only when the status is reported.
+	if m.ConversionsStatus != model.ConversionsNoConversions {
+		t.Errorf("ConversionsStatus = %q on an empty elements array, want %q: LinkedIn answered "+
+			"this window and nothing in it could convert", m.ConversionsStatus, model.ConversionsNoConversions)
 	}
-	if *m.Conversions != 0 {
-		t.Errorf("Conversions = %v, want 0", *m.Conversions)
+	if m.Conversions != nil {
+		t.Errorf("Conversions = %v, want nil: only a reported status carries a total", *m.Conversions)
 	}
 }
 
@@ -1803,17 +1800,14 @@ func TestGetCampaignMetrics_ConversionsWithdrawnWhenOmissionFollowsAValue(t *tes
 	}
 }
 
-// TestGetCampaignMetrics_NoActivityConversionsIsMeasuredZero pins the convention that a
-// well-formed empty `elements` array is an ANSWERED zero-activity window, not an unmeasured
-// one. The client always names externalWebsiteConversions in `fields`, so LinkedIn was asked
-// for the metric and replied that nothing happened.
-//
-// The assertion is deliberately two-sided: non-nil AND exactly zero. Asserting only
-// non-nilness would pass on any garbage value, and asserting only nilness (the previous
-// behaviour) is the bug this test exists to prevent regressing to. The fixture returns a real
-// empty array over HTTP rather than constructing a struct, so the empty-elements branch is
-// genuinely executed.
-func TestGetCampaignMetrics_NoActivityConversionsIsMeasuredZero(t *testing.T) {
+// TestGetCampaignMetrics_NoActivityIsNoConversions pins the #175 answer for a well-formed empty
+// `elements` array over a real HTTP round trip: status no_conversions and NO total. The client
+// always names externalWebsiteConversions in `fields`, so LinkedIn was asked for the metric and
+// replied that nothing happened — which is why the status is no_conversions, not unavailable.
+// Both halves are asserted: the status (a regression to unavailable would re-merge the cases
+// #175 separated) and the absent total (a regression to the old non-nil 0 would publish a
+// number for a status that carries none).
+func TestGetCampaignMetrics_NoActivityIsNoConversions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Prove the metric really was requested: if the client stopped naming it, a nil
 		// Conversions would be the honest answer and this test's premise would be void.
@@ -1835,11 +1829,12 @@ func TestGetCampaignMetrics_NoActivityConversionsIsMeasuredZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if metrics.Conversions == nil {
-		t.Fatal("expected a non-nil Conversions for an answered zero-activity window, got nil (unmeasured)")
+	if metrics.ConversionsStatus != model.ConversionsNoConversions {
+		t.Fatalf("ConversionsStatus = %q for an answered zero-activity window, want %q (not unavailable: "+
+			"the metric was requested and answered)", metrics.ConversionsStatus, model.ConversionsNoConversions)
 	}
-	if *metrics.Conversions != 0 {
-		t.Errorf("expected Conversions 0, got %v", *metrics.Conversions)
+	if metrics.Conversions != nil {
+		t.Errorf("Conversions = %v, want nil: no_conversions carries no total (#175)", *metrics.Conversions)
 	}
 	// The sibling measurements must agree with it: all four describe the same answered window.
 	if metrics.Impressions != 0 || metrics.Clicks != 0 || metrics.CostMicros != 0 {
@@ -1917,3 +1912,55 @@ func TestGetCampaignMetrics_NilConversionsIsAnIncompleteRead(t *testing.T) {
 		})
 	}
 }
+
+// TestGetCampaignMetrics_ConversionsStatusSeparatesEachCase pins the #175 status for every shape a
+// LinkedIn response can take, and that the total is set ONLY when the status is reported. Before
+// #175 the first two cases were both a bare nil, so a consumer could not tell an incomplete read of
+// a conversion-capable campaign from a channel that cannot report conversions at all.
+func TestGetCampaignMetrics_ConversionsStatusSeparatesEachCase(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   string
+		status model.ConversionsStatus
+		total  *float64
+	}{
+		{"some elements omit the metric: incomplete",
+			`{"elements":[{"impressions":500,"clicks":40,"externalWebsiteConversions":3},{"impressions":500,"clicks":40}]}`,
+			model.ConversionsIncomplete, nil},
+		{"no element carries the metric: unavailable",
+			`{"elements":[{"impressions":500,"clicks":40},{"impressions":500,"clicks":40}]}`,
+			model.ConversionsUnavailable, nil},
+		{"every element carries it, zero clicks and zero conversions: no_conversions",
+			`{"elements":[{"impressions":500,"clicks":0,"externalWebsiteConversions":0}]}`,
+			model.ConversionsNoConversions, nil},
+		{"zero clicks but a reported conversion: reported",
+			`{"elements":[{"impressions":500,"clicks":0,"externalWebsiteConversions":2}]}`,
+			model.ConversionsReported, ptrFloat(2)},
+		{"clicks and a measured zero: reported 0",
+			`{"elements":[{"impressions":1000,"clicks":60,"externalWebsiteConversions":0}]}`,
+			model.ConversionsReported, ptrFloat(0)},
+		{"empty window: no_conversions",
+			`{"elements":[]}`,
+			model.ConversionsNoConversions, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := linkedinConvServer(t, tc.body)
+			m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if m.ConversionsStatus != tc.status {
+				t.Errorf("ConversionsStatus = %q, want %q", m.ConversionsStatus, tc.status)
+			}
+			switch {
+			case tc.total == nil && m.Conversions != nil:
+				t.Errorf("Conversions = %v, want nil: only a reported status carries a total", *m.Conversions)
+			case tc.total != nil && (m.Conversions == nil || *m.Conversions != *tc.total):
+				t.Errorf("Conversions = %v, want %v", m.Conversions, *tc.total)
+			}
+		})
+	}
+}
+
+func ptrFloat(f float64) *float64 { return &f }

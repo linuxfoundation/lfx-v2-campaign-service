@@ -219,30 +219,25 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 	// as a decode error inside makeAdAnalyticsRequest) when the campaign had no
 	// activity in the window.
 	//
-	// A no-activity window is a MEASUREMENT, not an absence of one, so Conversions is a
-	// non-nil zero here — the same answer googleads.GetCampaignMetrics gives for its
-	// equivalent no-rows branch. The request named externalWebsiteConversions in `fields`
-	// and LinkedIn answered with a well-formed empty array, so the metric WAS asked for and
-	// the campaign simply did nothing in the window. Leaving it nil would report "not
-	// measured", which per model.CampaignMetrics.Conversions means either a platform that
-	// cannot report a campaign-level count at all (false for LinkedIn) or an incomplete read
-	// (which this branch has no evidence for).
+	// A no-activity window is a MEASUREMENT, not an absence of one: the request named
+	// externalWebsiteConversions in `fields` and LinkedIn answered with a well-formed empty
+	// array, so the metric WAS asked for and the campaign simply did nothing in the window. It
+	// is therefore neither unavailable (LinkedIn can report the metric) nor incomplete (nothing
+	// was omitted). Since #175 it is ConversionsNoConversions: "answered, with no clicks", with
+	// NO total. Before #175 it was a non-nil 0; the status says the same thing
+	// without publishing a zero that a consumer could read as a finding, and the total is
+	// published only with ConversionsReported.
 	//
-	// This is distinct from the per-element omission handled in the aggregation loop below,
-	// which withdraws the total to nil: THERE an element LinkedIn returned came back without
-	// the metric, which is missing data about activity that happened. HERE there is no
-	// activity to have measured. Impressions/Clicks/Cost already answer 0 as measurements on
-	// this branch; the pointer now agrees with them rather than contradicting them in the
-	// same struct.
+	// This is distinct from the per-element omission handled in the aggregation loop below:
+	// THERE an element LinkedIn returned came back without the metric, which is missing data
+	// about activity that happened. HERE there is no activity to have measured.
 	//
-	// No effect on the no_conversions rule either way: it is gated on
-	// Clicks >= minClicksForConversions (internal/service/rules/actions.go) and this branch
-	// reports zero clicks, so the rule cannot fire on it. What the zero buys is that every
-	// other consumer — the brief response, a conversion total — reads "measured, and the
-	// answer was none" instead of "unmeasured".
+	// The no_conversions rule cannot fire on it: the rule reads only a reported total (and is
+	// gated on Clicks >= minClicksForConversions besides). zero_delivery is the rule for a
+	// campaign that delivered nothing.
 	if len(*resp.Elements) == 0 {
-		zero := 0.0
-		return &model.CampaignMetrics{CampaignID: campaignID, Window: window, Conversions: &zero}, nil
+		return &model.CampaignMetrics{CampaignID: campaignID, Window: window,
+			ConversionsStatus: model.ConversionsNoConversions}, nil
 	}
 
 	// Aggregate metrics from all elements. In practice there should be one element
@@ -362,13 +357,30 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 		}
 	}
 
-	// Widen the aggregated count once, and only if EVERY element carried the metric. One
-	// element omitting it anywhere in the response leaves Conversions nil — see the reasoning
-	// at the accumulation site. A nil Conversions means LinkedIn never reported it, or
-	// reported it incompletely; both stay distinct from a measured zero.
-	if conversionsMeasured && !conversionsIncomplete {
+	// Classify the read (#175). nil used to stand for both "LinkedIn did not report this" and
+	// "LinkedIn reported it for only part of the response"; the status now names which, and
+	// the total is widened once and published only when the status is reported.
+	//
+	//   - no element carried the metric: unavailable — LinkedIn reported no conversion count
+	//     for this campaign at all (for example an account with no conversion tracking);
+	//   - some did and some did not: incomplete — any sum would be a partial count, see the
+	//     reasoning at the accumulation site;
+	//   - every element carried it, with no clicks and no conversions: no_conversions, the
+	//     same answer as the empty-elements branch above — a zero against zero clicks is not a
+	//     conversion finding (a zero-click window that DOES report a conversion, e.g. a
+	//     view-through one, is reported);
+	//   - otherwise: reported, with the total (a 0 here is a measured 0 against real clicks).
+	switch {
+	case !conversionsMeasured:
+		metrics.ConversionsStatus = model.ConversionsUnavailable
+	case conversionsIncomplete:
+		metrics.ConversionsStatus = model.ConversionsIncomplete
+	case metrics.Clicks == 0 && conversions == 0:
+		metrics.ConversionsStatus = model.ConversionsNoConversions
+	default:
 		total := float64(conversions)
 		metrics.Conversions = &total
+		metrics.ConversionsStatus = model.ConversionsReported
 	}
 
 	// Calculate Ctr: clicks / impressions. If impressions is 0, Ctr stays 0.

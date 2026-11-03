@@ -59,8 +59,9 @@ type Input struct {
 	// the pacing rules use.
 	DeliveryExpected bool
 	// Conversions is the campaign's conversion count over the measured window, and is nil
-	// when it was not measured — the platform cannot report it, or (LinkedIn, Microsoft) the
-	// read was incomplete. See model.CampaignMetrics.Conversions.
+	// unless the read's conversions status is `reported` (#175): the brief service passes
+	// model.CampaignMetrics.ReportedConversions, so unavailable, incomplete and no_conversions
+	// all arrive as nil. See model.ConversionsStatus.
 	//
 	// A POINTER, because the clicks-without-conversions rule turns entirely on the
 	// difference between the two zeros. A campaign that earned 500 clicks and 0 measured
@@ -204,9 +205,9 @@ func Evaluate(in Input) []ActionItem {
 	// THREE gates, and each one exists because without it the rule fires on missing data
 	// rather than on a finding:
 	//
-	//   - in.Conversions != nil gates the whole rule on the READ having produced a complete
-	//     conversion measurement — which is what nil means per model.CampaignMetrics.
-	//     Conversions, and it covers two cases that must both be excluded here. Four of the
+	//   - in.Conversions != nil gates the whole rule on the read's conversions status being
+	//     `reported` (the caller passes ReportedConversions), which excludes unavailable,
+	//     incomplete and no_conversions. The first two are the cases that matter most here. Four of the
 	//     seven adapters (Meta, X, Reddit, HubSpot) cannot report a campaign-level count at
 	//     all, for reasons that are properties of those APIs rather than gaps here; on those
 	//     platforms every campaign would otherwise present as 0 conversions and every one
