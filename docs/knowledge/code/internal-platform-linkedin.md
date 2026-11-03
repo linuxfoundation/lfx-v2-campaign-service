@@ -969,7 +969,18 @@ empty composes the legacy name byte for byte. The composed name is also the key
 campaign group, which every slot shares because the group name carries no token): slot 2's name
 differs from slot 1's, so it never finds slot 1's campaign and never has its creatives created
 under it, while a retry of the same row still finds its own. An over-long labelled name is the
-same `PreflightRefusal` as any over-long name, with zero requests sent. Pinned by
-`TestBuildCampaignName_LabelTokens` and
-`TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest`; see the dispatch concept for the
-dispatcher side.
+same `PreflightRefusal` as any over-long name, with zero requests sent. `BuildUTMURL` derives
+`utm_term` from the campaign name, so a labelled or later-slot campaign has its own `utm_term`
+(`…_prospecting-retargeting-#2_…`, the `#` query-escaped as `%23`); `utm_campaign` stays
+event-level. Pinned by `TestBuildCampaignName_LabelTokens`,
+`TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest` and
+`TestBuildUTMURL_SlotTokenIsEscaped`; see the dispatch concept for the dispatcher side.
+
+Known limitation (not new in cs-4, but now reached routinely): the shared campaign group keeps
+the run schedule of the request that created it, and a found group is reused as-is, its schedule
+neither compared nor extended. A second campaign whose `endDate` falls after the group's end (or
+a group whose end has passed) is therefore sent to LinkedIn under that group, and if LinkedIn
+refuses a campaign scheduled outside its group the create fails after the group lookup, as a
+definite campaign failure with the group recorded (`group_created`, claim retained). The same
+already applied to a retry with edited dates and to a second brief for the same event and
+project. Comparing the found group's schedule before the campaign POST is a follow-up.

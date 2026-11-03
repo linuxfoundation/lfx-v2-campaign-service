@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -105,5 +106,32 @@ func TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest(t *testing.T
 				t.Errorf("refusal = %q (preflight %v)\nwant      %q", msg, ok, want)
 			}
 		})
+	}
+}
+
+// A slot-2 name's "#<n>" token reaches utm_term (BuildUTMURL derives the term from the campaign
+// name), so it must be query-escaped: a raw "#" would start a fragment and drop every UTM
+// parameter after it. The term differs per slot, and the legacy term is unchanged.
+func TestBuildUTMURL_SlotTokenIsEscaped(t *testing.T) {
+	legacy := buildCampaignName("KubeCon", "Traffic", "cncf", CampaignInput{})
+	slot2 := buildCampaignName("KubeCon", "Traffic", "cncf", CampaignInput{StageToken: "MoFU", Tactic: "retargeting", SlotToken: "#2"})
+
+	got := BuildUTMURL("https://events.example.org/kc", "hs1", slot2, 1)
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse %q: %v", got, err)
+	}
+	if u.Fragment != "" || u.RawFragment != "" {
+		t.Fatalf("URL %q has a fragment; the slot token must be escaped inside utm_term", got)
+	}
+	q := u.Query()
+	if term := q.Get("utm_term"); term != "events_kubecon_linkedin_traffic_prospecting-retargeting-#2_static_cncf_mofu" {
+		t.Errorf("utm_term = %q", term)
+	}
+	if q.Get("utm_content") != "variant-1" || q.Get("utm_campaign") != "hs1" {
+		t.Errorf("UTM params after the term were lost: %q", got)
+	}
+	if want := "https://events.example.org/kc?utm_campaign=hs1&utm_content=variant-1&utm_medium=paid-social&utm_source=linkedin&utm_term=events_kubecon_linkedin_traffic_prospecting_static_cncf_mofu"; BuildUTMURL("https://events.example.org/kc", "hs1", legacy, 1) != want {
+		t.Errorf("legacy UTM URL changed: %q", BuildUTMURL("https://events.example.org/kc", "hs1", legacy, 1))
 	}
 }

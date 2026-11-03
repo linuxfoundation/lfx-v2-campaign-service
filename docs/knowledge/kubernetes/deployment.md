@@ -376,7 +376,8 @@ is more dangerous here than on Reddit or Meta. In order:
    re-dispatch such a row (a cleared stuck claim, a retained partial) under the legacy name. On
    an UNLABELLED slot ≥2 row that name is slot 1's, so the older client's by-name lookup FINDS
    slot 1's live campaign and binds slot 2 to it — on LinkedIn it then creates slot 2's creatives
-   under slot 1's campaign, on X a line item and promoted tweet under it. On a LABELLED row (any
+   under slot 1's campaign; on X it finds slot 1's line item by its (token-free) name under that
+   campaign and attaches slot 2's promoted tweet to it. On a LABELLED row (any
    slot) the legacy name matches no labelled campaign, so it misses the campaign the row already
    created and creates a duplicate under the legacy name (which, for a labelled slot ≥2 row, can
    equal slot 1's and be reused as above). List them — `SELECT id, brief_id, platform,

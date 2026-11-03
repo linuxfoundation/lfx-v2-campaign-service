@@ -32,7 +32,15 @@ before the first request, so an over-long labelled or later-slot name is refused
 that fit before is refused.
 
 **lf-dbt.** As for Reddit and Meta, lf-dbt reads segment 5 by position, so its `targeting` column
-holds the raw `Prospecting retargeting #2`; the same lf-dbt normalisation follow-up covers it.
+holds the raw `Prospecting retargeting #2` (and `Prospecting prospecting` for the prospecting
+tactic); the same lf-dbt normalisation follow-up covers it. LinkedIn's `utm_term`, derived from
+the campaign name, now differs per slot and label (`#` escaped as `%23`); `utm_campaign` stays
+event-level.
+
+**Known limitation.** Every LinkedIn slot shares the event's campaign group, whose run schedule
+is the first creator's and is not compared or extended when the group is reused; a slot whose end
+date falls after it may be refused by LinkedIn after the group lookup (`group_created`, claim
+retained). This pre-dates cs-4 (retries with edited dates, a second brief) and is a follow-up.
 
 **Rollback.** No migration. `deployment.md` has the runbook: remove `linkedin-ads` and
 `twitter-ads` from `LFX_CUTOVER_CAMPAIGN_SERVICE_MULTI_CAMPAIGN_PLATFORMS`, settle non-terminal
@@ -41,6 +49,6 @@ name), then roll the image back.
 
 **Tests.**
 - Dispatch: `TestLinkedInX_NamesComeFromTheClaimedRow`, `TestLinkedInX_Slot2NeverBindsSlot1`, `TestLinkedInX_OverlongLabelledNameIsRefusedBeforeAnyRequest`, against stateful fakes that answer the by-name lookups.
-- Clients: `TestBuildCampaignName_LabelTokens` (LinkedIn), `TestBuildTwitterCampaignName_LabelTokens`, `TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest` (both).
+- Clients: `TestBuildCampaignName_LabelTokens` (LinkedIn), `TestBuildTwitterCampaignName_LabelTokens`, `TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest` (both), `TestBuildUTMURL_SlotTokenIsEscaped` (LinkedIn).
 - Service: `TestBriefService_CreateCampaigns_LinkedInAndXAcceptALabelledNewVersion`, the unlisted-label refusals on LinkedIn and X, and the HubSpot refusals.
-- Live: `TestLiveLinkedInXSecondCampaignThroughTheOrchestrator`, which runs the real orchestrator, repositories and dispatchers against stateful fake LinkedIn and X APIs.
+- Live: `TestLiveLinkedInXSecondCampaignThroughTheOrchestrator`, which runs the real orchestrator, repositories and dispatchers against stateful fake LinkedIn and X APIs, labelled and unlabelled (where only `#2` separates the names).

@@ -173,8 +173,12 @@ func (w *liveNamedWire) twitterDispatcher(t *testing.T) service.PlatformDispatch
 //     upstream campaign and its children (LinkedIn creative, X line item) go onto it;
 //  4. its replay is a reuse and sends nothing.
 //
-// Exactly two creates reach the platform and two campaigns are live.
+// Exactly two creates reach the platform and two campaigns are live. It runs labelled and
+// unlabelled; unlabelled, only the "#2" slot token keeps slot 2 from finding slot 1 by name.
 func TestLiveLinkedInXSecondCampaignThroughTheOrchestrator(t *testing.T) {
+	labels := func(s model.FunnelStage, tc model.Tactic) model.CampaignLabels {
+		return model.CampaignLabels{FunnelStage: liveStage(s), Tactic: liveTactic(tc)}
+	}
 	for _, tc := range []struct {
 		provider   model.Provider
 		config     string
@@ -193,113 +197,130 @@ func TestLiveLinkedInXSecondCampaignThroughTheOrchestrator(t *testing.T) {
 			(*liveNamedWire).twitterDispatcher,
 			"Events | KubeCon NA 2026 | Global | Awareness | ", " | Promoted Post | "},
 	} {
-		t.Run(string(tc.provider), func(t *testing.T) {
-			ctx := context.Background()
-			pool := dbtest.Pool(t)
-			pgPool := &postgres.Pool{Pool: pool}
-			campaigns := postgres.NewCampaignRepo(pgPool)
-			jobs := postgres.NewJobRepo(pgPool)
-			// Unique per run, because the package shares one schema and campaign_briefs is unique
-			// on (project_id, event_slug).
-			project := fmt.Sprintf("cs4-%s-%x", tc.provider[:4], time.Now().UnixNano())
-			var briefID string
-			if err := pool.QueryRow(ctx, `
+		// Labelled, where slot 1 and slot 2 also differ by stage and tactic; and unlabelled,
+		// where ONLY the "#2" slot token separates slot 2's name from slot 1's live campaign.
+		for _, sc := range []struct {
+			name             string
+			slot1, slot2     model.CampaignLabels
+			seg1, seg2       string // segment 5 of each slot
+			funnel1, funnel2 string
+			stage1, stage2   string
+		}{
+			{"labelled", labels(model.FunnelStageTop, model.TacticProspecting), labels(model.FunnelStageMid, model.TacticRetargeting),
+				"Prospecting prospecting", "Prospecting retargeting #2", "ToFU", "MoFU", "top", "mid"},
+			{"unlabelled", model.CampaignLabels{}, model.CampaignLabels{}, "Prospecting", "Prospecting #2", "MoFU", "MoFU", "", ""},
+		} {
+			t.Run(string(tc.provider)+"/"+sc.name, func(t *testing.T) {
+				ctx := context.Background()
+				pool := dbtest.Pool(t)
+				pgPool := &postgres.Pool{Pool: pool}
+				campaigns := postgres.NewCampaignRepo(pgPool)
+				jobs := postgres.NewJobRepo(pgPool)
+				// Unique per run, because the package shares one schema and campaign_briefs is unique
+				// on (project_id, event_slug).
+				project := fmt.Sprintf("cs4-%s-%x", tc.provider[:4], time.Now().UnixNano())
+				var briefID string
+				if err := pool.QueryRow(ctx, `
 				INSERT INTO campaign_briefs (project_id, program_type, event_slug, status)
 				VALUES ($1, 'events', $1, 'approved')
 				RETURNING id`, project).Scan(&briefID); err != nil {
-				t.Fatalf("insert approved brief: %v", err)
-			}
-			if _, err := pool.Exec(ctx, `UPDATE campaign_briefs SET event_details = $2 WHERE id = $1`, briefID,
-				`{"eventName":"KubeCon NA 2026","registrationUrl":"https://events.example/kc"}`); err != nil {
-				t.Fatalf("set event details: %v", err)
-			}
-			brief, err := postgres.NewBriefRepo(pgPool).GetBrief(ctx, project, briefID)
-			if err != nil {
-				t.Fatalf("get brief: %v", err)
-			}
-			p := tc.provider
-			wire := &liveNamedWire{idBase: 130_000_000_000_000 + time.Now().UnixNano()%1_000_000_000*100}
-			orch := service.NewOrchestrator(campaigns, jobs, map[model.Provider]service.PlatformDispatcher{p: tc.disp(wire, t)})
-			t.Cleanup(func() { _ = orch.Shutdown(context.Background(), 5*time.Second) })
-
-			run := func(opts service.StartOptions) map[string]any {
-				t.Helper()
-				id, err := orch.StartWithOptions(ctx, brief, brief.Version, []model.Provider{p}, json.RawMessage(tc.config), opts)
+					t.Fatalf("insert approved brief: %v", err)
+				}
+				if _, err := pool.Exec(ctx, `UPDATE campaign_briefs SET event_details = $2 WHERE id = $1`, briefID,
+					`{"eventName":"KubeCon NA 2026","registrationUrl":"https://events.example/kc"}`); err != nil {
+					t.Fatalf("set event details: %v", err)
+				}
+				brief, err := postgres.NewBriefRepo(pgPool).GetBrief(ctx, project, briefID)
 				if err != nil {
-					t.Fatalf("start: %v", err)
+					t.Fatalf("get brief: %v", err)
 				}
-				deadline := time.Now().Add(10 * time.Second)
-				for time.Now().Before(deadline) {
-					j, err := jobs.GetJob(ctx, project, id)
-					if err == nil && j.Status.Terminal() {
-						var res []map[string]any
-						if err := json.Unmarshal(j.Result, &res); err != nil || len(res) != 1 {
-							t.Fatalf("decode %s: %v", j.Result, err)
-						}
-						return res[0]
+				p := tc.provider
+				wire := &liveNamedWire{idBase: 130_000_000_000_000 + time.Now().UnixNano()%1_000_000_000*100}
+				orch := service.NewOrchestrator(campaigns, jobs, map[model.Provider]service.PlatformDispatcher{p: tc.disp(wire, t)})
+				t.Cleanup(func() { _ = orch.Shutdown(context.Background(), 5*time.Second) })
+
+				run := func(opts service.StartOptions) map[string]any {
+					t.Helper()
+					id, err := orch.StartWithOptions(ctx, brief, brief.Version, []model.Provider{p}, json.RawMessage(tc.config), opts)
+					if err != nil {
+						t.Fatalf("start: %v", err)
 					}
-					time.Sleep(20 * time.Millisecond)
+					deadline := time.Now().Add(10 * time.Second)
+					for time.Now().Before(deadline) {
+						j, err := jobs.GetJob(ctx, project, id)
+						if err == nil && j.Status.Terminal() {
+							var res []map[string]any
+							if err := json.Unmarshal(j.Result, &res); err != nil || len(res) != 1 {
+								t.Fatalf("decode %s: %v", j.Result, err)
+							}
+							return res[0]
+						}
+						time.Sleep(20 * time.Millisecond)
+					}
+					t.Fatal("job did not finish")
+					return nil
 				}
-				t.Fatal("job did not finish")
-				return nil
-			}
-			labels := func(s model.FunnelStage, tc model.Tactic) model.CampaignLabels {
-				return model.CampaignLabels{FunnelStage: liveStage(s), Tactic: liveTactic(tc)}
-			}
-			slot1 := tc.head + "Prospecting prospecting" + tc.tail + project + " | ToFU"
-			slot2 := tc.head + "Prospecting retargeting #2" + tc.tail + project + " | MoFU"
+				slot1 := tc.head + sc.seg1 + tc.tail + project + " | " + sc.funnel1
+				slot2 := tc.head + sc.seg2 + tc.tail + project + " | " + sc.funnel2
 
-			// 1. The first, labelled campaign.
-			first := run(service.StartOptions{Labels: labels(model.FunnelStageTop, model.TacticProspecting)})
-			if first["ok"] != true || first["slot_version"] != float64(1) || first["reused"] == true || first["funnel_stage"] != "top" {
-				t.Fatalf("first create = %v, want slot 1 created, labelled top", first)
-			}
-			// 2. A retry of slot 1 with a different stage.
-			retry := run(service.StartOptions{Labels: labels(model.FunnelStageLower, model.TacticKeyword)})
-			if retry["slot_version"] != float64(1) || retry["reused"] != true || retry["funnel_stage"] != "top" || retry["tactic"] != "prospecting" {
-				t.Fatalf("retry = %v, want slot 1 reused with its stored top/prospecting", retry)
-			}
-			// 3. The deliberate second campaign, and 4. its replay.
-			second := run(service.StartOptions{NewVersion: true, ExpectedSlotVersions: map[model.Provider]int{p: 1}, Labels: labels(model.FunnelStageMid, model.TacticRetargeting)})
-			if second["ok"] != true || second["slot_version"] != float64(2) || second["reused"] == true || second["funnel_stage"] != "mid" {
-				t.Fatalf("new_version = %v, want slot 2 created, labelled mid", second)
-			}
-			replay := run(service.StartOptions{NewVersion: true, ExpectedSlotVersions: map[model.Provider]int{p: 1}, Labels: labels(model.FunnelStageMid, model.TacticRetargeting)})
-			if replay["slot_version"] != float64(2) || replay["reused"] != true {
-				t.Fatalf("replay = %v, want slot 2 returned with reused=true", replay)
-			}
+				// 1. The first, labelled campaign.
+				first := run(service.StartOptions{Labels: sc.slot1})
+				if first["ok"] != true || first["slot_version"] != float64(1) || first["reused"] == true || str(first["funnel_stage"]) != sc.stage1 {
+					t.Fatalf("first create = %v, want slot 1 created, stage %q", first, sc.stage1)
+				}
+				// 2. A retry of slot 1 with a different stage.
+				retry := run(service.StartOptions{Labels: labels(model.FunnelStageLower, model.TacticKeyword)})
+				if retry["slot_version"] != float64(1) || retry["reused"] != true || str(retry["funnel_stage"]) != sc.stage1 {
+					t.Fatalf("retry = %v, want slot 1 reused with its stored stage %q", retry, sc.stage1)
+				}
+				// 3. The deliberate second campaign, and 4. its replay.
+				second := run(service.StartOptions{NewVersion: true, ExpectedSlotVersions: map[model.Provider]int{p: 1}, Labels: sc.slot2})
+				if second["ok"] != true || second["slot_version"] != float64(2) || second["reused"] == true || str(second["funnel_stage"]) != sc.stage2 {
+					t.Fatalf("new_version = %v, want slot 2 created, stage %q", second, sc.stage2)
+				}
+				replay := run(service.StartOptions{NewVersion: true, ExpectedSlotVersions: map[model.Provider]int{p: 1}, Labels: sc.slot2})
+				if replay["slot_version"] != float64(2) || replay["reused"] != true {
+					t.Fatalf("replay = %v, want slot 2 returned with reused=true", replay)
+				}
 
-			if got, want := wire.created(), []string{slot1, slot2}; strings.Join(got, "\n") != strings.Join(want, "\n") {
-				t.Errorf("campaign creates sent = %q, want exactly %q", got, want)
-			}
-			if got, want := wire.childCampaigns(), []int64{wire.idBase + 1, wire.idBase + 2}; fmt.Sprint(got) != fmt.Sprint(want) {
-				t.Errorf("children created under campaigns %v, want one per slot under its own campaign %v", got, want)
-			}
-			if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 2 {
-				t.Fatalf("live campaigns = %d, want 2", live)
-			}
-			ids := map[string]bool{}
-			for slot, want := range map[int]string{1: slot1, 2: slot2} {
-				var name, stage, upstream string
-				if err := pool.QueryRow(ctx,
-					`SELECT campaign_name, COALESCE(funnel_stage, ''), COALESCE(platform_campaign_id, '') FROM campaigns WHERE brief_id=$1 AND platform=$2 AND slot_version=$3 AND status <> 'deleted'`,
-					briefID, string(p), slot).Scan(&name, &stage, &upstream); err != nil {
-					t.Fatalf("read slot %d: %v", slot, err)
+				if got, want := wire.created(), []string{slot1, slot2}; strings.Join(got, "\n") != strings.Join(want, "\n") {
+					t.Errorf("campaign creates sent = %q, want exactly %q", got, want)
 				}
-				if name != want {
-					t.Errorf("slot %d stored name %q, want %q", slot, name, want)
+				if got, want := wire.childCampaigns(), []int64{wire.idBase + 1, wire.idBase + 2}; fmt.Sprint(got) != fmt.Sprint(want) {
+					t.Errorf("children created under campaigns %v, want one per slot under its own campaign %v", got, want)
 				}
-				if strings.Count(name, " | ") != 7 {
-					t.Errorf("slot %d stored name %q is not 8 segments", slot, name)
+				if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 2 {
+					t.Fatalf("live campaigns = %d, want 2", live)
 				}
-				if wantStage := map[int]string{1: "top", 2: "mid"}[slot]; stage != wantStage {
-					t.Errorf("slot %d stored stage %q, want %q", slot, stage, wantStage)
+				ids := map[string]bool{}
+				for slot, want := range map[int]string{1: slot1, 2: slot2} {
+					var name, stage, upstream string
+					if err := pool.QueryRow(ctx,
+						`SELECT campaign_name, COALESCE(funnel_stage, ''), COALESCE(platform_campaign_id, '') FROM campaigns WHERE brief_id=$1 AND platform=$2 AND slot_version=$3 AND status <> 'deleted'`,
+						briefID, string(p), slot).Scan(&name, &stage, &upstream); err != nil {
+						t.Fatalf("read slot %d: %v", slot, err)
+					}
+					if name != want {
+						t.Errorf("slot %d stored name %q, want %q", slot, name, want)
+					}
+					if strings.Count(name, " | ") != 7 {
+						t.Errorf("slot %d stored name %q is not 8 segments", slot, name)
+					}
+					if wantStage := map[int]string{1: sc.stage1, 2: sc.stage2}[slot]; stage != wantStage {
+						t.Errorf("slot %d stored stage %q, want %q", slot, stage, wantStage)
+					}
+					ids[upstream] = true
 				}
-				ids[upstream] = true
-			}
-			if len(ids) != 2 || ids[""] {
-				t.Errorf("stored upstream campaign ids %v, want two distinct ids (slot 2 bound to its own campaign)", ids)
-			}
-		})
+				if len(ids) != 2 || ids[""] {
+					t.Errorf("stored upstream campaign ids %v, want two distinct ids (slot 2 bound to its own campaign)", ids)
+				}
+			})
+		}
 	}
+}
+
+// str reads an optional string field of a decoded job result ("" when absent).
+func str(v any) string {
+	s, _ := v.(string)
+	return s
 }
