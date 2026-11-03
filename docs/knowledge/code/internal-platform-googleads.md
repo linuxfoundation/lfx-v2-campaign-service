@@ -1044,7 +1044,9 @@ LFXV2-3259, which the brief generator's ~38-keyword output exceeded); duplicates
 matchType+text) are deduped rather than rejected.
 
 **Audience segments** are EXISTING Google Ads audience resource names — this
-client does not create audiences. For SEARCH campaigns, only `.../userLists/{id}`
+client does not create audiences. This section is the SEARCH ad group's; Display attaches
+the same field, plus three more segment kinds, as TARGETING criteria through its own path
+(see "Display campaign creation" below, #462). For SEARCH campaigns, only `.../userLists/{id}`
 (Customer Match / remarketing list) resource names are accepted; any other shape
 (`customAudiences`, `userInterest`, `combinedAudience`, `detailedDemographic`, …)
 is rejected — deliberately narrow scope limiting to externally built user lists
@@ -2590,9 +2592,55 @@ comment says so. Over-long copy is REFUSED, not truncated.
 
 **Targeting is the un-narrowed Search set, as on Video.** Campaign-level geo INCLUDING
 proximity, and all five campaign-criteria kinds. Conversion actions are ACCEPTED and become
-a campaign-level goal after the create, as on every channel (#436). Keywords, audience segments, campaign-level
+a campaign-level goal after the create, as on every channel (#436). Keywords, campaign-level
 negative keywords, a CPC bid, extension assets and multiple ad groups are all REFUSED by
-the pre-existing `!= campaignKindSearch` fences, which Display inherits correctly.
+the pre-existing `!= campaignKindSearch` fences, which Display inherits correctly. Audience
+segments are the exception since #462, below.
+
+**Audiences and placement exclusions (#462) are Display's own targeting, and the audiences
+TARGET where Search's observe.** `display_targeting.go` adds four segment lists —
+`AudienceSegments` (user lists), `CustomAudiences`, `CustomAffinities` (`customInterests`
+resources) and `UserInterests` — and `ExcludedPlacements`. Every list is EXISTING resource
+names; this client creates no audience. What Google accepts was established by `validateOnly`
+probes on 2026-11-03 and nothing beyond them is claimed: a `DISPLAY_STANDARD` ad group took
+`userList`, `customAudience`, `customAffinity` and `userInterest` criteria alone and together;
+it REFUSED an `audience` criterion with
+`AUDIENCE_NOT_ALLOWED_TO_ATTACH_WHEN_AUDIENCE_GROUPED_SET_TO_FALSE`, because Display is not
+audience-grouped and takes segments directly; and a negative `placement` criterion naming a
+bare domain was accepted at the campaign and the ad group level.
+
+- **Preflight.** `validateDisplayTargeting` refuses the three new lists and the placements on
+  every other channel, by field name, offering a Display campaign. On Display,
+  `validateDisplayAudienceList` holds each entry to exactly
+  `customers/{customerId}/{collection}/{id}` with numeric ids and the customer equal to THIS
+  client's account — the account check `validateAudienceSegments` does not make, and the one
+  that keeps another customer's list from failing at the criteria mutate after the ad group
+  exists. A well-formed name of the wrong kind is refused with the field it belongs in, and
+  an Audience resource with Display's reason. Display's `AudienceSegments` are judged here,
+  not by the Search validator: `preflightCampaignKind` clears them from the Search inputs on
+  Display, so the off-Search audience fence sees an empty list there by construction.
+  Placements must be bare domains — a scheme, path, query, port, credentials, wildcard,
+  trailing dot or non-ASCII name is refused rather than rewritten, the only change is
+  lower-casing, and `www.example.com` stays distinct from `example.com`. Caps: 20 per segment
+  list (Search's `maxAudienceSegments`), 500 placements (a broker cap, not Google's).
+- **Targeting, not observation.** `displayAdGroupCreate` sends no `targetingSetting`, so the
+  AUDIENCE dimension takes Google's default, bidOnly false, and the criteria restrict who the
+  ad group reaches. Search's ad group sends `bidOnly: true` precisely to stop that. Nothing new
+  is sent to get the Display behaviour; it is the absence of the Search setting. The probes
+  show the criteria are ACCEPTED in that shape; that they restrict delivery is Google's
+  documented default, not something a `validateOnly` call can show.
+- **Cascade.** After the ad group: one atomic `adGroupCriteria:mutate` of the segments (user
+  lists, custom audiences, custom affinities, user interests, each ENABLED), then one atomic
+  `campaignCriteria:mutate` of negative placements (`negative` sent explicitly, no
+  `omitempty`), then the image assets and the ad. Each step is skipped when its lists are
+  empty, records its ids (`AudienceCriteriaIDs`, `ExcludedPlacementCriteriaIDs`) and adds a
+  step line; a failure returns the partial result, a definite 4xx as failed and an ambiguous
+  outcome, a short 2xx or a resource name for another ad group, campaign or account as
+  UNCONFIRMED. The closing step's no-geo remedy now says "add geo targeting", since a campaign
+  without geo may carry audiences.
+- **Not built.** Multiple Display ad groups (Retargeting and Prospecting, as the reference
+  campaign has) are a follow-up; two Display ad groups under one campaign were accepted by a
+  probe, but this cascade still creates one.
 
 **Named gaps, each a client limitation rather than Google's rule — and said so in place.**
 Google accepts MANUAL CPC on Display; this client refuses it, because the Display ad-group

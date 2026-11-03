@@ -1081,6 +1081,19 @@ requires each shape on its own (#437), so a mapper that dropped either array is 
 that array's own name. The logo arrays and the
 call-to-action text are omitted together too, to prove optional means optional.
 
+Display's audiences and placement exclusions (#462) are five more pass-through fields:
+`audienceSegments` now reaches the Display cascade too, and `customAudiences`,
+`customAffinities`, `userInterests` and `excludedPlacements` map one to one onto
+`CampaignInput`. Dispatch decides none of their rules — which channel takes them, the
+resource-name shape and the THIS-account check, the bare-domain rule — because the client's
+preflight does, on both the create and the `adoptExisting` paths.
+`TestGoogleAds_DisplayAudiencesAndPlacementExclusionsReachTheCriteria` proves each reaches its
+oneof arm in the ad group's criteria mutate and the placements the campaign's, and
+`TestGoogleAds_ExcludedPlacementsRefusedOnSearch` that the field reaches the preflight off
+Display, with no budget sent. None of them silences the "NO geo targeting" warning below: an
+audience narrows WHO and a placement exclusion WHERE ON THE WEB, and neither bounds the
+geography the campaign spends in.
+
 One thing this layer does decide for itself is the post-create "NO geo targeting" warning,
 which is the operator's only signal that a campaign will spend wherever the ad account
 allows. It counts every POSITIVE shape, so `proximityTargets` silences it exactly as

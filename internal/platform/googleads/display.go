@@ -86,6 +86,14 @@ type displayCampaignCreate struct {
 // preflight refuses a manual bid on every non-Search channel. On THIS channel that
 // refusal is a client limitation rather than an upstream one — Google does accept manual
 // CPC on Display — and displayBiddingStrategies is where that is written down.
+//
+// It carries no targetingSetting either, and that is what makes Display's audience
+// criteria TARGETING rather than observation (#462). Search's ad group sends
+// targetingSetting with bidOnly true for the AUDIENCE dimension so its segments only
+// observe; with no setting, the AUDIENCE dimension takes Google's default, bidOnly
+// false, and the criteria createDisplayAudienceCriteria attaches restrict who the ad
+// group reaches. That is the point on this channel: a Display ad group has no keywords,
+// so its audiences are what decides who sees the ad.
 type displayAdGroupCreate struct {
 	Name     string `json:"name"`
 	Campaign string `json:"campaign"`
@@ -94,16 +102,16 @@ type displayAdGroupCreate struct {
 }
 
 // CreateDisplayCampaign creates a PAUSED Display campaign: images → budget → campaign →
-// campaign-level geo → campaign-level criteria → ad group → ad-group exclusions → image
-// assets → ad.
+// campaign-level geo → campaign-level criteria → ad group → ad-group exclusions →
+// ad-group audience criteria → campaign-level placement exclusions → image assets → ad.
 //
-// Seven mutating steps (eight with ad-group exclusions) behind a fetch phase, which makes
-// this the union of the two hardest halves in the package: campaign-level criteria like
-// Search, Performance Max and Video, an ad group with an ad under it like Search, Demand
-// Gen and Video, AND a pre-budget network phase like Demand Gen and Performance Max. Video
-// had the first two and no fetch, because a YouTube video is referenced by id; a
-// responsive display ad is built from image BYTES, so this channel pays the fetch cost
-// those two do.
+// Up to ten mutating steps (plus the conversion goal every channel may apply) behind a
+// fetch phase, which makes this the union of the two hardest halves in the package:
+// campaign-level criteria like Search, Performance Max and Video, an ad group with an ad
+// under it like Search, Demand Gen and Video, AND a pre-budget network phase like Demand
+// Gen and Performance Max. Video had the first two and no fetch, because a YouTube video
+// is referenced by id; a responsive display ad is built from image BYTES, so this channel
+// pays the fetch cost those two do.
 //
 // NOT LIVE-VERIFIED, on the same terms as Video: the only Google account reachable from
 // here is a production LF account and a validateOnly mutate is still a POST to it. What
@@ -347,6 +355,31 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 		res.Steps = steps
 	}
 
+	// The audience segments, on the ad group they need (#462) — user lists, custom
+	// audiences, custom affinities and user interests in one atomic mutate. TARGETING, not
+	// Search's observation: see createDisplayAudienceCriteria and displayAdGroupCreate.
+	if pf.displayTargeting.audienceCount() > 0 {
+		audienceIDs, audErr := c.createDisplayAudienceCriteria(ctx, adGroupResource, adGroupID, pf.displayTargeting)
+		res.AudienceCriteriaIDs = audienceIDs
+		if audErr != nil {
+			return res, audErr
+		}
+		steps = append(steps, fmt.Sprintf("Audience targeting applied: %d ad group criteria (%s) — targeting, not observation: they restrict who the ad group reaches", len(audienceIDs), displayAudienceStep(pf.displayTargeting)))
+		res.Steps = steps
+	}
+
+	// The placement exclusions, at the CAMPAIGN level so they cover every ad group
+	// — one atomic campaignCriteria:mutate of negative placement criteria (#462).
+	if len(pf.displayTargeting.excludedPlacements) > 0 {
+		placementIDs, plErr := c.createCampaignPlacementExclusions(ctx, campaignResource, campaignID, pf.displayTargeting.excludedPlacements)
+		res.ExcludedPlacementCriteriaIDs = placementIDs
+		if plErr != nil {
+			return res, plErr
+		}
+		steps = append(steps, fmt.Sprintf("Placement exclusions applied: %d campaign negative placement criteria", len(placementIDs)))
+		res.Steps = steps
+	}
+
 	// The image assets, then the ad that references them — two mutates,
 	// because Google has no call that does both. The asset ids are carried on the
 	// result even when the ad half failed, so an operator can find assets created with
@@ -376,10 +409,10 @@ func displayClosingStep(hasGeo, hasAd bool) string {
 	case hasGeo && hasAd:
 		return "Display campaign created — review the ad and launch in the Google Ads UI"
 	case hasAd:
-		return "Display campaign created (no geo targeting set) — add targeting, then review the ad and launch in the Google Ads UI"
+		return "Display campaign created (no geo targeting set) — add geo targeting, then review the ad and launch in the Google Ads UI"
 	case hasGeo:
 		return "Display campaign created with NO AD — it cannot serve until one is added; add a responsive display ad in the Google Ads UI"
 	default:
-		return "Display campaign created with NO AD (no geo targeting set) — it cannot serve until one is added; add targeting and a responsive display ad in the Google Ads UI"
+		return "Display campaign created with NO AD (no geo targeting set) — it cannot serve until one is added; add geo targeting and a responsive display ad in the Google Ads UI"
 	}
 }

@@ -284,10 +284,12 @@ type googleAdsConfig struct {
 	Keywords []googleAdsKeywordConfig `json:"keywords"`
 	// AudienceSegments are optional EXISTING Google Ads audience resource names (GA-4)
 	// — Customer Match user-list resources the caller has already built elsewhere,
-	// not created by this dispatcher. See googleads.validateAudienceSegments for the
-	// accepted shapes. SEARCH ONLY: on "demand-gen" they are refused because Google
-	// refuses a user list on an audience-grouped Demand Gen ad group — see
-	// DemandGenAudience.
+	// not created by this dispatcher. "search" attaches them as observation-only
+	// criteria (see googleads.validateAudienceSegments for the accepted shapes);
+	// "display" attaches them as TARGETING criteria and requires each to be on the
+	// campaign's own account (#462, googleads.validateDisplayAudienceList). Refused on
+	// every other channel: on "demand-gen" because Google refuses a user list on an
+	// audience-grouped Demand Gen ad group — see DemandGenAudience.
 	AudienceSegments []string `json:"audienceSegments"`
 	// DemandGenAudience is ONE existing Google Ads Audience resource name,
 	// `customers/<this account>/audiences/<id>`, attached to the Demand Gen ad group
@@ -299,11 +301,24 @@ type googleAdsConfig struct {
 	// Refused outright unless GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED is "true" — see
 	// googleAdsDemandGenAudienceEnabled.
 	DemandGenAudience string `json:"demandGenAudience"`
+	// CustomAudiences, CustomAffinities and UserInterests are the other three segment
+	// kinds a Display ad group targets (#462): EXISTING customers/{id}/customAudiences/{id},
+	// customers/{id}/customInterests/{id} and customers/{id}/userInterests/{id} resource
+	// names on the campaign's own account — this dispatcher creates no audience. DISPLAY
+	// ONLY, refused on every other channel. See googleads.CampaignInput.CustomAudiences.
+	CustomAudiences  []string `json:"customAudiences"`
+	CustomAffinities []string `json:"customAffinities"`
+	UserInterests    []string `json:"userInterests"`
+	// ExcludedPlacements are websites a Display campaign must never appear on, as bare
+	// domains ("example.com"), attached as campaign-level negative placement criteria
+	// (#462). DISPLAY ONLY, refused on every other channel; a scheme, path or port is
+	// refused rather than stripped. See googleads.validateExcludedPlacements.
+	ExcludedPlacements []string `json:"excludedPlacements"`
 	// NegativeKeywords are optional CAMPAIGN-level keyword exclusions — queries the
 	// campaign must never pay for, however broadly Keywords match. SEARCH ONLY, and
-	// REFUSED on every other channel rather than ignored — as Keywords and
-	// AudienceSegments now are too: every Search-only field here refuses off Search
-	// rather than being dropped. See
+	// REFUSED on every other channel rather than ignored — as Keywords are too, and
+	// AudienceSegments everywhere but Display: a field here refuses on every channel
+	// that does not attach it rather than being dropped. See
 	// googleads.CampaignInput.NegativeKeywords.
 	//
 	// Left empty, no exclusions are created, which is the behaviour of every caller
@@ -706,6 +721,13 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		PerformanceMaxCreative:   googleAdsPerformanceMaxCreative(cfg.PerformanceMaxCreative),
 		VideoCreative:            googleAdsVideoCreative(cfg.VideoCreative),
 		DisplayCreative:          googleAdsDisplayCreative(cfg.DisplayCreative),
+		// The Display-only audience lists and placement exclusions (#462), passed through
+		// verbatim like the inputs above: the client's preflight refuses them off Display
+		// and checks every resource name against the account, before its first mutate.
+		CustomAudiences:    cfg.CustomAudiences,
+		CustomAffinities:   cfg.CustomAffinities,
+		UserInterests:      cfg.UserInterests,
+		ExcludedPlacements: cfg.ExcludedPlacements,
 		// The bytes for every asset-backed image entry, keyed by the slot string the
 		// mappers above rendered. Carried on the input rather than on each of the three
 		// creatives because it is one dispatch-wide map: the same asset may be named from

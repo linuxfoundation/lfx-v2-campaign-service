@@ -222,3 +222,66 @@ func TestGoogleAdsRecordedChannelType_Display(t *testing.T) {
 		t.Errorf("recorded channel type = %q, want %q", *got, googleAdsChannelTypeDisplay)
 	}
 }
+
+// The #462 fields: a Display config's four audience lists must reach the ad group's
+// criteria mutate, each in its own oneof arm, and its placement exclusions the campaign's
+// criteria mutate as negative placements. A mapper that dropped any of the five leaves the
+// client's own tests green and the field unreachable through the API.
+func TestGoogleAds_DisplayAudiencesAndPlacementExclusionsReachTheCriteria(t *testing.T) {
+	opts, cap := targetingServers(t)
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"display",
+		"audienceSegments":["customers/1234567890/userLists/11"],
+		"customAudiences":["customers/1234567890/customAudiences/22"],
+		"customAffinities":["customers/1234567890/customInterests/33"],
+		"userInterests":["customers/1234567890/userInterests/44"],
+		"excludedPlacements":["example.com"]}}`)
+
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	cap.mu.Lock()
+	defer cap.mu.Unlock()
+	if len(cap.adGroupCriteria) != 1 {
+		t.Fatalf("got %d adGroupCriteria mutates, want 1", len(cap.adGroupCriteria))
+	}
+	audiences := string(cap.adGroupCriteria[0])
+	for _, want := range []string{
+		`"userList":{"userList":"customers/1234567890/userLists/11"}`,
+		`"customAudience":{"customAudience":"customers/1234567890/customAudiences/22"}`,
+		`"customAffinity":{"customAffinity":"customers/1234567890/customInterests/33"}`,
+		`"userInterest":{"userInterestCategory":"customers/1234567890/userInterests/44"}`,
+	} {
+		if !strings.Contains(audiences, want) {
+			t.Errorf("audience mutate lacks %s: %s", want, audiences)
+		}
+	}
+	if len(cap.campaignCriteria) != 1 {
+		t.Fatalf("got %d campaignCriteria mutates, want 1 (the placement exclusions)", len(cap.campaignCriteria))
+	}
+	if placements := string(cap.campaignCriteria[0]); !strings.Contains(placements, `"negative":true,"placement":{"url":"example.com"}`) {
+		t.Errorf("placement mutate = %s, want a negative placement for example.com", placements)
+	}
+}
+
+// Off Display the new fields are refused before anything is created — the dispatch half of
+// the client's refusal, proving the field reaches the preflight on the Search channel too.
+func TestGoogleAds_ExcludedPlacementsRefusedOnSearch(t *testing.T) {
+	opts, cap := targetingServers(t)
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"excludedPlacements":["example.com"]}}`)
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+	if err == nil || !strings.Contains(err.Error(), "placement exclusions are not supported on Search Campaign") {
+		t.Fatalf("err = %v, want the Search refusal", err)
+	}
+	if camp != nil {
+		t.Errorf("camp = %+v, want nil — nothing was created", camp)
+	}
+	cap.mu.Lock()
+	defer cap.mu.Unlock()
+	if cap.sawBudget {
+		t.Error("a budget mutate was sent for a config the preflight must refuse")
+	}
+}
