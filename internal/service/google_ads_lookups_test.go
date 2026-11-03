@@ -19,7 +19,7 @@ import (
 // mockLookupDispatcher implements the three create-form lookup capabilities.
 type mockLookupDispatcher struct {
 	geo        []model.GeoTargetSuggestion
-	notCalled  bool // SuggestGeoTargets reports Google was not reached
+	notCalled  bool // SuggestGeoTargets and ListConversionActions report Google was not reached
 	lists      *model.AudienceUserLists
 	actions    *model.ConversionActions
 	err        error
@@ -44,9 +44,9 @@ func (m *mockLookupDispatcher) ListUserLists(_ context.Context, _ string, _ mode
 	return m.lists, m.err
 }
 
-func (m *mockLookupDispatcher) ListConversionActions(context.Context, string, model.Provider) (*model.ConversionActions, error) {
+func (m *mockLookupDispatcher) ListConversionActions(context.Context, string, model.Provider) (*model.ConversionActions, bool, error) {
 	m.calls++
-	return m.actions, m.err
+	return m.actions, !m.notCalled, m.err
 }
 
 func lookupService(d PlatformDispatcher) *ConnectionService {
@@ -397,5 +397,32 @@ func TestReadConversionActions_NilResultIsAnError(t *testing.T) {
 		if _, err := o.ReadConversionActions(context.Background(), "cncf", model.ProviderGoogleAds); err == nil {
 			t.Errorf("%s: must not be reported as an empty answer", name)
 		}
+	}
+}
+
+// Only a conversion-action read that reached Google is recorded: a local refusal (no or an
+// unusable connection) records nothing; a call that went out, successful or not, records one.
+func TestReadConversionActions_RecordsOnlyCallsThatReachedGoogle(t *testing.T) {
+	empty := &model.ConversionActions{AccountID: "1234567890", Actions: []model.ConversionAction{}}
+	cases := []struct {
+		name string
+		d    *mockLookupDispatcher
+		want int
+	}{
+		{"no connection", &mockLookupDispatcher{err: domain.ErrNotFound, notCalled: true}, 0},
+		{"unusable connection", &mockLookupDispatcher{err: fmt.Errorf("%w: x", domain.ErrConnectionNotUsable), notCalled: true}, 0},
+		{"success", &mockLookupDispatcher{actions: empty}, 1},
+		{"upstream failure", &mockLookupDispatcher{err: errors.New("google 500")}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingMetrics{}
+			o := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: tc.d})
+			o.SetMetrics(rec)
+			_, _ = o.ReadConversionActions(context.Background(), "cncf", model.ProviderGoogleAds)
+			if got := len(rec.upstreamCalls()); got != tc.want {
+				t.Errorf("%d upstream calls recorded, want %d", got, tc.want)
+			}
+		})
 	}
 }

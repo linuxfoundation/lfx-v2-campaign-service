@@ -409,11 +409,11 @@ func (d upstreamCapableDispatcher) ListUserLists(context.Context, string, model.
 	return &model.AudienceUserLists{Lists: []model.AudienceUserList{}}, nil
 }
 
-func (d upstreamCapableDispatcher) ListConversionActions(context.Context, string, model.Provider) (*model.ConversionActions, error) {
+func (d upstreamCapableDispatcher) ListConversionActions(context.Context, string, model.Provider) (*model.ConversionActions, bool, error) {
 	if d.err != nil {
-		return nil, d.err
+		return nil, true, d.err
 	}
-	return &model.ConversionActions{Actions: []model.ConversionAction{}}, nil
+	return &model.ConversionActions{Actions: []model.ConversionAction{}}, true, nil
 }
 
 func (d upstreamCapableDispatcher) SearchEmails(context.Context, string, model.Provider, string) ([]model.MarketingEmail, error) {

@@ -40,9 +40,11 @@ type UserListReader interface {
 // ConversionActionReader is an OPTIONAL dispatcher capability: list the enabled conversion
 // actions on the ad account a campaign create for the project would use.
 //
-// A successful call MUST return a non-nil result with a non-nil Actions slice.
+// A successful call MUST return a non-nil result with a non-nil Actions slice. called reports
+// whether the platform was actually contacted, as GeoTargetSuggester's does: false for a local
+// refusal before any request (no connection, an unusable one).
 type ConversionActionReader interface {
-	ListConversionActions(ctx context.Context, projectID string, platform model.Provider) (*model.ConversionActions, error)
+	ListConversionActions(ctx context.Context, projectID string, platform model.Provider) (res *model.ConversionActions, called bool, err error)
 }
 
 // ErrTargetingLookupUnsupported re-exports the domain sentinel, as the siblings in
@@ -145,8 +147,12 @@ func (o *Orchestrator) ReadConversionActions(ctx context.Context, projectID stri
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
 	start := time.Now()
-	res, err := r.ListConversionActions(callCtx, projectID, platform)
-	o.recordUpstream(ctx, platform, opListConversionActions, start, err)
+	res, called, err := r.ListConversionActions(callCtx, projectID, platform)
+	// Recorded only when Google was reached, as ReadGeoTargetSuggestions does: a local refusal
+	// sent nothing, and recording it would count a connection fault as a platform error.
+	if called {
+		o.recordUpstream(ctx, platform, opListConversionActions, start, err)
+	}
 	if err != nil {
 		return nil, err
 	}

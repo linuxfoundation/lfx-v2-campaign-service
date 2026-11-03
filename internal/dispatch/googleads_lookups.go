@@ -143,27 +143,32 @@ func (d *GoogleAdsDispatcher) ListUserLists(ctx context.Context, projectID strin
 // no one but a cross-foundation (ROOT) principal to the route: the root-campaign-admin rule in
 // ruleset.yaml, not the project campaign_manager check. Orchestrator.ReadConversionActions
 // says the same.
-func (d *GoogleAdsDispatcher) ListConversionActions(ctx context.Context, projectID string, platform model.Provider) (*model.ConversionActions, error) {
+//
+// called reports whether Google was contacted: false for every local refusal before the search
+// (no connection, an unusable one, a stored account id that is not digits only).
+func (d *GoogleAdsDispatcher) ListConversionActions(ctx context.Context, projectID string, platform model.Provider) (_ *model.ConversionActions, called bool, _ error) {
 	res, err := d.creds.resolve(ctx, projectID, platform)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// The cached client, as every other read on an account-bound client takes it; its
 	// CustomerID is the account validateGoogleAdsConnection returned, which it requires.
 	client, err := d.cachedGoogleAdsClient(projectID, platform, res)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	accountID := client.CustomerID()
-	// A stored id that is not digits only is a connection to edit (400), not an upstream
-	// failure: checked here, before gaqlSearch would refuse it with an error that maps to 503.
+	// A stored id that is not digits only is a connection to edit, not an upstream failure:
+	// checked here, before gaqlSearch would refuse it with an error that maps to 503. On the
+	// project's own row that is a 400; systemScoped makes it the LF system row's defect (500)
+	// when the project fell back to that row.
 	if verr := googleads.ValidateCustomerID(accountID); verr != nil {
-		return nil, res.systemScoped(fmt.Errorf("%w: %w: stored google ads account id: %w",
+		return nil, false, res.systemScoped(fmt.Errorf("%w: %w: stored google ads account id: %w",
 			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, verr))
 	}
 	rows, lerr := client.ListConversionActions(ctx)
 	if lerr != nil {
-		return nil, lerr
+		return nil, true, lerr
 	}
 	// make, not var: an account with no enabled action is a real, empty answer.
 	actions := make([]model.ConversionAction, 0, len(rows))
@@ -178,7 +183,7 @@ func (d *GoogleAdsDispatcher) ListConversionActions(ctx context.Context, project
 			PrimaryForGoal: r.PrimaryForGoal,
 		})
 	}
-	return &model.ConversionActions{AccountID: accountID, Actions: actions}, nil
+	return &model.ConversionActions{AccountID: accountID, Actions: actions}, true, nil
 }
 
 // geoSuggestTTL and geoSuggestMaxEntries bound the geo suggestion cache. Google's geo target

@@ -16,7 +16,8 @@ spec:
     - "lfx-api.{{ .Values.lfx.domain }}"
   rules:
     # Project-nested campaign API (the approved contract — every endpoint is
-    # /projects/{projectId}/…, gated on the project `campaign_manager` relation).
+    # /projects/{projectId}/…, gated on the project `campaign_manager` relation, except the
+    # ROOT-only conversion-action list, #458).
     #
     # project-service owns `PathPrefix: /projects/`, so we cannot claim that
     # prefix. The distinguishing token (connection-*, briefs, jobs, the provider

@@ -18,6 +18,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 var (
@@ -350,9 +351,9 @@ func TestGoogleAdsListConversionActions_OneSearchOnTheConnectionsAccount(t *test
 	})
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 
-	res, err := d.ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
-	if err != nil {
-		t.Fatalf("ListConversionActions: %v", err)
+	res, called, err := d.ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
+	if err != nil || !called {
+		t.Fatalf("ListConversionActions: err=%v called=%v, want success with Google contacted", err, called)
 	}
 	if res.AccountID != "1234567890" || len(res.Actions) != 1 {
 		t.Fatalf("res = %+v", res)
@@ -382,7 +383,7 @@ func TestGoogleAdsListConversionActions_UsesTheSystemFallback(t *testing.T) {
 	})
 	d := NewGoogleAdsDispatcher(splitConnReader{system: googleAdsConnFor("5555555555")}, identityEncryptor{}, opts...)
 
-	res, err := d.ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
+	res, _, err := d.ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
 	if err != nil {
 		t.Fatalf("ListConversionActions through the system fallback: %v", err)
 	}
@@ -403,10 +404,11 @@ func TestGoogleAdsListConversionActions_FollowsTheForcedSystemAccount(t *testing
 		rec.add(r.URL.Path)
 		_, _ = io.WriteString(w, `{"results":[]}`)
 	})
+	// Set before the dispatcher is built: credsSource reads the flag at construction.
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
 	d := NewGoogleAdsDispatcher(splitConnReader{own: googleAdsConnFor("1234567890"), system: googleAdsConnFor("5555555555")}, identityEncryptor{}, opts...)
-	d.creds.forceSystemPaidAds = true
 
-	res, err := d.ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
+	res, _, err := d.ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
 	if err != nil {
 		t.Fatalf("ListConversionActions: %v", err)
 	}
@@ -418,21 +420,25 @@ func TestGoogleAdsListConversionActions_FollowsTheForcedSystemAccount(t *testing
 	}
 }
 
-// Local refusals never reach Google: no connection anywhere is ErrNotFound (404), and a stored
-// account id that is not digits only is a connection to fix (400), not an upstream failure.
+// Local refusals never reach Google and report called=false: no connection anywhere is
+// ErrNotFound (404), and a project's own stored account id that is not digits only is a
+// connection to fix (400), not an upstream failure.
 func TestGoogleAdsListConversionActions_LocalRefusals(t *testing.T) {
 	opts, reached := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, conversionActionBody) })
 
-	_, err := NewGoogleAdsDispatcher(splitConnReader{}, identityEncryptor{}, opts...).
+	_, called, err := NewGoogleAdsDispatcher(splitConnReader{}, identityEncryptor{}, opts...).
 		ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
-	if !errors.Is(err, domain.ErrNotFound) {
-		t.Errorf("no connection: err = %v, want ErrNotFound", err)
+	if !errors.Is(err, domain.ErrNotFound) || called {
+		t.Errorf("no connection: err=%v called=%v, want ErrNotFound and called=false", err, called)
 	}
 
-	_, err = NewGoogleAdsDispatcher(fakeConnReader{conn: googleAdsConnFor("123-456-7890")}, identityEncryptor{}, opts...).
+	_, called, err = NewGoogleAdsDispatcher(fakeConnReader{conn: googleAdsConnFor("123-456-7890")}, identityEncryptor{}, opts...).
 		ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
-	if !errors.Is(err, domain.ErrConnectionNotUsable) || !errors.Is(err, domain.ErrProviderConfigInvalid) {
-		t.Errorf("dashed account id: err = %v, want ErrConnectionNotUsable and ErrProviderConfigInvalid", err)
+	if !errors.Is(err, domain.ErrConnectionNotUsable) || !errors.Is(err, domain.ErrProviderConfigInvalid) || called {
+		t.Errorf("dashed account id: err=%v called=%v, want ErrConnectionNotUsable and ErrProviderConfigInvalid, called=false", err, called)
+	}
+	if errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+		t.Errorf("dashed account id on the project's OWN row: err = %v, must not be tagged as the LF system row's defect", err)
 	}
 
 	if reached.Load() {
@@ -448,11 +454,27 @@ func TestGoogleAdsListConversionActions_UpstreamFailureIsNotAConnectionDefect(t 
 		_, _ = io.WriteString(w, `{"error":{"code":400,"message":"bad","status":"INVALID_ARGUMENT"}}`)
 	})
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
-	_, err := d.ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
-	if err == nil {
-		t.Fatal("want an error for a refused search")
+	_, called, err := d.ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
+	if err == nil || !called {
+		t.Fatalf("err=%v called=%v, want an error with Google contacted", err, called)
 	}
 	if errors.Is(err, domain.ErrConnectionNotUsable) || errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("err = %v, want an upstream error, not a local connection state", err)
+	}
+}
+
+// A non-digit account id on the LF system row a project fell back to is the LF row's defect, not
+// the project's: it carries ErrSystemConnectionNotUsable, which the service answers 500 (paging
+// the operator) rather than the 400 that would tell the project to edit a connection it lacks.
+func TestGoogleAdsListConversionActions_BadSystemRowAccountIsTheSystemRowsDefect(t *testing.T) {
+	opts, reached := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, conversionActionBody) })
+	d := NewGoogleAdsDispatcher(splitConnReader{system: googleAdsConnFor("123-456-7890")}, identityEncryptor{}, opts...)
+
+	_, called, err := d.ListConversionActions(context.Background(), "proj-1", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrSystemConnectionNotUsable) || !errors.Is(err, domain.ErrProviderConfigInvalid) || called {
+		t.Errorf("err=%v called=%v, want ErrSystemConnectionNotUsable and ErrProviderConfigInvalid, called=false", err, called)
+	}
+	if reached.Load() {
+		t.Error("Google was contacted for a locally refused read")
 	}
 }

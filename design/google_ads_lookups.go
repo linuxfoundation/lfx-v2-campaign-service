@@ -194,10 +194,13 @@ func googleAdsLookupMethods() {
 			"ROOT PRINCIPALS ONLY: the Google Ads customer is shared by every foundation, so the response " +
 			"lists EVERY foundation's conversion action names, not only this project's. The gateway therefore " +
 			"admits only a cross-foundation principal — writer_guard or global_marketing_ops on the ROOT " +
-			"project (resolved by the slug ROOT), the same two checks as lfx-self-serve's " +
-			"isRootCampaignPrincipal. Being a campaign_manager of {project_id} is not enough. " +
-			"{project_id} still selects which project's connection supplies the credential. " +
-			"More than 500 actions on the customer fails the read with 503 rather than truncating it. " +
+			"project, whose UID the deployment sets per environment (chart value openfga.rootProjectUid) — " +
+			"the same two checks as lfx-self-serve's isRootCampaignPrincipal. Until that value is set " +
+			"in an environment, the gateway denies this route there. Being a campaign_manager of " +
+			"{project_id} is not enough. {project_id} still selects which project's connection supplies " +
+			"the credential. More than 500 enabled actions on the customer fails the read with 503 " +
+			"rather than truncating it, and that 503 does not clear on retry: the account itself holds " +
+			"more actions than this endpoint publishes. " +
 			"A pure read: the only upstream call is googleAds:search, and nothing is persisted.")
 		Payload(func() {
 			bearerToken()

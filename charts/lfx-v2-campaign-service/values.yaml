@@ -118,6 +118,13 @@ openfga:
   # Note: If it is disabled, then the service will allow all requests
   # (Disabling OpenFGA should only be used for local development).
   enabled: true
+  # rootProjectUid is the ROOT project's UID for this environment, set per environment in
+  # lfx-v2-argocd. It gates GET /projects/{projectId}/google-ads/conversion-actions (#458) on
+  # writer_guard or global_marketing_ops on that project. lfx-self-serve resolves ROOT at
+  # runtime over NATS, but project-service's HTTP slug-to-uid lookup refuses the slug "ROOT",
+  # so the gateway cannot resolve it. Empty: that one route is denied (fail closed); every
+  # other route is unaffected. A non-empty value that is not a UUID fails the render.
+  rootProjectUid: ""
 
 # heimdall is the configuration for the heimdall middleware
 heimdall:

@@ -158,47 +158,116 @@ func rulePatterns(t *testing.T, ruleset, ruleID string) []string {
 	return pats
 }
 
-// assertRootAdminAuthz verifies the root-campaign-admin rule admits only a cross-foundation
-// principal: one openfga_or_check on the ROOT project's resolved uid, `writer_guard` OR
-// `global_marketing_ops` (lfx-self-serve's isRootCampaignPrincipal), with the resolver fed the
-// fixed slug ROOT. It must not consult the :projectId capture, carry a campaign_manager check
-// (that would let a project's campaign_manager in), or fall back to allow_all while OpenFGA is
-// enabled. These are assertions on the rendered values; what Heimdall does with them is
-// lfx-v2-helm's openfga_or_check definition, which this test cannot exercise.
-func assertRootAdminAuthz(t *testing.T, ruleset string) {
+// testRootProjectUID is an obviously fake UUID for openfga.rootProjectUid.
+const testRootProjectUID = "11111111-2222-3333-4444-555555555555"
+
+// helmTemplateWith renders one template with --set overrides and returns the output and the
+// render error, so a test can assert that a value is refused.
+func helmTemplateWith(t *testing.T, showOnly string, sets ...string) (string, error) {
+	t.Helper()
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skipf("helm not on PATH; skipping chart test: %v", err)
+	}
+	args := []string{"template", chartDir, "--show-only", showOnly}
+	for _, kv := range sets {
+		args = append(args, "--set", kv)
+	}
+	out, err := exec.Command("helm", args...).CombinedOutput()
+	return string(out), err
+}
+
+// assertRootAdminShape pins what the root-campaign-admin rule is whatever its authorizer: GET
+// only, exactly one authorizer, and nothing that would scope it to the path's project — no
+// campaign_manager, no :projectId capture, no slug resolver (project-service's HTTP lookup
+// refuses the slug "ROOT"), no campaign_manager-style openfga_check. Returns the rule block.
+func assertRootAdminShape(t *testing.T, ruleset string) string {
 	t.Helper()
 	block := ruleBlock(t, ruleset, rootAdminRuleID)
-	const rootObject = `"project:{{- .Outputs.project_slug_resolver_contextualizer.uid -}}"`
+	if got := strings.Count(block, "- authorizer:"); got != 1 {
+		t.Errorf("%s rule must have exactly one authorizer, got %d:\n%s", rootAdminRuleID, got, block)
+	}
+	for _, banned := range []string{"campaign_manager", "Captures.projectId", "project_slug_resolver_contextualizer", "authorizer: openfga_check"} {
+		if strings.Contains(block, banned) {
+			t.Errorf("%s rule must not contain %q:\n%s", rootAdminRuleID, banned, block)
+		}
+	}
+	m, r := strings.Index(block, "methods:"), strings.Index(block, "routes:")
+	if m < 0 || r < 0 || r < m {
+		t.Fatalf("%s rule must carry match.methods before match.routes:\n%s", rootAdminRuleID, block)
+	}
+	if methods := block[m:r]; strings.Count(methods, "- ") != 1 || !strings.Contains(methods, "- GET") {
+		t.Errorf("%s rule must match GET only:\n%s", rootAdminRuleID, methods)
+	}
+	return block
+}
+
+// assertRootAdminAuthz is the check the parity tests run on the default render, where
+// openfga.rootProjectUid is empty: the rule exists with its fixed shape and fails closed.
+func assertRootAdminAuthz(t *testing.T, ruleset string) {
+	t.Helper()
+	block := assertRootAdminShape(t, ruleset)
+	if !strings.Contains(block, "- authorizer: deny_all") {
+		t.Errorf("%s rule must be deny_all while openfga.rootProjectUid is empty:\n%s", rootAdminRuleID, block)
+	}
+}
+
+// TestRootAdminRuleEnforcesRootPrincipal: with openfga.rootProjectUid set, the rule admits only
+// `writer_guard` OR `global_marketing_ops` on that project (lfx-self-serve's
+// isRootCampaignPrincipal), in one openfga_or_check naming the uid in both objects. These are
+// assertions on the rendered values; what Heimdall does with them is lfx-v2-helm's
+// openfga_or_check definition, which this test cannot exercise.
+func TestRootAdminRuleEnforcesRootPrincipal(t *testing.T) {
+	ruleset, err := helmTemplateWith(t, "templates/ruleset.yaml", "openfga.rootProjectUid="+testRootProjectUID)
+	if err != nil {
+		t.Fatalf("render with a valid rootProjectUid failed: %v\n%s", err, ruleset)
+	}
+	block := assertRootAdminShape(t, ruleset)
+	const object = `"project:` + testRootProjectUID + `"`
 	for _, want := range []string{
 		"- authorizer: openfga_or_check",
 		"relation: writer_guard",
-		"object: " + rootObject,
+		"object: " + object,
 		"or_relation: global_marketing_ops",
-		"or_object: " + rootObject,
-		"- contextualizer: project_slug_resolver_contextualizer\n          config:\n            values:\n              slug: \"ROOT\"",
+		"or_object: " + object,
 	} {
 		if !strings.Contains(block, want) {
 			t.Errorf("%s rule is missing %q:\n%s", rootAdminRuleID, want, block)
 		}
 	}
-	if got := strings.Count(block, "- authorizer:"); got != 1 {
-		t.Errorf("%s rule must have exactly one authorizer (the openfga_or_check), got %d:\n%s", rootAdminRuleID, got, block)
+}
+
+// TestRootAdminRuleDeniesWhenRootUidUnset: an environment that has not set
+// openfga.rootProjectUid renders, and the conversion-action route alone is deny_all.
+func TestRootAdminRuleDeniesWhenRootUidUnset(t *testing.T) {
+	ruleset, err := helmTemplateWith(t, "templates/ruleset.yaml", "openfga.rootProjectUid=")
+	if err != nil {
+		t.Fatalf("an empty rootProjectUid must not fail the render: %v\n%s", err, ruleset)
 	}
-	for _, banned := range []string{"campaign_manager", "Captures.projectId", "authorizer: allow_all", "authorizer: openfga_check"} {
-		if strings.Contains(block, banned) {
-			t.Errorf("%s rule must not contain %q:\n%s", rootAdminRuleID, banned, block)
-		}
+	assertRootAdminAuthz(t, ruleset)
+}
+
+// TestRootAdminRuleRefusesAMalformedRootUid: a non-empty value that is not a UUID fails the
+// render rather than writing an object no tuple can match.
+func TestRootAdminRuleRefusesAMalformedRootUid(t *testing.T) {
+	out, err := helmTemplateWith(t, "templates/ruleset.yaml", "openfga.rootProjectUid=ROOT")
+	if err == nil {
+		t.Fatalf("a non-UUID rootProjectUid rendered:\n%s", out)
 	}
-	methods := block[strings.Index(block, "methods:"):strings.Index(block, "routes:")]
-	if strings.Count(methods, "- ") != 1 || !strings.Contains(methods, "- GET") {
-		t.Errorf("%s rule must match GET only:\n%s", rootAdminRuleID, methods)
+	if !strings.Contains(out, "openfga.rootProjectUid must be the ROOT project's UUID") {
+		t.Errorf("render failed for another reason: %s", out)
 	}
 }
 
-// TestRootAdminRuleEnforcesRootPrincipal pins the root-campaign-admin rule's authorizer, so a
-// downgrade to campaign_manager, allow_all or a single check fails even if parity still holds.
-func TestRootAdminRuleEnforcesRootPrincipal(t *testing.T) {
-	assertRootAdminAuthz(t, helmTemplate(t, "templates/ruleset.yaml"))
+// TestRootAdminRuleIsAllowAllWithOpenFGADisabled: local dev without OpenFGA is allow_all, as
+// project-api is, even with a uid set.
+func TestRootAdminRuleIsAllowAllWithOpenFGADisabled(t *testing.T) {
+	ruleset, err := helmTemplateWith(t, "templates/ruleset.yaml", "openfga.enabled=false", "openfga.rootProjectUid="+testRootProjectUID)
+	if err != nil {
+		t.Fatalf("render failed: %v\n%s", err, ruleset)
+	}
+	if block := assertRootAdminShape(t, ruleset); !strings.Contains(block, "- authorizer: allow_all") {
+		t.Errorf("%s rule must be allow_all with OpenFGA disabled:\n%s", rootAdminRuleID, block)
+	}
 }
 
 // TestConversionActionsIsRuledOnlyByTheRootAdminRule pins WHERE the conversion-action list is
