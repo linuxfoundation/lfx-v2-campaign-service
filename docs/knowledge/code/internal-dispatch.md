@@ -1005,6 +1005,12 @@ completeness) — follow the same rule and the same hands-off posture: each gets
 JSON-tagged wire type for the reason `googleAdsKeywordConfig` has one, and a mapper that
 copies fields and validates nothing.
 
+The #473 Search-parity fields are passed through on the same terms: `path1`/`path2` at the
+top level and on each `adGroups[].ads[]` entry, `adGroups[].negativeKeywords` (mapped by
+`googleAdsKeywords`, as the campaign-level list is), and `excludedIncomeRanges` and
+`excludedParentalStatuses`. Which channel takes each is the client preflight's decision, so
+an off-channel value is refused there for the create and the adoption path alike.
+
 Two details of those mappers are load-bearing. Each returns **nil** for an empty input, as
 `googleAdsKeywords` does, so an omitted field stays nil end-to-end rather than becoming an
 empty-but-non-nil slice — and for the per-ad-group fields nil is specifically what the client

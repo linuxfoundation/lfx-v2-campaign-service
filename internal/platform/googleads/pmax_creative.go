@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -95,6 +96,28 @@ const (
 	// segments that render after the domain in a Performance Max ad.
 	maxDisplayPathRunes = 15
 )
+
+// displayPathPunctuation is the URL punctuation a display-path segment may not carry.
+const displayPathPunctuation = "/?#&="
+
+// displayPathRefusedRune returns the first rune of a display-path segment that this client
+// refuses: any whitespace (unicode.IsSpace, so NBSP and the ideographic space too), any
+// control character, or one of displayPathPunctuation. Shared by the Performance Max paths
+// (validateDisplayPath) and the responsive search ad paths (validateSearchAdPath), so both
+// refuse the same CHARACTERS; they measure LENGTH differently — the RSA paths in the
+// headline's double-width weight, the Performance Max paths in runes.
+func displayPathRefusedRune(p string) (rune, bool) {
+	for _, r := range p {
+		if unicode.IsSpace(r) || unicode.IsControl(r) || strings.ContainsRune(displayPathPunctuation, r) {
+			return r, true
+		}
+	}
+	return 0, false
+}
+
+// displayPathRefusalText names exactly what displayPathRefusedRune refuses, for both
+// channels' error messages.
+const displayPathRefusalText = "whitespace, control characters and / ? # & = are not accepted in a display path"
 
 // Asset field types, as AssetFieldTypeEnum names them. Written out rather than derived
 // from the slot label, because the enum is the wire contract and a derived name that
@@ -382,9 +405,10 @@ func validatePerformanceMaxCreative(kind string, in CampaignInput) (performanceM
 	return plan, nil
 }
 
-// validateDisplayPath bounds one display-path segment and refuses the characters Google
-// refuses there. A path segment renders inside the visible URL, so a slash or a space in
-// it is rejected by Google at the asset-group mutate — after the campaign exists.
+// validateDisplayPath bounds one display-path segment and refuses what
+// displayPathRefusedRune refuses. A path segment renders inside the visible URL, so a
+// slash or a space in it is rejected by Google at the asset-group mutate — after the
+// campaign exists.
 func validateDisplayPath(label, raw string) (string, error) {
 	p := strings.TrimSpace(raw)
 	if p == "" {
@@ -393,8 +417,8 @@ func validateDisplayPath(label, raw string) (string, error) {
 	if n := utf8.RuneCountInString(p); n > maxDisplayPathRunes {
 		return "", fmt.Errorf("google-ads Performance Max display %s %q is %d characters, exceeding the %d limit", label, capForError(p), n, maxDisplayPathRunes)
 	}
-	if strings.ContainsAny(p, "/?#&= \t\n") {
-		return "", fmt.Errorf("google-ads Performance Max display %s %q contains a character Google does not accept in a display path (no slashes, spaces or URL punctuation)", label, capForError(p))
+	if r, bad := displayPathRefusedRune(p); bad {
+		return "", fmt.Errorf("google-ads Performance Max display %s %q contains %q (%s)", label, capForError(p), r, displayPathRefusalText)
 	}
 	return p, nil
 }

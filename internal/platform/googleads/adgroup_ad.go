@@ -151,10 +151,13 @@ type adGroupStatusUpdate struct {
 	Status       string `json:"status"`
 }
 
-// responsiveSearchAd is the ad-type payload for an Ad create.
+// responsiveSearchAd is the ad-type payload for an Ad create. Path1/Path2 are the display
+// paths (#473), omitted when unset so an ad without them is the payload sent before.
 type responsiveSearchAd struct {
 	Headlines    []adTextAsset `json:"headlines"`
 	Descriptions []adTextAsset `json:"descriptions"`
+	Path1        string        `json:"path1,omitempty"`
+	Path2        string        `json:"path2,omitempty"`
 }
 
 // adCreate is the "ad" object nested in an adGroupAd create.
@@ -302,6 +305,10 @@ func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, ad adPlan, ad
 	if err != nil {
 		return "", adPlan{}, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid ad copy): %w", err)
 	}
+	ad.path1, ad.path2, err = validateSearchAdPaths(in.Path1, in.Path2)
+	if err != nil {
+		return "", adPlan{}, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request: %w", err)
+	}
 	adGroupName = ComposeName("Ad Group", in)
 	if err := validateEntityName("ad group", adGroupName, utf8.RuneCountInString(adGroupName), maxAdGroupNameRunes, "characters"); err != nil {
 		return "", adPlan{}, "", nil, nil, err
@@ -334,9 +341,9 @@ func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, ad adPlan, ad
 // (precomputeAdGroupAdInputs, then validateAdGroupPlans) BEFORE CreateCampaign's
 // first mutate, so this method performs no local validation of its own — by the
 // time it runs, the campaign already exists and there is nothing left to
-// reject before sending. If both plan.keywords and plan.audienceSegments are
-// empty (GA-4 targeting is optional), the ad group/ad are created with no
-// criteria, same as pre-GA-4 behavior.
+// reject before sending. If plan carries no criteria of any kind (keywords,
+// audiences, negative keywords or income/parental exclusions — all optional), the ad
+// group/ad are created with no criteria, same as pre-GA-4 behavior.
 //
 // res is mutated in place (AdGroups/AdGroupName/AdGroupID/AdID/Steps) so the
 // caller's existing partial-result plumbing (campaignNamePartial-derived)
@@ -347,7 +354,6 @@ func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, ad adPlan, ad
 func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campaignID, finalURL string, plan adGroupPlan, res *CampaignResult) error {
 	adGroupName := plan.name
 	cpcBidMicros := plan.cpcBidMicros
-	keywords := plan.keywords
 	audienceSegments := plan.audienceSegments
 
 	if ctxErr := ctx.Err(); ctxErr != nil {
@@ -443,6 +449,8 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 				ResponsiveSearchAd: &responsiveSearchAd{
 					Headlines:    textAssets(ad.headlines),
 					Descriptions: textAssets(ad.descriptions),
+					Path1:        ad.path1,
+					Path2:        ad.path2,
 				},
 			},
 		}})
@@ -495,6 +503,18 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 	} else {
 		res.Steps = append(res.Steps, fmt.Sprintf("Responsive search ads created: %s (PAUSED, %d ads in ad group %s)", strings.Join(adIDs, ", "), len(adIDs), adGroupID))
 	}
+	// The display path each ad carries (#473), so the visible URL an operator set is on the
+	// record beside the ad it went to.
+	for i, ad := range plan.ads {
+		path := searchAdPathStep(ad)
+		switch {
+		case path == "":
+		case len(plan.ads) == 1:
+			res.Steps = append(res.Steps, "Ad display path: "+path)
+		default:
+			res.Steps = append(res.Steps, fmt.Sprintf("Ad %d display path: %s", i+1, path))
+		}
+	}
 	// What composeAdCopy changed in the operator's copy (#441), so a line they never wrote,
 	// or one they wrote that was dropped, is visible beside the ad it landed in.
 	for i, ad := range plan.ads {
@@ -507,20 +527,24 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 		}
 	}
 
-	if len(keywords) == 0 && len(audienceSegments) == 0 {
+	criteria := plan.criteria()
+	if criteria.count() == 0 {
 		return nil
 	}
-	keywordIDs, audienceIDs, err := c.createAdGroupTargeting(ctx, adGroupResource, adGroupID, keywords, audienceSegments)
+	ids, err := c.createAdGroupTargeting(ctx, adGroupResource, adGroupID, criteria)
 	if err != nil {
 		return err
 	}
-	group.KeywordCriteriaIDs = keywordIDs
-	group.AudienceCriteriaIDs = audienceIDs
+	group.KeywordCriteriaIDs = ids.keywords
+	group.AudienceCriteriaIDs = ids.audiences
+	group.NegativeKeywordCriteriaIDs = ids.negativeKeywords
+	group.DemographicCriteriaIDs = ids.demographics
 	if isFirstAdGroup {
-		res.KeywordCriteriaIDs = keywordIDs
-		res.AudienceCriteriaIDs = audienceIDs
+		res.KeywordCriteriaIDs = ids.keywords
+		res.AudienceCriteriaIDs = ids.audiences
+		res.AdGroupDemographicCriteriaIDs = ids.demographics
 	}
-	res.Steps = append(res.Steps, fmt.Sprintf("Keyword/audience targeting attached: %d keyword(s), %d audience segment(s)", len(keywordIDs), len(audienceIDs)))
+	res.Steps = append(res.Steps, adGroupCriteriaStep(ids))
 	return nil
 }
 

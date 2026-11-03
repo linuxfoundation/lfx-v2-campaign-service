@@ -1030,6 +1030,9 @@ mutate here, just extended to N operations. Input is validated up front
 keyword or audience value must not leave a created ad group + ad with a
 failed targeting step the caller has to puzzle out separately.
 
+Since #473 the same mutate also carries the group's negative keywords and its income and
+parental-status exclusions; see "Search parity" under Search campaign completeness.
+
 **Keywords** (`Keyword{Text, MatchType}`) are positive Search criteria only;
 `MatchType` is one of `EXACT`/`PHRASE`/`BROAD`. `Text` is capped at v23's
 80-rune `KeywordInfo.text` limit. Up to 60 keywords per call (a sanity cap on
@@ -1924,6 +1927,49 @@ The groups are created in order, and because every one of them is created after
 the campaign exists, the partial-result contract covers them: a failure at group
 N returns the error alongside the non-nil result, and says which group of how many
 failed with how many were created before it.
+
+**Search parity: display paths, ad-group negatives, income and parental exclusions
+(#473).** Four inputs close the gap between an LFX-built Search campaign and the live
+KubeCon NA 2026 one. Each is optional, validated before the budget mutate, and refused off
+the channels named below. The live behaviour each encodes was checked with validateOnly
+probes on 2026-11-03 (v23). The 15/16 path boundary was probed in ASCII; the double-width
+weighting and the refused characters follow the RSA headline and Performance Max path rules
+and were not probed separately.
+
+- `CampaignInput.Path1`/`Path2` and `AdSpec.Path1`/`Path2` are the responsive search ad's
+  display paths, sent as `responsiveSearchAd.path1`/`path2` (omitted when unset, so an ad
+  without them is the old payload). `validateSearchAdPaths` (`ad_copy.go`) caps each at 15
+  in the headline's double-width weight (`textWeight`); the probe accepted 15 and refused 16
+  with `TOO_LONG`. It refuses the same characters as the Performance Max paths — any
+  whitespace (`unicode.IsSpace`, so NBSP and U+3000 too), any control character, and
+  `/?#&=`, through the shared `displayPathRefusedRune` — and refuses `path2` without
+  `path1`. An `AdSpec` that sets
+  neither path takes the campaign-level pair. Refused off Search before
+  `precomputeAdGroupAdInputs`, so an off-Search caller hears about the channel, not a length.
+- `AdGroupSpec.NegativeKeywords` are one group's own exclusions, sent as
+  `{adGroup, negative: true, keyword}` with no status, beside the campaign-level list. They
+  are never inherited from it: that list already applies to every group. Same rules and cap
+  as the campaign list (`validateKeywordList`, `maxNegativeKeywords`).
+- `ExcludedIncomeRanges` (Google's `IncomeRangeType` enum) and `ExcludedParentalStatuses`
+  (`ParentalStatusType`) are AD-GROUP exclusions, not campaign criteria like the age and
+  gender ones: the ad group is the level the probes verified.
+  `validateAdGroupDemographicExclusions` (`campaign_criteria.go`) takes income ranges on
+  Search and Display and parental status on Display only, because Google refused a
+  parental-status criterion on a Search ad group with `OPERATION_NOT_PERMITTED_FOR_CONTEXT`.
+  Demand Gen, Video and Performance Max refuse both. An entry carrying any non-ASCII rune is
+  refused before it is upper-cased, because Unicode case folding maps the dotless `ı` onto
+  `I`. Positive (targeting or observation) demographic criteria are not added; no probe
+  covered them.
+
+On Search all of a group's criteria share ONE atomic `adGroupCriteria:mutate`:
+`createAdGroupTargeting` now takes an `adGroupCriteriaSet` and sends keywords, audiences,
+negative keywords, then the exclusions, splitting the index-aligned results back by kind.
+Positive criteria keep `status: ENABLED`; negative ones carry `negative: true` and no status.
+Display calls the same function with only the exclusions, right after its ad group is
+created and before the images. The ids land in `AdGroupResult.NegativeKeywordCriteriaIDs` and
+`DemographicCriteriaIDs`, and in `CampaignResult.AdGroupDemographicCriteriaIDs` (the first
+group's on Search). A failure follows the partial-result contract, and a 5xx, transport
+error or short response is UNCONFIRMED.
 
 ## Demand Gen ad creation (LFXV2-2665)
 

@@ -91,20 +91,24 @@ type displayAdGroupCreate struct {
 }
 
 // CreateDisplayCampaign creates a PAUSED Display campaign: images → budget → campaign →
-// campaign-level geo → campaign-level criteria → ad group → image assets → ad.
+// campaign-level geo → campaign-level criteria → ad group → ad-group exclusions → image
+// assets → ad.
 //
-// Seven mutating steps behind a fetch phase, which makes this the union of the two
-// hardest halves in the package: campaign-level criteria like Search, Performance Max
-// and Video, an ad group with an ad under it like Search, Demand Gen and Video, AND a
-// pre-budget network phase like Demand Gen and Performance Max. Video had the first two
-// and no fetch, because a YouTube video is referenced by id; a responsive display ad is
-// built from image BYTES, so this channel pays the fetch cost those two do.
+// Seven mutating steps (eight with ad-group exclusions) behind a fetch phase, which makes
+// this the union of the two hardest halves in the package: campaign-level criteria like
+// Search, Performance Max and Video, an ad group with an ad under it like Search, Demand
+// Gen and Video, AND a pre-budget network phase like Demand Gen and Performance Max. Video
+// had the first two and no fetch, because a YouTube video is referenced by id; a
+// responsive display ad is built from image BYTES, so this channel pays the fetch cost
+// those two do.
 //
 // NOT LIVE-VERIFIED, on the same terms as Video: the only Google account reachable from
 // here is a production LF account and a validateOnly mutate is still a POST to it. What
 // that leaves open is named rather than hedged — the field shapes below are read off
 // Google's published v23 resources, and the one thing a code reading cannot settle is
 // the BIDDING SET, recorded at displayBiddingStrategies with the check that closes it.
+// #473's ad-group income-range and parental-status exclusion shapes were accepted by
+// validateOnly probes on 2026-11-03; the bidding set was not probed.
 //
 // The partial-result contract is the siblings', unchanged: past the campaign create
 // every failure returns the error ALONGSIDE a non-nil *CampaignResult carrying what
@@ -323,7 +327,20 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 	steps = append(steps, fmt.Sprintf("Ad group created: %s (%s)", adGroupID, adGroupTypeDisplayStandard))
 	res.Steps = steps
 
-	// Steps 6 and 7: the image assets, then the ad that references them — two mutates,
+	// The income-range and parental-status exclusions (#473) go on the ad group, the level
+	// the validateOnly probes verified for Display, and before the images and the ad so a
+	// failure has as little built on it as possible. Same partial-result contract.
+	if !pf.adGroupDemographics.empty() {
+		ids, exErr := c.createAdGroupTargeting(ctx, adGroupResource, adGroupID, adGroupCriteriaSet{demographics: pf.adGroupDemographics})
+		if exErr != nil {
+			return res, exErr
+		}
+		res.AdGroupDemographicCriteriaIDs = ids.demographics
+		steps = append(steps, fmt.Sprintf("Ad group exclusions applied: %d criteria (%s)", len(ids.demographics), adGroupDemographicStep(pf.adGroupDemographics)))
+		res.Steps = steps
+	}
+
+	// The image assets, then the ad that references them — two mutates,
 	// because Google has no call that does both. The asset ids are carried on the
 	// result even when the ad half failed, so an operator can find assets created with
 	// nothing referencing them.

@@ -51,16 +51,23 @@ const (
 // are — composeAdCopy pads missing slots with deterministic placeholders up to
 // Google's minimum — so an AdSpec may be zero-valued, which produces the same
 // generated copy the single-ad path produces today.
+//
+// Path1/Path2 are the ad's display paths (#473), the segments Google renders after the final
+// URL's domain. Unlike the copy, an ad that sets NEITHER inherits the campaign-level
+// CampaignInput.Path1/Path2 pair, because a display path usually names the event rather than
+// the theme; an ad that sets either one uses its own pair. See validateSearchAdPaths.
 type AdSpec struct {
 	Headlines    []string
 	Descriptions []string
+	Path1        string
+	Path2        string
 }
 
 // AdGroupSpec is one ad group: a theme, the keywords that express it, and the
 // ads written for it.
 //
-// Every field except Name falls back to the campaign-level equivalent when it is
-// empty, so a caller that only wants to split keywords across themes writes just
+// Every field except Name and NegativeKeywords falls back to the campaign-level equivalent
+// when it is empty, so a caller that only wants to split keywords across themes writes just
 // Name and Keywords and inherits the rest. That fallback is per field and not
 // all-or-nothing: a group may override only its bid.
 type AdGroupSpec struct {
@@ -86,6 +93,12 @@ type AdGroupSpec struct {
 	// Empty means one ad built from the campaign-level copy, which is what the
 	// single-group path does.
 	Ads []AdSpec
+	// NegativeKeywords are this group's own keyword EXCLUSIONS (#473), attached as negative
+	// ad-group criteria beside the campaign-level CampaignInput.NegativeKeywords. Unlike the
+	// fields above there is no campaign-level fallback: the campaign list is already in force
+	// for every group, so inheriting it would send each exclusion twice. Validated by the
+	// campaign list's rules (validateKeywordList) and cap.
+	NegativeKeywords []Keyword
 }
 
 // adPlan is one validated ad: the copy composeAdCopy produced, padded to
@@ -95,17 +108,35 @@ type adPlan struct {
 	headlines    []string
 	descriptions []string
 	copyNotes    []string
+	path1        string
+	path2        string
 }
 
 // adGroupPlan is one validated ad group and everything that hangs off it. Every
 // value here is already checked and derived — by the time the cascade reads one,
 // the campaign exists and there is nothing left to reject.
+//
+// negativeKeywords are the group's own exclusions, and demographics the income and parental
+// exclusions preflightCampaignKind copies onto every group; both ride in the group's one
+// adGroupCriteria:mutate with its keywords and audiences.
 type adGroupPlan struct {
 	name             string
 	cpcBidMicros     int64
 	keywords         []Keyword
 	audienceSegments []string
 	ads              []adPlan
+	negativeKeywords []Keyword
+	demographics     adGroupDemographicPlan
+}
+
+// criteria is everything this group's adGroupCriteria:mutate carries.
+func (p adGroupPlan) criteria() adGroupCriteriaSet {
+	return adGroupCriteriaSet{
+		keywords:         p.keywords,
+		audienceSegments: p.audienceSegments,
+		negativeKeywords: p.negativeKeywords,
+		demographics:     p.demographics,
+	}
 }
 
 // everyAdGroupBringsAds reports whether the caller asked for ad groups and every one of them
@@ -193,24 +224,36 @@ func validateAdGroupPlans(kind string, in CampaignInput, base adGroupPlan) ([]ad
 			plan.audienceSegments = segments
 		}
 		if len(spec.Ads) > 0 {
-			ads, err := validateAdSpecs(name, spec.Ads, in)
+			var inherit adPlan
+			if len(base.ads) > 0 {
+				inherit = base.ads[0]
+			}
+			ads, err := validateAdSpecs(name, spec.Ads, in, inherit)
 			if err != nil {
 				return nil, err
 			}
 			plan.ads = ads
+		}
+		if len(spec.NegativeKeywords) > 0 {
+			negatives, err := validateKeywordList("ad group negative keyword", spec.NegativeKeywords, maxNegativeKeywords)
+			if err != nil {
+				return nil, fmt.Errorf("google-ads campaign creation aborted before any request (ad group %q has invalid negative keyword input): %w", name, err)
+			}
+			plan.negativeKeywords = negatives
 		}
 		plans = append(plans, plan)
 	}
 	return plans, nil
 }
 
-// validateAdSpecs composes and validates one group's ads.
+// validateAdSpecs composes and validates one group's ads. inherit is the campaign-level ad,
+// whose display paths an ad that sets neither path takes.
 //
 // Duplicate copy across two ads in a group is NOT refused. Google accepts it,
 // and a guard here that upstream would not apply is the expensive kind of wrong:
 // it turns a campaign Google would have created into a failure. It is wasteful,
 // not invalid.
-func validateAdSpecs(adGroupName string, specs []AdSpec, in CampaignInput) ([]adPlan, error) {
+func validateAdSpecs(adGroupName string, specs []AdSpec, in CampaignInput, inherit adPlan) ([]adPlan, error) {
 	if len(specs) > maxAdsPerAdGroup {
 		return nil, fmt.Errorf("google-ads campaign creation aborted before any request (ad group %q has %d ads, limit %d responsive search ads per ad group)", adGroupName, len(specs), maxAdsPerAdGroup)
 	}
@@ -219,6 +262,13 @@ func validateAdSpecs(adGroupName string, specs []AdSpec, in CampaignInput) ([]ad
 		ad, err := composeAdCopy(spec.Headlines, spec.Descriptions, in.EventName, in.Project)
 		if err != nil {
 			return nil, fmt.Errorf("google-ads campaign creation aborted before any request (ad group %q ad %d has invalid ad copy): %w", adGroupName, i+1, err)
+		}
+		ad.path1, ad.path2 = inherit.path1, inherit.path2
+		if strings.TrimSpace(spec.Path1) != "" || strings.TrimSpace(spec.Path2) != "" {
+			ad.path1, ad.path2, err = validateSearchAdPaths(spec.Path1, spec.Path2)
+			if err != nil {
+				return nil, fmt.Errorf("google-ads campaign creation aborted before any request (ad group %q ad %d): %w", adGroupName, i+1, err)
+			}
 		}
 		ads = append(ads, ad)
 	}
