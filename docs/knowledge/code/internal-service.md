@@ -157,8 +157,8 @@ the first; the expand-phase "not available yet" refusal and `domain.ErrSlotVersi
 gone. `CreateCampaigns`
 refuses `new_version` synchronously (400, before a job exists) for any platform outside
 `model.ProviderSupportsSlotVersions` — today Microsoft, Google (cs-2), Reddit and Meta (cs-3),
-because the other providers reuse campaigns by a name that does not yet vary by slot version (see
-the dispatch concept).
+LinkedIn and X (cs-4), so every ad platform; only HubSpot, which clones an email under the same
+name, is refused (see the dispatch concept).
 
 **Multi-campaign per event: compare-and-set and labels (cs-1).** A `new_version` request must
 also carry `expected_slot_versions` — per platform, the slot version of the latest live campaign
@@ -180,9 +180,9 @@ replay of that request arrives, the latest live campaign is the one the replay e
 it creates another. Comparing against the highest version ever used instead would need the caller
 to know deleted versions, which no read exposes, and would block every later deliberate create.
 `campaignLabels` also refuses labels unless every selected platform names campaigns by stage
-(`model.ProviderNamesByStage`, Microsoft, Google since cs-2, Reddit and Meta since cs-3): a row labelled on, say, LinkedIn
-today would compose a different name once LinkedIn adds the stage, and a re-dispatch would miss its
-upstream campaign.
+(`model.ProviderNamesByStage`, Microsoft, Google since cs-2, Reddit and Meta since cs-3, LinkedIn
+and X since cs-4): a row labelled on a platform before its name carried the stage would compose a
+different name once it did, and a re-dispatch would miss its upstream campaign.
 `funnel_stage` and `tactic` (design Enums, re-checked by `campaignLabels`) become
 `StartOptions.Labels` and are passed to the claim, which writes them only on a row it INSERTS
 (migration `000054`); a slot version that already has a row keeps its labels. Both persists after

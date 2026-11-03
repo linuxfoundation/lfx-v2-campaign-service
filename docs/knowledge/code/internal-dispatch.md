@@ -578,13 +578,42 @@ segments, segment 8 ∈ {ToFU, MoFU, BoFU}), `TestRedditMeta_Slot2NeverBindsSlot
 `TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest` (both packages), and the live
 `TestLiveRedditMetaSecondCampaignThroughTheOrchestrator`.
 
-Every other provider still composes the same name for every slot, and looks campaigns up by it:
-LinkedIn (`findCampaignByNameInGroup`, which would also push new creatives onto the live
-campaign) and X (`findCampaignByName`); HubSpot clones under the same email name. So
-`model.ProviderSupportsSlotVersions` and `model.ProviderNamesByStage` are allowlists holding
-Microsoft, Google, Reddit and Meta, and `create-campaigns` refuses `new_version`, `funnel_stage`
-and `tactic` with a 400 for anything else. A provider joins both in the same change that makes its
-name unique per slot version and carries the stage (cs-4: LinkedIn and X).
+**LinkedIn and X (cs-4).** Both names are the same 8-segment contract —
+LinkedIn `Events | <event> | LinkedIn | <Objective> | Prospecting | Static | <project> | MoFU`, X
+`Events | <event> | Global | Awareness | Prospecting | Promoted Post | <project> | MoFU` — and
+`LinkedInDispatcher` and `TwitterDispatcher` set `CampaignInput.StageToken`, `Tactic` and
+`SlotToken` exactly as Reddit and Meta do (claimed row's labels via
+`model.CampaignLabels.NameTokens`, slot via `model.SlotNameToken`). The client builders
+(`linkedin.buildCampaignName`, `buildTwitterCampaignName`) put the stage token in segment 8 in
+place of the legacy `MoFU` (a tactic-only row keeps `MoFU`) and append the tactic and `#<n>` to
+the `Prospecting` Targeting segment (`Prospecting retargeting #2`); an unlabelled slot-1 row
+composes its legacy name byte for byte, and the group name (`Events | <event> | <project>`) and
+X's line-item name carry no token. The difference from Reddit and Meta is that both clients REUSE
+a campaign by that composed name on create: LinkedIn's `findCampaignByNameInGroup` (inside the
+event's shared campaign group) and X's `findCampaignByName`, which runs on every create. Because
+the lookup key is the row-derived name, slot 2 never finds slot 1's live campaign, so it creates
+its own, and its children follow it: LinkedIn creatives are created under slot 2's campaign, X's
+line item is created (and found by name) under slot 2's campaign and the promoted tweet attaches
+to that line item. A retry of the same row composes the same name and reuses its own campaign.
+Length: both clients' existing 255-character campaign-name checks (`maxNameLen`,
+`validateEntityName`) run on the composed, labelled name before the first request, so an
+over-long labelled or later-slot name is a `PreflightRefusal`, the client returns `(nil, err)`
+and the dispatcher releases the claim (`notCreated`); an unlabelled name that fit before still
+fits. Pinned by `TestLinkedInX_NamesComeFromTheClaimedRow` (goldens; each row dispatched twice
+against a stateful fake that answers the by-name lookup, so the retry reuses and one create is
+sent; 8 segments; segment 8 ∈ {ToFU, MoFU, BoFU}), `TestLinkedInX_Slot2NeverBindsSlot1` (slot 1
+live in the fake; slot 2 unlabelled and labelled gets its own campaign and its creatives / line
+item / promoted tweet), `TestLinkedInX_OverlongLabelledNameIsRefusedBeforeAnyRequest`
+(`NoUpstreamCreate`, zero requests), the client tests `TestBuildCampaignName_LabelTokens`
+(LinkedIn), `TestBuildTwitterCampaignName_LabelTokens` and
+`TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest` (both packages), and the live
+`TestLiveLinkedInXSecondCampaignThroughTheOrchestrator`.
+
+So `model.ProviderSupportsSlotVersions` and `model.ProviderNamesByStage` now hold every ad
+platform — Microsoft, Google, Reddit, Meta, LinkedIn and X — and `create-campaigns` refuses
+`new_version`, `funnel_stage` and `tactic` with a 400 only for HubSpot, which clones an email under
+the same name. A provider joins both in the same change that makes its name unique per slot
+version and carries the stage.
 
 ## Registration
 
