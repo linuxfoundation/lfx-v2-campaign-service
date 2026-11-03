@@ -532,7 +532,10 @@ model.DispatchSlotVersion(ctx))`, plus `CampaignInput.StageToken` and `CampaignI
 names from them, so a labelled slot-2 campaign is the 7-segment `LFX | Search Campaign | <project> |
 <event> | MoFU | retargeting | <brief id>-2` (budget `LFX | Budget | …`, ad group `LFX | Ad Group |
 …`); a stage without a tactic drops the tactic segment, and an unlabelled slot-1 row composes its
-legacy 5-segment names byte for byte. Because every name-keyed Google path takes the composed
+legacy 5-segment names byte for byte. Unlike Microsoft, Google's name carries the tactic (the plan's
+7-segment Google shape), as its slug except `content-promotion`, written `content-promo` because the
+data pipeline's ad-format parser matches `MOTION` anywhere in a name (`googleAdsTactic`); the other
+slugs contain none of its format, funnel or channel words. Because every name-keyed Google path takes the composed
 name, slot 2 never meets slot 1's: a `DUPLICATE_CAMPAIGN_NAME` on slot 2 means a prior slot-2
 attempt (the partial names slot 2, with no id), the budget reuse after `DUPLICATE_NAME` looks up
 slot 2's budget name only, and `adoptExisting` searches slot 2's campaign name. The Demand Gen,

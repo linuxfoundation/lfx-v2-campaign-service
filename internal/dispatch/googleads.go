@@ -864,12 +864,21 @@ func googleAdsStageToken(l model.CampaignLabels) string {
 	return l.FunnelStage.NameToken()
 }
 
-// googleAdsTactic is the claimed row's tactic slug for the name, or "" when the row has
+// googleAdsTactic is the claimed row's tactic token for the name, or "" when the row has
 // none. Only a listed tactic is returned: the column's CHECK and the service already refuse
 // anything else, and a name segment must never carry a value nobody validated.
+//
+// The token is the tactic's slug except content-promotion, which is named "content-promo": the
+// data pipeline classifies a campaign's ad format by substring over the whole name, and
+// "content-proMOTION" would file a Demand Gen campaign under the Motion format. Every other slug
+// is free of the pipeline's format, funnel and channel words. The mapping is fixed forever once a
+// campaign carries it — a retry must compose the same name.
 func googleAdsTactic(l model.CampaignLabels) string {
 	if l.Tactic == nil || !l.Tactic.Valid() {
 		return ""
+	}
+	if *l.Tactic == model.TacticContentPromotion {
+		return "content-promo"
 	}
 	return string(*l.Tactic)
 }

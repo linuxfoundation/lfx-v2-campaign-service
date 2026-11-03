@@ -187,8 +187,8 @@ func SlotNameSuffix(base string, slotVersion int) string {
 // version, so slot 2 would be bound to slot 1's live campaign (on LinkedIn, with new creatives
 // pushed onto it); Meta also looks campaigns up by name; HubSpot clones an email under the same
 // name. Microsoft and Google fold the slot version into their name suffix (SlotNameSuffix) —
-// on Google into the budget, campaign and ad group names alike, so its DUPLICATE_NAME budget
-// reuse and its adoptExisting lookup key on the slot's own names. A provider is added here in
+// on Google into the budget and campaign names (and the Search ad group's), so its DUPLICATE_NAME
+// budget reuse and its adoptExisting lookup key on the slot's own names. A provider is added here in
 // the same change that makes its upstream name unique per slot version.
 func ProviderSupportsSlotVersions(p Provider) bool {
 	return p == ProviderMicrosoftAds || p == ProviderGoogleAds

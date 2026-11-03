@@ -170,6 +170,8 @@ func labelledRow(stage model.FunnelStage, tactic *model.Tactic) *model.Campaign 
 func TestGoogleAds_NamesComeFromTheClaimedRow(t *testing.T) {
 	retargeting := model.TacticRetargeting
 	prospecting := model.TacticProspecting
+	contentPromotion := model.TacticContentPromotion
+	unlisted := model.Tactic("retarget | BoFU")
 	const head = "cncf | KubeCon NA 2026"
 	for _, tc := range []struct {
 		name                            string
@@ -202,6 +204,14 @@ func TestGoogleAds_NamesComeFromTheClaimedRow(t *testing.T) {
 			"LFX | Budget | cncf | KubeCon NA 2026 | BoFU | brief-1-3",
 			"LFX | Search Campaign | cncf | KubeCon NA 2026 | BoFU | brief-1-3",
 			"LFX | Ad Group | cncf | KubeCon NA 2026 | BoFU | brief-1-3", 6},
+		{"content-promotion is written content-promo (keeps the pipeline's Motion parser off it)", 2, labelledRow(model.FunnelStageTop, &contentPromotion),
+			"LFX | Budget | cncf | KubeCon NA 2026 | ToFU | content-promo | brief-1-2",
+			"LFX | Search Campaign | cncf | KubeCon NA 2026 | ToFU | content-promo | brief-1-2",
+			"LFX | Ad Group | cncf | KubeCon NA 2026 | ToFU | content-promo | brief-1-2", 7},
+		{"an unlisted stored tactic never reaches the name", 2, labelledRow(model.FunnelStageTop, &unlisted),
+			"LFX | Budget | cncf | KubeCon NA 2026 | ToFU | brief-1-2",
+			"LFX | Search Campaign | cncf | KubeCon NA 2026 | ToFU | brief-1-2",
+			"LFX | Ad Group | cncf | KubeCon NA 2026 | ToFU | brief-1-2", 6},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wire := &googleWire{}
@@ -261,13 +271,15 @@ func TestGoogleAds_Slot2DemandGenNamesCarryTheSlotAndLabels(t *testing.T) {
 
 const slot1CampaignName = "LFX | Search Campaign | cncf | KubeCon NA 2026 | brief-1"
 
-// gaqlNames the exact name literal a GAQL search asks for, quoted as the client quotes it, so a
-// test can tell `... | brief-1'` (slot 1) from `... | brief-1-2'` (slot 2), whose name extends it.
+// gaqlNames reports whether a GAQL search asks for exactly this name literal, quoted as the
+// client quotes it, so a test can tell `... | brief-1'` (slot 1) from `... | brief-1-2'` (slot 2),
+// whose name extends it.
 func gaqlNames(query, name string) bool {
-	return strings.Contains(query, "'"+name+"'") || strings.Contains(query, `'`+name+`'`)
+	return strings.Contains(query, "'"+name+"'")
 }
 
-// AC 10 (Google): slot 2 never binds to slot 1 by name.
+// AC 10 (Google): slot 2 never binds to slot 1 by name — for an UNLABELLED slot 2, whose name
+// differs from slot 1's only by the slot suffix, as much as for a labelled one.
 //   - adoptExisting looks up SLOT 2's name, so slot 1's live campaign (found only under its own
 //     name) is not adopted as slot 2; the control dispatch on slot 1 does adopt it.
 //   - a DUPLICATE_CAMPAIGN_NAME on slot 2 means a prior SLOT 2 attempt: the partial it returns
@@ -281,8 +293,6 @@ func TestGoogleAds_Slot2NeverBindsSlot1ByName(t *testing.T) {
 		return `{"results":[]}`
 	}
 	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"adoptExisting":true}}`)
-	retargeting := model.TacticRetargeting
-	const slot2Name = "LFX | Search Campaign | cncf | KubeCon NA 2026 | MoFU | retargeting | brief-1-2"
 
 	t.Run("control: slot 1 adopts the campaign that carries its name", func(t *testing.T) {
 		wire := &googleWire{search: answer}
@@ -292,44 +302,55 @@ func TestGoogleAds_Slot2NeverBindsSlot1ByName(t *testing.T) {
 		}
 	})
 
-	t.Run("slot 2 with adoptExisting creates instead of adopting slot 1", func(t *testing.T) {
-		wire := &googleWire{search: answer}
-		camp, err := wire.dispatcher(t).Dispatch(googleSlotCtx(2, labelledRow(model.FunnelStageMid, &retargeting)), testBrief(), model.ProviderGoogleAds, cfg)
-		if err != nil {
-			t.Fatalf("Dispatch: %v", err)
-		}
-		if camp.PlatformCampaignID == "999" {
-			t.Fatal("slot 2 adopted slot 1's campaign 999")
-		}
-		if camp.CampaignName != slot2Name {
-			t.Errorf("campaign name %q, want %q", camp.CampaignName, slot2Name)
-		}
-		wire.mu.Lock()
-		defer wire.mu.Unlock()
-		if len(wire.searches) == 0 || !gaqlNames(wire.searches[0], slot2Name) {
-			t.Errorf("the adoption lookup searched %q, want slot 2's name %q", wire.searches, slot2Name)
-		}
-	})
+	retargeting := model.TacticRetargeting
+	for _, row := range []struct {
+		name      string
+		row       *model.Campaign
+		slot2Name string
+	}{
+		{"unlabelled slot 2", &model.Campaign{}, slot1CampaignName + "-2"},
+		{"labelled slot 2", labelledRow(model.FunnelStageMid, &retargeting),
+			"LFX | Search Campaign | cncf | KubeCon NA 2026 | MoFU | retargeting | brief-1-2"},
+	} {
+		t.Run(row.name+": adoptExisting creates instead of adopting slot 1", func(t *testing.T) {
+			wire := &googleWire{search: answer}
+			camp, err := wire.dispatcher(t).Dispatch(googleSlotCtx(2, row.row), testBrief(), model.ProviderGoogleAds, cfg)
+			if err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			if camp.PlatformCampaignID == "999" {
+				t.Fatal("slot 2 adopted slot 1's campaign 999")
+			}
+			if camp.CampaignName != row.slot2Name {
+				t.Errorf("campaign name %q, want %q", camp.CampaignName, row.slot2Name)
+			}
+			wire.mu.Lock()
+			defer wire.mu.Unlock()
+			if len(wire.searches) == 0 || !gaqlNames(wire.searches[0], row.slot2Name) {
+				t.Errorf("the adoption lookup searched %q, want slot 2's name %q", wire.searches, row.slot2Name)
+			}
+		})
 
-	t.Run("DUPLICATE_CAMPAIGN_NAME on slot 2 reports slot 2, not slot 1", func(t *testing.T) {
-		wire := &googleWire{search: answer, campaign: googleadsError("campaignError", "DUPLICATE_CAMPAIGN_NAME")}
-		camp, err := wire.dispatcher(t).Dispatch(googleSlotCtx(2, labelledRow(model.FunnelStageMid, &retargeting)), testBrief(), model.ProviderGoogleAds, cfg)
-		if err == nil || !strings.Contains(err.Error(), "DUPLICATE_CAMPAIGN_NAME") {
-			t.Fatalf("err = %v, want the duplicate reported", err)
-		}
-		if camp == nil {
-			t.Fatal("a duplicate name may exist upstream: the partial must be returned so the claim is retained")
-		}
-		if camp.PlatformCampaignID != "" {
-			t.Errorf("partial bound upstream id %q; a slot 2 duplicate must not bind any campaign, least of all slot 1's", camp.PlatformCampaignID)
-		}
-		if camp.CampaignName != slot2Name {
-			t.Errorf("partial names %q, want slot 2's %q", camp.CampaignName, slot2Name)
-		}
-		if !strings.Contains(err.Error(), slot2Name) || strings.Contains(err.Error(), slot1CampaignName+`"`) {
-			t.Errorf("the duplicate error must name slot 2's campaign only: %v", err)
-		}
-	})
+		t.Run(row.name+": DUPLICATE_CAMPAIGN_NAME reports slot 2, not slot 1", func(t *testing.T) {
+			wire := &googleWire{search: answer, campaign: googleadsError("campaignError", "DUPLICATE_CAMPAIGN_NAME")}
+			camp, err := wire.dispatcher(t).Dispatch(googleSlotCtx(2, row.row), testBrief(), model.ProviderGoogleAds, cfg)
+			if err == nil || !strings.Contains(err.Error(), "DUPLICATE_CAMPAIGN_NAME") {
+				t.Fatalf("err = %v, want the duplicate reported", err)
+			}
+			if camp == nil {
+				t.Fatal("a duplicate name may exist upstream: the partial must be returned so the claim is retained")
+			}
+			if camp.PlatformCampaignID != "" {
+				t.Errorf("partial bound upstream id %q; a slot 2 duplicate must not bind any campaign, least of all slot 1's", camp.PlatformCampaignID)
+			}
+			if camp.CampaignName != row.slot2Name {
+				t.Errorf("partial names %q, want slot 2's %q", camp.CampaignName, row.slot2Name)
+			}
+			if !strings.Contains(err.Error(), `"`+row.slot2Name+`"`) || strings.Contains(err.Error(), `"`+slot1CampaignName+`"`) {
+				t.Errorf("the duplicate error must name slot 2's campaign only: %v", err)
+			}
+		})
+	}
 }
 
 // googleadsError answers a mutate with a GoogleAdsFailure carrying one error code.

@@ -329,7 +329,13 @@ every Google name with the bare brief id and no label segments. In order:
    AND status NOT IN ('created', 'created_degraded', 'deleted')` — and settle each (confirm the
    upstream campaign and record it, or delete the row) before the rollback, and do not clear any
    such claim while rolled back. Completed rows are unaffected: they are read and toggled by id,
-   never re-dispatched.
+   and a plain retry reuses the slot's LATEST live row (slot 2 included) rather than recomposing
+   a name, so they are never re-dispatched.
+
+Independently of any rollback: before clearing a stuck claim on a labelled Google or Microsoft row,
+confirm in the ad account whether that attempt created a campaign. A later request that re-claims
+the cleared slot carries its OWN labels, so its name differs from the cleared attempt's and the
+platform's duplicate-name refusal no longer catches the repeat.
 3. Then roll the campaign-service image back.
 
 Rolling forward again needs no data step.

@@ -111,7 +111,8 @@ type CampaignInput struct {
 	// which the client reports as UNCONFIRMED-already-exists rather than re-creating.
 	NameSuffix string
 	// StageToken and Tactic, when non-empty, are a LABELLED campaign's funnel-stage token
-	// (ToFU, MoFU or BoFU — model.FunnelStage.NameToken) and tactic slug (model.Tactic).
+	// (ToFU, MoFU or BoFU — model.FunnelStage.NameToken) and tactic token (the model.Tactic
+	// slug, with content-promotion shortened to content-promo by the dispatcher).
 	// ComposeName gives each its own segment, stage first, just before NameSuffix, so a
 	// campaign labelled with both composes the 7-segment
 	// `LFX | <kind> | <project> | <event> | <stage> | <tactic> | <suffix>`. The dispatcher
@@ -1816,7 +1817,7 @@ func validateEntityName(kind, name string, measuredLen, maxLen int, unit string)
 		return fmt.Errorf("google-ads %s name is empty", kind)
 	}
 	if measuredLen > maxLen {
-		return fmt.Errorf("google-ads %s name exceeds %d %s (%d): shorten EventName/Project/NameSuffix", kind, maxLen, unit, measuredLen)
+		return fmt.Errorf("google-ads %s name exceeds %d %s (%d): shorten EventName/Project (the stage, tactic and brief-id suffix are fixed)", kind, maxLen, unit, measuredLen)
 	}
 	return nil
 }

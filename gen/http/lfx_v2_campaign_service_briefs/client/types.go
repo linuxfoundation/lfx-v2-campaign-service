@@ -5426,8 +5426,8 @@ type CampaignCreateInputRequestBody struct {
 	// label must be part of the platform's campaign name before it is stored
 	// there. A Microsoft Advertising campaign carries the stage (ToFU, MoFU or
 	// BoFU) in its upstream name; a Google Ads campaign carries the stage and the
-	// tactic in its budget, campaign and ad group names. An unlabelled campaign
-	// keeps the names it has always had.
+	// tactic in its budget and campaign names (and, on Search, its ad group name).
+	// An unlabelled campaign keeps the names it has always had.
 	FunnelStage *string `form:"funnel_stage,omitempty" json:"funnel_stage,omitempty" xml:"funnel_stage,omitempty"`
 	// How the campaign(s) this request creates pursue their stage, from a
 	// controlled list (free text is refused because the label can reach campaign
@@ -5436,8 +5436,11 @@ type CampaignCreateInputRequestBody struct {
 	Tactic *string `form:"tactic,omitempty" json:"tactic,omitempty" xml:"tactic,omitempty"`
 	// REQUIRED when new_version is true (400 without it), and refused without
 	// new_version: for EVERY selected platform, the slot_version of the latest
-	// live campaign the caller saw on that platform for this brief (from
-	// list-brief-campaigns or a previous job's platform result), or 0 when it saw
+	// live campaign the caller saw in the slot this request dispatches to for this
+	// brief — on google-ads the campaigns of the same googleAdsConfig.channel
+	// (Search is variant default), not the platform's highest version, which would
+	// read as stale; elsewhere the platform's campaigns — taken from
+	// list-brief-campaigns or a previous job's platform result, or 0 when it saw
 	// none. A compare-and-set: a platform gets another campaign only while its
 	// latest live campaign is still the one the caller saw. Otherwise its latest
 	// campaign is returned with reused=true and nothing is created — which is what
