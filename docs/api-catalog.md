@@ -1711,7 +1711,9 @@ demandGenAdGroups?:             — OPTIONAL several Demand Gen ad groups (#460)
                                   appended before its mutate, so a failure on group k returns
                                   groups 1..k-1 complete and what exists of k. `adGroupId`/`adId`
                                   and the other scalar fields are the FIRST group's. Launch flips
-                                  every group's ad.
+                                  every group's ad. Every group's ad carries the same tagged final
+                                  URL (`utm_medium=display`), and the campaign's `utmcampaign`
+                                  custom parameter covers every group (#476).
 performanceMaxCreative?:        — OPTIONAL Performance Max ASSET GROUP (LFXV2-2665). PERFORMANCE MAX
   {marketingImages?: ImageRef[],  ONLY, and REFUSED on every other `channel`. Performance Max has no ad
    squareMarketingImages?:        groups and no ads: this field IS its creative. Omitted, the campaign

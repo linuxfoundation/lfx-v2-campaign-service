@@ -383,7 +383,7 @@ func TestCreateDemandGenCampaign_VideoAdPayload(t *testing.T) {
 		{"assetOperation":{"create":{"resourceName":"customers/1234567890/assets/-2","callToActionAsset":{"callToAction":"SIGN_UP"}}}},
 		{"adGroupAdOperation":{"create":{"adGroup":"customers/1234567890/adGroups/333","status":"PAUSED","ad":{
 			"name":"KubeCon Europe 2026 - Display - Video ad",
-			"finalUrls":["https://events.linuxfoundation.org/kubecon-eu-2026/?utm_campaign=kubecon-eu-2026&utm_content=tlf&utm_medium=cpc&utm_source=google"],
+			"finalUrls":["https://events.linuxfoundation.org/kubecon-eu-2026/?utm_campaign=kubecon-eu-2026&utm_content=tlf&utm_medium=display&utm_source=google"],
 			"demandGenVideoResponsiveAd":{
 				"headlines":[{"text":"KubeCon NA 2026"}],
 				"longHeadlines":[{"text":"Join the cloud native community in Salt Lake City"}],
@@ -398,7 +398,9 @@ func TestCreateDemandGenCampaign_VideoAdPayload(t *testing.T) {
 	if got := strings.Join(res.CreativeAssetIDs, ","); got != "900,950,951" {
 		t.Errorf("CreativeAssetIDs = %s, want the logo, the video, then the CTA: 900,950,951", got)
 	}
-	if !containsStep(res.Steps, "Demand Gen video ad created: 444 (PAUSED, 1 YouTube video(s), 1 logo(s), 1 headline(s), 1 long headline(s), 1 description(s), call to action SIGN_UP)") {
+	const wantStep = "Demand Gen video ad created: 444 (PAUSED, 1 YouTube video(s), 1 logo(s), " +
+		"1 headline(s), 1 long headline(s), 1 description(s), call to action SIGN_UP)"
+	if !hasExactStep(res.Steps, wantStep) {
 		t.Errorf("steps do not report the video ad:\n%s", strings.Join(res.Steps, "\n"))
 	}
 	if last := res.Steps[len(res.Steps)-1]; !strings.Contains(last, "(no geo targeting set) — add geo targeting, then review the creative") {

@@ -2272,6 +2272,11 @@ re-indexes each image to its slot within its own creative. The closing step read
 group and is true for all: every group gets the same geo, every named group must have an
 ad, and the loop returns on the first failure.
 
+Click tracking (#476) needs nothing per group: every group's ad, image or video, takes
+`pf.finalURL`, which the preflight tagged with Demand Gen's `utm_medium=display`, and the
+`utmcampaign` custom parameter is set once on the campaign create, which every ad group and
+ad under it inherits. `TestCreateDemandGenCampaign_TwoAdGroups` pins both.
+
 ## Bidding strategies and conversion actions (LFXV2-2665)
 
 `bidding.go` makes the bidding strategy selectable. Until it existed the choice

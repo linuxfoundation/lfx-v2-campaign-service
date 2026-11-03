@@ -232,6 +232,18 @@ func TestCreateDemandGenCampaign_TwoAdGroups(t *testing.T) {
 		!strings.Contains(video, `"name":"KubeCon Europe 2026 - Display | Prospecting - Video ad"`) {
 		t.Errorf("group 2's video ad is not built on its own ad group and logo: %s", video)
 	}
+	// Click tracking (#476) covers every group: both ads carry Demand Gen's utm_medium,
+	// and the one campaign create carries the utmcampaign parameter they inherit.
+	video := string(rig.sent("googleAds:mutate")[0])
+	for name, body := range map[string]string{"image ad": ad, "video ad": video} {
+		if !strings.Contains(body, "utm_medium=display") || strings.Contains(body, "utm_medium=cpc") {
+			t.Errorf("%s final URL lacks utm_medium=display: %s", name, body)
+		}
+	}
+	const utmParam = `"urlCustomParameters":[{"key":"utmcampaign","value":"`
+	if camp := string(rig.sent("campaigns:mutate")[0]); !strings.Contains(camp, utmParam) {
+		t.Errorf("the campaign create lacks the utmcampaign custom parameter: %s", camp)
+	}
 
 	if res.AdGroupID != "333" || res.AdGroupName != "KubeCon Europe 2026 - Display | Retargeting" || res.AdID != "555" {
 		t.Errorf("scalars = %s/%q/%s, want the first group's", res.AdGroupID, res.AdGroupName, res.AdID)
