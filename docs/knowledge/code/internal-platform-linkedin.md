@@ -979,13 +979,29 @@ event-level. Pinned by `TestBuildCampaignName_LabelTokens`,
 A reused group's schedule is widened before the campaign POST. `findOrCreateCampaignGroup`
 reports whether the group already existed, and for a reused one `CreateCampaign` calls
 `ensureCampaignGroupCoversEnd`: an identity-checked single-entity GET of the group
-(`doEntityGET` + `identityjson`, the body's id must be the group's), then, only when its
-`runSchedule.end` is before the campaign's end, a Rest.li PARTIAL_UPDATE setting
-`runSchedule` to the group's own start and the campaign's end. The start is never changed and
-the end never moves earlier, so the group's other campaigns are unaffected; an open-ended group
-or one already ending on or after the campaign is left alone. A read that cannot be trusted
-(another group's body, a duplicate key, an end with no start) or a failed write creates no
-campaign and returns a partial result carrying the group, so the dispatcher keeps the claim and
-a retry re-reads the group (the widening write is idempotent). Only the end is handled: a group
-whose start is after the new campaign's start is still refused by LinkedIn as before. Pinned by
-`TestEnsureCampaignGroupCoversEnd` and `TestCreateCampaign_ReusedGroupScheduleCoversCampaign`.
+(`doEntityGET` + `identityjson`, the body's id must be the group's) and, only when its
+`runSchedule.end` is before the campaign's end, a Rest.li PARTIAL_UPDATE with a nested `$set`
+of `runSchedule.end` alone (`{"patch":{"runSchedule":{"$set":{"end":…}}}}`), so the group's
+start, usually already past, is never re-sent. An open-ended group or one already ending on or
+after the campaign gets no write. That LinkedIn accepts the nested form on a started group is
+Rest.li protocol, not yet seen against the live API.
+
+Concurrency: campaigns of one event share the group and different briefs dispatch
+independently, so two creates can widen it at once, and a write from a stale read could put back
+a shorter end. The read, write and verify run under `groupScheduleLocks`, a process-wide lock per
+(base URL, account, group) (the dispatcher builds a client per create, so a per-client lock would
+serialize nothing): a second caller reads the first one's end and writes nothing. Across replicas,
+each write is followed by a re-read, and a group found short again is widened again; each caller
+only writes its own later end, so the rounds converge on the latest end needed, and a group still
+short after `groupScheduleAttempts` (3) writes is an error. A sibling's campaign POST that lands
+between another replica's stale write and its re-widen can still be refused; cross-replica
+serialization of same-group dispatches is LFXV2-2665's.
+
+Any failure here returns `(nil, err)`, not a partial: the group existed before the call and no
+campaign was sent, so nothing was created. A partial would be persisted as an orphan the
+orchestrator refuses to retry ("reconciliation required"), when a plain retry, which re-reads the
+group, recovers it; a widening write with an unknown outcome is safe to repeat. Only the end is
+handled: a group whose start is after the new campaign's start is still refused by LinkedIn.
+Pinned by `TestEnsureCampaignGroupCoversEnd` (and its `_WriteFailureIsAnError`,
+`_ReWidensAfterAConcurrentShortening` and `_ConcurrentCallersKeepTheLaterEnd` siblings) and
+`TestCreateCampaign_ReusedGroupScheduleCoversCampaign`.

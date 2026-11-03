@@ -6,9 +6,10 @@ created it. With multi-campaign, a second campaign that ends after the first rea
 under a group that ended earlier, and LinkedIn refuses a campaign scheduled outside its group.
 
 `CreateCampaign` now reads a reused group (`ensureCampaignGroupCoversEnd`: identity-checked
-single-entity GET) and, when its end is before the campaign's, widens it with a PARTIAL_UPDATE
-that re-sends the group's start unchanged. The end never moves earlier and the start is never
-touched, so the group's other campaigns are unaffected. A read that cannot be trusted or a
-failed write creates no campaign and returns a partial result with the group, so the claim is
-kept and a retry re-reads the group. A group whose start is after the new campaign's start is
-not handled and is still refused by LinkedIn.
+single-entity GET) and, when its end is before the campaign's, writes `runSchedule.end` alone with
+a nested PARTIAL_UPDATE `$set`; the start is never sent and the end never moves earlier through
+this call. The read-write-verify runs under a process-wide lock per group, and every write is
+re-read and repeated (up to 3 writes) if another replica put back a shorter end. Any failure
+returns no result, because the group pre-existed and nothing was created, so the claim is
+released and a retry re-reads the group instead of stopping at "reconciliation required". A
+group whose start is after the new campaign's start is not handled and is still refused.
