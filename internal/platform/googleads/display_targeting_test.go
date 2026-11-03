@@ -448,6 +448,11 @@ func TestValidateExcludedPlacements(t *testing.T) {
 		"example.com#top":     "with no path, query, fragment, port or credentials",
 		"example.com:8080":    "with no path, query, fragment, port or credentials",
 		"user@example.com":    "with no path, query, fragment, port or credentials",
+		// strings.ToLower folds these to ASCII ("examplek.com", "i.com"), so ASCII is
+		// checked before case is folded: the entry is refused, never rewritten.
+		"exampleK.com":   "is not ASCII",
+		"İ.com":          "is not ASCII",
+		"bücher.example": "is not ASCII",
 	} {
 		if _, err := validateExcludedPlacements([]string{entry}); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("validateExcludedPlacements(%q) = %v, want an error containing %q", entry, err, want)

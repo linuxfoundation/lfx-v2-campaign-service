@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 )
 
 // ---------------------------------------------------------------------------
@@ -284,6 +285,14 @@ func validateExcludedPlacements(placements []string) ([]string, error) {
 		}
 		if strings.ContainsAny(entry, "/?#:@") {
 			return nil, fmt.Errorf("google-ads: excluded placement %s must be a bare domain such as example.com, with no path, query, fragment, port or credentials", redactURLForError(entry))
+		}
+		// ASCII is checked on the entry as sent, before case is folded: strings.ToLower maps
+		// some non-ASCII runes to ASCII (KELVIN SIGN U+212A becomes "k"), which would turn the
+		// caller's entry into a different domain instead of refusing it.
+		for i := 0; i < len(entry); i++ {
+			if entry[i] >= utf8.RuneSelf {
+				return nil, fmt.Errorf("google-ads: excluded placement %q is not ASCII; write an internationalised domain in its xn-- form", entry)
+			}
 		}
 		domain := strings.ToLower(entry)
 		if !placementDomain(domain) {

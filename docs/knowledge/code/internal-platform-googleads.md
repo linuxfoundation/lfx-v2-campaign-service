@@ -2627,11 +2627,13 @@ AUDIENCE `bidOnly: false`, together with the four criteria, was accepted.
   audience fence sees an empty list there by construction. Placements must be bare domains — a
   scheme, path, query, fragment, port, credentials, wildcard, trailing dot, non-ASCII name or
   IPv4 literal is refused rather than rewritten, and the scheme and path refusals render the
-  entry through `redactURLForError` so a query or credentials never reach the error text. The
-  only change is lower-casing; `www.example.com` and `example.com` are both sent as written and
-  neither is folded into the other (whether Google's exclusion of one covers the other is
-  Google's rule, not checked here). Caps: 20 per segment list (Search's `maxAudienceSegments`),
-  500 placements (a broker cap, not Google's).
+  entry through `redactURLForError` so a query or credentials never reach the error text. ASCII
+  is checked on the entry as sent, before lower-casing, because `strings.ToLower` folds some
+  non-ASCII runes to ASCII (KELVIN SIGN U+212A to `k`). The only change is lower-casing;
+  `www.example.com` and `example.com` are both sent as written and neither is folded into the
+  other (whether Google's exclusion of one covers the other is Google's rule, not checked here).
+  Caps: 20 per segment list (Search's `maxAudienceSegments`), 500 placements (a broker cap, not
+  Google's).
 - **Targeting, not observation.** When any audience list is supplied, the ad group is created
   with `targetingSetting.targetRestrictions` = AGE_RANGE, GENDER, PARENTAL_STATUS and
   INCOME_RANGE `bidOnly: true`, then AUDIENCE `bidOnly: false`
