@@ -140,9 +140,10 @@ const (
 	maxCreativeTotalImageBytes = 64 << 20 // 64 MiB
 
 	// demandGenImageFetchTimeout bounds one image fetch. A Demand Gen creative has up to
-	// 25 images (20 marketing + 5 logos), and since #460 one create's walk can cover up to
-	// maxDemandGenAdGroups creatives, so this is per-image; the whole walk is still under
-	// maxCreativeImageFetchWall and the 64 MiB total, and the caller's context bounds it.
+	// 25 images (20 marketing + 5 logos), and one create's walk can cover up to
+	// maxDemandGenAdGroups × maxDemandGenAdsPerGroup (25) creatives (#460, #474), so this is
+	// per-image; the whole walk is ONE fetchSlotImages call, still under one
+	// maxCreativeImageFetchWall and one 64 MiB total, and the caller's context bounds it.
 	demandGenImageFetchTimeout = 20 * time.Second
 
 	// creativeImageFetchDeadlineShare is the divisor applied to the caller's REMAINING
@@ -156,8 +157,9 @@ const (
 	// no deadline — a background reconcile, a test harness, any call site that passes
 	// context.Background() — the share does nothing and the bound reverts to the one the
 	// walk implies: 25 images per creative — and one create's walk can cover up to
-	// maxDemandGenAdGroups creatives — times demandGenImageFetchTimeout, which is minutes of
-	// wall time chosen by whoever supplied the URLs. A host that accepts the
+	// maxDemandGenAdGroups × maxDemandGenAdsPerGroup (25) creatives (#460, #474) — times
+	// demandGenImageFetchTimeout, which is hours of wall time chosen by whoever supplied
+	// the URLs. A host that accepts the
 	// connection and then trickles bytes just under the per-image timeout spends all of
 	// it. The share is still applied when there is a deadline and the SMALLER of the two
 	// wins, so this never widens the caller's budget — it only puts a floor under the

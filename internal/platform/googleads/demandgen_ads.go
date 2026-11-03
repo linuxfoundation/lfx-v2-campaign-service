@@ -16,7 +16,9 @@ import (
 // creative. CampaignInput.DemandGenAds (the single group) and DemandGenAdGroup.Ads (a
 // named group) let a caller give it several, each its own ad — the shape of a live
 // display campaign running several ad variants. Two DemandGenVideoResponsiveAd ads in
-// one Demand Gen ad group were accepted by a validateOnly probe on 2026-11-03.
+// one Demand Gen ad group were accepted by a validateOnly probe on 2026-11-03. Several
+// IMAGE ads, or image and video ads mixed, in one group were NOT probed, and are admitted
+// anyway (see maxDemandGenAdsPerGroup).
 //
 // Each ad is created by its own requests, exactly as the single ad is (createDemandGenAd,
 // createDemandGenVideoAd), so a failure on ad j returns ads 1..j-1 complete and what
@@ -27,6 +29,14 @@ import (
 // mutates after the campaign exists — each a point where a failure leaves a partial
 // campaign to reconcile. It matches maxDemandGenAdGroups for the same reason; the whole
 // campaign's images stay under one maxCreativeTotalImageBytes either way.
+//
+// The bound applies to every mix, but only one mix was probed: two VIDEO ads in one group.
+// Several image ads, or image and video ads mixed, were not probed. They are admitted on
+// purpose, because each extra image ad is sent by exactly the requests the single image
+// ad sends (createDemandGenAd: its own assets:mutate, then its own adGroupAds:mutate), so
+// no new request shape is introduced; only the count per group is unverified. If Google
+// refuses a second image ad, the refusal lands at that ad, after the campaign and ad group
+// exist, and is reported per ad (PlannedAds against Ads).
 const maxDemandGenAdsPerGroup = 5
 
 // DemandGenAd is one ad of a Demand Gen ad group that carries several.

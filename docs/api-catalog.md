@@ -1735,7 +1735,11 @@ demandGenAds?:                  — OPTIONAL several ads in the single Demand Ge
                                   were accepted by a `validateOnly` probe (2026-11-03). Several
                                   IMAGE ads, or a mix of image and video ads, in one group were NOT
                                   probed; the service admits them all the same, so that multiplicity
-                                  is unverified against the live API.
+                                  is unverified against the live API. They are admitted because each
+                                  extra image ad sends exactly the requests the single image ad
+                                  sends (its own assets, then its own ad); only the count per group
+                                  is new. A refusal of ad 2+ lands after the campaign and ad group
+                                  exist and is reported per ad.
 
                                   `name` is REQUIRED and a label, unique ignoring case within the
                                   group. Each ad takes EXACTLY ONE of `creative` / `videoCreative`,

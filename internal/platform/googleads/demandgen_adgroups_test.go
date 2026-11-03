@@ -401,6 +401,51 @@ func TestCreateDemandGenCampaign_TotalImageBytesSpanEveryGroup(t *testing.T) {
 	}
 }
 
+// The same 64 MiB total spans every AD of a group too (#474): the walk covers up to
+// maxDemandGenAdGroups × maxDemandGenAdsPerGroup creatives in one fetchSlotImages call, so
+// three image ads in the single group, each under the total, are refused together before
+// ANY mutate.
+func TestCreateDemandGenCampaign_TotalImageBytesSpanEveryAd(t *testing.T) {
+	pad := func(img []byte, to int) []byte {
+		return append(append([]byte{}, img...), make([]byte, to-len(img))...)
+	}
+	const big = MaxImageBytes - 1024
+	ref := func(n int) string {
+		return ResolvedImageRefPrefix + fmt.Sprintf("00000000-0000-4000-8000-%012d", n)
+	}
+	resolved := map[string][]byte{}
+	ad := func(n int) DemandGenAd {
+		c := fullCreative()
+		c.MarketingImages, c.SquareMarketingImages, c.LogoImages = nil, nil, nil
+		for i := 0; i < 6; i++ {
+			r := ref(n*100 + i)
+			resolved[r] = pad(pngOf(t, 600, 600), big)
+			c.SquareMarketingImages = append(c.SquareMarketingImages, r)
+		}
+		r := ref(n*100 + 99)
+		resolved[r] = pngOf(t, 128, 128)
+		c.LogoImages = []string{r}
+		return DemandGenAd{Name: fmt.Sprintf("Ad %d", n), Creative: c}
+	}
+	in := demandGenInput()
+	in.DemandGenCreative = DemandGenCreative{}
+	in.DemandGenAds = []DemandGenAd{ad(1), ad(2), ad(3)}
+	in.ResolvedImages = resolved
+	perAd := 6*big + len(resolved[ref(199)])
+	if perAd >= maxCreativeTotalImageBytes || 3*perAd <= maxCreativeTotalImageBytes {
+		t.Fatalf("fixture: per ad %d, total %d against cap %d",
+			perAd, 3*perAd, maxCreativeTotalImageBytes)
+	}
+	rig, c, _ := newDGRig(t, nil, nil)
+	res, err := c.CreateDemandGenCampaign(context.Background(), in)
+	if err == nil || !strings.Contains(err.Error(), "creative images total more than") {
+		t.Fatalf("err = %v, want the total-bytes refusal", err)
+	}
+	if res != nil || len(rig.mutatePaths()) != 0 {
+		t.Errorf("res = %+v, mutates = %v; nothing may be sent", res, rig.mutatePaths())
+	}
+}
+
 // errAfterFlagCtx reports Canceled from Err once its flag is set, while its Done channel
 // never fires — so a request already in flight completes, and the cascade's own
 // ctx.Err() check between groups is what sees it.

@@ -38,8 +38,10 @@ cascade reuses `createCampaignAssets`.
 named ads, each one image or video creative, labels unique within the group, a video ad named
 `<ad group name> - <label>` within Google's 255 characters. Each ad is created by its own
 requests; a failure on ad j returns ads 1..j-1 complete. Two video ads in one group were
-probed; several image ads, or image and video mixed, were not, and are admitted unprobed. A
-single group with several ads is recorded in `adGroups`, so launch flips every ad. Each
+probed; several image ads, or image and video mixed, were not, and are admitted unprobed
+because each extra image ad sends exactly the single image ad's requests (only the count per
+group is new). A single group with several ads is recorded in `adGroups`, so launch flips
+every ad. Each
 `adGroups` entry carries `plannedAds` and `ads` — one `{name, id, creativeAssetIds}` per ad
 attempted — so a failed ad's assets are recorded against that ad, and the scalar
 `creativeAssetIds` stays the first ad's beside `adId`. `googleAdsToggleTargets` reads a

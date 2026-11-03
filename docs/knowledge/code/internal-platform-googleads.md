@@ -2295,7 +2295,8 @@ TV, carry an ad schedule and sitelinks, and run several ads per ad group. Each s
 was accepted by a `validateOnly` probe on 2026-11-03 (v23), and the refusals name what was
 not probed — with ONE exception, stated here plainly: ad multiplicity was probed with two
 VIDEO ads in one group, and several IMAGE ads, or image and video ads mixed, in one group
-were not probed. The code admits them all the same (see "Several ads per ad group").
+were not probed. The code admits them all the same, on purpose (see "Several ads per ad
+group").
 
 **Bidding.** `demandGenBiddingStrategies` holds `maximize-clicks` (still the default),
 `maximize-conversions`, `target-cpa` and `maximize-conversion-value`. A target CPA renders as
@@ -2342,7 +2343,14 @@ becomes one unnamed ad (`singleDemandGenAd`), so the single-ad path sends exactl
 `fetchDemandGenGroupImages` walks every ad of every group in one fetch and returns images
 indexed `[group][ad]`. The cascade creates the ads in order, each by its own requests; each
 step line ends `[ad "<label>"]`, and a failure on ad j returns ads 1..j-1 complete. Several
-image ads, or a mix, in one group are admitted though only two video ads were probed.
+image ads, or a mix, in one group are admitted though only two video ads were probed. The
+reason: each extra image ad is sent by exactly the requests the single image ad sends
+(`createDemandGenAd`: its own `assets:mutate`, then its own `adGroupAds:mutate`), so no
+request shape is new and only the count per group is unverified. A refusal of a later ad
+lands after the campaign and ad group exist and is reported per ad (`PlannedAds` against
+`Ads`). The fetch walk then spans up to `maxDemandGenAdGroups` × `maxDemandGenAdsPerGroup`
+(25) creatives, still in one `fetchSlotImages` call under one fetch-phase deadline and one
+64 MiB total.
 
 Assets are recorded PER AD. Each `AdGroupResult` entry gets `PlannedAds` (the ad count, set
 before any ad exists) and `Ads []DemandGenAdResult`, one `{Name, ID, CreativeAssetIDs}` per
