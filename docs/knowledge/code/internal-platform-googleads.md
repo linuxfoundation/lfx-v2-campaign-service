@@ -2158,7 +2158,9 @@ refuses the field unless `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"t
 the chart sets it to `"false"` until #468 adds a foundation-scoped check.
 This client never creates the Audience. `AudienceSegments` stays refused on
 Demand Gen, now with a message that says why (audience-grouped) and names
-`DemandGenAudience`; the other channels keep their Search-cascade reason.
+`DemandGenAudience`; Performance Max and Video keep the generic reason (audience criteria
+attach only on the Search and Display cascades), and Display accepts them as targeting
+criteria (#462).
 `Languages` reach Demand Gen through `validateCriteriaPlan`, which refuses only the
 other four criteria kinds there.
 

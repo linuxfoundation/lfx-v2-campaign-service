@@ -236,7 +236,8 @@ type CampaignInput struct {
 	//     createDisplayAudienceCriteria. Optimized targeting is left at Google's default
 	//     and may widen reach beyond the named segments.
 	//
-	// Refused on every other channel.
+	// Refused on every other channel; on Demand Gen, whose ad group is audience-grouped,
+	// the segments go inside the Audience named by DemandGenAudience instead.
 	AudienceSegments []string
 	// DemandGenAudience is ONE existing Google Ads Audience resource
 	// (`customers/<this account>/audiences/<id>`) attached to the Demand Gen ad group as
