@@ -335,6 +335,32 @@ every Google name with the bare brief id and no label segments. In order:
 
 Rolling forward again needs no data step.
 
+**Rolling back past the Reddit and Meta multi-campaign release (cs-3).** No migration: cs-3 only
+adds `reddit-ads` and `meta-ads` to the `new_version` and label allowlists and makes their
+8-segment campaign names carry the claimed row's stage (segment 8), tactic and `#<slot>` token
+(segment 5). The image before it refuses `new_version`, `funnel_stage` and `tactic` for Reddit
+and Meta with a 400, and composes every Reddit and Meta name in its legacy form (`Intent`, Reddit
+`ToFU`, Meta `MoFU`). In order:
+
+1. **Remove `reddit-ads` and `meta-ads` from `LFX_CUTOVER_CAMPAIGN_SERVICE_MULTI_CAMPAIGN_PLATFORMS`**
+   (argocd values) and let self-serve roll, so it stops offering a second or labelled Reddit or
+   Meta campaign that the older image would refuse.
+2. **Resolve non-terminal slot ≥2 and labelled Reddit and Meta rows.** The older image would
+   re-dispatch such a row (a cleared stuck claim, a retained partial) under the legacy name.
+   Neither platform refuses a duplicate name, so that creates a second paid campaign, named exactly
+   like slot 1's, which the data pipeline then merges with slot 1 (its key is a hash of the 8
+   segments). List them — `SELECT id, brief_id, platform, slot_version, status,
+   platform_campaign_id FROM campaigns WHERE platform IN ('reddit-ads', 'meta-ads') AND
+   (slot_version > 1 OR funnel_stage IS NOT NULL OR tactic IS NOT NULL) AND status NOT IN
+   ('created', 'created_degraded', 'deleted')` — and settle each (confirm in the ad account
+   whether a campaign exists under the row's labelled name and record it, or delete the row)
+   before the rollback, and do not clear any such claim while rolled back. Completed rows are
+   unaffected: they are read and toggled by id, and a plain retry reuses the slot's LATEST live
+   row rather than recomposing a name.
+3. Then roll the campaign-service image back.
+
+Rolling forward again needs no data step.
+
 Independently of any rollback: before clearing a stuck claim on a labelled Google or Microsoft row,
 confirm in the ad account whether that attempt created a campaign. A later request that re-claims
 the cleared slot carries its OWN labels, so its name differs from the cleared attempt's and the

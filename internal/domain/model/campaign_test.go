@@ -402,11 +402,12 @@ func TestReportedConversionValueAndRoasFollowTheStatus(t *testing.T) {
 }
 
 // The multi-campaign allowlists hold exactly the platforms whose upstream names are unique per
-// slot version AND carry the stage: Microsoft (cs-1) and Google (cs-2). They move together — a
-// platform allowed a second campaign but refused labels (or the reverse) would leave ss offering
-// a create the service refuses — and every other provider stays out until its own change.
+// slot version AND carry the stage: Microsoft (cs-1), Google (cs-2), Reddit and Meta (cs-3). They
+// move together — a platform allowed a second campaign but refused labels (or the reverse) would
+// leave ss offering a create the service refuses — and every other provider stays out until its
+// own change.
 func TestMultiCampaignAllowlists(t *testing.T) {
-	want := map[Provider]bool{ProviderMicrosoftAds: true, ProviderGoogleAds: true}
+	want := map[Provider]bool{ProviderMicrosoftAds: true, ProviderGoogleAds: true, ProviderRedditAds: true, ProviderMetaAds: true}
 	for _, p := range AllProviders() {
 		if got := ProviderSupportsSlotVersions(p); got != want[p] {
 			t.Errorf("ProviderSupportsSlotVersions(%s) = %v, want %v", p, got, want[p])

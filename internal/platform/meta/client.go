@@ -85,6 +85,12 @@ const (
 	// is composed ("<EventName> - Variant N"), so the COMPOSED value is validated
 	// up front against this before any mutating call.
 	maxCreativeNameChars = 255
+	// maxLabelledCampaignNameRunes bounds the composed name of a LABELLED or later-slot campaign
+	// (multi-campaign cs-3). Meta documents no campaign-name limit, so this is the service's
+	// own bound — the ad-creative name cap above — and it applies ONLY to such names: an
+	// unlabelled slot-1 campaign composes its legacy name, unbounded as before, so no create that
+	// worked before cs-3 is refused now. Checked before any request is sent.
+	maxLabelledCampaignNameRunes = maxCreativeNameChars
 )
 
 // ---------------------------------------------------------------------------
@@ -2350,6 +2356,13 @@ func objectiveLabel(objective string) string {
 // caller-supplied canonical LFX slug (docs/api-catalog.md). Substituting a
 // placeholder (e.g. "tlf") for an omitted project could mis-attribute a
 // non-Linux-Foundation campaign to the wrong project.
+//
+// The name has the 8 segments the data pipeline parses positionally: Program | Event | Region |
+// Objective | Targeting | Ad Format | Project | Funnel. An unlabelled slot-1 input (no StageToken,
+// Tactic or SlotToken) composes the legacy name byte for byte — Targeting "Intent", Funnel "MoFU".
+// A labelled or later-slot input changes only the Targeting segment (tactic and slot token
+// appended) and the Funnel segment (the stage token); neither becomes a segment of its own, and
+// neither touches the Event (2) or Project (7) segments the pipeline joins on.
 func buildCampaignName(in CampaignInput, geoTargets []string) string {
 	// Segments are trimmed as well as pipe-stripped: validation TrimSpaces its
 	// checks, so " cncf " passes validation — but the attribution pipeline joins
@@ -2358,7 +2371,28 @@ func buildCampaignName(in CampaignInput, geoTargets []string) string {
 	region := resolveRegion(geoTargets)
 	objective := objectiveLabel(defaultObjective(strings.ToLower(strings.TrimSpace(in.Objective))))
 	project := strings.ReplaceAll(strings.TrimSpace(in.Project), "|", "-")
-	return fmt.Sprintf("Events | %s | %s | %s | Intent | Social | %s | MoFU", event, region, objective, project)
+	funnel := "MoFU"
+	if st := nameToken(in.StageToken); st != "" {
+		funnel = st
+	}
+	targeting := "Intent"
+	for _, p := range []string{in.Tactic, in.SlotToken} {
+		if p = nameToken(p); p != "" {
+			targeting += " " + p
+		}
+	}
+	return fmt.Sprintf("Events | %s | %s | %s | %s | Social | %s | %s", event, region, objective, targeting, project, funnel)
+}
+
+// nameToken trims and pipe-strips one label token, so it can never add a name segment.
+func nameToken(s string) string {
+	return strings.ReplaceAll(strings.TrimSpace(s), "|", "-")
+}
+
+// labelledName reports whether in names a labelled or later-slot campaign, whose composed name
+// is bounded by maxLabelledCampaignNameRunes.
+func (in CampaignInput) labelledName() bool {
+	return nameToken(in.StageToken) != "" || nameToken(in.Tactic) != "" || nameToken(in.SlotToken) != ""
 }
 
 // metaUTMParams returns the exact set of utm_* parameters this client generates
@@ -2832,6 +2866,20 @@ type CampaignInput struct {
 	// reconcile path lands (LFXV2-2665) it is the caller that knows it is resuming a
 	// specific dispatch generation, so it sets this flag; the client cannot infer it.
 	ReconcileByName bool
+	// StageToken, Tactic and SlotToken name a LABELLED or later-slot campaign (multi-campaign
+	// cs-3). The dispatcher reads all three from the CLAIMED campaign row (its stored labels and
+	// slot version), never from a request, so a retry composes the same name. All empty — every
+	// campaign before cs-3, and any unlabelled slot-1 campaign — composes the legacy name byte for
+	// byte (buildCampaignName):
+	//   - StageToken (ToFU, MoFU or BoFU) replaces the fixed "MoFU" in the Funnel Stage segment;
+	//   - Tactic (a model.Tactic name token) is appended to the Targeting segment ("Intent
+	//     retargeting");
+	//   - SlotToken ("#2" from slot 2 on, model.SlotNameToken) is appended to the Targeting
+	//     segment too, so a second campaign's name differs from the first's while the name keeps
+	//     exactly the 8 segments the data pipeline parses.
+	StageToken string
+	Tactic     string
+	SlotToken  string
 }
 
 // CampaignResult mirrors MetaCampaignCreateResult.
@@ -3200,6 +3248,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// skippedGeos holds only codes that passed validateGeoTargets AND are keys of the
 		// fixed regulatedCountries table, so the list is service-vetted, not free caller text.
 		return nil, domain.PreflightRefusalf("meta campaign skipped: all selected geo targets (%s) are regulated and excluded from API targeting; supply at least one eligible (non-regulated) geo target", strings.Join(skippedGeos, ", "))
+	}
+	// A labelled or later-slot campaign's composed name is bounded (cs-3), BEFORE Step 1's GET:
+	// its inputs are all settled above, so an over-long name costs no upstream round trip and is
+	// a pre-send refusal. The message quotes only rune counts this service computed.
+	if in.labelledName() {
+		if n := utf8.RuneCountInString(buildCampaignName(in, geoCountries)); n > maxLabelledCampaignNameRunes {
+			return nil, domain.PreflightRefusalf("composed campaign name is too long: %d characters (max %d for a labelled or additional campaign); shorten the event name", n, maxLabelledCampaignNameRunes)
+		}
 	}
 
 	// Step 1: Account preflight (GET the ad-account object). This both verifies

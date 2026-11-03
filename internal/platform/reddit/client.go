@@ -507,6 +507,20 @@ type CampaignInput struct {
 	// (ManualCPCBidSupported); the amount must be a whole number of micro-units, refused rather
 	// than rounded. Both are checked before the first mutating call.
 	ManualCPCBid float64
+	// StageToken, Tactic and SlotToken name a LABELLED or later-slot campaign (multi-campaign
+	// cs-3). The dispatcher reads all three from the CLAIMED campaign row (its stored labels and
+	// slot version), never from a request, so a retry composes the same name. All empty — every
+	// campaign before cs-3, and any unlabelled slot-1 campaign — composes the legacy name byte for
+	// byte (buildRedditCampaignName):
+	//   - StageToken (ToFU, MoFU or BoFU) replaces the fixed "ToFU" in the Funnel Stage segment;
+	//   - Tactic (a model.Tactic name token) is appended to the Targeting segment ("Intent
+	//     retargeting");
+	//   - SlotToken ("#2" from slot 2 on, model.SlotNameToken) is appended to the Targeting
+	//     segment too, so a second campaign's name differs from the first's while the name keeps
+	//     exactly the 8 segments the data pipeline parses.
+	StageToken string
+	Tactic     string
+	SlotToken  string
 }
 
 // ManualCPCBidSupported reports whether a campaign with this objective can be created with a
@@ -2834,7 +2848,14 @@ func resolveRegion(geoTargets []string) string {
 	return "Global"
 }
 
-// buildRedditCampaignName mirrors buildRedditCampaignName.
+// buildRedditCampaignName composes the 8-segment campaign name the data pipeline parses
+// positionally: Program | Event | Region | Objective | Targeting | Ad Format | Project | Funnel.
+//
+// An unlabelled slot-1 input (no StageToken, Tactic or SlotToken) composes the legacy name byte
+// for byte — Targeting "Intent", Funnel "ToFU". A labelled or later-slot input changes only the
+// Targeting segment (tactic and slot token appended) and the Funnel segment (the stage token);
+// the label and slot never become a segment of their own, and never touch the Event (2) or
+// Project (7) segments the pipeline joins on.
 func buildRedditCampaignName(in CampaignInput, objective, region string) string {
 	event := replacePipes(in.EventName)
 	objectiveLabel := redditObjectiveLabels[objective]
@@ -2844,7 +2865,24 @@ func buildRedditCampaignName(in CampaignInput, objective, region string) string 
 	// in.Project is required and already trimmed/validated in CreateCampaign (no
 	// silent default — a hardcoded slug would mis-attribute non-TLF campaigns).
 	project := replacePipes(in.Project)
-	return fmt.Sprintf("Events | %s | %s | %s | Intent | Social | %s | ToFU", event, region, objectiveLabel, project)
+	funnel := "ToFU"
+	if st := strings.TrimSpace(replacePipes(in.StageToken)); st != "" {
+		funnel = st
+	}
+	return fmt.Sprintf("Events | %s | %s | %s | %s | Social | %s | %s", event, region, objectiveLabel,
+		redditTargetingSegment(in), project, funnel)
+}
+
+// redditTargetingSegment is the name's Targeting segment: "Intent", then the tactic and the slot
+// token when set ("Intent retargeting #2"). Each is pipe-stripped, so neither can add a segment.
+func redditTargetingSegment(in CampaignInput) string {
+	parts := []string{"Intent"}
+	for _, p := range []string{in.Tactic, in.SlotToken} {
+		if p = strings.TrimSpace(replacePipes(p)); p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // validateRegistrationURL ensures a user-supplied registration URL is an

@@ -552,11 +552,10 @@ func TestBriefService_CreateCampaigns_RejectsDuplicatePlatforms(t *testing.T) {
 }
 
 // new_version is refused synchronously for any platform that is not on the slot-version
-// allowlist. LinkedIn and X reuse campaigns by name (Meta can, and Reddit's names do not yet vary
-// by slot), so a "new" campaign there would be
+// allowlist. LinkedIn and X reuse campaigns by name, so a "new" campaign there would be
 // bound to the existing one upstream; the 400 must come before a job exists.
 func TestBriefService_CreateCampaigns_NewVersionRefusedOutsideTheAllowlist(t *testing.T) {
-	for _, pl := range []string{"linkedin-ads", "twitter-ads", "meta-ads", "reddit-ads"} {
+	for _, pl := range []string{"linkedin-ads", "twitter-ads"} {
 		repo := newFakeBriefRepo()
 		repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
 			ID: "b1", ProjectID: "cncf", Status: model.BriefApproved, DeliveryType: model.DeliveryPaidMarketing,

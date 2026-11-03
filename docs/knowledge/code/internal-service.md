@@ -156,9 +156,9 @@ concept), the claim for the next version simply succeeds and the second campaign
 the first; the expand-phase "not available yet" refusal and `domain.ErrSlotVersionUnavailable` are
 gone. `CreateCampaigns`
 refuses `new_version` synchronously (400, before a job exists) for any platform outside
-`model.ProviderSupportsSlotVersions` — today Microsoft and Google (cs-2), because the other
-providers reuse campaigns by a name that does not yet vary by slot version (see the dispatch
-concept).
+`model.ProviderSupportsSlotVersions` — today Microsoft, Google (cs-2), Reddit and Meta (cs-3),
+because the other providers reuse campaigns by a name that does not yet vary by slot version (see
+the dispatch concept).
 
 **Multi-campaign per event: compare-and-set and labels (cs-1).** A `new_version` request must
 also carry `expected_slot_versions` — per platform, the slot version of the latest live campaign
@@ -180,7 +180,7 @@ replay of that request arrives, the latest live campaign is the one the replay e
 it creates another. Comparing against the highest version ever used instead would need the caller
 to know deleted versions, which no read exposes, and would block every later deliberate create.
 `campaignLabels` also refuses labels unless every selected platform names campaigns by stage
-(`model.ProviderNamesByStage`, Microsoft and Google since cs-2): a row labelled on, say, LinkedIn
+(`model.ProviderNamesByStage`, Microsoft, Google since cs-2, Reddit and Meta since cs-3): a row labelled on, say, LinkedIn
 today would compose a different name once LinkedIn adds the stage, and a re-dispatch would miss its
 upstream campaign.
 `funnel_stage` and `tactic` (design Enums, re-checked by `campaignLabels`) become

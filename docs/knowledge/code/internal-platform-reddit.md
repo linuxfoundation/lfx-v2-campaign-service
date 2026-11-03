@@ -905,3 +905,17 @@ matching rule.
 
 `CampaignResult.BidApplied` is always true on success: this client never reuses a campaign or ad
 group by name.
+
+## Campaign name (multi-campaign cs-3)
+
+`buildRedditCampaignName` composes the data pipeline's 8-segment name, `Events | <event> |
+<region> | <objective> | Intent | Social | <project> | ToFU`, validated against
+`redditMaxNameRunes` (200) before the first request. Three `CampaignInput` fields, which the
+dispatcher reads from the CLAIMED row (never the request), change it for a labelled or later-slot
+campaign without adding a segment: `StageToken` (ToFU / MoFU / BoFU) replaces the fixed `ToFU`,
+and `Tactic` and `SlotToken` (`#<n>` from slot 2 on) are appended to the Targeting segment
+(`Intent retargeting #2`). All three empty composes the legacy name byte for byte. Reddit never
+looks a campaign up by name, so a second campaign is never bound to the first. Pinned by
+`TestBuildRedditCampaignName_LabelTokens` and
+`TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest`; see the dispatch concept for the
+dispatcher side.
