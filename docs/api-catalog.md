@@ -952,7 +952,8 @@ demandGenAudience?: string      — OPTIONAL one EXISTING Google Ads Audience,
                                   GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED to exactly "true", a create
                                   naming it is refused before the budget mutate, whatever the value.
                                   It stays off until this service can check the Audience against the
-                                  calling foundation (#468).
+                                  calling foundation (#468). The same flag gates every
+                                  `demandGenAdGroups[].audience` (#460).
 
                                   DEMAND GEN ONLY, and REFUSED on every other `channel`. It shares
                                   one atomic `adGroupCriteria:mutate` with `languages`, after the geo
@@ -1697,7 +1698,11 @@ demandGenAdGroups?:             — OPTIONAL several Demand Gen ad groups (#460)
                                   are REFUSED (Google refuses `DUPLICATE_ADGROUP_NAME`, but only
                                   after the earlier groups exist). Each group takes EXACTLY ONE of
                                   `creative` / `videoCreative`, under those fields' rules, and an
-                                  optional `audience` under `demandGenAudience`'s. `geoTargets`,
+                                  optional `audience` under `demandGenAudience`'s, gate included:
+                                  unless the deployment sets GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED
+                                  to exactly "true", a create naming any group's `audience` is
+                                  refused before the budget mutate, naming the entries to clear
+                                  (#468); a group without one is unaffected. `geoTargets`,
                                   `excludedGeoTargets` and `languages` apply to EVERY group. With
                                   this list, `demandGenCreative`, `demandGenVideoCreative` and
                                   `demandGenAudience` must be empty. Every image across every

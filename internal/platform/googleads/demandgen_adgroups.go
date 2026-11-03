@@ -111,8 +111,9 @@ func validateDemandGenAdGroups(kind, customerID string, in CampaignInput, base d
 		plan := demandGenGroupPlan{name: name}
 		var err error
 		// The same check as the campaign-level DemandGenAudience: shape and THIS account's
-		// customer id only. It is not a tenancy check — whether the Audience belongs to the
-		// brief's project is the accepted risk tracked by #468.
+		// customer id only. It is not a tenancy check, so the dispatch adapter refuses a
+		// group's Audience under DemandGenAudience's gate (GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED,
+		// see dispatch.googleAdsDemandGenAdGroupAudiencesSet) until #468 adds one.
 		if plan.audience, err = validateDemandGenAudienceField(kind, customerID, fmt.Sprintf("the Audience of Demand Gen ad group %q", name), g.Audience); err != nil {
 			return nil, err
 		}

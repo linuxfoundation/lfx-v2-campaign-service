@@ -140,9 +140,10 @@ const (
 	EnvTwitterMetricsEnabled = "TWITTER_METRICS_ENABLED"
 
 	// EnvGoogleAdsDemandGenAudienceEnabled opts a deployment IN to googleAdsConfig.demandGenAudience
-	// (#459): one existing Google Ads Audience attached to a Demand Gen ad group. Only the exact
-	// value "true" enables it; unset or any other value fails closed, and a create naming one is
-	// refused before anything upstream exists.
+	// (#459): one existing Google Ads Audience attached to a Demand Gen ad group, and to each
+	// googleAdsConfig.demandGenAdGroups[].audience (#460), the same input on a named ad group.
+	// Only the exact value "true" enables them; unset or any other value fails closed, and a
+	// create naming one is refused before anything upstream exists.
 	//
 	// Default-off because the only ownership check is ACCOUNT-scoped (#468): on the shared LF
 	// Google Ads customer a project could name another foundation's Audience, and on Demand Gen

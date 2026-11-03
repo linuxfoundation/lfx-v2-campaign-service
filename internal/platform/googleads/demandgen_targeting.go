@@ -78,8 +78,9 @@ type adGroupCriterionDemandGenCreate struct {
 // The check is ACCOUNT-scoped, not foundation-scoped, and is not tenancy protection: on
 // the shared LF Google Ads customer a project can name another foundation's Audience,
 // and on Demand Gen that Audience restricts who the ad group reaches. So the dispatch
-// adapter keeps the field off by default (GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED, see
-// dispatch.googleAdsDemandGenAudienceEnabled) until #468 adds a foundation-scoped check.
+// adapter keeps the field, and every DemandGenAdGroup.Audience (#460), off by default
+// (GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED, see dispatch.googleAdsDemandGenAudienceEnabled)
+// until #468 adds a foundation-scoped check.
 func validateDemandGenAudience(kind, customerID, audience string) (string, error) {
 	return validateDemandGenAudienceField(kind, customerID, "DemandGenAudience", audience)
 }

@@ -1128,7 +1128,10 @@ deliberately **not** restated here;
 `audienceSegments` and `geoTargets` are, once one deployment gate has passed: unless
 `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`, `Dispatch` refuses any non-empty
 `demandGenAudience` as not-created, straight after decoding the config
-(`googleAdsDemandGenAudienceEnabled`). That gate is not a channel rule. It exists because the
+(`googleAdsDemandGenAudienceEnabled`), and likewise any `demandGenAdGroups` entry with a
+non-empty `audience` (`googleAdsDemandGenAdGroupAudiencesSet`, #460), whose refusal names the
+entries by 1-based position — never the caller's group names or Audience. A group without an
+audience is not gated. That gate is not a channel rule. It exists because the
 client's check is account-scoped and the LF account is shared by every foundation (#468), and a
 caller can reach `Dispatch` without lfx-self-serve's root-only form. It sits in the adapter so it
 also covers direct callers.

@@ -519,7 +519,9 @@ type googleAdsConfig struct {
 	// creative (image or video) and Audience; geo and languages apply to every one. Left
 	// empty the campaign gets the single ad group it always had, from demandGenCreative,
 	// demandGenVideoCreative and demandGenAudience — which must then be empty when this
-	// list is set. DEMAND GEN ONLY. Refusals are the client's preflight's.
+	// list is set. DEMAND GEN ONLY. Refusals are the client's preflight's, except one: a
+	// group's audience is refused outright unless GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED is
+	// "true", as demandGenAudience is — see googleAdsDemandGenAdGroupAudiencesSet.
 	DemandGenAdGroups []googleAdsDemandGenAdGroupConfig `json:"demandGenAdGroups"`
 	// PerformanceMaxCreative is the ASSET GROUP for a Performance Max campaign, the
 	// third member of the same family and PERFORMANCE MAX ONLY.
@@ -570,6 +572,30 @@ type googleAdsConfig struct {
 // foundation's Audience. Off, no caller can attach an Audience at all.
 func googleAdsDemandGenAudienceEnabled() bool {
 	return os.Getenv(constants.EnvGoogleAdsDemandGenAudienceEnabled) == "true"
+}
+
+// googleAdsDemandGenAdGroupAudiencesSet is the refusal's subject naming the demandGenAdGroups
+// entries that set an audience, by 1-based position ("the audience on demandGenAdGroups entry
+// 2 is", "the audiences on demandGenAdGroups entries 1, 2 are"), or "" when none does.
+// A group's audience is the same input as demandGenAudience, one existing Audience checked
+// against the account only (#468), so GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED gates both. Any
+// non-empty value counts, whitespace included, as for demandGenAudience. The positions are
+// service-derived, so the sentence still carries no caller value.
+func googleAdsDemandGenAdGroupAudiencesSet(cfg googleAdsConfig) string {
+	var set []string
+	for i, g := range cfg.DemandGenAdGroups {
+		if g.Audience != "" {
+			set = append(set, strconv.Itoa(i+1))
+		}
+	}
+	switch len(set) {
+	case 0:
+		return ""
+	case 1:
+		return "the audience on demandGenAdGroups entry " + set[0] + " is"
+	default:
+		return "the audiences on demandGenAdGroups entries " + strings.Join(set, ", ") + " are"
+	}
 }
 
 // googleAdsDisplayAudiencesEnabled reports whether this deployment opted in to the Display
@@ -696,6 +722,14 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if cfg.DemandGenAudience != "" && !googleAdsDemandGenAudienceEnabled() {
 		return nil, googleAdsInputDisabled("demandGenAudience is",
 			constants.EnvGoogleAdsDemandGenAudienceEnabled, "an Audience", "demandGenAudience")
+	}
+	// The same gate for each demandGenAdGroups entry's audience (#460): the list replaces the
+	// single ad group, so without this a caller could move the gated Audience into a group.
+	if subject := googleAdsDemandGenAdGroupAudiencesSet(cfg); subject != "" &&
+		!googleAdsDemandGenAudienceEnabled() {
+		return nil, googleAdsInputDisabled(subject,
+			constants.EnvGoogleAdsDemandGenAudienceEnabled, "an Audience",
+			"the audience from each demandGenAdGroups entry")
 	}
 	// The Display gate, likewise before anything else is decoded or sent.
 	if set := googleAdsDisplayAudienceFieldsSet(cfg); len(set) > 0 &&

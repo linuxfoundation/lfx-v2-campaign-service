@@ -2155,8 +2155,9 @@ resource under another customer — the `validateConversionActions` check, for t
 reason. That check is ACCOUNT-scoped, not foundation-scoped, and is not tenancy
 protection: on the shared LF Google Ads customer a project can name another foundation's
 Audience, which on Demand Gen restricts who the ad group reaches. So the dispatch adapter
-refuses the field unless `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`, and
-the chart sets it to `"false"` until #468 adds a foundation-scoped check.
+refuses the field — and, since #460, every `demandGenAdGroups[].audience` — unless
+`GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`, and the chart sets it to
+`"false"` until #468 adds a foundation-scoped check.
 This client never creates the Audience. `AudienceSegments` stays refused on
 Demand Gen, now with a message that says why (audience-grouped) and names
 `DemandGenAudience`; Performance Max and Video keep the generic reason (audience criteria
@@ -2244,7 +2245,9 @@ omitted when nil.
 every group's images are held before the budget mutate and every group adds mutates after
 the campaign exists). Each `DemandGenAdGroup` has a `Name` label, an optional `Audience`
 under `validateDemandGenAudience`'s rules (shape and this account only — not a tenancy
-check; that accepted risk is #468), and exactly one of `Creative` / `VideoCreative`
+check, so the dispatch adapter refuses any group's Audience unless
+`GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`, as it does
+`DemandGenAudience`; #468), and exactly one of `Creative` / `VideoCreative`
 — a named group with no ad cannot serve, and the list has no older callers to keep. Names
 are `sanitizeNamePart`ed and appended to the single group's name
 (`<event> - Display | <label>`, as the Search list does); a duplicate ignoring case is
