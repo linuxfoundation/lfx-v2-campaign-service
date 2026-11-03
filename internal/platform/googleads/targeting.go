@@ -94,14 +94,17 @@ type userListInfo struct {
 // Status and Negative are both omitempty, so a positive keyword or audience criterion is
 // the same bytes it was before #473. A NEGATIVE criterion — an ad-group negative keyword,
 // an income or a parental-status exclusion — is sent as {adGroup, negative: true, <arm>}
-// with no status, the shape verified by a validateOnly probe on 2026-11-03.
+// with no status. validateOnly probes on 2026-11-03 accepted that shape for a negative
+// keyword and an income range on a Search ad group, and for an income range (including
+// INCOME_RANGE_UNDETERMINED) and a parental status on a Display ad group.
 //
 // There is deliberately no customAudience field. Google Ads has a
 // customAudience criterion, but validateAudienceSegments rejects every
 // customAudiences resource name before any mutate is built — Custom Audiences
-// are not supported on SEARCH campaigns, which is the only campaign type this
-// client creates. Carrying the field would make the payload advertise a
-// targeting shape this client can never populate.
+// are not supported on SEARCH campaigns. The Display cascade also sends this
+// payload, but only for its income and parental-status exclusions, never an
+// audience. Carrying the field would make the payload advertise a targeting
+// shape this client can never populate.
 type adGroupCriterionCreate struct {
 	AdGroup        string              `json:"adGroup"`
 	Status         string              `json:"status,omitempty"`
@@ -382,7 +385,8 @@ func validateAudienceSegments(segments []string) ([]string, error) {
 // just extended to N operations instead of 1. The exclusions ride in the same
 // batch for the reason createCampaignTargetingCriteria gives for its own: a group
 // whose keywords committed and whose exclusions did not is serving the queries and
-// the audience it was told to avoid.
+// the audience it was told to avoid. That shared outcome is a Search guarantee: the
+// Display cascade sends only its exclusions through this call.
 //
 // Every POSITIVE criterion is created ENABLED (not PAUSED, unlike the ad group/ad
 // shell): a criterion's own status is one more gate on top of its ancestors

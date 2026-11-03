@@ -136,8 +136,8 @@ func validateSearchAdPath(label, raw string) (string, error) {
 	if w := textWeight(p); w > maxSearchAdPathWeight {
 		return "", fmt.Errorf("google-ads search ad display %s %q has a display width of %d, exceeding the %d limit (CJK and full-width characters count double)", label, capForError(p), w, maxSearchAdPathWeight)
 	}
-	if strings.ContainsAny(p, displayPathForbiddenChars) {
-		return "", fmt.Errorf("google-ads search ad display %s %q contains a character not accepted in a display path (no slashes, spaces or URL punctuation)", label, capForError(p))
+	if r, bad := displayPathRefusedRune(p); bad {
+		return "", fmt.Errorf("google-ads search ad display %s %q contains %q (%s)", label, capForError(p), r, displayPathRefusalText)
 	}
 	return p, nil
 }

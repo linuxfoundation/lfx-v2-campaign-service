@@ -161,6 +161,14 @@ func TestValidatePerformanceMaxCreative_Rejections(t *testing.T) {
 			c.AssetGroupName = strings.Repeat("a", maxAssetGroupNameRunes+1)
 		}, "exceeding the"},
 		{"display path with a slash", func(c *PerformanceMaxCreative) { c.Path1 = "events/eu" }, "display path"},
+		// The same class the responsive search ad paths refuse (displayPathRefusedRune).
+		{"display path with an NBSP", func(c *PerformanceMaxCreative) { c.Path1 = "events\u00a0eu" }, "not accepted in a display path"},
+		{"display path with an ideographic space", func(c *PerformanceMaxCreative) {
+			c.Path1 = "events\u3000eu"
+		}, "not accepted in a display path"},
+		{"display path with a carriage return", func(c *PerformanceMaxCreative) {
+			c.Path1, c.Path2 = "events", "e\ru"
+		}, "not accepted in a display path"},
 		{"over-long display path", func(c *PerformanceMaxCreative) { c.Path1 = "sixteencharacter" }, "display path1"},
 		// path2 renders only after path1, so on its own it renders nothing at all.
 		{"path2 without path1", func(c *PerformanceMaxCreative) { c.Path2 = "eu" }, "without path1"},

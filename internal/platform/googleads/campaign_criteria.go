@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"unicode"
 )
 
 // ---------------------------------------------------------------------------
@@ -723,13 +724,13 @@ func validateAdGroupDemographicExclusions(kind string, in CampaignInput) (adGrou
 	if len(in.ExcludedParentalStatuses) > 0 && kind != campaignKindDisplay {
 		return adGroupDemographicPlan{}, fmt.Errorf("google-ads: parental-status exclusions are not supported on %s (this client attaches them as an ad-group criterion on the Display cascade only); omit ExcludedParentalStatuses, or create a Display campaign to exclude parental status", kind)
 	}
-	incomes, err := validateEnumExclusions("excluded income range", in.ExcludedIncomeRanges, incomeRangeTypes,
-		"INCOME_RANGE_0_50, INCOME_RANGE_50_60, INCOME_RANGE_60_70, INCOME_RANGE_70_80, INCOME_RANGE_80_90, INCOME_RANGE_90_UP or UNDETERMINED")
+	incomes, err := validateEnumExclusions("excluded income range", "excluded income ranges",
+		in.ExcludedIncomeRanges, incomeRangeTypes, "INCOME_RANGE_0_50, INCOME_RANGE_50_60, INCOME_RANGE_60_70, INCOME_RANGE_70_80, INCOME_RANGE_80_90, INCOME_RANGE_90_UP or UNDETERMINED")
 	if err != nil {
 		return adGroupDemographicPlan{}, err
 	}
-	parents, err := validateEnumExclusions("excluded parental status", in.ExcludedParentalStatuses, parentalStatusTypes,
-		"PARENT, NOT_A_PARENT or UNDETERMINED")
+	parents, err := validateEnumExclusions("excluded parental status", "excluded parental statuses",
+		in.ExcludedParentalStatuses, parentalStatusTypes, "PARENT, NOT_A_PARENT or UNDETERMINED")
 	if err != nil {
 		return adGroupDemographicPlan{}, err
 	}
@@ -745,18 +746,26 @@ func validateAdGroupDemographicExclusions(kind string, in CampaignInput) (adGrou
 
 // validateEnumExclusions is validateExcludedAgeRanges' shape for an enum list: trim and
 // upper-case each entry, map it through allowed, collapse repeats by the resolved enum, and
-// cap the list at maxDemographicExclusions.
-func validateEnumExclusions(noun string, values []string, allowed map[string]string, choices string) ([]string, error) {
+// cap the list at maxDemographicExclusions. noun names one entry, plural the list.
+//
+// An entry carrying any non-ASCII rune is refused BEFORE strings.ToUpper, because Unicode
+// case folding maps some non-ASCII letters onto ASCII ones (the dotless ı upper-cases to
+// I, the long ſ to S), so "ıncome_range_0_50" would otherwise resolve to a real enum.
+func validateEnumExclusions(noun, plural string, values []string, allowed map[string]string, choices string) ([]string, error) {
 	if len(values) == 0 {
 		return nil, nil
 	}
 	if len(values) > maxDemographicExclusions {
-		return nil, fmt.Errorf("google-ads: at most %d %ss are supported, got %d", maxDemographicExclusions, noun, len(values))
+		return nil, fmt.Errorf("google-ads: at most %d %s are supported, got %d", maxDemographicExclusions, plural, len(values))
 	}
 	seen := make(map[string]struct{}, len(values))
 	out := make([]string, 0, len(values))
 	for _, v := range values {
-		enum, ok := allowed[strings.ToUpper(strings.TrimSpace(v))]
+		var enum string
+		ok := !hasNonASCII(v)
+		if ok {
+			enum, ok = allowed[strings.ToUpper(strings.TrimSpace(v))]
+		}
 		if !ok {
 			return nil, fmt.Errorf("google-ads: %s %q must be one of %s", noun, v, choices)
 		}
@@ -767,6 +776,16 @@ func validateEnumExclusions(noun string, values []string, allowed map[string]str
 		out = append(out, enum)
 	}
 	return out, nil
+}
+
+// hasNonASCII reports whether s carries any rune above unicode.MaxASCII.
+func hasNonASCII(s string) bool {
+	for _, r := range s {
+		if r > unicode.MaxASCII {
+			return true
+		}
+	}
+	return false
 }
 
 // adGroupDemographicStep names the requested parts of the plan for the step list, as

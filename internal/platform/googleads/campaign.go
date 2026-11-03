@@ -1106,20 +1106,21 @@ func (c *Client) ValidateCampaignInput(in CampaignInput) error {
 // narrowest set of the four — the Search-only targeting fields (keywords, audience
 // segments, the CPC bid, negative keywords, the extension assets and the ad-group
 // list) — because it carries its location and its other campaign criteria at the
-// campaign level exactly as Search does. The ad-group income and parental-status
-// exclusions (#473) cut across all of this: every channel but Search and Display refuses
-// income ranges, and every channel but Display refuses parental status, Search included.
-// So a Demand Gen request
-// carrying one of those validates clean as Search and is then refused by
-// CreateDemandGenCampaign. On the create path
-// that is merely a late error; on the ADOPTION path, which returns before any create
-// runs, it is the exact defect this function exists to prevent: the same request
-// accepted when a campaign happens to exist and refused when it does not.
+// campaign level exactly as Search does. So a Demand Gen request carrying one of those
+// validates clean as Search and is then refused by CreateDemandGenCampaign. On the
+// create path that is merely a late error; on the ADOPTION path, which returns before
+// any create runs, it is the exact defect this function exists to prevent: the same
+// request accepted when a campaign happens to exist and refused when it does not.
+//
+// The ad-group income and parental-status exclusions (#473) cut across all of this:
+// every channel but Search and Display refuses income ranges, and every channel but
+// Display refuses parental status, Search included.
 //
 // Unknown kinds are not rejected here. The dispatch layer refuses an unrecognised
 // channel before it reaches the client at all, and a kind this package does not know
 // gates nothing — it simply gets the un-restricted Search treatment, which is the
-// pre-existing behaviour and cannot refuse something upstream would have accepted.
+// pre-existing behaviour and cannot refuse something upstream would have accepted,
+// except where a guard names the channels it accepts.
 func (c *Client) ValidateCampaignInputKind(kind string, in CampaignInput) error {
 	_, err := c.preflightCampaignKind(kind, in)
 	return err

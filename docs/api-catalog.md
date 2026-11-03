@@ -845,8 +845,9 @@ path1?: string                  — OPTIONAL Responsive Search Ad display paths 
 path2?: string                    shown after the final URL's domain, as in `example.com/kubecon`.
                                   Each is ≤15 WEIGHTED chars (the headline counting above; a
                                   validateOnly probe on 2026-11-03 accepted 15 and refused 16 with
-                                  `TOO_LONG`) and may not contain a slash, a space or `?#&=` — the
-                                  same characters `performanceMaxCreative` paths refuse. `path2`
+                                  `TOO_LONG`) and may not contain whitespace (any Unicode space), a
+                                  control character or `/?#&=` — the same characters
+                                  `performanceMaxCreative` paths refuse. `path2`
                                   without `path1` is refused: Google shows `path2` only after
                                   `path1`. They go on the campaign-level ad and on every
                                   `adGroups[].ads[]` entry that sets neither path. Each ad's path is
@@ -1306,13 +1307,13 @@ excludedParentalStatuses?:        criteria like the two above, because the ad gr
 
                                   On `search` they ride in each ad group's criteria mutate with its
                                   keywords; on `display` they are one mutate after the ad group is
-                                  created. Their ids are in the result's
-                                  `adGroupDemographicCriteriaIds` (and per group in
-                                  `adGroups[].demographicCriteriaIds`).
+                                  created. Their ids are in `adGroupDemographicCriteriaIds` (on
+                                  `search` the first ad group's; every group's own are in
+                                  `adGroups[].demographicCriteriaIds`; on `display` its one ad
+                                  group's).
 
-                                  There is no positive (observation) demographic field, deliberately:
-                                  under automated bidding Google ignores the bid modifiers an
-                                  observation criterion exists to carry.
+                                  Positive (targeting or observation) demographic criteria are not
+                                  added; no probe covered them.
 sitelinks?:                     — OPTIONAL sitelink extensions (LFXV2-2665): extra links shown under the
   {text, description1?,           ad. `text` ≤25 runes, required and unique within the list.
    description2?, finalUrl}       `description1`/`description2` are ≤35 runes each and ALL-OR-NOTHING —
@@ -1448,11 +1449,11 @@ adGroups?:                      — OPTIONAL multiple themed ad groups (LFXV2-26
                                   at the mutate, by which point the earlier groups already exist.
 
                                   Every other key except `negativeKeywords` is a PER-FIELD override of
-                                  the campaign-level value,
-                                  and inheritance is per field rather than all-or-nothing: a group that
-                                  sets only `keywords` keeps the campaign's `cpcBid`, audiences and ad
-                                  copy. Omitting a key inherits; `cpcBid: 0` also inherits, since 0
-                                  already means "unset" on the campaign-level field. Each override is
+                                  the campaign-level value, and inheritance is per field rather than
+                                  all-or-nothing: a group that sets only `keywords` keeps the
+                                  campaign's `cpcBid`, audiences and ad copy. Omitting a key
+                                  inherits; `cpcBid: 0` also inherits, since 0 already means "unset"
+                                  on the campaign-level field. Each override is
                                   validated by the same rules as its campaign-level counterpart
                                   (`keywords`, `audienceSegments`, `cpcBid`, `headlines`,
                                   `descriptions` above), with the group's name in the error.
@@ -1558,8 +1559,9 @@ performanceMaxCreative?:        — OPTIONAL Performance Max ASSET GROUP (LFXV2-
                                   URL is refused rather than parsed, because guessing which part of a
                                   URL is the id is how the wrong video gets attached. `assetGroupName`
                                   defaults to `<eventName> - Asset Group`. `path1`/`path2` are the
-                                  display-path segments rendered after the domain, ≤15 runes each;
-                                  `path2` without `path1` is REFUSED rather than promoted or dropped.
+                                  display-path segments rendered after the domain, ≤15 runes each,
+                                  refusing whitespace, control characters and `/?#&=`; `path2`
+                                  without `path1` is REFUSED rather than promoted or dropped.
 
                                   The asset group is created PAUSED, matching the campaign. It takes
                                   TWO mutates — the assets, then the group TOGETHER WITH the links

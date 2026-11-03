@@ -4,7 +4,9 @@
 campaign could not carry: an RSA display path (`/kubecon`), ad-group-level negative keywords
 beside the campaign-level ones, and income-range criteria. The NA 2025 Display reference also
 excludes income ranges and parental status. Each behaviour below was checked with validateOnly
-probes on 2026-11-03 (v23); nothing beyond them is claimed.
+probes on 2026-11-03 (v23). The 15/16 path boundary was probed in ASCII; the double-width
+weighting and the refused characters follow the RSA headline and Performance Max path rules and
+were not probed separately.
 
 - `path1`/`path2` (`CampaignInput.Path1`/`Path2`, `AdSpec.Path1`/`Path2`) are sent on the
   responsive search ad, each at most 15 display-width units (15 accepted, 16 refused
@@ -21,8 +23,8 @@ probes on 2026-11-03 (v23); nothing beyond them is claimed.
 audiences, negatives and exclusions share one atomic `adGroupCriteria:mutate`. Display calls
 it with the exclusions alone after its ad group is created. New result fields:
 `adGroups[].negativeKeywordCriteriaIds`, `adGroups[].demographicCriteriaIds` and
-`adGroupDemographicCriteriaIds`. Positive (observation) demographic criteria are deliberately
-not added.
+`adGroupDemographicCriteriaIds`. Positive (targeting or observation) demographic criteria are
+not added; no probe covered them.
 
 Search campaign image assets (`AD_IMAGE`, `BUSINESS_LOGO`, `BUSINESS_NAME`) are left to a
 follow-up: they need a fetch phase on the Search path and their own stored-asset slots.

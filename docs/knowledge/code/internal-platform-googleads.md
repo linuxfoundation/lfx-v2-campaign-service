@@ -1932,14 +1932,18 @@ failed with how many were created before it.
 (#473).** Four inputs close the gap between an LFX-built Search campaign and the live
 KubeCon NA 2026 one. Each is optional, validated before the budget mutate, and refused off
 the channels named below. The live behaviour each encodes was checked with validateOnly
-probes on 2026-11-03 (v23), and nothing beyond those probes is claimed.
+probes on 2026-11-03 (v23). The 15/16 path boundary was probed in ASCII; the double-width
+weighting and the refused characters follow the RSA headline and Performance Max path rules
+and were not probed separately.
 
 - `CampaignInput.Path1`/`Path2` and `AdSpec.Path1`/`Path2` are the responsive search ad's
   display paths, sent as `responsiveSearchAd.path1`/`path2` (omitted when unset, so an ad
   without them is the old payload). `validateSearchAdPaths` (`ad_copy.go`) caps each at 15
   in the headline's double-width weight (`textWeight`); the probe accepted 15 and refused 16
-  with `TOO_LONG`. It refuses the same characters as the Performance Max paths
-  (`displayPathForbiddenChars`) and refuses `path2` without `path1`. An `AdSpec` that sets
+  with `TOO_LONG`. It refuses the same characters as the Performance Max paths — any
+  whitespace (`unicode.IsSpace`, so NBSP and U+3000 too), any control character, and
+  `/?#&=`, through the shared `displayPathRefusedRune` — and refuses `path2` without
+  `path1`. An `AdSpec` that sets
   neither path takes the campaign-level pair. Refused off Search before
   `precomputeAdGroupAdInputs`, so an off-Search caller hears about the channel, not a length.
 - `AdGroupSpec.NegativeKeywords` are one group's own exclusions, sent as
@@ -1952,8 +1956,10 @@ probes on 2026-11-03 (v23), and nothing beyond those probes is claimed.
   `validateAdGroupDemographicExclusions` (`campaign_criteria.go`) takes income ranges on
   Search and Display and parental status on Display only, because Google refused a
   parental-status criterion on a Search ad group with `OPERATION_NOT_PERMITTED_FOR_CONTEXT`.
-  Demand Gen, Video and Performance Max refuse both. There is no positive (observation)
-  demographic input.
+  Demand Gen, Video and Performance Max refuse both. An entry carrying any non-ASCII rune is
+  refused before it is upper-cased, because Unicode case folding maps the dotless `ı` onto
+  `I`. Positive (targeting or observation) demographic criteria are not added; no probe
+  covered them.
 
 On Search all of a group's criteria share ONE atomic `adGroupCriteria:mutate`:
 `createAdGroupTargeting` now takes an `adGroupCriteriaSet` and sends keywords, audiences,

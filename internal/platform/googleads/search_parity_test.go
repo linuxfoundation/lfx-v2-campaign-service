@@ -175,6 +175,11 @@ func TestValidateSearchAdPaths(t *testing.T) {
 		{name: "8 wide refused", p1: strings.Repeat("会", 8), wantErrSubstring: "display width of 16"},
 		{name: "slash refused", p1: "kube/con", wantErrSubstring: "not accepted in a display path"},
 		{name: "space refused", p1: "kube con", wantErrSubstring: "not accepted in a display path"},
+		// The refusal is the class (unicode.IsSpace, unicode.IsControl), not a list of
+		// ASCII spellings: shared with the Performance Max paths.
+		{name: "NBSP refused", p1: "kube\u00a0con", wantErrSubstring: "not accepted in a display path"},
+		{name: "ideographic space refused", p1: "kube\u3000con", wantErrSubstring: "not accepted in a display path"},
+		{name: "carriage return refused", p2: "n\ra", p1: "kubecon", wantErrSubstring: "not accepted in a display path"},
 		{name: "path2 without path1", p2: "na", wantErrSubstring: "path2 was supplied without path1"},
 	}
 	for _, tc := range cases {
@@ -276,6 +281,35 @@ func TestCreateCampaign_AdSpecPathsOverrideOrInherit(t *testing.T) {
 	}
 	if !containsStep(res.Steps, "Ad 1 display path: /kubecon/na") || !containsStep(res.Steps, "Ad 2 display path: /training") {
 		t.Errorf("steps = %v, want one display-path line per ad", res.Steps)
+	}
+}
+
+// A whitespace-only AdSpec path is "not set": the ad inherits the campaign pair rather
+// than clearing it.
+func TestCreateCampaign_BlankAdSpecPathInheritsTheCampaignPair(t *testing.T) {
+	s := &parityServer{}
+	in := sampleInput()
+	in.Path1, in.Path2 = "kubecon", "na"
+	in.AdGroups = []AdGroupSpec{{
+		Name: "Training",
+		Ads:  []AdSpec{{Headlines: []string{"Train with us", "Hands-on labs", "Certify"}, Path1: "  "}},
+	}}
+	if _, err := newParityClient(t, s).CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	_, ads, _ := s.snapshot()
+	rsa := rsaOf(t, createOps(t, ads[0])[0])
+	if rsa["path1"] != "kubecon" || rsa["path2"] != "na" {
+		t.Errorf("paths = %v/%v, want the inherited kubecon/na", rsa["path1"], rsa["path2"])
+	}
+}
+
+// A whitespace-only path is not a path, so it does not trip the off-Search refusal.
+func TestPreflight_BlankDisplayPathOffSearchIsNotAPath(t *testing.T) {
+	in := demandGenInput()
+	in.Path1 = "  "
+	if err := NewClient(testCreds(), testAccount()).ValidateCampaignInputKind(CampaignKindDisplay, in); err != nil {
+		t.Fatalf("a blank Path1 on Display was refused: %v", err)
 	}
 }
 
@@ -420,19 +454,36 @@ func TestValidateAdGroupDemographicExclusions_ResolvesAndDedupes(t *testing.T) {
 }
 
 func TestValidateAdGroupDemographicExclusions_RefusesBadValues(t *testing.T) {
-	tooMany := make([]string, maxDemographicExclusions+1)
-	for i := range tooMany {
-		tooMany[i] = "PARENT"
+	repeat := func(v string) []string {
+		out := make([]string, maxDemographicExclusions+1)
+		for i := range out {
+			out[i] = v
+		}
+		return out
 	}
-	cases := map[string]CampaignInput{
-		"unknown income":   {ExcludedIncomeRanges: []string{"50-60"}},
-		"unknown parental": {ExcludedParentalStatuses: []string{"GUARDIAN"}},
-		"over the cap":     {ExcludedParentalStatuses: tooMany},
+	cases := map[string]struct {
+		in      CampaignInput
+		wantErr string
+	}{
+		"unknown income":   {CampaignInput{ExcludedIncomeRanges: []string{"50-60"}}, "must be one of"},
+		"unknown parental": {CampaignInput{ExcludedParentalStatuses: []string{"GUARDIAN"}}, "must be one of"},
+		// The dotless ı upper-cases to an ASCII I, so without the non-ASCII refusal this
+		// would resolve to INCOME_RANGE_0_50.
+		"non-ASCII fold": {CampaignInput{ExcludedIncomeRanges: []string{"ıncome_range_0_50"}}, "must be one of"},
+		"income over the cap": {
+			CampaignInput{ExcludedIncomeRanges: repeat("INCOME_RANGE_0_50")},
+			fmt.Sprintf("at most %d excluded income ranges are supported", maxDemographicExclusions),
+		},
+		"parental over the cap": {
+			CampaignInput{ExcludedParentalStatuses: repeat("PARENT")},
+			fmt.Sprintf("at most %d excluded parental statuses are supported", maxDemographicExclusions),
+		},
 	}
-	for name, in := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := validateAdGroupDemographicExclusions(campaignKindDisplay, in); err == nil {
-				t.Fatal("expected a refusal")
+			_, err := validateAdGroupDemographicExclusions(campaignKindDisplay, tc.in)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want one containing %q", err, tc.wantErr)
 			}
 		})
 	}
@@ -543,7 +594,8 @@ func TestCreateCampaign_AdGroupCriteriaFailureIsAPartialResult(t *testing.T) {
 			if got := strings.Contains(err.Error(), "UNCONFIRMED"); got != tc.wantUnconfirmed {
 				t.Errorf("err = %v, UNCONFIRMED = %v, want %v", err, got, tc.wantUnconfirmed)
 			}
-			if len(res.AdGroups[0].NegativeKeywordCriteriaIDs)+len(res.AdGroupDemographicCriteriaIDs) != 0 {
+			ag := res.AdGroups[0]
+			if len(ag.NegativeKeywordCriteriaIDs)+len(ag.DemographicCriteriaIDs)+len(res.AdGroupDemographicCriteriaIDs) != 0 {
 				t.Errorf("no criterion id may be recorded for a failed mutate: %+v", res.AdGroups[0])
 			}
 		})
@@ -631,6 +683,84 @@ func TestCreateDisplayCampaign_ExclusionFailureIsAPartialResult(t *testing.T) {
 				t.Errorf("err = %v, UNCONFIRMED = %v, want %v", err, got, tc.wantUnconfirmed)
 			}
 		})
+	}
+}
+
+// displayExclusionServer serves a Display cascade WITH a creative: the images, the shell
+// mutates, the assets and the ad from displayCascade, and the ad-group criteria mutate
+// from criteria. It records every mutate path in order.
+func displayExclusionServer(t *testing.T, criteria http.HandlerFunc) (*httptest.Server, func() []string) {
+	t.Helper()
+	var (
+		mu    sync.Mutex
+		paths []string
+	)
+	adGroupH, _ := capturedMutate(1, displayAdGroupResource)
+	assetH, _ := displayAssets()
+	adH, _ := capturedMutate(1, displayAdResource)
+	cascade := displayCascade(t, displayImages(t), adGroupH, assetH, adH)
+	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ":mutate") {
+			mu.Lock()
+			paths = append(paths, r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
+			mu.Unlock()
+		}
+		if strings.HasSuffix(r.URL.Path, "adGroupCriteria:mutate") {
+			criteria(w, r)
+			return
+		}
+		cascade(w, r)
+	})
+	return srv, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), paths...)
+	}
+}
+
+// With a creative, the exclusions run right after the ad group, before the images and
+// the ad, so a refused exclusion leaves nothing more built on the group.
+func TestCreateDisplayCampaign_ExclusionsRunBeforeTheCreative(t *testing.T) {
+	srv, paths := displayExclusionServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_, _ = io.WriteString(w, criteriaEcho(body))
+	})
+	in := displayInput(srv.URL)
+	in.ExcludedParentalStatuses = []string{"PARENT"}
+	res, err := demandGenClient(t, srv).CreateDisplayCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateDisplayCampaign: %v", err)
+	}
+	want := "campaignBudgets:mutate campaigns:mutate adGroups:mutate adGroupCriteria:mutate assets:mutate adGroupAds:mutate"
+	if got := strings.Join(paths(), " "); got != want {
+		t.Errorf("mutate order = %s, want %s", got, want)
+	}
+	if res.AdID == "" || len(res.CreativeAssetIDs) == 0 || len(res.AdGroupDemographicCriteriaIDs) != 1 {
+		t.Errorf("res = %+v, want the exclusion, the assets and the ad all recorded", res)
+	}
+}
+
+func TestCreateDisplayCampaign_ExclusionFailureSendsNoCreative(t *testing.T) {
+	srv, paths := displayExclusionServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":3,"status":"INVALID_ARGUMENT","message":"boom"}}`)
+	})
+	in := displayInput(srv.URL)
+	in.ExcludedParentalStatuses = []string{"PARENT"}
+	res, err := demandGenClient(t, srv).CreateDisplayCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected the exclusion failure to surface")
+	}
+	for _, p := range paths() {
+		if p == "assets:mutate" || p == "adGroupAds:mutate" {
+			t.Errorf("%s was sent after the exclusions failed (paths %v)", p, paths())
+		}
+	}
+	if res == nil || res.AdGroupID == "" {
+		t.Fatalf("res = %+v, want the ad group kept on the partial result", res)
+	}
+	if len(res.CreativeAssetIDs) != 0 || res.AdID != "" {
+		t.Errorf("creative recorded after a failed exclusion: assets %v, ad %q", res.CreativeAssetIDs, res.AdID)
 	}
 }
 
