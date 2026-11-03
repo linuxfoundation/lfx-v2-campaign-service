@@ -1018,6 +1018,15 @@ top level and on each `adGroups[].ads[]` entry, `adGroups[].negativeKeywords` (m
 `excludedParentalStatuses`. Which channel takes each is the client preflight's decision, so
 an off-channel value is refused there for the create and the adoption path alike.
 
+The #477 fields follow the same rule. `sharedNegativeKeywordLists` is passed through
+verbatim. `searchAssets` is `googleAdsSearchAssetsConfig`: `adImages` and
+`businessLogoImages` are `googleAdsImageRefs`, so each entry is a URL or an
+`{"imageAssetId": …}` object. Both lists are enumerated by `googleAdsCreativeSlots` (as
+`search adImages` and `search businessLogoImages`), which brings the Google slot count to
+sixteen, so stored assets resolve and are budgeted with every other Google image slot.
+`googleAdsSnapshotConfig` sanitizes both lists on a deep copy and names `SearchAssets` in its
+early return. `googleAdsSearchAssets` maps nil to the zero value.
+
 Two details of those mappers are load-bearing. Each returns **nil** for an empty input, as
 `googleAdsKeywords` does, so an omitted field stays nil end-to-end rather than becoming an
 empty-but-non-nil slice — and for the per-ad-group fields nil is specifically what the client

@@ -44,6 +44,8 @@ type targetingCapture struct {
 	adGroupCriteria  [][]byte
 	assets           []byte
 	campaignAssets   []byte
+	googleAdsMutates [][]byte
+	sharedSets       [][]byte
 	sawBudget        bool
 }
 
@@ -147,6 +149,26 @@ func targetingServers(t *testing.T) ([]googleads.Option, *targetingCapture) {
 			out, err := campaignAssetResults(body)
 			if err != nil {
 				t.Errorf("decode campaignAssets request: %v", err)
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			_, _ = io.WriteString(w, out)
+		case strings.HasSuffix(r.URL.Path, "googleAds:mutate"):
+			// The Search campaign assets (#477): echo each temporary asset as a real one and
+			// each link under it, as Google does.
+			cap.add(&cap.googleAdsMutates, body)
+			out, err := searchAssetMutateResults(body)
+			if err != nil {
+				t.Errorf("decode googleAds:mutate request: %v", err)
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			_, _ = io.WriteString(w, out)
+		case strings.HasSuffix(r.URL.Path, "campaignSharedSets:mutate"):
+			cap.add(&cap.sharedSets, body)
+			out, err := campaignSharedSetResults(body)
+			if err != nil {
+				t.Errorf("decode campaignSharedSets request: %v", err)
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}

@@ -164,6 +164,11 @@ type CampaignInput struct {
 	// campaign can serve a query it will never see. Neither silence is recoverable
 	// from the created campaign, so neither is defensible.
 	NegativeKeywords []Keyword
+	// SharedNegativeKeywordLists are EXISTING shared negative keyword lists to attach to the
+	// campaign (#477), as `customers/<id>/sharedSets/<id>` resource names in THIS account. The
+	// client attaches them and never creates or edits one. SEARCH ONLY, refused elsewhere. See
+	// shared_negative_lists.go.
+	SharedNegativeKeywordLists []string
 	// SearchPartners opts a Search campaign into the Search partner network
 	// (networkSettings.targetSearchNetwork) as well as Google Search. False, the default,
 	// keeps Google Search only, which is what every campaign before #457 was. Search only:
@@ -372,7 +377,7 @@ type CampaignInput struct {
 	// this client creates, under the same rules as the three above except the
 	// channel: optional, account-level assets linked to the campaign, and SEARCH ONLY.
 	// Their shapes and validators live in assets_extended.go, which also says
-	// why image and location extensions are not here.
+	// why location extensions are not here. Image assets are SearchAssets below.
 	CallExtensions []CallExtension
 	Promotions     []PromotionExtension
 	Prices         []PriceExtension
@@ -468,6 +473,11 @@ type CampaignInput struct {
 	// built from DisplayCreative and the four campaign-level audience lists, which must then
 	// be empty when this list is set. DISPLAY ONLY. See display_adgroups.go.
 	DisplayAdGroups []DisplayAdGroup
+	// SearchAssets are the Search campaign's image, business-logo and business-name assets
+	// (#477), linked to the CAMPAIGN. SEARCH ONLY, refused at preflight on every other channel.
+	// Like the image-bearing creatives above, its images are fetched (or taken from
+	// ResolvedImages) before the budget mutate. See search_assets.go.
+	SearchAssets SearchCampaignAssets
 
 	// ResolvedImages supplies the bytes for creative image entries the caller has ALREADY
 	// resolved, keyed by the exact slot entry string it put in the creative above.
@@ -693,6 +703,16 @@ type CampaignResult struct {
 	// ExtensionLinkIDs empty is exactly that case, and the returned error says so.
 	ExtensionAssetIDs []string `json:"extensionAssetIds,omitempty"`
 	ExtensionLinkIDs  []string `json:"extensionLinkIds,omitempty"`
+	// SearchAssetIDs are the Search campaign's image, business-logo and business-name ASSETS
+	// (#477), in the order sent: ad images, the logo, then the name. The assets and their
+	// campaign links are created in one atomic request, so a nil error means every one is
+	// linked. With an error, the ids are the assets the 2xx response did describe — they
+	// exist, and a link may not; a definite refusal or an ambiguous failure records none.
+	SearchAssetIDs []string `json:"searchAssetIds,omitempty"`
+	// SharedNegativeKeywordListIDs are the shared sets (#477) whose attach to this campaign
+	// Google confirmed, in the order asked. Empty is ambiguous in the three ways
+	// GeoCriterionIDs documents, and the returned ERROR tells them apart.
+	SharedNegativeKeywordListIDs []string `json:"sharedNegativeKeywordListIds,omitempty"`
 	// CreativeAssetIDs are the IMAGE assets created for a Demand Gen ad — marketing
 	// images, then logos, in the order demandGenImageSlots lists them.
 	//
@@ -1182,6 +1202,12 @@ type campaignPreflight struct {
 	// its user-list exclusions and its creative — the single campaign-level group when
 	// DisplayAdGroups is empty, nil off Display. See validateDisplayAdGroups.
 	displayGroups []displayGroupPlan
+	// searchAssets are the validated Search campaign assets (#477); their image bytes are
+	// fetched by the Search cascade before the budget mutate. sharedNegativeLists are the
+	// validated shared set resource names to attach. See search_assets.go and
+	// shared_negative_lists.go.
+	searchAssets        searchAssetPlan
+	sharedNegativeLists []string
 	// adGroups are the ad groups the cascade will create, always at least one. When
 	// the caller asked for none, it holds exactly the single group the fields above
 	// describe, so the cascade has one shape to walk rather than two. A duplicate
@@ -1342,7 +1368,8 @@ func (c *Client) ValidateCampaignInput(in CampaignInput) error {
 //
 // The ad-group income and parental-status exclusions (#473) cut across all of this:
 // every channel but Search and Display refuses income ranges, and every channel but
-// Display refuses parental status, Search included.
+// Display refuses parental status, Search included. The Search campaign assets and shared
+// negative keyword lists (#477) are Search only: every other channel refuses both.
 //
 // Unknown kinds are not rejected here. The dispatch layer refuses an unrecognised
 // channel before it reaches the client at all, and a kind this package does not know
@@ -1616,6 +1643,19 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	// Shared lists (#477) are refused off Search and checked for this account here, before the
+	// budget: Google refuses another customer's set only at the attach.
+	sharedNegativeLists, err := validateSharedNegativeKeywordLists(
+		kind, c.account.CustomerID, in.SharedNegativeKeywordLists)
+	if err != nil {
+		return nil, err
+	}
+	// The Search campaign assets (#477): refused off Search, locally checked here, fetched by
+	// the Search cascade before the budget mutate.
+	searchAssets, err := validateSearchAssets(kind, in)
+	if err != nil {
+		return nil, err
+	}
 	// Search partners are a Search network setting (#457): refused off Search, as the other
 	// Search-only fields are, so asking for them never validates and then does nothing.
 	if in.SearchPartners && kind != campaignKindSearch {
@@ -1761,6 +1801,8 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		display:             display,
 		displayTargeting:    displayTargeting,
 		displayGroups:       displayGroups,
+		searchAssets:        searchAssets,
+		sharedNegativeLists: sharedNegativeLists,
 		adGroups:            adGroups,
 		negativeKeywords:    negativeKeywords,
 		cpcBidMicros:        cpcBidMicros,
@@ -1800,6 +1842,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	pf, err := c.preflightCampaign(in)
 	if err != nil {
 		return nil, err
+	}
+	// The Search campaign asset images (#477) are fetched BEFORE the first mutate, in one
+	// bounded pass, as Display, Demand Gen and Performance Max fetch theirs: a 404, an
+	// over-sized file or a non-square image costs an error and nothing else.
+	searchImages, err := c.fetchSearchAssetImages(ctx, pf.searchAssets)
+	if err != nil {
+		return nil, err // pre-create: nothing was sent
 	}
 	amountMicros, budgetName, campaignName := pf.amountMicros, pf.budgetName, pf.campaignName
 	// The ad group, its bid, its copy and its targeting are no longer read
@@ -2025,6 +2074,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		res.Steps = steps
 	}
 
+	// Shared negative keyword lists (#477) are exclusions too, so they follow the campaign's
+	// own negatives. Same partial-result contract: the confirmed ids are kept with the error.
+	if len(pf.sharedNegativeLists) > 0 {
+		setIDs, setErr := c.attachSharedNegativeKeywordLists(
+			ctx, campaignResource, campaignID, pf.sharedNegativeLists)
+		res.SharedNegativeKeywordListIDs = setIDs
+		if setErr != nil {
+			return res, setErr
+		}
+		steps = append(steps,
+			fmt.Sprintf("Shared negative keyword lists attached: %d", len(setIDs)))
+		res.Steps = steps
+	}
+
 	// Language, ad schedule, device and demographic criteria are campaign-level too,
 	// and go in last of the three criteria steps — still before the ad group, so a
 	// failure has as little built on top of it as possible. Separate mutate from both
@@ -2040,7 +2103,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		res.Steps = steps
 	}
 
-	// Ad extensions are the last campaign-level step before the ad group. They go
+	// Ad extensions are the last campaign-level step but one (the Search campaign assets
+	// follow them) before the ad group. They go
 	// AFTER the criteria rather than before because they are the only step here
 	// that takes two mutates and can leave something behind (unlinked assets) —
 	// the less that is already built when that happens, the cheaper the
@@ -2054,6 +2118,22 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		res.ExtensionLinkIDs = linkIDs
 		steps = append(steps, fmt.Sprintf("Ad extensions applied: %d assets (%s)", len(linkIDs), assetStep(pf.assets)))
+		res.Steps = steps
+	}
+
+	// The Search campaign assets (#477) are campaign-level too, and go last of the campaign
+	// steps, after the extensions, for the reason the extensions go last: the less already
+	// built on a failure, the cheaper the reconcile. One atomic request; the asset ids a 2xx
+	// described are kept with any error.
+	if pf.searchAssets.present {
+		searchIDs, searchErr := c.createSearchCampaignAssets(
+			ctx, campaignResource, campaignID, pf.searchAssets, searchImages)
+		res.SearchAssetIDs = searchIDs
+		if searchErr != nil {
+			return res, searchErr
+		}
+		steps = append(steps, fmt.Sprintf("Search campaign assets linked: %d (%s)",
+			len(searchIDs), searchAssetStep(pf.searchAssets)))
 		res.Steps = steps
 	}
 

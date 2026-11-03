@@ -340,6 +340,12 @@ type googleAdsConfig struct {
 	// Left empty, no exclusions are created, which is the behaviour of every caller
 	// that predates this field.
 	NegativeKeywords []googleAdsKeywordConfig `json:"negativeKeywords"`
+	// SharedNegativeKeywordLists are EXISTING shared negative keyword lists to attach to the
+	// campaign (#477), as `customers/<id>/sharedSets/<id>` resource names in the connected
+	// account. Attached only: this service never creates or edits a shared set. SEARCH ONLY,
+	// refused on every other channel; another account's set is refused before the budget.
+	// See googleads.CampaignInput.SharedNegativeKeywordLists.
+	SharedNegativeKeywordLists []string `json:"sharedNegativeKeywordLists"`
 	// SearchPartners opts a Search campaign into the Search partner network as well as
 	// Google Search (#457). SEARCH ONLY, refused on every other channel. Absent or false
 	// keeps Google Search only, as every caller before this field.
@@ -502,9 +508,9 @@ type googleAdsConfig struct {
 	StructuredSnippets []googleAdsStructuredSnippetConfig `json:"structuredSnippets"`
 	// CallExtensions, Promotions and Prices are the other three extension types,
 	// under the same rules except the channel: optional, account-level assets
-	// linked to the campaign, and Search only. Image and location extensions are NOT
-	// here — see internal/platform/googleads/assets_extended.go for why each is a gap
-	// rather than an omission.
+	// linked to the campaign, and Search only. Location extensions are NOT here — see
+	// internal/platform/googleads/assets_extended.go for why that is a gap rather
+	// than an omission. Image assets are searchAssets (#477), below.
 	CallExtensions []googleAdsCallExtensionConfig `json:"callExtensions"`
 	Promotions     []googleAdsPromotionConfig     `json:"promotions"`
 	Prices         []googleAdsPriceConfig         `json:"prices"`
@@ -588,6 +594,11 @@ type googleAdsConfig struct {
 	// lists — which must then be empty when this list is set. DISPLAY ONLY. Refusals are
 	// the client's preflight's.
 	DisplayAdGroups []googleAdsDisplayAdGroupConfig `json:"displayAdGroups"`
+	// SearchAssets are the Search campaign's image, business-logo and business-name assets
+	// (#477), linked to the campaign. SEARCH ONLY, refused on every other channel. Its two image
+	// lists take the same ImageRef entries as the creatives above, so they are resolved,
+	// enumerated and snapshot-sanitized with them.
+	SearchAssets *googleAdsSearchAssetsConfig `json:"searchAssets"`
 	// AdoptExisting opts THIS dispatch in to adopting a campaign that already carries the
 	// composed name instead of creating one. It defaults to FALSE, and the default is the
 	// safety property, not a convenience: ComposeName is deterministic in
@@ -934,10 +945,14 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		UserInterests:            cfg.UserInterests,
 		ExcludedPlacements:       cfg.ExcludedPlacements,
 		ExcludedAudienceSegments: cfg.ExcludedAudienceSegments,
+		SearchAssets:             googleAdsSearchAssets(cfg.SearchAssets),
+		// Passed through verbatim: the shape, account and channel checks are the client's
+		// preflight, before its first mutate.
+		SharedNegativeKeywordLists: cfg.SharedNegativeKeywordLists,
 		// The bytes for every asset-backed image entry, keyed by the slot string the
 		// mappers above rendered. Carried on the input rather than on each of the three
-		// creatives because it is one dispatch-wide map: the same asset may be named from
-		// two channels, and the client's fetch phase is shared across all three.
+		// creatives and the Search assets because it is one dispatch-wide map: the same asset
+		// may be named from two channels, and the client's fetch phase is shared by all four.
 		ResolvedImages: resolvedImages,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
 		// GA client composes the budget/campaign/ad-group names from these, and a retry
@@ -1724,6 +1739,33 @@ func googleAdsDisplayAdGroups(in []googleAdsDisplayAdGroupConfig) []googleads.Di
 	return out
 }
 
+// googleAdsSearchAssetsConfig is the Search campaign's linked assets (#477) for the "search"
+// channel. Its two image lists carry URLs or stored-asset ids, so it is named in
+// googleAdsSnapshotConfig's early return and sanitized there with the creatives.
+type googleAdsSearchAssetsConfig struct {
+	// AdImages are AD_IMAGE assets: square (1:1), at least 300x300, at most 20.
+	AdImages googleAdsImageRefs `json:"adImages"`
+	// BusinessLogoImages is the BUSINESS_LOGO asset: at most one square image, at least
+	// 128x128.
+	BusinessLogoImages googleAdsImageRefs `json:"businessLogoImages"`
+	// BusinessName is the BUSINESS_NAME text asset, at most 25 display-width units.
+	BusinessName string `json:"businessName"`
+}
+
+// googleAdsSearchAssets maps the Search assets config to the client input, validating
+// nothing — every rule lives in the client's preflight. A nil pointer maps to the zero value,
+// which the client reads as "no Search campaign assets asked for".
+func googleAdsSearchAssets(in *googleAdsSearchAssetsConfig) googleads.SearchCampaignAssets {
+	if in == nil {
+		return googleads.SearchCampaignAssets{}
+	}
+	return googleads.SearchCampaignAssets{
+		AdImages:           in.AdImages.slotEntries(),
+		BusinessLogoImages: in.BusinessLogoImages.slotEntries(),
+		BusinessName:       in.BusinessName,
+	}
+}
+
 // googleAdsSnapshotConfig returns cfg with every caller-supplied URL reduced to
 // scheme+host, for storage in config_snapshot — which is persisted UNENCRYPTED in
 // Postgres. Same reason and same helper as campaignFromMeta's ImageURL and
@@ -1734,8 +1776,8 @@ func googleAdsDisplayAdGroups(in []googleAdsDisplayAdGroupConfig) []googleads.Di
 // types — a sitelink's finalUrl, a promotion's finalUrl and the finalUrl of EVERY
 // price offering, each row of a price table carrying its own — and the image URLs of
 // the Demand Gen creative, the Demand Gen video ad's logo, every Demand Gen ad group's
-// creative (#460), the Performance Max asset group, the Display creative and every
-// Display ad group's creative (#475).
+// creative (#460), the Performance Max asset group, the Display creative, every Display ad
+// group's creative (#475) and the Search campaign assets (#477).
 // The Video channel's creative is the one with nothing to sanitize: it references a
 // YouTube video by bare id and carries no URL field at all, which is why it is the
 // only one absent from the early return below. Call extensions carry a phone number
@@ -1751,7 +1793,7 @@ func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 		len(cfg.LeadForms) == 0 && cfg.DemandGenCreative == nil &&
 		cfg.DemandGenVideoCreative == nil && len(cfg.DemandGenAds) == 0 && len(cfg.DemandGenAdGroups) == 0 &&
 		cfg.PerformanceMaxCreative == nil && cfg.DisplayCreative == nil &&
-		len(cfg.DisplayAdGroups) == 0 {
+		len(cfg.DisplayAdGroups) == 0 && cfg.SearchAssets == nil {
 		return cfg
 	}
 	snapshot := cfg
@@ -1851,6 +1893,14 @@ func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 		for i := range snapshot.DisplayAdGroups {
 			snapshot.DisplayAdGroups[i].Creative = sanitizeSnapshotDisplayCreative(cfg.DisplayAdGroups[i].Creative)
 		}
+	}
+	// The Search campaign assets (#477) carry image URLs with the same exposure, so they are
+	// sanitized the same way and with the same deep copy.
+	if cfg.SearchAssets != nil {
+		assets := *cfg.SearchAssets
+		assets.AdImages = sanitizeSnapshotImageRefs(cfg.SearchAssets.AdImages)
+		assets.BusinessLogoImages = sanitizeSnapshotImageRefs(cfg.SearchAssets.BusinessLogoImages)
+		snapshot.SearchAssets = &assets
 	}
 	return snapshot
 }

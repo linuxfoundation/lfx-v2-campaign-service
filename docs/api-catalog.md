@@ -1154,6 +1154,26 @@ negativeKeywords?:              — OPTIONAL Search keyword EXCLUSIONS, attached
                                   the campaign paying for exactly the queries you named. Omitted/empty, no
                                   exclusions are attached and the campaign is eligible for every query
                                   its positive keywords match.
+sharedNegativeKeywordLists?:    — OPTIONAL EXISTING shared negative keyword lists to attach to the
+  string[]                        campaign (#477), as `customers/<id>/sharedSets/<id>` resource
+                                  names (a canonical id, no leading zero). This service ATTACHES
+                                  them through `campaignSharedSets:mutate` and never creates, edits
+                                  or removes a shared set or a keyword in one. Each name must belong
+                                  to the connected account: Google refuses another customer's set
+                                  (`INVALID_CUSTOMER_ID`) only at the attach, after the budget and
+                                  campaign exist, so it is refused before any request. Trimmed and
+                                  de-duplicated, at most 20. The attach runs right after the
+                                  campaign-level `negativeKeywords`, in one atomic request; the
+                                  confirmed set ids are in `sharedNegativeKeywordListIds`. A failure
+                                  keeps the campaign (partial result), and an ambiguous or
+                                  mismatched response is UNCONFIRMED.
+
+                                  SEARCH ONLY, and REFUSED on every other `channel` before any
+                                  request. The 2026-11-03 validateOnly probe accepted a
+                                  campaignSharedSet naming an existing NEGATIVE_KEYWORDS set and
+                                  refused another customer's set. NOT LIVE-VERIFIED: a
+                                  multi-operation `campaignSharedSets:mutate`, and attaching a set
+                                  of another type (the resource name does not say its type).
 cpcBid?: number                 — OPTIONAL manual CPC bid for the ad group, in whole units of the ad
                                   ACCOUNT's currency (the same no-FX-conversion caveat `budget`
                                   carries). Accepted range 0.01..100000.0 inclusive; NaN/Inf or a
@@ -2095,6 +2115,38 @@ displayAdGroups?:               — OPTIONAL several named Display ad groups (#4
                                   group's ad. Omitted, the campaign gets the single ad group it
                                   always had, byte-for-byte. The same validation runs on the
                                   `adoptExisting` path.
+
+searchAssets?:                  — OPTIONAL Search campaign image, logo and name assets (#477), each
+  {adImages?: ImageRef[],         linked to the CAMPAIGN. SEARCH ONLY, and REFUSED on every other
+   businessLogoImages?:           `channel` before any request (the other channels carry their own
+     ImageRef[],                  business name and logo on their own creative). Every field is
+   businessName?: string}         optional and independent:
+                                    adImages             AD_IMAGE,      1:1, min 300x300, at most 20
+                                    businessLogoImages   BUSINESS_LOGO, 1:1, min 128x128, at most 1
+                                    businessName         BUSINESS_NAME, ≤25 weighted chars
+                                  Only the SQUARE shape is taken for `adImages`: the probe covered a
+                                  square image, and no slot documents 1.91:1 for this field type.
+                                  Image entries take both ImageRef shapes `demandGenCreative`
+                                  defines — an https URL this service fetches, or {"imageAssetId":
+                                  "<uuid>"} naming a stored creative asset — under that field's
+                                  rules, every image resolved and checked BEFORE the first budget
+                                  mutate.
+
+                                  The assets and their campaign links are created in ONE atomic
+                                  `googleAds:mutate` (each asset under a temporary id the link
+                                  names), after the extensions and before the ad group, so a refusal
+                                  leaves no unlinked asset. The asset ids are in `searchAssetIds`
+                                  (ad images, then the logo, then the name). A failure keeps the
+                                  campaign (partial result); an ambiguous outcome, or a 2xx that
+                                  does not describe every asset and link, is UNCONFIRMED and keeps
+                                  the asset ids the response did describe.
+
+                                  The 2026-11-03 validateOnly probes accepted AD_IMAGE and
+                                  BUSINESS_LOGO links to EXISTING square image assets, and a
+                                  BUSINESS_NAME link to a text asset created by temporary id in the
+                                  same request. NOT LIVE-VERIFIED: an image asset created by
+                                  temporary id in that request, which is what is sent; the minimums
+                                  and the 20-image cap are Google's documented specifications.
 adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When true, the dispatcher first
                                   looks the composed campaign name up on the account and, if a single
                                   live campaign already carries it, ADOPTS that campaign instead of
