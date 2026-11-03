@@ -1254,7 +1254,9 @@ var AccountMonitorActionItem = Type("account-monitor-action-item", func() {
 	Attribute("email_id", String, "monitor-hubspot-account only: the HubSpot marketing-email id the item is about — the key that joins a finding to its row in `emails` (an A/B variant shares its parent's campaign_id). Absent on every ad-platform monitor.", func() { Example("112233445566") })
 	Attribute("campaign_name", String, "The campaign's platform-side name, carried alongside campaign_id so a renderer never needs to re-join against the row list.", func() { Example("KubeCon NA 2026 - Search") })
 	Attribute("priority", String, "The rule engine's priority band for this item.", func() { Enum("HIGH", "MED", "LOW") })
-	Attribute("issue", String, "What the rule engine flagged.", func() { Example("Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected") })
+	Attribute("issue", String, "What the rule engine flagged.", func() {
+		Example("Only spending 42% of a daily budget of 150.00 in account currency — 1890.00 in account currency spent vs 4500.00 in account currency expected")
+	})
 	Attribute("action", String, "The suggested remedy.", func() {
 		Example("Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions")
 	})
@@ -1267,7 +1269,7 @@ var AccountMonitorActionItem = Type("account-monitor-action-item", func() {
 	// example (design/account_monitor_examples.go).
 	Example(map[string]any{
 		"campaign_id": "24183781329", "campaign_name": "KubeCon NA 2026 - Search", "priority": "MED",
-		"issue":  "Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected",
+		"issue":  "Only spending 42% of a daily budget of 150.00 in account currency — 1890.00 in account currency spent vs 4500.00 in account currency expected",
 		"action": "Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions",
 	})
 })

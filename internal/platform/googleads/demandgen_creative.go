@@ -364,12 +364,11 @@ func validateDemandGenCreative(kind string, in CampaignInput) (demandGenCreative
 // validateCreativeText checks one text list against its count bounds and display
 // weight, and de-duplicates case-insensitively.
 //
-// It REFUSES over-long text rather than truncating it, which is the opposite of
-// what boundedUniqueCopy does in ad_copy.go — deliberately, and for the reason
-// assets.go already states: that path may truncate because it GENERATES its own
-// copy and pads from defaults, so a cut line is a cut line of its own making.
-// Demand Gen copy is written by a human for a reason, and silently shipping a
-// headline cut mid-word is worse than refusing it while nothing has been paid for.
+// It REFUSES over-long text rather than truncating it, as the Search path's callerCopy
+// does since #441: copy written by a human for a reason, shipped cut mid-word, is worse
+// than refused while nothing has been paid for. Only the Search path's own generated
+// default lines (padUnique) are ever truncated, because a cut line there is of its own
+// making.
 func validateCreativeText(channel, label string, in []string, min, max, maxWeight int) ([]string, error) {
 	// The count bound is checked BEFORE the loop as well as after it. Checking it only
 	// after meant a caller could send a million strings and have every one of them

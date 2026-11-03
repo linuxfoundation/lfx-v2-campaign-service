@@ -290,31 +290,31 @@ func compositeResourceID(resourceName string) (parentID, id string) {
 // createAdGroupAndAd (which runs after both prior mutates) would orphan a
 // real campaign+budget with no ad group/ad for what is purely a local
 // input-validation failure.
-func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, headlines, descriptions []string, adGroupName string, keywords []Keyword, audienceSegments []string, err error) {
+func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, ad adPlan, adGroupName string, keywords []Keyword, audienceSegments []string, err error) {
 	finalURL, err = buildAdFinalURL(in.RegistrationURL, in.EventSlug, in.EventName, in.Project, in.NameSuffix)
 	if err != nil {
-		return "", nil, nil, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid destination URL): %w", err)
+		return "", adPlan{}, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid destination URL): %w", err)
 	}
 	if n := len(finalURL); n > maxFinalURLBytes {
-		return "", nil, nil, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (composed ad final URL is %d bytes, exceeding the %d limit; shorten the registration URL)", n, maxFinalURLBytes)
+		return "", adPlan{}, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (composed ad final URL is %d bytes, exceeding the %d limit; shorten the registration URL)", n, maxFinalURLBytes)
 	}
-	headlines, descriptions, err = composeAdCopy(in.Headlines, in.Descriptions, in.EventName, in.Project)
+	ad, err = composeAdCopy(in.Headlines, in.Descriptions, in.EventName, in.Project)
 	if err != nil {
-		return "", nil, nil, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid ad copy): %w", err)
+		return "", adPlan{}, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid ad copy): %w", err)
 	}
 	adGroupName = ComposeName("Ad Group", in)
 	if err := validateEntityName("ad group", adGroupName, utf8.RuneCountInString(adGroupName), maxAdGroupNameRunes, "characters"); err != nil {
-		return "", nil, nil, "", nil, nil, err
+		return "", adPlan{}, "", nil, nil, err
 	}
 	keywords, err = validateKeywords(in.Keywords)
 	if err != nil {
-		return "", nil, nil, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid keyword input): %w", err)
+		return "", adPlan{}, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid keyword input): %w", err)
 	}
 	audienceSegments, err = validateAudienceSegments(in.AudienceSegments)
 	if err != nil {
-		return "", nil, nil, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid audience segment input): %w", err)
+		return "", adPlan{}, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid audience segment input): %w", err)
 	}
-	return finalURL, headlines, descriptions, adGroupName, keywords, audienceSegments, nil
+	return finalURL, ad, adGroupName, keywords, audienceSegments, nil
 }
 
 // createAdGroupAndAd extends a just-created campaign with a PAUSED ad group and a
@@ -494,6 +494,17 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 		res.Steps = append(res.Steps, fmt.Sprintf("Responsive search ad created: %s (PAUSED, %d headlines, %d descriptions)", adIDs[0], len(plan.ads[0].headlines), len(plan.ads[0].descriptions)))
 	} else {
 		res.Steps = append(res.Steps, fmt.Sprintf("Responsive search ads created: %s (PAUSED, %d ads in ad group %s)", strings.Join(adIDs, ", "), len(adIDs), adGroupID))
+	}
+	// What composeAdCopy changed in the operator's copy (#441), so a line they never wrote,
+	// or one they wrote that was dropped, is visible beside the ad it landed in.
+	for i, ad := range plan.ads {
+		for _, note := range ad.copyNotes {
+			if len(plan.ads) == 1 {
+				res.Steps = append(res.Steps, "Ad copy: "+note)
+			} else {
+				res.Steps = append(res.Steps, fmt.Sprintf("Ad %d copy: %s", i+1, note))
+			}
+		}
 	}
 
 	if len(keywords) == 0 && len(audienceSegments) == 0 {

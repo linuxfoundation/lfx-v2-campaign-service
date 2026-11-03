@@ -279,7 +279,7 @@ post URL provided" wording was false whenever `Variants` were supplied; (2) the
 definite-failure arms omitted the campaign/ad-group context, so an operator
 following them literally builds a SECOND campaign while the first sits PAUSED and
 orphaned; (3) nothing said to delete a stray post. Step 4 now emits nothing when
-`postWarning != ""` (guarded at the variant-LISTING level, which is the arm that
+an authoring failure was recorded (guarded at the variant-LISTING level, which is the arm that
 actually fired), and the ambiguous arms say DELETE.
 
 **The campaign-state context is DEFERRED, not stated at Step 1.5.** Fixing (2) by
@@ -294,7 +294,7 @@ that may never have been created.
 So the Step 1.5 arms confine themselves to the POST that actually happened
 ("continuing without an ad"), and a single step naming the real ids
 (`Campaign <id> and ad group <id> were created (PAUSED)…`) plus an `AdWarning`
-suffix are appended at **Step 4**, under `postWarning != ""`. Reaching Step 4 is
+suffix are appended at **Step 4**, for an outcome row marked `CampaignContext`. Reaching Step 4 is
 the proof the claim holds: every path between the campaign POST and it returns
 early — ambiguous partial, malformed 2xx, definite failure, and the ad-group
 equivalents — so control arrives only when both ids are decoded non-empty and both
@@ -312,6 +312,22 @@ claim is already known, not from where it is convenient to write.**
   - **Pre-send** — the `default` arm (token refresh, body encode, request build, a
     refused/unresolvable dial). A new non-`apiError` shape must be checked against
     `createOutcomeAmbiguous` before it lands here.
+
+**One outcome table (#173).** Every way the promoted-post leg ends — Step 1.5 authoring and
+Step 4 ad create — is one row of `promoOutcomeRows` in `promo_outcome.go`: outcome class →
+result shape (and so the persisted status: `not_created`, `pending`, `created_degraded` or
+`created`), the exact `AdWarning`, the runbook step (with an HTTP-status variant), and whether
+the deferred campaign-context sentence is rendered at Step 4. `classifyAuthorFailure` and
+`classifyAdFailure` share one ordered rule (caller cancel + ambiguous → in flight; other cancel
+→ before send; ambiguous → unconfirmed; `*apiError` → rejected; else pre-send). `CreateCampaign`
+only classifies and renders; it no longer carries the AdWarning and runbook strings (the returned
+error texts and the ad-created step are still built inline). Four rounds on PR #158 each fixed
+one arm and broke another; `TestReddit_PromoOutcomeTable` (internal/dispatch) now drives every
+row end to end through the real dispatcher against a fake Reddit, asserts each expectation as a
+literal, and fails when a row has no scenario or a row's `Persisted` column disagrees with what
+the dispatcher writes. The ordering invariant of the issue's second comment (deterministic
+checks before the first mutating call) is pinned separately by
+`TestCreateCampaign_DeterministicFailuresAuthorNoPost`.
 
 The dispatch adapter SANITIZES
 both `PostURL` and `ImageURL` (reduced to scheme+host) before snapshotting the

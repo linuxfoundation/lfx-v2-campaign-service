@@ -6,6 +6,7 @@ package googleads
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -67,11 +68,11 @@ func TestTruncateWeighted(t *testing.T) {
 func TestComposeAdCopy_CJKHeadlineStaysUnderEffectiveWidth(t *testing.T) {
 	eventName := strings.Repeat("日本語テスト", 4) // 24 runes, weight 48 — below 30 by rune count but
 	// above 30 by Google's double-width weight (48 > 30).
-	headlines, _, err := composeAdCopy(nil, nil, eventName, "Project")
+	ad, err := composeAdCopy(nil, nil, eventName, "Project")
 	if err != nil {
 		t.Fatalf("composeAdCopy: %v", err)
 	}
-	for _, h := range headlines {
+	for _, h := range ad.headlines {
 		weight := 0
 		for _, r := range h {
 			weight += googleAdsCharWeight(r)
@@ -82,24 +83,47 @@ func TestComposeAdCopy_CJKHeadlineStaysUnderEffectiveWidth(t *testing.T) {
 	}
 }
 
-func TestBoundedUniqueCopy(t *testing.T) {
+// callerCopy trims and skips blanks, refuses what Google would refuse, and drops (with a note)
+// an exact duplicate. Caller text is never cut (#441).
+func TestCallerCopy(t *testing.T) {
 	cases := []struct {
 		name       string
 		candidates []string
-		maxRunes   int
+		maxWeight  int
 		maxCount   int
 		want       []string
+		notes      int
+		refused    string
 	}{
-		{"trims and drops empties", []string{"  a  ", "", "   ", "b"}, 10, 10, []string{"a", "b"}},
-		{"dedupes after truncation", []string{"abcdef", "abcxyz"}, 3, 10, []string{"abc"}},
-		{"caps at maxCount", []string{"a", "b", "c", "d"}, 10, 2, []string{"a", "b"}},
-		{"nil input", nil, 10, 10, nil},
+		{"trims and skips blanks without a note", []string{"  a  ", "", "   ", "b"}, 10, 10, []string{"a", "b"}, 0, ""},
+		{"drops a duplicate with a note", []string{"abc", "abc", "d"}, 10, 10, []string{"abc", "d"}, 1, ""},
+		{"refuses a line over the width, never cuts it", []string{"abcdef"}, 3, 10, nil, 0, "display width of 6, exceeding the 3 limit"},
+		{"counts CJK double", []string{"日本語"}, 5, 10, nil, 0, "display width of 6"},
+		{"drops lines past the cap with one note", []string{"a", "b", "c", "d"}, 10, 2, []string{"a", "b"}, 1, ""},
+		{"no note when the list ends at the cap", []string{"a", "b"}, 10, 2, []string{"a", "b"}, 0, ""},
+		{"blank rows past the cap are counted, not searched", []string{"a", "b", "", "  ", "c"}, 10, 2, []string{"a", "b"}, 1, ""},
+		{"a line past the cap is not measured", []string{"a", "b", "far too wide to send"}, 3, 2, []string{"a", "b"}, 1, ""},
+		{"a duplicate does not count toward the cap", []string{"a", "a", "b"}, 10, 2, []string{"a", "b"}, 1, ""},
+		{"nil input", nil, 10, 10, nil, 0, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := boundedUniqueCopy(tc.candidates, tc.maxRunes, tc.maxCount)
+			var notes []string
+			got, err := callerCopy("headline", tc.candidates, tc.maxWeight, tc.maxCount, &notes)
+			if tc.refused != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.refused) {
+					t.Fatalf("err = %v, want a refusal containing %q", err, tc.refused)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("callerCopy: %v", err)
+			}
 			if !strSliceEqual(got, tc.want) {
-				t.Errorf("boundedUniqueCopy(%v, %d, %d) = %v, want %v", tc.candidates, tc.maxRunes, tc.maxCount, got, tc.want)
+				t.Errorf("callerCopy(%v) = %v, want %v", tc.candidates, got, tc.want)
+			}
+			if len(notes) != tc.notes {
+				t.Errorf("notes = %v, want %d", notes, tc.notes)
 			}
 		})
 	}
@@ -123,9 +147,14 @@ func TestPadUnique(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := padUnique(tc.base, tc.fallback, tc.maxRunes, tc.min, tc.max)
+			var notes []string
+			got := padUnique("headline", tc.base, tc.fallback, tc.maxRunes, tc.min, tc.max, &notes)
 			if !strSliceEqual(got, tc.want) {
 				t.Errorf("padUnique(%v, %v, %d, %d, %d) = %v, want %v", tc.base, tc.fallback, tc.maxRunes, tc.min, tc.max, got, tc.want)
+			}
+			// One note per line added, so an operator sees every line they did not write.
+			if added := len(got) - len(tc.base); len(notes) != added {
+				t.Errorf("notes = %v, want one per added line (%d)", notes, added)
 			}
 		})
 	}
@@ -162,52 +191,111 @@ func TestDefaultHeadlinesAndDescriptions(t *testing.T) {
 	}
 }
 
+// The overflow note counts every row past the cap and names the first one when it has text.
+func TestCallerCopy_OverflowNoteCountsTheRowsAfterTheCap(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		candidates []string
+		want       string
+	}{
+		{"names the first row", []string{"a", "b", "c", "d"}, `did not send the 2 headline row(s) after the 2 Google takes, from "c" on`},
+		{"a blank first row is counted but not named", []string{"a", "b", "", "c"}, "did not send the 2 headline row(s) after the 2 Google takes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var notes []string
+			if _, err := callerCopy("headline", tc.candidates, 10, 2, &notes); err != nil {
+				t.Fatalf("callerCopy: %v", err)
+			}
+			if len(notes) != 1 || notes[0] != tc.want {
+				t.Errorf("notes = %q, want [%q]", notes, tc.want)
+			}
+		})
+	}
+}
+
+// However long the caller's list, the notes stay bounded: one for the duplicates, one for
+// the overflow. Each note becomes a persisted step, so a per-line note would let one
+// request write thousands of them.
+func TestCallerCopy_NotesStayBoundedForALongList(t *testing.T) {
+	var lines []string
+	for i := 0; i < 1000; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i), fmt.Sprintf("line %d", i))
+	}
+	var notes []string
+	got, err := callerCopy("headline", lines, maxHeadlineWeight, maxHeadlines, &notes)
+	if err != nil {
+		t.Fatalf("callerCopy: %v", err)
+	}
+	if len(got) != maxHeadlines {
+		t.Errorf("kept %d headlines, want %d", len(got), maxHeadlines)
+	}
+	if len(notes) > 2 {
+		t.Errorf("got %d notes for one long list, want at most 2: %v", len(notes), notes)
+	}
+}
+
 func TestComposeAdCopy(t *testing.T) {
-	t.Run("caller copy used verbatim when sufficient", func(t *testing.T) {
+	t.Run("caller copy used verbatim when sufficient, with no notes", func(t *testing.T) {
 		headlines := []string{"H1", "H2", "H3"}
 		descriptions := []string{"D1", "D2"}
-		gotH, gotD, err := composeAdCopy(headlines, descriptions, "KubeCon", "CNCF")
+		ad, err := composeAdCopy(headlines, descriptions, "KubeCon", "CNCF")
 		if err != nil {
 			t.Fatalf("composeAdCopy: %v", err)
 		}
-		if !strSliceEqual(gotH, headlines) {
-			t.Errorf("headlines = %v, want %v", gotH, headlines)
+		if !strSliceEqual(ad.headlines, headlines) || !strSliceEqual(ad.descriptions, descriptions) {
+			t.Errorf("ad = %+v, want the caller's copy unchanged", ad)
 		}
-		if !strSliceEqual(gotD, descriptions) {
-			t.Errorf("descriptions = %v, want %v", gotD, descriptions)
+		if len(ad.copyNotes) != 0 {
+			t.Errorf("notes = %v, want none for copy that was not changed", ad.copyNotes)
 		}
 	})
 
-	t.Run("pads short caller copy with placeholders", func(t *testing.T) {
-		gotH, gotD, err := composeAdCopy([]string{"Only One"}, nil, "KubeCon", "CNCF")
+	t.Run("pads short caller copy and notes every added line", func(t *testing.T) {
+		ad, err := composeAdCopy([]string{"Only One"}, nil, "KubeCon", "CNCF")
 		if err != nil {
 			t.Fatalf("composeAdCopy: %v", err)
 		}
-		if len(gotH) < minHeadlines {
-			t.Errorf("headlines = %v, want at least %d", gotH, minHeadlines)
+		if len(ad.headlines) != minHeadlines || ad.headlines[0] != "Only One" {
+			t.Errorf("headlines = %v, want the caller's first, padded to %d", ad.headlines, minHeadlines)
 		}
-		if gotH[0] != "Only One" {
-			t.Errorf("caller-supplied headline must be preserved first, got %v", gotH)
+		if len(ad.descriptions) != minDescriptions {
+			t.Errorf("descriptions = %v, want %d", ad.descriptions, minDescriptions)
 		}
-		if len(gotD) < minDescriptions {
-			t.Errorf("descriptions = %v, want at least %d", gotD, minDescriptions)
+		added := (len(ad.headlines) - 1) + len(ad.descriptions)
+		if len(ad.copyNotes) != added {
+			t.Fatalf("notes = %v, want one per added line (%d)", ad.copyNotes, added)
+		}
+		for _, h := range ad.headlines[1:] {
+			if !strings.Contains(strings.Join(ad.copyNotes, "\n"), `added default headline "`+h+`"`) {
+				t.Errorf("notes %v do not name the added headline %q", ad.copyNotes, h)
+			}
+		}
+	})
+
+	t.Run("refuses over-wide caller copy instead of cutting it", func(t *testing.T) {
+		long := strings.Repeat("x", maxHeadlineWeight+1)
+		if _, err := composeAdCopy([]string{long, "H2", "H3"}, []string{"D1", "D2"}, "KubeCon", "CNCF"); err == nil {
+			t.Fatal("accepted a headline over Google's width, which used to be cut mid-word")
+		}
+		longD := strings.Repeat("y", maxDescriptionWeight+1)
+		if _, err := composeAdCopy([]string{"H1", "H2", "H3"}, []string{longD, "D2"}, "KubeCon", "CNCF"); err == nil {
+			t.Fatal("accepted a description over Google's width")
 		}
 	})
 
 	t.Run("no caller copy, no event name is a hard error", func(t *testing.T) {
-		_, _, err := composeAdCopy(nil, nil, "", "")
-		if err == nil {
+		if _, err := composeAdCopy(nil, nil, "", ""); err == nil {
 			t.Error("expected an error when there is no usable copy at all")
 		}
 	})
 
 	t.Run("empty caller descriptions still padded even with headlines present", func(t *testing.T) {
-		_, gotD, err := composeAdCopy([]string{"H1", "H2", "H3"}, nil, "KubeCon", "CNCF")
+		ad, err := composeAdCopy([]string{"H1", "H2", "H3"}, nil, "KubeCon", "CNCF")
 		if err != nil {
 			t.Fatalf("composeAdCopy: %v", err)
 		}
-		if len(gotD) < minDescriptions {
-			t.Errorf("descriptions = %v, want at least %d", gotD, minDescriptions)
+		if len(ad.descriptions) < minDescriptions {
+			t.Errorf("descriptions = %v, want at least %d", ad.descriptions, minDescriptions)
 		}
 	})
 }

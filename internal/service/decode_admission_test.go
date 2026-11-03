@@ -215,10 +215,10 @@ func TestDecodedBytesFor_MatchesTheGateItShares(t *testing.T) {
 // elapsed-time threshold decides the outcome — a still-blocking implementation fails by never
 // arriving, which the harness reports as a timeout.
 func TestDecodeReserver_WaitIsBoundedWhenCallerContextHasNoDeadline(t *testing.T) {
-	d := NewDecodeReserver(constants.DecodeAdmissionBudgetBytes)
+	d := NewDecodeReserver(constants.UploadMemoryBudgetFallbackBytes)
 
 	// Occupy the entire budget so the next reservation cannot be satisfied.
-	releaseAll, ok := d.reserve(context.Background(), constants.DecodeAdmissionBudgetBytes)
+	releaseAll, ok := d.reserve(context.Background(), constants.UploadMemoryBudgetFallbackBytes)
 	if !ok {
 		t.Fatal("could not reserve the whole budget to set up the contention case")
 	}
@@ -263,14 +263,14 @@ func TestDecodeReserver_WaitIsBoundedWhenCallerContextHasNoDeadline(t *testing.T
 // — that is, after the decode and during the persist — the whole decode budget must be
 // reservable by someone else. No sleep and no elapsed-time threshold is involved.
 func TestUploadCreativeAsset_DecodeReservationIsReleasedBeforeThePersist(t *testing.T) {
-	d := NewDecodeReserver(constants.DecodeAdmissionBudgetBytes)
+	d := NewDecodeReserver(constants.UploadMemoryBudgetFallbackBytes)
 
 	var freeDuringPersist atomic.Bool
 	repo := &observingCreativeAssetRepo{
 		during: func() {
 			// If the upload still holds its reservation here, the budget is short by the
 			// decoded size of the image and this full-budget reservation must fail.
-			release, ok := d.reserve(context.Background(), constants.DecodeAdmissionBudgetBytes)
+			release, ok := d.reserve(context.Background(), constants.UploadMemoryBudgetFallbackBytes)
 			if ok {
 				release()
 			}
@@ -345,7 +345,7 @@ func (r *observingCreativeAssetRepo) DeleteAsset(_ context.Context, _, _, _ stri
 // Proven by exhaustion rather than by inspection: after the failed upload, the WHOLE budget must
 // still be reservable.
 func TestUploadCreativeAsset_DecodeReservationIsReleasedWhenTheDecodeFails(t *testing.T) {
-	d := NewDecodeReserver(constants.DecodeAdmissionBudgetBytes)
+	d := NewDecodeReserver(constants.UploadMemoryBudgetFallbackBytes)
 	s := NewBriefService(nil, nil, nil, nil)
 	s.SetCreativeAssetRepo(&fakeCreativeAssetRepo{})
 	s.SetDecodeReserver(d)
@@ -364,7 +364,7 @@ func TestUploadCreativeAsset_DecodeReservationIsReleasedWhenTheDecodeFails(t *te
 		t.Fatal("a truncated PNG was accepted; this test needs the decode-failure arm")
 	}
 
-	release, ok := d.reserve(context.Background(), constants.DecodeAdmissionBudgetBytes)
+	release, ok := d.reserve(context.Background(), constants.UploadMemoryBudgetFallbackBytes)
 	if !ok {
 		t.Fatal("the whole decode budget could not be reserved after a FAILED decode: the " +
 			"reservation leaked on the 400 arm, so repeated corrupt uploads drain the budget " +

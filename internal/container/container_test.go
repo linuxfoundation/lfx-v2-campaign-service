@@ -29,6 +29,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/metrics"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/membudget"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
@@ -1609,7 +1610,7 @@ func TestBindBriefLiveBackends_BindsEveryPoolBackedDependency(t *testing.T) {
 
 	require.False(t, s.WizardSessionRepoIsSet(), "premise: unbound before wiring")
 
-	bindBriefLiveBackends(s, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	bindBriefLiveBackends(s, membudget.New(constants.UploadMemoryBudgetFallbackBytes), nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	assert.True(t, s.CreativeAssetRepoIsSet(),
 		"the shared live-wiring helper must bind the creative-asset repo; without it BOTH startup paths serve every upload a 503 forever while the rest of the brief routes work")
@@ -1803,7 +1804,7 @@ func (r *orderRecordingBriefSetter) SetEmailReferenceSource(*service.EmailRefere
 func TestBindBriefLiveBackends_PublishesTheBoundBeforeTheGate(t *testing.T) {
 	rec := &orderRecordingBriefSetter{}
 
-	bindBriefLiveBackends(rec, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	bindBriefLiveBackends(rec, membudget.New(constants.UploadMemoryBudgetFallbackBytes), nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	idx := func(name string) int {
 		for i, c := range rec.calls {

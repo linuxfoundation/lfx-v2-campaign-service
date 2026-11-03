@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/metrics"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/membudget"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
@@ -283,6 +285,13 @@ type Container struct {
 	// the pod's DB-outage window is when its metrics matter most.
 	Metrics *metrics.Registry
 
+	// UploadBudget is the ONE per-pod upload memory budget (#179). The HTTP chain's
+	// UploadAdmission charges it for an upload's wire side and the brief service's
+	// DecodeReserver charges it for the pixel buffer, so both admission points bound the same
+	// process-wide figure. Built with Metrics, before any wiring branch, so every path that
+	// constructs a BriefService binds the same instance.
+	UploadBudget *membudget.Budget
+
 	// mu guards pool, which the background DB-init goroutine sets once the pool
 	// opens and Close reads on shutdown.
 	mu   sync.Mutex
@@ -386,6 +395,13 @@ func NewContainer(cfg *config.Config) (container *Container, err error) {
 		return nil, fmt.Errorf("metrics registry: %w", merr)
 	}
 	c.Metrics = promReg
+
+	budget, berr := newUploadBudget(os.Getenv, membudget.ReadCgroupLimit)
+	if berr != nil {
+		return nil, berr
+	}
+	c.UploadBudget = budget
+	promReg.SetUploadBudget(budget)
 
 	// Build the index publisher BEFORE any wiring branch. Indexing is independent of
 	// the database (a resource is published after its write commits), and there are
@@ -1019,7 +1035,7 @@ func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispat
 // the brief repos while forgetting the rest, because there is no longer a separate statement to
 // forget. This is the same reasoning that put SetOrchestrator behind the backendSetter interface
 // rather than a direct cast — one declared contract, both injection sites.
-func bindBriefLiveBackends(bb briefBackendSetter, pool *postgres.Pool, briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator, connRepo *postgres.ConnectionRepo, enc domain.Encryptor, audiences domain.AudienceRepository, dispatchers map[model.Provider]service.PlatformDispatcher) {
+func bindBriefLiveBackends(bb briefBackendSetter, budget *membudget.Budget, pool *postgres.Pool, briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator, connRepo *postgres.ConnectionRepo, enc domain.Encryptor, audiences domain.AudienceRepository, dispatchers map[model.Provider]service.PlatformDispatcher) {
 	bb.SetBackend(briefs, campaigns, jobs, orch)
 	bb.SetEmailReferenceSource(service.NewEmailReferenceSource(connRepo, enc))
 	// ORDER MATTERS between these two, and only in one direction.
@@ -1035,7 +1051,7 @@ func bindBriefLiveBackends(bb briefBackendSetter, pool *postgres.Pool, briefs do
 	//
 	// Binding the BOUND first makes the window harmless: while the repo is still nil every
 	// upload is refused with 503, so no request can observe a live repo without a reserver.
-	bb.SetDecodeReserver(service.NewDecodeReserver(constants.DecodeAdmissionBudgetBytes))
+	bb.SetDecodeReserver(service.NewSharedDecodeReserver(budget))
 	bb.SetCreativeAssetRepo(postgres.NewCreativeAssetRepo(pool))
 	// The wizard binds LAST, and its own repository is its availability gate: until this
 	// returns its eight routes answer 503, which is the correct answer for a pod that has
@@ -1078,7 +1094,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// leaving this one silently behind.
 	c.Connections.(backendSetter).SetOrchestrator(orch)
 	briefSvc := c.newBriefService(briefRepo, campaignRepo, jobRepo, orch)
-	bindBriefLiveBackends(briefSvc, pool, briefRepo, campaignRepo, jobRepo, orch, repo, enc, audienceRepo, dispatchers)
+	bindBriefLiveBackends(briefSvc, c.UploadBudget, pool, briefRepo, campaignRepo, jobRepo, orch, repo, enc, audienceRepo, dispatchers)
 	c.Briefs = briefSvc
 	c.Audiences = c.newAudienceService(audienceRepo, briefRepo)
 	c.Explore = c.newAudienceExploreService(audienceRepo, briefRepo)
@@ -1161,7 +1177,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// goroutine returns) before it reads c.orch, so this write happens-before
 			// that read.
 			c.orch = orch
-			bindBriefLiveBackends(bb, pool, briefRepo, campaignRepo, jobRepo, orch, connRepo, enc, audienceRepo, dispatchers)
+			bindBriefLiveBackends(bb, c.UploadBudget, pool, briefRepo, campaignRepo, jobRepo, orch, connRepo, enc, audienceRepo, dispatchers)
 			ab.SetBackend(audienceRepo)
 			// Inject the orchestrator into the connection service for account-listing operations.
 			b.SetOrchestrator(orch)
@@ -1639,4 +1655,31 @@ func nat64Prefixes(c *Container) []string {
 		return nil
 	}
 	return c.Config.EventURLNAT64Prefixes
+}
+
+// newUploadBudget resolves and builds the per-pod upload memory budget (#179):
+// UPLOAD_MEMORY_BUDGET_BYTES when set, else 40% of the cgroup memory limit, else 40% of the
+// chart's default limit, and never below one worst-case upload. A malformed env value is fatal,
+// so a typo stops the pod instead of silently falling back to a size nobody chose.
+func newUploadBudget(getenv func(string) string, readLimit func() (int64, bool)) (*membudget.Budget, error) {
+	res, err := membudget.Resolve(getenv, readLimit, constants.PodMemoryLimitBytes, constants.UploadWorstCaseBytes)
+	if err != nil {
+		return nil, fmt.Errorf("upload memory budget: %w", err)
+	}
+	attrs := []any{
+		"budget_bytes", res.Bytes,
+		"source", string(res.Source),
+		"worst_case_upload_bytes", constants.UploadWorstCaseBytes,
+	}
+	if res.LimitBytes > 0 {
+		attrs = append(attrs, "memory_limit_bytes", res.LimitBytes)
+	}
+	if res.RaisedToFloor {
+		slog.Warn("upload memory budget raised to one worst-case upload; it exceeds the intended share of the memory limit", attrs...)
+	} else {
+		slog.Info("upload memory budget", attrs...)
+	}
+	// The reserve keeps one worst-case pixel charge always available to uploads that already
+	// hold their wire charge, so wire admission can never starve the decode stage.
+	return membudget.NewWithReserve(res.Bytes, constants.CreativeDecodePeakBytes), nil
 }

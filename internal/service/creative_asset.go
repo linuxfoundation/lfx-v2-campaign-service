@@ -369,7 +369,7 @@ func createdTag(created bool) *string {
 // maxCreativeDimension additionally bounds each SIDE, because a byte budget alone admits a
 // degenerate 1x20,000,000 strip that is no image any creative pipeline should accept.
 const (
-	maxCreativeDecodedBytes = 80 << 20 // 80 MiB of decoded pixel data
+	maxCreativeDecodedBytes = constants.CreativeDecodePeakBytes // 80 MiB of decoded pixel data; one constant so the budget floor cannot drift from it
 	maxCreativeDimension    = 10_000
 	// maxCreativeStoredBytes is the ceiling on the STORED IMAGE FILE — the base64-DECODED payload
 	// bytes, which is what lands in the creative_assets.bytes column and what Meta caps at ~30 MB
@@ -529,10 +529,11 @@ func creativeAssetResult(a *model.CreativeAsset) *briefs.CreativeAsset {
 // Clearing p.Bytes is a MEMORY BOUND, not tidiness. It is the ~40 MiB base64 string for a
 // maximum-size upload, and the payload struct keeps it reachable for the whole handler (p is
 // read again for ProjectID/BriefID). Left set, it stays resident THROUGH the 80 MiB pixel
-// decode, putting the coexisting peak at roughly 42 + 40 + 30 + 80 = 192 MiB — past the
-// ~128 MiB constants.UploadAdmissionWeightBytes charges for one upload, so the admission bound
-// would under-count exactly when it matters. Clearing it at the only point it stops being needed
-// keeps the peak at the figure that constant is derived from.
+// decode, putting the coexisting peak at roughly 42 + 40 + 30 + 80 = 192 MiB — the whole of what
+// the wire weight (constants.UploadAdmissionWeightBytes, 112 MiB) plus the pixel reservation
+// (80 MiB) charge one upload against the shared budget, with nothing to spare for the rounding
+// both already absorb. Clearing it at the only point it stops being needed keeps the decode-time
+// peak at 42 + 30 + 80 = 152 MiB, inside that charge.
 //
 // # The ceiling
 //

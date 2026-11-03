@@ -1763,10 +1763,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		authorImageURL string
 		postHeadline   string
 		postCTA        string
-		// postWarning records a post-AUTHORING shortfall (Step 1.5). It seeds
-		// adWarning below so a "the caller asked for an ad and there is none"
-		// outcome is a DEGRADED success, not a clean one.
-		postWarning string
+		// authorFailure is the outcome-table row of a non-fatal post-AUTHORING shortfall
+		// (Step 1.5), nil when authoring succeeded or was not asked for. Its AdWarning seeds
+		// adWarning at Step 4 so a "the caller asked for an ad and there is none" outcome is
+		// a DEGRADED success, not a clean one.
+		authorFailure *PromoOutcomeRow
 	)
 	if validatedPostID == "" && (strings.TrimSpace(in.ImageURL) != "" || in.ImageURLSource != nil) {
 		if in.ImageURLSource != nil && strings.TrimSpace(in.ImageURL) != "" {
@@ -1959,7 +1960,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// That degraded outcome RESEMBLES the missing-PostURL state (both end with
 	// AdCount == 0) but is NOT the same and must not be recorded as one: there the
 	// caller never requested an ad, whereas here one WAS requested and does not
-	// exist. So a failure sets postWarning, which seeds adWarning in Step 4 and
+	// exist. So a failure sets authorFailure, which seeds adWarning in Step 4 and
 	// makes the dispatch adapter persist `created_degraded`. Treating the two as
 	// equivalent is what previously persisted an ad-less campaign as a clean
 	// `created` — a terminal status, so idempotency then refused to re-dispatch it.
@@ -2011,8 +2012,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// ALONE. So an in-flight cancellation released the claim on a post that may
 			// exist, and a retry authored a DUPLICATE paid post. Returning a partial result
 			// retains the claim and records the orphan by name for reconciliation.
-			if ctxErr := ctx.Err(); ctxErr != nil && createOutcomeAmbiguous(err) {
-				steps = append(steps, "Promoted-post authoring is UNCONFIRMED (the request reached Reddit but the outcome is unknown) -- no campaign was created; check Reddit Ads Manager for a post with this headline BEFORE authoring it again to avoid a duplicate, and DELETE it if it exists and is not attached to an ad")
+			//
+			// The class, and from it the result shape, AdWarning and runbook step, comes from
+			// the outcome table (promo_outcome.go); classifyAuthorFailure documents why its
+			// order is load-bearing. NO ROW NAMES THE CAMPAIGN OR AD-GROUP STATE, because at
+			// this point it is not yet known: the campaign POST is Step 2 and the ad group is
+			// Step 3, both BELOW. A row marked CampaignContext has it rendered at Step 4, the
+			// only place both ids are known (#158 round 3). The step reports ONLY the HTTP
+			// status, never the error body, which can echo the destination_url's secrets.
+			outcome := classifyAuthorFailure(ctx, err)
+			row := promoRow(outcome)
+			status, hasStatus := errStatus(err)
+			switch outcome {
+			case PromoAuthorCanceledInFlight:
+				steps = append(steps, row.step(status, hasStatus))
 				return &CampaignResult{
 						Platform:     "reddit-ads",
 						CampaignName: campaignName,
@@ -2021,72 +2034,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 						Steps:        steps,
 					}, fmt.Errorf("reddit promoted-post authoring UNCONFIRMED (a post for campaign %q may exist): %w",
 						campaignName, err)
-			}
-			// A cancellation that is NOT ambiguous landed cleanly before any authoring bytes
-			// went out, so no post exists: abort with a nil result and release the claim.
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, fmt.Errorf("reddit campaign creation aborted during post authoring: %w", ctxErr)
-			}
-			// Classify with the SAME rule AND THE SAME ORDER as the ad-create path, so
-			// the operator is never told to take a manual action that could duplicate
-			// a post Reddit already holds. Order is load-bearing: createOutcomeAmbiguous
-			// is asked FIRST, because "is this an *apiError" and "is this ambiguous" are
-			// NOT mutually exclusive — createOutcomeAmbiguous returns true for an
-			// *apiError carrying a 5xx or a mutating 3xx (Reddit received the POST and
-			// MAY have committed the post before erroring/redirecting). Testing
-			// errors.As first would swallow both into the "Reddit rejected it" arm and
-			// tell the operator to author the post again — the exact duplicate this
-			// classification exists to prevent. errors.As is therefore used only to
-			// EXTRACT the status for the message, never to select the arm.
-			//   - ambiguous (transportError from an in-flight timeout/TLS error, a 2xx
-			//     whose body carried no data.id which createPromotedPost wraps as one,
-			//     OR an apiError with a 5xx / mutating 3xx): the post MAY exist —
-			//     verify BEFORE authoring it again;
-			//   - apiError otherwise (a definite 4xx): Reddit received and REJECTED it,
-			//     so no post exists and the operator can remediate directly;
-			//   - anything else (token refresh, body encode, request build, a
-			//     pre-connect dial failure): proven pre-send, nothing was created.
-			// NO ARM NAMES THE CAMPAIGN OR AD-GROUP STATE, because at this point in the
-			// function it is not yet known: the campaign POST is Step 2 and the ad group is
-			// Step 3, both BELOW. An earlier version of these strings asserted "campaign +
-			// ad group created (PAUSED)" here to supply context the operator genuinely needs
-			// — but it was written where the claim could not be true yet. It becomes true
-			// only on the path where both creates succeed; when the campaign create returns
-			// an ambiguous partial, the persisted runbook asserted two resources exist while
-			// the very next step said "a PAUSED campaign MAY exist", and told the operator to
-			// attach an ad to a campaign that may never have been created.
-			//
-			// That is the same defect class these strings were fixed for — a runbook
-			// asserting something the code does not guarantee — so the context is DEFERRED
-			// rather than dropped: Step 4 appends it once, from a point where both outcomes
-			// are known (see the postWarning block there). Every arm here confines itself to
-			// the POST, which is the only thing that has actually happened.
-			var postAPIErr *apiError
-			gotStatus := errors.As(err, &postAPIErr)
-			switch {
-			case createOutcomeAmbiguous(err):
-				// The post MAY exist (a 5xx, a mutating 3xx, or a transport error with no
-				// caller cancellation). Verify BEFORE authoring again, and DELETE a stray:
-				// whether such a post is publicly visible is undocumented (see Step 1.5), so
-				// removal is the instruction that is correct either way.
-				postWarning = "promoted-post authoring is UNCONFIRMED (the request may have reached Reddit) and no ad was created — verify in Reddit Ads Manager BEFORE authoring the post again to avoid a duplicate, and DELETE any post that is not attached to an ad"
-				if gotStatus {
-					steps = append(steps, fmt.Sprintf("Promoted-post authoring UNCONFIRMED (HTTP %d) -- continuing without an ad; verify whether the post exists before authoring it again, and DELETE it if it is not attached to an ad", postAPIErr.StatusCode))
-				} else {
-					steps = append(steps, "Promoted-post authoring UNCONFIRMED (the request may have reached Reddit) -- continuing without an ad; verify whether the post exists before authoring it again, and DELETE it if it is not attached to an ad")
-				}
-			case gotStatus:
-				// A definite 4xx: Reddit received and REJECTED the post, so none exists and
-				// authoring one again carries no duplicate risk.
-				postWarning = "promoted-post authoring FAILED (Reddit rejected the post) and no ad was created — author the post and add the ad in Reddit Ads Manager"
-				steps = append(steps, fmt.Sprintf("Promoted-post authoring failed: Reddit rejected the post (HTTP %d) -- continuing without an ad; author the post and add the ad in Reddit Ads Manager", postAPIErr.StatusCode))
+			case PromoAuthorCanceledBeforeSend:
+				// Landed cleanly before any authoring bytes went out, so no post exists:
+				// abort with a nil result and release the claim.
+				return nil, fmt.Errorf("reddit campaign creation aborted during post authoring: %w", ctx.Err())
 			default:
-				postWarning = "promoted-post authoring FAILED before it reached Reddit; no post exists and no ad was created — author the post and add the ad in Reddit Ads Manager"
-				steps = append(steps, "Promoted-post authoring failed before the request reached Reddit -- continuing without an ad; author the post and add the ad in Reddit Ads Manager")
+				authorFailure = &row
+				steps = append(steps, row.step(status, hasStatus))
 			}
 			// validatedPostID stays empty -> no ad. Unlike the no-PostURL path (where
 			// the caller never asked for an ad), an ad WAS intended here and does not
-			// exist, so postWarning above carries the shortfall into CampaignResult.
+			// exist, so authorFailure above carries the shortfall into CampaignResult.
 			// AdWarning; without it the campaign persists as a clean `created` and
 			// idempotency makes that permanent.
 		} else {
@@ -2440,9 +2398,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// is the ONLY thing that can mark the result degraded — an ad was requested
 	// (ImageURL was supplied) and none exists. Leaving it empty here is what made a
 	// no-ad campaign persist as a clean `created`, which idempotency then froze.
-	// The no-PostURL/no-ImageURL path never sets postWarning, so it still yields an
+	// The no-PostURL/no-ImageURL path never sets authorFailure, so it still yields an
 	// empty AdWarning and a clean `created`, as its contract requires.
-	adWarning := postWarning
+	var adWarning string
+	if authorFailure != nil {
+		adWarning = authorFailure.AdWarning
+	}
 
 	// The DEFERRED half of the Step 1.5 authoring runbook. The campaign-state context an
 	// operator needs — that a campaign and ad group DO exist, PAUSED, so remediation means
@@ -2457,13 +2418,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// ambiguous campaign create left a persisted runbook claiming two resources existed
 	// beside a step saying one of them MAY exist.
 	//
-	// Appended only when authoring actually failed (postWarning is non-empty, which is the
-	// same condition that seeded adWarning). A clean run has no authoring runbook to complete.
-	if postWarning != "" {
-		steps = append(steps, fmt.Sprintf(
-			"Campaign %s and ad group %s were created (PAUSED) with no ad -- add the ad to THIS campaign in Reddit Ads Manager rather than creating a new one",
-			campaignID, adGroupID))
-		adWarning += " (the campaign and ad group were created and are PAUSED)"
+	// Appended only for an outcome-table row marked CampaignContext (every non-fatal
+	// authoring shortfall). A clean run has no authoring runbook to complete.
+	if authorFailure != nil && authorFailure.CampaignContext {
+		steps = append(steps, fmt.Sprintf(campaignContextStep, campaignID, adGroupID))
+		adWarning += campaignContextWarning
 	}
 
 	// A post id here came from EITHER a caller-supplied PostURL OR Step 1.5
@@ -2494,47 +2453,30 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// MAY exist; a clean pre-send cancel means it does not. Return a partial
 			// result carrying both IDs so the (created, PAUSED) campaign+ad group are
 			// reconcilable regardless.
-			if ctxErr := ctx.Err(); ctxErr != nil {
+			// The class, and from it the result shape, AdWarning and runbook step, comes from
+			// the outcome table (promo_outcome.go), by the same rule and in the same order as
+			// the authoring path. Report ONLY the HTTP status, never err.Error()/apiError.Body:
+			// a reflective Reddit validation error can echo the click_url (which holds the
+			// caller's permitted secret-bearing query params); persisting it in Steps would
+			// leak those.
+			outcome := classifyAdFailure(ctx, err)
+			row := promoRow(outcome)
+			status, hasStatus := errStatus(err)
+			switch outcome {
+			case PromoAdCanceledInFlight, PromoAdCanceledBeforeSend:
+				// A caller cancellation is fatal. Return a partial result carrying both IDs so
+				// the (created, PAUSED) campaign + ad group are reconcilable either way.
 				pr := partialResult()
 				pr.AdGroupName = adGroupName
 				pr.AdGroupID = adGroupID
-				if createOutcomeAmbiguous(err) {
-					pr.AdWarning = "promoted-post ad is UNCONFIRMED: the create was interrupted in flight and the ad MAY exist — verify in Reddit Ads Manager before recreating"
-					return pr, fmt.Errorf("ad creation interrupted, outcome UNCONFIRMED: %w", ctxErr)
+				pr.AdWarning = row.AdWarning
+				if outcome == PromoAdCanceledInFlight {
+					return pr, fmt.Errorf("ad creation interrupted, outcome UNCONFIRMED: %w", ctx.Err())
 				}
-				return pr, fmt.Errorf("ad creation aborted before send: %w", ctxErr)
-			}
-			// Not a caller cancel. Classify by outcome:
-			//   - ambiguous (transportError / 5xx / mutating 3xx): the ad MAY exist — UNCONFIRMED,
-			//     require verification before manual creation (avoids a duplicate);
-			//   - definite (4xx / pre-send): the ad was NOT created — report FAILED so
-			//     the operator's manual remediation isn't blocked by a misleading
-			//     "may exist".
-			// Report ONLY the HTTP status, never err.Error()/apiError.Body: a
-			// reflective Reddit validation error can echo the click_url (which holds
-			// the caller's permitted secret-bearing query params); persisting it in
-			// Steps would leak those.
-			var adAPIErr *apiError
-			gotStatus := errors.As(err, &adAPIErr)
-			if createOutcomeAmbiguous(err) {
-				adWarning = "promoted-post ad creation is UNCONFIRMED (campaign and ad group created, PAUSED); the ad request may have reached Reddit — verify whether the ad exists BEFORE creating it manually to avoid a duplicate"
-				if gotStatus {
-					steps = append(steps, fmt.Sprintf("Ad creation UNCONFIRMED (HTTP %d) -- verify in Reddit Ads Manager before adding manually", adAPIErr.StatusCode))
-				} else {
-					steps = append(steps, "Ad creation UNCONFIRMED (request may have reached Reddit) -- verify in Reddit Ads Manager before adding manually")
-				}
-			} else {
-				// This definite-not-created branch covers BOTH a 4xx (Reddit received
-				// and REJECTED the ad) and a pre-send failure (token refresh, request
-				// build, or a pre-connect dial error — Reddit NEVER received it). Word
-				// each accurately rather than claiming "Reddit rejected" in both cases.
-				if gotStatus {
-					adWarning = "promoted-post ad creation FAILED (campaign and ad group created, PAUSED); Reddit rejected the ad — add it manually in Reddit Ads Manager"
-					steps = append(steps, fmt.Sprintf("Ad creation failed: Reddit rejected the ad (HTTP %d) -- add ad manually in Reddit Ads Manager", adAPIErr.StatusCode))
-				} else {
-					adWarning = "promoted-post ad creation FAILED before it reached Reddit (campaign and ad group created, PAUSED); the ad was not created — add it manually in Reddit Ads Manager"
-					steps = append(steps, "Ad creation failed before the request reached Reddit -- add ad manually in Reddit Ads Manager")
-				}
+				return pr, fmt.Errorf("ad creation aborted before send: %w", ctx.Err())
+			default:
+				adWarning = row.AdWarning
+				steps = append(steps, row.step(status, hasStatus))
 			}
 		} else {
 			adID = decodeID(adResp)
@@ -2548,11 +2490,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				// still have created the ad. Don't count it as created, and don't tell
 				// the operator to add it (which could duplicate it); mark it UNCONFIRMED
 				// and require verification first, matching the transport-error path.
-				adWarning = "promoted-post ad creation is UNCONFIRMED (2xx response with no ad id); the ad may already exist — verify in Reddit Ads Manager BEFORE creating it manually to avoid a duplicate"
-				steps = append(steps, fmt.Sprintf("Ad creation UNCONFIRMED (2xx with no ad ID, post: %s) -- verify in Reddit Ads Manager before adding manually", postID))
+				row := promoRow(PromoAdNoID)
+				adWarning = row.AdWarning
+				steps = append(steps, row.stepf(postID))
 			}
 		}
-	} else if postWarning != "" {
+	} else if authorFailure != nil {
 		// Step 1.5 was asked for an ad (an ImageURL was supplied) and the authoring failed,
 		// so it has ALREADY appended guidance describing exactly what happened and what to
 		// do. Emit nothing further here.
@@ -2577,12 +2520,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// utm_* keys it sets and PRESERVES every other query parameter (including any
 			// utm_* the tool doesn't generate, e.g. utm_id) — so the operator keeps all
 			// other params; appending instead would leave duplicate/conflicting values.
-			steps = append(steps, fmt.Sprintf("%d ad variant(s) ready -- create ads in Reddit Ads Manager with these headlines (set/replace the shown utm_* params on your registration URL, keeping all its other query parameters; drop any trailing '/' from the path so it matches the automated destination):", variantCount))
+			steps = append(steps, promoRow(PromoNotRequestedVariants).stepf(variantCount))
 			for i := 0; i < variantCount; i++ {
 				steps = append(steps, fmt.Sprintf("  Variant %d: %q -> %s", i+1, in.Variants[i].Headline, displayRedditUTMURL(in, i)))
 			}
 		} else {
-			steps = append(steps, "No ad variants or post URL provided -- add ads manually in Reddit Ads Manager")
+			steps = append(steps, promoRow(PromoNotRequestedNoVariants).Step)
 		}
 	}
 

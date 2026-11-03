@@ -4,6 +4,7 @@
 package rules
 
 import (
+	"fmt"
 	"math"
 	"sort"
 
@@ -147,3 +148,10 @@ func sortByPriority(items []model.AccountMonitorActionItem) {
 		return priorityRank(items[i].Priority) < priorityRank(items[j].Priority)
 	})
 }
+
+// accountMoney renders an amount for action-item text, shared by every ad-platform monitor so
+// none of them can drift back to a symbol (#435). The figures are the connected ad account's
+// own, in its currency: no FX conversion happens on any monitor path, and the row does not carry
+// the currency code, so a "$" would call a EUR, INR or yen amount dollars. The text names the
+// unit instead.
+func accountMoney(v float64) string { return fmt.Sprintf("%.2f in account currency", v) }

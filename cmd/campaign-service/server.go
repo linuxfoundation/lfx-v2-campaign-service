@@ -28,6 +28,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/container"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/metrics"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/membudget"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/middleware"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/log"
@@ -220,7 +221,7 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 	// closes; the tracker is waited on between the forced Close and cont.Close.
 	inflight := middleware.NewInflightTracker()
 
-	handler := buildHandler(mux, cfg, inflight)
+	handler := buildHandler(mux, cfg, inflight, cont.UploadBudget)
 
 	srv := buildServer(cfg, handler)
 
@@ -280,11 +281,19 @@ func buildServer(cfg *config.Config, handler http.Handler) *http.Server {
 //     enters the chain. If it were inner, a handler that has started but not yet reached
 //     the inner wrapper would be invisible to Wait, and shutdown could observe zero,
 //     close the pool, and let that straggler touch a closing pool.
-func buildHandler(mux http.Handler, cfg *config.Config, inflight *middleware.InflightTracker) http.Handler {
+//
+// budget is the per-pod upload memory budget the brief service's DecodeReserver also charges
+// (container.UploadBudget, #179). It is REQUIRED: a nil budget panics rather than falling back to
+// a private one, because a private budget here silently splits the wire charge from the pixel
+// charge again, which compiles, serves and passes every request-level test.
+func buildHandler(mux http.Handler, cfg *config.Config, inflight *middleware.InflightTracker, budget *membudget.Budget) http.Handler {
+	if budget == nil {
+		panic("buildHandler: nil upload memory budget; pass the container's UploadBudget")
+	}
 	handler := mux
 	handler = middleware.MaxBodyBytesPerRoute(constants.MaxRequestBodyBytes, constants.MaxNonUploadRequestBodyBytes)(handler)
-	handler = middleware.UploadAdmission(
-		constants.UploadAdmissionBudgetBytes,
+	handler = middleware.UploadAdmissionShared(
+		budget,
 		constants.MaxRequestBodyBytes,
 		constants.UploadAdmissionWeightFor,
 		constants.UploadAdmissionWait,

@@ -51,17 +51,20 @@ body, the email wizard's `update-sections`: 120 blocks and a 200,000-rune assemb
 rune as a 12-byte surrogate pair. Raising those
 wizard limits requires revisiting this cap.
 
-`PodMemoryLimitBytes`, `UploadAdmissionBudgetBytes`, `UploadAdmissionWeightBytes` and
-`UploadAdmissionWait` (also in `http.go`) size the concurrent-upload admission bound applied by
-`middleware.UploadAdmission`. `MaxRequestBodyBytes` bounds one body; these bound how many uploads
+`PodMemoryLimitBytes`, `UploadMemoryBudgetFallbackBytes`, `UploadAdmissionWeightBytes`,
+`CreativeDecodePeakBytes`, `UploadWorstCaseBytes` and `UploadAdmissionWait` (also in `http.go`)
+size the per-pod upload memory budget that `middleware.UploadAdmissionShared` (wire side) and
+`service.DecodeReserver` (pixel buffer) both charge (#179). `MaxRequestBodyBytes` bounds one body; these bound how many uploads
 may allocate at once, which is what stands between a burst of legal uploads and an OOM-killed pod.
 
-The budget is derived rather than chosen: `UploadAdmissionBudgetBytes` is `PodMemoryLimitBytes / 4`,
-reserving the majority of the pod for the runtime, the DB pool and every non-upload request.
-`PodMemoryLimitBytes` duplicates the chart's `resources.limits.memory`, a number the Go build
-cannot read — so `TestPodMemoryLimitMatchesChart` parses `values.yaml` and fails when the two
-drift, and `TestUploadAdmissionBudgetLeavesHeadroom` asserts the headroom property against the
-pod limit rather than restating the budget's own formula. **Changing the chart's memory limit
+At runtime the budget is `UPLOAD_MEMORY_BUDGET_BYTES` when set, else 40% of the cgroup memory
+limit (`internal/membudget`); `UploadMemoryBudgetFallbackBytes` (40% of `PodMemoryLimitBytes`) is
+used only when no cgroup limit is readable, and the budget is never below `UploadWorstCaseBytes`
+(wire weight 112 MiB + pixel peak 80 MiB). `PodMemoryLimitBytes` duplicates the chart's
+`resources.limits.memory`, a number the Go build cannot read — so `TestPodMemoryLimitMatchesChart`
+parses `values.yaml` and fails when the two drift, and `TestUploadMemoryBudgetComposes` asserts the
+composed property and its effective concurrency (worst case, undeclared, small uploads) rather
+than restating the budget's own formula. **Changing the chart's memory limit
 requires changing `PodMemoryLimitBytes` in the same change**; the test names whichever one lags.
 
 `DefaultReadTimeout` bounds an entire request read, not just the headers. Without it a slowloris
