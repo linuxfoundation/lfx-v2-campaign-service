@@ -16,8 +16,7 @@ spec:
     - "lfx-api.{{ .Values.lfx.domain }}"
   rules:
     # Project-nested campaign API (the approved contract — every endpoint is
-    # /projects/{projectId}/…, gated on the project `campaign_manager` relation, except the
-    # ROOT-only conversion-action list, #458).
+    # /projects/{projectId}/…, gated on the project `campaign_manager` relation).
     #
     # project-service owns `PathPrefix: /projects/`, so we cannot claim that
     # prefix. The distinguishing token (connection-*, briefs, jobs, the provider
@@ -37,8 +36,7 @@ spec:
     # rather than assuming the render alone means it routes.
     #
     # The trailing wildcard is per-family and MUST mirror the RuleSet
-    # (ruleset.yaml `project-api`, plus `root-campaign-admin:get` for the one ROOT-only path,
-    # google-ads/conversion-actions) exactly, or the route would forward sub-paths
+    # (ruleset.yaml `project-api`) exactly, or the route would forward sub-paths
     # Heimdall has no rule for (a route/rule parity violation — an unruled path is
     # denied, or worse). Only briefs/jobs/hubspot carry `**` in the RuleSet, so
     # only they get the free `(/.*)?` tail here — which is also what routes every

@@ -84,21 +84,15 @@ create form offer them in a picker instead of making an operator type them (self
   account id is checked for digits only before any request: 400 on the project's own row, and
   500 on the LF system row it fell back to (`ErrSystemConnectionNotUsable`), which only an
   operator can fix.
-- **ROOT principals only, enforced at the gateway.** Unlike user lists, this read is NOT refused
+- **A `campaign_manager` read, like its siblings.** Unlike user lists, this read is NOT refused
   on a shared-tenancy platform. Google Ads is one customer shared by every foundation, so the
-  answer holds every foundation's conversion action names, and the read exists for
-  cross-foundation (LF admin) callers. It is therefore ruled by its own Heimdall rule,
-  `root-campaign-admin:get`, not `project-api`: one `openfga_or_check` admits `writer_guard` OR
-  `global_marketing_ops` on the ROOT project — the same two checks as lfx-self-serve's
-  `isRootCampaignPrincipal`. The ROOT project's UID is the chart value
-  `openfga.rootProjectUid`, set per environment in lfx-v2-argocd. It is not resolved at the
-  gateway because project-service's HTTP slug-to-uid lookup refuses the slug `ROOT`
-  (lfx-self-serve resolves it over NATS instead). Until an environment sets the value, the rule
-  is `deny_all` there, so the route answers 403 to everyone; a non-UUID value fails the render.
-  A `campaign_manager` of the path's project is not admitted, and `{project_id}` only selects
-  whose connection supplies the credential. GET only. With OpenFGA disabled (local dev) the rule
-  is `allow_all`, as `project-api` does. User lists have no such gate, which is why that read
-  refuses the shared account instead.
+  answer holds every foundation's conversion action names, and `{project_id}` only selects whose
+  connection supplies the credential. That is intended: `campaign_manager` is held only by the
+  internal LF marketing team, which manages every foundation (#468, closed as won't do). It was
+  first ruled by a ROOT-only Heimdall rule (`root-campaign-admin:get`, keyed on a chart value
+  `openfga.rootProjectUid` that no environment ever set, so it answered 403 to everyone); that
+  rule and the value were removed and the path moved into `project-api`. GET only. User lists
+  are still refused on the shared account.
 
 ## Shared
 

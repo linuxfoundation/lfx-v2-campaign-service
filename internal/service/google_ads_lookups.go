@@ -130,11 +130,10 @@ func (o *Orchestrator) ReadUserLists(ctx context.Context, projectID string, plat
 // Unlike ReadUserLists this is NOT refused on a shared-tenancy platform, by decision (#458):
 // the read exists for cross-foundation (LF admin) callers choosing the conversion actions a
 // Google create attaches, and on Google Ads those actions live on the one customer every
-// foundation shares, so the answer holds EVERY foundation's conversion action names. The
-// boundary is the gateway, which user lists do not have: the root-campaign-admin rule in
-// ruleset.yaml admits only writer_guard or global_marketing_ops on the ROOT project (the two
-// checks of lfx-self-serve's isRootCampaignPrincipal), so a project campaign_manager cannot
-// call this route. Nothing here re-checks that; a non-HTTP caller must not expose it.
+// foundation shares, so the answer holds EVERY foundation's conversion action names. That is
+// intended: the gateway admits campaign_manager of the project, as for every route, and that
+// relation is held only by the internal LF marketing team, which manages every foundation
+// (#468, closed as won't do).
 func (o *Orchestrator) ReadConversionActions(ctx context.Context, projectID string, platform model.Provider) (*model.ConversionActions, error) {
 	d, ok := o.dispatchers[platform]
 	if !ok {
@@ -359,8 +358,7 @@ func (s *ConnectionService) ListGoogleAdsUserLists(ctx context.Context, p *conn.
 // a create for this project uses, for the googleAdsConfig.conversionActions picker.
 //
 // The answer is account-wide on a customer every foundation shares and is not isolated per
-// project, so the gateway admits only ROOT principals to it; see
-// Orchestrator.ReadConversionActions. The reserved LF scope stays unaddressable, as it is for
+// project, which is intended for campaign managers; see Orchestrator.ReadConversionActions. The reserved LF scope stays unaddressable, as it is for
 // every connection read.
 func (s *ConnectionService) ListGoogleAdsConversionActions(ctx context.Context, p *conn.ListGoogleAdsConversionActionsPayload) (*conn.GoogleAdsConversionActions, error) {
 	if err := rejectSystemScope(p.ProjectID); err != nil {

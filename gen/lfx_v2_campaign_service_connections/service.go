@@ -188,20 +188,17 @@ type Service interface {
 	// create for this project uses, live from GAQL on conversion_action, for
 	// picking googleAdsConfig.conversionActions. Credentials resolve as for a
 	// create: the project's own connection, or the shared LF system credential
-	// when it has none (or when the deployment forces the LF account). ROOT
-	// PRINCIPALS ONLY: the Google Ads customer is shared by every foundation, so
-	// the response lists EVERY foundation's conversion action names, not only this
-	// project's. The gateway therefore admits only a cross-foundation principal —
-	// writer_guard or global_marketing_ops on the ROOT project, whose UID the
-	// deployment sets per environment (chart value openfga.rootProjectUid) — the
-	// same two checks as lfx-self-serve's isRootCampaignPrincipal. Until that
-	// value is set in an environment, the gateway denies this route there. Being a
-	// campaign_manager of {project_id} is not enough. {project_id} still selects
-	// which project's connection supplies the credential. More than 500 enabled
-	// actions on the customer fails the read with 503 rather than truncating it,
-	// and that 503 does not clear on retry: the account itself holds more actions
-	// than this endpoint publishes. A pure read: the only upstream call is
-	// googleAds:search, and nothing is persisted.
+	// when it has none (or when the deployment forces the LF account). Gated on
+	// campaign_manager of {project_id}, like every other endpoint. The Google Ads
+	// customer is shared by every foundation, so the response lists EVERY
+	// foundation's conversion action names, not only this project's;
+	// campaign_manager is held only by the internal LF marketing team, which
+	// manages every foundation, so that is intended. {project_id} selects which
+	// project's connection supplies the credential. More than 500 enabled actions
+	// on the customer fails the read with 503 rather than truncating it, and that
+	// 503 does not clear on retry: the account itself holds more actions than this
+	// endpoint publishes. A pure read: the only upstream call is googleAds:search,
+	// and nothing is persisted.
 	ListGoogleAdsConversionActions(context.Context, *ListGoogleAdsConversionActionsPayload) (res *GoogleAdsConversionActions, err error)
 	// Read Meta audience insights — age and gender (one combined breakdown) and
 	// placement (publisher_platform and platform_position) — for this project's

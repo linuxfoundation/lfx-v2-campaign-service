@@ -375,8 +375,8 @@ func TestListGoogleAdsConversionActions_EmptyIsAnEmptyArray(t *testing.T) {
 }
 
 // Unlike the user-list read, the conversion-action read is NOT refused on a shared-tenancy
-// platform (#458): it reaches the dispatcher and answers. Its boundary is the gateway's
-// root-campaign-admin rule, which admits only ROOT principals (charts parity_test.go).
+// platform (#458): it reaches the dispatcher and answers. The gateway admits campaign_manager
+// of the project, as for every route (charts parity_test.go).
 func TestListGoogleAdsConversionActions_SharedTenancyIsNotRefused(t *testing.T) {
 	d := &sharedTenancyLookupDispatcher{mockLookupDispatcher{actions: &model.ConversionActions{
 		AccountID: "1234567890",
