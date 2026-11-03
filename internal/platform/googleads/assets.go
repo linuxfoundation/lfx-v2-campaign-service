@@ -296,7 +296,7 @@ func validateSitelinks(in CampaignInput) ([]assetCreate, error) {
 			}
 		}
 
-		finalURL, err := buildTaggedFinalURL(fmt.Sprintf("sitelink %q destination URL", text), s.FinalURL, in.EventSlug, in.EventName, in.Project, in.NameSuffix)
+		finalURL, err := buildTaggedFinalURL(fmt.Sprintf("sitelink %q destination URL", text), s.FinalURL, in.EventSlug, in.EventName, in.Project, in.utmCampaignFallback())
 		if err != nil {
 			return nil, fmt.Errorf("google-ads sitelink %d is unservable: %w", i, err)
 		}

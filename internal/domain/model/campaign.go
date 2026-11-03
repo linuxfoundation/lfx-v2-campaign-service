@@ -182,18 +182,21 @@ func SlotNameSuffix(base string, slotVersion int) string {
 // ProviderSupportsSlotVersions reports whether a deliberate second campaign on one slot
 // (new_version) is safe to dispatch on p.
 //
-// It is an ALLOWLIST because the hazard is per provider and silent: Google, LinkedIn and X
+// It is an ALLOWLIST because the hazard is per provider and silent: LinkedIn and X
 // find-or-reuse a campaign by its composed name, and their names do not yet vary by slot
 // version, so slot 2 would be bound to slot 1's live campaign (on LinkedIn, with new creatives
 // pushed onto it); Meta also looks campaigns up by name; HubSpot clones an email under the same
-// name. Microsoft folds the slot version into its name suffix (SlotNameSuffix). A provider is
-// added here in the same change that makes its upstream name unique per slot version.
+// name. Microsoft and Google fold the slot version into their name suffix (SlotNameSuffix) —
+// on Google into the budget and campaign names (and the Search ad group's), so its DUPLICATE_NAME
+// budget reuse and its adoptExisting lookup key on the slot's own names. A provider is added here in
+// the same change that makes its upstream name unique per slot version.
 func ProviderSupportsSlotVersions(p Provider) bool {
-	return p == ProviderMicrosoftAds
+	return p == ProviderMicrosoftAds || p == ProviderGoogleAds
 }
 
 // ProviderNamesByStage reports whether p's dispatcher puts a campaign's funnel stage in its
-// upstream name, and so whether a create may label campaigns on p (cs-1). Microsoft only today.
+// upstream name, and so whether a create may label campaigns on p (cs-1). Microsoft (cs-1) and
+// Google (cs-2) today.
 //
 // Labels are refused elsewhere rather than stored silently because a later change will make that
 // platform's name carry the stage: a row labelled BEFORE that change, then re-dispatched after it
@@ -201,7 +204,7 @@ func ProviderSupportsSlotVersions(p Provider) bool {
 // upstream campaign does not have, miss it, and create a duplicate. A provider joins this set in
 // the same change that adds the stage to its name.
 func ProviderNamesByStage(p Provider) bool {
-	return p == ProviderMicrosoftAds
+	return p == ProviderMicrosoftAds || p == ProviderGoogleAds
 }
 
 type dispatchSlotVersionKey struct{}

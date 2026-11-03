@@ -190,10 +190,11 @@ func TestCampaignDoc_CarriesVariantLabelsAndCreatedAt(t *testing.T) {
 	}
 }
 
-// Labels are accepted only where the platform names campaigns by stage (Microsoft today): stored
-// elsewhere, they would mismatch the name that platform composes once it adds the stage.
+// Labels are accepted only where the platform names campaigns by stage (Microsoft and Google
+// today): stored elsewhere, they would mismatch the name that platform composes once it adds the
+// stage.
 func TestBriefService_CreateCampaigns_RefusesLabelsOnPlatformsWithoutStageNames(t *testing.T) {
-	for _, pl := range []string{"google-ads", "linkedin-ads", "meta-ads", "reddit-ads", "twitter-ads"} {
+	for _, pl := range []string{"linkedin-ads", "meta-ads", "reddit-ads", "twitter-ads"} {
 		s, jobs, _ := approvedPaidBriefService(t)
 		_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
 			ProjectID: "cncf", BriefID: "b1",
@@ -243,5 +244,41 @@ func TestBriefService_CreateCampaigns_AMatchingExpectationCreatesTheNextCampaign
 	}
 	if len(disp.labels) != 1 {
 		t.Fatalf("dispatched %d times, want once", len(disp.labels))
+	}
+}
+
+// cs-2: google-ads joins both allowlists, so a labelled new_version create for Google is accepted
+// and makes the next campaign on the dispatched channel's slot (Search here), carrying the labels.
+func TestBriefService_CreateCampaigns_GoogleAcceptsALabelledNewVersion(t *testing.T) {
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-na-2026", Status: model.BriefApproved,
+		DeliveryType: model.DeliveryPaidMarketing, Version: 1,
+	}
+	camps := &fakeCampaignRepo{}
+	camps.storeRow(&model.Campaign{
+		ID: "row-1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		Variant: model.VariantDefault, SlotVersion: 1, PlatformCampaignID: "ga-1", Status: "created",
+	})
+	jobs := newFakeJobRepo()
+	disp := &labelRecordingDispatcher{}
+	s := NewBriefService(repo, camps, jobs, NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp}))
+
+	res, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+		ProjectID: "cncf", BriefID: "b1",
+		Input: &briefs.CampaignCreateInput{
+			Platforms: []string{"google-ads"}, NewVersion: true,
+			ExpectedSlotVersions: map[string]int{"google-ads": 1}, FunnelStage: strp("mid"), Tactic: strp("keyword"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaigns: %v", err)
+	}
+	got := decodeResults(t, waitForTerminal(t, jobs, res.JobID))
+	if len(got) != 1 || got[0].Reused || got[0].SlotVersion != 2 || got[0].FunnelStage != "mid" || got[0].Tactic != "keyword" || got[0].Variant != model.VariantDefault {
+		t.Fatalf("result = %+v, want slot 2 of the search slot created, labelled mid/keyword", got)
+	}
+	if len(disp.labels) != 1 || disp.labels[0].FunnelStage == nil || *disp.labels[0].FunnelStage != model.FunnelStageMid {
+		t.Fatalf("dispatch labels = %+v, want one dispatch labelled mid", disp.labels)
 	}
 }

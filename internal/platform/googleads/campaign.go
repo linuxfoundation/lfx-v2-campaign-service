@@ -110,6 +110,24 @@ type CampaignInput struct {
 	// retry then reuses the same name and Google rejects it with DUPLICATE_NAME,
 	// which the client reports as UNCONFIRMED-already-exists rather than re-creating.
 	NameSuffix string
+	// StageToken and Tactic, when non-empty, are a LABELLED campaign's funnel-stage token
+	// (ToFU, MoFU or BoFU — model.FunnelStage.NameToken) and tactic token (the model.Tactic
+	// slug, with content-promotion shortened to content-promo by the dispatcher).
+	// ComposeName gives each its own segment, stage first, just before NameSuffix, so a
+	// campaign labelled with both composes the 7-segment
+	// `LFX | <kind> | <project> | <event> | <stage> | <tactic> | <suffix>`. The dispatcher
+	// reads them from the STORED campaign row (model.DispatchLabels), never from a request,
+	// so a retry composes the same budget, campaign and ad group names; both are empty for an
+	// unlabelled campaign, whose names are byte-identical to the names it had before labels.
+	StageToken string
+	Tactic     string
+	// UTMCampaignFallback is the utm_campaign value the ad, sitelink and extension URLs
+	// fall back to when neither EventSlug nor EventName is set. Empty means NameSuffix,
+	// the fallback every caller had before slot versions. The dispatcher sets it to the
+	// bare brief id because NameSuffix now carries the slot version ("<brief>-2"):
+	// utm_campaign is EVENT-level attribution, so a second campaign on the same event must
+	// not move it.
+	UTMCampaignFallback string
 	// Keywords are positive Search keyword criteria attached to the ad group
 	// (GA-4). Optional: an ad group created with none still exists but matches
 	// no query, so a caller that wants the campaign to actually serve once
@@ -1752,10 +1770,28 @@ func ComposeName(kind string, in CampaignInput) string {
 	if e := sanitizeNamePart(in.EventName); e != "" {
 		parts = append(parts, e)
 	}
+	// A labelled campaign's stage and tactic segments, between the event and the suffix.
+	// Absent on an unlabelled campaign, so its names keep the exact legacy shape.
+	if st := sanitizeNamePart(in.StageToken); st != "" {
+		parts = append(parts, st)
+	}
+	if t := sanitizeNamePart(in.Tactic); t != "" {
+		parts = append(parts, t)
+	}
 	if s := sanitizeNamePart(in.NameSuffix); s != "" {
 		parts = append(parts, s)
 	}
 	return strings.Join(parts, " | ")
+}
+
+// utmCampaignFallback is the utm_campaign value used when the input has neither an event
+// slug nor an event name: UTMCampaignFallback when set, otherwise NameSuffix (see
+// CampaignInput.UTMCampaignFallback).
+func (in CampaignInput) utmCampaignFallback() string {
+	if in.UTMCampaignFallback != "" {
+		return in.UTMCampaignFallback
+	}
+	return in.NameSuffix
 }
 
 // sanitizeNamePart trims a caller-supplied name segment and strips the "|"
@@ -1789,7 +1825,7 @@ func validateEntityName(kind, name string, measuredLen, maxLen int, unit string)
 		return fmt.Errorf("google-ads %s name is empty", kind)
 	}
 	if measuredLen > maxLen {
-		return fmt.Errorf("google-ads %s name exceeds %d %s (%d): shorten EventName/Project/NameSuffix", kind, maxLen, unit, measuredLen)
+		return fmt.Errorf("google-ads %s name exceeds %d %s (%d): shorten EventName/Project (the stage, tactic and brief-id suffix are fixed)", kind, maxLen, unit, measuredLen)
 	}
 	return nil
 }

@@ -291,7 +291,7 @@ func compositeResourceID(resourceName string) (parentID, id string) {
 // real campaign+budget with no ad group/ad for what is purely a local
 // input-validation failure.
 func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, ad adPlan, adGroupName string, keywords []Keyword, audienceSegments []string, err error) {
-	finalURL, err = buildAdFinalURL(in.RegistrationURL, in.EventSlug, in.EventName, in.Project, in.NameSuffix)
+	finalURL, err = buildAdFinalURL(in.RegistrationURL, in.EventSlug, in.EventName, in.Project, in.utmCampaignFallback())
 	if err != nil {
 		return "", adPlan{}, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid destination URL): %w", err)
 	}

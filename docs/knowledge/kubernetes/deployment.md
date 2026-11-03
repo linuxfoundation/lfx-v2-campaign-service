@@ -310,4 +310,34 @@ finished, a reload, a second tab) creates ANOTHER campaign, and it ignores `funn
 Rolling forward again needs no data step: labelled rows keep their labels, and rows created while
 rolled back are unlabelled (legacy).
 
+**Rolling back past the Google multi-campaign release (cs-2).** No migration: cs-2 only adds
+`google-ads` to the `new_version` and label allowlists and makes Google's budget, campaign and ad
+group names carry the claimed row's slot suffix (`<brief>-2`), stage token and tactic. The image
+before it refuses `new_version`, `funnel_stage` and `tactic` for Google with a 400, and composes
+every Google name with the bare brief id and no label segments. In order:
+
+1. **Remove `google-ads` from `LFX_CUTOVER_CAMPAIGN_SERVICE_MULTI_CAMPAIGN_PLATFORMS`** (argocd
+   values) and let self-serve roll, so it stops offering a second or labelled Google campaign that
+   the older image would refuse.
+2. **Resolve non-terminal slot ≥2 and labelled Google rows.** The older image would re-dispatch
+   such a row (a cleared stuck claim, a retained partial) under slot 1's legacy names: on slot ≥2
+   that is DUPLICATE_CAMPAIGN_NAME against slot 1, a DUPLICATE_NAME budget reuse looking up slot
+   1's budget name, or `adoptExisting` adopting slot 1 as the second campaign; on a labelled slot 1
+   it misses the `| ToFU | …`-named upstream campaign and creates a duplicate. List them —
+   `SELECT id, brief_id, variant, slot_version, status, platform_campaign_id FROM campaigns WHERE
+   platform = 'google-ads' AND (slot_version > 1 OR funnel_stage IS NOT NULL OR tactic IS NOT NULL)
+   AND status NOT IN ('created', 'created_degraded', 'deleted')` — and settle each (confirm the
+   upstream campaign and record it, or delete the row) before the rollback, and do not clear any
+   such claim while rolled back. Completed rows are unaffected: they are read and toggled by id,
+   and a plain retry reuses the slot's LATEST live row (slot 2 included) rather than recomposing
+   a name, so they are never re-dispatched.
+3. Then roll the campaign-service image back.
+
+Rolling forward again needs no data step.
+
+Independently of any rollback: before clearing a stuck claim on a labelled Google or Microsoft row,
+confirm in the ad account whether that attempt created a campaign. A later request that re-claims
+the cleared slot carries its OWN labels, so its name differs from the cleared attempt's and the
+platform's duplicate-name refusal no longer catches the repeat.
+
 See [charts/lfx-v2-campaign-service/templates/deployment.yaml](../../../charts/lfx-v2-campaign-service/templates/deployment.yaml).
