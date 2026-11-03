@@ -195,11 +195,11 @@ func TestBudget_SecondStageIsNotQueuedBehindAWaitingFirstStage(t *testing.T) {
 
 	queued := make(chan bool, 1)
 	go func() { // B: a second worst-case wire request, which cannot fit beside A's
-		rel, ok := b.Acquire(context.Background(), 112, 300*time.Millisecond)
+		rel, ok := b.Acquire(context.Background(), 112, 2*time.Second)
 		rel()
 		queued <- ok
 	}()
-	time.Sleep(20 * time.Millisecond) // let B queue
+	awaitWaiters(t, b, 1, 0) // B is queued: A's pixel request below arrives behind it
 
 	start := time.Now()
 	pixA, ok := b.AcquireSecondStage(context.Background(), 80, 250*time.Millisecond)
@@ -210,8 +210,10 @@ func TestBudget_SecondStageIsNotQueuedBehindAWaitingFirstStage(t *testing.T) {
 		t.Fatalf("A's pixel charge waited %v behind a first-stage waiter", waited)
 	}
 	pixA()
-	if <-queued {
-		t.Fatal("B's wire charge must not be admitted beside A's: it would exceed the first-stage limit")
+	awaitWaiters(t, b, 1, 0) // B is still queued: its wire charge does not fit beside A's
+	wireA()
+	if !<-queued {
+		t.Fatal("B's wire charge must be admitted once A's releases")
 	}
 }
 
@@ -244,34 +246,160 @@ func TestBudget_FirstStageAlwaysLeavesRoomForOnePixelCharge(t *testing.T) {
 }
 
 // When budget frees, a waiting second-stage request is served before a first-stage one queued
-// earlier.
+// earlier. The sizes make the order observable: after pix1's release either waiter fits on its
+// own (100+95 <= 200, 100+10 <= 120) but not both, so whichever is served first is the only one
+// served.
 func TestBudget_ReleaseServesSecondStageFirst(t *testing.T) {
 	b := NewWithReserve(200, 80)
-	hold, _ := b.Acquire(context.Background(), 120, time.Second)           // first stage full
-	pix1, _ := b.AcquireSecondStage(context.Background(), 70, time.Second) // 190 of 200
+	hold, _ := b.Acquire(context.Background(), 100, time.Second)           // 100 of the 120 first-stage limit
+	pix1, _ := b.AcquireSecondStage(context.Background(), 90, time.Second) // 190 of 200
 
 	order := make(chan string, 2)
+	releaseSecond := make(chan struct{})
 	go func() {
-		if rel, ok := b.Acquire(context.Background(), 10, time.Second); ok {
+		if rel, ok := b.Acquire(context.Background(), 10, 5*time.Second); ok {
 			order <- "first"
 			rel()
 		}
 	}()
-	time.Sleep(20 * time.Millisecond)
+	awaitWaiters(t, b, 1, 0) // the first-stage request queued first
 	go func() {
-		if rel, ok := b.AcquireSecondStage(context.Background(), 60, time.Second); ok {
+		if rel, ok := b.AcquireSecondStage(context.Background(), 95, 5*time.Second); ok {
 			order <- "second"
-			time.Sleep(20 * time.Millisecond)
+			<-releaseSecond
 			rel()
 		}
 	}()
-	time.Sleep(20 * time.Millisecond)
-	pix1() // frees 70: the second-stage waiter (60) fits and must go first
+	awaitWaiters(t, b, 1, 1) // and the second-stage one behind it in time
+	// Free 90: the second-stage waiter (95) fits and must go first.
+	pix1()
 	if got := <-order; got != "second" {
 		t.Fatalf("first grant after release went to the %s stage, want second", got)
 	}
 	hold()
+	close(releaseSecond)
 	if got := <-order; got != "first" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// awaitWaiters blocks until exactly first first-stage and second second-stage requests are
+// queued, failing the test after a deadline. It is the happens-before the hold-and-wait tests
+// need: a sleep only makes it likely that a goroutine has queued, and a test that runs before it
+// has can pass without exercising the ordering it exists to prove.
+func awaitWaiters(t *testing.T, b *Budget, first, second int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		b.mu.Lock()
+		f, s := len(b.first), len(b.second)
+		b.mu.Unlock()
+		if f == first && s == second {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("waiters = (first %d, second %d), want (%d, %d)", f, s, first, second)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// A caller whose context is already done is refused by both stages even with the whole budget
+// free (#445 review): otherwise a disconnected upload reads its body and runs image.Decode, which
+// cannot be cancelled, holding charges a live upload could use.
+func TestBudget_CancelledContextIsRefusedWithCapacityFree(t *testing.T) {
+	b := NewWithReserve(205, 80)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for name, acquire := range map[string]func(context.Context, int64, time.Duration) (func(), bool){
+		"first stage":  b.Acquire,
+		"second stage": b.AcquireSecondStage,
+	} {
+		if rel, ok := acquire(ctx, 10, time.Second); ok {
+			rel()
+			t.Errorf("%s admitted a cancelled caller", name)
+		}
+		if got := b.InUse(); got != 0 {
+			t.Errorf("%s: a refused caller must hold nothing; InUse = %d", name, got)
+		}
+	}
+}
+
+// A queued request granted in the same moment its caller is cancelled gives the charge back
+// instead of returning it (#445 review). This case covers a grant that lands AFTER the waiter has
+// woken on ctx.Done: the hook places it deterministically between the wake and settling the
+// outcome under the lock. TestBudget_GrantAndCancelBothReadyBeforeWaitIsGivenBack covers the
+// other window.
+func TestBudget_GrantRacingCancellationIsGivenBack(t *testing.T) {
+	for _, second := range []bool{false, true} {
+		b := NewWithReserve(205, 80)
+		hold, ok := b.AcquireSecondStage(context.Background(), 205, time.Second)
+		if !ok {
+			t.Fatal("premise: the whole budget is held")
+		}
+		woke, proceed := make(chan struct{}), make(chan struct{})
+		b.testAfterWait = func() {
+			close(woke)
+			<-proceed
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan bool, 1)
+		go func() {
+			acquire := b.Acquire
+			if second {
+				acquire = b.AcquireSecondStage
+			}
+			rel, ok := acquire(ctx, 50, 5*time.Second)
+			if ok {
+				rel()
+			}
+			result <- ok
+		}()
+		if second {
+			awaitWaiters(t, b, 0, 1)
+		} else {
+			awaitWaiters(t, b, 1, 0)
+		}
+		cancel()
+		<-woke
+		hold() // grants the 50 to the waiter, which has already woken on ctx.Done
+		if inUse := b.InUse(); inUse != 50 {
+			t.Fatalf("second=%v: premise: the grant must land while the waiter is held after waking; InUse = %d", second, inUse)
+		}
+		close(proceed)
+		got := <-result
+		if got {
+			t.Errorf("second=%v: a request granted as its caller was cancelled was admitted", second)
+		}
+		if inUse := b.InUse(); inUse != 0 {
+			t.Errorf("second=%v: the racing grant was not given back; InUse = %d", second, inUse)
+		}
+	}
+}
+
+// The other racing window: the grant and the cancellation are both in place before the waiter's
+// select runs, so select picks either case at random. Whichever it picks, the caller is gone and
+// the charge must be given back. An early return on the ready case would admit about half of
+// these, so 100 rounds fail it with near certainty.
+func TestBudget_GrantAndCancelBothReadyBeforeWaitIsGivenBack(t *testing.T) {
+	for i := range 100 {
+		b := NewWithReserve(205, 80)
+		hold, ok := b.AcquireSecondStage(context.Background(), 205, time.Second)
+		if !ok {
+			t.Fatal("premise: the whole budget is held")
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		b.testBeforeWait = func() {
+			cancel()
+			hold() // grants the 50 to the queued waiter before it waits
+		}
+		rel, ok := b.Acquire(ctx, 50, 5*time.Second)
+		if ok {
+			rel()
+			t.Fatalf("round %d: a request granted as its caller was cancelled was admitted", i)
+		}
+		if inUse := b.InUse(); inUse != 0 {
+			t.Fatalf("round %d: the racing grant was not given back; InUse = %d", i, inUse)
+		}
 	}
 }

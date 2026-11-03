@@ -861,6 +861,10 @@ type Orchestrator struct {
 	// non-positive values, which are what an unset or unparseable
 	// CAMPAIGN_JOB_RETENTION produces.
 	jobRetention time.Duration
+	// assetPruner deletes the creative assets of long-archived briefs (#171). Nil until
+	// SetArchivedAssetPruner binds it; the archived-asset retention sweeper does nothing
+	// while it is nil. Set during construction, before the sweeper starts.
+	assetPruner domain.ArchivedCreativeAssetPruner
 	// sem is a process-wide semaphore bounding concurrent provider dispatches
 	// across ALL jobs (a per-job errgroup limit would let N concurrent jobs each
 	// get maxParallelDispatch slots, leaving total provider calls unbounded).

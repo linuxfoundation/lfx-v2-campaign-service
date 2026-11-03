@@ -2497,7 +2497,8 @@ while a call under test runs on another and `waitForBackendsBlockedBy` proves it
 which the service maps to a `409`, not a `400`: the request is well-formed, the brief's state is
 what refuses it, and the remedy is to change that state. The figures are a STATED ASSUMPTION
 (issue `#171` owns the real ones) chosen so the endpoint cannot be used to fill the table, not
-derived from a product requirement.
+derived from a product requirement. #171 kept these figures as the cap and added only the prune
+of long-archived briefs' assets (below).
 
 Three properties of where the check sits are load-bearing:
 
@@ -2512,6 +2513,40 @@ Three properties of where the check sits are load-bearing:
   re-sends a stored checksum at the cap and requires both no error and `created == false`.
 - **A refusal stores nothing**, because the transaction rolls back; the same test counts rows
   after the 409 to pin it.
+
+### Pruning the assets of long-archived briefs (#171)
+
+`PruneArchivedBriefAssets` (implementing `domain.ArchivedCreativeAssetPruner`, called by the
+orchestrator's archived-asset retention sweeper) deletes ONE bounded batch of assets whose brief
+was archived more than the window ago (`domain.ArchivedBriefAssetRetention`, 90 days; a
+non-positive window falls back to it and a non-positive limit to 100, so a zero never reads as
+"delete everything"; a limit above 100 is capped at 100). Before it, the table had no prune at
+all, which 000028 recorded.
+
+- **The archival time is `campaign_briefs.updated_at`.** `archiveBriefQuery` sets it with the
+  status flip and every other brief UPDATE is guarded by `status <> 'archived'`, so it never
+  moves afterwards; no migration or index is needed (the brief table is small, and assets are
+  reached through the `(brief_id, checksum)` index). The join is on the composite FK
+  `(id, project_id)`.
+- **No live-campaign reference check and no brief row lock**, unlike `DeleteAsset`: every read
+  of an asset's bytes or size and every dispatch path is scoped to a non-archived parent, so
+  under an archived brief nothing serves or dispatches the bytes. The one read that is not,
+  `presentCreativeAssetsQuery`, is an existence check: after a prune, a `ReplaceCampaign` on an
+  archived brief's campaign that newly names a pruned asset is refused, and a replace racing the
+  prune can keep a reference to an asset that is gone. Both concern bytes nothing can read, so
+  this is the deliberate exception to `lockBriefForAssetWriteQuery`'s rule.
+- **One replica at a time.** Each batch runs in its own transaction that first takes
+  `pg_try_advisory_xact_lock(0x43415052 /* "CAPR" */, 0)`. A replica that finds it held skips the
+  batch (`ran == false`) instead of waiting; the lock is transaction-scoped, so a crash or a
+  severed connection can never leave it held. The batch itself is idempotent.
+
+`dbtest/archived_asset_prune_live_test.go` pins it against a real database: a brief archived
+91 days ago loses its assets over several batches, one archived 89 days ago and an active brief
+untouched for 200 days keep theirs, a second pass deletes nothing, `(0, 0)` falls back to the
+90-day window and the batch bound, and a batch run while another session holds the lock deletes
+nothing and reports `ran == false`. The prune is cluster-global, so those tests stay
+non-parallel. `TestContainer_BothStartupPathsStartArchivedAssetRetention` pins that both live
+wiring paths call `startArchivedAssetRetention`.
 
 `GetAssetMetadata` is `GetAsset`'s scoping (tenant, brief, non-archived parent) with
 `creativeAssetCols` instead of `creativeAssetColsWithBytes`. It is a separate method rather than
