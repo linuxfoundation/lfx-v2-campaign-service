@@ -67,7 +67,7 @@ func TestPrecomputeAdGroupAdInputs_NameMeasuredInRunesNotBytes(t *testing.T) {
 	// count is well over 255 while rune count stays under 255.
 	multibyte := strings.Repeat("é", 200)
 	in := CampaignInput{Project: "CNCF", EventName: multibyte, RegistrationURL: "https://example.com/event"}
-	_, _, adGroupName, _, _, err := precomputeAdGroupAdInputs(in)
+	_, _, adGroupName, _, _, err := precomputeAdGroupAdInputs(in, utmMediumSearch)
 	if err != nil {
 		t.Fatalf("a multibyte ad group name under 255 characters must be accepted (rune-measured), got: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestPrecomputeAdGroupAdInputs_NameMeasuredInRunesNotBytes(t *testing.T) {
 // cap altogether.
 func TestPrecomputeAdGroupAdInputs_OversizedNameRejected(t *testing.T) {
 	in := CampaignInput{Project: "CNCF", EventName: strings.Repeat("x", 300), RegistrationURL: "https://example.com/event"}
-	_, _, _, _, _, err := precomputeAdGroupAdInputs(in)
+	_, _, _, _, _, err := precomputeAdGroupAdInputs(in, utmMediumSearch)
 	if err == nil || !strings.Contains(err.Error(), "name exceeds") {
 		t.Errorf("an over-length ad group name must be rejected preflight, got: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestPrecomputeAdGroupAdInputs_OversizedFinalURLRejected(t *testing.T) {
 		EventName:       "KubeCon",
 		RegistrationURL: "https://example.com/" + longPath,
 	}
-	finalURL, _, _, _, _, err := precomputeAdGroupAdInputs(in)
+	finalURL, _, _, _, _, err := precomputeAdGroupAdInputs(in, utmMediumSearch)
 	if err == nil {
 		t.Fatalf("an over-length composed final URL must be rejected preflight, got finalURL=%q", finalURL)
 	}

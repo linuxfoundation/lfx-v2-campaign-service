@@ -75,6 +75,9 @@ type displayCampaignCreate struct {
 	// would make the campaigns table claim a date the campaign does not have.
 	StartDateTime string `json:"startDateTime,omitempty"`
 	EndDateTime   string `json:"endDateTime,omitempty"`
+	// URLCustomParameters is the utmcampaign custom parameter (#476), from the same
+	// shared preflight as on every sibling payload; see campaignCreate.URLCustomParameters.
+	URLCustomParameters []urlCustomParameter `json:"urlCustomParameters,omitempty"`
 }
 
 // displayAdGroupCreate is the ad group a responsive display ad hangs off.
@@ -216,6 +219,7 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 		StartDateTime:                  pf.startDateTime,
 		EndDateTime:                    pf.endDateTime,
 		biddingFields:                  pf.bidding.fields(),
+		URLCustomParameters:            pf.urlCustomParameters,
 	}}}}
 	campaignResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), campaignReq, false)
 	if err != nil {
@@ -236,6 +240,9 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 		return budgetPartial(), fmt.Errorf("google-ads display campaign creation UNCONFIRMED (budget %s in place; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, verr)
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, %s, %s, %s)", campaignID, advertisingChannelDisplay, pf.bidding.describe(), flightWindowStep(pf.startDateTime, pf.endDateTime)))
+	if pf.utmCampaignStep != "" {
+		steps = append(steps, pf.utmCampaignStep)
+	}
 
 	res := budgetPartial()
 	res.CampaignID = campaignID

@@ -118,14 +118,14 @@ func TestValidatePromotions_TagsTheDestinationAndScalesThePercentage(t *testing.
 	in := sampleInput()
 	in.Promotions = []PromotionExtension{samplePromotion()}
 
-	got, err := validatePromotionExtensions(in)
+	got, err := validatePromotionExtensions(in, utmMediumSearch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(got) != 1 || got[0].PromotionAsset == nil || len(got[0].FinalURLs) != 1 {
 		t.Fatalf("got %+v, want one promotion with one final URL", got)
 	}
-	for _, want := range []string{"utm_source=google", "utm_medium=cpc", "events.example.org/register"} {
+	for _, want := range []string{"utm_source=google", "utm_medium=paid-search", "events.example.org/register"} {
 		if !strings.Contains(got[0].FinalURLs[0], want) {
 			t.Errorf("promotion destination %q is missing %q", got[0].FinalURLs[0], want)
 		}
@@ -150,7 +150,7 @@ func TestValidatePromotions_BuildsTheMoneyArms(t *testing.T) {
 	p.CurrencyCode = "usd"
 	in.Promotions = []PromotionExtension{p}
 
-	got, err := validatePromotionExtensions(in)
+	got, err := validatePromotionExtensions(in, utmMediumSearch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestValidatePromotions_BuildsTheMoneyArms(t *testing.T) {
 func TestValidatePromotions_OmitsUnsetOptionalKeys(t *testing.T) {
 	in := sampleInput()
 	in.Promotions = []PromotionExtension{samplePromotion()}
-	got, err := validatePromotionExtensions(in)
+	got, err := validatePromotionExtensions(in, utmMediumSearch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestValidatePromotions_CarriesTheOptionalFields(t *testing.T) {
 	p.RedemptionStartDate, p.RedemptionEndDate = "2026-11-01", "2026-12-15"
 	in.Promotions = []PromotionExtension{p}
 
-	got, err := validatePromotionExtensions(in)
+	got, err := validatePromotionExtensions(in, utmMediumSearch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestValidatePromotions_AcceptsAnUnknownOccasionOfTheRightShape(t *testing.T
 	p := samplePromotion()
 	p.Occasion = "SOME_FUTURE_GOOGLE_OCCASION_2030"
 	in.Promotions = []PromotionExtension{p}
-	got, err := validatePromotionExtensions(in)
+	got, err := validatePromotionExtensions(in, utmMediumSearch)
 	if err != nil {
 		t.Fatalf("an unknown occasion of the right shape must be accepted, got %v", err)
 	}
@@ -283,7 +283,7 @@ func TestValidatePromotions_RejectsBadInput(t *testing.T) {
 			p := samplePromotion()
 			tc.mutate(&p)
 			in.Promotions = []PromotionExtension{p}
-			_, err := validatePromotionExtensions(in)
+			_, err := validatePromotionExtensions(in, utmMediumSearch)
 			if err == nil {
 				t.Fatalf("%s must be refused", name)
 			}
@@ -305,7 +305,7 @@ func TestValidatePromotions_ErrorDoesNotEchoTheRawURL(t *testing.T) {
 	// secretlint-disable-next-line
 	p.FinalURL = "https://user:SECRETVALUE@events.example.org/register"
 	in.Promotions = []PromotionExtension{p}
-	_, err := validatePromotionExtensions(in)
+	_, err := validatePromotionExtensions(in, utmMediumSearch)
 	if err == nil {
 		t.Fatal("a destination carrying embedded credentials must be refused")
 	}
@@ -319,7 +319,7 @@ func TestValidatePromotions_DedupesByTarget(t *testing.T) {
 	a, b := samplePromotion(), samplePromotion()
 	b.PromotionTarget = "conference PASSES"
 	in.Promotions = []PromotionExtension{a, b}
-	if _, err := validatePromotionExtensions(in); err == nil {
+	if _, err := validatePromotionExtensions(in, utmMediumSearch); err == nil {
 		t.Fatal("two promotions for the same target must be refused")
 	}
 }
@@ -332,7 +332,7 @@ func TestValidatePrices_TagsEveryOfferingsOwnDestination(t *testing.T) {
 	in := sampleInput()
 	in.Prices = []PriceExtension{samplePrice()}
 
-	got, err := validatePriceExtensions(in)
+	got, err := validatePriceExtensions(in, utmMediumSearch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestValidatePrices_TagsEveryOfferingsOwnDestination(t *testing.T) {
 		if len(o.FinalURLs) != 1 {
 			t.Fatalf("offering %d has %d final URLs, want 1", i, len(o.FinalURLs))
 		}
-		for _, want := range []string{"utm_source=google", "utm_medium=cpc"} {
+		for _, want := range []string{"utm_source=google", "utm_medium=paid-search"} {
 			if !strings.Contains(o.FinalURLs[0], want) {
 				t.Errorf("offering %d destination %q is missing %q", i, o.FinalURLs[0], want)
 			}
@@ -369,7 +369,7 @@ func TestValidatePrices_TagsEveryOfferingsOwnDestination(t *testing.T) {
 func TestValidatePrices_OmitsUnsetOptionalKeys(t *testing.T) {
 	in := sampleInput()
 	in.Prices = []PriceExtension{samplePrice()}
-	got, err := validatePriceExtensions(in)
+	got, err := validatePriceExtensions(in, utmMediumSearch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -429,7 +429,7 @@ func TestValidatePrices_RejectsBadInput(t *testing.T) {
 			p.Offerings = append([]PriceOffering(nil), p.Offerings...)
 			tc.mutate(&p)
 			in.Prices = []PriceExtension{p}
-			_, err := validatePriceExtensions(in)
+			_, err := validatePriceExtensions(in, utmMediumSearch)
 			if err == nil {
 				t.Fatalf("%s must be refused", name)
 			}
@@ -597,7 +597,7 @@ func TestExtensionErrors_BoundTheCallerString(t *testing.T) {
 			p := samplePromotion()
 			p.PromotionTarget = v
 			in.Promotions = []PromotionExtension{p}
-			_, err := validatePromotionExtensions(in)
+			_, err := validatePromotionExtensions(in, utmMediumSearch)
 			return err
 		},
 		"promotion occasion": func(v string) error {
@@ -605,7 +605,7 @@ func TestExtensionErrors_BoundTheCallerString(t *testing.T) {
 			p := samplePromotion()
 			p.Occasion = v
 			in.Promotions = []PromotionExtension{p}
-			_, err := validatePromotionExtensions(in)
+			_, err := validatePromotionExtensions(in, utmMediumSearch)
 			return err
 		},
 		"promotion language code": func(v string) error {
@@ -613,7 +613,7 @@ func TestExtensionErrors_BoundTheCallerString(t *testing.T) {
 			p := samplePromotion()
 			p.LanguageCode = v
 			in.Promotions = []PromotionExtension{p}
-			_, err := validatePromotionExtensions(in)
+			_, err := validatePromotionExtensions(in, utmMediumSearch)
 			return err
 		},
 		"price type": func(v string) error {
@@ -621,7 +621,7 @@ func TestExtensionErrors_BoundTheCallerString(t *testing.T) {
 			p := samplePrice()
 			p.Type = v
 			in.Prices = []PriceExtension{p}
-			_, err := validatePriceExtensions(in)
+			_, err := validatePriceExtensions(in, utmMediumSearch)
 			return err
 		},
 		"price qualifier": func(v string) error {
@@ -629,7 +629,7 @@ func TestExtensionErrors_BoundTheCallerString(t *testing.T) {
 			p := samplePrice()
 			p.PriceQualifier = v
 			in.Prices = []PriceExtension{p}
-			_, err := validatePriceExtensions(in)
+			_, err := validatePriceExtensions(in, utmMediumSearch)
 			return err
 		},
 		"price language code": func(v string) error {
@@ -637,7 +637,7 @@ func TestExtensionErrors_BoundTheCallerString(t *testing.T) {
 			p := samplePrice()
 			p.LanguageCode = v
 			in.Prices = []PriceExtension{p}
-			_, err := validatePriceExtensions(in)
+			_, err := validatePriceExtensions(in, utmMediumSearch)
 			return err
 		},
 		"price offering unit": func(v string) error {
@@ -645,7 +645,7 @@ func TestExtensionErrors_BoundTheCallerString(t *testing.T) {
 			p := samplePrice()
 			p.Offerings[0].Unit = v
 			in.Prices = []PriceExtension{p}
-			_, err := validatePriceExtensions(in)
+			_, err := validatePriceExtensions(in, utmMediumSearch)
 			return err
 		},
 		"callout text length": func(v string) error {

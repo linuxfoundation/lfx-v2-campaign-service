@@ -805,6 +805,20 @@ BEFORE the first budget mutate, so a
 refused value cannot strand a paid campaign — and the same validation runs on the
 `adoptExisting` path, so a config is refused identically whether it creates or adopts.
 
+**Click tracking (#476), on every channel and with no config field.** Every campaign create
+sets the campaign custom parameter `utmcampaign` to the composed campaign name, query-escaped
+(`LFX | Search Campaign | cncf | …` → `LFX+%7C+Search+Campaign+%7C+cncf+%7C+…`), which the
+account-level tracking template reads as `utm_campaign={_utmcampaign}`. Without it that
+`utm_campaign` came out empty on every LFX campaign. When the escaped name is over Google's
+250-character limit the parameter is left out, the create still goes ahead, and the campaign
+result's steps record `utm_campaign left empty: …`. An adopted campaign is not changed. The
+final URLs this service tags — the ad's, and on Search each sitelink, promotion and
+price-offering destination — carry `utm_source=google` and a per-channel `utm_medium`:
+`paid-search` on Search, `display` on Demand Gen, Display and Video, and `cpc` on Performance
+Max (it was `cpc` on every channel before). Both are set unconditionally, replacing any
+`utm_source` or `utm_medium` the caller's URL carried; `utm_campaign` (event-level) and
+`utm_content` keep a value the caller's URL already has.
+
 ```
 budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…),
                                   applied as the campaign's DAILY budget. Must be a finite, POSITIVE
@@ -2328,6 +2342,11 @@ pacingLabel: string             — underspending | normal | constrained | overs
   assets, then the asset group with its asset-group links in ONE atomic `googleAds:mutate` —
   Google refuses a non-retail asset group created on its own
 - Duplicate campaign names cause creation failure; retry adds timestamp suffix
+- The account's tracking template reads `utm_campaign` from the campaign custom parameter
+  `utmcampaign` (#476). Its value must be URL-encoded (a raw space or `|` is refused with
+  `ILLEGAL_CHARS`) and at most 250 characters (251 is `TOO_LONG`), and the key is
+  `utmcampaign`, not `_utmcampaign` — the underscore belongs only to the `{_utmcampaign}`
+  reference in the template. Checked with validateOnly on 2026-11-03.
 - RSA ads pin top 3 headlines for consistency
 
 ### LinkedIn Ads

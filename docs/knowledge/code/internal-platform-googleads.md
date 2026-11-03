@@ -715,8 +715,10 @@ lines. Each drop and each added line is an `adPlan.copyNotes` entry, which the
 cascade reports as an "Ad copy: …" step beside the ad, and
 `buildAdFinalURL` builds the ad's destination URL from the brief's
 registration URL, UTM-tagging it: `utm_source`/`utm_medium` are set
-unconditionally to `google`/`cpc` (a Google CPC click must attribute to this
-channel, never to a `utm_source` the registration URL already carried), while
+unconditionally to `google` and the channel's medium — `paid-search` on Search,
+`display` on Demand Gen, Display and Video, `cpc` on Performance Max
+(`utmMediumFor`, #476) — so a Google click attributes to this channel, never to a
+`utm_source`/`utm_medium` the registration URL already carried, while
 `utm_campaign`/`utm_content` are set only when the registration URL does not
 already carry them (`setIfAbsent`).
 
@@ -860,13 +862,14 @@ version of this file claimed there was no double-width halving here, which
 contradicted `ad_copy.go` and is corrected.
 
 **The ad's final URL** (`buildAdFinalURL`) is the brief's `RegistrationURL`
-tagged with `utm_source=google`, `utm_medium=cpc`, `utm_campaign` (from
+tagged with `utm_source=google`, `utm_medium=<channel medium>` (see above),
+`utm_campaign` (from
 EventSlug, falling back to EventName, then `UTMCampaignFallback` — the bare brief
 id the dispatcher passes on every slot — or, when that is unset, NameSuffix), and `utm_content`
 (from Project). `utm_source` and `utm_medium` are set UNCONDITIONALLY
 (`q.Set`), overwriting any values the registration URL carried — a click on
-a Google CPC ad must be attributed to Google/CPC, never to an earlier
-channel's tag. `utm_campaign` and `utm_content` use `setIfAbsent`, so a
+a Google ad must be attributed to Google and this channel's medium, never to an
+earlier channel's tag. `utm_campaign` and `utm_content` use `setIfAbsent`, so a
 caller-supplied value for either wins. Every other query param the URL
 already carries is preserved untouched. An empty/non-http(s)/no-host registration URL is rejected
 before any mutate runs, so a bad input never orphans an ad group with no ad.
@@ -2564,6 +2567,44 @@ and format characters through unchanged. Widening it to `unicode.IsControl` or t
 other: ANY `DISPLAY` campaign fills the `display` slot. One slot per channel TYPE is the
 model, not a Display-specific gap.
 
+
+## Click tracking: the utmcampaign custom parameter and utm_medium (#476)
+
+The Google Ads account has an ACCOUNT-level tracking template that every campaign
+inherits. Beside HubSpot's `hsa_*` parameters it sets `utm_campaign={_utmcampaign}`,
+a reference to a campaign custom parameter named `utmcampaign`. Campaigns the team
+builds by hand override the template with a literal `utm_campaign` holding the
+campaign name; an LFX campaign defined no `utmcampaign`, so its clicks arrived with
+`utm_campaign` empty.
+
+Every channel's campaign create (`campaignCreate`, `demandGenCampaignCreate`,
+`displayCampaignCreate`, `performanceMaxCampaignCreate` and the retained
+`videoCampaignCreate`) now sends
+`urlCustomParameters: [{key: "utmcampaign", value: url.QueryEscape(<composed name>)}]`.
+`url.QueryEscape` spells a space `+`, `|` `%7C` and `+` `%2B`, which is the
+encoding the hand-built campaigns' literal already uses. The rules come from
+validateOnly probes on 2026-11-03 (v23): the escaped name was accepted on Search;
+the raw name was refused with `ILLEGAL_CHARS` on Search, Demand Gen and Display;
+the key `_utmcampaign` was refused; and a 251-character value was refused with
+`TOO_LONG`. Performance Max and Video were not probed.
+
+`utmCampaignCustomParameters` (in `tracking.go`) decides the parameter in
+`preflightCampaignKind`, from the composed campaign name alone, so it is settled
+before the budget mutate. An escaped value over 250 characters is OMITTED, not
+refused and not cut: the key is left out of the payload, the create goes ahead, and
+the cascade records `utm_campaign left empty: the query-escaped campaign name is
+<n> characters, …` directly after its `Campaign created` step. Because the step is
+added once the campaign exists, a later failure's partial result carries it too.
+Adoption (`adoptExisting`) creates nothing and sends no parameter.
+
+`utmMediumFor` maps the kind to the `utm_medium` every tagged final URL carries:
+the ad's, and on Search each sitelink, promotion and price-offering destination
+(`validateAssetPlan` passes the same medium to the extension validators). The
+event-level `utm_campaign` and `utm_content` on those URLs are unchanged.
+
+The settings readback (`GetCampaignSettings`) does not read `url_custom_parameters`
+back. The value is derived from the campaign name the readback already reports,
+and no campaign row records it, so there is no recorded side to compare against.
 
 ## Scope
 

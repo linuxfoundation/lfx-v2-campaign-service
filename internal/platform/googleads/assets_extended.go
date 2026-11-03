@@ -282,7 +282,7 @@ func validateCallExtensions(calls []CallExtension) ([]assetCreate, error) {
 // final URL is tagged exactly like the ad's own, for the reason validateSitelinks
 // gives: an untagged promotion click lands in the attribution data as organic
 // traffic the campaign paid for.
-func validatePromotionExtensions(in CampaignInput) ([]assetCreate, error) {
+func validatePromotionExtensions(in CampaignInput, medium string) ([]assetCreate, error) {
 	promos := in.Promotions
 	if len(promos) > maxPromotionExtensions {
 		return nil, fmt.Errorf("google-ads campaign accepts at most %d promotion extensions in one request (a bound on this request's payload, not an upstream limit), got %d", maxPromotionExtensions, len(promos))
@@ -374,7 +374,7 @@ func validatePromotionExtensions(in CampaignInput) ([]assetCreate, error) {
 			return nil, err
 		}
 
-		finalURL, err := buildTaggedFinalURL(fmt.Sprintf("promotion extension %q destination URL", target), p.FinalURL, in.EventSlug, in.EventName, in.Project, in.utmCampaignFallback())
+		finalURL, err := buildTaggedFinalURL(fmt.Sprintf("promotion extension %q destination URL", target), medium, p.FinalURL, in.EventSlug, in.EventName, in.Project, in.utmCampaignFallback())
 		if err != nil {
 			return nil, fmt.Errorf("google-ads promotion extension %d is unservable: %w", i, err)
 		}
@@ -388,7 +388,7 @@ func validatePromotionExtensions(in CampaignInput) ([]assetCreate, error) {
 }
 
 // validatePriceExtensions checks each price extension and builds its asset.
-func validatePriceExtensions(in CampaignInput) ([]assetCreate, error) {
+func validatePriceExtensions(in CampaignInput, medium string) ([]assetCreate, error) {
 	prices := in.Prices
 	if len(prices) > maxPriceExtensions {
 		return nil, fmt.Errorf("google-ads campaign accepts at most %d price extensions in one request (a bound on this request's payload, not an upstream limit), got %d", maxPriceExtensions, len(prices))
@@ -462,7 +462,7 @@ func validatePriceExtensions(in CampaignInput) ([]assetCreate, error) {
 				row.Unit = u
 			}
 
-			finalURL, err := buildTaggedFinalURL(label+" destination URL", o.FinalURL, in.EventSlug, in.EventName, in.Project, in.utmCampaignFallback())
+			finalURL, err := buildTaggedFinalURL(label+" destination URL", medium, o.FinalURL, in.EventSlug, in.EventName, in.Project, in.utmCampaignFallback())
 			if err != nil {
 				return nil, fmt.Errorf("google-ads %s is unservable: %w", label, err)
 			}

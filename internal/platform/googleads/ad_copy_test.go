@@ -316,25 +316,25 @@ func strSliceEqual(a, b []string) bool {
 
 func TestBuildAdFinalURL(t *testing.T) {
 	t.Run("empty registration URL is an error", func(t *testing.T) {
-		if _, err := buildAdFinalURL("", "slug", "Event", "Proj", "suffix"); err == nil {
+		if _, err := buildAdFinalURL(utmMediumSearch, "", "slug", "Event", "Proj", "suffix"); err == nil {
 			t.Error("expected an error for an empty registration URL")
 		}
 	})
 
 	t.Run("invalid scheme is rejected", func(t *testing.T) {
-		if _, err := buildAdFinalURL("ftp://example.com/register", "slug", "Event", "Proj", "suffix"); err == nil {
+		if _, err := buildAdFinalURL(utmMediumSearch, "ftp://example.com/register", "slug", "Event", "Proj", "suffix"); err == nil {
 			t.Error("expected an error for a non-http(s) scheme")
 		}
 	})
 
 	t.Run("no host is rejected", func(t *testing.T) {
-		if _, err := buildAdFinalURL("https:///register", "slug", "Event", "Proj", "suffix"); err == nil {
+		if _, err := buildAdFinalURL(utmMediumSearch, "https:///register", "slug", "Event", "Proj", "suffix"); err == nil {
 			t.Error("expected an error for a URL with no host")
 		}
 	})
 
 	t.Run("tags utm params using the event slug", func(t *testing.T) {
-		got, err := buildAdFinalURL("https://example.com/register", "kubecon-na-2026", "KubeCon NA", "CNCF", "brief-1")
+		got, err := buildAdFinalURL(utmMediumSearch, "https://example.com/register", "kubecon-na-2026", "KubeCon NA", "CNCF", "brief-1")
 		if err != nil {
 			t.Fatalf("buildAdFinalURL: %v", err)
 		}
@@ -343,8 +343,8 @@ func TestBuildAdFinalURL(t *testing.T) {
 		if q.Get("utm_source") != "google" {
 			t.Errorf("utm_source = %q, want google", q.Get("utm_source"))
 		}
-		if q.Get("utm_medium") != "cpc" {
-			t.Errorf("utm_medium = %q, want cpc", q.Get("utm_medium"))
+		if q.Get("utm_medium") != utmMediumSearch {
+			t.Errorf("utm_medium = %q, want the medium passed in (%s)", q.Get("utm_medium"), utmMediumSearch)
 		}
 		if q.Get("utm_campaign") != "kubecon-na-2026" {
 			t.Errorf("utm_campaign = %q, want the event slug", q.Get("utm_campaign"))
@@ -355,7 +355,7 @@ func TestBuildAdFinalURL(t *testing.T) {
 	})
 
 	t.Run("falls back from slug to event name to name suffix", func(t *testing.T) {
-		got, err := buildAdFinalURL("https://example.com/register", "", "KubeCon NA", "CNCF", "brief-1")
+		got, err := buildAdFinalURL(utmMediumSearch, "https://example.com/register", "", "KubeCon NA", "CNCF", "brief-1")
 		if err != nil {
 			t.Fatalf("buildAdFinalURL: %v", err)
 		}
@@ -364,7 +364,7 @@ func TestBuildAdFinalURL(t *testing.T) {
 			t.Error("utm_campaign should fall back to a sanitized event name")
 		}
 
-		got, err = buildAdFinalURL("https://example.com/register", "", "", "CNCF", "brief-1")
+		got, err = buildAdFinalURL(utmMediumSearch, "https://example.com/register", "", "", "CNCF", "brief-1")
 		if err != nil {
 			t.Fatalf("buildAdFinalURL: %v", err)
 		}
@@ -375,7 +375,7 @@ func TestBuildAdFinalURL(t *testing.T) {
 	})
 
 	t.Run("overwrites utm_source and utm_medium but preserves other params", func(t *testing.T) {
-		got, err := buildAdFinalURL("https://example.com/register?utm_source=newsletter&utm_medium=email&ref=abc", "slug", "Event", "Proj", "suffix")
+		got, err := buildAdFinalURL(utmMediumSearch, "https://example.com/register?utm_source=newsletter&utm_medium=email&ref=abc", "slug", "Event", "Proj", "suffix")
 		if err != nil {
 			t.Fatalf("buildAdFinalURL: %v", err)
 		}
@@ -384,8 +384,8 @@ func TestBuildAdFinalURL(t *testing.T) {
 		if q.Get("utm_source") != "google" {
 			t.Errorf("utm_source = %q, want google (overwrite pre-existing for accurate attribution)", q.Get("utm_source"))
 		}
-		if q.Get("utm_medium") != "cpc" {
-			t.Errorf("utm_medium = %q, want cpc (overwrite pre-existing for accurate attribution)", q.Get("utm_medium"))
+		if q.Get("utm_medium") != utmMediumSearch {
+			t.Errorf("utm_medium = %q, want %s (overwrite pre-existing for accurate attribution)", q.Get("utm_medium"), utmMediumSearch)
 		}
 		if q.Get("ref") != "abc" {
 			t.Errorf("ref = %q, want the pre-existing non-utm param preserved", q.Get("ref"))
@@ -422,7 +422,7 @@ func TestRedactURLForError(t *testing.T) {
 
 func TestBuildAdFinalURL_RejectsUserinfoAndMalformedQuery(t *testing.T) {
 	t.Run("embedded userinfo is rejected", func(t *testing.T) {
-		_, err := buildAdFinalURL("https://user:pass@example.com/register", "slug", "Event", "Proj", "suffix") // secretlint-disable-line -- fixture asserting embedded userinfo is rejected, not a real credential
+		_, err := buildAdFinalURL(utmMediumSearch, "https://user:pass@example.com/register", "slug", "Event", "Proj", "suffix") // secretlint-disable-line -- fixture asserting embedded userinfo is rejected, not a real credential
 		if err == nil {
 			t.Fatal("expected an error for a registration URL with embedded userinfo")
 		}
@@ -435,7 +435,7 @@ func TestBuildAdFinalURL_RejectsUserinfoAndMalformedQuery(t *testing.T) {
 	})
 
 	t.Run("malformed query is rejected rather than silently dropped", func(t *testing.T) {
-		_, err := buildAdFinalURL("https://example.com/register?%zz", "slug", "Event", "Proj", "suffix")
+		_, err := buildAdFinalURL(utmMediumSearch, "https://example.com/register?%zz", "slug", "Event", "Proj", "suffix")
 		if err == nil {
 			t.Fatal("expected an error for a malformed query string")
 		}

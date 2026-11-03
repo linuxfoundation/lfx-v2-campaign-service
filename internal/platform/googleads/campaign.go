@@ -695,6 +695,11 @@ type campaignCreate struct {
 	// field, which is what omitempty gives us.
 	StartDateTime string `json:"startDateTime,omitempty"`
 	EndDateTime   string `json:"endDateTime,omitempty"`
+	// URLCustomParameters carries the utmcampaign custom parameter the account's tracking
+	// template reads (#476). omitempty: when the escaped name is over Google's limit the
+	// preflight leaves it nil and the key is not sent. Every channel's payload carries the
+	// same field from the same preflight — see utmCampaignCustomParameters.
+	URLCustomParameters []urlCustomParameter `json:"urlCustomParameters,omitempty"`
 }
 
 // geoTargetTypeSetting decides what a location criterion actually MEANS, and Google's default
@@ -994,6 +999,12 @@ type campaignPreflight struct {
 	// the corresponding field is omitted.
 	startDateTime string
 	endDateTime   string
+	// urlCustomParameters is the campaign's utmcampaign custom parameter (#476), sent on
+	// every channel's campaign create; nil when the escaped name is over Google's limit,
+	// in which case utmCampaignStep is the step line each cascade records after its
+	// campaign create. See utmCampaignCustomParameters.
+	urlCustomParameters []urlCustomParameter
+	utmCampaignStep     string
 }
 
 // campaignDateRE pins the flight-window format BEFORE time.Parse sees it.
@@ -1254,6 +1265,11 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if (strings.TrimSpace(in.Path1) != "" || strings.TrimSpace(in.Path2) != "") && kind != campaignKindSearch {
 		return nil, fmt.Errorf("google-ads: responsive search ad display paths are not supported on %s (only the Search cascade builds a responsive search ad; Performance Max takes its own in PerformanceMaxCreative.Path1/Path2); omit Path1 and Path2, or create a Search campaign", kind)
 	}
+	// The utmcampaign custom parameter (#476) is derived from the composed name alone, so
+	// whether it is sent is settled here, before the budget mutate: an over-long value is
+	// omitted with a step line rather than refused, and never fails a create after its
+	// budget exists. See utmCampaignCustomParameters.
+	urlCustomParameters, utmCampaignStep := utmCampaignCustomParameters(campaignName)
 	// Validate the ad-group/ad inputs (destination URL, ad copy, ad-group name,
 	// keywords/audience segments) BEFORE the first (budget) mutate: a failure
 	// here is purely local input validation, and surfacing it only after the
@@ -1270,7 +1286,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if kind != campaignKindSearch || everyAdGroupBringsAds(in.AdGroups) {
 		adIn.Headlines, adIn.Descriptions = nil, nil
 	}
-	finalURL, ad, adGroupName, keywords, audienceSegments, err := precomputeAdGroupAdInputs(adIn)
+	finalURL, ad, adGroupName, keywords, audienceSegments, err := precomputeAdGroupAdInputs(adIn, utmMediumFor(kind))
 	if err != nil {
 		return nil, err
 	}
@@ -1452,6 +1468,9 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		bidding:             bidding,
 		startDateTime:       startDateTime,
 		endDateTime:         endDateTime,
+
+		urlCustomParameters: urlCustomParameters,
+		utmCampaignStep:     utmCampaignStep,
 	}, nil
 }
 
@@ -1627,6 +1646,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// field disappears rather than being sent empty — which Google rejects outright.
 		StartDateTime: startDateTime,
 		EndDateTime:   endDateTime,
+		// Resolved in the preflight; nil (and so not sent) only when the escaped name is
+		// over Google's limit.
+		URLCustomParameters: pf.urlCustomParameters,
 	}
 	campaignReq := mutateRequest{Operations: []mutateOperation{{Create: campaignCreateVal}}}
 	campaignPath := c.customerPath("campaigns:mutate")
@@ -1656,6 +1678,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// "manual CPC" on a campaign created with maximize-conversions would be the only
 	// record of the bid an operator ever reads, and it would be wrong.
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, SEARCH, %s, %s)", campaignID, pf.bidding.describe(), flightWindowStep(startDateTime, endDateTime)))
+	if pf.utmCampaignStep != "" {
+		steps = append(steps, pf.utmCampaignStep)
+	}
 
 	res := budgetPartial()
 	res.CampaignID = campaignID

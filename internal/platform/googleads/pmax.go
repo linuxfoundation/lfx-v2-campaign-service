@@ -171,6 +171,9 @@ type performanceMaxCampaignCreate struct {
 	// does not have.
 	StartDateTime string `json:"startDateTime,omitempty"`
 	EndDateTime   string `json:"endDateTime,omitempty"`
+	// URLCustomParameters is the utmcampaign custom parameter (#476), from the same
+	// shared preflight as on every sibling payload; see campaignCreate.URLCustomParameters.
+	URLCustomParameters []urlCustomParameter `json:"urlCustomParameters,omitempty"`
 }
 
 // CreatePerformanceMaxCampaign creates a PAUSED Performance Max campaign: budget →
@@ -341,8 +344,9 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 			AssetAutomationType:   assetAutomationFinalURLExpansion,
 			AssetAutomationStatus: assetAutomationOptedOut,
 		}},
-		StartDateTime: pf.startDateTime,
-		EndDateTime:   pf.endDateTime,
+		StartDateTime:       pf.startDateTime,
+		EndDateTime:         pf.endDateTime,
+		URLCustomParameters: pf.urlCustomParameters,
 		// Resolved by the SHARED preflight, which on this channel admits only the four
 		// conversion-based strategies — Performance Max has no manual bidding at all.
 		biddingFields: pf.bidding.fields(),
@@ -378,6 +382,9 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 		return budgetPartial(), fmt.Errorf("google-ads performance max campaign creation UNCONFIRMED (budget %s in place; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, verr)
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, PERFORMANCE_MAX, %s, %s)", campaignID, pf.bidding.describe(), flightWindowStep(pf.startDateTime, pf.endDateTime)))
+	if pf.utmCampaignStep != "" {
+		steps = append(steps, pf.utmCampaignStep)
+	}
 	// HERE, immediately after the campaign is confirmed, and not down beside the closing
 	// step. Every return below this line hands back a campaign that is already billable, and
 	// internal/dispatch/googleads.go keeps and persists the claim on a non-nil result — so a

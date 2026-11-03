@@ -334,21 +334,21 @@ func capForError(s string) string {
 
 // buildAdFinalURL builds the ad's destination URL from the brief's
 // registration URL, tagging it with UTM parameters for attribution. utm_source
-// and utm_medium are set unconditionally to reflect the Google CPC channel,
-// overwriting any existing values; other utm_* parameters are preserved if
-// already present (mirrors the microsoft client's final-URL builder to avoid
-// misattribution).
-func buildAdFinalURL(registrationURL, eventSlug, eventName, project, nameSuffix string) (string, error) {
-	return buildTaggedFinalURL("registration URL", registrationURL, eventSlug, eventName, project, nameSuffix)
+// is set unconditionally to google and utm_medium to the channel's medium
+// (utmMediumFor: paid-search, display or cpc), overwriting any existing values;
+// other utm_* parameters are preserved if already present (mirrors the
+// microsoft client's final-URL builder to avoid misattribution).
+func buildAdFinalURL(medium, registrationURL, eventSlug, eventName, project, nameSuffix string) (string, error) {
+	return buildTaggedFinalURL("registration URL", medium, registrationURL, eventSlug, eventName, project, nameSuffix)
 }
 
 // buildTaggedFinalURL is buildAdFinalURL with the noun its error messages use
 // made a parameter. Sitelinks are ad destinations too — a click on one is an ad
-// click and must attribute to google/cpc exactly like the headline's — so they
+// click and must attribute to the same google/<medium> as the headline's — so they
 // need this builder verbatim, and only the wording of a validation failure
 // differs. Keeping one implementation is what stops sitelink URLs from drifting
 // into a second, laxer set of checks.
-func buildTaggedFinalURL(noun, registrationURL, eventSlug, eventName, project, nameSuffix string) (string, error) {
+func buildTaggedFinalURL(noun, medium, registrationURL, eventSlug, eventName, project, nameSuffix string) (string, error) {
 	u, err := validateServableURL(noun, registrationURL)
 	if err != nil {
 		return "", err
@@ -363,11 +363,12 @@ func buildTaggedFinalURL(noun, registrationURL, eventSlug, eventName, project, n
 	}
 
 	q := u.Query()
-	// Set utm_source and utm_medium unconditionally: a click from a Google CPC ad
-	// must be attributed to Google/CPC, never to an earlier channel's utm_source
-	// from the caller-supplied URL (which would misattribute the ad spend).
+	// Set utm_source and utm_medium unconditionally: a click from a Google ad must
+	// be attributed to google and this channel's medium, never to an earlier
+	// channel's utm_source/utm_medium from the caller-supplied URL (which would
+	// misattribute the ad spend).
 	q.Set("utm_source", "google")
-	q.Set("utm_medium", "cpc")
+	q.Set("utm_medium", medium)
 	// Preserve existing utm_campaign and utm_content if already present.
 	if campaign != "" {
 		setIfAbsent(q, "utm_campaign", campaign)
