@@ -565,8 +565,8 @@ the legacy funnel. Tactic tokens come from `model.Tactic.NameToken`, shared with
 segment — `Intent`, `Intent #2`, `Intent retargeting #2` — a distinct value per tactic and slot,
 not a normalised Prospecting / Retargeting (the substring parsers are only fallbacks for names
 that are not 8 segments). That raw segment is also what gives slot 2 its own
-`paid_ads_campaign_key`; a report grouped by targeting splits by slot until lf-dbt normalises it. Nothing binds slot 2 to slot 1 by
-name: Reddit never looks a campaign up by name on create, and Meta's `findCampaignByName` runs
+`paid_ads_campaign_key`; a report grouped by targeting splits by slot until lf-dbt normalises it.
+Nothing binds slot 2 to slot 1 by name: Reddit never looks a campaign up by name on create, and Meta's `findCampaignByName` runs
 only under `CampaignInput.ReconcileByName`, which no dispatcher sets. Length: Reddit's 200-rune
 check already covers every composed name before the first request; Meta, which documents no
 campaign-name limit, refuses a LABELLED or later-slot name over 255 runes
