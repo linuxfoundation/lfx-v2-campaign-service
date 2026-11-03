@@ -146,9 +146,9 @@ which also refuses, under the slot lock, a version held by a soft-deleted row an
 (`domain.ErrSlotVersionUsed`, reported as skipped): a concurrent request completed and deleted it
 between this request's read and its claim, and the live-row index alone would admit a second row
 there. A live row at the version is handed back as usual. `DeleteCampaign` takes the same slot
-lock, so no delete lands between that check and the INSERT. An UNFINISHED latest campaign is never built on — the
-claim targets its own slot version and gets the skip / reconciliation-required answer a retry
-gets, because a second campaign beside an unresolved one would spend twice. The slot version
+lock, so no delete lands between that check and the INSERT. An UNFINISHED latest campaign is never built on — a retry's
+claim targets its own slot version and gets the skip / reconciliation-required answer (a
+new_version request answers the same from the row without claiming; see cs-1 below), because a second campaign beside an unresolved one would spend twice. The slot version
 reaches the dispatcher on the context (`model.WithDispatchSlotVersion`). Since `000051` dropped
 `000022`'s three-column index (one release after the per-slot adopt/claim lock shipped, so an
 image-only rollback never returns to a lock-free binary on a schema without it — see the postgres
@@ -158,6 +158,44 @@ gone. `CreateCampaigns`
 refuses `new_version` synchronously (400, before a job exists) for any platform outside
 `model.ProviderSupportsSlotVersions` — today Microsoft only, because the other providers reuse
 campaigns by a name that does not yet vary by slot version (see the dispatch concept).
+
+**Multi-campaign per event: compare-and-set and labels (cs-1).** A `new_version` request must
+also carry `expected_slot_versions` — per platform, the slot version of the latest live campaign
+the caller saw, `0` for none — or `CreateCampaigns` refuses it (400, before a job exists;
+`expectedSlotVersions` also refuses the map without `new_version`, an unselected key or a negative
+value). It reaches `dispatchPlatform` as `StartOptions.ExpectedSlotVersions`, and the new_version
+arm claims `max(latest, maxUsed)+1` ONLY while the latest live campaign is complete AND its slot
+version equals the expectation; otherwise (`!hasExpected || expected != existing.SlotVersion`) the
+latest campaign is returned as a reuse and nothing is claimed. Concurrent submits were already
+deduplicated by the claim; this closes SEQUENTIAL repeats (a double click after the job finished, a
+reload, a second tab, a late replay), each of which carries the stale expectation it was built
+from. With no live campaign the expectation is not compared — there is nothing to duplicate. A
+new_version request whose latest campaign is UNFINISHED claims nothing at all (unlike a plain
+retry, which claims that version): it answers from the row it read — reconciliation required for
+an orphan, skipped for a bare pending claim — because the unfinished row may be a LATER request's,
+and re-claiming it after its owner released it would dispatch under a stale expectation. One
+residual is accepted rather than closed: if the campaign a request created is DELETED before a
+replay of that request arrives, the latest live campaign is the one the replay expected again, and
+it creates another. Comparing against the highest version ever used instead would need the caller
+to know deleted versions, which no read exposes, and would block every later deliberate create.
+`campaignLabels` also refuses labels unless every selected platform names campaigns by stage
+(`model.ProviderNamesByStage`, Microsoft only): a row labelled on Google today would compose a
+different name once Google adds the stage, and a re-dispatch would miss its upstream campaign.
+`funnel_stage` and `tactic` (design Enums, re-checked by `campaignLabels`) become
+`StartOptions.Labels` and are passed to the claim, which writes them only on a row it INSERTS
+(migration `000054`); a slot version that already has a row keeps its labels. Both persists after
+the dispatch copy the CLAIMED row's labels onto the campaign, so an upsert that takes its INSERT
+arm (the claim was cleared mid-flight) recreates the row with the stage its name was composed from. The dispatcher
+gets the CLAIMED ROW's labels on the context (`model.WithDispatchLabels`), never the request's,
+so a name is always composed from what the row stores and an unlabelled row composes its legacy
+name byte for byte. Every `platformResult` now names its row (`reuseResult` / `identifyRow`):
+`campaign_row_id`, `slot_version`, `variant`, the stored `funnel_stage` / `tactic`, and `reused`
+(true on every reuse path: a retry, a stale new_version, a claim lost to a completed row), and a
+retained partial names the row it was recorded on too;
+`campaign_id` stays the platform's id. `campaignResult` and the indexed `CampaignDoc` gain
+`variant`, `funnel_stage`, `tactic` and `created_at`. Pinned by
+`orchestrator_multi_campaign_test.go`, `create_multi_campaign_test.go` and, live,
+`TestLiveRepeatedNewVersionRequestsCreateExactlyOne`.
 
 Dispatch is durable (LFXV2-2665): single-flight per (brief, platform) is
 enforced by an atomic claim — `ClaimCampaignDispatch` does INSERT ... ON CONFLICT

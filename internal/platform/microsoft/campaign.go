@@ -115,6 +115,13 @@ type CampaignInput struct {
 	// findCampaignByName reliable: a retry composes the SAME name and the pre-create
 	// lookup returns the existing campaign instead of hitting the duplicate-name rejection.
 	NameSuffix string
+	// StageToken, when non-empty, is the campaign's funnel-stage token (ToFU, MoFU or BoFU —
+	// model.FunnelStage.NameToken) and becomes its own name segment just before NameSuffix.
+	// It comes from the STORED campaign row (model.DispatchLabels), so a retry composes the
+	// same name; empty for an unlabelled campaign, whose name is byte-identical to the name it
+	// had before stages existed. Campaign name only: an ad group's name is unique within its
+	// own campaign already.
+	StageToken string
 	// TimeZone is the Microsoft Campaign.TimeZone enum value. Microsoft marks the field
 	// deprecated but still "Add: Required", so it is always sent; when empty,
 	// defaultTimeZone is used. A caller that knows the account's intended zone can pass a
@@ -1282,6 +1289,11 @@ func composeName(in CampaignInput) string {
 	}
 	if e := sanitizeNamePart(in.EventName); e != "" {
 		parts = append(parts, e)
+	}
+	// The funnel-stage segment of a labelled campaign (cs-1), between the event and the
+	// suffix. Absent on an unlabelled campaign, so its name keeps the exact legacy shape.
+	if st := sanitizeNamePart(in.StageToken); st != "" {
+		parts = append(parts, st)
 	}
 	if s := sanitizeNamePart(in.NameSuffix); s != "" {
 		parts = append(parts, s)

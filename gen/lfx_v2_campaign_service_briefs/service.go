@@ -976,6 +976,21 @@ type Campaign struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int
+	// The platform's campaign type this campaign is: the Google channel (search,
+	// demand-gen, performance-max, video, display), `default` on every other
+	// platform. With platform and slot_version it identifies the campaign among
+	// the brief's campaigns.
+	Variant *string
+	// The funnel stage the campaign was created to serve (top, mid or lower), set
+	// when it was created and never changed. ABSENT on a campaign created without
+	// one, created before the field existed, or adopted.
+	FunnelStage *string
+	// The tactic the campaign was created with, set when it was created and never
+	// changed. ABSENT on a campaign created without one, created before the field
+	// existed, or adopted.
+	Tactic *string
+	// When this service recorded the campaign (its claim), RFC 3339.
+	CreatedAt *string
 	// How the campaign was CREATED to bid, as its dispatch config asked
 	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
 	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
@@ -1116,7 +1131,40 @@ type CampaignCreateInput struct {
 	// platform in the request is refused with 400. Two concurrent requests that
 	// both find the same complete campaign create one new campaign between them,
 	// not two: the second is reported as a reuse of (or skipped behind) the first.
+	// REQUIRES expected_slot_versions for every selected platform (400 without
+	// it), which also makes a SEQUENTIAL repeat — a double click, a reload, a
+	// second tab, a replay after a lost response — return the campaign it already
+	// made instead of creating another.
 	NewVersion bool
+	// The funnel stage the campaign(s) this request creates serve: `top`, `mid` or
+	// `lower`. Applies to every selected platform. Recorded on a campaign ONLY
+	// when this request creates it: a platform whose campaign already exists (a
+	// retry, or a new_version request with a stale expected_slot_versions) returns
+	// that campaign with the stage it was created with, never relabelled.
+	// Optional; omitted, the campaign is unlabelled. Supported on microsoft-ads
+	// only for now (400 if any other platform is selected), because a label must
+	// be part of the platform's campaign name before it is stored there; a
+	// Microsoft Advertising campaign carries the stage (ToFU, MoFU or BoFU) in its
+	// upstream name, and an unlabelled one keeps the name it has always had.
+	FunnelStage *string
+	// How the campaign(s) this request creates pursue their stage, from a
+	// controlled list (free text is refused because the label can reach campaign
+	// names). Same scope, platform support and immutability as funnel_stage.
+	// Optional.
+	Tactic *string
+	// REQUIRED when new_version is true (400 without it), and refused without
+	// new_version: for EVERY selected platform, the slot_version of the latest
+	// live campaign the caller saw on that platform for this brief (from
+	// list-brief-campaigns or a previous job's platform result), or 0 when it saw
+	// none. A compare-and-set: a platform gets another campaign only while its
+	// latest live campaign is still the one the caller saw. Otherwise its latest
+	// campaign is returned with reused=true and nothing is created — which is what
+	// makes a double click, a reload, a second tab or a late replay of the same
+	// request create exactly one campaign. One residual: if the campaign the first
+	// request created is DELETED before the replay arrives, the replay's
+	// expectation matches again and it creates another. Keys must be the selected
+	// platforms (the slot is the platform's dispatched channel), values 0 or more.
+	ExpectedSlotVersions map[string]int
 }
 
 // CampaignMetrics is the result type of the lfx-v2-campaign-service-briefs
@@ -2373,6 +2421,30 @@ type PlatformResult struct {
 	// reconcile is incomplete: top-level identifiers are always kept, and only the
 	// most deeply nested or latest entries are cut
 	ReconcileTruncated *bool
+	// This service's campaign UUID (the id get-campaign and list-brief-campaigns
+	// use), as opposed to campaign_id, the platform's. Present whenever the result
+	// names a campaign row: a create or a reuse.
+	CampaignRowID *string
+	// Which campaign on this platform and channel the result is: 1 for the first,
+	// 2 for the next created with new_version, and so on. Present with
+	// campaign_row_id.
+	SlotVersion *int
+	// The platform's campaign type (the Google channel: search, demand-gen,
+	// performance-max, video, display); `default` on every other platform. Present
+	// with campaign_row_id.
+	Variant *string
+	// The funnel stage the campaign was CREATED with — the stored label, not this
+	// request's. Absent on an unlabelled campaign.
+	FunnelStage *string
+	// The tactic the campaign was CREATED with — the stored label, not this
+	// request's. Absent on an unlabelled campaign.
+	Tactic *string
+	// true when this request did NOT create the campaign and is returning an
+	// existing one: an idempotent retry, or a new_version request whose
+	// expected_slot_versions was stale (someone — usually this same caller —
+	// already created the next campaign). Absent when the campaign was created by
+	// this request.
+	Reused *bool
 }
 
 type PreconditionFailedError struct {

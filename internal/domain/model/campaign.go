@@ -192,6 +192,18 @@ func ProviderSupportsSlotVersions(p Provider) bool {
 	return p == ProviderMicrosoftAds
 }
 
+// ProviderNamesByStage reports whether p's dispatcher puts a campaign's funnel stage in its
+// upstream name, and so whether a create may label campaigns on p (cs-1). Microsoft only today.
+//
+// Labels are refused elsewhere rather than stored silently because a later change will make that
+// platform's name carry the stage: a row labelled BEFORE that change, then re-dispatched after it
+// (a cleared claim, a retained partial, a name-keyed reconciliation), would compose a name its
+// upstream campaign does not have, miss it, and create a duplicate. A provider joins this set in
+// the same change that adds the stage to its name.
+func ProviderNamesByStage(p Provider) bool {
+	return p == ProviderMicrosoftAds
+}
+
 type dispatchSlotVersionKey struct{}
 
 // WithDispatchSlotVersion returns ctx carrying the slot version one platform dispatch is
@@ -212,6 +224,108 @@ func DispatchSlotVersion(ctx context.Context) int {
 		return n
 	}
 	return FirstSlotVersion
+}
+
+// FunnelStage is the funnel stage a campaign serves (migration 000054). The set mirrors the
+// campaigns_funnel_stage_valid CHECK and the create input's design Enum.
+type FunnelStage string
+
+const (
+	FunnelStageTop   FunnelStage = "top"
+	FunnelStageMid   FunnelStage = "mid"
+	FunnelStageLower FunnelStage = "lower"
+)
+
+// FunnelStages is every valid FunnelStage, in funnel order.
+func FunnelStages() []FunnelStage {
+	return []FunnelStage{FunnelStageTop, FunnelStageMid, FunnelStageLower}
+}
+
+// Valid reports whether s is one of FunnelStages.
+func (s FunnelStage) Valid() bool {
+	for _, v := range FunnelStages() {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// NameToken is the stage's token in an upstream campaign name: the ToFU / MoFU / BoFU
+// vocabulary the data pipeline's name parser already reads, so a staged name is attributed to
+// the right stage. Empty for an invalid stage.
+func (s FunnelStage) NameToken() string {
+	switch s {
+	case FunnelStageTop:
+		return "ToFU"
+	case FunnelStageMid:
+		return "MoFU"
+	case FunnelStageLower:
+		return "BoFU"
+	}
+	return ""
+}
+
+// Tactic is how a campaign pursues its stage (migration 000054). A CONTROLLED list, not free
+// text: the label can reach upstream names, and the data pipeline's fallback parsers match words
+// such as "retarget" anywhere in a name. The set mirrors the campaigns_tactic_valid CHECK and the
+// create input's design Enum.
+type Tactic string
+
+const (
+	TacticProspecting      Tactic = "prospecting"
+	TacticRetargeting      Tactic = "retargeting"
+	TacticLookalike        Tactic = "lookalike"
+	TacticKeyword          Tactic = "keyword"
+	TacticCompetitor       Tactic = "competitor"
+	TacticContentPromotion Tactic = "content-promotion"
+)
+
+// Tactics is every valid Tactic.
+func Tactics() []Tactic {
+	return []Tactic{TacticProspecting, TacticRetargeting, TacticLookalike, TacticKeyword, TacticCompetitor, TacticContentPromotion}
+}
+
+// Valid reports whether t is one of Tactics.
+func (t Tactic) Valid() bool {
+	for _, v := range Tactics() {
+		if t == v {
+			return true
+		}
+	}
+	return false
+}
+
+// CampaignLabels is what a create request asks a newly CLAIMED campaign to be labelled with.
+// The claim writes it on the row it inserts and ignores it otherwise: a slot version that
+// already has a row keeps that row's labels. Both nil is an unlabelled (legacy) campaign.
+type CampaignLabels struct {
+	FunnelStage *FunnelStage
+	Tactic      *Tactic
+}
+
+type dispatchLabelsKey struct{}
+
+// WithDispatchLabels returns ctx carrying the CLAIMED row's labels for one platform dispatch.
+// The orchestrator sets it from the row the claim returned, never from the request, so a name a
+// dispatcher composes from it is the name that row's campaign has always had. A context value for
+// the reason WithDispatchSlotVersion gives: only the dispatchers that put a stage in the name
+// read it, and its absence (no labels) means the legacy name.
+func WithDispatchLabels(ctx context.Context, c *Campaign) context.Context {
+	var l CampaignLabels
+	if c != nil {
+		l = CampaignLabels{FunnelStage: c.FunnelStage, Tactic: c.Tactic}
+	}
+	return context.WithValue(ctx, dispatchLabelsKey{}, l)
+}
+
+// DispatchLabels returns the labels set by WithDispatchLabels, or the zero CampaignLabels
+// (a legacy, unlabelled campaign) when none were set.
+func DispatchLabels(ctx context.Context) CampaignLabels {
+	if l, ok := ctx.Value(dispatchLabelsKey{}).(CampaignLabels); ok {
+		return l
+	}
+	return CampaignLabels{}
 }
 
 type Campaign struct {
@@ -258,11 +372,19 @@ type Campaign struct {
 	// BiddingStrategy is the strategy the create path asked for (migration 000050). nil means the
 	// row predates the column or was ADOPTED — not recorded, NOT "automatic".
 	BiddingStrategy *BiddingStrategy
-	StartDate       *time.Time
-	EndDate         *time.Time
-	ConfigSnapshot  json.RawMessage
-	Result          json.RawMessage
-	Version         int64
+	// FunnelStage and Tactic label the campaign among several on one platform for one event
+	// (migration 000054): which funnel stage it serves and by what tactic. Set at CLAIM from the
+	// create request and never changed afterwards. nil means a LEGACY campaign (created before
+	// the columns, created without a label, or adopted), whose upstream name is the one it has
+	// always had. A dispatcher composes names from these STORED values (DispatchLabels), never
+	// from a request, so a retry carrying a different stage cannot rename a campaign.
+	FunnelStage    *FunnelStage
+	Tactic         *Tactic
+	StartDate      *time.Time
+	EndDate        *time.Time
+	ConfigSnapshot json.RawMessage
+	Result         json.RawMessage
+	Version        int64
 	// CreatedBy / UpdatedBy name the human behind the write, with the same three
 	// causes for nil as CampaignBrief.CreatedBy — read that doc first, it is the
 	// canonical statement and is not repeated here.

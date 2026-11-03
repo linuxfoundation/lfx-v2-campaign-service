@@ -7405,7 +7405,9 @@ func marshalLfxv2campaignservicebriefsCreativeSlotGapToCreativeSlotGapResponseBo
 // a value of type *CampaignCreateInputRequestBody.
 func unmarshalCampaignCreateInputRequestBodyToLfxv2campaignservicebriefsCampaignCreateInput(v *CampaignCreateInputRequestBody) *lfxv2campaignservicebriefs.CampaignCreateInput {
 	res := &lfxv2campaignservicebriefs.CampaignCreateInput{
-		Config: v.Config,
+		Config:      v.Config,
+		FunnelStage: v.FunnelStage,
+		Tactic:      v.Tactic,
 	}
 	if v.NewVersion != nil {
 		res.NewVersion = *v.NewVersion
@@ -7416,6 +7418,14 @@ func unmarshalCampaignCreateInputRequestBodyToLfxv2campaignservicebriefsCampaign
 	}
 	if v.NewVersion == nil {
 		res.NewVersion = false
+	}
+	if v.ExpectedSlotVersions != nil {
+		res.ExpectedSlotVersions = make(map[string]int, len(v.ExpectedSlotVersions))
+		for key, val := range v.ExpectedSlotVersions {
+			tk := key
+			tv := val
+			res.ExpectedSlotVersions[tk] = tv
+		}
 	}
 
 	return res
@@ -7724,6 +7734,12 @@ func marshalLfxv2campaignservicebriefsPlatformResultToPlatformResultResponseBody
 		Error:              v.Error,
 		HubspotURL:         v.HubspotURL,
 		ReconcileTruncated: v.ReconcileTruncated,
+		CampaignRowID:      v.CampaignRowID,
+		SlotVersion:        v.SlotVersion,
+		Variant:            v.Variant,
+		FunnelStage:        v.FunnelStage,
+		Tactic:             v.Tactic,
+		Reused:             v.Reused,
 	}
 	if v.Warnings != nil {
 		res.Warnings = make([]string, len(v.Warnings))

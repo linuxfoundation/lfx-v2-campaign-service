@@ -231,7 +231,12 @@ type CampaignReader interface {
 	// slotVersion names WHICH campaign on the slot is being claimed (model.Campaign.
 	// SlotVersion); 1 for the first. A claim is serialized per (brief, platform, variant)
 	// against AdoptCampaign, so an adopt never lands beside a claimed row on the same slot.
-	ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (claimed bool, row *model.Campaign, err error)
+	//
+	// labels (migration 000054) are written on the row ONLY when this call inserts it. A slot
+	// version that already has a row keeps that row's labels — the row this returns carries the
+	// STORED ones — so a retry carrying a different funnel stage or tactic can never relabel, or
+	// through the upstream name rename, a campaign that exists.
+	ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor, labels model.CampaignLabels) (claimed bool, row *model.Campaign, err error)
 	// ClaimNewCampaignVersion is ClaimCampaignDispatch for EVERY new_version claim (a fresh
 	// version, an unfinished latest one's, or slot 1 on a never-used slot), plus one check under
 	// the same per-slot lock: a slotVersion held by a soft-deleted row and by no live row refuses
@@ -239,7 +244,7 @@ type CampaignReader interface {
 	// deleted after this request read the slot; the live-row index would admit a second row there,
 	// recomposing the deleted campaign's upstream name. A live row at the version is handed back as
 	// ClaimCampaignDispatch does. A plain create keeps ClaimCampaignDispatch.
-	ClaimNewCampaignVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (claimed bool, row *model.Campaign, err error)
+	ClaimNewCampaignVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor, labels model.CampaignLabels) (claimed bool, row *model.Campaign, err error)
 	// DeleteDispatchClaim removes the still-'pending' claim row jobID took on (brief,
 	// platform, variant, slot version) so the slot can be retried after a dispatch fails
 	// before the upstream campaign is created. It only deletes rows still in 'pending'

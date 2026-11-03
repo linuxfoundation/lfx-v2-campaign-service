@@ -206,7 +206,11 @@ create while a redundant deprecated field is harmless, the client sends it.
 conversion (Google Ads uses micros; Microsoft does not). Input is validated up front:
 budget finite (NaN/Inf rejected) and > 0 and <= `maxBudget`; BOTH Project and EventName
 non-empty (on the SANITIZED value); the composed name (`LFX | Search Campaign | Project |
-Event | Suffix`, `|`-and-control-char sanitized) is length-capped in CHARACTERS.
+Event | [Stage |] Suffix`, `|`-and-control-char sanitized) is length-capped in CHARACTERS, stage
+segment included. `CampaignInput.StageToken` (ToFU / MoFU / BoFU, from the claimed campaign row's
+funnel stage via the dispatcher — cs-1, migration `000054`) adds the stage segment only for a
+labelled campaign; an unlabelled one composes the exact pre-stage name. The ad-group name never
+carries it.
 `toMSDate` renders Microsoft's `{Month,Day,Year}` date object, used by the ad-group flight
 dates (below) and the report date ranges.
 
