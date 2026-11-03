@@ -10,4 +10,6 @@ test asserts the first batch deleted exactly the limit and that no batch deleted
 
 Mutation-proved against a local Postgres 16: with the query's `LIMIT $2` replaced by an
 unbounded `LIMIT NULLIF($2::int, $2::int)`, the new assertion fails ("batch 1 deleted 8 rows,
-over the limit of 2") while the old batch-count assertion passes. No production code changes.
+over the limit of 2"; 8, not 3, because the prune is cluster-global and also removed
+long-archived assets other live tests had left in the shared database) while the old
+batch-count assertion passes. No production code changes.
