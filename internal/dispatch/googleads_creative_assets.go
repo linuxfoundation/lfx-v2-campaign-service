@@ -71,7 +71,7 @@ type googleAdsCreativeSlot struct {
 }
 
 // googleAdsCreativeSlots enumerates every image slot the config carries, across all three
-// creative channels and every Demand Gen ad group.
+// creative channels, every Demand Gen ad group and every Display ad group.
 //
 // One list rather than three loops: the budget, the dedupe and the per-dispatch ceiling are
 // properties of the DISPATCH, not of a channel, and a config may name the same asset from two
@@ -123,6 +123,21 @@ func googleAdsCreativeSlots(cfg *googleAdsConfig) []googleAdsCreativeSlot {
 			googleAdsCreativeSlot{"display squareMarketingImages", &c.SquareMarketingImages},
 			googleAdsCreativeSlot{"display logoImages", &c.LogoImages},
 			googleAdsCreativeSlot{"display squareLogoImages", &c.SquareLogoImages},
+		)
+	}
+	// Every Display ad group's creative (#475), labelled by position so a refusal names the
+	// entry the caller wrote.
+	for i := range cfg.DisplayAdGroups {
+		c := cfg.DisplayAdGroups[i].Creative
+		if c == nil {
+			continue
+		}
+		prefix := fmt.Sprintf("display ad group %d ", i+1)
+		out = append(out,
+			googleAdsCreativeSlot{prefix + "marketingImages", &c.MarketingImages},
+			googleAdsCreativeSlot{prefix + "squareMarketingImages", &c.SquareMarketingImages},
+			googleAdsCreativeSlot{prefix + "logoImages", &c.LogoImages},
+			googleAdsCreativeSlot{prefix + "squareLogoImages", &c.SquareLogoImages},
 		)
 	}
 	return out

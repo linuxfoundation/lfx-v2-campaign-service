@@ -170,7 +170,7 @@ type displayCreativePlan struct {
 // adoption path refuses exactly what the create path refuses.
 //
 // What it cannot check is whether a URL actually serves a decodable image of the right
-// shape. That is fetchDisplayImages' job, and it still runs before the budget mutate.
+// shape. That is fetchDisplayGroupImages' job, and it still runs before the budget mutate.
 func validateDisplayCreative(kind string, in CampaignInput) (displayCreativePlan, error) {
 	d := in.DisplayCreative
 	if d.empty() {
@@ -263,19 +263,6 @@ func validateDisplayCreative(kind string, in CampaignInput) (displayCreativePlan
 	plan.callToActionText = cta
 
 	return plan, nil
-}
-
-// fetchDisplayImages downloads every image this creative references, in slot order.
-//
-// A one-line wrapper over the shared fetcher, kept because the slot TABLE is the
-// channel-specific part, and naming the channel at the call site is what keeps the caller
-// in display.go from having to know which table belongs to it. (Demand Gen's own wrapper
-// became fetchDemandGenGroupImages, which walks every ad group's tables at once, #460.)
-func (c *Client) fetchDisplayImages(ctx context.Context, plan displayCreativePlan) ([]fetchedImage, error) {
-	if !plan.present {
-		return nil, nil
-	}
-	return c.fetchSlotImages(ctx, displayImageSlots, plan.urls, plan.resolved)
 }
 
 // ---------------------------------------------------------------------------
@@ -450,9 +437,10 @@ func displayCreativeStep(plan displayCreativePlan) string {
 		marketing, logos, len(plan.headlines), len(plan.descriptions))
 }
 
-// displayAdGroupName composes the single ad group this channel creates, mirroring
-// videoAdGroupName: one group per campaign, named off the event so an operator reading
-// the Google Ads UI sees which brief it came from.
+// displayAdGroupName composes this channel's ad group name, mirroring videoAdGroupName:
+// named off the event so an operator reading the Google Ads UI sees which brief it came
+// from. It is the single group's name, and the prefix every DisplayAdGroups entry's label
+// is appended to (#475).
 //
 // The suffix is " - Display Network", not " - Display": Demand Gen's ad group
 // (demandgen.go) has used the bare " - Display" since it was the Display channel, and

@@ -799,8 +799,9 @@ only creation is impossible); `display` creates a DISPLAY campaign with NO chann
 sub-type, an ad group of type `DISPLAY_STANDARD` targeted at the audiences named in
 `audienceSegments`/`customAudiences`/`customAffinities`/`userInterests` (the first three
 only where the deployment sets GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED, #468), campaign-level
-`excludedPlacements`, and (given `displayCreative`) one
-responsive display ad built from images this service fetches and uploads. **Budget is in whole units of the ad ACCOUNT's
+`excludedPlacements` and `excludedAudienceSegments`, and (given `displayCreative`) one
+responsive display ad built from images this service fetches and uploads — or, given
+`displayAdGroups`, several named ad groups, each with its own audiences and ad (#475). **Budget is in whole units of the ad ACCOUNT's
 currency**, not USD — the service does no FX conversion (mirroring `metaConfig`).
 
 Every field below is OPTIONAL except `budget`, and every one of them is additive: a config
@@ -1014,6 +1015,22 @@ excludedPlacements?: string[]   — OPTIONAL websites a Display campaign must ne
                                   Google's exclusion of one covers the other is Google's rule, not
                                   checked here). A definite refusal of the mutate fails the job with
                                   the campaign recorded; an ambiguous one is UNCONFIRMED.
+excludedAudienceSegments?:      — OPTIONAL user lists excluded from the whole Display campaign (#475),
+  string[]                        each an EXISTING `customers/{id}/userLists/{id}` on the campaign's
+                                  OWN account. DISPLAY ONLY, and REFUSED on every other `channel`.
+                                  Attached at the CAMPAIGN level as negative user-list criteria, so
+                                  they cover every ad group, in ONE atomic `campaignCriteria:mutate`
+                                  after the placement exclusions and before any ad; the ids are
+                                  returned in `excludedAudienceCriteriaIds`. At most 20 entries,
+                                  deduped. Only user lists can be excluded — the exclusion a
+                                  validateOnly probe established — so a custom audience, custom
+                                  affinity, user interest or Audience name is refused, as are a
+                                  malformed name and another customer's list. A list also targeted by
+                                  `audienceSegments` or by any `displayAdGroups` entry, or also
+                                  excluded by an entry, is refused: name it once. The account check is
+                                  ACCOUNT-scoped, not tenancy protection; see `audienceSegments` and
+                                  #468. A definite refusal of the mutate fails the job with the
+                                  campaign recorded; an ambiguous one is UNCONFIRMED.
 geoTargets?: string[]           — OPTIONAL locations the campaign should serve in (LFXV2-3283). Each
                                   entry is EITHER an ISO 3166-1 alpha-2 country code, spelled as in
                                   `metaConfig`/`redditConfig`, OR a raw numeric geo target constant id
@@ -1612,10 +1629,11 @@ leadForms?:                     — OPTIONAL lead form (LFXV2-2665). The one ext
 adGroups?:                      — OPTIONAL multiple themed ad groups (LFXV2-2665), each with its own
   {name, cpcBid?, keywords?,      keywords and up to 3 Responsive Search Ads. SEARCH ONLY and REFUSED on
    audienceSegments?,             every other `channel`: Demand Gen takes `demandGenAdGroups`
-   negativeKeywords?,             instead, and Performance Max has no ad groups at all. At most 20
-   ads?: {headlines?,             groups, at most 3 ads per group.
-          descriptions?,
-          path1?, path2?}[]}[]    `negativeKeywords` (#473) are the group's OWN exclusions, attached as
+   negativeKeywords?,             instead, Display takes its own list (`displayAdGroups`), and
+   ads?: {headlines?,             Performance Max has no ad groups at all. At most 20 groups, at
+          descriptions?,          most 3 ads per group.
+          path1?, path2?}[]}[]
+                                  `negativeKeywords` (#473) are the group's OWN exclusions, attached as
                                   negative ad-group criteria in the same mutate as its keywords. They
                                   are added beside the campaign-level `negativeKeywords`, never
                                   inherited from them, and follow the same `text`/`matchType` rules
@@ -2008,6 +2026,43 @@ displayCreative?:               — OPTIONAL Display RESPONSIVE DISPLAY AD (LFXV
                                   them, and an AMBIGUOUS failure is reported UNCONFIRMED rather than
                                   failed, so a retry does not create a second ad. The same validation
                                   runs on the `adoptExisting` path.
+displayAdGroups?:               — OPTIONAL several named Display ad groups (#475), each with its own
+  {name, creative,                responsive display ad and audiences — the shape of a Display campaign
+   audienceSegments?,             split into, say, Retargeting and Prospecting. DISPLAY ONLY, and
+   customAudiences?,              REFUSED on every other `channel`. At most 5 groups.
+   customAffinities?,
+   userInterests?,                `name` is REQUIRED and is a label: the ad group is named
+   excludedAudienceSegments?}[]   `<event> - Display Network | <name>`, at most 255 characters, and
+                                  names equal ignoring case are refused. `creative` is REQUIRED and
+                                  takes the `displayCreative` shape and rules, images included. The
+                                  four audience lists take the shapes and rules of the campaign-level
+                                  fields of the same names and are attached as TARGETING on that group
+                                  alone; every group with audiences is created with the AUDIENCE
+                                  bidOnly false targeting setting. `excludedAudienceSegments` excludes
+                                  user lists from that group alone, as negative ad-group criteria; a
+                                  list a group both targets and excludes, or that the campaign already
+                                  excludes, is refused. A refusal names the group — by its position
+                                  when the name itself is what is refused.
+
+                                  With the list set, `displayCreative`, `audienceSegments`,
+                                  `customAudiences`, `customAffinities` and `userInterests` must be
+                                  empty — they describe the single group the list replaces — while
+                                  geo, the other campaign criteria, `excludedPlacements` and
+                                  `excludedAudienceSegments` stay campaign-level and cover every group.
+                                  Every group's images are fetched in ONE pass before the budget mutate,
+                                  under one 64 MiB total for the whole campaign.
+
+                                  Each group's ad group, audience criteria and exclusions are created
+                                  in order, then the campaign-level exclusions, then each group's image
+                                  assets and ad, so every criteria step runs before any ad. The result
+                                  lists every group in `adGroups` ({name, id, adIds,
+                                  audienceCriteriaIds, excludedAudienceCriteriaIds, creativeAssetIds});
+                                  the scalar `adGroupId`, `adId`, `audienceCriteriaIds` and
+                                  `creativeAssetIds` are the FIRST group's. A failure returns what
+                                  exists, a group that failed is listed with no id, and an ambiguous
+                                  outcome is UNCONFIRMED. A status toggle cascades over every group's
+                                  ad. Omitted, the campaign gets the single ad group it always had,
+                                  byte-for-byte. The same validation runs on the `adoptExisting` path.
 adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When true, the dispatcher first
                                   looks the composed campaign name up on the account and, if a single
                                   live campaign already carries it, ADOPTS that campaign instead of

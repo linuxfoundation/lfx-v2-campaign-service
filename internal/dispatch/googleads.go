@@ -321,6 +321,12 @@ type googleAdsConfig struct {
 	// (#462). DISPLAY ONLY, refused on every other channel; a scheme, path or port is
 	// refused rather than stripped. See googleads.validateExcludedPlacements.
 	ExcludedPlacements []string `json:"excludedPlacements"`
+	// ExcludedAudienceSegments are EXISTING user lists, customers/{id}/userLists/{id} on the
+	// campaign's own account, excluded from the whole campaign as campaign-level negative
+	// user-list criteria (#475), so they cover every ad group. DISPLAY ONLY, refused on
+	// every other channel; a list also targeted is refused. See
+	// googleads.CampaignInput.ExcludedAudienceSegments.
+	ExcludedAudienceSegments []string `json:"excludedAudienceSegments"`
 	// NegativeKeywords are optional CAMPAIGN-level keyword exclusions — queries the
 	// campaign must never pay for, however broadly Keywords match. SEARCH ONLY, and
 	// REFUSED on every other channel rather than ignored — as Keywords are too, and
@@ -572,6 +578,13 @@ type googleAdsConfig struct {
 	// Demand Gen or Video campaign without a creative has, and it cannot serve until
 	// someone builds an ad in the Google Ads UI. The result's closing step says so.
 	DisplayCreative *googleAdsDisplayCreativeConfig `json:"displayCreative"`
+	// DisplayAdGroups names several Display ad groups (#475), each with its own responsive
+	// display ad, audience lists and user-list exclusions; geo, the other campaign criteria
+	// and both campaign-level exclusion lists apply to every one. Left empty the campaign
+	// gets the single ad group it always had, from displayCreative and the four audience
+	// lists — which must then be empty when this list is set. DISPLAY ONLY. Refusals are
+	// the client's preflight's.
+	DisplayAdGroups []googleAdsDisplayAdGroupConfig `json:"displayAdGroups"`
 	// AdoptExisting opts THIS dispatch in to adopting a campaign that already carries the
 	// composed name instead of creating one. It defaults to FALSE, and the default is the
 	// safety property, not a convenience: ComposeName is deterministic in
@@ -877,16 +890,19 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		PerformanceMaxCreative:   googleAdsPerformanceMaxCreative(cfg.PerformanceMaxCreative),
 		VideoCreative:            googleAdsVideoCreative(cfg.VideoCreative),
 		DisplayCreative:          googleAdsDisplayCreative(cfg.DisplayCreative),
+		DisplayAdGroups:          googleAdsDisplayAdGroups(cfg.DisplayAdGroups),
 		// The asset group's signals (#461), verbatim like the creative they attach to.
 		PerformanceMaxSearchThemes:   cfg.PerformanceMaxSearchThemes,
 		PerformanceMaxAudienceSignal: cfg.PerformanceMaxAudienceSignal,
-		// The Display-only audience lists and placement exclusions (#462), passed through
-		// verbatim like the inputs above: the client's preflight refuses them off Display
-		// and checks every resource name against the account, before its first mutate.
-		CustomAudiences:    cfg.CustomAudiences,
-		CustomAffinities:   cfg.CustomAffinities,
-		UserInterests:      cfg.UserInterests,
-		ExcludedPlacements: cfg.ExcludedPlacements,
+		// The Display-only audience lists and placement and audience exclusions (#462,
+		// #475), passed through verbatim like the inputs above: the client's preflight
+		// refuses them off Display and checks every resource name against the account,
+		// before its first mutate.
+		CustomAudiences:          cfg.CustomAudiences,
+		CustomAffinities:         cfg.CustomAffinities,
+		UserInterests:            cfg.UserInterests,
+		ExcludedPlacements:       cfg.ExcludedPlacements,
+		ExcludedAudienceSegments: cfg.ExcludedAudienceSegments,
 		// The bytes for every asset-backed image entry, keyed by the slot string the
 		// mappers above rendered. Carried on the input rather than on each of the three
 		// creatives because it is one dispatch-wide map: the same asset may be named from
@@ -1638,6 +1654,40 @@ func googleAdsDisplayCreative(in *googleAdsDisplayCreativeConfig) googleads.Disp
 	}
 }
 
+// googleAdsDisplayAdGroupConfig is one entry of displayAdGroups (#475): a name, a required
+// creative in the displayCreative shape, the four optional audience lists in the shapes of
+// the campaign-level fields of the same names, and optional user-list exclusions for this
+// group alone.
+type googleAdsDisplayAdGroupConfig struct {
+	Name                     string                          `json:"name"`
+	Creative                 *googleAdsDisplayCreativeConfig `json:"creative"`
+	AudienceSegments         []string                        `json:"audienceSegments"`
+	CustomAudiences          []string                        `json:"customAudiences"`
+	CustomAffinities         []string                        `json:"customAffinities"`
+	UserInterests            []string                        `json:"userInterests"`
+	ExcludedAudienceSegments []string                        `json:"excludedAudienceSegments"`
+}
+
+// googleAdsDisplayAdGroups maps the list verbatim; every refusal is the client's.
+func googleAdsDisplayAdGroups(in []googleAdsDisplayAdGroupConfig) []googleads.DisplayAdGroup {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.DisplayAdGroup, len(in))
+	for i, g := range in {
+		out[i] = googleads.DisplayAdGroup{
+			Name:                     g.Name,
+			Creative:                 googleAdsDisplayCreative(g.Creative),
+			AudienceSegments:         g.AudienceSegments,
+			CustomAudiences:          g.CustomAudiences,
+			CustomAffinities:         g.CustomAffinities,
+			UserInterests:            g.UserInterests,
+			ExcludedAudienceSegments: g.ExcludedAudienceSegments,
+		}
+	}
+	return out
+}
+
 // googleAdsSnapshotConfig returns cfg with every caller-supplied URL reduced to
 // scheme+host, for storage in config_snapshot — which is persisted UNENCRYPTED in
 // Postgres. Same reason and same helper as campaignFromMeta's ImageURL and
@@ -1648,7 +1698,8 @@ func googleAdsDisplayCreative(in *googleAdsDisplayCreativeConfig) googleads.Disp
 // types — a sitelink's finalUrl, a promotion's finalUrl and the finalUrl of EVERY
 // price offering, each row of a price table carrying its own — and the image URLs of
 // the Demand Gen creative, the Demand Gen video ad's logo, every Demand Gen ad group's
-// creative (#460), the Performance Max asset group and the Display creative.
+// creative (#460), the Performance Max asset group, the Display creative and every
+// Display ad group's creative (#475).
 // The Video channel's creative is the one with nothing to sanitize: it references a
 // YouTube video by bare id and carries no URL field at all, which is why it is the
 // only one absent from the early return below. Call extensions carry a phone number
@@ -1663,7 +1714,8 @@ func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 	if len(cfg.Sitelinks) == 0 && len(cfg.Promotions) == 0 && len(cfg.Prices) == 0 &&
 		len(cfg.LeadForms) == 0 && cfg.DemandGenCreative == nil &&
 		cfg.DemandGenVideoCreative == nil && len(cfg.DemandGenAds) == 0 && len(cfg.DemandGenAdGroups) == 0 &&
-		cfg.PerformanceMaxCreative == nil && cfg.DisplayCreative == nil {
+		cfg.PerformanceMaxCreative == nil && cfg.DisplayCreative == nil &&
+		len(cfg.DisplayAdGroups) == 0 {
 		return cfg
 	}
 	snapshot := cfg
@@ -1753,13 +1805,16 @@ func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 	// The Display creative carries image URLs with exactly the same exposure, so it is
 	// sanitized the same way and with the same deep copy. Video is the only creative
 	// absent from this chain, and only because it holds no URL at all.
-	if cfg.DisplayCreative != nil {
-		creative := *cfg.DisplayCreative
-		creative.MarketingImages = sanitizeSnapshotImageRefs(cfg.DisplayCreative.MarketingImages)
-		creative.SquareMarketingImages = sanitizeSnapshotImageRefs(cfg.DisplayCreative.SquareMarketingImages)
-		creative.LogoImages = sanitizeSnapshotImageRefs(cfg.DisplayCreative.LogoImages)
-		creative.SquareLogoImages = sanitizeSnapshotImageRefs(cfg.DisplayCreative.SquareLogoImages)
-		snapshot.DisplayCreative = &creative
+	snapshot.DisplayCreative = sanitizeSnapshotDisplayCreative(cfg.DisplayCreative)
+	// Every Display ad group's creative (#475) carries the same exposure, and is deep-copied
+	// the same way: the group slice and each creative pointer are shared with the caller's
+	// config.
+	if len(cfg.DisplayAdGroups) > 0 {
+		snapshot.DisplayAdGroups = make([]googleAdsDisplayAdGroupConfig, len(cfg.DisplayAdGroups))
+		copy(snapshot.DisplayAdGroups, cfg.DisplayAdGroups)
+		for i := range snapshot.DisplayAdGroups {
+			snapshot.DisplayAdGroups[i].Creative = sanitizeSnapshotDisplayCreative(cfg.DisplayAdGroups[i].Creative)
+		}
 	}
 	return snapshot
 }
@@ -1805,6 +1860,20 @@ func sanitizeSnapshotDemandGenAds(in []googleAdsDemandGenAdConfig) []googleAdsDe
 		}
 	}
 	return out
+}
+
+// sanitizeSnapshotDisplayCreative deep-copies a Display creative with every image URL
+// reduced for the snapshot; nil stays nil.
+func sanitizeSnapshotDisplayCreative(in *googleAdsDisplayCreativeConfig) *googleAdsDisplayCreativeConfig {
+	if in == nil {
+		return nil
+	}
+	creative := *in
+	creative.MarketingImages = sanitizeSnapshotImageRefs(in.MarketingImages)
+	creative.SquareMarketingImages = sanitizeSnapshotImageRefs(in.SquareMarketingImages)
+	creative.LogoImages = sanitizeSnapshotImageRefs(in.LogoImages)
+	creative.SquareLogoImages = sanitizeSnapshotImageRefs(in.SquareLogoImages)
+	return &creative
 }
 
 // campaignFromGoogleAds maps the client result to the persistence model. The

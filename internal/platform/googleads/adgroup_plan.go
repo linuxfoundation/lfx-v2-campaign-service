@@ -173,6 +173,11 @@ func validateAdGroupPlans(kind string, in CampaignInput, base adGroupPlan) ([]ad
 	if kind == campaignKindDemandGen {
 		return nil, fmt.Errorf("google-ads campaign creation aborted before any request (%d ad groups requested, but AdGroups is the SEARCH ad-group list; a Demand Gen campaign takes DemandGenAdGroups, each with its own creative and Audience)", len(in.AdGroups))
 	}
+	// Display has its own list (#475), whose groups carry a responsive display ad and
+	// audiences rather than keywords and responsive search ads, so the refusal names it.
+	if kind == campaignKindDisplay {
+		return nil, fmt.Errorf("google-ads campaign creation aborted before any request (%d ad groups requested, but AdGroups is the SEARCH ad-group list; a Display campaign takes DisplayAdGroups, each with its own creative and audiences)", len(in.AdGroups))
+	}
 	if kind != campaignKindSearch {
 		return nil, fmt.Errorf("google-ads campaign creation aborted before any request (%d ad groups requested, but multiple ad groups are a SEARCH capability; the %s channel creates its own single ad group and no ad)", len(in.AdGroups), kind)
 	}

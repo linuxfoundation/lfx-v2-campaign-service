@@ -122,6 +122,10 @@ type displayTargetingPlan struct {
 	customAffinities   []string
 	userInterests      []string
 	excludedPlacements []string
+	// excludedUserLists are the user lists excluded at THIS plan's level (#475): the
+	// campaign's on the campaign-level plan, a named ad group's on that group's plan. See
+	// display_adgroups.go.
+	excludedUserLists []string
 }
 
 // audienceCount is how many ad-group audience criteria the plan creates.
@@ -133,9 +137,10 @@ func (p displayTargetingPlan) audienceCount() int {
 // given campaign KIND. Called from preflightCampaignKind, so it fails before the budget
 // mutate and the adoption path refuses exactly what the create path would.
 //
-// Off Display the three segment lists Display adds and the placement exclusions are
-// REFUSED, never dropped: no other cascade reads them, so accepting one would validate
-// it and then create a campaign without it. AudienceSegments is not judged here off
+// Off Display the three segment lists Display adds, the placement exclusions and the
+// audience exclusions (#475) are REFUSED, never dropped: no other cascade reads them, so
+// accepting one would validate it and then create a campaign without it. AudienceSegments
+// is not judged here off
 // Display — the Search cascade owns it there, and the preflight's own fence refuses it
 // on the other channels.
 //
@@ -160,6 +165,9 @@ func validateDisplayTargeting(kind, customerID string, in CampaignInput) (displa
 		if len(in.ExcludedPlacements) > 0 {
 			return displayTargetingPlan{}, fmt.Errorf("google-ads: placement exclusions are not supported on %s (this client attaches placement criteria only on the Display cascade); omit ExcludedPlacements, or create a Display campaign to keep its ads off a site", kind)
 		}
+		if len(in.ExcludedAudienceSegments) > 0 {
+			return displayTargetingPlan{}, fmt.Errorf("google-ads: audience exclusions are not supported on %s (this client attaches negative user lists only on the Display cascade); omit ExcludedAudienceSegments, or create a Display campaign to exclude a user list", kind)
+		}
 		return displayTargetingPlan{}, nil
 	}
 
@@ -178,6 +186,15 @@ func validateDisplayTargeting(kind, customerID string, in CampaignInput) (displa
 		return displayTargetingPlan{}, err
 	}
 	if plan.excludedPlacements, err = validateExcludedPlacements(in.ExcludedPlacements); err != nil {
+		return displayTargetingPlan{}, err
+	}
+	// The campaign-level user-list exclusions (#475), under the same account rule. A list
+	// both targeted here and excluded is refused; a named ad group's lists are checked
+	// against these in validateDisplayAdGroups.
+	if plan.excludedUserLists, err = validateDisplayExcludedUserLists("ExcludedAudienceSegments", customerID, in.ExcludedAudienceSegments); err != nil {
+		return displayTargetingPlan{}, err
+	}
+	if err := refuseExcludedOverlap("the ad group targets", plan.userLists, "the campaign excludes", plan.excludedUserLists); err != nil {
 		return displayTargetingPlan{}, err
 	}
 	return plan, nil

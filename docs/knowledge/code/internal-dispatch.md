@@ -314,7 +314,10 @@ five individually for the reason the Demand Gen test gives.
 There is no portrait slot on a display ad, and `squareLogoImages` exists on neither
 sibling, so `googleAdsSnapshotConfig` sanitizes a third block of its own and
 `TestGoogleAdsSnapshotConfig_SanitizesEveryDisplayURLList` asserts all four individually,
-one more time for the same reason.
+one more time for the same reason. Every `displayAdGroups` entry's creative (#475) carries
+the same four lists and goes through the same `sanitizeSnapshotDisplayCreative`, on a copied
+group slice so the caller's groups keep the signed URLs the fetch needs;
+`TestGoogleAdsSnapshotConfig_SanitizesEveryDisplayAdGroup` pins both halves.
 
 **Promotion and price extensions carry destinations too.** A promotion has one
 `finalUrl`; a price extension has one per OFFERING, which is where its deep copy has to
@@ -337,13 +340,14 @@ the snapshot loses the signing query, and the caller's config keeps the full URL
 requires. A shallow slice copy suffices here; only the price extension's nested
 `Offerings` needs the deep one.
 
-The early return that skips the whole copy names SEVEN fields now — sitelinks,
-promotions, prices, lead forms, the Demand Gen creative, the asset group and the Display
-creative, and deliberately NOT `videoCreative`, which carries YouTube video ids and text
-and no URL of any kind, so a config holding only a video creative has nothing to
-sanitize — and `TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone`,
-`..._SanitizesTheDisplayCreativeAlone`, `..._SanitizesEachNewExtensionAlone` and
-`..._SanitizesTheLeadFormPrivacyPolicyURL` pin the last five, because a config carrying
+The early return that skips the whole copy names EIGHT fields now — sitelinks,
+promotions, prices, lead forms, the Demand Gen creative, the asset group, the Display
+creative and the Display ad groups (#475), and deliberately NOT `videoCreative`, which
+carries YouTube video ids and text and no URL of any kind, so a config holding only a video
+creative has nothing to sanitize — and `TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone`,
+`..._SanitizesTheDisplayCreativeAlone`, `..._SanitizesEachNewExtensionAlone`,
+`..._SanitizesTheLeadFormPrivacyPolicyURL` and `..._SanitizesEveryDisplayAdGroup` pin the last
+six, because a config carrying
 only one of them taking that return is precisely the bug each condition was added to
 prevent.
 
@@ -1131,6 +1135,19 @@ oneof arm in the ad group's criteria mutate and the placements the campaign's, a
 Display, with no budget sent. None of them silences the "NO geo targeting" warning below: an
 audience narrows WHO and a placement exclusion WHERE ON THE WEB, and neither bounds the
 geography the campaign spends in.
+
+`displayAdGroups` and `excludedAudienceSegments` (#475) pass through the same way:
+`googleAdsDisplayAdGroups` maps each group's name, its creative through the same
+`googleAdsDisplayCreative` mapper, its four audience lists and its own
+`excludedAudienceSegments`, and the campaign-level `excludedAudienceSegments` maps one to one.
+`googleAdsCreativeSlots` enumerates each group's four image slots, labelled
+`display ad group <n> <slot>`, so a stored asset named in a group resolves under the same
+dispatch-wide budget. `googleads_display_adgroups_test.go` pins the mapping field by field,
+the campaign-level exclusion reaching the campaign criteria mutate, a second group's foreign
+exclusion refused by that group's name before any budget, both fields refused on Search, the
+snapshot and the slot labels. Like the campaign-level creative, a group's ad is out of reach
+from here; the cascade is pinned in `display_adgroups_test.go`. Neither field silences the
+"NO geo targeting" warning either.
 
 One thing this layer does decide for itself is the post-create "NO geo targeting" warning,
 which is the operator's only signal that a campaign will spend wherever the ad account
