@@ -343,6 +343,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	}
 	defer releaseImage()
 
+	stageToken, tacticToken := model.DispatchLabels(ctx).NameTokens()
 	in := twitter.CampaignInput{
 		EventName: bf.EventName,
 		EventSlug: brief.EventSlug,
@@ -358,6 +359,15 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		AsUserID:        asUserID,
 		Image:           image,
 		MaxBid:          plan.amount,
+
+		// The name labels of the CLAIMED row (multi-campaign cs-4): its stored funnel stage and
+		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of
+		// that row composes the same name; an unlabelled slot-1 row composes its legacy name
+		// byte for byte; slot 2 on gets a "#<n>" token, so it never shares slot 1's name — and
+		// so the client's by-name reuse lookup never binds it to slot 1's campaign.
+		StageToken: stageToken,
+		Tactic:     tacticToken,
+		SlotToken:  model.SlotNameToken(model.DispatchSlotVersion(ctx)),
 	}
 
 	// Built through the client cache, so concurrent dispatches for this account share ONE

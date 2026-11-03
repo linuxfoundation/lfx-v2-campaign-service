@@ -955,3 +955,21 @@ resolved before the first POST. Neither shape is verified against a live account
 
 `CampaignResult.BidApplied` is false when `createSponsoredCampaign` reused a campaign found by name
 in the group (it now returns `(id, reused, err)`), with a "bid NOT applied to reused campaign" step.
+
+## Campaign name (multi-campaign cs-4)
+
+`buildCampaignName` composes the data pipeline's 8-segment name, `Events | <event> | LinkedIn |
+<Objective> | Prospecting | Static | <project> | MoFU`, checked against `maxNameLen` (255) before
+the first request. Three `CampaignInput` fields, which the dispatcher reads from the CLAIMED row
+(never the request), change it for a labelled or later-slot campaign without adding a segment:
+`StageToken` (ToFU / MoFU / BoFU) replaces the fixed `MoFU`, and `Tactic` and `SlotToken` (`#<n>`
+from slot 2 on) are appended to the Targeting segment (`Prospecting retargeting #2`). All three
+empty composes the legacy name byte for byte. The composed name is also the key
+`createSponsoredCampaign` reuses a campaign by (`findCampaignByNameInGroup`, inside the event's
+campaign group, which every slot shares because the group name carries no token): slot 2's name
+differs from slot 1's, so it never finds slot 1's campaign and never has its creatives created
+under it, while a retry of the same row still finds its own. An over-long labelled name is the
+same `PreflightRefusal` as any over-long name, with zero requests sent. Pinned by
+`TestBuildCampaignName_LabelTokens` and
+`TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest`; see the dispatch concept for the
+dispatcher side.

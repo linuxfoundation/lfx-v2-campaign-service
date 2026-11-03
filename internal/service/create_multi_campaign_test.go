@@ -45,9 +45,9 @@ func TestBriefService_CreateCampaigns_RefusesUnlistedLabelsBeforeAnyJob(t *testi
 		{"over-long tactic", nil, strp(strings.Repeat("prospecting", 30)), "tactic"},
 		{"motion-shaped tactic", nil, strp("content-promotion video"), "tactic"},
 	} {
-		// cs-3: Reddit and Meta accept labels now, so the same refusals must hold on them, still
-		// before any job exists (and so before any upstream call).
-		for _, pl := range []string{"microsoft-ads", "reddit-ads", "meta-ads"} {
+		// cs-3 / cs-4: Reddit, Meta, LinkedIn and X accept labels now, so the same refusals must
+		// hold on them, still before any job exists (and so before any upstream call).
+		for _, pl := range []string{"microsoft-ads", "reddit-ads", "meta-ads", "linkedin-ads", "twitter-ads"} {
 			t.Run(pl+"/"+tc.name, func(t *testing.T) {
 				s, jobs, _ := approvedPaidBriefService(t)
 				_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
@@ -196,23 +196,28 @@ func TestCampaignDoc_CarriesVariantLabelsAndCreatedAt(t *testing.T) {
 	}
 }
 
-// Labels are accepted only where the platform names campaigns by stage (Microsoft, Google, Reddit
-// and Meta today): stored elsewhere, they would mismatch the name that platform composes once it
-// adds the stage.
+// Labels are accepted only where the platform names campaigns by stage (every ad platform since
+// cs-4): stored elsewhere, they would mismatch the name that platform composes once it adds the
+// stage. HubSpot is the one provider left outside, so it carries the refusal.
 func TestBriefService_CreateCampaigns_RefusesLabelsOnPlatformsWithoutStageNames(t *testing.T) {
-	for _, pl := range []string{"linkedin-ads", "twitter-ads"} {
-		s, jobs, _ := approvedPaidBriefService(t)
-		_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
-			ProjectID: "cncf", BriefID: "b1",
-			Input: &briefs.CampaignCreateInput{Platforms: []string{"microsoft-ads", pl}, FunnelStage: strp("top")},
-		})
-		var bad *briefs.BadRequestError
-		if !errors.As(err, &bad) || !strings.Contains(bad.Message, "not supported for "+pl) {
-			t.Errorf("%s: got %T (%v), want a 400 naming the platform", pl, err, err)
-		}
-		if len(jobs.jobs) != 0 {
-			t.Errorf("%s: a job was created for a refused request", pl)
-		}
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-na-2026", Status: model.BriefApproved,
+		DeliveryType: model.DeliveryEmail, Version: 1,
+	}
+	camps := &fakeCampaignRepo{}
+	jobs := newFakeJobRepo()
+	s := NewBriefService(repo, camps, jobs, NewOrchestrator(camps, jobs, nil))
+	_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+		ProjectID: "cncf", BriefID: "b1",
+		Input: &briefs.CampaignCreateInput{Platforms: []string{"hubspot"}, FunnelStage: strp("top")},
+	})
+	var bad *briefs.BadRequestError
+	if !errors.As(err, &bad) || !strings.Contains(bad.Message, "not supported for hubspot") {
+		t.Errorf("got %T (%v), want a 400 naming hubspot", err, err)
+	}
+	if len(jobs.jobs) != 0 {
+		t.Errorf("a job was created for a refused request")
 	}
 }
 
@@ -293,39 +298,51 @@ func TestBriefService_CreateCampaigns_GoogleAcceptsALabelledNewVersion(t *testin
 // and makes the platform's next campaign (slot 2), carrying the labels to the dispatcher.
 func TestBriefService_CreateCampaigns_RedditAndMetaAcceptALabelledNewVersion(t *testing.T) {
 	for _, p := range []model.Provider{model.ProviderRedditAds, model.ProviderMetaAds} {
-		t.Run(string(p), func(t *testing.T) {
-			repo := newFakeBriefRepo()
-			repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
-				ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-na-2026", Status: model.BriefApproved,
-				DeliveryType: model.DeliveryPaidMarketing, Version: 1,
-			}
-			camps := &fakeCampaignRepo{}
-			camps.storeRow(&model.Campaign{
-				ID: "row-1", ProjectID: "cncf", BriefID: "b1", Platform: p,
-				Variant: model.VariantDefault, SlotVersion: 1, PlatformCampaignID: "up-1", Status: "created",
-			})
-			jobs := newFakeJobRepo()
-			disp := &labelRecordingDispatcher{}
-			s := NewBriefService(repo, camps, jobs, NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{p: disp}))
+		t.Run(string(p), func(t *testing.T) { assertLabelledNewVersionAccepted(t, p) })
+	}
+}
 
-			res, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
-				ProjectID: "cncf", BriefID: "b1",
-				Input: &briefs.CampaignCreateInput{
-					Platforms: []string{string(p)}, NewVersion: true,
-					ExpectedSlotVersions: map[string]int{string(p): 1}, FunnelStage: strp("lower"), Tactic: strp("retargeting"),
-				},
-			})
-			if err != nil {
-				t.Fatalf("CreateCampaigns: %v", err)
-			}
-			got := decodeResults(t, waitForTerminal(t, jobs, res.JobID))
-			if len(got) != 1 || got[0].Reused || got[0].SlotVersion != 2 || got[0].FunnelStage != "lower" || got[0].Tactic != "retargeting" {
-				t.Fatalf("result = %+v, want slot 2 created, labelled lower/retargeting", got)
-			}
-			if len(disp.labels) != 1 || disp.labels[0].FunnelStage == nil || *disp.labels[0].FunnelStage != model.FunnelStageLower ||
-				disp.labels[0].Tactic == nil || *disp.labels[0].Tactic != model.TacticRetargeting {
-				t.Fatalf("dispatch labels = %+v, want one dispatch labelled lower/retargeting", disp.labels)
-			}
-		})
+// cs-4: linkedin-ads and twitter-ads join both allowlists the same way.
+func TestBriefService_CreateCampaigns_LinkedInAndXAcceptALabelledNewVersion(t *testing.T) {
+	for _, p := range []model.Provider{model.ProviderLinkedInAds, model.ProviderTwitterAds} {
+		t.Run(string(p), func(t *testing.T) { assertLabelledNewVersionAccepted(t, p) })
+	}
+}
+
+// assertLabelledNewVersionAccepted creates a labelled new_version campaign on p beside a complete
+// slot-1 campaign and asserts slot 2 is created and dispatched with the request's labels.
+func assertLabelledNewVersionAccepted(t *testing.T, p model.Provider) {
+	t.Helper()
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-na-2026", Status: model.BriefApproved,
+		DeliveryType: model.DeliveryPaidMarketing, Version: 1,
+	}
+	camps := &fakeCampaignRepo{}
+	camps.storeRow(&model.Campaign{
+		ID: "row-1", ProjectID: "cncf", BriefID: "b1", Platform: p,
+		Variant: model.VariantDefault, SlotVersion: 1, PlatformCampaignID: "up-1", Status: "created",
+	})
+	jobs := newFakeJobRepo()
+	disp := &labelRecordingDispatcher{}
+	s := NewBriefService(repo, camps, jobs, NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{p: disp}))
+
+	res, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+		ProjectID: "cncf", BriefID: "b1",
+		Input: &briefs.CampaignCreateInput{
+			Platforms: []string{string(p)}, NewVersion: true,
+			ExpectedSlotVersions: map[string]int{string(p): 1}, FunnelStage: strp("lower"), Tactic: strp("retargeting"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaigns: %v", err)
+	}
+	got := decodeResults(t, waitForTerminal(t, jobs, res.JobID))
+	if len(got) != 1 || got[0].Reused || got[0].SlotVersion != 2 || got[0].FunnelStage != "lower" || got[0].Tactic != "retargeting" {
+		t.Fatalf("result = %+v, want slot 2 created, labelled lower/retargeting", got)
+	}
+	if len(disp.labels) != 1 || disp.labels[0].FunnelStage == nil || *disp.labels[0].FunnelStage != model.FunnelStageLower ||
+		disp.labels[0].Tactic == nil || *disp.labels[0].Tactic != model.TacticRetargeting {
+		t.Fatalf("dispatch labels = %+v, want one dispatch labelled lower/retargeting", disp.labels)
 	}
 }

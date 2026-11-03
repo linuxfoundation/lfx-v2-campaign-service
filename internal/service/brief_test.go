@@ -552,23 +552,26 @@ func TestBriefService_CreateCampaigns_RejectsDuplicatePlatforms(t *testing.T) {
 }
 
 // new_version is refused synchronously for any platform that is not on the slot-version
-// allowlist. LinkedIn and X reuse campaigns by name, so a "new" campaign there would be
-// bound to the existing one upstream; the 400 must come before a job exists.
+// allowlist. Since cs-4 every ad platform is on it; HubSpot, which clones an email under the
+// same name, is the one provider left outside, so it carries the refusal. The 400 must come
+// before a job exists.
 func TestBriefService_CreateCampaigns_NewVersionRefusedOutsideTheAllowlist(t *testing.T) {
-	for _, pl := range []string{"linkedin-ads", "twitter-ads"} {
-		repo := newFakeBriefRepo()
-		repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
-			ID: "b1", ProjectID: "cncf", Status: model.BriefApproved, DeliveryType: model.DeliveryPaidMarketing,
-		}
-		s := newTestBriefService(repo)
-		_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
-			ProjectID: "cncf", BriefID: "b1",
-			Input: &briefs.CampaignCreateInput{Platforms: []string{"microsoft-ads", pl}, NewVersion: true},
-		})
-		var bad *briefs.BadRequestError
-		if !errors.As(err, &bad) || !strings.Contains(bad.Message, "new_version is not supported for "+pl) {
-			t.Errorf("%s: expected a 400 naming the platform, got %T (%v)", pl, err, err)
-		}
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", Status: model.BriefApproved, DeliveryType: model.DeliveryEmail,
+	}
+	jobs := newFakeJobRepo()
+	s := NewBriefService(repo, &fakeCampaignRepo{}, jobs, NewOrchestrator(&fakeCampaignRepo{}, jobs, nil))
+	_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+		ProjectID: "cncf", BriefID: "b1",
+		Input: &briefs.CampaignCreateInput{Platforms: []string{"hubspot"}, NewVersion: true},
+	})
+	var bad *briefs.BadRequestError
+	if !errors.As(err, &bad) || !strings.Contains(bad.Message, "new_version is not supported for hubspot") {
+		t.Errorf("expected a 400 naming hubspot, got %T (%v)", err, err)
+	}
+	if len(jobs.jobs) != 0 {
+		t.Errorf("a job was created for a refused request")
 	}
 }
 

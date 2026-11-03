@@ -361,9 +361,41 @@ and Meta with a 400, and composes every Reddit and Meta name in its legacy form 
 
 Rolling forward again needs no data step.
 
+**Rolling back past the LinkedIn and X multi-campaign release (cs-4).** No migration: cs-4 only
+adds `linkedin-ads` and `twitter-ads` to the `new_version` and label allowlists and makes their
+8-segment campaign names carry the claimed row's stage (segment 8), tactic and `#<slot>` token
+(segment 5, after `Prospecting`). The image before it refuses `new_version`, `funnel_stage` and
+`tactic` for LinkedIn and X with a 400, and composes every LinkedIn and X name in its legacy form
+(`Prospecting`, `MoFU`). Both clients REUSE a campaign by that name on create, so the older image
+is more dangerous here than on Reddit or Meta. In order:
+
+1. **Remove `linkedin-ads` and `twitter-ads` from `LFX_CUTOVER_CAMPAIGN_SERVICE_MULTI_CAMPAIGN_PLATFORMS`**
+   (argocd values) and let self-serve roll, so it stops offering a second or labelled LinkedIn or
+   X campaign that the older image would refuse.
+2. **Resolve non-terminal slot ≥2 and labelled LinkedIn and X rows.** The older image would
+   re-dispatch such a row (a cleared stuck claim, a retained partial) under the legacy name. On
+   an UNLABELLED slot ≥2 row that name is slot 1's, so the older client's by-name lookup FINDS
+   slot 1's live campaign and binds slot 2 to it — on LinkedIn it then creates slot 2's creatives
+   under slot 1's campaign, on X a line item and promoted tweet under it. On a LABELLED row (any
+   slot) the legacy name matches no labelled campaign, so it misses the campaign the row already
+   created and creates a duplicate under the legacy name (which, for a labelled slot ≥2 row, can
+   equal slot 1's and be reused as above). List them — `SELECT id, brief_id, platform,
+   slot_version, status, platform_campaign_id FROM campaigns WHERE platform IN ('linkedin-ads',
+   'twitter-ads') AND (slot_version > 1 OR funnel_stage IS NOT NULL OR tactic IS NOT NULL) AND
+   status NOT IN ('created', 'created_degraded', 'deleted')` — and settle each (confirm in the ad
+   account whether a campaign exists under the row's labelled or `#<slot>` name and record it, or
+   delete the row) before the rollback, and do not clear any such claim while rolled back.
+   Completed rows are unaffected: they are read and toggled by id, and a plain retry reuses the
+   slot's LATEST live row rather than recomposing a name.
+3. Then roll the campaign-service image back.
+
+Rolling forward again needs no data step.
+
 Independently of any rollback: before clearing a stuck claim on a labelled Google or Microsoft row,
 confirm in the ad account whether that attempt created a campaign. A later request that re-claims
 the cleared slot carries its OWN labels, so its name differs from the cleared attempt's and the
-platform's duplicate-name refusal no longer catches the repeat.
+platform's duplicate-name refusal no longer catches the repeat. The same holds for a labelled
+LinkedIn or X row, where it is the client's reuse-by-name lookup that no longer finds the cleared
+attempt's campaign.
 
 See [charts/lfx-v2-campaign-service/templates/deployment.yaml](../../../charts/lfx-v2-campaign-service/templates/deployment.yaml).

@@ -403,6 +403,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		hsToken = bf.HSToken
 	}
 
+	stageToken, tacticToken := model.DispatchLabels(ctx).NameTokens()
 	in := linkedin.CampaignInput{
 		EventName:       bf.EventName,
 		RegistrationURL: bf.RegistrationURL,
@@ -419,6 +420,15 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		AdAccountID:      adAccountID,
 		Images:           images,
 		ManualCPCBid:     plan.amount,
+
+		// The name labels of the CLAIMED row (multi-campaign cs-4): its stored funnel stage and
+		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of
+		// that row composes the same name; an unlabelled slot-1 row composes its legacy name
+		// byte for byte; slot 2 on gets a "#<n>" token, so it never shares slot 1's name — and
+		// so the client's by-name reuse lookup never binds it to slot 1's campaign.
+		StageToken: stageToken,
+		Tactic:     tacticToken,
+		SlotToken:  model.SlotNameToken(model.DispatchSlotVersion(ctx)),
 	}
 
 	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), runtime, d.opts...)

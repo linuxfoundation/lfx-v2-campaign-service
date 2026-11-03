@@ -182,19 +182,23 @@ func SlotNameSuffix(base string, slotVersion int) string {
 // ProviderSupportsSlotVersions reports whether a deliberate second campaign on one slot
 // (new_version) is safe to dispatch on p.
 //
-// It is an ALLOWLIST because the hazard is per provider and silent: LinkedIn and X
-// find-or-reuse a campaign by its composed name, and their names do not yet vary by slot
-// version, so slot 2 would be bound to slot 1's live campaign (on LinkedIn, with new creatives
-// pushed onto it); HubSpot clones an email under the same name. Microsoft and Google fold the
-// slot version into their name suffix (SlotNameSuffix) — on Google into the budget and campaign
-// names (and the Search ad group's), so its DUPLICATE_NAME budget reuse and its adoptExisting
-// lookup key on the slot's own names. Reddit and Meta (cs-3) put a "#<n>" slot token in their
-// name's Targeting segment from slot 2 on (SlotNameToken); neither binds a campaign by name on
-// the dispatch path (Reddit never looks one up, and Meta's by-name lookup is gated off). A
-// provider is added here in the same change that makes its upstream name unique per slot version.
+// It is an ALLOWLIST because the hazard is per provider and silent: a provider whose name does
+// not vary by slot version would bind slot 2 to slot 1's live campaign wherever it
+// finds-or-reuses a campaign by name; HubSpot clones an email under the same name. Microsoft and
+// Google fold the slot version into their name suffix (SlotNameSuffix) — on Google into the
+// budget and campaign names (and the Search ad group's), so its DUPLICATE_NAME budget reuse and
+// its adoptExisting lookup key on the slot's own names. Reddit and Meta (cs-3) put a "#<n>" slot
+// token in their name's Targeting segment from slot 2 on (SlotNameToken); neither binds a
+// campaign by name on the dispatch path (Reddit never looks one up, and Meta's by-name lookup is
+// gated off). LinkedIn and X (cs-4) carry the same token, and their by-name reuse lookups
+// (LinkedIn's findCampaignByNameInGroup, X's findCampaignByName, which runs on every create) key
+// on that composed name, so slot 2 never finds slot 1's campaign (nor, on LinkedIn, pushes its
+// creatives onto it). A provider is added here in the same change that makes its upstream name
+// unique per slot version.
 func ProviderSupportsSlotVersions(p Provider) bool {
 	switch p {
-	case ProviderMicrosoftAds, ProviderGoogleAds, ProviderRedditAds, ProviderMetaAds:
+	case ProviderMicrosoftAds, ProviderGoogleAds, ProviderRedditAds, ProviderMetaAds,
+		ProviderLinkedInAds, ProviderTwitterAds:
 		return true
 	}
 	return false
@@ -202,7 +206,7 @@ func ProviderSupportsSlotVersions(p Provider) bool {
 
 // ProviderNamesByStage reports whether p's dispatcher puts a campaign's funnel stage in its
 // upstream name, and so whether a create may label campaigns on p (cs-1). Microsoft (cs-1),
-// Google (cs-2), Reddit and Meta (cs-3) today.
+// Google (cs-2), Reddit and Meta (cs-3), LinkedIn and X (cs-4) today.
 //
 // Labels are refused elsewhere rather than stored silently because a later change will make that
 // platform's name carry the stage: a row labelled BEFORE that change, then re-dispatched after it
@@ -211,16 +215,17 @@ func ProviderSupportsSlotVersions(p Provider) bool {
 // the same change that adds the stage to its name.
 func ProviderNamesByStage(p Provider) bool {
 	switch p {
-	case ProviderMicrosoftAds, ProviderGoogleAds, ProviderRedditAds, ProviderMetaAds:
+	case ProviderMicrosoftAds, ProviderGoogleAds, ProviderRedditAds, ProviderMetaAds,
+		ProviderLinkedInAds, ProviderTwitterAds:
 		return true
 	}
 	return false
 }
 
-// SlotNameToken is the slot-uniqueness token an 8-segment upstream name (Reddit, Meta) appends
-// to its Targeting segment: "" on slot 1, so every existing campaign keeps its exact name, and
-// "#<n>" from slot 2 on. It lives INSIDE an existing segment, never as a new one, because the data
-// pipeline parses a name positionally only when it has exactly 8 segments.
+// SlotNameToken is the slot-uniqueness token an 8-segment upstream name (Reddit, Meta, LinkedIn,
+// X) appends to its Targeting segment: "" on slot 1, so every existing campaign keeps its exact
+// name, and "#<n>" from slot 2 on. It lives INSIDE an existing segment, never as a new one,
+// because the data pipeline parses a name positionally only when it has exactly 8 segments.
 func SlotNameToken(slotVersion int) string {
 	if n := NormalizeSlotVersion(slotVersion); n > FirstSlotVersion {
 		return fmt.Sprintf("#%d", n)

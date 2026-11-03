@@ -1539,3 +1539,21 @@ or parent refuses; a deleted twin is skipped; a twin on page 2 refuses while the
 two pages does not; the explicit-`TweetID` matrix (read failure still promotes, associated
 twice refuses, not yet associated is promoted). Mutation-checked: thirteen mutations of the
 new rules, each killed.
+
+## Campaign name (multi-campaign cs-4)
+
+`buildTwitterCampaignName` composes the data pipeline's 8-segment name, `Events | <event> |
+Global | Awareness | Prospecting | Promoted Post | <project> | MoFU`, checked by
+`validateEntityName` against X's 255-rune limit before the first request (the account verify).
+Three `CampaignInput` fields, which the dispatcher reads from the CLAIMED row (never the request),
+change it for a labelled or later-slot campaign without adding a segment: `StageToken` (ToFU /
+MoFU / BoFU) replaces the fixed `MoFU`, and `Tactic` and `SlotToken` (`#<n>` from slot 2 on) are
+appended to the Targeting segment (`Prospecting retargeting #2`). All three empty composes the
+legacy name byte for byte. The composed name is also the key `findCampaignByName` reuses a
+campaign by on EVERY create: slot 2's name differs from slot 1's, so it never finds slot 1's
+campaign; its line item is then created (and looked up by name) under slot 2's own campaign, and
+the promoted tweet attaches to that line item. The line-item name carries no token: it is scoped
+by its campaign. An over-long labelled name is the same `PreflightRefusal` as any over-long name,
+with zero requests sent. Pinned by `TestBuildTwitterCampaignName_LabelTokens` and
+`TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest`; see the dispatch concept for the
+dispatcher side.

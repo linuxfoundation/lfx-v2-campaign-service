@@ -261,6 +261,24 @@ type CampaignInput struct {
 	// Images holds the stored image for every ImageAssetID a variant names, keyed by that
 	// id. Each distinct key is uploaded ONCE per CreateCampaign however many variants share it.
 	Images map[string]ImageUpload
+	// StageToken, Tactic and SlotToken name a LABELLED or later-slot campaign (multi-campaign
+	// cs-4). The dispatcher reads all three from the CLAIMED campaign row (its stored labels and
+	// slot version), never from a request, so a retry composes the same name. All empty — every
+	// campaign before cs-4, and any unlabelled slot-1 campaign — composes the legacy name byte for
+	// byte (buildCampaignName):
+	//   - StageToken (ToFU, MoFU or BoFU) replaces the fixed "MoFU" in the Funnel Stage segment;
+	//   - Tactic (a model.Tactic name token) is appended to the Targeting segment ("Prospecting
+	//     retargeting");
+	//   - SlotToken ("#2" from slot 2 on, model.SlotNameToken) is appended to the Targeting
+	//     segment too, so a second campaign's name differs from the first's while the name keeps
+	//     exactly the 8 segments the data pipeline parses.
+	//
+	// The composed name is also the key findCampaignByNameInGroup reuses a campaign by, so a
+	// slot-2 campaign never finds slot 1's (and never has its creatives pushed onto it). The
+	// campaign GROUP name carries none of them: every slot of an event shares one group.
+	StageToken string
+	Tactic     string
+	SlotToken  string
 }
 
 // CampaignResult is the outcome of CreateCampaign. Mirrors
@@ -2120,6 +2138,34 @@ func isValidPostURN(raw string) bool {
 	return postURNRe.MatchString(raw)
 }
 
+// buildCampaignName composes the 8-segment campaign name the data pipeline parses positionally:
+// Program | Event | Region | Objective | Targeting | Ad Format | Project | Funnel. eventName and
+// project arrive trimmed and pipe-stripped from CreateCampaign.
+//
+// An unlabelled slot-1 input (no StageToken, Tactic or SlotToken) composes the legacy name byte
+// for byte — Targeting "Prospecting", Funnel "MoFU". A labelled or later-slot input changes only
+// the Targeting segment (tactic and slot token appended) and the Funnel segment (the stage
+// token); the label and slot never become a segment of their own, and never touch the Event (2)
+// or Project (7) segments the pipeline joins on.
+func buildCampaignName(eventName, nameObjective, project string, in CampaignInput) string {
+	funnel := "MoFU"
+	if st := nameToken(in.StageToken); st != "" {
+		funnel = st
+	}
+	targeting := "Prospecting"
+	for _, p := range []string{in.Tactic, in.SlotToken} {
+		if p = nameToken(p); p != "" {
+			targeting += " " + p
+		}
+	}
+	return fmt.Sprintf("Events | %s | LinkedIn | %s | %s | Static | %s | %s", eventName, nameObjective, targeting, project, funnel)
+}
+
+// nameToken trims and pipe-strips one label token, so it can never add a name segment.
+func nameToken(s string) string {
+	return strings.TrimSpace(strings.ReplaceAll(s, "|", "-"))
+}
+
 // createCreative creates a DRAFT creative referencing a share URN and returns
 // its ID. Mirrors createCreative().
 //
@@ -2658,7 +2704,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// WEBSITE_CONVERSION campaign — the name every campaign had before — and "Traffic" for an
 	// automatic WEBSITE_VISIT one, so the two never share a name and a retry of one can never
 	// find and reuse the other (findCampaignByNameInGroup also refuses an objective mismatch).
-	campaignName := fmt.Sprintf("Events | %s | LinkedIn | %s | Prospecting | Static | %s | MoFU", eventName, bidding.nameObjective, project)
+	//
+	// The stage, tactic and slot tokens (multi-campaign cs-4) come from the claimed row; see
+	// buildCampaignName. The 255-character check below covers the labelled name too, before any
+	// request.
+	campaignName := buildCampaignName(eventName, bidding.nameObjective, project, in)
 	// LinkedIn limits campaign-group and campaign names to 255 characters. Validate
 	// both generated names before the first create so an over-long event name/project
 	// fails fast instead of after the group is created.
