@@ -757,7 +757,9 @@ func TestValidateCPCBid_CeilingClearsLowUnitCurrencies(t *testing.T) {
 // TestPreflightRefusesSearchOnlyTargetingOffSearch pins the three campaign-level
 // fences that refuse rather than drop: negative keywords, the CPC bid, and the
 // positive keyword/audience criteria. All three are attached only on the Search
-// cascade, so every other channel would have validated them and thrown them away.
+// cascade, so every other channel would have validated them and thrown them away —
+// except audience segments on Display, which that cascade attaches since #462 and
+// which the table therefore skips there (display_targeting_test.go covers it).
 //
 // Written as one table over every non-Search kind on purpose: the fences are
 // spelled `!= campaignKindSearch` precisely so the next channel added inherits
@@ -793,6 +795,9 @@ func TestPreflightRefusesSearchOnlyTargetingOffSearch(t *testing.T) {
 
 	for _, kind := range []string{campaignKindDemandGen, campaignKindPerformanceMax, campaignKindVideo, campaignKindDisplay} {
 		for name, tc := range cases {
+			if kind == campaignKindDisplay && name == "audience segments" {
+				continue
+			}
 			t.Run(kind+"/"+name, func(t *testing.T) {
 				in := demandGenInput()
 				if kind == campaignKindPerformanceMax {

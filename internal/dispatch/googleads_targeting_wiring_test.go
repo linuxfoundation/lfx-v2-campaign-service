@@ -19,6 +19,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -1082,16 +1083,18 @@ func TestGoogleAds_DemandGenAudienceGate(t *testing.T) {
 	cases := []struct {
 		name, env, cfg string
 	}{
-		{"unset", "", valid},
+		{"unset", unsetEnv, valid},
+		{"empty", "", valid},
 		{"false", "false", valid},
 		{"wrong case", "TRUE", valid},
+		{"leading space", " true", valid},
 		{"one", "1", valid},
 		{"blank audience", "", `"channel":"demand-gen","demandGenAudience":"  "`},
 		{"off demand gen", "", `"demandGenAudience":"customers/1234567890/audiences/4242"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(constants.EnvGoogleAdsDemandGenAudienceEnabled, tc.env)
+			setGateEnv(t, constants.EnvGoogleAdsDemandGenAudienceEnabled, tc.env)
 			opts, cap := targetingServers(t)
 			d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 			cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,` + tc.cfg + `}}`)
@@ -1105,6 +1108,12 @@ func TestGoogleAds_DemandGenAudienceGate(t *testing.T) {
 			var pce *preCreateError
 			if !errors.As(err, &pce) {
 				t.Errorf("error = %v, want a not-created error so the claim is released", err)
+			}
+			// The async job copies only a PreflightRefusal verbatim; anything else is the
+			// generic "platform campaign creation failed", which hides the fix.
+			got := service.DispatchFailureMessage(model.ProviderGoogleAds, err, true)
+			if got != err.Error() {
+				t.Errorf("job message = %q, want the gate's own sentence %q", got, err.Error())
 			}
 			if camp != nil {
 				t.Errorf("nothing may be created for a refused input, got %+v", camp)

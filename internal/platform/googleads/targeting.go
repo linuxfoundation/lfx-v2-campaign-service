@@ -103,8 +103,9 @@ type userListInfo struct {
 // customAudiences resource name before any mutate is built — Custom Audiences
 // are not supported on SEARCH campaigns. The Display cascade also sends this
 // payload, but only for its income and parental-status exclusions, never an
-// audience. Carrying the field would make the payload advertise a targeting
-// shape this client can never populate.
+// audience: Display's audience criteria, custom audiences included, use
+// displayAudienceCriterionCreate (display_targeting.go). Carrying the field here
+// would make the payload advertise a targeting shape it can never populate.
 type adGroupCriterionCreate struct {
 	AdGroup        string              `json:"adGroup"`
 	Status         string              `json:"status,omitempty"`
@@ -340,9 +341,12 @@ type campaignNegativeKeywordCreate struct {
 // validateAudienceSegments trims/validates each caller-supplied audience
 // resource name and de-duplicates. Returns (nil, nil) for an empty input.
 // An unrecognized resource-name shape is a hard error — see
-// audienceCriterionField. This client creates only SEARCH campaigns, which
-// do not support Custom Audiences (Google limits them to Display, Demand Gen,
-// Gmail, Video, and Performance Max); only userLists are accepted.
+// audienceCriterionField. It judges the SEARCH ad group's segments, and those
+// sent to any other non-Display channel, where the preflight's fence then
+// refuses them. Search does not support Custom Audiences (Google limits them to
+// Display, Demand Gen, Gmail, Video, and Performance Max), so only userLists are
+// accepted. Display's lists are judged by validateDisplayAudienceList instead,
+// which also checks the account.
 func validateAudienceSegments(segments []string) ([]string, error) {
 	if len(segments) == 0 {
 		return nil, nil
@@ -361,10 +365,11 @@ func validateAudienceSegments(segments []string) ([]string, error) {
 		if !ok {
 			return nil, fmt.Errorf("google-ads: audience segment %q is not a recognized resource name (want a .../userLists/{id} Customer Match user-list resource name)", s)
 		}
-		// Reject customAudiences: this client only creates SEARCH campaigns,
-		// which do not support Custom Audiences per Google's documentation.
+		// Reject customAudiences: SEARCH campaigns do not support Custom Audiences
+		// per Google's documentation. A Display campaign takes them, in its own
+		// CustomAudiences list.
 		if field == "customAudience" {
-			return nil, fmt.Errorf("google-ads: custom audiences are not supported for SEARCH campaigns; only userLists are accepted")
+			return nil, fmt.Errorf("google-ads: custom audiences are not supported for SEARCH campaigns; only userLists are accepted (a Display campaign takes custom audiences in CustomAudiences)")
 		}
 		if _, dup := seen[s]; dup {
 			continue

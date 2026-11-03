@@ -473,5 +473,10 @@ func TestDisplayClosingStep(t *testing.T) {
 		if strings.Contains(got, "no geo targeting") != tc.wantNoGeo {
 			t.Errorf("displayClosingStep(%v,%v) = %q, geo mismatch", tc.hasGeo, tc.hasAd, got)
 		}
+		// The remedy names GEO targeting: since #462 a campaign with no geo may still carry
+		// audiences and placement exclusions, so a bare "add targeting" would be false.
+		if strings.Contains(got, "add geo targeting") != tc.wantNoGeo {
+			t.Errorf("displayClosingStep(%v,%v) = %q, want the remedy to name geo targeting exactly when geo is missing", tc.hasGeo, tc.hasAd, got)
+		}
 	}
 }

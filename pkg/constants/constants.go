@@ -150,6 +150,20 @@ const (
 	// an Audience to the calling foundation; that fix removes this gate and this constant.
 	EnvGoogleAdsDemandGenAudienceEnabled = "GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED"
 
+	// EnvGoogleAdsDisplayAudiencesEnabled opts a deployment IN to the Display audience lists
+	// that name an ACCOUNT-OWNED segment (#462): googleAdsConfig.audienceSegments on the
+	// "display" channel, customAudiences and customAffinities. Only the exact value "true"
+	// enables them; unset or any other value fails closed, and a create naming one is refused
+	// before anything upstream exists.
+	//
+	// Default-off for the reason EnvGoogleAdsDemandGenAudienceEnabled is (#468): the only
+	// ownership check is ACCOUNT-scoped, so on the shared LF Google Ads customer a project could
+	// target with another foundation's user list or custom segment. userInterests (Google's own
+	// affinity and in-market categories) and excludedPlacements (public domains) name nothing a
+	// foundation owns and are not gated. Keep it off until this service can scope a segment to
+	// the calling foundation; that fix removes this gate and this constant.
+	EnvGoogleAdsDisplayAudiencesEnabled = "GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any

@@ -95,9 +95,9 @@ type videoAdGroupCreate struct {
 // CreateVideoCampaign creates a PAUSED Video (YouTube) campaign: budget → campaign →
 // campaign-level geo → campaign-level criteria → ad group → video assets → ad.
 //
-// Seven steps, the longest cascade in this package, because Video is the only channel
-// that has BOTH campaign-level criteria (like Search and Performance Max) AND an ad
-// group with an ad under it (like Search and Demand Gen). Performance Max has the
+// Seven steps; Display's cascade is longer (see display.go). Video has BOTH
+// campaign-level criteria (like Search and Performance Max) AND an ad group with an ad
+// under it (like Search and Demand Gen), as Display does. Performance Max has the
 // first half and an asset group; Demand Gen has the second half with its geo on the
 // ad group. This channel is the union.
 //
