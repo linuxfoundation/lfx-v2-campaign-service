@@ -95,6 +95,14 @@ type CampaignInput struct {
 	// descriptions), so a caller may leave these nil.
 	Headlines    []string
 	Descriptions []string
+	// Path1/Path2 are the responsive search ad's display paths (#473), the segments Google
+	// renders after the final URL's domain ("example.com/kubecon"). Optional, each at most 15
+	// of Google's display-width units, path2 only with path1 — see validateSearchAdPaths.
+	// They go on the campaign-level ad, and on every AdSpec that sets neither path. SEARCH
+	// ONLY: refused on every other channel (Performance Max takes its own in
+	// PerformanceMaxCreative.Path1/Path2).
+	Path1 string
+	Path2 string
 	// Budget is the campaign daily budget in whole units of the ad ACCOUNT's
 	// currency. IMPORTANT: this is NOT a USD amount and the client performs NO
 	// foreign-exchange conversion — Google interprets the resulting amountMicros in
@@ -140,8 +148,9 @@ type CampaignInput struct {
 	//
 	// Campaign level rather than ad group, deliberately — an exclusion expresses
 	// intent for the whole campaign and must keep applying to an ad group a human
-	// adds later in the UI. SEARCH only, and REFUSED on EVERY non-Search channel
-	// rather than ignored — see the guard in preflightCampaignKind.
+	// adds later in the UI. An exclusion meant for one theme only goes in that group's
+	// AdGroupSpec.NegativeKeywords instead (#473). SEARCH only, and REFUSED on EVERY
+	// non-Search channel rather than ignored — see the guard in preflightCampaignKind.
 	//
 	// Keywords and AudienceSegments were once accepted-and-ignored off Search and are
 	// now refused on the same terms, so the contrast this comment used to draw between
@@ -278,6 +287,14 @@ type CampaignInput struct {
 	// shape at campaign level, not a narrowing — see campaign_criteria.go.
 	ExcludedAgeRanges []string
 	ExcludedGenders   []string
+	// ExcludedIncomeRanges and ExcludedParentalStatuses are demographic EXCLUSIONS too
+	// (#473), but attached as negative AD GROUP criteria on every ad group the cascade
+	// creates — the level the validateOnly probes verified. Income ranges are taken on
+	// Search and Display; parental status on Display only, because Google refuses it on a
+	// Search ad group. Both are refused on every other channel. See
+	// validateAdGroupDemographicExclusions.
+	ExcludedIncomeRanges     []string
+	ExcludedParentalStatuses []string
 	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions.
 	// All optional, all SEARCH ONLY (refused at preflight on Demand Gen), and all
 	// created as account-level assets that are then linked to the campaign — see
@@ -388,6 +405,11 @@ type AdGroupResult struct {
 	// documents: none asked for, the mutate failed, or it was unconfirmed.
 	KeywordCriteriaIDs  []string `json:"keywordCriteriaIds,omitempty"`
 	AudienceCriteriaIDs []string `json:"audienceCriteriaIds,omitempty"`
+	// NegativeKeywordCriteriaIDs are this group's own negative keyword criteria
+	// (AdGroupSpec.NegativeKeywords) and DemographicCriteriaIDs its income/parental
+	// exclusions, with the same three-way ambiguity on empty (#473).
+	NegativeKeywordCriteriaIDs []string `json:"negativeKeywordCriteriaIds,omitempty"`
+	DemographicCriteriaIDs     []string `json:"demographicCriteriaIds,omitempty"`
 }
 
 // CampaignResult reports what CreateCampaign created. The Google Ads hierarchy is
@@ -481,6 +503,13 @@ type CampaignResult struct {
 	// Always campaignCriterion ids: these exist on the Search path only, since
 	// validateCriteriaPlan refuses them on Demand Gen.
 	TargetingCriterionIDs []string `json:"targetingCriterionIds,omitempty"`
+	// AdGroupDemographicCriteriaIDs are the income-range and parental-status exclusions
+	// (#473). They are adGroupCriterion ids, not campaignCriterion ids like the age and
+	// gender exclusions above, because they attach to the ad group. On a Display campaign
+	// they belong to its one ad group; on a Search campaign they are the FIRST group's, as
+	// KeywordCriteriaIDs are, with each group's own in AdGroups. Empty is ambiguous in the
+	// three ways GeoCriterionIDs documents, and the returned ERROR tells them apart.
+	AdGroupDemographicCriteriaIDs []string `json:"adGroupDemographicCriteriaIds,omitempty"`
 	// ExtensionAssetIDs are the sitelink/callout/structured-snippet ASSETS created
 	// for this campaign, in that order; ExtensionLinkIDs are the asset ids Google
 	// confirmed LINKED to the campaign.
@@ -906,6 +935,11 @@ type campaignPreflight struct {
 	// out-of-range bid modifier must fail before anything is paid for. See
 	// validateCriteriaPlan.
 	criteria criteriaPlan
+	// adGroupDemographics are the income-range and parental-status exclusions, resolved
+	// here for the same reason and attached to every ad group the cascade creates — on
+	// Search through each adGroups entry, on Display directly. See
+	// validateAdGroupDemographicExclusions.
+	adGroupDemographics adGroupDemographicPlan
 	// assets are the validated ad extensions — sitelinks, callouts and structured
 	// snippets — resolved here for the same reason the criteria are: an over-long
 	// callout or a sitelink with no destination must fail before anything is paid
@@ -1071,8 +1105,11 @@ func (c *Client) ValidateCampaignInput(in CampaignInput) error {
 // languages and ad schedules at the campaign level like Search. Video refuses the
 // narrowest set of the four — the Search-only targeting fields (keywords, audience
 // segments, the CPC bid, negative keywords, the extension assets and the ad-group
-// list) and nothing else, because it carries its location and its other campaign
-// criteria at the campaign level exactly as Search does. So a Demand Gen request
+// list) — because it carries its location and its other campaign criteria at the
+// campaign level exactly as Search does. The ad-group income and parental-status
+// exclusions (#473) cut across all of this: every channel but Search and Display refuses
+// income ranges, and every channel but Display refuses parental status, Search included.
+// So a Demand Gen request
 // carrying one of those validates clean as Search and is then refused by
 // CreateDemandGenCampaign. On the create path
 // that is merely a late error; on the ADOPTION path, which returns before any create
@@ -1208,6 +1245,14 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err := validateEntityName("campaign", campaignName, utf8.RuneCountInString(campaignName), maxCampaignNameRunes, "characters"); err != nil {
 		return nil, err
 	}
+	// Responsive search ad display paths (#473) are refused off Search, as every Search-only
+	// field is: only the Search cascade builds a responsive search ad. Refused here, before
+	// precomputeAdGroupAdInputs validates them, so an off-Search caller hears about the
+	// channel rather than a path length. Checked on the trimmed value, which is what
+	// validateSearchAdPaths treats as unset.
+	if (strings.TrimSpace(in.Path1) != "" || strings.TrimSpace(in.Path2) != "") && kind != campaignKindSearch {
+		return nil, fmt.Errorf("google-ads: responsive search ad display paths are not supported on %s (only the Search cascade builds a responsive search ad; Performance Max takes its own in PerformanceMaxCreative.Path1/Path2); omit Path1 and Path2, or create a Search campaign", kind)
+	}
 	// Validate the ad-group/ad inputs (destination URL, ad copy, ad-group name,
 	// keywords/audience segments) BEFORE the first (budget) mutate: a failure
 	// here is purely local input validation, and surfacing it only after the
@@ -1237,6 +1282,10 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		return nil, err
 	}
 	criteria, err := validateCriteriaPlan(kind, in)
+	if err != nil {
+		return nil, err
+	}
+	adGroupDemographics, err := validateAdGroupDemographicExclusions(kind, in)
 	if err != nil {
 		return nil, err
 	}
@@ -1373,29 +1422,35 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	// The income/parental exclusions apply to every ad group, so each plan carries them
+	// into its own criteria mutate.
+	for i := range adGroups {
+		adGroups[i].demographics = adGroupDemographics
+	}
 	return &campaignPreflight{
-		amountMicros:     amountMicros,
-		budgetName:       budgetName,
-		campaignName:     campaignName,
-		finalURL:         finalURL,
-		adGroupName:      adGroupName,
-		headlines:        ad.headlines,
-		descriptions:     ad.descriptions,
-		keywords:         keywords,
-		audienceSegments: audienceSegments,
-		geo:              geo,
-		criteria:         criteria,
-		assets:           assets,
-		creative:         creative,
-		pmax:             pmax,
-		video:            video,
-		display:          display,
-		adGroups:         adGroups,
-		negativeKeywords: negativeKeywords,
-		cpcBidMicros:     cpcBidMicros,
-		bidding:          bidding,
-		startDateTime:    startDateTime,
-		endDateTime:      endDateTime,
+		amountMicros:        amountMicros,
+		budgetName:          budgetName,
+		campaignName:        campaignName,
+		finalURL:            finalURL,
+		adGroupName:         adGroupName,
+		headlines:           ad.headlines,
+		descriptions:        ad.descriptions,
+		keywords:            keywords,
+		audienceSegments:    audienceSegments,
+		geo:                 geo,
+		criteria:            criteria,
+		adGroupDemographics: adGroupDemographics,
+		assets:              assets,
+		creative:            creative,
+		pmax:                pmax,
+		video:               video,
+		display:             display,
+		adGroups:            adGroups,
+		negativeKeywords:    negativeKeywords,
+		cpcBidMicros:        cpcBidMicros,
+		bidding:             bidding,
+		startDateTime:       startDateTime,
+		endDateTime:         endDateTime,
 	}, nil
 }
 

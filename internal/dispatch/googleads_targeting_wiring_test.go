@@ -37,6 +37,7 @@ type targetingCapture struct {
 	campaignCriteria [][]byte
 	adGroups         [][]byte
 	adGroupAds       [][]byte
+	adGroupCriteria  [][]byte
 	assets           []byte
 	campaignAssets   []byte
 	sawBudget        bool
@@ -116,6 +117,7 @@ func targetingServers(t *testing.T) ([]googleads.Option, *targetingCapture) {
 			}
 			_, _ = io.WriteString(w, out)
 		case strings.HasSuffix(r.URL.Path, "adGroupCriteria:mutate"):
+			cap.add(&cap.adGroupCriteria, body)
 			out, err := adGroupCriteriaResults(body)
 			if err != nil {
 				t.Errorf("decode adGroupCriteria request: %v", err)

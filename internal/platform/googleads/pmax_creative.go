@@ -94,6 +94,11 @@ const (
 	// maxDisplayPathRunes is Google's documented limit for each of the two display-path
 	// segments that render after the domain in a Performance Max ad.
 	maxDisplayPathRunes = 15
+
+	// displayPathForbiddenChars are the characters validateDisplayPath refuses in a
+	// display-path segment. Shared with the responsive search ad paths
+	// (validateSearchAdPath), so the two channels refuse the same text.
+	displayPathForbiddenChars = "/?#&= \t\n"
 )
 
 // Asset field types, as AssetFieldTypeEnum names them. Written out rather than derived
@@ -393,7 +398,7 @@ func validateDisplayPath(label, raw string) (string, error) {
 	if n := utf8.RuneCountInString(p); n > maxDisplayPathRunes {
 		return "", fmt.Errorf("google-ads Performance Max display %s %q is %d characters, exceeding the %d limit", label, capForError(p), n, maxDisplayPathRunes)
 	}
-	if strings.ContainsAny(p, "/?#&= \t\n") {
+	if strings.ContainsAny(p, displayPathForbiddenChars) {
 		return "", fmt.Errorf("google-ads Performance Max display %s %q contains a character Google does not accept in a display path (no slashes, spaces or URL punctuation)", label, capForError(p))
 	}
 	return p, nil

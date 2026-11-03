@@ -841,6 +841,17 @@ descriptions?: string[]         — Optional Responsive Search Ad descriptions (
                                   therefore fits 15 headline / 45 description characters, not
                                   30 / 90, and anything wider is refused. Latin text is
                                   unaffected — one character, one unit.
+path1?: string                  — OPTIONAL Responsive Search Ad display paths (#473): the segments
+path2?: string                    shown after the final URL's domain, as in `example.com/kubecon`.
+                                  Each is ≤15 WEIGHTED chars (the headline counting above; a
+                                  validateOnly probe on 2026-11-03 accepted 15 and refused 16 with
+                                  `TOO_LONG`) and may not contain a slash, a space or `?#&=` — the
+                                  same characters `performanceMaxCreative` paths refuse. `path2`
+                                  without `path1` is refused: Google shows `path2` only after
+                                  `path1`. They go on the campaign-level ad and on every
+                                  `adGroups[].ads[]` entry that sets neither path. Each ad's path is
+                                  reported in the steps ("Ad display path: /kubecon"). SEARCH ONLY,
+                                  REFUSED on every other `channel` before any request.
 keywords?: {text, matchType}[]  — OPTIONAL positive Search keyword criteria (GA-4), attached to the
                                   ad group created above. `text` ≤80 runes; `matchType` one of EXACT,
                                   PHRASE, BROAD (case-insensitive). At most 20 entries; duplicates
@@ -1276,6 +1287,32 @@ excludedGenders?: string[]        campaign criteria. Age ranges are 18-24, 25-34
                                   REFUSED rather than ignored on `demand-gen` AND on
                                   `performance-max`; ACCEPTED on `video` and `display`; see `languages`
                                   for why.
+excludedIncomeRanges?:          — OPTIONAL demographic EXCLUSIONS (#473), attached as negative AD
+  string[]                        GROUP criteria on every ad group the campaign gets — not campaign
+excludedParentalStatuses?:        criteria like the two above, because the ad group is the level the
+  string[]                        2026-11-03 validateOnly probes verified. Income ranges are Google's
+                                  `IncomeRangeType` enum: INCOME_RANGE_0_50, INCOME_RANGE_50_60,
+                                  INCOME_RANGE_60_70, INCOME_RANGE_70_80, INCOME_RANGE_80_90,
+                                  INCOME_RANGE_90_UP or INCOME_RANGE_UNDETERMINED (bare UNDETERMINED is
+                                  accepted too); the numbers are household-income percentiles, not
+                                  amounts. Parental statuses are PARENT, NOT_A_PARENT or UNDETERMINED.
+                                  Case-insensitive, deduped, at most 20 entries each.
+
+                                  `excludedIncomeRanges` is accepted on `search` and `display`.
+                                  `excludedParentalStatuses` is accepted on `display` ONLY: Google
+                                  refuses a parental-status criterion on a Search ad group
+                                  (`OPERATION_NOT_PERMITTED_FOR_CONTEXT`), so `search` refuses it
+                                  before any request. Both are REFUSED on every other `channel`.
+
+                                  On `search` they ride in each ad group's criteria mutate with its
+                                  keywords; on `display` they are one mutate after the ad group is
+                                  created. Their ids are in the result's
+                                  `adGroupDemographicCriteriaIds` (and per group in
+                                  `adGroups[].demographicCriteriaIds`).
+
+                                  There is no positive (observation) demographic field, deliberately:
+                                  under automated bidding Google ignores the bid modifiers an
+                                  observation criterion exists to carry.
 sitelinks?:                     — OPTIONAL sitelink extensions (LFXV2-2665): extra links shown under the
   {text, description1?,           ad. `text` ≤25 runes, required and unique within the list.
    description2?, finalUrl}       `description1`/`description2` are ≤35 runes each and ALL-OR-NOTHING —
@@ -1396,14 +1433,22 @@ leadForms?:                     — OPTIONAL lead form (LFXV2-2665). The one ext
 adGroups?:                      — OPTIONAL multiple themed ad groups (LFXV2-2665), each with its own
   {name, cpcBid?, keywords?,      keywords and up to 3 Responsive Search Ads. SEARCH ONLY and REFUSED on
    audienceSegments?,             every other `channel`: Demand Gen creates its own single ad group,
-   ads?: {headlines?,             and Performance Max has no ad groups at all. At most 20 groups, at
-          descriptions?}[]}[]     most 3 ads per group.
+   negativeKeywords?,             and Performance Max has no ad groups at all. At most 20 groups, at
+   ads?: {headlines?,             most 3 ads per group.
+          descriptions?,
+          path1?, path2?}[]}[]    `negativeKeywords` (#473) are the group's OWN exclusions, attached as
+                                  negative ad-group criteria in the same mutate as its keywords. They
+                                  are added beside the campaign-level `negativeKeywords`, never
+                                  inherited from them, and follow the same `text`/`matchType` rules
+                                  and 60-entry cap. An ad's `path1`/`path2` follow the campaign-level
+                                  rules above; an ad that sets neither takes the campaign-level pair.
                                   `name` is REQUIRED per group and is a THEME LABEL, not the full name:
                                   the created ad group is named `<composed campaign name> | <label>`.
                                   Names must be distinct case-insensitively — Google rejects duplicates
                                   at the mutate, by which point the earlier groups already exist.
 
-                                  Every other key is a PER-FIELD override of the campaign-level value,
+                                  Every other key except `negativeKeywords` is a PER-FIELD override of
+                                  the campaign-level value,
                                   and inheritance is per field rather than all-or-nothing: a group that
                                   sets only `keywords` keeps the campaign's `cpcBid`, audiences and ad
                                   copy. Omitting a key inherits; `cpcBid: 0` also inherits, since 0

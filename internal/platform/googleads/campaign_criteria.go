@@ -31,6 +31,10 @@ import (
 // locally is free; discovering it after a paid campaign exists is not, and
 // silently dropping the caller's intent is the defect LFXV2-3283 already fixed
 // once for countries. Lift this per criterion as each is confirmed live.
+//
+// The income-range and parental-status exclusions at the end of this file (#473) are
+// the exception: they are AD GROUP criteria with their own channel fence — see
+// validateAdGroupDemographicExclusions.
 // ---------------------------------------------------------------------------
 
 // languageConstants maps an ISO 639-1 language code to its Google Ads language
@@ -650,6 +654,132 @@ func validateExcludedGenders(genders []string) ([]genderInfo, error) {
 		out = append(out, genderInfo{Type: entry})
 	}
 	return out, nil
+}
+
+// incomeRangeTypes maps the spellings a caller may write to Google's IncomeRangeTypeEnum
+// (google/ads/googleads/v23/enums/income_range_type.proto). The enum names are percentile
+// buckets of household income, not currency amounts, so no friendly "50-60" spelling is
+// offered: it would read as dollars. Bare UNDETERMINED is accepted beside the enum name,
+// as ageRangeTypes accepts it.
+var incomeRangeTypes = map[string]string{
+	"INCOME_RANGE_0_50":  "INCOME_RANGE_0_50",
+	"INCOME_RANGE_50_60": "INCOME_RANGE_50_60",
+	"INCOME_RANGE_60_70": "INCOME_RANGE_60_70",
+	"INCOME_RANGE_70_80": "INCOME_RANGE_70_80",
+	"INCOME_RANGE_80_90": "INCOME_RANGE_80_90",
+	"INCOME_RANGE_90_UP": "INCOME_RANGE_90_UP",
+	"UNDETERMINED":       "INCOME_RANGE_UNDETERMINED", "INCOME_RANGE_UNDETERMINED": "INCOME_RANGE_UNDETERMINED",
+}
+
+// parentalStatusTypes is Google's ParentalStatusTypeEnum
+// (google/ads/googleads/v23/enums/parental_status_type.proto), whose names are already
+// what a caller would write.
+var parentalStatusTypes = map[string]string{
+	"PARENT": "PARENT", "NOT_A_PARENT": "NOT_A_PARENT", "UNDETERMINED": "UNDETERMINED",
+}
+
+type incomeRangeInfo struct {
+	Type string `json:"type"`
+}
+
+type parentalStatusInfo struct {
+	Type string `json:"type"`
+}
+
+// adGroupDemographicPlan is the resolved income-range and parental-status EXCLUSION intent
+// (#473). Unlike the age and gender exclusions above, these are AD GROUP criteria: each
+// was verified by a validateOnly probe on 2026-11-03 as a negative adGroupCriterion, and
+// nothing was probed at the campaign level, so the cascade attaches them to every ad group
+// it creates rather than to the campaign.
+type adGroupDemographicPlan struct {
+	incomeRanges     []incomeRangeInfo
+	parentalStatuses []parentalStatusInfo
+}
+
+func (p adGroupDemographicPlan) empty() bool { return p.count() == 0 }
+
+func (p adGroupDemographicPlan) count() int {
+	return len(p.incomeRanges) + len(p.parentalStatuses)
+}
+
+// validateAdGroupDemographicExclusions resolves ExcludedIncomeRanges and
+// ExcludedParentalStatuses for the given campaign KIND. Called from preflightCampaignKind,
+// so a refusal costs nothing upstream.
+//
+// The channel fence is exactly what the 2026-11-03 validateOnly probes established, and
+// no wider. An income exclusion was accepted on a Search ad group and on a Display ad
+// group. A parental-status exclusion was accepted on a Display ad group and REFUSED on a
+// Search ad group with OPERATION_NOT_PERMITTED_FOR_CONTEXT, so Search refuses it here,
+// before the budget, rather than at the criteria mutate after the campaign exists. Demand
+// Gen and Video build ad groups this client did not probe, and Performance Max has none,
+// so all three refuse both lists.
+func validateAdGroupDemographicExclusions(kind string, in CampaignInput) (adGroupDemographicPlan, error) {
+	if len(in.ExcludedIncomeRanges) > 0 && kind != campaignKindSearch && kind != campaignKindDisplay {
+		return adGroupDemographicPlan{}, fmt.Errorf("google-ads: income-range exclusions are not supported on %s (this client attaches them as ad-group criteria on the Search and Display cascades only); omit ExcludedIncomeRanges, or create a Search or Display campaign to exclude income ranges", kind)
+	}
+	if len(in.ExcludedParentalStatuses) > 0 && kind == campaignKindSearch {
+		return adGroupDemographicPlan{}, fmt.Errorf("google-ads: parental-status exclusions are not supported on %s (Google refuses a parental-status criterion on a Search ad group with OPERATION_NOT_PERMITTED_FOR_CONTEXT); omit ExcludedParentalStatuses, or create a Display campaign to exclude parental status", kind)
+	}
+	if len(in.ExcludedParentalStatuses) > 0 && kind != campaignKindDisplay {
+		return adGroupDemographicPlan{}, fmt.Errorf("google-ads: parental-status exclusions are not supported on %s (this client attaches them as an ad-group criterion on the Display cascade only); omit ExcludedParentalStatuses, or create a Display campaign to exclude parental status", kind)
+	}
+	incomes, err := validateEnumExclusions("excluded income range", in.ExcludedIncomeRanges, incomeRangeTypes,
+		"INCOME_RANGE_0_50, INCOME_RANGE_50_60, INCOME_RANGE_60_70, INCOME_RANGE_70_80, INCOME_RANGE_80_90, INCOME_RANGE_90_UP or UNDETERMINED")
+	if err != nil {
+		return adGroupDemographicPlan{}, err
+	}
+	parents, err := validateEnumExclusions("excluded parental status", in.ExcludedParentalStatuses, parentalStatusTypes,
+		"PARENT, NOT_A_PARENT or UNDETERMINED")
+	if err != nil {
+		return adGroupDemographicPlan{}, err
+	}
+	var plan adGroupDemographicPlan
+	for _, t := range incomes {
+		plan.incomeRanges = append(plan.incomeRanges, incomeRangeInfo{Type: t})
+	}
+	for _, t := range parents {
+		plan.parentalStatuses = append(plan.parentalStatuses, parentalStatusInfo{Type: t})
+	}
+	return plan, nil
+}
+
+// validateEnumExclusions is validateExcludedAgeRanges' shape for an enum list: trim and
+// upper-case each entry, map it through allowed, collapse repeats by the resolved enum, and
+// cap the list at maxDemographicExclusions.
+func validateEnumExclusions(noun string, values []string, allowed map[string]string, choices string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	if len(values) > maxDemographicExclusions {
+		return nil, fmt.Errorf("google-ads: at most %d %ss are supported, got %d", maxDemographicExclusions, noun, len(values))
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		enum, ok := allowed[strings.ToUpper(strings.TrimSpace(v))]
+		if !ok {
+			return nil, fmt.Errorf("google-ads: %s %q must be one of %s", noun, v, choices)
+		}
+		if _, dup := seen[enum]; dup {
+			continue
+		}
+		seen[enum] = struct{}{}
+		out = append(out, enum)
+	}
+	return out, nil
+}
+
+// adGroupDemographicStep names the requested parts of the plan for the step list, as
+// criteriaStep does for the campaign-level set.
+func adGroupDemographicStep(plan adGroupDemographicPlan) string {
+	parts := make([]string, 0, 2)
+	if n := len(plan.incomeRanges); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d income range exclusion(s)", n))
+	}
+	if n := len(plan.parentalStatuses); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d parental status exclusion(s)", n))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // criteriaStep summarises the plan for the step list a human reads, naming only

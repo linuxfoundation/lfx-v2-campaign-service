@@ -91,9 +91,10 @@ type displayAdGroupCreate struct {
 }
 
 // CreateDisplayCampaign creates a PAUSED Display campaign: images → budget → campaign →
-// campaign-level geo → campaign-level criteria → ad group → image assets → ad.
+// campaign-level geo → campaign-level criteria → ad group → ad-group exclusions → image
+// assets → ad.
 //
-// Seven mutating steps behind a fetch phase, which makes this the union of the two
+// Seven mutating steps behind a fetch phase (eight when ad-group exclusions are asked for), which makes this the union of the two
 // hardest halves in the package: campaign-level criteria like Search, Performance Max
 // and Video, an ad group with an ad under it like Search, Demand Gen and Video, AND a
 // pre-budget network phase like Demand Gen and Performance Max. Video had the first two
@@ -322,6 +323,19 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 	res.AdGroupID = adGroupID
 	steps = append(steps, fmt.Sprintf("Ad group created: %s (%s)", adGroupID, adGroupTypeDisplayStandard))
 	res.Steps = steps
+
+	// The income-range and parental-status exclusions (#473) go on the ad group, the level
+	// the validateOnly probes verified for Display, and before the images and the ad so a
+	// failure has as little built on it as possible. Same partial-result contract.
+	if !pf.adGroupDemographics.empty() {
+		ids, exErr := c.createAdGroupTargeting(ctx, adGroupResource, adGroupID, adGroupCriteriaSet{demographics: pf.adGroupDemographics})
+		if exErr != nil {
+			return res, exErr
+		}
+		res.AdGroupDemographicCriteriaIDs = ids.demographics
+		steps = append(steps, fmt.Sprintf("Ad group exclusions applied: %d criteria (%s)", len(ids.demographics), adGroupDemographicStep(pf.adGroupDemographics)))
+		res.Steps = steps
+	}
 
 	// Steps 6 and 7: the image assets, then the ad that references them — two mutates,
 	// because Google has no call that does both. The asset ids are carried on the

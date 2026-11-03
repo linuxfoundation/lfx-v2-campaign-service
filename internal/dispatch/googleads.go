@@ -194,25 +194,30 @@ type googleAdsLeadFormConfig struct {
 
 // googleAdsAdConfig is one responsive search ad inside an ad group. Both lists are
 // optional in exactly the way the campaign-level headlines/descriptions are — the
-// client pads missing slots to Google's minimums.
+// client pads missing slots to Google's minimums. path1/path2 are the ad's display
+// paths (#473); an ad that sets neither takes the campaign-level pair.
 type googleAdsAdConfig struct {
 	Headlines    []string `json:"headlines"`
 	Descriptions []string `json:"descriptions"`
+	Path1        string   `json:"path1"`
+	Path2        string   `json:"path2"`
 }
 
 // googleAdsAdGroupConfig is one ad group: a theme, the keywords that express it, and
 // the ads written for it.
 //
-// Every field except Name falls back to the campaign-level equivalent when it is
-// empty, and that fallback is PER FIELD — a group may override only its bid. cpcBid 0
-// means "inherit", not "no bid"; a campaign-level 0 is what means that, and it is
-// inherited as such.
+// Every field except Name and NegativeKeywords falls back to the campaign-level
+// equivalent when it is empty, and that fallback is PER FIELD — a group may override only
+// its bid. cpcBid 0 means "inherit", not "no bid"; a campaign-level 0 is what means that,
+// and it is inherited as such. NegativeKeywords are the group's own exclusions (#473),
+// added beside the campaign-level list rather than inheriting it.
 type googleAdsAdGroupConfig struct {
 	Name             string                   `json:"name"`
 	CPCBid           float64                  `json:"cpcBid"`
 	Keywords         []googleAdsKeywordConfig `json:"keywords"`
 	AudienceSegments []string                 `json:"audienceSegments"`
 	Ads              []googleAdsAdConfig      `json:"ads"`
+	NegativeKeywords []googleAdsKeywordConfig `json:"negativeKeywords"`
 }
 
 const (
@@ -266,6 +271,11 @@ type googleAdsConfig struct {
 	// brief's EventName/Project (see googleads.composeAdCopy).
 	Headlines    []string `json:"headlines"`
 	Descriptions []string `json:"descriptions"`
+	// Path1/Path2 are the responsive search ad's optional display paths (#473), each at
+	// most 15 display-width units, path2 only with path1. SEARCH ONLY, refused on every
+	// other channel. See googleads.CampaignInput.Path1.
+	Path1 string `json:"path1"`
+	Path2 string `json:"path2"`
 	// Keywords are optional positive Search keyword criteria (GA-4). Left empty, the
 	// ad group created by GA-3 gets no criteria and can never serve — see
 	// googleads.Keyword/validateKeywords.
@@ -419,6 +429,13 @@ type googleAdsConfig struct {
 	// empty, no demographic is excluded.
 	ExcludedAgeRanges []string `json:"excludedAgeRanges"`
 	ExcludedGenders   []string `json:"excludedGenders"`
+	// ExcludedIncomeRanges ("INCOME_RANGE_0_50", …) and ExcludedParentalStatuses
+	// ("PARENT", "NOT_A_PARENT", "UNDETERMINED") are demographic EXCLUSIONS attached to every
+	// ad group the campaign gets, not to the campaign (#473). Income ranges are taken on
+	// "search" and "display", parental status on "display" only; both are refused on every
+	// other channel. See googleads.validateAdGroupDemographicExclusions.
+	ExcludedIncomeRanges     []string `json:"excludedIncomeRanges"`
+	ExcludedParentalStatuses []string `json:"excludedParentalStatuses"`
 	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions. All
 	// Search only — refused on every other channel, none of which has a text ad to
 	// extend — and all created as account-level assets then linked to the campaign.
@@ -606,6 +623,8 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		RegistrationURL:  bf.RegistrationURL,
 		Headlines:        cfg.Headlines,
 		Descriptions:     cfg.Descriptions,
+		Path1:            cfg.Path1,
+		Path2:            cfg.Path2,
 		Keywords:         googleAdsKeywords(cfg.Keywords),
 		NegativeKeywords: googleAdsKeywords(cfg.NegativeKeywords),
 		SearchPartners:   cfg.SearchPartners,
@@ -629,25 +648,27 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		// by the client's preflight, BEFORE its first mutate, so they are refused in one
 		// place for both the create path and the ValidateCampaignInput call below rather
 		// than re-stated here where the two could drift.
-		ExcludedGeoTargets:     cfg.ExcludedGeoTargets,
-		ProximityTargets:       googleAdsProximityTargets(cfg.ProximityTargets),
-		Languages:              cfg.Languages,
-		AdSchedules:            googleAdsAdSchedules(cfg.AdSchedules),
-		DeviceBidModifiers:     deviceBidModifiers,
-		ExcludedAgeRanges:      cfg.ExcludedAgeRanges,
-		ExcludedGenders:        cfg.ExcludedGenders,
-		Sitelinks:              googleAdsSitelinks(cfg.Sitelinks),
-		Callouts:               cfg.Callouts,
-		StructuredSnippets:     googleAdsStructuredSnippets(cfg.StructuredSnippets),
-		CallExtensions:         googleAdsCallExtensions(cfg.CallExtensions),
-		Promotions:             googleAdsPromotions(cfg.Promotions),
-		Prices:                 googleAdsPrices(cfg.Prices),
-		LeadForms:              googleAdsLeadForms(cfg.LeadForms),
-		AdGroups:               googleAdsAdGroups(cfg.AdGroups),
-		DemandGenCreative:      googleAdsDemandGenCreative(cfg.DemandGenCreative),
-		PerformanceMaxCreative: googleAdsPerformanceMaxCreative(cfg.PerformanceMaxCreative),
-		VideoCreative:          googleAdsVideoCreative(cfg.VideoCreative),
-		DisplayCreative:        googleAdsDisplayCreative(cfg.DisplayCreative),
+		ExcludedGeoTargets:       cfg.ExcludedGeoTargets,
+		ProximityTargets:         googleAdsProximityTargets(cfg.ProximityTargets),
+		Languages:                cfg.Languages,
+		AdSchedules:              googleAdsAdSchedules(cfg.AdSchedules),
+		DeviceBidModifiers:       deviceBidModifiers,
+		ExcludedAgeRanges:        cfg.ExcludedAgeRanges,
+		ExcludedGenders:          cfg.ExcludedGenders,
+		ExcludedIncomeRanges:     cfg.ExcludedIncomeRanges,
+		ExcludedParentalStatuses: cfg.ExcludedParentalStatuses,
+		Sitelinks:                googleAdsSitelinks(cfg.Sitelinks),
+		Callouts:                 cfg.Callouts,
+		StructuredSnippets:       googleAdsStructuredSnippets(cfg.StructuredSnippets),
+		CallExtensions:           googleAdsCallExtensions(cfg.CallExtensions),
+		Promotions:               googleAdsPromotions(cfg.Promotions),
+		Prices:                   googleAdsPrices(cfg.Prices),
+		LeadForms:                googleAdsLeadForms(cfg.LeadForms),
+		AdGroups:                 googleAdsAdGroups(cfg.AdGroups),
+		DemandGenCreative:        googleAdsDemandGenCreative(cfg.DemandGenCreative),
+		PerformanceMaxCreative:   googleAdsPerformanceMaxCreative(cfg.PerformanceMaxCreative),
+		VideoCreative:            googleAdsVideoCreative(cfg.VideoCreative),
+		DisplayCreative:          googleAdsDisplayCreative(cfg.DisplayCreative),
 		// The bytes for every asset-backed image entry, keyed by the slot string the
 		// mappers above rendered. Carried on the input rather than on each of the three
 		// creatives because it is one dispatch-wide map: the same asset may be named from
@@ -1148,6 +1169,7 @@ func googleAdsAdGroups(in []googleAdsAdGroupConfig) []googleads.AdGroupSpec {
 			Keywords:         googleAdsKeywords(g.Keywords),
 			AudienceSegments: g.AudienceSegments,
 			Ads:              googleAdsAds(g.Ads),
+			NegativeKeywords: googleAdsKeywords(g.NegativeKeywords),
 		}
 	}
 	return out
@@ -1159,7 +1181,7 @@ func googleAdsAds(in []googleAdsAdConfig) []googleads.AdSpec {
 	}
 	out := make([]googleads.AdSpec, len(in))
 	for i, a := range in {
-		out[i] = googleads.AdSpec{Headlines: a.Headlines, Descriptions: a.Descriptions}
+		out[i] = googleads.AdSpec{Headlines: a.Headlines, Descriptions: a.Descriptions, Path1: a.Path1, Path2: a.Path2}
 	}
 	return out
 }

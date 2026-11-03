@@ -89,7 +89,12 @@ type userListInfo struct {
 }
 
 // adGroupCriterionCreate is the create payload for adGroupCriteria:mutate.
-// Exactly one of Keyword/UserList is set per operation.
+// Exactly one of Keyword/UserList/IncomeRange/ParentalStatus is set per operation.
+//
+// Status and Negative are both omitempty, so a positive keyword or audience criterion is
+// the same bytes it was before #473. A NEGATIVE criterion — an ad-group negative keyword,
+// an income or a parental-status exclusion — is sent as {adGroup, negative: true, <arm>}
+// with no status, the shape verified by a validateOnly probe on 2026-11-03.
 //
 // There is deliberately no customAudience field. Google Ads has a
 // customAudience criterion, but validateAudienceSegments rejects every
@@ -98,10 +103,49 @@ type userListInfo struct {
 // client creates. Carrying the field would make the payload advertise a
 // targeting shape this client can never populate.
 type adGroupCriterionCreate struct {
-	AdGroup  string        `json:"adGroup"`
-	Status   string        `json:"status"`
-	Keyword  *keywordInfo  `json:"keyword,omitempty"`
-	UserList *userListInfo `json:"userList,omitempty"`
+	AdGroup        string              `json:"adGroup"`
+	Status         string              `json:"status,omitempty"`
+	Negative       bool                `json:"negative,omitempty"`
+	Keyword        *keywordInfo        `json:"keyword,omitempty"`
+	UserList       *userListInfo       `json:"userList,omitempty"`
+	IncomeRange    *incomeRangeInfo    `json:"incomeRange,omitempty"`
+	ParentalStatus *parentalStatusInfo `json:"parentalStatus,omitempty"`
+}
+
+// adGroupCriteriaSet is everything one ad group's adGroupCriteria:mutate carries, in the
+// order the operations are sent: keywords, audience segments, negative keywords, then the
+// income and parental-status exclusions.
+type adGroupCriteriaSet struct {
+	keywords         []Keyword
+	audienceSegments []string
+	negativeKeywords []Keyword
+	demographics     adGroupDemographicPlan
+}
+
+func (s adGroupCriteriaSet) count() int {
+	return len(s.keywords) + len(s.audienceSegments) + len(s.negativeKeywords) + s.demographics.count()
+}
+
+// adGroupCriteriaIDs are the criterion ids createAdGroupTargeting confirmed, split by kind.
+type adGroupCriteriaIDs struct {
+	keywords         []string
+	audiences        []string
+	negativeKeywords []string
+	demographics     []string
+}
+
+// adGroupCriteriaStep summarises one group's confirmed criteria for the step list. The
+// keyword and audience counts are always named, as they were before #473; the newer kinds
+// only when present.
+func adGroupCriteriaStep(ids adGroupCriteriaIDs) string {
+	line := fmt.Sprintf("Keyword/audience targeting attached: %d keyword(s), %d audience segment(s)", len(ids.keywords), len(ids.audiences))
+	if n := len(ids.negativeKeywords); n > 0 {
+		line += fmt.Sprintf(", %d negative keyword(s)", n)
+	}
+	if n := len(ids.demographics); n > 0 {
+		line += fmt.Sprintf(", %d income/parental exclusion(s)", n)
+	}
+	return line
 }
 
 // validateKeywords trims/validates each caller-supplied keyword and
@@ -328,27 +372,31 @@ func validateAudienceSegments(segments []string) ([]string, error) {
 	return out, nil
 }
 
-// createAdGroupTargeting attaches keywords and/or audience segments to the
-// just-created ad group as a SINGLE adGroupCriteria:mutate call carrying one
+// createAdGroupTargeting attaches one ad group's criteria — keywords, audience
+// segments, negative keywords and income/parental exclusions, whichever are set —
+// to the just-created ad group as a SINGLE adGroupCriteria:mutate call carrying one
 // operation per criterion. Batched into one call (not one per criterion) so
 // the whole set shares one atomic outcome: partialFailure is left false (the
 // package default — see mutateRequest), so this either wholly succeeds or
 // wholly fails, same "no partial state" reasoning as every other mutate here,
-// just extended to N operations instead of 1.
+// just extended to N operations instead of 1. The exclusions ride in the same
+// batch for the reason createCampaignTargetingCriteria gives for its own: a group
+// whose keywords committed and whose exclusions did not is serving the queries and
+// the audience it was told to avoid.
 //
-// Every criterion is created ENABLED (not PAUSED, unlike the ad group/ad
+// Every POSITIVE criterion is created ENABLED (not PAUSED, unlike the ad group/ad
 // shell): a criterion's own status is one more gate on top of its ancestors
 // (ad group, ad, campaign) already being enabled/eligible — Google will not
 // serve it while any ancestor is PAUSED, so creating it ENABLED now means the
 // campaign is immediately serve-ready the moment a human flips the ad
 // group/ad/campaign to ENABLED, with no separate targeting-activation step.
+// Negative criteria carry no status; see adGroupCriterionCreate.
 //
 // Audience criteria rely on the ad group create having already set its
 // targetingSetting to observation-only for the AUDIENCE dimension (see
 // targetingSetting's doc comment in campaign.go, and its use in
-// adgroup_ad.go) — this function does not re-check that here, so a caller
-// invoking createAdGroupTargeting outside that flow (there is none today)
-// would need to set it itself.
+// adgroup_ad.go) — this function does not re-check that here. The Display cascade
+// is the one other caller, and it sends only the income/parental exclusions.
 //
 // This is the highest-risk unverified assumption in this slice, mirroring the
 // AdGroupAd composite-resourceName flag from GA-3: verify against a live
@@ -360,24 +408,24 @@ func validateAudienceSegments(segments []string) ([]string, error) {
 // the budget/campaign/ad-group DUPLICATE_NAME family): any 4xx here —
 // including a possible duplicate-criterion rejection on a retry — is reported
 // as a straightforward failure, not reconciled by a duplicate predicate.
-func (c *Client) createAdGroupTargeting(ctx context.Context, adGroupResource, adGroupID string, keywords []Keyword, audienceSegments []string) (keywordIDs, audienceIDs []string, err error) {
-	if len(keywords) == 0 && len(audienceSegments) == 0 {
-		return nil, nil, nil
+func (c *Client) createAdGroupTargeting(ctx context.Context, adGroupResource, adGroupID string, set adGroupCriteriaSet) (adGroupCriteriaIDs, error) {
+	if set.count() == 0 {
+		return adGroupCriteriaIDs{}, nil
 	}
 
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, nil, fmt.Errorf("google-ads keyword/audience targeting aborted before any request (context already done; ad group %s has no targeting yet): %w", adGroupID, ctxErr)
+		return adGroupCriteriaIDs{}, fmt.Errorf("google-ads ad group criteria aborted before any request (context already done; ad group %s has no criteria yet): %w", adGroupID, ctxErr)
 	}
 
-	ops := make([]mutateOperation, 0, len(keywords)+len(audienceSegments))
-	for _, kw := range keywords {
+	ops := make([]mutateOperation, 0, set.count())
+	for _, kw := range set.keywords {
 		ops = append(ops, mutateOperation{Create: adGroupCriterionCreate{
 			AdGroup: adGroupResource,
 			Status:  StatusEnabled,
 			Keyword: &keywordInfo{Text: kw.Text, MatchType: kw.MatchType},
 		}})
 	}
-	for _, seg := range audienceSegments {
+	for _, seg := range set.audienceSegments {
 		// Every segment reaching here is a userList: validateAudienceSegments (the sole
 		// producer of this slice) rejects customAudiences resource names outright, and
 		// any other shape fails audienceCriterionField. So there is no oneof to branch
@@ -390,41 +438,78 @@ func (c *Client) createAdGroupTargeting(ctx context.Context, adGroupResource, ad
 			UserList: &userListInfo{UserList: seg},
 		}})
 	}
+	// The exclusions below are NEGATIVE, and that flag is the whole meaning of each: an
+	// omitted `negative` would TARGET the query, income range or parental status the
+	// caller asked to keep out.
+	for _, kw := range set.negativeKeywords {
+		ops = append(ops, mutateOperation{Create: adGroupCriterionCreate{
+			AdGroup:  adGroupResource,
+			Negative: true,
+			Keyword:  &keywordInfo{Text: kw.Text, MatchType: kw.MatchType},
+		}})
+	}
+	for i := range set.demographics.incomeRanges {
+		ops = append(ops, mutateOperation{Create: adGroupCriterionCreate{
+			AdGroup:     adGroupResource,
+			Negative:    true,
+			IncomeRange: &set.demographics.incomeRanges[i],
+		}})
+	}
+	for i := range set.demographics.parentalStatuses {
+		ops = append(ops, mutateOperation{Create: adGroupCriterionCreate{
+			AdGroup:        adGroupResource,
+			Negative:       true,
+			ParentalStatus: &set.demographics.parentalStatuses[i],
+		}})
+	}
 
 	resp, mErr := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroupCriteria:mutate"), mutateRequest{Operations: ops}, false)
 	if mErr != nil {
 		if createOutcomeAmbiguous(mErr) {
-			return nil, nil, fmt.Errorf("google-ads keyword/audience targeting UNCONFIRMED (ad group %s; criteria may exist — verify in Google Ads before retrying): %w", adGroupID, mErr)
+			return adGroupCriteriaIDs{}, fmt.Errorf("google-ads ad group criteria UNCONFIRMED (ad group %s; criteria may exist — verify in Google Ads before retrying): %w", adGroupID, mErr)
 		}
-		return nil, nil, fmt.Errorf("google-ads keyword/audience targeting failed (ad group %s created): %w", adGroupID, mErr)
+		return adGroupCriteriaIDs{}, fmt.Errorf("google-ads ad group criteria failed (ad group %s created; it has none of its %d requested keyword, audience, negative keyword or exclusion criteria): %w", adGroupID, len(ops), mErr)
 	}
 
 	var mr mutateResponse
 	if uErr := json.Unmarshal(resp, &mr); uErr != nil || len(mr.Results) != len(ops) {
-		return nil, nil, fmt.Errorf("google-ads keyword/audience targeting UNCONFIRMED (ad group %s; 2xx with a malformed/short mutate response — criteria may exist — verify in Google Ads before retrying)", adGroupID)
+		return adGroupCriteriaIDs{}, fmt.Errorf("google-ads ad group criteria UNCONFIRMED (ad group %s; 2xx with a malformed/short mutate response — criteria may exist — verify in Google Ads before retrying)", adGroupID)
 	}
 
-	keywordIDs = make([]string, 0, len(keywords))
-	audienceIDs = make([]string, 0, len(audienceSegments))
+	all := make([]string, 0, len(ops))
 	for i, r := range mr.Results {
 		returnedAdGroupID, critID := c.adGroupCriterionID(r.ResourceName)
 		if critID == "" || returnedAdGroupID == "" {
-			return nil, nil, fmt.Errorf("google-ads keyword/audience targeting UNCONFIRMED (ad group %s; malformed/wrong-kind/wrong-account criterion resource name %q at index %d — verify in Google Ads before retrying)", adGroupID, r.ResourceName, i)
+			return adGroupCriteriaIDs{}, fmt.Errorf("google-ads ad group criteria UNCONFIRMED (ad group %s; malformed/wrong-kind/wrong-account criterion resource name %q at index %d — verify in Google Ads before retrying)", adGroupID, r.ResourceName, i)
 		}
 		// The adGroupCriterion resourceName's ad-group-id half must match the ad group this
 		// criterion was created under — a mismatch means the response doesn't describe the
 		// criterion this call just created (a malformed/substituted resourceName), so the
 		// returned criterion ID cannot be trusted enough to persist.
 		if returnedAdGroupID != adGroupID {
-			return nil, nil, fmt.Errorf("google-ads keyword/audience targeting UNCONFIRMED (ad group %s; adGroupCriterion resource name %q reports a different ad group id %q — verify in Google Ads before retrying)", adGroupID, r.ResourceName, returnedAdGroupID)
+			return adGroupCriteriaIDs{}, fmt.Errorf("google-ads ad group criteria UNCONFIRMED (ad group %s; adGroupCriterion resource name %q reports a different ad group id %q — verify in Google Ads before retrying)", adGroupID, r.ResourceName, returnedAdGroupID)
 		}
-		if i < len(keywords) {
-			keywordIDs = append(keywordIDs, critID)
-		} else {
-			audienceIDs = append(audienceIDs, critID)
-		}
+		all = append(all, critID)
 	}
-	return keywordIDs, audienceIDs, nil
+	// Results are index-aligned with the operations, so the ids split back into kinds by
+	// the same order the operations were built in. Each kind is capped at its own length so
+	// an append to one can never write into the next.
+	k, a, n := len(set.keywords), len(set.audienceSegments), len(set.negativeKeywords)
+	return adGroupCriteriaIDs{
+		keywords:         nilIfEmpty(all[:k:k]),
+		audiences:        nilIfEmpty(all[k : k+a : k+a]),
+		negativeKeywords: nilIfEmpty(all[k+a : k+a+n : k+a+n]),
+		demographics:     nilIfEmpty(all[k+a+n:]),
+	}, nil
+}
+
+// nilIfEmpty returns nil for an empty slice, so a criteria kind that was not requested
+// reads as absent rather than as an empty list.
+func nilIfEmpty(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	return ids
 }
 
 // createCampaignNegativeKeywords attaches NEGATIVE keyword criteria to a

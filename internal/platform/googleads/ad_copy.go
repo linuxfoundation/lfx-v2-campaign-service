@@ -101,6 +101,59 @@ func composeAdCopy(callerHeadlines, callerDescriptions []string, eventName, proj
 	return adPlan{headlines: headlines, descriptions: descriptions, copyNotes: notes}, nil
 }
 
+// maxSearchAdPathWeight bounds each responsive search ad display path (path1, path2).
+// Verified by a validateOnly probe on 2026-11-03: 15 characters accepted, 16 refused with
+// StringLengthError TOO_LONG. Measured in the same double-width weight as the headlines
+// (textWeight) that callerCopy applies to RSA headlines and descriptions; the probe used ASCII,
+// where weight and rune count agree.
+const maxSearchAdPathWeight = 15
+
+// validateSearchAdPaths resolves one responsive search ad's display paths (#473): the
+// segments Google renders after the final URL's domain, as in example.com/kubecon. Both
+// are optional. path2 without path1 is refused, as the Performance Max paths refuse it:
+// Google renders path2 only after path1, so the caller's text would not show where they
+// put it.
+func validateSearchAdPaths(path1, path2 string) (string, string, error) {
+	p1, err := validateSearchAdPath("path1", path1)
+	if err != nil {
+		return "", "", err
+	}
+	p2, err := validateSearchAdPath("path2", path2)
+	if err != nil {
+		return "", "", err
+	}
+	if p2 != "" && p1 == "" {
+		return "", "", errors.New("google-ads search ad display path2 was supplied without path1; Google renders path2 only after path1, so supply path1 as well or move the text into it")
+	}
+	return p1, p2, nil
+}
+
+func validateSearchAdPath(label, raw string) (string, error) {
+	p := strings.TrimSpace(raw)
+	if p == "" {
+		return "", nil
+	}
+	if w := textWeight(p); w > maxSearchAdPathWeight {
+		return "", fmt.Errorf("google-ads search ad display %s %q has a display width of %d, exceeding the %d limit (CJK and full-width characters count double)", label, capForError(p), w, maxSearchAdPathWeight)
+	}
+	if strings.ContainsAny(p, displayPathForbiddenChars) {
+		return "", fmt.Errorf("google-ads search ad display %s %q contains a character not accepted in a display path (no slashes, spaces or URL punctuation)", label, capForError(p))
+	}
+	return p, nil
+}
+
+// searchAdPathStep renders an ad's display paths for the step list, as the visible URL
+// suffix ("/kubecon/na"). Empty when the ad has none.
+func searchAdPathStep(ad adPlan) string {
+	if ad.path1 == "" {
+		return ""
+	}
+	if ad.path2 == "" {
+		return "/" + ad.path1
+	}
+	return "/" + ad.path1 + "/" + ad.path2
+}
+
 // callerCopy trims the caller's lines, skips blanks, refuses a line over maxWeight, drops an
 // exact duplicate, and stops at maxCount. Each kind of drop is ONE note, so the steps stay
 // bounded however long the caller's list is.
