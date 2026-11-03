@@ -20,9 +20,18 @@ lf-dbt parses positionally only at exactly 8 segments. The dispatchers pass the 
   segments 2 or 7.
 
 **Tactic tokens.** `model.Tactic.NameToken` now holds the mapping Google used privately
-(`content-promotion` → `content-promo`), and all three platforms share it. Each slug was checked
-against lf-dbt's substring parsers for funnel, objective, targeting, ad format, region and program
-(`macros/parse_campaign_name.sql`). There are two hits:
+(`content-promotion` → `content-promo`), and all three platforms share it.
+
+**How lf-dbt reads these names.** For an 8-segment name, `silver_fact_paid_ads.sql` reads every
+field BY POSITION. So its `targeting` column holds the raw segment 5 (`Intent`, `Intent #2`,
+`Intent retargeting #2`), one value per tactic and slot, not a normalised Prospecting /
+Retargeting. That raw segment is also what gives slot 2 its own `paid_ads_campaign_key` (a hash
+of the 8 segments). A report grouped by targeting therefore splits by slot until lf-dbt normalises
+the value (strip ` #<n>`, map the tactic); that is an lf-dbt follow-up.
+
+The substring parsers (`macros/parse_campaign_name.sql`) are fallbacks, used only for names that
+are not 8 segments, plus the LIKE-only funnel parse in `_silver_fact_campaign_report.sql`. Each
+slug was still checked against them. There are two hits:
 - `proMOTION`, already handled by that mapping;
 - the program parser's `%T_C%` wildcard, which matches the `t c` in `Intent competitor` or
   `Intent content-promo`. It is harmless, because every one of these names starts with `Events`,

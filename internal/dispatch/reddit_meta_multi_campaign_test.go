@@ -168,7 +168,7 @@ func stagedRow(stage *model.FunnelStage, tactic *model.Tactic) *model.Campaign {
 }
 
 func stagePtr(s model.FunnelStage) *model.FunnelStage { return &s }
-func tacticPtr(t model.Tactic) *model.Tactic         { return &t }
+func tacticPtr(t model.Tactic) *model.Tactic          { return &t }
 
 // AC 11 and AC 12 (Reddit, Meta): literal golden names per claimed row, each dispatched twice (a
 // retry of the same row composes the same name), every one exactly 8 segments with segment 8 in

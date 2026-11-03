@@ -560,8 +560,12 @@ tactic and slot token are appended to segment 5 (`Intent retargeting #2`). The u
 never becomes a segment and never touches the Event (2) or Project (7) segments the pipeline joins
 on; an unlabelled slot-1 row composes its legacy name byte for byte, and a tactic-only row keeps
 the legacy funnel. Tactic tokens come from `model.Tactic.NameToken`, shared with Google
-(`content-promotion` → `content-promo`; every slug checked against lf-dbt's funnel, objective,
-targeting, ad-format, region and program substring parsers). Nothing binds slot 2 to slot 1 by
+(`content-promotion` → `content-promo`, kept off lf-dbt's substring ad-format parser). For an
+8-segment name lf-dbt reads every field BY POSITION, so its `targeting` column holds the raw
+segment — `Intent`, `Intent #2`, `Intent retargeting #2` — a distinct value per tactic and slot,
+not a normalised Prospecting / Retargeting (the substring parsers are only fallbacks for names
+that are not 8 segments). That raw segment is also what gives slot 2 its own
+`paid_ads_campaign_key`; a report grouped by targeting splits by slot until lf-dbt normalises it. Nothing binds slot 2 to slot 1 by
 name: Reddit never looks a campaign up by name on create, and Meta's `findCampaignByName` runs
 only under `CampaignInput.ReconcileByName`, which no dispatcher sets. Length: Reddit's 200-rune
 check already covers every composed name before the first request; Meta, which documents no

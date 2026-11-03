@@ -1126,18 +1126,20 @@ type CampaignCreateInput struct {
 	// latest campaign is complete gets a new campaign alongside it; a platform
 	// with none gets its first; a platform whose latest campaign is still in
 	// flight or needs reconciliation is reported exactly as a retry would be. The
-	// version is tracked by this service only and is never shown on the ad
-	// platform as a label. Supported on microsoft-ads, google-ads, reddit-ads and
-	// meta-ads for now; any other platform in the request is refused with 400. On
-	// google-ads the slot is the dispatched channel (Search, Demand Gen,
-	// Performance Max, Video or Display), so another campaign is another campaign
-	// of that channel. Two concurrent requests that both find the same complete
-	// campaign create one new campaign between them, not two: the second is
-	// reported as a reuse of (or skipped behind) the first. REQUIRES
-	// expected_slot_versions for every selected platform (400 without it), which
-	// also makes a SEQUENTIAL repeat — a double click, a reload, a second tab, a
-	// replay after a lost response — return the campaign it already made instead
-	// of creating another.
+	// version is tracked by this service and is never a platform label or tag; on
+	// platforms whose campaigns need distinct names it appears only in the name of
+	// a second or later campaign: a `-<n>` suffix on microsoft-ads and google-ads,
+	// a `#<n>` token in the targeting segment on reddit-ads and meta-ads.
+	// Supported on microsoft-ads, google-ads, reddit-ads and meta-ads for now; any
+	// other platform in the request is refused with 400. On google-ads the slot is
+	// the dispatched channel (Search, Demand Gen, Performance Max, Video or
+	// Display), so another campaign is another campaign of that channel. Two
+	// concurrent requests that both find the same complete campaign create one new
+	// campaign between them, not two: the second is reported as a reuse of (or
+	// skipped behind) the first. REQUIRES expected_slot_versions for every
+	// selected platform (400 without it), which also makes a SEQUENTIAL repeat — a
+	// double click, a reload, a second tab, a replay after a lost response —
+	// return the campaign it already made instead of creating another.
 	NewVersion bool
 	// The funnel stage the campaign(s) this request creates serve: `top`, `mid` or
 	// `lower`. Applies to every selected platform. Recorded on a campaign ONLY

@@ -417,3 +417,13 @@ func TestMultiCampaignAllowlists(t *testing.T) {
 		}
 	}
 }
+
+// SlotNameToken is "" for slot 1 and for every legacy or unset slot (0, negative), which is what
+// keeps an existing Reddit or Meta campaign on its exact legacy name; "#<n>" from slot 2 on.
+func TestSlotNameToken(t *testing.T) {
+	for slot, want := range map[int]string{-1: "", 0: "", 1: "", 2: "#2", 3: "#3", 12: "#12"} {
+		if got := SlotNameToken(slot); got != want {
+			t.Errorf("SlotNameToken(%d) = %q, want %q", slot, got, want)
+		}
+	}
+}

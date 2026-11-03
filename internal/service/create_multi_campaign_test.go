@@ -322,8 +322,9 @@ func TestBriefService_CreateCampaigns_RedditAndMetaAcceptALabelledNewVersion(t *
 			if len(got) != 1 || got[0].Reused || got[0].SlotVersion != 2 || got[0].FunnelStage != "lower" || got[0].Tactic != "retargeting" {
 				t.Fatalf("result = %+v, want slot 2 created, labelled lower/retargeting", got)
 			}
-			if len(disp.labels) != 1 || disp.labels[0].FunnelStage == nil || *disp.labels[0].FunnelStage != model.FunnelStageLower {
-				t.Fatalf("dispatch labels = %+v, want one dispatch labelled lower", disp.labels)
+			if len(disp.labels) != 1 || disp.labels[0].FunnelStage == nil || *disp.labels[0].FunnelStage != model.FunnelStageLower ||
+				disp.labels[0].Tactic == nil || *disp.labels[0].Tactic != model.TacticRetargeting {
+				t.Fatalf("dispatch labels = %+v, want one dispatch labelled lower/retargeting", disp.labels)
 			}
 		})
 	}
