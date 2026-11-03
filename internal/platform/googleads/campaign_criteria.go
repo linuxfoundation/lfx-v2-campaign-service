@@ -146,16 +146,16 @@ var adScheduleMinutes = map[int]string{
 //
 // OTHER is a reporting bucket rather than something a campaign bids on.
 //
-// CONNECTED_TV is a NAMED GAP, and the reasoning behind it changed when this client
-// gained the two channels Google supports it on. Google's own device-targeting
-// documentation says of TV screens: "This targeting option is only available for
-// Display and Video campaigns." While Search was the only kind that reached this map —
-// device criteria were refused outright on Demand Gen until #474 — the omission
-// restated an upstream rule and cost a caller nothing. Video and Display now reach it too, and on those two Google DOES accept the
-// device, so on those two the omission is this client's limitation rather than
+// CONNECTED_TV is a NAMED GAP, and the reasoning behind it changed when this client gained
+// the two channels Google supports it on. Google's own device-targeting documentation says
+// of TV screens: "This targeting option is only available for Display and Video campaigns."
+// While Search was the only kind that reached this map — device criteria were refused
+// outright on Demand Gen until #474 — the omission restated an upstream rule and cost a
+// caller nothing. Video and Display now reach it too, and on those two Google DOES accept
+// the device, so on those two the omission is this client's limitation rather than
 // Google's, and is stated as one — the same distinction displayBiddingStrategies draws
-// about manual CPC, and for the same reason: a reader widening this set later needs to
-// know which of the two they are arguing with.
+// about manual CPC, and for the same reason: a reader widening this set later needs to know
+// which of the two they are arguing with.
 //
 // It stays closed because opening it is a live-API question, not a code-reading one.
 // What is NOT established from the documentation alone is whether a CONNECTED_TV
@@ -169,8 +169,10 @@ var adScheduleMinutes = map[int]string{
 // Closing it means running that validateOnly campaignCriteria:mutate for CONNECTED_TV
 // on a non-production DISPLAY and VIDEO campaign and admitting the device here for
 // those kinds alone — Search, which Google does not support it on, keeps refusing it.
-// Demand Gen is the one channel where that probe HAS been run (#474); see
-// demandGenDeviceTypes.
+// Demand Gen is the one channel where that probe HAS been run (#474), and it contradicts
+// the quote above: Google accepted a CONNECTED_TV criterion on a Demand Gen campaign,
+// which the "Display and Video campaigns only" sentence says it would not. So that
+// documentation is not a reliable boundary in either direction; see demandGenDeviceTypes.
 //
 // A device list is capped at len() of its channel's vocabulary: a longer list must
 // contain a duplicate, which Google rejects with a criterion conflict AFTER the
@@ -613,7 +615,7 @@ func validateDeviceBidModifiers(kind string, devices []DeviceBidModifier) ([]dev
 		device := strings.ToUpper(strings.TrimSpace(d.Device))
 		if _, ok := vocabulary[device]; !ok {
 			if kind == campaignKindDemandGen {
-				return nil, nil, fmt.Errorf("google-ads: device bid modifier %d device %q must be one of MOBILE, DESKTOP, TABLET, CONNECTED_TV", i, d.Device)
+				return nil, nil, fmt.Errorf("google-ads: device bid modifier %d device %q must be one of MOBILE, DESKTOP, TABLET, CONNECTED_TV on %s", i, d.Device, kind)
 			}
 			return nil, nil, fmt.Errorf("google-ads: device bid modifier %d device %q must be one of MOBILE, DESKTOP, TABLET on %s (this client sends CONNECTED_TV on Demand Gen only, the one channel where it has verified the device — see deviceTypes)", i, d.Device, kind)
 		}
@@ -868,9 +870,37 @@ func criteriaStep(plan criteriaPlan) string {
 	return strings.Join(parts, "; ")
 }
 
-// createCampaignTargetingCriteria attaches the language, ad schedule, device and
-// demographic criteria to a just-created SEARCH campaign as a single
-// campaignCriteria:mutate.
+// criteriaFailureKinds names the criterion kinds plan carries ("schedule or device") and
+// what their absence leaves the campaign doing ("around the clock, on every device"), for
+// createCampaignTargetingCriteria's failure text. Built from the plan rather than fixed
+// because the plan differs per channel: Demand Gen's carries no languages (#474), and a
+// message claiming the campaign "would serve in every language" there would be false.
+func criteriaFailureKinds(plan criteriaPlan) (kinds, exposure string) {
+	var k, e []string
+	if len(plan.languages) > 0 {
+		k, e = append(k, "language"), append(e, "in every language")
+	}
+	if len(plan.schedules) > 0 {
+		k, e = append(k, "schedule"), append(e, "around the clock")
+	}
+	if len(plan.devices) > 0 {
+		k, e = append(k, "device"), append(e, "on every device")
+	}
+	if len(plan.ageRanges)+len(plan.genders) > 0 {
+		k, e = append(k, "demographic"), append(e, "to the demographics it was told to exclude")
+	}
+	if n := len(k); n > 1 {
+		return strings.Join(k[:n-1], ", ") + " or " + k[n-1], strings.Join(e, ", ")
+	}
+	return strings.Join(k, ""), strings.Join(e, "")
+}
+
+// createCampaignTargetingCriteria attaches the campaign-level criteria in plan —
+// language, ad schedule, device and demographic — to a just-created campaign as a single
+// campaignCriteria:mutate. Search, Display, Video and Performance Max send what their
+// preflight admitted; Demand Gen sends only its ad schedules and devices (#474), its
+// languages going on the ad group. The failure text names only the kinds in plan
+// (criteriaFailureKinds), so it never claims a criterion this call was not sending.
 //
 // ONE BATCH, and it must be. The four kinds are not independent settings that
 // happen to arrive together: a campaign whose languages committed and whose
@@ -892,8 +922,9 @@ func (c *Client) createCampaignTargetingCriteria(ctx context.Context, campaignRe
 	if plan.empty() {
 		return nil, nil
 	}
+	kinds, exposure := criteriaFailureKinds(plan)
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, fmt.Errorf("google-ads campaign targeting criteria aborted before any request (context already done; campaign %s has no language/schedule/device/demographic criteria yet): %w", campaignID, ctxErr)
+		return nil, fmt.Errorf("google-ads campaign targeting criteria aborted before any request (context already done; campaign %s has no %s criteria yet): %w", campaignID, kinds, ctxErr)
 	}
 
 	ops := make([]mutateOperation, 0, plan.count())
@@ -941,9 +972,9 @@ func (c *Client) createCampaignTargetingCriteria(ctx context.Context, campaignRe
 	resp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaignCriteria:mutate"), mutateRequest{Operations: ops}, false)
 	if err != nil {
 		if createOutcomeAmbiguous(err) {
-			return nil, fmt.Errorf("google-ads campaign targeting criteria UNCONFIRMED (campaign %s; language/schedule/device/demographic criteria may exist — verify in Google Ads before retrying): %w", campaignID, err)
+			return nil, fmt.Errorf("google-ads campaign targeting criteria UNCONFIRMED (campaign %s; %s criteria may exist — verify in Google Ads before retrying): %w", campaignID, kinds, err)
 		}
-		return nil, fmt.Errorf("google-ads campaign targeting criteria failed (campaign %s created; it has NO language, schedule, device or demographic criteria and would serve in every language, around the clock, on every device if enabled): %w", campaignID, err)
+		return nil, fmt.Errorf("google-ads campaign targeting criteria failed (campaign %s created; it has NO %s criteria and would serve %s if enabled): %w", campaignID, kinds, exposure, err)
 	}
 
 	var mr mutateResponse

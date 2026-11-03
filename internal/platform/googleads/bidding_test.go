@@ -287,7 +287,10 @@ func TestBiddingPlan_DemandGenSendsTheProbedPayload(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%+v: %v", tc.in, err)
 		}
-		raw, _ := json.Marshal(plan.fields())
+		raw, err := json.Marshal(plan.fields())
+		if err != nil {
+			t.Fatalf("%+v: marshal: %v", tc.in, err)
+		}
 		if string(raw) != tc.want {
 			t.Errorf("%+v: payload %s, want %s", tc.in, raw, tc.want)
 		}
@@ -296,7 +299,11 @@ func TestBiddingPlan_DemandGenSendsTheProbedPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if raw, _ := json.Marshal(plan.fields()); string(raw) != `{"maximizeConversions":{"targetCpaMicros":25000000}}` {
+	raw, err := json.Marshal(plan.fields())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(raw) != `{"maximizeConversions":{"targetCpaMicros":25000000}}` {
 		t.Errorf("Search target CPA payload %s, want the folded maximizeConversions form", raw)
 	}
 }
@@ -314,6 +321,19 @@ func TestBiddingPlan_DemandGenRefusesTargetROAS(t *testing.T) {
 	}
 	if _, err := validateBiddingPlan(campaignKindSearch, biddingTestCustomer, CampaignInput{BiddingStrategy: biddingMaximizeConversionValue, TargetROAS: 4}); err != nil {
 		t.Errorf("Search must keep its target ROAS: %v", err)
+	}
+	// Under a strategy that carries no target at all, the Demand Gen refusal still answers
+	// first: the generic "choose maximize-conversion-value or target-roas" would send the
+	// caller to a strategy that refuses the same target here — two round trips for one fix.
+	for _, strategy := range []string{biddingMaximizeClicks, biddingMaximizeConversions, biddingTargetCPA} {
+		in := CampaignInput{BiddingStrategy: strategy, TargetROAS: 4}
+		if strategy == biddingTargetCPA {
+			in.TargetCPA = 25
+		}
+		_, err := validateBiddingPlan(campaignKindDemandGen, biddingTestCustomer, in)
+		if err == nil || !strings.Contains(err.Error(), "a target ROAS is not supported on "+campaignKindDemandGen) || strings.Contains(err.Error(), "choose one of those strategies") {
+			t.Errorf("%s + target ROAS: err = %v, want the Demand Gen refusal, not the generic one", strategy, err)
+		}
 	}
 }
 

@@ -166,12 +166,34 @@ func TestGoogleAds_DemandGenAdsRefusalsArePreCreate(t *testing.T) {
 }
 
 // A single Demand Gen group with several ads is recorded in adGroups (#474), so the launch
-// toggle reaches every ad rather than only the scalar adId.
+// toggle reaches every ad rather than only the scalar adId; with every planned ad created it
+// is complete.
 func TestGoogleAdsToggleTargets_SeveralDemandGenAdsInOneGroup(t *testing.T) {
-	c := &model.Campaign{Result: json.RawMessage(`{"adGroupId":"333","adId":"444","adGroups":[{"name":"E - Display","id":"333","adIds":["444","445","555"]}]}`)}
+	c := &model.Campaign{Result: json.RawMessage(`{"adGroupId":"333","adId":"444","adGroups":[{"name":"E - Display","id":"333","adIds":["444","445","555"],"plannedAds":3}]}`)}
 	targets, _, incomplete := googleAdsToggleTargets(c)
 	if len(targets) != 1 || targets[0].AdGroupID != "333" || strings.Join(targets[0].AdIDs, ",") != "444,445,555" || incomplete != nil {
 		t.Errorf("targets = %+v incomplete = %v, want every ad of the group", targets, incomplete)
+	}
+}
+
+// A Demand Gen group whose ad 2 failed (or came back UNCONFIRMED) holds fewer ad ids than
+// it planned (#474). It must not read as complete — that would launch ad 1 and say nothing
+// about ad 2 — so it is reported in incomplete_ad_groups, while the ad it has is still
+// toggled, as every group that CAN take the toggle is. A complete group beside it is not
+// reported, and a row with no plannedAds (older rows, Search) keeps its old reading.
+func TestGoogleAdsToggleTargets_PartialDemandGenGroupIsIncomplete(t *testing.T) {
+	c := &model.Campaign{Result: json.RawMessage(`{"adGroupId":"333","adId":"444","adGroups":[` +
+		`{"name":"E - Display | Prospecting","id":"333","adIds":["444"],"plannedAds":2,` +
+		`"ads":[{"name":"Cut A","id":"444","creativeAssetIds":["900"]},{"name":"Cut B","creativeAssetIds":["901"]}]},` +
+		`{"name":"E - Display | Retargeting","id":"334","adIds":["446","447"],"plannedAds":2},` +
+		`{"name":"E - Search","id":"335","adIds":["448"]}]}`)}
+	targets, _, incomplete := googleAdsToggleTargets(c)
+	if strings.Join(incomplete, ",") != "E - Display | Prospecting" {
+		t.Errorf("incomplete = %v, want the partial group alone", incomplete)
+	}
+	if len(targets) != 3 || targets[0].AdGroupID != "333" || strings.Join(targets[0].AdIDs, ",") != "444" ||
+		strings.Join(targets[1].AdIDs, ",") != "446,447" || strings.Join(targets[2].AdIDs, ",") != "448" {
+		t.Errorf("targets = %+v, want the partial group's created ad and both complete groups", targets)
 	}
 }
 

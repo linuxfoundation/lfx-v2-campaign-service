@@ -277,6 +277,11 @@ func TestValidateDeviceBidModifiers_DemandGenTakesConnectedTV(t *testing.T) {
 			t.Errorf("%s: CONNECTED_TV err = %v, want the Demand Gen-only refusal", kind, err)
 		}
 	}
+	// Out of Demand Gen's vocabulary, the refusal names the channel like every sibling's.
+	_, _, err = validateDeviceBidModifiers(campaignKindDemandGen, []DeviceBidModifier{{Device: "OTHER"}})
+	if err == nil || !strings.Contains(err.Error(), "TABLET, CONNECTED_TV on "+campaignKindDemandGen) {
+		t.Errorf("OTHER on Demand Gen err = %v, want the vocabulary named on the channel", err)
+	}
 	// A fifth entry is necessarily a duplicate, refused by the cap before the loop.
 	_, _, err = validateDeviceBidModifiers(campaignKindDemandGen, append(all, DeviceBidModifier{Device: "MOBILE"}))
 	if err == nil || !strings.Contains(err.Error(), "at most 4 device bid modifiers") {

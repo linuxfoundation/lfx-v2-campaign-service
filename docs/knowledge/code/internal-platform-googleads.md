@@ -929,9 +929,11 @@ child-cascade contract:
   that field existed (single-group by construction). Toggling only the scalar pair — a
   copy of the first group's — left every later group and ad PAUSED while the campaign
   reported ENABLED. A group recorded in the blob but not fully created (no id, or no ad)
-  cannot be toggled; it is logged by name as `incomplete_ad_groups` and the toggle still
-  applies to every group that CAN take it, because refusing the whole campaign over one
-  failed group would strand a campaign that is otherwise ready.
+  cannot be toggled; nor is a Demand Gen group with fewer `AdIDs` than its `PlannedAds`
+  (#474) complete, though its created ads are toggled. Either is logged by name as
+  `incomplete_ad_groups` and the toggle still applies to every group that CAN take it,
+  because refusing the whole campaign over one failed group would strand a campaign that
+  is otherwise ready.
 
 - **ACTIVATE is refused** with `domain.ErrCampaignNotProvisioned` (mapped to a 409 without
   calling Google) unless this campaign's own serving resources are fully provisioned. When the
@@ -1765,7 +1767,9 @@ The accepted device vocabulary is MOBILE, DESKTOP and TABLET (`deviceTypes`), pl
 CONNECTED_TV on Demand Gen alone (`demandGenDeviceTypes`, #474; see "Demand Gen
 parity" below). `OTHER` is absent because it is a reporting bucket rather than
 something a campaign bids on, and TV screens are absent elsewhere because Google
-documents that device only for Display and Video campaigns. When this vocabulary was
+documents that device only for Display and Video campaigns — a sentence the Demand Gen
+probe contradicts, since it accepted CONNECTED_TV there, so that documentation is not a
+reliable boundary in either direction. When this vocabulary was
 written, Demand Gen refused every criterion in the group and Search was the only kind
 that reached the map, so the omission merely restated an upstream rule and cost
 nothing. **Video and Display now reach it too** (`validateCriteriaPlan` narrows only
@@ -2210,13 +2214,13 @@ TOO_LONG).
 
 `validateDemandGenVideoCreative` runs in the pure preflight beside the other creatives:
 refused off Demand Gen, and refused beside `DemandGenCreative` — the pair describes one ad;
-several ads on one group are named in `DemandGenAds` or a group's `Ads` (#474). YouTube ids go through the shared
-`validateYouTubeVideoIDs` (bare ids only, 1-5, the length not pinned — the same answer the
-Video and Performance Max creatives give). Headlines are 1-5 at width 40
+several ads on one group are named in `DemandGenAds` or a group's `Ads` (#474). YouTube ids
+go through the shared `validateYouTubeVideoIDs` (bare ids only, 1-5, the length not pinned —
+the same answer the Video and Performance Max creatives give). Headlines are 1-5 at width 40
 (`maxDemandGenVideoHeadlineWeight`: a probe accepted 40 and refused 41 — the image ad keeps
 30, its own limit unprobed); descriptions 1-5 at 90; long headlines 1-5 at 90 and required
-(the probe accepted 90 for both); the business name is required at 25. The call to action
-is limited to SIGN_UP, LEARN_MORE, BOOK_NOW, VISIT_SITE and WATCH_NOW, each accepted by the
+(the probe accepted 90 for both); the business name is required at 25. The call to action is
+limited to SIGN_UP, LEARN_MORE, BOOK_NOW, VISIT_SITE and WATCH_NOW, each accepted by the
 2026-11-03 probe, which also showed REGISTER and GET_STARTED are not CallToActionType values
 at all. Two choices are deliberately conservative and say so in the code: exactly ONE logo
 (the probe sent one, and no cited source gives this ad type's range) and a required long
@@ -2261,22 +2265,23 @@ campaign-level and are attached to EVERY group: Demand Gen takes both only on th
 and a group created without them would serve worldwide in every language. The Search
 `AdGroups` list on Demand Gen is refused with a message naming `DemandGenAdGroups`.
 
-`validateDemandGenAdGroups` returns `pf.demandGenGroups` — the ONE group the
-campaign-level fields describe when the list is empty — so `CreateDemandGenCampaign` walks
-one shape: per group, the ad group, geo, the Audience and languages, then the image or
-video ad. For the single group every request, step line and result field is what the
-cascade produced before (the existing Demand Gen tests are unchanged). With a list, each
-group's `AdGroupResult` (now also carrying `GeoCriterionIDs`, `TargetingCriterionIDs` and
-`CreativeAssetIDs`) is appended BEFORE its mutate, so a failure on group k returns groups
-1..k-1 complete and what exists of k; the scalar fields stay the FIRST group's; each
-group step line ends `[ad group "<name>"]`; and a context that ends between groups stops
-before the next group with `aborted after k of N ad group(s)`. `AdGroups` is left empty for
-a single group with one ad, as before (#474 records it when that group has several ads). The launch toggle already reads `AdGroups` entries and their
+`validateDemandGenAdGroups` returns `pf.demandGenGroups` — the ONE group the campaign-level
+fields describe when the list is empty — so `CreateDemandGenCampaign` walks one shape: per
+group, the ad group, geo, the Audience and languages, then the image or video ad. For the
+single group every request, step line and result field is what the cascade produced before
+(the existing Demand Gen tests are unchanged). With a list, each group's `AdGroupResult`
+(now also carrying `GeoCriterionIDs`, `TargetingCriterionIDs` and `CreativeAssetIDs`, and
+since #474 `PlannedAds` and the per-ad `Ads`) is appended BEFORE its mutate, so a failure on
+group k returns groups 1..k-1 complete and what exists of k; the scalar fields stay the
+FIRST group's; each group step line ends `[ad group "<name>"]`; and a context that ends
+between groups stops before the next group with `aborted after k of N ad group(s)`.
+`AdGroups` is left empty for a single group with one ad, as before (#474 records it when
+that group has several ads). The launch toggle already reads `AdGroups` entries and their
 `AdIDs`, so activation flips every group's ad. `fetchDemandGenGroupImages` fetches every
 group's images in one walk, sharing one fetch-phase deadline and the 64 MiB total, and
 re-indexes each image to its slot within its own creative. The closing step reads the first
-group and is true for all: every group gets the same geo, every named group must have an
-ad, and the loop returns on the first failure.
+group and is true for all: every group gets the same geo, every named group must have an ad,
+and the loop returns on the first failure.
 
 Click tracking (#476) needs nothing per group or per ad: every ad in every group, image or
 video, takes `pf.finalURL`, which the preflight tagged with Demand Gen's
@@ -2287,8 +2292,10 @@ create, which every ad group and ad under it inherits. `TestCreateDemandGenCampa
 
 The live KubeCon NA 2026 Demand Gen campaigns bid maximize conversions, exclude Connected
 TV, carry an ad schedule and sitelinks, and run several ads per ad group. Each shape below
-was accepted by a `validateOnly` probe on 2026-11-03 (v23); nothing beyond the probed shapes
-is admitted, and the refusals name what was not probed.
+was accepted by a `validateOnly` probe on 2026-11-03 (v23), and the refusals name what was
+not probed — with ONE exception, stated here plainly: ad multiplicity was probed with two
+VIDEO ads in one group, and several IMAGE ads, or image and video ads mixed, in one group
+were not probed. The code admits them all the same (see "Several ads per ad group").
 
 **Bidding.** `demandGenBiddingStrategies` holds `maximize-clicks` (still the default),
 `maximize-conversions`, `target-cpa` and `maximize-conversion-value`. A target CPA renders as
@@ -2333,11 +2340,24 @@ budget past 255 characters, while an image ad still sends no name (its `ad.name`
 probed). `demandGenGroupPlan` now carries `ads []demandGenAdPlan` — the legacy creative pair
 becomes one unnamed ad (`singleDemandGenAd`), so the single-ad path sends exactly what it did.
 `fetchDemandGenGroupImages` walks every ad of every group in one fetch and returns images
-indexed `[group][ad]`. The cascade creates the ads in order, each by its own requests; every
-ad's assets are appended to `CreativeAssetIDs`, the scalar `AdID` is the first group's first
-ad, each step line ends `[ad "<label>"]`, and a failure on ad j returns ads 1..j-1 complete.
-A single group with several ads is recorded in `AdGroups` so the launch toggle reaches every
-ad id, not only the scalar `AdID`.
+indexed `[group][ad]`. The cascade creates the ads in order, each by its own requests; each
+step line ends `[ad "<label>"]`, and a failure on ad j returns ads 1..j-1 complete. Several
+image ads, or a mix, in one group are admitted though only two video ads were probed.
+
+Assets are recorded PER AD. Each `AdGroupResult` entry gets `PlannedAds` (the ad count, set
+before any ad exists) and `Ads []DemandGenAdResult`, one `{Name, ID, CreativeAssetIDs}` per
+ad attempted, appended before its requests: an ad that failed is there with an empty `ID`
+and whatever assets it got, the per-ad form of the "assets with no ad" orphan signal, and an
+ad never reached has no entry. The scalar `CreativeAssetIDs` and the entry's own are the
+FIRST ad's alone, beside `AdID`, so the scalar signal still names the ad it belongs to: one
+flat list of every ad's assets could not say which of them are orphaned. `reconcileRef`
+keeps `adGroups[i].ads[j]`'s ids (depth 3, its limit). A single group with several ads is
+recorded in `AdGroups` so the launch toggle reaches every ad id, not only the scalar `AdID`;
+with ONE ad in `DemandGenAds` it is not, exactly as the single creative is not.
+`googleAdsToggleTargets` reads a group whose `AdIDs` is shorter than its `PlannedAds` as
+incomplete: it toggles the ads that exist and logs the group under `incomplete_ad_groups`,
+rather than launching ad 1 and saying nothing about ad 2. `PlannedAds` 0 (Search, older
+rows) keeps the old reading, because a Search group's ads come from one atomic mutate.
 
 ## Bidding strategies and conversion actions (LFXV2-2665)
 
@@ -2364,7 +2384,8 @@ reading that UI. `target-cpa`/`target-roas` are where the two vocabularies
 genuinely disagree: Google folded the standalone TargetCpa and TargetRoas
 strategies into MaximizeConversions and MaximizeConversionValue with a target
 set, and the UI still uses the old names. Both spellings resolve to the surviving
-strategy; the only difference is that the target is REQUIRED under the
+strategy, except on Demand Gen, which sends the standalone `targetCpa` (#474, below); the
+only difference is that the target is REQUIRED under the
 target-bearing label and optional under the maximize- one.
 
 **The defaults are byte-identical to the legacy payloads.**

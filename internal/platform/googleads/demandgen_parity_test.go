@@ -30,6 +30,19 @@ type parityCapture struct {
 	failStatus int
 }
 
+// recorded returns a copy of the request paths and bodies, taken under the lock the handler
+// writes them under, as dgRig.sent does — the handler runs on the server's goroutines, so
+// reading the fields directly is a data race.
+func (p *parityCapture) recorded() (paths []string, bodies map[string]string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	bodies = make(map[string]string, len(p.bodies))
+	for k, v := range p.bodies {
+		bodies[k] = v
+	}
+	return append([]string(nil), p.paths...), bodies
+}
+
 func (p *parityCapture) handler(t *testing.T) http.HandlerFunc {
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -103,29 +116,30 @@ func TestCreateDemandGenCampaign_ConversionBiddingCriteriaAndSitelinks(t *testin
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	paths, bodies := cap.recorded()
 	wantOrder := "campaignBudgets:mutate,campaigns:mutate,campaignCriteria:mutate,assets:mutate,campaignAssets:mutate,adGroups:mutate,adGroupCriteria:mutate"
-	if got := strings.Join(cap.paths, ","); got != wantOrder {
+	if got := strings.Join(paths, ","); got != wantOrder {
 		t.Fatalf("request order = %s, want %s", got, wantOrder)
 	}
-	campaign := cap.bodies["campaigns:mutate"]
+	campaign := bodies["campaigns:mutate"]
 	if !strings.Contains(campaign, `"targetCpa":{"targetCpaMicros":25000000}`) || strings.Contains(campaign, "maximizeConversions") || strings.Contains(campaign, "targetSpend") {
 		t.Errorf("campaign body %s, want exactly the standalone targetCpa strategy", campaign)
 	}
 	wantCriteria := `{"operations":[` +
 		`{"create":{"campaign":"customers/1234567890/campaigns/222","adSchedule":{"dayOfWeek":"MONDAY","startHour":9,"startMinute":"ZERO","endHour":17,"endMinute":"ZERO"}}},` +
 		`{"create":{"campaign":"customers/1234567890/campaigns/222","bidModifier":0,"device":{"type":"CONNECTED_TV"}}}]}`
-	if got := cap.bodies["campaignCriteria:mutate"]; got != wantCriteria {
+	if got := bodies["campaignCriteria:mutate"]; got != wantCriteria {
 		t.Errorf("campaign criteria body\n got %s\nwant %s", got, wantCriteria)
 	}
-	if !strings.Contains(cap.bodies["assets:mutate"], `"sitelinkAsset":{"linkText":"Register"}`) {
-		t.Errorf("assets body %s, want the sitelink", cap.bodies["assets:mutate"])
+	if !strings.Contains(bodies["assets:mutate"], `"sitelinkAsset":{"linkText":"Register"}`) {
+		t.Errorf("assets body %s, want the sitelink", bodies["assets:mutate"])
 	}
 	wantLink := `{"operations":[{"create":{"campaign":"customers/1234567890/campaigns/222","asset":"customers/1234567890/assets/900","fieldType":"SITELINK"}}]}`
-	if got := cap.bodies["campaignAssets:mutate"]; got != wantLink {
+	if got := bodies["campaignAssets:mutate"]; got != wantLink {
 		t.Errorf("link body %s, want %s", got, wantLink)
 	}
-	if !strings.Contains(cap.bodies["adGroupCriteria:mutate"], "languageConstants/1000") {
-		t.Errorf("the language must stay on the ad group, got %s", cap.bodies["adGroupCriteria:mutate"])
+	if !strings.Contains(bodies["adGroupCriteria:mutate"], "languageConstants/1000") {
+		t.Errorf("the language must stay on the ad group, got %s", bodies["adGroupCriteria:mutate"])
 	}
 
 	if strings.Join(res.CampaignTargetingCriterionIDs, ",") != "700,701" {
@@ -161,7 +175,8 @@ func TestCreateDemandGenCampaign_NoCampaignCriteriaWhenOnlyLanguages(t *testing.
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := strings.Join(cap.paths, ","); got != "campaignBudgets:mutate,campaigns:mutate,adGroups:mutate,adGroupCriteria:mutate" {
+	paths, _ := cap.recorded()
+	if got := strings.Join(paths, ","); got != "campaignBudgets:mutate,campaigns:mutate,adGroups:mutate,adGroupCriteria:mutate" {
 		t.Errorf("request order = %s", got)
 	}
 	if !strings.Contains(strings.Join(res.Steps, "\n"), "Campaign created: 222 (PAUSED, DEMAND_GEN, maximize-clicks,") {
@@ -180,7 +195,7 @@ func TestCreateDemandGenCampaign_NewStepsFailAsPartials(t *testing.T) {
 		wantErr  string
 		check    func(t *testing.T, res *CampaignResult)
 	}{
-		{"criteria refused", "campaignCriteria:mutate", http.StatusBadRequest, "it has NO language, schedule, device or demographic criteria", nil},
+		{"criteria refused", "campaignCriteria:mutate", http.StatusBadRequest, "it has NO schedule or device criteria and would serve around the clock, on every device if enabled", nil},
 		{"criteria ambiguous", "campaignCriteria:mutate", http.StatusInternalServerError, "campaign targeting criteria UNCONFIRMED", nil},
 		{"sitelink assets ambiguous", "assets:mutate", http.StatusInternalServerError, "ad extension assets UNCONFIRMED", func(t *testing.T, res *CampaignResult) {
 			if strings.Join(res.CampaignTargetingCriterionIDs, ",") != "700,701" {
@@ -205,7 +220,8 @@ func TestCreateDemandGenCampaign_NewStepsFailAsPartials(t *testing.T) {
 			if res == nil || res.CampaignID != "222" || res.CampaignBudgetID != "111" {
 				t.Fatalf("partial = %+v, want the campaign and budget", res)
 			}
-			for _, p := range cap.paths {
+			paths, _ := cap.recorded()
+			for _, p := range paths {
 				if p == "adGroups:mutate" {
 					t.Errorf("the ad group was created after the failed step")
 				}
@@ -285,8 +301,22 @@ func TestCreateDemandGenCampaign_SeveralAdsInTheSingleGroup(t *testing.T) {
 	if res.AdID != "444" || len(res.AdGroups) != 1 || strings.Join(res.AdGroups[0].AdIDs, ",") != "444,445,555" || res.AdGroups[0].ID != "333" {
 		t.Errorf("AdID = %q AdGroups = %+v, want 444 and one group with ads 444,445,555", res.AdID, res.AdGroups)
 	}
-	if len(res.CreativeAssetIDs) == 0 || strings.Join(res.CreativeAssetIDs, ",") != strings.Join(res.AdGroups[0].CreativeAssetIDs, ",") {
-		t.Errorf("CreativeAssetIDs %v / group %v, want every ad's assets on both", res.CreativeAssetIDs, res.AdGroups[0].CreativeAssetIDs)
+	// Assets are recorded PER AD, each beside its own id; the scalar list and the group's own
+	// are the FIRST ad's alone, beside AdID, so neither mixes another ad's assets in.
+	g := res.AdGroups[0]
+	if g.PlannedAds != 3 || len(g.Ads) != 3 {
+		t.Fatalf("PlannedAds = %d, Ads = %+v, want 3 planned and 3 recorded", g.PlannedAds, g.Ads)
+	}
+	for i, want := range []struct{ name, id, assets string }{
+		{"Cut A", "444", "900,950,951"}, {"Cut B", "445", "901,950,951"}, {"Static", "555", "902,903"},
+	} {
+		a := g.Ads[i]
+		if a.Name != want.name || a.ID != want.id || strings.Join(a.CreativeAssetIDs, ",") != want.assets {
+			t.Errorf("Ads[%d] = %+v, want %s / %s / %s", i, a, want.name, want.id, want.assets)
+		}
+	}
+	if strings.Join(res.CreativeAssetIDs, ",") != "900,950,951" || strings.Join(g.CreativeAssetIDs, ",") != "900,950,951" {
+		t.Errorf("CreativeAssetIDs %v / group %v, want the first ad's alone on both", res.CreativeAssetIDs, g.CreativeAssetIDs)
 	}
 	steps := strings.Join(res.Steps, "\n")
 	for _, want := range []string{`Demand Gen video ad created: 444 (PAUSED,`, `[ad "Cut A"]`, `[ad "Cut B"]`, `Demand Gen ad created: 555 (PAUSED,`, `[ad "Static"]`} {
@@ -296,8 +326,9 @@ func TestCreateDemandGenCampaign_SeveralAdsInTheSingleGroup(t *testing.T) {
 	}
 }
 
-// A failure on the second ad returns the first ad complete, the second's logo asset, and
-// an UNCONFIRMED error naming the second ad; the third is never sent.
+// A failure on the second ad returns the first ad complete, the second's logo asset under
+// the SECOND ad with no id — the per-ad orphan signal — and an UNCONFIRMED error naming
+// the second ad; the third is never sent and has no entry.
 func TestCreateDemandGenCampaign_SeveralAdsPartialOnTheSecond(t *testing.T) {
 	rig, c, base := newDGRig(t, twoGroupImages(t), map[string]func(int, []byte, http.ResponseWriter){
 		"googleAds:mutate": numberedVideoAds(1),
@@ -309,8 +340,18 @@ func TestCreateDemandGenCampaign_SeveralAdsPartialOnTheSecond(t *testing.T) {
 	if res == nil || res.AdID != "444" || len(res.AdGroups) != 1 || strings.Join(res.AdGroups[0].AdIDs, ",") != "444" {
 		t.Fatalf("res = %+v, want the first ad complete", res)
 	}
-	if len(res.AdGroups[0].CreativeAssetIDs) < 2 {
-		t.Errorf("the second ad's logo asset was lost: %v", res.AdGroups[0].CreativeAssetIDs)
+	g := res.AdGroups[0]
+	if g.PlannedAds != 3 || len(g.Ads) != 2 {
+		t.Fatalf("PlannedAds = %d, Ads = %+v, want 3 planned and ads 1-2 recorded", g.PlannedAds, g.Ads)
+	}
+	if g.Ads[0].ID != "444" || strings.Join(g.Ads[0].CreativeAssetIDs, ",") != "900,950,951" {
+		t.Errorf("Ads[0] = %+v, want the first ad complete with its own assets", g.Ads[0])
+	}
+	if g.Ads[1].Name != "Cut B" || g.Ads[1].ID != "" || strings.Join(g.Ads[1].CreativeAssetIDs, ",") != "901" {
+		t.Errorf("Ads[1] = %+v, want the second ad's logo 901 with no ad id", g.Ads[1])
+	}
+	if strings.Join(res.CreativeAssetIDs, ",") != "900,950,951" {
+		t.Errorf("CreativeAssetIDs = %v, want the first ad's alone — the orphan is on Ads[1]", res.CreativeAssetIDs)
 	}
 	if n := len(rig.sent("adGroupAds:mutate")); n != 0 {
 		t.Errorf("the third ad was sent after the second failed")
@@ -359,7 +400,7 @@ func TestValidateDemandGenAds_Refusals(t *testing.T) {
 		}, "has no creative"},
 		"video ad name over 255": {campaignKindDemandGen, func(in *CampaignInput) {
 			in.DemandGenAds = []DemandGenAd{{Name: strings.Repeat("v", 230), VideoCreative: fullVideoCreative("https://cdn.example.org")}}
-		}, "video ad name"},
+		}, "google-ads: Demand Gen video ad name"},
 		"group ads beside the group creative": {campaignKindDemandGen, func(in *CampaignInput) {
 			in.DemandGenAdGroups = []DemandGenAdGroup{{Name: "G", Creative: fullCreative(), Ads: []DemandGenAd{ad("A")}}}
 		}, "sets Ads beside Creative or VideoCreative"},
@@ -425,7 +466,11 @@ func TestCreateDemandGenCampaign_ContextDoneBetweenAds(t *testing.T) {
 		t.Fatalf("err = %v, want the between-ads abort", err)
 	}
 	if res == nil || len(res.AdGroups) != 1 || strings.Join(res.AdGroups[0].AdIDs, ",") != "444" {
-		t.Errorf("res = %+v, want the first ad only", res)
+		t.Fatalf("res = %+v, want the first ad only", res)
+	}
+	// An ad never reached has no Ads entry; PlannedAds still says three were meant.
+	if g := res.AdGroups[0]; len(g.Ads) != 1 || g.PlannedAds != 3 {
+		t.Errorf("Ads = %+v PlannedAds = %d, want one entry of 3 planned", g.Ads, g.PlannedAds)
 	}
 	if n := len(rig.sent("googleAds:mutate")); n != 1 {
 		t.Errorf("sent %d video ad mutates, want only the first", n)

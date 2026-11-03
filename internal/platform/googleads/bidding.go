@@ -24,8 +24,9 @@ import (
 // vocabularies genuinely disagree: Google folded the standalone TargetCpa and TargetRoas
 // strategies into MaximizeConversions and MaximizeConversionValue with a target set, and the
 // UI still calls them by the old names. So both spellings are accepted and both resolve to
-// the surviving strategy — the difference being only that the target is REQUIRED when the
-// caller names the target-bearing label, and optional when they name the maximize- one.
+// the surviving strategy, except on Demand Gen, which sends the standalone targetCpa (see
+// targetCPA) — the difference being only that the target is REQUIRED when the caller names
+// the target-bearing label, and optional when they name the maximize- one.
 const (
 	biddingManualCPC               = "manual-cpc"
 	biddingMaximizeClicks          = "maximize-clicks"
@@ -101,6 +102,10 @@ type maximizeConversions struct {
 // with a non-shared budget accepts `targetCpa: {targetCpaMicros}` and refuses
 // `maximizeConversions: {targetCpaMicros}` (OPERATION_NOT_PERMITTED_FOR_CONTEXT). No
 // omitempty: this arm is rendered only when a target exists, and the target is its content.
+//
+// VERSION-SCOPED to v23: settingsQueryFields (campaign_settings.go) records target_cpa.*
+// leaving the selectable set in v25, so a client API version bump must re-probe this
+// payload on Demand Gen before trusting it.
 type targetCPA struct {
 	TargetCpaMicros int64 `json:"targetCpaMicros"`
 }
@@ -126,6 +131,8 @@ type biddingFields struct {
 	MaximizeConversions     *maximizeConversions     `json:"maximizeConversions,omitempty"`
 	MaximizeConversionValue *maximizeConversionValue `json:"maximizeConversionValue,omitempty"`
 	// TargetCpa is set on Demand Gen only; see targetCPA and biddingPlan.standaloneTargetCPA.
+	// Probed at v23 only: settingsQueryFields (campaign_settings.go) records target_cpa.*
+	// leaving the selectable set in v25, so a version bump must re-probe it (see targetCPA).
 	TargetCpa *targetCPA `json:"targetCpa,omitempty"`
 }
 
@@ -465,6 +472,16 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 	// believes Google is bidding to their number while it is bidding to nothing of the
 	// kind, and the one field whose entire purpose is to CAP what a conversion costs is
 	// the worst place in this payload to lose silently.
+	//
+	// Demand Gen takes maximize-conversion-value with NO target (#474): the probe sent none,
+	// and the folded target CPA is refused on this channel, so the folded targetRoas is not
+	// assumed to pass. Refused rather than dropped, for the reason given above. Checked
+	// BEFORE the strategy-carries-a-target arms: under any strategy, the answer on this
+	// channel is "omit it", and the generic arm would send a caller on maximize-clicks to a
+	// strategy that refuses the same target, one mistake in two round trips.
+	if in.TargetROAS != 0 && kind == campaignKindDemandGen {
+		return biddingPlan{}, fmt.Errorf("google-ads: a target ROAS is not supported on %s (this client has verified %q there only without a target); omit TargetROAS", kind, biddingMaximizeConversionValue)
+	}
 	takesCPA := strategy == biddingMaximizeConversions || strategy == biddingTargetCPA
 	takesROAS := strategy == biddingMaximizeConversionValue || strategy == biddingTargetROAS
 	if in.TargetCPA != 0 && !takesCPA {
@@ -472,12 +489,6 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 	}
 	if in.TargetROAS != 0 && !takesROAS {
 		return biddingPlan{}, fmt.Errorf("google-ads: a target ROAS is not supported by the %q bidding strategy (only %q and %q carry one); omit TargetROAS, or choose one of those strategies", strategy, biddingMaximizeConversionValue, biddingTargetROAS)
-	}
-	// Demand Gen takes maximize-conversion-value with NO target (#474): the probe sent none,
-	// and the folded target CPA is refused on this channel, so the folded targetRoas is not
-	// assumed to pass. Refused rather than dropped, for the reason given above.
-	if in.TargetROAS != 0 && kind == campaignKindDemandGen {
-		return biddingPlan{}, fmt.Errorf("google-ads: a target ROAS is not supported on %s (this client has verified %q there only without a target); omit TargetROAS", kind, biddingMaximizeConversionValue)
 	}
 	// The target-bearing spellings REQUIRE their target. `target-cpa` with no CPA is not
 	// the same request as `maximize-conversions` — the caller named the label whose whole

@@ -801,8 +801,9 @@ again:** `googleAdsConfig.BiddingStrategy` now DOES record one, so the recorded 
 and the field is nonetheless left uncompared on purpose. Comparing it would require mapping
 this client's caller vocabulary onto Google's OUTPUT_ONLY `BiddingStrategyTypeEnum`, and
 that mapping is unverified exactly where it is ambiguous — `target-cpa` and
-`maximize-conversions` are both sent as `maximize_conversions`, and which enum Google
-reports back for the targeted one has not been observed — while on the adopt path the row
+`maximize-conversions` are both sent as `maximize_conversions` (except on Demand Gen, which
+sends the standalone `targetCpa`, #474), and which enum Google reports back for the
+targeted one has not been observed — while on the adopt path the row
 records a strategy that was never pushed upstream, so the two sides are expected to
 disagree. A guessed mapping would report a false divergence on campaigns set exactly as
 asked; `unknown` under-informs, a false divergence misinforms, and only the second costs the
@@ -1047,7 +1048,11 @@ URL through `sanitizeSnapshotDemandGenImage` / `sanitizeSnapshotDemandGenVideo`.
 unique names are the client's. `googleAdsCreativeSlots` enumerates every ad's slots through
 `appendDemandGenSlots` (labelled `demand gen ad N …` and `demand gen ad group N ad M …`),
 and `googleAdsSnapshotConfig` deep-copies both lists with `sanitizeSnapshotDemandGenAds`;
-the snapshot's early return names `demandGenAds` beside `demandGenAdGroups`.
+the snapshot's early return names `demandGenAds` beside `demandGenAdGroups`. On the way
+back, `googleAdsToggleTargets` reads each `adGroups` entry's `plannedAds`: a Demand Gen group
+holding fewer `adIds` than it planned (ad 2 failed or came back UNCONFIRMED) is still
+toggled for the ads it has and is reported in `incomplete_ad_groups`, never read as
+complete. `plannedAds` absent (Search, older rows) keeps the old reading.
 
 `performanceMaxCreative` is the same shape again — a pointer on the config, a mapper that
 validates nothing, the zero value for nil — and its test asserts nine lists into nine

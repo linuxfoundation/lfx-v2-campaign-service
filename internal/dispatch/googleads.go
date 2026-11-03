@@ -2507,12 +2507,13 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 			return gErr
 		}
 	}
-	// A group recorded but not toggleable is reported, never silently skipped. The toggle
-	// below still applies to every group that CAN take it — refusing the whole campaign
-	// because one group's create failed would strand a campaign that is otherwise ready —
-	// but the operator needs to know the campaign's state is not uniform.
+	// A group recorded but not toggleable — or, on Demand Gen (#474), toggleable for only
+	// the ads it got — is reported, never silently skipped. The toggle below still applies
+	// to every group that CAN take it — refusing the whole campaign because one group's
+	// create failed would strand a campaign that is otherwise ready — but the operator
+	// needs to know the campaign's state is not uniform.
 	if len(incompleteGroups) > 0 {
-		slog.WarnContext(ctx, "google ads campaign has ad groups that were never fully created; the status toggle cannot reach them",
+		slog.WarnContext(ctx, "google ads campaign has ad groups that were never fully created; the status toggle cannot reach what is missing from them",
 			"campaign_id", campaign.ID,
 			"platform_campaign_id", campaign.PlatformCampaignID,
 			"status", status,
@@ -3099,10 +3100,13 @@ func googleAdsToggleChildren(ctx context.Context, client *googleads.Client, targ
 //     delivers if one of its groups has keywords; asking only about the first group
 //     refuses a campaign that would have served, which is the over-refusal this gate
 //     must not commit.
-//   - incomplete: groups recorded in the blob that cannot be toggled because their create
-//     did not finish — present with an empty id, or with no ad. The create path appends an
-//     entry BEFORE the group's mutate precisely so a failed group leaves a trace, and the
-//     caller reports these rather than silently acting on a subset.
+//   - incomplete: groups recorded in the blob whose create did not finish — present with
+//     an empty id, or with no ad, and so not toggled at all; or (#474) a Demand Gen group
+//     holding fewer ads than its PlannedAds, whose ad j failed or was never reached. That
+//     one IS toggled, for the ads it has, and reported too: treating it as complete would
+//     launch ad 1 and say nothing about ad 2. The create path appends an entry BEFORE the
+//     group's mutate precisely so a failed group leaves a trace, and the caller reports
+//     these rather than silently acting on a subset.
 //
 // Falls back to the scalar pair when AdGroups is absent: rows written before that field
 // existed are single-group by construction, so the pair IS the whole campaign there.
@@ -3133,15 +3137,18 @@ func googleAdsToggleTargets(campaign *model.Campaign) (targets []googleads.AdGro
 				adIDs = append(adIDs, adID)
 			}
 		}
+		// Named by what the operator will recognise in the Google Ads UI, falling back to the
+		// position when the name is empty too.
+		name := strings.TrimSpace(g.Name)
+		if name == "" {
+			name = fmt.Sprintf("#%d", i+1)
+		}
 		if adGroupID == "" || len(adIDs) == 0 {
-			// Named by what the operator will recognise in the Google Ads UI, falling back
-			// to the position when the name is empty too.
-			name := strings.TrimSpace(g.Name)
-			if name == "" {
-				name = fmt.Sprintf("#%d", i+1)
-			}
 			incomplete = append(incomplete, name)
 			continue
+		}
+		if len(adIDs) < g.PlannedAds {
+			incomplete = append(incomplete, name)
 		}
 		targets = append(targets, googleads.AdGroupStatusTarget{AdGroupID: adGroupID, AdIDs: adIDs})
 	}
@@ -3193,8 +3200,9 @@ const (
 	// the comparison would have to map this client's UI vocabulary onto Google's OUTPUT_ONLY
 	// BiddingStrategyTypeEnum, and that mapping is not live-verified at exactly the point it
 	// is ambiguous — `target-cpa` and `maximize-conversions` are both sent as
-	// maximize_conversions (with and without a target), and which enum value Google reports
-	// back for the targeted one has not been observed. A mapping guessed wrong reports a
+	// maximize_conversions (with and without a target), except on Demand Gen, which sends
+	// the standalone targetCpa (#474) — and which enum value Google reports back for the
+	// targeted one has not been observed. A mapping guessed wrong reports a
 	// false divergence, which sends an operator to investigate a campaign that is set
 	// exactly as asked. Reporting `unknown` under-informs; a false divergence misinforms,
 	// and only the second is a cost the operator pays. Comparing this field is a follow-up

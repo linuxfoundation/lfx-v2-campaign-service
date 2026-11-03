@@ -610,11 +610,13 @@ func TestGoogleAds_WithoutTheNewFieldsTheCascadeIsUnchanged(t *testing.T) {
 	}
 }
 
-// The Search-only fields must be refused BEFORE the budget mutate on Demand Gen:
+// The fields Demand Gen cannot take must be refused BEFORE the budget mutate there:
 // discovering the channel cannot take them after the campaign exists leaves a paid
-// campaign behind. Each is listed separately because they are refused by three
+// campaign behind. Not all of them are Search-only any more (#474: Demand Gen takes an
+// unmodified ad schedule, device exclusions and sitelinks; Video and Display take
+// demographics), hence the name. Each is listed separately because they are refused by three
 // different validators, and a regression in one would be hidden by the others.
-func TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenBeforeAnyCreate(t *testing.T) {
+func TestGoogleAds_UnsupportedFieldsAreRefusedOnDemandGenBeforeAnyCreate(t *testing.T) {
 	cases := []struct {
 		name string
 		cfg  string
@@ -720,7 +722,7 @@ func TestGoogleAdsAdSchedules_CarriesTheBidModifierPointer(t *testing.T) {
 	}
 }
 
-// The Search-only refusals must hold on the ADOPTION path too, which is the half the
+// The Demand Gen refusals must hold on the ADOPTION path too, which is the half the
 // per-field table above cannot reach: adoption returns before any create runs, so a
 // request that CreateDemandGenCampaign would refuse is never handed to it.
 //
@@ -733,7 +735,7 @@ func TestGoogleAdsAdSchedules_CarriesTheBidModifierPointer(t *testing.T) {
 //
 // The server fails on ANY request: the refusal must land before the adoption lookup,
 // not merely before a create, so there is nothing legitimate for it to serve.
-func TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenAdoptionToo(t *testing.T) {
+func TestGoogleAds_UnsupportedFieldsAreRefusedOnDemandGenAdoptionToo(t *testing.T) {
 	cases := []struct {
 		name string
 		cfg  string
@@ -833,7 +835,7 @@ func TestGoogleAdsClient_ValidateCampaignInputKindGatesOnTheKind(t *testing.T) {
 //
 // This is the SEARCH channel, where all of these fields are supported — so a
 // refusal here is about the value, not the channel, which is what separates this
-// table from TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenBeforeAnyCreate.
+// table from TestGoogleAds_UnsupportedFieldsAreRefusedOnDemandGenBeforeAnyCreate.
 // One case per validator: they fail independently, and a regression in one would
 // be invisible behind the others.
 func TestGoogleAds_BadTargetingConfigIsPreCreate(t *testing.T) {

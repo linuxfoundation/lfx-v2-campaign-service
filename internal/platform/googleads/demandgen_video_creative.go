@@ -267,11 +267,12 @@ func demandGenVideoAdName(adGroupName string) string {
 
 // validateDemandGenVideoAdName refuses a composed video ad name over Google's Ad.name
 // limit before the budget mutate; Google refuses it only at the ad's mutate, after the
-// campaign and ad group exist.
-func validateDemandGenVideoAdName(adGroupName string) error {
-	name := demandGenVideoAdName(adGroupName)
+// campaign and ad group exist. name is the composed ad.name: demandGenVideoAdName's for
+// the single unnamed ad, "<ad group name> - <label>" for a DemandGenAd (#474). One check
+// and one message for both, so the two paths cannot drift apart.
+func validateDemandGenVideoAdName(name string) error {
 	if n := utf8.RuneCountInString(name); n > maxAdNameRunes {
-		return fmt.Errorf("google-ads Demand Gen video ad name %q is %d characters, over Google's %d; shorten EventName or the ad group's name", capForError(name), n, maxAdNameRunes)
+		return fmt.Errorf("google-ads: Demand Gen video ad name %q is %d characters, over Google's %d; shorten EventName, the ad group's name or the ad's name", capForError(name), n, maxAdNameRunes)
 	}
 	return nil
 }

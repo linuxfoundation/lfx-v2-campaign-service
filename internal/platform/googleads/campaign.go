@@ -464,11 +464,26 @@ type CampaignInput struct {
 
 // AdGroupResult is one ad group the cascade attempted, and everything created
 // under it. ID empty means the ad group's own mutate failed or was unconfirmed;
-// AdIDs empty means the group exists but its ads did not get created.
+// AdIDs empty means the group exists but its ads did not get created. On a Demand
+// Gen group (#474) AdIDs SHORTER than PlannedAds means the same for the ads past
+// its end: ad j failed, was unconfirmed or was never reached, and ads 1..j-1 exist.
 type AdGroupResult struct {
 	Name  string   `json:"name"`
 	ID    string   `json:"id,omitempty"`
 	AdIDs []string `json:"adIds,omitempty"`
+	// PlannedAds is how many ads the Demand Gen cascade meant to create in this group
+	// (#474), set when the entry is appended, before any ad exists. It is what lets the
+	// launch toggle tell a group whose ad 2 failed — AdIDs ["444"] of 2 planned — from a
+	// complete one-ad group. 0 on every other channel and on rows written before it
+	// existed, where the toggle keeps reading a non-empty AdIDs as complete: the Search
+	// ads of a group are created by one atomic mutate, so its AdIDs is all or nothing.
+	PlannedAds int `json:"plannedAds,omitempty"`
+	// Ads is every Demand Gen ad of this group the cascade attempted, in order (#474),
+	// each with its OWN creative assets. An entry is appended before the ad's requests,
+	// so an ad that failed is present with an empty ID and whatever assets it got, and
+	// an ad never reached has no entry. It is the per-ad record a reconciler needs:
+	// CreativeAssetIDs below is the FIRST ad's alone, as the scalar fields are.
+	Ads []DemandGenAdResult `json:"ads,omitempty"`
 	// KeywordCriteriaIDs/AudienceCriteriaIDs are this group's own criteria, with
 	// the same three-way ambiguity on empty that CampaignResult.GeoCriterionIDs
 	// documents: none asked for, the mutate failed, or it was unconfirmed.
@@ -481,10 +496,21 @@ type AdGroupResult struct {
 	DemographicCriteriaIDs     []string `json:"demographicCriteriaIds,omitempty"`
 	// GeoCriterionIDs, TargetingCriterionIDs and CreativeAssetIDs are this group's own, set
 	// on a Demand Gen campaign built from DemandGenAdGroups (#460), with the meanings the
-	// CampaignResult fields of the same names document.
+	// CampaignResult fields of the same names document. CreativeAssetIDs is the group's
+	// FIRST ad's; with several ads (#474), Ads holds each ad's.
 	GeoCriterionIDs       []string `json:"geoCriterionIds,omitempty"`
 	TargetingCriterionIDs []string `json:"targetingCriterionIds,omitempty"`
 	CreativeAssetIDs      []string `json:"creativeAssetIds,omitempty"`
+}
+
+// DemandGenAdResult is one Demand Gen ad the cascade attempted (#474). Name is the ad's
+// label, empty for the single unnamed ad a group's creative fields describe. ID empty
+// with CreativeAssetIDs non-empty is the orphan case CampaignResult.CreativeAssetIDs
+// documents, for THIS ad: its assets exist account-wide and no ad references them.
+type DemandGenAdResult struct {
+	Name             string   `json:"name,omitempty"`
+	ID               string   `json:"id,omitempty"`
+	CreativeAssetIDs []string `json:"creativeAssetIds,omitempty"`
 }
 
 // CampaignResult reports what CreateCampaign created. The Google Ads hierarchy is
@@ -626,11 +652,11 @@ type CampaignResult struct {
 	// CreativeAssetIDs are the IMAGE assets created for a Demand Gen ad — marketing
 	// images, then logos, in the order demandGenImageSlots lists them.
 	//
-	// Kept separate from ExtensionAssetIDs rather than folded into it, even though
-	// both are account-level `assets` ids created by an `assets:mutate`: the two
-	// come from different inputs (extensions, Search's and Demand Gen's sitelinks; these,
-	// Demand Gen's creatives) and are attached to different things — an extension is linked to the CAMPAIGN
-	// by a second mutate, an image is referenced by the AD itself. A reconciler
+	// Kept separate from ExtensionAssetIDs rather than folded into it, even though both are
+	// account-level `assets` ids created by an `assets:mutate`: the two come from different
+	// inputs (extensions, Search's and Demand Gen's sitelinks; these, Demand Gen's
+	// creatives) and are attached to different things — an extension is linked to the
+	// CAMPAIGN by a second mutate, an image is referenced by the AD itself. A reconciler
 	// chasing one would look in the wrong place for the other.
 	//
 	// Non-empty with AdID empty is the Demand Gen counterpart of the
@@ -643,6 +669,10 @@ type CampaignResult struct {
 	// exist with nothing referencing them.
 	// On a Demand Gen VIDEO ad (#460) it carries the logo image, then the YouTube video
 	// assets, then the call-to-action asset.
+	// On Demand Gen it is the FIRST group's FIRST ad's, beside AdID, so the orphan signal
+	// above holds for that ad. A group with several ads (#474) records every ad's own
+	// assets in AdGroups[].Ads, where an entry with an empty ID is the same signal for
+	// that ad; a flat list of every ad's assets could not say which ones are orphaned.
 	CreativeAssetIDs []string `json:"creativeAssetIds,omitempty"`
 	// AssetGroupID is the Performance Max asset group, empty on every other channel
 	// and on a Performance Max campaign created without a creative. Non-empty with a

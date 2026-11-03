@@ -89,7 +89,7 @@ func validateDemandGenAdGroups(kind, customerID string, in CampaignInput, base d
 			}
 			base.ads = ads
 		} else if len(base.ads) > 0 && base.ads[0].video.present {
-			if err := validateDemandGenVideoAdName(base.name); err != nil {
+			if err := validateDemandGenVideoAdName(demandGenVideoAdName(base.name)); err != nil {
 				return nil, err
 			}
 		}
@@ -155,7 +155,7 @@ func validateDemandGenAdGroups(kind, customerID string, in CampaignInput, base d
 			if video, err = validateDemandGenVideoSpec(g.VideoCreative, in.ResolvedImages); err != nil {
 				return nil, fmt.Errorf("google-ads: Demand Gen ad group %q: %w", name, err)
 			}
-			if err := validateDemandGenVideoAdName(name); err != nil {
+			if err := validateDemandGenVideoAdName(demandGenVideoAdName(name)); err != nil {
 				return nil, err
 			}
 			plan.ads = singleDemandGenAd(name, creative, video)

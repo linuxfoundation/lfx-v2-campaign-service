@@ -6,7 +6,6 @@ package googleads
 import (
 	"fmt"
 	"strings"
-	"unicode/utf8"
 )
 
 // ---------------------------------------------------------------------------
@@ -98,8 +97,8 @@ func validateDemandGenAds(owner, groupName string, ads []DemandGenAd, resolved m
 			if plan.video, err = validateDemandGenVideoSpec(a.VideoCreative, resolved); err != nil {
 				return nil, fmt.Errorf("google-ads: %s: %w", adOwner, err)
 			}
-			if n := utf8.RuneCountInString(adName); n > maxAdNameRunes {
-				return nil, fmt.Errorf("google-ads: Demand Gen video ad name %q is %d characters, over Google's %d; shorten the ad's name, EventName or the ad group's name", capForError(adName), n, maxAdNameRunes)
+			if err := validateDemandGenVideoAdName(adName); err != nil {
+				return nil, err
 			}
 		default:
 			return nil, fmt.Errorf("google-ads: %s has no creative; set its Creative (image) or VideoCreative", adOwner)

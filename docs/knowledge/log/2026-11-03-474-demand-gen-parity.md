@@ -9,6 +9,8 @@ Each shape was checked by validateOnly probes on 2026-11-03 at v23, with the non
 budget every LFX create makes. `maximizeConversions: {}`, `targetCpa: {targetCpaMicros}` and
 `maximizeConversionValue: {}` were accepted on a Demand Gen campaign, and
 `maximizeConversions: {targetCpaMicros}` was refused (OPERATION_NOT_PERMITTED_FOR_CONTEXT).
+That payload is version-scoped to v23: `target_cpa.*` left the selectable set in v25, so a
+client version bump re-probes it.
 The 2026-08-14 refusal that fenced the channel to maximize clicks
 (BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET) was about a shared budget. Campaign
 criteria `{device: CONNECTED_TV, bidModifier: 0}` and MOBILE at 0, a campaign ad schedule, a
@@ -35,7 +37,13 @@ cascade reuses `createCampaignAssets`.
 `demandGenAdGroups` entry's `ads` to `DemandGenAdGroup.Ads` (`demandgen_ads.go`): up to five
 named ads, each one image or video creative, labels unique within the group, a video ad named
 `<ad group name> - <label>` within Google's 255 characters. Each ad is created by its own
-requests; a failure on ad j returns ads 1..j-1 complete. A single group with several ads is
-recorded in `adGroups`, so launch flips every ad. Dispatch mapping, stored-asset slots and
+requests; a failure on ad j returns ads 1..j-1 complete. Two video ads in one group were
+probed; several image ads, or image and video mixed, were not, and are admitted unprobed. A
+single group with several ads is recorded in `adGroups`, so launch flips every ad. Each
+`adGroups` entry carries `plannedAds` and `ads` — one `{name, id, creativeAssetIds}` per ad
+attempted — so a failed ad's assets are recorded against that ad, and the scalar
+`creativeAssetIds` stays the first ad's beside `adId`. `googleAdsToggleTargets` reads a
+group with fewer `adIds` than `plannedAds` as incomplete (`incomplete_ad_groups`) while
+still toggling the ads it has. Dispatch mapping, stored-asset slots and
 snapshot sanitization cover the lists. The api-catalog entries and the googleads and dispatch
 knowledge concepts are updated.

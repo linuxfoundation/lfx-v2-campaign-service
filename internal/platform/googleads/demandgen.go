@@ -384,7 +384,9 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		}
 		var entry *AdGroupResult
 		if record {
-			res.AdGroups = append(res.AdGroups, AdGroupResult{Name: adGroupName})
+			// PlannedAds (#474) is set now, before any ad exists, so a group whose ad j
+			// fails reads as incomplete to the launch toggle rather than as a group of j-1.
+			res.AdGroups = append(res.AdGroups, AdGroupResult{Name: adGroupName, PlannedAds: len(g.ads)})
 			entry = &res.AdGroups[len(res.AdGroups)-1]
 		}
 		adGroupResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), adGroupReq, false)
@@ -470,7 +472,10 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		//
 		// The asset ids are carried even when the ad itself failed, so the operator can find
 		// assets created with nothing referencing them; a failure on ad j returns ads
-		// 1..j-1 complete.
+		// 1..j-1 complete. They are recorded PER AD (#474): each ad gets an entry.Ads entry,
+		// appended before its requests, holding its own assets and, once created, its id. The
+		// scalar CreativeAssetIDs and the entry's own are the first ad's alone, beside AdID,
+		// so "assets with no ad id" keeps naming the ad they belong to.
 		for j, ad := range g.ads {
 			if j > 0 {
 				if ctxErr := ctx.Err(); ctxErr != nil {
@@ -482,7 +487,12 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 				adID     string
 				adErr    error
 				adStep   string
+				adEntry  *DemandGenAdResult
 			)
+			if entry != nil {
+				entry.Ads = append(entry.Ads, DemandGenAdResult{Name: ad.label})
+				adEntry = &entry.Ads[len(entry.Ads)-1]
+			}
 			if ad.creative.present {
 				assetIDs, adID, adErr = c.createDemandGenAd(ctx, adGroupResource, adGroupID, pf.finalURL, ad.creative, groupImages[k][j].images)
 				adStep = fmt.Sprintf("Demand Gen ad created: %s (PAUSED, %s)", adID, demandGenCreativeStep(ad.creative))
@@ -490,11 +500,14 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 				assetIDs, adID, adErr = c.createDemandGenVideoAd(ctx, adGroupResource, adGroupID, ad.adName, pf.finalURL, ad.video, groupImages[k][j].logos)
 				adStep = fmt.Sprintf("Demand Gen video ad created: %s (PAUSED, %s)", adID, demandGenVideoCreativeStep(ad.video))
 			}
-			if k == 0 {
-				res.CreativeAssetIDs = append(res.CreativeAssetIDs, assetIDs...)
+			if k == 0 && j == 0 {
+				res.CreativeAssetIDs = assetIDs
 			}
 			if entry != nil {
-				entry.CreativeAssetIDs = append(entry.CreativeAssetIDs, assetIDs...)
+				if j == 0 {
+					entry.CreativeAssetIDs = assetIDs
+				}
+				adEntry.CreativeAssetIDs = assetIDs
 			}
 			if adErr != nil {
 				return fail(adErr)
@@ -504,6 +517,7 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 			}
 			if entry != nil {
 				entry.AdIDs = append(entry.AdIDs, adID)
+				adEntry.ID = adID
 			}
 			steps = append(steps, adStep+demandGenAdStep(ad.label)+tag)
 			res.Steps = steps
