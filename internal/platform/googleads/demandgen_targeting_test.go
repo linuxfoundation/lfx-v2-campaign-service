@@ -271,7 +271,7 @@ func TestCreateDemandGenCampaign_AttachesAudienceAndLanguagesToTheAdGroup(t *tes
 		t.Errorf("TargetingCriterionIDs = %v, want [901 902]", res.TargetingCriterionIDs)
 	}
 	wantStep := "Audience and language targeting applied: 3 ad-group criteria (audience customers/1234567890/audiences/4242; 2 language(s))"
-	if !containsStep(res.Steps, wantStep) {
+	if !hasExactStep(res.Steps, wantStep) {
 		t.Errorf("steps = %q, want %q", res.Steps, wantStep)
 	}
 }
@@ -320,7 +320,7 @@ func TestCreateDemandGenCampaign_AudienceOrLanguagesAlone(t *testing.T) {
 			if !reflect.DeepEqual(res.TargetingCriterionIDs, tc.wantLanguage) {
 				t.Errorf("TargetingCriterionIDs = %v, want %v", res.TargetingCriterionIDs, tc.wantLanguage)
 			}
-			if !containsStep(res.Steps, tc.wantStep) {
+			if !hasExactStep(res.Steps, tc.wantStep) {
 				t.Errorf("steps = %q, want %q", res.Steps, tc.wantStep)
 			}
 		})
@@ -524,7 +524,9 @@ func TestDemandGenClosingStep_NoGeoArmsAskForGeoTargeting(t *testing.T) {
 	}
 }
 
-func containsStep(steps []string, want string) bool {
+// hasExactStep reports whether steps holds want exactly. It is not search_parity_test.go's
+// containsStep, which matches a substring: these tests pin the whole step line.
+func hasExactStep(steps []string, want string) bool {
 	for _, s := range steps {
 		if s == want {
 			return true
