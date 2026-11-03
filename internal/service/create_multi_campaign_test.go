@@ -96,10 +96,11 @@ func TestBriefService_CreateCampaigns_ExpectedSlotVersionsRules(t *testing.T) {
 	}
 }
 
-// The validated expectation and labels reach the orchestrator: a well-formed new_version request
-// whose expectation is stale (the caller saw no campaign; slot 1 exists) is answered as a reuse,
-// which only happens if the service passed the map through.
-func TestBriefService_CreateCampaigns_PassesTheExpectationToTheOrchestrator(t *testing.T) {
+// Pins the stale-reuse answer at the service boundary: a well-formed new_version request whose
+// expectation is stale (the caller saw no campaign; slot 1 exists) is answered as a reuse. It does
+// NOT prove the map was forwarded — a missing expectation hits the same stale arm. The forwarding
+// guard is TestBriefService_CreateCampaigns_AMatchingExpectationCreatesTheNextCampaign.
+func TestBriefService_CreateCampaigns_AStaleExpectationReusesTheLatest(t *testing.T) {
 	s, jobs, camps := approvedPaidBriefService(t)
 	camps.storeRow(&model.Campaign{
 		ID: "row-1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderMicrosoftAds,
