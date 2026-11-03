@@ -788,7 +788,8 @@ Google Ads per-platform config. Which campaign is created depends on `channel`. 
 keyword/audience targeting attached to that ad group (GA-4) — without it, the ad group has zero
 criteria and the campaign can never serve, even once a human enables it. `demand-gen` creates a
 Demand Gen campaign with an ad group and (given `demandGenCreative` or `demandGenVideoCreative`)
-one ad — or one ad group per `demandGenAdGroups` entry, each with its own ad; `performance-max`
+one ad, or several given `demandGenAds` — or one ad group per `demandGenAdGroups` entry, each
+with its own ad or ads; `performance-max`
 creates a Performance Max campaign with NO ad group and NO ad at all — its creative is an ASSET
 GROUP built from `performanceMaxCreative`; `video` CREATES NOTHING — the Google Ads API
 supports fetching and reporting on Video campaigns but cannot create or mutate them, so a
@@ -807,9 +808,10 @@ that names none of them produces exactly the single-ad-group, single-ad campaign
 service created before they existed. Additive does NOT mean channel-independent — the
 entries below marked SEARCH ONLY are REFUSED, not ignored, on any other `channel`. Each
 entry states which channels accept it, because the channels do not refuse the same set:
-`performance-max` takes ad schedules and proximity that `demand-gen` refuses, and refuses
-device bid modifiers and demographic exclusions alongside it; `demand-gen` takes languages
-on its ad group, and is the only channel that takes `demandGenAudience`. Each is validated
+`performance-max` takes proximity that `demand-gen` refuses, and refuses device bid modifiers
+and demographic exclusions; `demand-gen` takes languages on its ad group, ad schedules,
+device exclusions and sitelinks at the campaign level (#474), refuses demographic
+exclusions, and is the only channel that takes `demandGenAudience`. Each is validated
 BEFORE the first budget mutate, so a refused value cannot strand a paid campaign — and the
 same validation runs on the `adoptExisting` path, so a config is refused identically whether
 it creates or adopts.
@@ -1170,13 +1172,22 @@ biddingStrategy?: string        — OPTIONAL how the campaign bids. Named with t
                                   `maximize-conversions` on Performance Max. An unknown name is refused
                                   and the error lists the supported set.
 
-                                  On `demand-gen` ONLY `maximize-clicks` is accepted. That is not a
-                                  Google limit but the limit of what this client has verified: a
-                                  recorded live-API check (2026-08-14, v23) had Demand Gen accept
-                                  `targetSpend` and reject `maximizeConversions` with
-                                  BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET — AFTER the
-                                  budget was created. Anything else on that channel is refused before
-                                  the budget mutate rather than risking that orphan.
+                                  On `demand-gen` (#474) the accepted set is `maximize-clicks`,
+                                  `maximize-conversions`, `target-cpa` and
+                                  `maximize-conversion-value`, each accepted by a `validateOnly`
+                                  probe (2026-11-03, v23) with the non-shared budget every LFX
+                                  create makes. A target CPA there — under `target-cpa`, or a
+                                  `targetCpa` under `maximize-conversions` — is sent as the
+                                  standalone `targetCpa: {targetCpaMicros}` strategy, because the
+                                  same probe refused `maximizeConversions.targetCpaMicros` on that
+                                  channel. `target-roas`, and a `targetRoas` under
+                                  `maximize-conversion-value`, are REFUSED there: only the
+                                  targetless strategy was probed. (Until #474 the channel took
+                                  `maximize-clicks` alone, on a 2026-08-14 refusal,
+                                  BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET, that was
+                                  about a shared budget rather than the channel.) A conversion
+                                  strategy with no `conversionActions` bids toward the account's
+                                  conversion goals, as on every channel.
 
                                   On `performance-max` the accepted set is the four conversion-oriented
                                   strategies — `maximize-conversions`, `target-cpa`,
@@ -1260,9 +1271,9 @@ conversionActions?: string[]    — OPTIONAL the conversion actions THIS campaig
                                   (`DUPLICATE_CONVERSION_ACTION_LIST`) takes no second-name
                                   fallback: a create under any name would be refused the same way.
                                   Under a strategy that
-                                  bids for clicks (manual CPC, maximize clicks, and Demand Gen's only
-                                  strategy) the goal decides what the campaign counts as a conversion,
-                                  not what it bids for, and the step line says so.
+                                  bids for clicks (manual CPC, maximize clicks — Demand Gen's
+                                  default) the goal decides what the campaign counts as a
+                                  conversion, not what it bids for, and the step line says so.
 
                                   The goal is the first step after the campaign create and the create
                                   stops on its failure, so a failure is a PARTIAL result: the campaign
@@ -1324,11 +1335,17 @@ languages?: string[]            — OPTIONAL languages the campaign targets (LFX
                                   probe, 2026-11-03). They share one atomic `adGroupCriteria:mutate`
                                   with `demandGenAudience` (with each group's `audience`, on every
                                   `demandGenAdGroups` group, #460), and their ids are reported in
-                                  `targetingCriterionIds` as adGroupCriterion ids. `adSchedules`,
-                                  `deviceBidModifiers`, `excludedAgeRanges` and `excludedGenders` stay
-                                  REFUSED there, by one guard: this client has not verified them on
-                                  the Demand Gen ad group, and accepting and dropping them would
-                                  create a campaign without the targeting the caller asked for.
+                                  `targetingCriterionIds` as adGroupCriterion ids. `adSchedules` and
+                                  `deviceBidModifiers` are CAMPAIGN criteria there (#474), sent in one
+                                  `campaignCriteria:mutate` after the conversion goal and before the
+                                  ad groups, with their ids in `campaignTargetingCriterionIds`; only
+                                  the shapes a `validateOnly` probe (2026-11-03) accepted pass — a
+                                  schedule with no `bidModifier`, a device with `bidModifier` 0.
+                                  `excludedAgeRanges` and `excludedGenders` stay REFUSED there:
+                                  Google refuses demographic criteria on the audience-grouped Demand
+                                  Gen ad group (CANNOT_ADD_AUDIENCE_SEGMENT_CRITERION_WHEN_AUDIENCE_GROUPED_IS_SET),
+                                  so they belong INSIDE the Audience `demandGenAudience` (or a
+                                  group's `audience`) references, built in the Google Ads UI.
 
                                   ACCEPTED on `performance-max`, which Google documents as taking
                                   LANGUAGE, LOCATION and AD_SCHEDULE campaign criteria. Only
@@ -1375,21 +1392,25 @@ adSchedules?:                   — OPTIONAL dayparting (LFXV2-2665): the interv
                                   campaign to the intervals listed — Google treats the set as
                                   exhaustive, so a single Monday interval means a Monday-only campaign.
 
-                                  REFUSED rather than ignored on `demand-gen`, accepted on
-                                  `performance-max`, `video` and `display`; see `languages` for why.
+                                  ACCEPTED on `demand-gen` (#474) at the campaign level, but WITHOUT a
+                                  `bidModifier` — only an unmodified schedule was probed there, so a
+                                  modifier is refused. Accepted on `performance-max`, `video` and
+                                  `display`; see `languages` for the levels.
 deviceBidModifiers?:            — OPTIONAL per-device bid adjustments (LFXV2-2665). `device` is one of
-  {device, bidModifier}[]         MOBILE, DESKTOP, TABLET (case-insensitive); at most 3 entries and a
-                                  device may appear only ONCE — two criteria for the same device are a
-                                  conflict Google rejects after the campaign exists, and the caller
-                                  plainly meant one of the two values.
+  {device, bidModifier}[]         MOBILE, DESKTOP, TABLET (case-insensitive), plus CONNECTED_TV on
+                                  `demand-gen`; at most one entry per device the channel takes (3, or
+                                  4 on `demand-gen`) and a device may appear only ONCE — two criteria
+                                  for the same device are a conflict Google rejects after the campaign
+                                  exists, and the caller plainly meant one of the two values.
 
-                                  There is NO TV-screen value, on ANY channel. Google supports that
-                                  device only on Display and Video campaigns — which this service now
-                                  creates — so on those two the omission is this client's limitation
-                                  rather than Google's, and is named as one. It stays closed because the
-                                  documentation does not settle whether a TV-screen criterion carries a
-                                  bid modifier, and this client cannot send one without: a wrong guess
-                                  is rejected at the criteria mutate, after the campaign is paid for.
+                                  CONNECTED_TV is accepted on `demand-gen` ONLY (#474): a
+                                  `validateOnly` probe (2026-11-03) accepted a Demand Gen campaign
+                                  criterion `{device: CONNECTED_TV, bidModifier: 0}`. Google documents
+                                  TV screens for Display and Video campaigns, so on those two the
+                                  omission is this client's limitation rather than Google's, and is
+                                  named as one: the documentation does not settle whether a TV-screen
+                                  criterion there carries a bid modifier, and a wrong guess is
+                                  rejected at the criteria mutate, after the campaign is paid for.
 
                                   `bidModifier` is REQUIRED here (unlike on `adSchedules`, where the
                                   absent case means "listed but unadjusted"; a device entry with no
@@ -1400,9 +1421,11 @@ deviceBidModifiers?:            — OPTIONAL per-device bid adjustments (LFXV2-2
                                   Omitted/empty, no device criteria are created and the campaign bids
                                   equally on every device.
 
-                                  REFUSED rather than ignored on `demand-gen` AND on
-                                  `performance-max`; ACCEPTED on `video` and `display`; see `languages`
-                                  for why.
+                                  ACCEPTED on `demand-gen` (#474) at the campaign level with
+                                  `bidModifier` 0 ONLY — the device exclusion is what the probe
+                                  verified, so any other modifier is refused. REFUSED on
+                                  `performance-max`; ACCEPTED on `video` and `display`; see
+                                  `languages` for the levels.
 excludedAgeRanges?: string[]    — OPTIONAL demographic EXCLUSIONS (LFXV2-2665), attached as negative
 excludedGenders?: string[]        campaign criteria. Age ranges are 18-24, 25-34, 35-44, 45-54, 55-64,
                                   65+ or UNDETERMINED (Google's own AGE_RANGE_* enum names are accepted
@@ -1418,9 +1441,9 @@ excludedGenders?: string[]        campaign criteria. Age ranges are 18-24, 25-34
                                   Omitted/empty, no demographic criteria are created and the campaign
                                   is eligible for every bucket.
 
-                                  REFUSED rather than ignored on `demand-gen` AND on
-                                  `performance-max`; ACCEPTED on `video` and `display`; see `languages`
-                                  for why.
+                                  REFUSED rather than ignored on `demand-gen` (the message says to put
+                                  them inside the Audience; see `languages`) AND on
+                                  `performance-max`; ACCEPTED on `video` and `display`.
 excludedIncomeRanges?:          — OPTIONAL demographic EXCLUSIONS (#473), attached as negative AD
   string[]                        GROUP criteria on every ad group the campaign gets — not campaign
 excludedParentalStatuses?:        criteria like the two above, because the ad group is the level the
@@ -1455,6 +1478,13 @@ sitelinks?:                     — OPTIONAL sitelink extensions (LFXV2-2665): e
                                   copy the caller wrote. `finalUrl` is required and must be a servable
                                   http(s) URL; it is UTM-tagged by the same builder as the ad's own
                                   destination and must be ≤2084 bytes AFTER tagging. At most 20.
+
+                                  ACCEPTED on `demand-gen` too (#474) — the one extension type that
+                                  channel takes, verified by a `validateOnly` probe (2026-11-03) of a
+                                  sitelink asset and its SITELINK campaign asset. Created and linked
+                                  exactly as on Search, after the campaign criteria and before the
+                                  ad groups; the ids are reported in `extensionAssetIds` /
+                                  `extensionLinkIds`.
 
                                   Lengths are RUNE counts, not the double-width WEIGHT the RSA copy
                                   uses, and over-long text is REFUSED rather than truncated: generated
@@ -1553,8 +1583,9 @@ leadForms?:                     — OPTIONAL lead form (LFXV2-2665). The one ext
                                   for it, which this client cannot check — an account without the
                                   allow-list is refused at the mutate.
 
-                                  All seven extension fields are SEARCH ONLY and are REFUSED, not
-                                  ignored, on every other channel. Omitted/empty, no assets are created
+                                  All seven extension fields are SEARCH ONLY, except `sitelinks` on
+                                  `demand-gen` (above), and are REFUSED, not ignored, on every other
+                                  channel. Omitted/empty, no assets are created
                                   and the ad serves with no extensions — the pre-LFXV2-2665 behaviour.
 
                                   IMAGE and LOCATION extensions, and the lead form's optional
@@ -1655,10 +1686,10 @@ demandGenCreative?:             — OPTIONAL Demand Gen ad (LFXV2-2665). DEMAND 
 demandGenVideoCreative?:        — OPTIONAL Demand Gen VIDEO responsive ad (#460). DEMAND GEN ONLY,
   {youtubeVideoIds?: string[],    and REFUSED on every other `channel`. The ALTERNATIVE to
    logoImages?: ImageRef[],       `demandGenCreative` on the same ad group: setting both is
-   headlines?: string[],          REFUSED, since a Demand Gen ad group here carries one ad (use
-   longHeadlines?: string[],      `demandGenAdGroups` for an image ad and a video ad side by
-   descriptions?: string[],       side). Not the `video` channel's `videoCreative`: that is a
-   businessName?: string,         different ad type on a channel the API cannot create.
+   headlines?: string[],          REFUSED, since the pair describes one ad (use `demandGenAds`, or
+   longHeadlines?: string[],      a group's `ads`, for an image ad and a video ad side by side).
+   descriptions?: string[],       Not the `video` channel's `videoCreative`: that is a different
+   businessName?: string,         ad type on a channel the API cannot create.
    callToAction?: string}
                                   `youtubeVideoIds` 1-5, bare ids — a URL is refused, as on
                                   `videoCreative`. `logoImages` exactly ONE, 1:1 and at least
@@ -1688,26 +1719,49 @@ demandGenVideoCreative?:        — OPTIONAL Demand Gen VIDEO responsive ad (#46
                                   failure of the atomic request means none of its assets or the ad
                                   exist, an ambiguous one is UNCONFIRMED. A short 2xx is UNCONFIRMED
                                   and still records each same-account asset id it carried.
+demandGenAds?:                  — OPTIONAL several ads in the single Demand Gen ad group (#474).
+  {name: string,                  DEMAND GEN ONLY, and REFUSED on every other `channel`. INSTEAD of
+   creative?:                     `demandGenCreative` / `demandGenVideoCreative`, which must then be
+     <demandGenCreative>,         empty; with `demandGenAdGroups`, set each group's `ads` instead.
+   videoCreative?:                At most 5 (a service bound, as for ad groups: every ad's images
+     <demandGenVideoCreative>}[]  are held before the budget mutate and every ad adds mutates after
+                                  the campaign exists). Two video ads in one Demand Gen ad group were
+                                  accepted by a `validateOnly` probe (2026-11-03).
+
+                                  `name` is REQUIRED and a label, unique ignoring case within the
+                                  group. Each ad takes EXACTLY ONE of `creative` / `videoCreative`,
+                                  under those fields' rules. A video ad's `name` is
+                                  `<ad group name> - <name>`, at most 255 characters (refused before
+                                  the budget mutate when longer); an image ad sends no ad name, as
+                                  before, and the label only names it in the step lines.
+
+                                  The ads are created in order, each by its own requests exactly as
+                                  the single ad is. The ad group is reported in `adGroups` with every
+                                  ad's id in `adIds` (so launch flips every ad), and `adId` is the
+                                  first; `creativeAssetIds` holds every ad's assets in order. A
+                                  failure on ad j returns ads 1..j-1 complete, ad j's assets, and
+                                  the error (UNCONFIRMED when the outcome is unknown).
 demandGenAdGroups?:             — OPTIONAL several Demand Gen ad groups (#460). DEMAND GEN ONLY,
   {name: string,                  and REFUSED on every other `channel`. At most 5 (a service
    audience?: string,             bound: every group's images are held before the budget mutate,
    creative?:                     and every group adds mutates after the campaign exists).
      <demandGenCreative>,
    videoCreative?:                `name` is REQUIRED and a label: the ad group is named
-     <demandGenVideoCreative>}[]  `<event name> - Display | <name>`; names equal ignoring case
-                                  are REFUSED (Google refuses `DUPLICATE_ADGROUP_NAME`, but only
+     <demandGenVideoCreative>,    `<event name> - Display | <name>`; names equal ignoring case
+   ads?: <demandGenAds>}[]        are REFUSED (Google refuses `DUPLICATE_ADGROUP_NAME`, but only
                                   after the earlier groups exist). Each group takes EXACTLY ONE of
-                                  `creative` / `videoCreative`, under those fields' rules, and an
-                                  optional `audience` under `demandGenAudience`'s, gate included:
-                                  unless the deployment sets GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED
-                                  to exactly "true", a create naming any group's `audience` is
-                                  refused before the budget mutate, naming the entries to clear
-                                  (#468); a group without one is unaffected. `geoTargets`,
+                                  `creative` / `videoCreative`, under those fields' rules, or an
+                                  `ads` list under `demandGenAds`' rules (#474), and an optional
+                                  `audience` under `demandGenAudience`'s, gate included: unless the
+                                  deployment sets GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED to exactly
+                                  "true", a create naming any group's `audience` is refused before
+                                  the budget mutate, naming the entries to clear (#468); a group
+                                  without one is unaffected. `geoTargets`,
                                   `excludedGeoTargets` and `languages` apply to EVERY group. With
-                                  this list, `demandGenCreative`, `demandGenVideoCreative` and
-                                  `demandGenAudience` must be empty. Every image across every
-                                  group is fetched in one pre-budget phase that shares the 64 MiB
-                                  total.
+                                  this list, `demandGenCreative`, `demandGenVideoCreative`,
+                                  `demandGenAds` and `demandGenAudience` must be empty. Every image
+                                  across every group and ad is fetched in one pre-budget phase that
+                                  shares the 64 MiB total.
 
                                   Omitted/empty, the single ad group is created exactly as before.
                                   The groups are created in order; each is reported in `adGroups`
@@ -1716,8 +1770,8 @@ demandGenAdGroups?:             — OPTIONAL several Demand Gen ad groups (#460)
                                   appended before its mutate, so a failure on group k returns
                                   groups 1..k-1 complete and what exists of k. `adGroupId`/`adId`
                                   and the other scalar fields are the FIRST group's. Launch flips
-                                  every group's ad. Every group's ad carries the same tagged final
-                                  URL (`utm_medium=display`), and the campaign's `utmcampaign`
+                                  every group's ads. Every ad in every group carries the same tagged
+                                  final URL (`utm_medium=display`), and the campaign's `utmcampaign`
                                   custom parameter covers every group (#476).
 performanceMaxCreative?:        — OPTIONAL Performance Max ASSET GROUP (LFXV2-2665). PERFORMANCE MAX
   {marketingImages?: ImageRef[],  ONLY, and REFUSED on every other `channel`. Performance Max has no ad

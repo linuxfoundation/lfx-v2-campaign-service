@@ -289,7 +289,8 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 
 	// Step 4: the remaining campaign criteria — all five kinds, as on Search and Video.
 	// See validateCriteriaPlan for why this channel takes the un-narrowed set where
-	// Demand Gen takes only languages (on its ad group) and Performance Max takes half.
+	// Demand Gen splits it across two levels and refuses demographics, and Performance Max
+	// takes half.
 	if !pf.criteria.empty() {
 		critIDs, critErr := c.createCampaignTargetingCriteria(ctx, campaignResource, campaignID, pf.criteria)
 		res.TargetingCriterionIDs = critIDs

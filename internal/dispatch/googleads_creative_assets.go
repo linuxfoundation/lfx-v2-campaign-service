@@ -89,25 +89,23 @@ func googleAdsCreativeSlots(cfg *googleAdsConfig) []googleAdsCreativeSlot {
 			googleAdsCreativeSlot{"demand gen logoImages", &c.LogoImages},
 		)
 	}
-	// The Demand Gen video ad's logo and every Demand Gen ad group's creatives (#460),
-	// labelled by position so a refusal names the entry the caller wrote.
+	// The Demand Gen video ad's logo, every Demand Gen ad's creatives (#474) and every
+	// Demand Gen ad group's (#460), labelled by position so a refusal names the entry the
+	// caller wrote.
 	if c := cfg.DemandGenVideoCreative; c != nil {
 		out = append(out, googleAdsCreativeSlot{"demand gen video logoImages", &c.LogoImages})
+	}
+	for i := range cfg.DemandGenAds {
+		a := &cfg.DemandGenAds[i]
+		out = appendDemandGenSlots(out, fmt.Sprintf("demand gen ad %d ", i+1), a.Creative, a.VideoCreative)
 	}
 	for i := range cfg.DemandGenAdGroups {
 		g := &cfg.DemandGenAdGroups[i]
 		prefix := fmt.Sprintf("demand gen ad group %d ", i+1)
-		if c := g.Creative; c != nil {
-			out = append(out,
-				googleAdsCreativeSlot{prefix + "marketingImages", &c.MarketingImages},
-				googleAdsCreativeSlot{prefix + "squareMarketingImages", &c.SquareMarketingImages},
-				googleAdsCreativeSlot{prefix + "portraitImages", &c.PortraitImages},
-				googleAdsCreativeSlot{prefix + "tallPortraitImages", &c.TallPortraitImages},
-				googleAdsCreativeSlot{prefix + "logoImages", &c.LogoImages},
-			)
-		}
-		if c := g.VideoCreative; c != nil {
-			out = append(out, googleAdsCreativeSlot{prefix + "video logoImages", &c.LogoImages})
+		out = appendDemandGenSlots(out, prefix, g.Creative, g.VideoCreative)
+		for j := range g.Ads {
+			a := &g.Ads[j]
+			out = appendDemandGenSlots(out, prefix+fmt.Sprintf("ad %d ", j+1), a.Creative, a.VideoCreative)
 		}
 	}
 	if c := cfg.PerformanceMaxCreative; c != nil {
@@ -126,6 +124,24 @@ func googleAdsCreativeSlots(cfg *googleAdsConfig) []googleAdsCreativeSlot {
 			googleAdsCreativeSlot{"display logoImages", &c.LogoImages},
 			googleAdsCreativeSlot{"display squareLogoImages", &c.SquareLogoImages},
 		)
+	}
+	return out
+}
+
+// appendDemandGenSlots appends one Demand Gen ad's image slots — the image creative's five,
+// or the video creative's logo — under the given label prefix.
+func appendDemandGenSlots(out []googleAdsCreativeSlot, prefix string, image *googleAdsDemandGenCreativeConfig, video *googleAdsDemandGenVideoCreativeConfig) []googleAdsCreativeSlot {
+	if c := image; c != nil {
+		out = append(out,
+			googleAdsCreativeSlot{prefix + "marketingImages", &c.MarketingImages},
+			googleAdsCreativeSlot{prefix + "squareMarketingImages", &c.SquareMarketingImages},
+			googleAdsCreativeSlot{prefix + "portraitImages", &c.PortraitImages},
+			googleAdsCreativeSlot{prefix + "tallPortraitImages", &c.TallPortraitImages},
+			googleAdsCreativeSlot{prefix + "logoImages", &c.LogoImages},
+		)
+	}
+	if c := video; c != nil {
+		out = append(out, googleAdsCreativeSlot{prefix + "video logoImages", &c.LogoImages})
 	}
 	return out
 }

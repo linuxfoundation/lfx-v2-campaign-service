@@ -620,10 +620,11 @@ func TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenBeforeAnyCreate(t *testi
 		cfg  string
 	}{
 		{"proximity targets", `"proximityTargets":[{"latitude":37.7749,"longitude":-122.4194,"radius":25,"radiusUnit":"MILES"}]`},
-		{"ad schedules", `"adSchedules":[{"dayOfWeek":"MONDAY","startHour":9,"startMinute":0,"endHour":17,"endMinute":0}]`},
+		// Demand Gen takes ad schedules and sitelinks (#474), but only an unmodified
+		// schedule was verified there, so a schedule bid modifier is still refused.
+		{"ad schedule bid modifier", `"adSchedules":[{"dayOfWeek":"MONDAY","startHour":9,"startMinute":0,"endHour":17,"endMinute":0,"bidModifier":1.2}]`},
 		{"device bid modifiers", `"deviceBidModifiers":[{"device":"MOBILE","bidModifier":1.2}]`},
 		{"excluded age ranges", `"excludedAgeRanges":["18-24"]`},
-		{"sitelinks", `"sitelinks":[{"text":"Register","finalUrl":"https://events.example/kc/register"}]`},
 		{"callouts", `"callouts":["Free workshops"]`},
 		{"ad groups", `"adGroups":[{"name":"Training"}]`},
 		// Validated on BOTH channels but attached only by CreateCampaign's cascade:
@@ -738,10 +739,11 @@ func TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenAdoptionToo(t *testing.T
 		cfg  string
 	}{
 		{"proximity targets", `"proximityTargets":[{"latitude":37.7749,"longitude":-122.4194,"radius":25,"radiusUnit":"MILES"}]`},
-		{"ad schedules", `"adSchedules":[{"dayOfWeek":"MONDAY","startHour":9,"startMinute":0,"endHour":17,"endMinute":0}]`},
+		// Demand Gen takes ad schedules and sitelinks (#474), but only an unmodified
+		// schedule was verified there, so a schedule bid modifier is still refused.
+		{"ad schedule bid modifier", `"adSchedules":[{"dayOfWeek":"MONDAY","startHour":9,"startMinute":0,"endHour":17,"endMinute":0,"bidModifier":1.2}]`},
 		{"device bid modifiers", `"deviceBidModifiers":[{"device":"MOBILE","bidModifier":1.2}]`},
 		{"excluded age ranges", `"excludedAgeRanges":["18-24"]`},
-		{"sitelinks", `"sitelinks":[{"text":"Register","finalUrl":"https://events.example/kc/register"}]`},
 		{"callouts", `"callouts":["Free workshops"]`},
 		{"ad groups", `"adGroups":[{"name":"Training"}]`},
 		{"negative keywords", `"negativeKeywords":[{"text":"free","matchType":"PHRASE"}]`},

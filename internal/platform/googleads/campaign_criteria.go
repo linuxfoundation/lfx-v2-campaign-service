@@ -26,16 +26,15 @@ import (
 // campaignCriteria:mutate — see createCampaignTargetingCriteria for why that
 // batch is atomic and why it is separate from geo's.
 //
-// Demand Gen is the exception to that level; validateCriteriaPlan says which kinds
-// each channel takes. Demand Gen attaches its targeting at the AD GROUP level
-// (geo.go has the same split) and refuses a campaign-level language. Languages are
-// the one kind confirmed live there (#459: an ad-group `language` criterion,
-// verified by a validateOnly probe on 2026-11-03), so a Demand Gen campaign takes
-// them on its ad group (createDemandGenAdGroupTargeting); ad schedules, devices and
-// demographics are still refused there at preflight. Refusing locally is free;
-// discovering it after a paid campaign exists is not, and silently dropping the
-// caller's intent is the defect LFXV2-3283 already fixed once for countries. Lift this
-// per criterion as each is confirmed live.
+// Demand Gen splits that level; validateCriteriaPlan says which kinds each channel
+// takes. It refuses a campaign-level language, so its languages go on the AD GROUP
+// (#459, createDemandGenAdGroupTargeting; geo.go has the same split), while its ad
+// schedules and device criteria are CAMPAIGN criteria sent here (#474). Both were
+// verified by validateOnly probes on 2026-11-03. Demographics are refused there at
+// preflight: Google refuses them on the audience-grouped ad group, so they belong in
+// the Audience. Refusing locally is free; discovering it after a paid campaign exists
+// is not, and silently dropping the caller's intent is the defect LFXV2-3283 already
+// fixed once for countries. Lift this per criterion as each is confirmed live.
 //
 // The income-range and parental-status exclusions at the end of this file (#473) are
 // another exception: they are AD GROUP criteria with their own channel fence — see
@@ -112,15 +111,6 @@ const maxAdSchedules = 42
 // the refusal to where it costs nothing.
 const maxAdSchedulesPerDay = 6
 
-// maxDeviceBidModifiers bounds the device list at one entry per device type this
-// client accepts. A longer list is necessarily a duplicate, which Google rejects
-// with a criterion conflict AFTER the campaign exists.
-//
-// It tracks len(deviceTypes) rather than Google's enum size, and a test asserts the
-// two agree — the cap's whole claim is "a longer list must contain a duplicate",
-// which stops being true the moment the accepted vocabulary and this number drift.
-const maxDeviceBidModifiers = 3
-
 // maxDemographicExclusions bounds EACH demographic exclusion list. Both are
 // closed enums far smaller than this; the cap exists so a malformed caller cannot
 // push an unbounded payload into the mutate.
@@ -150,18 +140,18 @@ var adScheduleMinutes = map[int]string{
 	0: "ZERO", 15: "FIFTEEN", 30: "THIRTY", 45: "FORTY_FIVE",
 }
 
-// deviceTypes is the Device enum this client accepts. Two of Google's values are
-// deliberately absent, for different reasons.
+// deviceTypes is the Device enum this client accepts on every channel but Demand Gen,
+// which takes demandGenDeviceTypes. Two of Google's values are absent here, for
+// different reasons.
 //
 // OTHER is a reporting bucket rather than something a campaign bids on.
 //
 // CONNECTED_TV is a NAMED GAP, and the reasoning behind it changed when this client
 // gained the two channels Google supports it on. Google's own device-targeting
 // documentation says of TV screens: "This targeting option is only available for
-// Display and Video campaigns." While Search and Demand Gen were the only kinds that
-// reached this map — device criteria are refused outright on Demand Gen, see
-// validateCriteriaPlan — the omission restated an upstream rule and cost a caller
-// nothing. Video and Display now reach it too, and on those two Google DOES accept the
+// Display and Video campaigns." While Search was the only kind that reached this map —
+// device criteria were refused outright on Demand Gen until #474 — the omission
+// restated an upstream rule and cost a caller nothing. Video and Display now reach it too, and on those two Google DOES accept the
 // device, so on those two the omission is this client's limitation rather than
 // Google's, and is stated as one — the same distinction displayBiddingStrategies draws
 // about manual CPC, and for the same reason: a reader widening this set later needs to
@@ -179,8 +169,31 @@ var adScheduleMinutes = map[int]string{
 // Closing it means running that validateOnly campaignCriteria:mutate for CONNECTED_TV
 // on a non-production DISPLAY and VIDEO campaign and admitting the device here for
 // those kinds alone — Search, which Google does not support it on, keeps refusing it.
+// Demand Gen is the one channel where that probe HAS been run (#474); see
+// demandGenDeviceTypes.
+//
+// A device list is capped at len() of its channel's vocabulary: a longer list must
+// contain a duplicate, which Google rejects with a criterion conflict AFTER the
+// campaign exists.
 var deviceTypes = map[string]struct{}{
 	"MOBILE": {}, "DESKTOP": {}, "TABLET": {},
+}
+
+// demandGenDeviceTypes is deviceTypes plus CONNECTED_TV, Demand Gen's vocabulary (#474).
+// A validateOnly probe on 2026-11-03 accepted a Demand Gen campaign criterion
+// {device: {type: CONNECTED_TV}, bidModifier: 0}, and the same with MOBILE — the TV-screen
+// exclusion the live KubeCon NA 2026 Demand Gen campaigns carry. Only bid modifier 0 was
+// probed, so validateCriteriaPlan refuses any other modifier on this channel.
+var demandGenDeviceTypes = map[string]struct{}{
+	"MOBILE": {}, "DESKTOP": {}, "TABLET": {}, "CONNECTED_TV": {},
+}
+
+// deviceTypesFor is the device vocabulary for a campaign kind.
+func deviceTypesFor(kind string) map[string]struct{} {
+	if kind == campaignKindDemandGen {
+		return demandGenDeviceTypes
+	}
+	return deviceTypes
 }
 
 // ageRangeTypes maps both the friendly spelling a caller is likely to write and
@@ -293,19 +306,36 @@ func (p criteriaPlan) count() int {
 // That is the same trade resolveGeoEntry documents: a lookup would make
 // ValidateCampaignInput send a request, which its contract forbids.
 func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
-	// Languages are NOT in this sum (#459). A Demand Gen ad group accepts `language`
-	// criteria next to its audience, while a CAMPAIGN-level language on Demand Gen is
-	// refused — both verified by a validateOnly probe on 2026-11-03 — so the Demand Gen
-	// cascade attaches plan.languages to its ad group (createDemandGenAdGroupTargeting)
-	// rather than calling createCampaignTargetingCriteria. The other four kinds have not
-	// been verified on that ad group and stay refused.
-	asked := len(in.AdSchedules) + len(in.DeviceBidModifiers) +
-		len(in.ExcludedAgeRanges) + len(in.ExcludedGenders)
-	if asked > 0 && kind == campaignKindDemandGen {
-		return criteriaPlan{}, fmt.Errorf("google-ads: ad schedule, device and demographic criteria are not supported on %s (Demand Gen attaches targeting at the ad group level, where this client has verified only languages); omit AdSchedules, DeviceBidModifiers, ExcludedAgeRanges and ExcludedGenders, or create a Search campaign for them", kind)
+	// Demand Gen takes four of the five kinds, at two levels, each verified by a
+	// validateOnly probe on 2026-11-03. Languages go on its AD GROUP (#459): the ad group
+	// accepts `language` criteria next to its audience and the campaign refuses them, so
+	// the cascade attaches plan.languages there (createDemandGenAdGroupTargeting). Ad
+	// schedules and devices go on the CAMPAIGN (#474), through
+	// createCampaignTargetingCriteria with the languages left out.
+	//
+	// Only the probed shapes pass. The schedule probe carried no bid modifier and the
+	// device probe only bidModifier 0, so a schedule modifier and a non-zero device
+	// modifier are refused here. Demographics are refused whole: Google refuses age,
+	// gender, income and parental criteria on the audience-grouped ad group
+	// (CANNOT_ADD_AUDIENCE_SEGMENT_CRITERION_WHEN_AUDIENCE_GROUPED_IS_SET), and the
+	// campaign level was not probed, so they belong inside the Audience instead.
+	if kind == campaignKindDemandGen {
+		if len(in.ExcludedAgeRanges)+len(in.ExcludedGenders) > 0 {
+			return criteriaPlan{}, fmt.Errorf("google-ads: demographic exclusions are not supported on %s (Google refuses demographic criteria on the audience-grouped Demand Gen ad group); omit ExcludedAgeRanges and ExcludedGenders, and set the demographics inside the Audience that DemandGenAudience or the ad group's Audience references", kind)
+		}
+		for i, sch := range in.AdSchedules {
+			if sch.BidModifier != nil {
+				return criteriaPlan{}, fmt.Errorf("google-ads: ad schedule %d carries a bid modifier, which is not supported on %s (this client has verified a Demand Gen ad schedule only without one); omit its BidModifier", i, kind)
+			}
+		}
+		for i, d := range in.DeviceBidModifiers {
+			if d.BidModifier != 0 {
+				return criteriaPlan{}, fmt.Errorf("google-ads: device bid modifier %d adjusts the bid by %v, which is not supported on %s (this client has verified only the device exclusion there); set it to 0 to exclude the device, or omit it", i, d.BidModifier, kind)
+			}
+		}
 	}
-	// Performance Max SPLITS this set rather than refusing it whole, which is why the
-	// Demand Gen check above could not simply be widened to every non-Search channel.
+	// Performance Max SPLITS this set rather than refusing it whole, which is why it has
+	// its own arm rather than sharing one with Demand Gen.
 	// Google documents LANGUAGE, LOCATION and AD_SCHEDULE as campaign criteria on
 	// Performance Max, so refusing a language there would be the over-refusal these
 	// guards exist to avoid — it would reject a campaign Google creates happily.
@@ -317,15 +347,13 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 	// so an operator never reads "campaign created" while an exclusion they asked for
 	// is nowhere upstream.
 	// Video and Display both take the UN-NARROWED set — every one of the five kinds,
-	// exactly as Search does — and that is why the Demand Gen fence above still names one
-	// channel rather than every non-Search one. (Demand Gen takes the languages, on its
-	// ad group; see above.) A VIDEO or DISPLAY campaign carries LANGUAGE, AD_SCHEDULE,
-	// DEVICE (with a bid modifier) and campaign-level AGE_RANGE/GENDER exclusions as
-	// campaign criteria, and video.go and display.go each attach all five on their criteria
-	// step, so nothing accepted here is dropped. Widening the Demand Gen refusal to
-	// `!= Search` would
-	// have refused a campaign Google creates happily — the over-refusal these guards
-	// exist to avoid.
+	// exactly as Search does — and that is why the Demand Gen arm above names one channel
+	// rather than every non-Search one. A VIDEO or DISPLAY campaign carries LANGUAGE,
+	// AD_SCHEDULE, DEVICE (with a bid modifier) and campaign-level AGE_RANGE/GENDER
+	// exclusions as campaign criteria, and video.go and display.go each attach all five on
+	// their criteria step, so nothing accepted here is dropped. Widening the Demand Gen
+	// refusals to `!= Search` would have refused a campaign Google creates happily — the
+	// over-refusal these guards exist to avoid.
 	// This arm is about the CHANNEL, not about automated bidding — Performance Max takes
 	// no device criteria at all, not even the 0 exclusion, so it refuses the whole list.
 	// The adjustment-is-ignored-under-automated-bidding rule is a different rule with a
@@ -358,7 +386,7 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 	}
 	plan.schedules, plan.scheduleMod = schedules, modifiers
 
-	devices, deviceMods, err := validateDeviceBidModifiers(in.DeviceBidModifiers)
+	devices, deviceMods, err := validateDeviceBidModifiers(kind, in.DeviceBidModifiers)
 	if err != nil {
 		return criteriaPlan{}, err
 	}
@@ -567,23 +595,27 @@ func sameBidModifier(a, b *float64) bool {
 	}
 }
 
-// validateDeviceBidModifiers bounds the device list, refusing a duplicate device:
-// two criteria for the same device are a conflict Google rejects AFTER the
-// campaign exists, and the caller plainly meant one of the two values.
-func validateDeviceBidModifiers(devices []DeviceBidModifier) ([]deviceInfo, []float64, error) {
+// validateDeviceBidModifiers bounds the device list against the kind's vocabulary,
+// refusing a duplicate device: two criteria for the same device are a conflict Google
+// rejects AFTER the campaign exists, and the caller plainly meant one of the two values.
+func validateDeviceBidModifiers(kind string, devices []DeviceBidModifier) ([]deviceInfo, []float64, error) {
 	if len(devices) == 0 {
 		return nil, nil, nil
 	}
-	if len(devices) > maxDeviceBidModifiers {
-		return nil, nil, fmt.Errorf("google-ads: at most %d device bid modifiers are supported, got %d", maxDeviceBidModifiers, len(devices))
+	vocabulary := deviceTypesFor(kind)
+	if len(devices) > len(vocabulary) {
+		return nil, nil, fmt.Errorf("google-ads: at most %d device bid modifiers are supported on %s, got %d", len(vocabulary), kind, len(devices))
 	}
 	seen := make(map[string]struct{}, len(devices))
 	out := make([]deviceInfo, 0, len(devices))
 	mods := make([]float64, 0, len(devices))
 	for i, d := range devices {
 		device := strings.ToUpper(strings.TrimSpace(d.Device))
-		if _, ok := deviceTypes[device]; !ok {
-			return nil, nil, fmt.Errorf("google-ads: device bid modifier %d device %q must be one of MOBILE, DESKTOP, TABLET (Google supports TV screens on Display and Video campaigns only, and this client sends that device on no channel at all — a named gap, see deviceTypes)", i, d.Device)
+		if _, ok := vocabulary[device]; !ok {
+			if kind == campaignKindDemandGen {
+				return nil, nil, fmt.Errorf("google-ads: device bid modifier %d device %q must be one of MOBILE, DESKTOP, TABLET, CONNECTED_TV", i, d.Device)
+			}
+			return nil, nil, fmt.Errorf("google-ads: device bid modifier %d device %q must be one of MOBILE, DESKTOP, TABLET on %s (this client sends CONNECTED_TV on Demand Gen only, the one channel where it has verified the device — see deviceTypes)", i, d.Device, kind)
 		}
 		if _, dup := seen[device]; dup {
 			return nil, nil, fmt.Errorf("google-ads: device %s appears more than once in the device bid modifiers — Google accepts one criterion per device, and the second value would be the one silently dropped", device)

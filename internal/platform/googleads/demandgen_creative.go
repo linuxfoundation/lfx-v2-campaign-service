@@ -294,7 +294,7 @@ func validateDemandGenCreative(kind string, in CampaignInput) (demandGenCreative
 	if d.empty() {
 		return demandGenCreativePlan{}, nil
 	}
-	// Refused as a channel capability, exactly as validateAssetPlan refuses
+	// Refused as a channel capability, exactly as validateAssetPlan refuses most
 	// extensions on Demand Gen: a Search campaign takes its creative as RSA copy
 	// and campaign-level extension assets, and DemandGenMultiAssetAdInfo is not a
 	// shape a Search ad group accepts.

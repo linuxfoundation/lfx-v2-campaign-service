@@ -25,10 +25,10 @@ import (
 // to the campaign. So this is two mutates and they cannot be collapsed: the link
 // operation needs the asset resource names the first mutate returns.
 //
-// SEARCH ONLY, like the criteria in campaign_criteria.go. Demand Gen takes its
-// creative assets on the ad itself, not as campaign-level extensions, so the
-// whole set is refused on that channel at preflight. Lift it per asset type as
-// each is confirmed live.
+// SEARCH ONLY, with one exception: Demand Gen takes SITELINKS (#474), verified by a
+// validateOnly probe on 2026-11-03 (a sitelink asset plus a SITELINK campaignAsset).
+// Every other extension type is refused on Demand Gen at preflight, and the whole set
+// on every other channel. Lift it per asset type as each is confirmed live.
 // ---------------------------------------------------------------------------
 
 // Extension caps. Google permits up to 20 sitelinks and 20 callouts per
@@ -177,10 +177,17 @@ func validateAssetPlan(kind string, in CampaignInput) (assetPlan, error) {
 	if asked == 0 {
 		return assetPlan{}, nil
 	}
-	// Refused as a channel capability, not as a value judgement: Demand Gen does
-	// not take campaign-level extension assets, so sending them would fail
-	// upstream after the campaign exists.
-	if kind != campaignKindSearch {
+	// Refused as a channel capability, not as a value judgement: sending an extension a
+	// channel does not take would fail upstream after the campaign exists.
+	//
+	// Demand Gen takes sitelinks alone (#474). The probe sent the sitelink asset and its
+	// SITELINK campaignAsset in one googleAds:mutate by temporary id; this client sends
+	// the same two resources through createCampaignAssets' two mutates, as on Search.
+	// Callouts and snippets were not probed there, so they stay refused with the rest.
+	if kind == campaignKindDemandGen && asked > len(in.Sitelinks) {
+		return assetPlan{}, fmt.Errorf("google-ads ad extensions other than sitelinks (callouts, structured snippets, call extensions, promotions, prices, lead forms) are not supported on %s; omit them, or create a Search campaign for them", kind)
+	}
+	if kind != campaignKindSearch && kind != campaignKindDemandGen {
 		return assetPlan{}, fmt.Errorf("google-ads ad extensions (sitelinks, callouts, structured snippets, call extensions, promotions, prices, lead forms) are supported on Search campaigns only, not on %s", kind)
 	}
 

@@ -159,7 +159,7 @@ func TestValidateDemandGenAdGroups_Plans(t *testing.T) {
 		t.Fatalf("preflight: %v", err)
 	}
 	if len(pf.demandGenGroups) != 1 || pf.demandGenGroups[0].name != "KubeCon Europe 2026 - Display" ||
-		pf.demandGenGroups[0].audience != "customers/1234567890/audiences/41" || pf.demandGenGroups[0].creative.present {
+		pf.demandGenGroups[0].audience != "customers/1234567890/audiences/41" || len(pf.demandGenGroups[0].ads) != 0 {
 		t.Errorf("single group = %+v", pf.demandGenGroups)
 	}
 
@@ -171,10 +171,11 @@ func TestValidateDemandGenAdGroups_Plans(t *testing.T) {
 		t.Fatalf("got %d groups, want 2", len(pf.demandGenGroups))
 	}
 	g0, g1 := pf.demandGenGroups[0], pf.demandGenGroups[1]
-	if g0.name != "KubeCon Europe 2026 - Display | Retargeting" || g0.audience != "customers/1234567890/audiences/41" || !g0.creative.present || g0.video.present {
+	if g0.name != "KubeCon Europe 2026 - Display | Retargeting" || g0.audience != "customers/1234567890/audiences/41" || len(g0.ads) != 1 || !g0.ads[0].creative.present || g0.ads[0].video.present {
 		t.Errorf("group 0 = %+v", g0)
 	}
-	if g1.name != "KubeCon Europe 2026 - Display | Prospecting" || g1.audience != "customers/1234567890/audiences/42" || g1.creative.present || !g1.video.present {
+	if g1.name != "KubeCon Europe 2026 - Display | Prospecting" || g1.audience != "customers/1234567890/audiences/42" || len(g1.ads) != 1 || g1.ads[0].creative.present || !g1.ads[0].video.present ||
+		g1.ads[0].adName != "KubeCon Europe 2026 - Display | Prospecting - Video ad" {
 		t.Errorf("group 1 = %+v", g1)
 	}
 
@@ -464,10 +465,10 @@ func TestFetchDemandGenGroupImages_ReindexesPerGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("video: %v", err)
 	}
+	// The second group carries two ads (#474), so the re-indexing is per AD, not per group.
 	groups := []demandGenGroupPlan{
-		{creative: image([]string{ref(1)}, nil, []string{ref(2)})},
-		{video: videoPlan},
-		{creative: image(nil, []string{ref(4)}, []string{ref(5)})},
+		{ads: []demandGenAdPlan{{creative: image([]string{ref(1)}, nil, []string{ref(2)})}}},
+		{ads: []demandGenAdPlan{{video: videoPlan}, {creative: image(nil, []string{ref(4)}, []string{ref(5)})}}},
 	}
 	out, err := imageFetchTestClient(t).fetchDemandGenGroupImages(context.Background(), groups)
 	if err != nil {
@@ -480,22 +481,22 @@ func TestFetchDemandGenGroupImages_ReindexesPerGroup(t *testing.T) {
 		}
 		return strings.Join(parts, ",")
 	}
-	if g := got(out[0].images); g != "0:1,4:2" || len(out[0].logos) != 0 {
-		t.Errorf("group 0 images = %s logos = %d, want 0:1,4:2 and none", g, len(out[0].logos))
+	if g := got(out[0][0].images); g != "0:1,4:2" || len(out[0][0].logos) != 0 {
+		t.Errorf("group 0 images = %s logos = %d, want 0:1,4:2 and none", g, len(out[0][0].logos))
 	}
-	if g := got(out[1].logos); g != "0:3" || len(out[1].images) != 0 {
-		t.Errorf("group 1 logos = %s images = %d, want 0:3 and none", g, len(out[1].images))
+	if g := got(out[1][0].logos); g != "0:3" || len(out[1][0].images) != 0 {
+		t.Errorf("group 1 ad 1 logos = %s images = %d, want 0:3 and none", g, len(out[1][0].images))
 	}
-	if g := got(out[2].images); g != "1:4,4:5" {
-		t.Errorf("group 2 images = %s, want its square image in slot 1 and its logo in slot 4: 1:4,4:5", g)
+	if g := got(out[1][1].images); g != "1:4,4:5" || len(out[1][1].logos) != 0 {
+		t.Errorf("group 1 ad 2 images = %s, want its square image in slot 1 and its logo in slot 4: 1:4,4:5", g)
 	}
 	// A video-only campaign has no image plan to lend its map: the video plan's own
 	// resolved bytes must reach the fetch, or a stored-asset logo would be fetched as a URL.
-	out, err = imageFetchTestClient(t).fetchDemandGenGroupImages(context.Background(), []demandGenGroupPlan{{video: videoPlan}})
+	out, err = imageFetchTestClient(t).fetchDemandGenGroupImages(context.Background(), []demandGenGroupPlan{{ads: []demandGenAdPlan{{video: videoPlan}}}})
 	if err != nil {
 		t.Fatalf("video-only fetch: %v", err)
 	}
-	if g := got(out[0].logos); g != "0:3" {
+	if g := got(out[0][0].logos); g != "0:3" {
 		t.Errorf("video-only logos = %s, want 0:3", g)
 	}
 }

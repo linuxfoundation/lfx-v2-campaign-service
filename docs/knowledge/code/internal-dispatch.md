@@ -1041,6 +1041,14 @@ entries resolve in them and `TestGoogleAdsConfigNamesItsAssetInEverySlot` counts
 `googleAdsSnapshotConfig` deep-copies the video creative and the group slice, reducing every
 URL through `sanitizeSnapshotDemandGenImage` / `sanitizeSnapshotDemandGenVideo`.
 
+`demandGenAds` and each group's `ads` (#474) are lists of `googleAdsDemandGenAdConfig` —
+`name` plus `creative` / `videoCreative` pointers of the same two types — mapped by
+`googleAdsDemandGenAds` with no checks of its own; the cap, the one-creative rule and the
+unique names are the client's. `googleAdsCreativeSlots` enumerates every ad's slots through
+`appendDemandGenSlots` (labelled `demand gen ad N …` and `demand gen ad group N ad M …`),
+and `googleAdsSnapshotConfig` deep-copies both lists with `sanitizeSnapshotDemandGenAds`;
+the snapshot's early return names `demandGenAds` beside `demandGenAdGroups`.
+
 `performanceMaxCreative` is the same shape again — a pointer on the config, a mapper that
 validates nothing, the zero value for nil — and its test asserts nine lists into nine
 slots plus four scalars. The trap there is the three TEXT lists rather than the images:
@@ -1119,11 +1127,12 @@ exclusions still serves wherever the account allows minus a few places, which is
 what the warning exists to say out loud. A warning an operator learns to distrust is worse
 than none.
 
-The channel rules — proximity, schedules, devices, demographics, extensions and the Search
-ad-group list are all refused on Demand Gen, which takes languages on its ad group instead
-(#459) and its own `demandGenAdGroups` (#460), and `demandGenAudience`,
-`demandGenVideoCreative` and `demandGenAdGroups` are refused everywhere else — are
-deliberately **not** restated here;
+The channel rules — proximity, demographics, every extension but sitelinks and the Search
+ad-group list are refused on Demand Gen, which takes languages on its ad group (#459),
+ad schedules, device exclusions and sitelinks at the campaign level (#474) and its own
+`demandGenAdGroups` (#460) and `demandGenAds` (#474), and `demandGenAudience`,
+`demandGenVideoCreative`, `demandGenAds` and `demandGenAdGroups` are refused everywhere
+else — are deliberately **not** restated here;
 `demandGenAudience` is mapped verbatim onto `CampaignInput.DemandGenAudience`, as
 `audienceSegments` and `geoTargets` are, once one deployment gate has passed: unless
 `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`, `Dispatch` refuses any non-empty

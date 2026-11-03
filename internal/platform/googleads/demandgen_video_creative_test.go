@@ -307,7 +307,8 @@ func TestPreflightRefusesAnOverLongVideoAdName(t *testing.T) {
 		wantErr bool
 	}{{"at 255", 255 - 11, false}, {"at 256", 256 - 11, true}} {
 		t.Run("single group "+tc.name, func(t *testing.T) {
-			base := demandGenGroupPlan{name: strings.Repeat("e", tc.group), video: video}
+			name := strings.Repeat("e", tc.group)
+			base := demandGenGroupPlan{name: name, ads: singleDemandGenAd(name, demandGenCreativePlan{}, video)}
 			_, err := validateDemandGenAdGroups(campaignKindDemandGen, "1234567890", demandGenInput(), base)
 			if gotErr := err != nil && strings.Contains(err.Error(), "video ad name"); gotErr != tc.wantErr || (err != nil && !gotErr) {
 				t.Errorf("err = %v, want refusal %v", err, tc.wantErr)

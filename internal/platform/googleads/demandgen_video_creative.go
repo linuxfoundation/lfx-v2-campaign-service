@@ -90,8 +90,8 @@ var demandGenVideoLogoSlot = func() imageSlot {
 
 // DemandGenVideoCreative is a Demand Gen VIDEO responsive ad: YouTube videos plus text
 // and a logo. DEMAND GEN ONLY, and an alternative to DemandGenCreative rather than an
-// addition to it — an ad group here carries one ad, image or video, so setting both is
-// refused (see validateDemandGenVideoCreative).
+// addition to it — the pair describes one ad, image or video, so setting both is refused
+// (see validateDemandGenVideoCreative); several ads go in DemandGenAds (#474).
 //
 // Breadcrumbs (display-URL path text) are not offered: there is no field, so nothing is
 // silently dropped; an operator who wants them adds them in the Google Ads UI.
@@ -150,11 +150,11 @@ func validateDemandGenVideoCreative(kind string, in CampaignInput) (demandGenVid
 	return validateDemandGenVideoSpec(in.DemandGenVideoCreative, in.ResolvedImages)
 }
 
-// errDemandGenTwoCreatives refuses an image and a video creative on one ad group. This
-// client builds one ad per Demand Gen ad group and records one AdID for it; a second ad
-// would have no place in the result and no status toggle at launch.
+// errDemandGenTwoCreatives refuses an image and a video creative on one ad. One creative
+// field pair describes ONE ad; several ads on one ad group are named explicitly (#474,
+// DemandGenAds or an ad group's Ads), so each has a label and its own AdIDs entry.
 func errDemandGenTwoCreatives(owner string) error {
-	return fmt.Errorf("google-ads: %s sets both a Demand Gen image creative and a Demand Gen video creative; a Demand Gen ad group here carries one ad, so set one of them (use a second ad group for the other)", owner)
+	return fmt.Errorf("google-ads: %s sets both a Demand Gen image creative and a Demand Gen video creative; one creative pair describes one ad, so set one of them (list several ads in DemandGenAds, or an ad group's Ads, for both)", owner)
 }
 
 // validateDemandGenVideoSpec checks one video creative. The channel fence is the caller's.
