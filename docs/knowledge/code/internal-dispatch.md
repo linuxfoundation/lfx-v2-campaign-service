@@ -1095,10 +1095,11 @@ than none.
 The channel rules — proximity, schedules, devices, demographics, extensions and ad groups
 are all refused on Demand Gen, which takes languages on its ad group instead (#459), and
 `demandGenAudience` is refused everywhere else — are deliberately **not** restated here;
-`demandGenAudience` is mapped verbatim onto `CampaignInput.DemandGenAudience` like every
-other targeting field. The client refuses them inside its own preflight, before its first
-mutate, and `Dispatch` validates unconditionally (including on the adoption path), so both
-paths already refuse in one place. A second copy in the adapter could only drift from it.
+`demandGenAudience` is mapped verbatim onto `CampaignInput.DemandGenAudience`, as
+`audienceSegments` and `geoTargets` are. The client refuses them inside its own preflight,
+before its first mutate, and `Dispatch` validates unconditionally (including on the adoption
+path), so both paths already refuse in one place. A second copy in the adapter could only
+drift from it.
 
 **Validate for the RESOLVED kind, which is why the channel switch runs first.** `Dispatch` calls
 `ValidateCampaignInputKind(campaignKind, in)`, not the Search-assuming `ValidateCampaignInput`,

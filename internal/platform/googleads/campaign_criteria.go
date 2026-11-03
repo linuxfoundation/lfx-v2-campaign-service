@@ -32,10 +32,10 @@ import (
 // the one kind confirmed live there (#459: an ad-group `language` criterion,
 // verified by a validateOnly probe on 2026-11-03), so a Demand Gen campaign takes
 // them on its ad group (createDemandGenAdGroupTargeting); ad schedules, devices and
-// demographics are still refused there at preflight. Refusing locally is free; discovering it after a paid
-// campaign exists is not, and silently dropping the caller's intent is the defect
-// LFXV2-3283 already fixed once for countries. Lift this per criterion as each is
-// confirmed live.
+// demographics are still refused there at preflight. Refusing locally is free;
+// discovering it after a paid campaign exists is not, and silently dropping the
+// caller's intent is the defect LFXV2-3283 already fixed once for countries. Lift this
+// per criterion as each is confirmed live.
 //
 // The income-range and parental-status exclusions at the end of this file (#473) are
 // another exception: they are AD GROUP criteria with their own channel fence — see
@@ -319,10 +319,11 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 	// Video and Display both take the UN-NARROWED set — every one of the five kinds,
 	// exactly as Search does — and that is why the Demand Gen fence above still names one
 	// channel rather than every non-Search one. (Demand Gen takes the languages, on its
-	// ad group; see above.) A VIDEO or DISPLAY campaign carries
-	// LANGUAGE, AD_SCHEDULE, DEVICE (with a bid modifier) and campaign-level
-	// AGE_RANGE/GENDER exclusions as campaign criteria, and video.go and display.go each
-	// attach all five on their criteria step, so nothing accepted here is dropped. Widening the Demand Gen refusal to `!= Search` would
+	// ad group; see above.) A VIDEO or DISPLAY campaign carries LANGUAGE, AD_SCHEDULE,
+	// DEVICE (with a bid modifier) and campaign-level AGE_RANGE/GENDER exclusions as
+	// campaign criteria, and video.go and display.go each attach all five on their criteria
+	// step, so nothing accepted here is dropped. Widening the Demand Gen refusal to
+	// `!= Search` would
 	// have refused a campaign Google creates happily — the over-refusal these guards
 	// exist to avoid.
 	// This arm is about the CHANNEL, not about automated bidding — Performance Max takes

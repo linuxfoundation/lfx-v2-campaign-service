@@ -801,10 +801,10 @@ entries below marked SEARCH ONLY are REFUSED, not ignored, on any other `channel
 entry states which channels accept it, because the channels do not refuse the same set:
 `performance-max` takes ad schedules and proximity that `demand-gen` refuses, and refuses
 device bid modifiers and demographic exclusions alongside it; `demand-gen` takes languages
-on its ad group, and `demandGenAudience` alone. Each is validated
-BEFORE the first budget mutate, so a
-refused value cannot strand a paid campaign — and the same validation runs on the
-`adoptExisting` path, so a config is refused identically whether it creates or adopts.
+on its ad group, and is the only channel that takes `demandGenAudience`. Each is validated
+BEFORE the first budget mutate, so a refused value cannot strand a paid campaign — and the
+same validation runs on the `adoptExisting` path, so a config is refused identically whether
+it creates or adopts.
 
 **Click tracking (#476), on every channel and with no config field.** Every campaign create
 sets the campaign custom parameter `utmcampaign` to the composed campaign name, query-escaped
@@ -878,8 +878,9 @@ keywords?: {text, matchType}[]  — OPTIONAL positive Search keyword criteria (G
 
                                   SEARCH ONLY, and REFUSED rather than ignored on every other
                                   `channel`: keyword criteria are attached only on the Search cascade,
-                                  Demand Gen's ad group takes no criteria at all, and Performance Max
-                                  has no ad group to hang them on. Accepting them elsewhere would
+                                  Demand Gen has no keyword criteria (its ad group takes location,
+                                  language and one Audience criterion), and Performance Max has no
+                                  ad group to hang them on. Accepting them elsewhere would
                                   validate every term and then discard the lot.
 audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTING audiences to attach
                                   to the ad group (GA-4) as observation-only criteria — bid/report on
@@ -918,6 +919,13 @@ demandGenAudience?: string      — OPTIONAL one EXISTING Google Ads Audience,
                                   2026-11-03). Any other shape, a non-canonical id, or a resource
                                   under ANOTHER customer is REFUSED before the budget mutate — Google
                                   refuses the foreign one too, but only after the budget.
+
+                                  That check is ACCOUNT-scoped, not foundation-scoped: on the shared
+                                  LF Google Ads customer a project can name another foundation's
+                                  Audience, which on Demand Gen restricts who the ad group reaches.
+                                  This is an accepted risk for now (lfx-self-serve offers Google
+                                  audience inputs only to root principals); a follow-up issue tracks
+                                  enforcement in this service.
 
                                   DEMAND GEN ONLY, and REFUSED on every other `channel`. It shares
                                   one atomic `adGroupCriteria:mutate` with `languages`, after the geo
@@ -1160,8 +1168,9 @@ conversionActions?: string[]    — OPTIONAL the conversion actions THIS campaig
                                   written: one edited by hand is left as it is, and a new goal is
                                   created under the set's second name. A removed goal holding the
                                   set is re-enabled, which is safe because a goal linked to a
-                                  campaign cannot be removed; if Google definitely refuses the
-                                  re-enable of the goal found for the set's own name (an unknown
+                                  campaign cannot be removed; if Google definitely refuses to
+                                  re-enable the removed goal holding the set (found when the set's
+                                  own name is held by a goal that cannot be reused; an unknown
                                   outcome is UNCONFIRMED), a goal is created under the second name
                                   instead. That create can still be refused when Google counts the
                                   removed goal as holding the list, and the goal is then NOT

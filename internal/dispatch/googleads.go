@@ -639,8 +639,8 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		NegativeKeywords: googleAdsKeywords(cfg.NegativeKeywords),
 		SearchPartners:   cfg.SearchPartners,
 		AudienceSegments: cfg.AudienceSegments,
-		// Verbatim like the rest: the channel fence and the account check are the
-		// client's preflight's.
+		// Mapped verbatim, as AudienceSegments and GeoTargets are: the channel fence and
+		// the account check are the client's preflight's.
 		DemandGenAudience: cfg.DemandGenAudience,
 		GeoTargets:        cfg.GeoTargets,
 		CPCBid:            cfg.CPCBid,

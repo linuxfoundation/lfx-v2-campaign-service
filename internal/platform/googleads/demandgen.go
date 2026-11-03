@@ -93,9 +93,10 @@ type demandGenAdGroupCreate struct {
 }
 
 // CreateDemandGenCampaign creates a PAUSED Demand Gen campaign: budget → campaign →
-// ad group → ad-group-level geo → ad-group-level audience and languages (#459). It is a port of the legacy Express implementation
-// (`lfx-self-serve` `campaign-proxy.service.ts`'s `createDemandGenCampaign`), which
-// is what serves this channel today and is the behavioural reference.
+// ad group → ad-group-level geo → ad-group-level audience and languages (#459). It is a
+// port of the legacy Express implementation (`lfx-self-serve`
+// `campaign-proxy.service.ts`'s `createDemandGenCampaign`), which is what serves this
+// channel today and is the behavioural reference.
 //
 // It creates NO KEYWORDS: Demand Gen has no keyword criteria, and the preflight
 // refuses them rather than dropping them.
@@ -407,10 +408,10 @@ func demandGenClosingStep(hasGeo, hasAd bool) string {
 	case hasGeo && hasAd:
 		return "Demand Gen campaign created — review the creative and launch in the Google Ads UI"
 	case hasAd:
-		return "Demand Gen campaign created (no geo targeting set) — add targeting, then review the creative and launch in the Google Ads UI"
+		return "Demand Gen campaign created (no geo targeting set) — add geo targeting, then review the creative and launch in the Google Ads UI"
 	case hasGeo:
 		return "Demand Gen campaign created with NO AD — it cannot serve until an ad is added; upload images and publish in the Google Ads UI"
 	default:
-		return "Demand Gen campaign created with NO AD (no geo targeting set) — it cannot serve until an ad is added; add targeting, upload images and publish in the Google Ads UI"
+		return "Demand Gen campaign created with NO AD (no geo targeting set) — it cannot serve until an ad is added; add geo targeting, upload images and publish in the Google Ads UI"
 	}
 }

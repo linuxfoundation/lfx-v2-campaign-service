@@ -1138,18 +1138,19 @@ func (c *Client) ValidateCampaignInput(in CampaignInput) error {
 // PER CHANNEL rather than Search-versus-everything. Demand Gen refuses the widest set:
 // proximity targeting, four of the five criteria kinds (it takes languages, on its ad
 // group), the extension assets, the ad-group list, the CPC bid, keywords and audience
-// segments. Performance Max refuses
-// only the half it genuinely cannot carry — device bid modifiers and campaign-level
-// demographic exclusions, plus the Search-only targeting fields — and accepts proximity,
-// languages and ad schedules at the campaign level like Search. Video refuses the
-// narrowest set of the four — the Search-only targeting fields (keywords, audience
-// segments, the CPC bid, negative keywords, the extension assets and the ad-group
-// list) — because it carries its location and its other campaign criteria at the
-// campaign level exactly as Search does. So a Demand Gen request carrying one of those
-// validates clean as Search and is then refused by CreateDemandGenCampaign. On the
-// create path that is merely a late error; on the ADOPTION path, which returns before
-// any create runs, it is the exact defect this function exists to prevent: the same
-// request accepted when a campaign happens to exist and refused when it does not.
+// segments. Performance Max refuses only the half it genuinely cannot carry — device bid
+// modifiers and campaign-level demographic exclusions, plus the Search-only targeting
+// fields — and accepts proximity, languages and ad schedules at the campaign level like
+// Search. Video refuses the narrowest set of the four — the Search-only targeting fields
+// (keywords, audience segments, the CPC bid, negative keywords, the extension assets and
+// the ad-group list) — because it carries its location and its other
+// campaign criteria at the campaign level exactly as Search does. (Each channel also
+// refuses the other channels' creative fields, and every channel but Demand Gen refuses
+// DemandGenAudience.) So a Demand Gen request carrying one of the fields Demand Gen
+// refuses validates clean as Search and is then refused by CreateDemandGenCampaign. On
+// the create path that is merely a late error; on the ADOPTION path, which returns
+// before any create runs, it is the exact defect this function exists to prevent: the
+// same request accepted when a campaign happens to exist and refused when it does not.
 //
 // The ad-group income and parental-status exclusions (#473) cut across all of this:
 // every channel but Search and Display refuses income ranges, and every channel but
@@ -1430,10 +1431,10 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	// CreateDemandGenCampaign and CreatePerformanceMaxCampaign never read
 	// pf.keywords/pf.audienceSegments — Demand Gen has no keyword criteria and its
 	// audience-grouped ad group refuses a user list (it gets location, language and one
-	// Audience criterion here instead), and
-	// Performance Max has no ad group to hang them on. Accepting them there would
-	// check every term and resource name and then discard the lot, leaving an operator
-	// who named an audience believing their campaign is targeted when it is not.
+	// Audience criterion here instead), and Performance Max has no ad group to hang them
+	// on. Accepting them there would check every term and resource name and then discard
+	// the lot, leaving an operator who named an audience believing their campaign is
+	// targeted when it is not.
 	// `!= campaignKindSearch` rather than a per-channel list, for the same reason: the
 	// drop is a property of not being on the Search cascade, so a fence naming one
 	// channel would silently admit the next one added.
@@ -1442,9 +1443,9 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	}
 	// Demand Gen gets its own sentence, because there the refusal is Google's rather than
 	// this client's: a Demand Gen ad group is AUDIENCE-GROUPED, and Google refuses a user
-	// list attached to it directly (CANNOT_ADD_AUDIENCE_SEGMENT_CRITERION_WHEN_AUDIENCE_
-	// GROUPED_IS_SET, with or without useAudienceGrouped=false — verified by a validateOnly
-	// probe on 2026-11-03). The segments have to sit inside an Audience, which the caller
+	// list attached to it directly, with or without useAudienceGrouped=false
+	// (CANNOT_ADD_AUDIENCE_SEGMENT_CRITERION_WHEN_AUDIENCE_GROUPED_IS_SET — verified by a
+	// validateOnly probe on 2026-11-03). The segments have to sit inside an Audience, which the caller
 	// references through DemandGenAudience, so the message names that field.
 	if len(audienceSegments) > 0 && kind == campaignKindDemandGen {
 		return nil, fmt.Errorf("google-ads: audience segments are not supported on %s (a Demand Gen ad group is audience-grouped, so Google refuses a user list attached to it directly); omit AudienceSegments, and set DemandGenAudience to an existing customers/<id>/audiences/<id> Audience that contains the segments", kind)

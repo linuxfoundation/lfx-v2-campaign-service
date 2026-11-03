@@ -355,7 +355,7 @@ func TestCreateDemandGenCampaign_AudienceLanguageFailureIsAPartialResult(t *test
 		"definite 4xx": {
 			respond: func(w http.ResponseWriter) {
 				w.WriteHeader(http.StatusBadRequest)
-				_, _ = io.WriteString(w, `{"error":{"code":400,"status":"INVALID_ARGUMENT","message":"refused"}}`)
+				_, _ = io.WriteString(w, oneAudienceFailureBody)
 			},
 		},
 		"5xx": {
@@ -417,6 +417,110 @@ func TestCreateDemandGenCampaign_AudienceLanguageFailureIsAPartialResult(t *test
 				t.Errorf("UNCONFIRMED in error = %v, want %v: %v", got, tc.wantUnconfirmed, err)
 			}
 		})
+	}
+}
+
+// oneAudienceFailureBody is a GoogleAdsFailure in the shape gaqlError builds, carrying the
+// error code a validateOnly probe on 2026-11-03 returned for a second audience criterion.
+// The category key is this fixture's choice, not the probe's: the client classifies the
+// failure by HTTP status alone, so it does not change what the tests below exercise.
+const oneAudienceFailureBody = `{"error":{"code":3,"status":"INVALID_ARGUMENT","details":[` +
+	`{"@type":"type.googleapis.com/google.ads.googleads.v23.errors.GoogleAdsFailure",` +
+	`"errors":[{"errorCode":{"criterionError":"ONE_AUDIENCE_ALLOWED_PER_AD_GROUP"},"message":"boom"}]}]}}`
+
+// A definite failure names only what the ad group is missing out of what was ASKED for:
+// a languages-only create never had an Audience to lose, and an audience-only one never
+// had languages.
+func TestCreateDemandGenCampaign_DefiniteFailureNamesOnlyWhatWasAsked(t *testing.T) {
+	for name, tc := range map[string]struct {
+		audience  string
+		languages []string
+		want      string
+		notWant   string
+	}{
+		"both": {
+			audience: testDemandGenAudience, languages: []string{"EN"},
+			want: "it has NO audience or language criteria, so if enabled it would serve without the named Audience and in every language",
+		},
+		"audience only": {
+			audience: testDemandGenAudience,
+			want:     "it has NO audience criterion, so if enabled it would serve without the named Audience)",
+			notWant:  "language",
+		},
+		"languages only": {
+			languages: []string{"EN"},
+			want:      "it has NO language criteria, so if enabled it would serve in every language)",
+			notWant:   "Audience",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, c := newDGTargetingRig(t, func(_ int, _ []byte, w http.ResponseWriter) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, oneAudienceFailureBody)
+			})
+			in := demandGenInput()
+			in.DemandGenAudience = tc.audience
+			in.Languages = tc.languages
+			res, err := c.CreateDemandGenCampaign(context.Background(), in)
+			if err == nil || res == nil {
+				t.Fatalf("want a partial result and an error, got res=%v err=%v", res, err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %q, want it to contain %q", err, tc.want)
+			}
+			if strings.Contains(err.Error(), "UNCONFIRMED") {
+				t.Errorf("a definite 4xx must not read UNCONFIRMED: %v", err)
+			}
+			if tc.notWant != "" {
+				clause := err.Error()[strings.Index(err.Error(), "created; "):]
+				if strings.Contains(clause, tc.notWant) {
+					t.Errorf("consequence clause %q mentions %q, which was not asked for", clause, tc.notWant)
+				}
+			}
+		})
+	}
+}
+
+// A context already done sends NOTHING: the step must not fire a mutate it cannot see
+// the outcome of, and its error must say no request was made.
+func TestCreateDemandGenAdGroupTargeting_CancelledContextSendsNothing(t *testing.T) {
+	rig, c := newDGTargetingRig(t, func(_ int, body []byte, w http.ResponseWriter) {
+		t.Errorf("no request expected, got %s", body)
+		http.Error(w, "unexpected", http.StatusBadRequest)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	audienceIDs, languageIDs, err := c.createDemandGenAdGroupTargeting(ctx, "customers/1234567890/adGroups/333", "333",
+		testDemandGenAudience, []languageInfo{{LanguageConstant: "languageConstants/1000"}})
+	if err == nil {
+		t.Fatal("a cancelled context must fail the step")
+	}
+	if !strings.Contains(err.Error(), "aborted before any request") {
+		t.Errorf("error = %q, want it to say it aborted before any request", err)
+	}
+	if audienceIDs != nil || languageIDs != nil {
+		t.Errorf("no ids may be returned, got %v %v", audienceIDs, languageIDs)
+	}
+	rig.mu.Lock()
+	defer rig.mu.Unlock()
+	if len(rig.paths) != 0 {
+		t.Errorf("sent %d requests, want 0: %v", len(rig.paths), rig.paths)
+	}
+}
+
+// The closing step's no-geo arms ask for GEO targeting by name: an audience or languages
+// may already be attached, so "add targeting" would send an operator to redo them.
+func TestDemandGenClosingStep_NoGeoArmsAskForGeoTargeting(t *testing.T) {
+	for _, hasAd := range []bool{true, false} {
+		got := demandGenClosingStep(false, hasAd)
+		if !strings.Contains(got, "add geo targeting") {
+			t.Errorf("demandGenClosingStep(false, %v) = %q, want it to ask for geo targeting", hasAd, got)
+		}
+	}
+	for _, hasAd := range []bool{true, false} {
+		if got := demandGenClosingStep(true, hasAd); strings.Contains(got, "targeting") {
+			t.Errorf("demandGenClosingStep(true, %v) = %q, want no targeting advice when geo is set", hasAd, got)
+		}
 	}
 }
 

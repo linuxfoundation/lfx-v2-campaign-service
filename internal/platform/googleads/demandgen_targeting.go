@@ -74,12 +74,18 @@ type adGroupCriterionDemandGenCreate struct {
 // (INVALID_CUSTOMER_ID, verified by a validateOnly probe on 2026-11-03) — but at the
 // criteria mutate, after the budget, the campaign and the ad group exist. This is the
 // check validateConversionActions makes for conversion actions, for the same reason.
+//
+// The check is ACCOUNT-scoped, not foundation-scoped, and is not tenancy protection: on
+// the shared LF Google Ads customer a project can name another foundation's Audience,
+// and on Demand Gen that Audience restricts who the ad group reaches. That is an accepted
+// risk for now — lfx-self-serve offers Google audience inputs only to root principals
+// (isRootCampaignPrincipal) — and a follow-up issue tracks enforcement in this service.
 func validateDemandGenAudience(kind, customerID, audience string) (string, error) {
 	if audience == "" {
 		return "", nil
 	}
 	if kind != campaignKindDemandGen {
-		return "", fmt.Errorf("google-ads: a Demand Gen audience is not supported on %s (only a Demand Gen ad group takes an Audience criterion here); omit DemandGenAudience, or use AudienceSegments on a Search campaign", kind)
+		return "", fmt.Errorf("google-ads: a Demand Gen audience is not supported on %s (only a Demand Gen ad group takes an Audience criterion here); omit DemandGenAudience, or create a Demand Gen campaign to target an Audience (Search takes user lists through AudienceSegments)", kind)
 	}
 	trimmed := strings.TrimSpace(audience)
 	if trimmed == "" {
@@ -90,7 +96,7 @@ func validateDemandGenAudience(kind, customerID, audience string) (string, error
 		return "", fmt.Errorf("google-ads: DemandGenAudience %q is not a customers/<id>/audiences/<id> Audience resource name with a positive canonical id (user lists and custom audiences go inside that Audience in the Google Ads UI)", capForError(trimmed))
 	}
 	if m[1] != customerID {
-		return "", fmt.Errorf("google-ads: DemandGenAudience %q belongs to customer %s, not the campaign's account %s; an Audience cannot be shared across accounts", capForError(trimmed), m[1], customerID)
+		return "", fmt.Errorf("google-ads: DemandGenAudience %q belongs to customer %s, not the campaign's account %s; Google refuses another customer's Audience on this account's ad group (INVALID_CUSTOMER_ID)", capForError(trimmed), m[1], customerID)
 	}
 	return trimmed, nil
 }
@@ -106,6 +112,21 @@ func demandGenTargetingStep(audience string, languages []languageInfo) string {
 		parts = append(parts, fmt.Sprintf("%d language(s)", n))
 	}
 	return strings.Join(parts, "; ")
+}
+
+// demandGenTargetingMissing states what a definitely-failed audience/language mutate left
+// the ad group without, naming only the halves that were asked for: a languages-only
+// create never had an Audience to lose, and saying it did would send an operator looking
+// for one.
+func demandGenTargetingMissing(audience string, languages []languageInfo) string {
+	switch {
+	case audience != "" && len(languages) > 0:
+		return "it has NO audience or language criteria, so if enabled it would serve without the named Audience and in every language"
+	case audience != "":
+		return "it has NO audience criterion, so if enabled it would serve without the named Audience"
+	default:
+		return "it has NO language criteria, so if enabled it would serve in every language"
+	}
 }
 
 // createDemandGenAdGroupTargeting attaches the Audience and the language criteria to a
@@ -153,7 +174,7 @@ func (c *Client) createDemandGenAdGroupTargeting(ctx context.Context, adGroupRes
 		if createOutcomeAmbiguous(mErr) {
 			return nil, nil, fmt.Errorf("google-ads demand gen audience/language targeting UNCONFIRMED (ad group %s; audience/language criteria may exist — verify in Google Ads before retrying): %w", adGroupID, mErr)
 		}
-		return nil, nil, fmt.Errorf("google-ads demand gen audience/language targeting failed (ad group %s created; it has NO audience or language criteria, so if enabled it would serve without the named Audience and in every language): %w", adGroupID, mErr)
+		return nil, nil, fmt.Errorf("google-ads demand gen audience/language targeting failed (ad group %s created; %s): %w", adGroupID, demandGenTargetingMissing(audience, languages), mErr)
 	}
 
 	var mr mutateResponse

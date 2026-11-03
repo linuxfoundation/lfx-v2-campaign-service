@@ -225,11 +225,11 @@ func TestValidateDeviceBidModifiers_RejectsBadInput(t *testing.T) {
 		// Two criteria for one device is a conflict Google rejects after the campaign
 		// exists, and the caller plainly meant one of the two values.
 		"duplicate device": {{Device: "MOBILE", BidModifier: 1.5}, {Device: "mobile", BidModifier: 2}},
-		// Google supports TV screens only on Display and Video campaigns, and every
-		// device criterion is refused on Demand Gen — so Search is the only kind
-		// that reaches the vocabulary, and Search is not a type it works on. Accepting
-		// it offered a knob that is inert at best and rejects the criteria mutate at
-		// worst, after the budget and campaign are committed.
+		// Google supports TV screens only on Display and Video campaigns. Search, Video
+		// and Display all reach this vocabulary (device criteria are refused on Demand
+		// Gen and Performance Max), and this client sends the device on none of them — a
+		// named gap on Video and Display, see deviceTypes. Accepting it would risk a
+		// rejected criteria mutate after the budget and campaign are committed.
 		"connected TV":            {{Device: "CONNECTED_TV", BidModifier: 1.5}},
 		"connected TV lowercased": {{Device: " connected_tv ", BidModifier: 1.5}},
 		// OTHER is a reporting bucket, not something a campaign bids on.
