@@ -2329,7 +2329,9 @@ extension type there (callouts and snippets were not probed). The cascade calls 
 path's `createCampaignAssets` after the campaign criteria; the probe sent the asset and its
 SITELINK campaign asset in one `googleAds:mutate` by temporary id, and this client sends the
 same two resources in the two mutates Search uses. Ids go to `ExtensionAssetIDs` /
-`ExtensionLinkIDs` with Search's partial semantics.
+`ExtensionLinkIDs` with Search's partial semantics. The sitelink's final URL goes through the
+same per-channel tagging as the ads (#476), so it carries `utm_medium=display`, not Search's
+`paid-search`.
 
 **Several ads per ad group** (`demandgen_ads.go`). `CampaignInput.DemandGenAds` (the single
 group, instead of `DemandGenCreative`/`DemandGenVideoCreative`) and `DemandGenAdGroup.Ads` (a

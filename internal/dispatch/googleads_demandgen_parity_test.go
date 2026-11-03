@@ -6,12 +6,14 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // The dispatch half of #474: on "demand-gen" the existing biddingStrategy/targetCpa,
@@ -208,4 +210,83 @@ func TestGoogleAdsSnapshotConfig_SanitizesDemandGenAdsAlone(t *testing.T) {
 	if strings.Contains(string(raw), "s3cr3t") {
 		t.Errorf("the snapshot still carries a signing query: %s", raw)
 	}
+}
+
+// demandGenAdsGateConfig is a Demand Gen create whose ads come from #474's lists: with
+// groupAudience non-nil, one demandGenAdGroups entry carrying that audience and an `ads`
+// list; with it nil, the single ad group's demandGenAds. Each ad is an image ad over STORED
+// assets, so the create reaches the ad mutates over the fake API with nothing fetched.
+func demandGenAdsGateConfig(t *testing.T, groupAudience *string) json.RawMessage {
+	t.Helper()
+	ad := func(name string) map[string]any {
+		return map[string]any{"name": name, "creative": map[string]any{
+			"marketingImages": []any{map[string]any{"imageAssetId": gaWireMarketingAssetID}},
+			"logoImages":      []any{map[string]any{"imageAssetId": gaWireLogoAssetID}},
+			"headlines":       []string{"Join us at KubeCon"},
+			"descriptions":    []string{"Talks, workshops and hallway track."},
+			"businessName":    "Linux Foundation",
+		}}
+	}
+	ads := []any{ad("One"), ad("Two")}
+	cfg := map[string]any{"budget": 50, "channel": "demand-gen"}
+	if groupAudience != nil {
+		cfg["demandGenAdGroups"] = []any{map[string]any{
+			"name": "Group A", "audience": *groupAudience, "ads": ads,
+		}}
+	} else {
+		cfg["demandGenAds"] = ads
+	}
+	raw, err := json.Marshal(map[string]any{"googleAdsConfig": cfg})
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	return raw
+}
+
+// #481's ad-group audience gate keys on the group's audience, not on the shape of its ads:
+// a group whose ads come from #474's `ads` list is gated exactly as one with a `creative`,
+// and demandGenAds — which carries no audience — passes the gate with it off.
+func TestGoogleAds_DemandGenAdsAndTheAudienceGate(t *testing.T) {
+	const own = "customers/1234567890/audiences/4242"
+
+	t.Run("a group with ads and an audience is refused", func(t *testing.T) {
+		setGateEnv(t, constants.EnvGoogleAdsDemandGenAudienceEnabled, unsetEnv)
+		d, cap := gaWireDispatcher(t, gaWireLibrary(t), gateAssetBudget())
+		audience := own
+		cfg := demandGenAdsGateConfig(t, &audience)
+		_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+		if err == nil {
+			t.Fatal("expected the dispatch to be refused while the gate is off")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, constants.EnvGoogleAdsDemandGenAudienceEnabled) ||
+			!strings.Contains(msg, "demandGenAdGroups entry 1 is") {
+			t.Errorf("error = %v, want the gate naming demandGenAdGroups entry 1", err)
+		}
+		var pce *preCreateError
+		if !errors.As(err, &pce) {
+			t.Errorf("error = %v, want a not-created error", err)
+		}
+		cap.mu.Lock()
+		defer cap.mu.Unlock()
+		if cap.sawBudget {
+			t.Error("the refusal must happen BEFORE the budget mutate")
+		}
+	})
+
+	t.Run("demandGenAds alone is not gated", func(t *testing.T) {
+		setGateEnv(t, constants.EnvGoogleAdsDemandGenAudienceEnabled, unsetEnv)
+		d, cap := gaWireDispatcher(t, gaWireLibrary(t), gateAssetBudget())
+		cfg := demandGenAdsGateConfig(t, nil)
+		ctx := context.Background()
+		if _, err := d.Dispatch(ctx, testBrief(), model.ProviderGoogleAds, cfg); err != nil {
+			t.Fatalf("Dispatch: %v", err)
+		}
+		cap.mu.Lock()
+		defer cap.mu.Unlock()
+		if len(cap.adGroups) != 1 || len(cap.adGroupAds) != 2 {
+			t.Errorf("got %d ad groups and %d ads, want 1 and 2",
+				len(cap.adGroups), len(cap.adGroupAds))
+		}
+	})
 }

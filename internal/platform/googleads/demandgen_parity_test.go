@@ -134,6 +134,12 @@ func TestCreateDemandGenCampaign_ConversionBiddingCriteriaAndSitelinks(t *testin
 	if !strings.Contains(bodies["assets:mutate"], `"sitelinkAsset":{"linkText":"Register"}`) {
 		t.Errorf("assets body %s, want the sitelink", bodies["assets:mutate"])
 	}
+	// #479: the sitelink's final URL carries Demand Gen's utm_medium, not Search's.
+	sitelink := bodies["assets:mutate"]
+	if !strings.Contains(sitelink, "utm_medium=display") ||
+		strings.Contains(sitelink, "paid-search") {
+		t.Errorf("assets body %s, want the sitelink tagged utm_medium=display", sitelink)
+	}
 	wantLink := `{"operations":[{"create":{"campaign":"customers/1234567890/campaigns/222","asset":"customers/1234567890/assets/900","fieldType":"SITELINK"}}]}`
 	if got := bodies["campaignAssets:mutate"]; got != wantLink {
 		t.Errorf("link body %s, want %s", got, wantLink)
@@ -295,8 +301,17 @@ func TestCreateDemandGenCampaign_SeveralAdsInTheSingleGroup(t *testing.T) {
 	if !strings.Contains(string(videos[1]), "abcdefghijk") {
 		t.Errorf("the second video ad must carry its own video: %s", videos[1])
 	}
-	if n := len(rig.sent("adGroupAds:mutate")); n != 1 {
+	images := rig.sent("adGroupAds:mutate")
+	if n := len(images); n != 1 {
 		t.Errorf("sent %d image ad mutates, want 1", n)
+	}
+	// #479: every one of the several ads, video and image, carries the tagged final URL with
+	// Demand Gen's utm_medium.
+	for i, body := range append(append([][]byte(nil), videos...), images...) {
+		ad := string(body)
+		if !strings.Contains(ad, "utm_medium=display") || strings.Contains(ad, "paid-search") {
+			t.Errorf("ad %d body %s, want its final URL tagged utm_medium=display", i+1, body)
+		}
 	}
 	if res.AdID != "444" || len(res.AdGroups) != 1 || strings.Join(res.AdGroups[0].AdIDs, ",") != "444,445,555" || res.AdGroups[0].ID != "333" {
 		t.Errorf("AdID = %q AdGroups = %+v, want 444 and one group with ads 444,445,555", res.AdID, res.AdGroups)

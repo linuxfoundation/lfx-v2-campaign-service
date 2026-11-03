@@ -1490,7 +1490,9 @@ sitelinks?:                     — OPTIONAL sitelink extensions (LFXV2-2665): e
                                   a sitelink asset and its SITELINK campaign asset. Created and
                                   linked exactly as on Search, after the campaign criteria and
                                   before the ad groups; the ids are reported in `extensionAssetIds`
-                                  / `extensionLinkIds`.
+                                  / `extensionLinkIds`. Its `finalUrl` is tagged with Demand Gen's
+                                  `utm_medium=display`, as the ads are (#476), not Search's
+                                  `paid-search`.
 
                                   Lengths are RUNE counts, not the double-width WEIGHT the RSA copy
                                   uses, and over-long text is REFUSED rather than truncated: generated

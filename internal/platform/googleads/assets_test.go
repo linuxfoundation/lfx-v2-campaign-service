@@ -434,10 +434,17 @@ func TestValidateAssetPlan_AcceptsSitelinksOnDemandGen(t *testing.T) {
 	if dg.sitelinks != 1 || len(dg.fieldTypes) != 1 || dg.fieldTypes[0] != assetFieldSitelink {
 		t.Fatalf("plan = %+v, want one SITELINK", dg)
 	}
+	// The same sitelink as Search's but for its final URL's utm_medium, which #479 sets per
+	// channel: a Demand Gen sitelink is tagged display, as every Demand Gen ad is.
 	a, _ := json.Marshal(dg.assets)
 	b, _ := json.Marshal(search.assets)
-	if string(a) != string(b) {
-		t.Errorf("Demand Gen sitelink %s differs from Search's %s", a, b)
+	if !strings.Contains(string(a), "utm_medium=display") ||
+		strings.Contains(string(a), "paid-search") {
+		t.Errorf("Demand Gen sitelink %s, want its final URL tagged utm_medium=display", a)
+	}
+	asSearch := strings.Replace(string(a), "utm_medium=display", "utm_medium=paid-search", 1)
+	if asSearch != string(b) {
+		t.Errorf("Demand Gen sitelink %s differs from Search's %s beyond utm_medium", a, b)
 	}
 	// Still refused on the channels that were not probed.
 	if _, err := validateAssetPlan(campaignKindVideo, in); err == nil {
