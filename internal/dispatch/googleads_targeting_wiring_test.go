@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -616,7 +617,6 @@ func TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenBeforeAnyCreate(t *testi
 		cfg  string
 	}{
 		{"proximity targets", `"proximityTargets":[{"latitude":37.7749,"longitude":-122.4194,"radius":25,"radiusUnit":"MILES"}]`},
-		{"languages", `"languages":["EN"]`},
 		{"ad schedules", `"adSchedules":[{"dayOfWeek":"MONDAY","startHour":9,"startMinute":0,"endHour":17,"endMinute":0}]`},
 		{"device bid modifiers", `"deviceBidModifiers":[{"device":"MOBILE","bidModifier":1.2}]`},
 		{"excluded age ranges", `"excludedAgeRanges":["18-24"]`},
@@ -735,7 +735,6 @@ func TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenAdoptionToo(t *testing.T
 		cfg  string
 	}{
 		{"proximity targets", `"proximityTargets":[{"latitude":37.7749,"longitude":-122.4194,"radius":25,"radiusUnit":"MILES"}]`},
-		{"languages", `"languages":["EN"]`},
 		{"ad schedules", `"adSchedules":[{"dayOfWeek":"MONDAY","startHour":9,"startMinute":0,"endHour":17,"endMinute":0}]`},
 		{"device bid modifiers", `"deviceBidModifiers":[{"device":"MOBILE","bidModifier":1.2}]`},
 		{"excluded age ranges", `"excludedAgeRanges":["18-24"]`},
@@ -805,10 +804,11 @@ func TestGoogleAdsClient_ValidateCampaignInputKindGatesOnTheKind(t *testing.T) {
 		RegistrationURL: "https://events.example/kc",
 		Headlines:       []string{"Attend KubeCon", "Register today", "Join the community"},
 		Descriptions:    []string{"Three days of talks and workshops.", "Meet maintainers in person."},
-		Languages:       []string{"EN"},
+		// Not Languages: since #459 Demand Gen takes those, on its ad group.
+		ExcludedAgeRanges: []string{"18-24"},
 	}
 	if err := client.ValidateCampaignInputKind(googleads.CampaignKindDemandGen, in); err == nil {
-		t.Error("languages are Search-only; validating for Demand Gen must refuse them")
+		t.Error("demographic exclusions are refused on Demand Gen; validating for it must refuse them")
 	}
 	if err := client.ValidateCampaignInputKind(googleads.CampaignKindSearch, in); err != nil {
 		t.Errorf("the same input is valid for Search, got %v", err)
@@ -992,4 +992,78 @@ func TestGoogleAdsToggleTargets_BlobShapes(t *testing.T) {
 			t.Errorf("targets = %+v, want trimmed ids with the blank ad dropped", targets)
 		}
 	})
+}
+
+// demandGenAudience and languages reach the Demand Gen AD GROUP through dispatch (#459):
+// one adGroupCriteria:mutate carrying the Audience and then the language, and no
+// campaign-level criteria at all.
+func TestGoogleAds_DemandGenAudienceAndLanguagesReachTheAdGroup(t *testing.T) {
+	opts, cap := targetingServers(t)
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"demand-gen",` +
+		`"demandGenAudience":"customers/1234567890/audiences/4242","languages":["EN"]}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	cap.mu.Lock()
+	defer cap.mu.Unlock()
+	if len(cap.adGroupCriteria) != 1 {
+		t.Fatalf("got %d adGroupCriteria mutates, want 1", len(cap.adGroupCriteria))
+	}
+	var req struct {
+		Operations []struct {
+			Create map[string]any `json:"create"`
+		} `json:"operations"`
+	}
+	if err := json.Unmarshal(cap.adGroupCriteria[0], &req); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(req.Operations) != 2 {
+		t.Fatalf("got %d operations, want the Audience and one language: %s", len(req.Operations), cap.adGroupCriteria[0])
+	}
+	if got := req.Operations[0].Create["audience"]; !reflect.DeepEqual(got, map[string]any{"audience": "customers/1234567890/audiences/4242"}) {
+		t.Errorf("operation 0 audience = %v", got)
+	}
+	if got := req.Operations[1].Create["language"]; !reflect.DeepEqual(got, map[string]any{"languageConstant": "languageConstants/1000"}) {
+		t.Errorf("operation 1 language = %v", got)
+	}
+	if len(cap.campaignCriteria) != 0 {
+		t.Errorf("Demand Gen must send no campaign criteria, got %d mutates", len(cap.campaignCriteria))
+	}
+}
+
+// demandGenAudience is refused BEFORE the budget on every channel but demand-gen, and
+// on demand-gen when it names another account; audienceSegments on demand-gen are
+// refused with the reason and the field to use instead.
+func TestGoogleAds_DemandGenAudienceRefusalsArePreCreate(t *testing.T) {
+	cases := []struct {
+		name, cfg, wantSub string
+	}{
+		{"on search", `"demandGenAudience":"customers/1234567890/audiences/4242"`, "a Demand Gen audience is not supported"},
+		{"on display", `"channel":"display","demandGenAudience":"customers/1234567890/audiences/4242"`, "a Demand Gen audience is not supported"},
+		{"another account", `"channel":"demand-gen","demandGenAudience":"customers/9999999999/audiences/4242"`, "belongs to customer 9999999999"},
+		{"user list on demand gen", `"channel":"demand-gen","audienceSegments":["customers/1234567890/userLists/1"]`, "audience-grouped"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, cap := targetingServers(t)
+			d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+			cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,` + tc.cfg + `}}`)
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+			if err == nil {
+				t.Fatal("expected the dispatch to be refused")
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("error = %v, want it to contain %q", err, tc.wantSub)
+			}
+			if camp != nil {
+				t.Errorf("nothing may be created for a refused input, got %+v", camp)
+			}
+			cap.mu.Lock()
+			defer cap.mu.Unlock()
+			if cap.sawBudget {
+				t.Error("the refusal must happen BEFORE the budget mutate")
+			}
+		})
+	}
 }

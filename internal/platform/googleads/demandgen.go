@@ -93,7 +93,7 @@ type demandGenAdGroupCreate struct {
 }
 
 // CreateDemandGenCampaign creates a PAUSED Demand Gen campaign: budget → campaign →
-// ad group → ad-group-level geo. It is a port of the legacy Express implementation
+// ad group → ad-group-level geo → ad-group-level audience and languages (#459). It is a port of the legacy Express implementation
 // (`lfx-self-serve` `campaign-proxy.service.ts`'s `createDemandGenCampaign`), which
 // is what serves this channel today and is the behavioural reference.
 //
@@ -355,7 +355,22 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		res.Steps = steps
 	}
 
-	// Step 5: the creative. Images first as account-level assets, then the ad that
+	// Step 5: the Audience and the languages (#459), on the AD GROUP — the only level
+	// Demand Gen takes either at (see demandgen_targeting.go for the probe facts). Its
+	// own mutate after geo rather than inside geo's; createDemandGenAdGroupTargeting says
+	// why. Same partial-result contract as geo: a failure comes back with the non-nil res.
+	if pf.demandGenAudience != "" || len(pf.criteria.languages) > 0 {
+		audienceIDs, languageIDs, targetErr := c.createDemandGenAdGroupTargeting(ctx, adGroupResource, adGroupID, pf.demandGenAudience, pf.criteria.languages)
+		if targetErr != nil {
+			return res, targetErr
+		}
+		res.AudienceCriteriaIDs = audienceIDs
+		res.TargetingCriterionIDs = languageIDs
+		steps = append(steps, fmt.Sprintf("Audience and language targeting applied: %d ad-group criteria (%s)", len(audienceIDs)+len(languageIDs), demandGenTargetingStep(pf.demandGenAudience, pf.criteria.languages)))
+		res.Steps = steps
+	}
+
+	// Step 6: the creative. Images first as account-level assets, then the ad that
 	// references them — two mutates, because Google has no call that does both.
 	//
 	// Like the geo step, a failure is returned ALONGSIDE the non-nil res: the campaign

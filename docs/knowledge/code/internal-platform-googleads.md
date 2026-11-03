@@ -1105,6 +1105,10 @@ predicate. An ambiguous outcome (5xx/429/transport, or a 2xx with a
 malformed/short mutate response) is reported UNCONFIRMED, same convention as
 GA-2/GA-3.
 
+Demand Gen does not use this path: its ad group is audience-grouped and refuses a
+user list, so it takes one Audience resource instead — see "Demand Gen audience and
+language criteria (#459)".
+
 `CampaignResult.KeywordCriteriaIDs`/`AudienceCriteriaIDs` are populated from
 the mutate response only when targeting was attempted and succeeded; both are
 empty if targeting was never attempted (no `Keywords`/`AudienceSegments`
@@ -1789,9 +1793,13 @@ takes a plain `float64` because a device listed without a modifier would say
 nothing at all. `validateBidModifier` mirrors Google's own rule — exactly 0, or
 `0.1`..`10.0`.
 
-All five are refused on Demand Gen, for the reason proximity is: that channel
-attaches targeting on the ad group, and these criteria have not been verified
-there.
+Four of the five are refused on Demand Gen, for the reason proximity is: that
+channel attaches targeting on the ad group, and these criteria have not been
+verified there. Languages are the exception since #459: Demand Gen refuses a
+CAMPAIGN-level language and its ad group accepts `language` criteria (validateOnly
+probe, 2026-11-03), so `validateCriteriaPlan` leaves them out of the Demand Gen
+refusal and the Demand Gen cascade attaches `plan.languages` to its ad group — see
+"Demand Gen audience and language criteria" below.
 
 **A device bid ADJUSTMENT is refused by the bidding strategy, not by the channel,
 and the two rules must not be folded together.** `validateBiddingPlan` refuses a
@@ -2111,6 +2119,61 @@ returns a non-nil result carrying the asset ids, so a retry does not lose them
 (`TestCreateDemandGenCampaign_AdFailureStillReportsTheAssets`). `demandGenClosingStep`
 now has four branches over (geo, ad) rather than one, so the step text stops
 telling an operator to upload images for a campaign that already has an ad.
+
+## Demand Gen audience and language criteria (#459)
+
+`demandgen_targeting.go`. The live KubeCon NA 2026 Demand Gen campaigns are built on
+audiences and English; a Demand Gen campaign built here could carry neither. The shape
+of the fix is set by three facts, each verified by a **validateOnly** probe on
+2026-11-03 at v23 (validateOnly only — nothing was created):
+
+- A Demand Gen ad group is **AUDIENCE-GROUPED**. Google refuses a user list or a
+  custom audience attached to it directly
+  (`CANNOT_ADD_AUDIENCE_SEGMENT_CRITERION_WHEN_AUDIENCE_GROUPED_IS_SET`), and setting
+  the ad group's `audienceSetting.useAudienceGrouped=false` does not change that. The
+  segments live INSIDE a Google Ads Audience (`customers/{cid}/audiences/{id}`).
+- The ad group takes exactly **ONE** `audience` criterion
+  (`adGroupCriterion.audience.audience`); a second is refused
+  (`ONE_AUDIENCE_ALLOWED_PER_AD_GROUP`).
+- The ad group takes `language` criteria next to the audience, while a
+  **campaign-level** language on Demand Gen is refused. So on Demand Gen, languages
+  attach at the ad group.
+
+A foreign customer id in the resource name is refused by Google too
+(`INVALID_CUSTOMER_ID`) — but only at the criteria mutate, after the budget.
+
+**Inputs.** `CampaignInput.DemandGenAudience` (dispatch `googleAdsConfig.demandGenAudience`)
+is ONE existing Audience resource name: singular because Google admits one, and named
+after its channel like `DemandGenCreative`. `validateDemandGenAudience` runs in
+`preflightCampaignKind`: it refuses the field on every channel but Demand Gen (the
+fence is `!= campaignKindDemandGen`, so a new channel inherits it), refuses any shape
+but `customers/<id>/audiences/<id>` with a positive canonical id, and refuses a
+resource under another customer — the `validateConversionActions` check, for the same
+reason. This client never creates the Audience. `AudienceSegments` stays refused on
+Demand Gen, now with a message that says why (audience-grouped) and names
+`DemandGenAudience`; the other channels keep their Search-cascade reason.
+`Languages` reach Demand Gen through `validateCriteriaPlan`, which refuses only the
+other four criteria kinds there.
+
+**The step.** After geo and before the creative, `createDemandGenAdGroupTargeting`
+sends ONE `adGroupCriteria:mutate`: the audience first, then the languages in order,
+each operation `{adGroup, audience|language}` with no `status` (like the location
+payload on the same ad group). One batch, so an ad group never ends up with its
+languages but not its audience. It is deliberately NOT folded into
+`createAdGroupGeoTargeting`'s mutate, for the reason `createCampaignTargetingCriteria`
+is kept apart from geo on Search: a shared mutate makes either set's failure discard
+the other, and geo's failure sentence ("would serve worldwide") would be false for a
+refused audience; it also leaves the geo request byte for byte what it was. The
+partial-result contract is the usual one — a failure returns the non-nil result
+(campaign, ad group and any geo ids) with no criterion ids recorded; a 5xx, a short
+2xx or a criterion naming another ad group or account is UNCONFIRMED.
+
+**Results.** The audience criterion id goes in `CampaignResult.AudienceCriteriaIDs` and
+the language ids in `TargetingCriterionIDs` — adGroupCriterion ids on this channel, as
+`GeoCriterionIDs` already is. The step line is `Audience and language targeting
+applied: N ad-group criteria (audience …; K language(s))`, naming only the half that
+was asked for. `demandGenClosingStep` is unchanged: its "(no geo targeting set)"
+clause is about geo and stays true whatever audience was attached.
 
 
 ## Bidding strategies and conversion actions (LFXV2-2665)
