@@ -284,6 +284,17 @@ func (c *Client) createVideoCampaignCascade(ctx context.Context, in CampaignInpu
 	res.GoogleAdsURL = "https://ads.google.com/aw/campaigns?ocid=" + c.account.CustomerID
 	res.Steps = steps
 
+	// The campaign-level conversion goal (#436), first of the post-create steps so a failure
+	// leaves as little built on the campaign as possible. Same partial-result contract as geo.
+	goalStep, goalErr := c.applyCampaignConversionGoal(ctx, campaignID, pf.bidding)
+	if goalErr != nil {
+		return res, goalErr
+	}
+	if goalStep != "" {
+		steps = append(steps, goalStep)
+		res.Steps = steps
+	}
+
 	// Step 3: geo. CAMPAIGN-level here, like Search and Performance Max — so this is
 	// the campaign call, not Demand Gen's ad-group one, and proximity targeting works
 	// on this channel for the same reason.

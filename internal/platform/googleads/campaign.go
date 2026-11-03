@@ -170,9 +170,9 @@ type CampaignInput struct {
 	// names. Empty means the campaign inherits the ACCOUNT's conversion goals, which
 	// is what every campaign created before this field existed does.
 	//
-	// SEARCH, VIDEO and DISPLAY, and REFUSED rather than dropped on Demand Gen and
-	// Performance Max — neither takes campaign.selective_optimization. See
-	// validateConversionActions.
+	// Every channel. Applied after the campaign exists as a campaign-level conversion goal
+	// (conversion_goal.go, #436); a failure there is a partial result, never reported as
+	// applied.
 	ConversionActions []string
 	// StartDate / EndDate are the campaign's flight window as YYYY-MM-DD, matching
 	// the vocabulary the meta and reddit dispatch configs already use. Each is
@@ -1571,13 +1571,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// "manual CPC" on a campaign created with maximize-conversions would be the only
 	// record of the bid an operator ever reads, and it would be wrong.
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, SEARCH, %s, %s)", campaignID, pf.bidding.describe(), flightWindowStep(startDateTime, endDateTime)))
-	if n := len(pf.bidding.conversionActions); n > 0 {
-		steps = append(steps, fmt.Sprintf("Conversion actions attached: %d (campaign optimizes toward these instead of the account goals)", n))
-	}
 
 	res := budgetPartial()
 	res.CampaignID = campaignID
 	res.Steps = steps
+
+	// The campaign-level conversion goal (#436), first of the post-create steps so a failure
+	// leaves as little built on the campaign as possible. Same partial-result contract as geo.
+	goalStep, goalErr := c.applyCampaignConversionGoal(ctx, campaignID, pf.bidding)
+	if goalErr != nil {
+		return res, goalErr
+	}
+	if goalStep != "" {
+		steps = append(steps, goalStep)
+		res.Steps = steps
+	}
 
 	// Location criteria go on the CAMPAIGN for Search (Demand Gen differs — see
 	// geo.go). Attached here, immediately after the campaign create and BEFORE the

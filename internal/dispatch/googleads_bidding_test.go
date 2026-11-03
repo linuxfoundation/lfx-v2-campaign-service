@@ -53,17 +53,19 @@ func TestGoogleAds_BiddingConfigFieldsReachCampaignCreate(t *testing.T) {
 		t.Errorf("targetCpaMicros = %#v, want 25000000 micros for a 25.00 target CPA", mc["targetCpaMicros"])
 	}
 
-	so, ok := cop["selectiveOptimization"].(map[string]any)
-	if !ok {
-		t.Fatalf("selectiveOptimization = %#v, want the configured conversion actions", cop["selectiveOptimization"])
+	// The actions are not on the create (#436): selective_optimization is App-campaign only.
+	if _, present := cop["selectiveOptimization"]; present {
+		t.Error("create carries selectiveOptimization, which Google takes on App campaigns only")
 	}
-	actions, ok := so["conversionActions"].([]any)
+
+	// They become a campaign-level goal instead: one custom goal holding both actions, fully
+	// qualified (the bare id is the one the mapper had to qualify), and the campaign's config
+	// pointed at it.
+	goal := servingCreate(t, cap.customGoal)
+	actions, ok := goal["conversionActions"].([]any)
 	if !ok || len(actions) != 2 {
-		t.Fatalf("conversionActions = %#v, want both configured actions", so["conversionActions"])
+		t.Fatalf("custom goal conversionActions = %#v, want both configured actions", goal["conversionActions"])
 	}
-	// Both caller spellings must arrive fully qualified: the bare id is the one the
-	// mapper had to qualify, and sending it unqualified is rejected AFTER the budget
-	// mutate.
 	want := []string{
 		"customers/1234567890/conversionActions/987654321",
 		"customers/1234567890/conversionActions/123456789",
@@ -72,6 +74,23 @@ func TestGoogleAds_BiddingConfigFieldsReachCampaignCreate(t *testing.T) {
 		if actions[i] != w {
 			t.Errorf("conversionActions[%d] = %#v, want %q", i, actions[i], w)
 		}
+	}
+	var write struct {
+		MutateOperations []struct {
+			ConversionGoalCampaignConfigOperation struct {
+				Update map[string]any `json:"update"`
+			} `json:"conversionGoalCampaignConfigOperation"`
+		} `json:"mutateOperations"`
+	}
+	if err := json.Unmarshal(cap.goalConfig, &write); err != nil || len(write.MutateOperations) == 0 {
+		t.Fatalf("decode goal write: %v (body=%s)", err, cap.goalConfig)
+	}
+	update := write.MutateOperations[0].ConversionGoalCampaignConfigOperation.Update
+	if update["resourceName"] != "customers/1234567890/conversionGoalCampaignConfigs/222" {
+		t.Errorf("config update names %#v, want the created campaign's config", update["resourceName"])
+	}
+	if update["goalConfigLevel"] != "CAMPAIGN" || update["customConversionGoal"] != "customers/1234567890/customConversionGoals/777" {
+		t.Errorf("config update = %#v, want CAMPAIGN level pointed at the custom goal", update)
 	}
 }
 
@@ -146,8 +165,8 @@ func TestGoogleAds_TargetROASReachesCampaignCreateAsARatio(t *testing.T) {
 // A bad bidding input must be refused as a PRE-CREATE failure, the same contract
 // the serving-readiness fields hold: the whole plan is validated in the pure
 // preflight, so nothing upstream exists to reconcile. The channel mismatch and the
-// conversion-actions-on-demand-gen cases are the ones worth pinning here — both are
-// refusals Google would make only AFTER the budget mutate committed.
+// foreign-account conversion action are the ones worth pinning here — both are refusals
+// Google would make only AFTER the budget mutate committed.
 func TestGoogleAds_BadBiddingConfigIsPreCreate(t *testing.T) {
 	// Each case pins a substring of the error it must produce, not merely that one
 	// occurred. Every one of these configs is otherwise valid, so a mapping or
@@ -176,10 +195,6 @@ func TestGoogleAds_BadBiddingConfigIsPreCreate(t *testing.T) {
 		"strategy not on this channel": {
 			`{"googleAdsConfig":{"budget":50,"channel":"demand-gen","biddingStrategy":"target-cpa","targetCpa":25}}`,
 			`bidding strategy "target-cpa" is not supported on`,
-		},
-		"conversion actions on demandgen": {
-			`{"googleAdsConfig":{"budget":50,"channel":"demand-gen","conversionActions":["987654321"]}}`,
-			`conversion actions are not supported on`,
 		},
 		"conversion action of another account": {
 			`{"googleAdsConfig":{"budget":50,"conversionActions":["customers/9999999999/conversionActions/123456789"]}}`,

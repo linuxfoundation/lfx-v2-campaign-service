@@ -295,6 +295,10 @@ func TestGoogleActionItems_NoAmountIsCalledDollars(t *testing.T) {
 			if strings.Contains(it.Issue, "$") {
 				t.Errorf("issue %q calls an account-currency amount dollars", it.Issue)
 			}
+			// The advice beside it is in the account's currency too, so it names no dollar figure.
+			if strings.Contains(it.Action, "$") {
+				t.Errorf("action %q gives advice in dollars", it.Action)
+			}
 		}
 	}
 	if issues < len(rows) {

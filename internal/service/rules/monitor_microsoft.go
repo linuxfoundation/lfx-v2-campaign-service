@@ -157,7 +157,7 @@ func microsoftActionItems(m model.AccountCampaignMetrics, pacingPct float64, lab
 	if !m.PacingUnknown && active && m.BudgetDay <= msPlaceholderBudgetMax {
 		add(model.MonitorPriorityHigh,
 			fmt.Sprintf("Daily budget is %s — this is a placeholder and won't generate meaningful traffic", accountMoney(m.BudgetDay)),
-			"Set a real daily budget (typically $10-50/day for events) before expecting results")
+			"Set a realistic daily budget for the campaign's goal and audience before expecting results")
 	}
 
 	// MED

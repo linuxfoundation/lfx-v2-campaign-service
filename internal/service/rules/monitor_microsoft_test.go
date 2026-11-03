@@ -39,6 +39,20 @@ func TestMicrosoftBaseRowFiresNothing(t *testing.T) {
 
 // TestMicrosoftActionItems pins every rule, each on both sides of its boundary. Strict (>, <)
 // boundaries are exclusive; the placeholder budget's <= 1 is inclusive.
+// No Microsoft action item prints a "$": the amounts are the account's own currency (#435),
+// and so is the advice beside them.
+func TestMicrosoftActionItems_NoDollarSign(t *testing.T) {
+	items := microsoftActionItems(model.AccountCampaignMetrics{Status: "Active", BudgetDay: 1}, 50, model.MonitorPacingNormal, 7)
+	if len(items) == 0 {
+		t.Fatal("the placeholder-budget rule did not fire")
+	}
+	for _, it := range items {
+		if strings.Contains(it.Issue, "$") || strings.Contains(it.Action, "$") {
+			t.Errorf("item %q / %q prints a dollar sign", it.Issue, it.Action)
+		}
+	}
+}
+
 func TestMicrosoftActionItems(t *testing.T) {
 	high, med := model.MonitorPriorityHigh, model.MonitorPriorityMed
 	tests := []struct {

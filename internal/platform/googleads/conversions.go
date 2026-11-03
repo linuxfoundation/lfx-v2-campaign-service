@@ -49,7 +49,7 @@ type ConversionAction struct {
 	Category string `json:"category"`
 	// PrimaryForGoal reports whether this action currently counts toward the account's
 	// "Conversions" column and therefore drives bidding by default. An action with it
-	// false is still selectable — naming it in selective_optimization is exactly how a
+	// false is still selectable — naming it in a campaign's conversion goal is exactly how a
 	// campaign bids toward a secondary conversion — so this is information, not a filter.
 	PrimaryForGoal bool `json:"primaryForGoal"`
 }

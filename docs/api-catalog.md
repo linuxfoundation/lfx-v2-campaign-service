@@ -1090,27 +1090,36 @@ conversionActions?: string[]    — OPTIONAL the conversion actions THIS campaig
 
                                   A full resource name naming a DIFFERENT customer is refused — a
                                   conversion action cannot be shared across accounts, and the create
-                                  would otherwise fail after the budget mutate. Omitted/empty, no
-                                  selective-optimization field is sent and the campaign bids toward the
-                                  account's own conversion goals, which is what every campaign created
-                                  before this field existed did.
+                                  would otherwise fail after the budget mutate. Omitted/empty, no goal
+                                  is written and the campaign bids toward the account's own conversion
+                                  goals, which is what every campaign created before this field existed
+                                  did.
 
-                                  ACCEPTED on `search`, `video` and `display`; REFUSED rather than
-                                  ignored on `demand-gen` and `performance-max`. The split follows the
-                                  mechanism, not a Search-versus-the-rest rule: this client attaches
-                                  them through `campaign.selective_optimization`, which Google defines
-                                  for SEARCH, DISPLAY, VIDEO and APP campaigns — so refusing them on
-                                  Video or Display would refuse a payload Google accepts. Demand Gen
-                                  conversion goals (`conversion_goal_campaign_config`) and Performance
-                                  Max campaign conversion goals are NOT implemented — both need a
-                                  second mutate after the campaign exists. A Performance Max campaign
-                                  therefore inherits the ACCOUNT's conversion goals, which is what
-                                  Google applies when none are named.
+                                  ACCEPTED on every channel (#436). After the campaign is created the
+                                  actions become a campaign-level conversion goal: one
+                                  `CustomConversionGoal` per action set (named
+                                  `LFX | conversion goal | <hash>` and shared by every campaign naming
+                                  the same set), and, in one atomic write, the campaign's
+                                  `ConversionGoalCampaignConfig` set to `goal_config_level` CAMPAIGN
+                                  with that goal and every account goal it inherited set not
+                                  biddable, so it bids only toward the chosen actions. When a goal
+                                  made by hand already holds exactly that set, Google refuses a
+                                  second one, and that goal is reused. No existing goal is ever
+                                  written: one named for the set but removed or edited is left as
+                                  it is, and a new goal is created under the set's second name.
+                                  Under a strategy that
+                                  bids for clicks (manual CPC, maximize clicks, and Demand Gen's only
+                                  strategy) the goal decides what the campaign counts as a conversion,
+                                  not what it bids for, and the step line says so.
 
-                                  Sent at CREATE time via `campaign.selective_optimization` rather than
-                                  through `campaignConversionGoal`, which is update-only: attaching
-                                  goals after the campaign exists needs a second mutate that can fail
-                                  and leave a campaign bidding toward the wrong goals.
+                                  The goal is the first step after the campaign create and the create
+                                  stops on its failure, so a failure is a PARTIAL result: the campaign
+                                  exists, PAUSED, with nothing else built, and the error says so. A
+                                  definite refusal says the goal was NOT applied and the campaign bids
+                                  toward the account's goals; a write whose outcome is unknown (a 5xx,
+                                  a timeout, an exhausted 429) says UNCONFIRMED. The earlier
+                                  create-time field, `campaign.selective_optimization`, is no longer
+                                  sent: Google documents it for App campaigns only.
 
                                   To populate a picker, the account's available actions are read by
                                   `googleads.ListConversionActions` — id, name, status, type, category

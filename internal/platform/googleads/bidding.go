@@ -59,8 +59,8 @@ const (
 	minTargetROAS = 0.01
 	maxTargetROAS = 1000.0
 
-	// maxConversionActions caps the selective-optimization list. This client's bound, not
-	// Google's: the list is sent inline on the campaign create and an unbounded one turns
+	// maxConversionActions caps the conversion-goal list. This client's bound, not
+	// Google's: the list is sent inline on the custom goal write and an unbounded one turns
 	// a caller typo into a multi-megabyte payload. It is set far above any plausible
 	// account's conversion-action count so it never refuses a real intent.
 	maxConversionActions = 100
@@ -102,19 +102,6 @@ type maximizeConversionValue struct {
 	TargetRoas float64 `json:"targetRoas,omitempty"`
 }
 
-// selectiveOptimization is `campaign.selective_optimization` — the set of conversion actions
-// THIS campaign optimizes toward, overriding the account-level conversion goals.
-//
-// It is the create-time field for conversion selection, which is why this client uses it
-// rather than `campaignConversionGoal`: that resource is update-only and addressed by a
-// name containing the campaign id, so attaching goals through it would need a second mutate
-// AFTER the campaign exists — a step that can fail and leave a campaign bidding toward the
-// account's goals rather than the ones the operator chose, with nothing in the result to say
-// so.
-type selectiveOptimization struct {
-	ConversionActions []string `json:"conversionActions"`
-}
-
 // biddingFields is the bidding half of a campaign create payload, embedded ANONYMOUSLY into
 // both channel payloads so its JSON keys flatten into the campaign object.
 //
@@ -128,7 +115,6 @@ type biddingFields struct {
 	TargetSpend             *targetSpend             `json:"targetSpend,omitempty"`
 	MaximizeConversions     *maximizeConversions     `json:"maximizeConversions,omitempty"`
 	MaximizeConversionValue *maximizeConversionValue `json:"maximizeConversionValue,omitempty"`
-	SelectiveOptimization   *selectiveOptimization   `json:"selectiveOptimization,omitempty"`
 }
 
 // biddingPlan is the validated, resolved bidding intent: which strategy, its target if it
@@ -146,7 +132,8 @@ type biddingPlan struct {
 	targetCPAMicros int64
 	targetROAS      float64
 	// conversionActions are fully-qualified resource names, deduplicated, in the order
-	// the caller gave them.
+	// the caller gave them. They are NOT part of the create payload: they become a
+	// campaign-level conversion goal after the campaign exists (conversion_goal.go, #436).
 	conversionActions []string
 }
 
@@ -164,10 +151,19 @@ func (p biddingPlan) fields() biddingFields {
 	case biddingMaximizeConversionValue, biddingTargetROAS:
 		f.MaximizeConversionValue = &maximizeConversionValue{TargetRoas: p.targetROAS}
 	}
-	if len(p.conversionActions) > 0 {
-		f.SelectiveOptimization = &selectiveOptimization{ConversionActions: p.conversionActions}
-	}
 	return f
+}
+
+// biddingOptimizesConversions reports whether the plan's strategy bids toward conversions.
+// Under manual CPC or maximize clicks a campaign-level goal still decides what the campaign
+// counts as a conversion, but not what it bids for, and the step line says so.
+func (p biddingPlan) biddingOptimizesConversions() bool {
+	switch p.strategy {
+	case biddingMaximizeConversions, biddingTargetCPA, biddingMaximizeConversionValue, biddingTargetROAS:
+		return true
+	default:
+		return false
+	}
 }
 
 // describe is the operator-facing phrase for the cascade's step line, e.g.
@@ -505,7 +501,7 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 		}
 	}
 
-	conversionActions, err := validateConversionActions(kind, customerID, in.ConversionActions)
+	conversionActions, err := validateConversionActions(customerID, in.ConversionActions)
 	if err != nil {
 		return biddingPlan{}, err
 	}
@@ -587,33 +583,13 @@ func validateTargetROAS(roas float64) (float64, error) {
 // account that owns it, and silently re-pointing one at this account would attach a
 // conversion that does not exist and fail after the budget mutate.
 //
-// Admitted on Search, Video and Display; refused on Demand Gen and Performance Max. Not
-// because conversions are meaningless on those two, but because selective_optimization is
-// the only create-time mechanism this client implements and neither takes it — Demand Gen
-// carries its goals through conversion_goal_campaign_config, and Performance Max through
-// campaign conversion goals, a resource that cannot be addressed until the campaign exists.
-// Accepting the list there would validate every name and then drop the lot, leaving the
-// operator believing the campaign bids toward the conversions they chose. This is the same
-// refuse-don't-drop rule every other channel-incapable input in this preflight follows.
-func validateConversionActions(kind, customerID string, actions []string) ([]string, error) {
+// Admitted on every channel (#436). The actions become a campaign-level conversion goal after
+// the campaign exists (conversion_goal.go), which Search, Display, Video, Demand Gen and
+// Performance Max all take. The earlier create-time field, campaign.selective_optimization,
+// is documented by Google as App-campaign only, which is why it was dropped.
+func validateConversionActions(customerID string, actions []string) ([]string, error) {
 	if len(actions) == 0 {
 		return nil, nil
-	}
-	// ADMITTED on Video and Display, refused on Demand Gen and Performance Max. The split is not
-	// Search-versus-the-rest, however much the earlier `!= campaignKindSearch` looked
-	// like it: campaign.selective_optimization is defined for SEARCH, DISPLAY, VIDEO and
-	// APP campaigns, so a VIDEO or DISPLAY campaign carrying it is a payload Google
-	// accepts, and refusing either would have been over-refusal — the one failure mode
-	// this preflight is not allowed to have. DISPLAY is named in that list literally,
-	// which makes admitting it the least arguable of the two. Demand Gen has no selective_optimization at all, and
-	// Performance Max selects its conversions through CAMPAIGN CONVERSION GOALS instead
-	// — a separate resource addressed by a name containing the campaign id, so it needs
-	// a mutate after the campaign exists. Those two are the same known gap, refused
-	// rather than dropped for the same reason: a campaign that silently bid toward the
-	// account's default goals while the operator believed it was bidding toward the ones
-	// they named is worse than one that would not create.
-	if kind != campaignKindSearch && kind != campaignKindVideo && kind != campaignKindDisplay {
-		return nil, fmt.Errorf("google-ads: conversion actions are not supported on %s (this client attaches them through campaign.selective_optimization, which %s does not accept); omit ConversionActions, or create a Search, Video or Display campaign to optimize toward specific conversions", kind, kind)
 	}
 	if len(actions) > maxConversionActions {
 		return nil, fmt.Errorf("google-ads: %d conversion actions exceeds the maximum %d", len(actions), maxConversionActions)
@@ -639,8 +615,8 @@ func validateConversionActions(kind, customerID string, actions []string) ([]str
 			return nil, fmt.Errorf("google-ads: conversion action %q is neither a numeric id nor a customers/<id>/conversionActions/<id> resource name", capForError(action))
 		}
 		// Deduplicated rather than refused: naming the same conversion twice is a
-		// harmless paste, and Google rejects a selective_optimization list containing a
-		// duplicate — after the budget mutate.
+		// harmless paste, and it would otherwise change the goal's name (conversion_goal.go)
+		// without changing the set it stands for.
 		if _, dup := seen[resource]; dup {
 			continue
 		}
