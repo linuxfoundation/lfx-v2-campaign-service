@@ -1108,7 +1108,8 @@ conversionActions?: string[]    — OPTIONAL the conversion actions THIS campaig
                                   written: one edited by hand is left as it is, and a new goal is
                                   created under the set's second name. A removed goal holding the
                                   set is re-enabled, which is safe because a goal linked to a
-                                  campaign cannot be removed.
+                                  campaign cannot be removed; if Google refuses the re-enable, a
+                                  goal is created under the second name instead.
                                   Under a strategy that
                                   bids for clicks (manual CPC, maximize clicks, and Demand Gen's only
                                   strategy) the goal decides what the campaign counts as a conversion,

@@ -2137,11 +2137,15 @@ NO GOAL IN USE IS EVER WRITTEN. The Google Ads account is shared by every founda
 live campaigns in other projects, and a goal edited by hand was edited on purpose. The LFX goal
 named for the set is reused when it is enabled and still holds the set. Otherwise the goal
 holding exactly the set under ANY name is used (`goalHoldingActionSet`, enabled preferred): an
-enabled one is reused as it is; a REMOVED one, including the LFX goal itself, is re-enabled with
-a status-only update (`useGoalHoldingActionSet`). That is the one write, and it is safe: Google
-refuses to remove a goal linked to a campaign (`CANNOT_REMOVE_LINKED_CUSTOM_CONVERSION_GOAL`),
-so a removed goal counts for no campaign. The re-enable is counted for retries and must name
-that goal, or it is UNCONFIRMED and the campaign is not pointed at it. With no goal holding the
+enabled one is reused as it is; a REMOVED one, including the LFX goal itself and one someone
+removed by hand, is re-enabled with a status-only update (`useGoalHoldingActionSet`). That is the
+one write, and it is safe: Google refuses to remove a goal linked to a campaign
+(`CANNOT_REMOVE_LINKED_CUSTOM_CONVERSION_GOAL`), so a removed goal counts for no campaign. The
+re-enable is counted for retries and must name that goal, or it is UNCONFIRMED and the campaign
+is not pointed at it. Whether Google lets a removed goal's status be updated is not verified
+live, so a DEFINITE refusal of the re-enable (`definitelyRefused`) falls back to the second name
+below; an unknown outcome does not. Both goal lookups ask for `status IN ('ENABLED', 'REMOVED')`
+explicitly, so neither depends on whether Google returns removed rows unasked. With no goal holding the
 set (the named one was edited), a new goal is created under the set's second name
 (`<name> | 2`), which later campaigns find the same way; with the second name also held by an
 edited goal, the goal is NOT applied. A create that loses a `CUSTOM_GOAL_DUPLICATE_NAME` race

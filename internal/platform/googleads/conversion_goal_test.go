@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -87,7 +88,7 @@ func goalClient(t *testing.T, f *goalFake) *Client {
 			out := f.searches[0]
 			f.searches = f.searches[1:]
 			f.mu.Unlock()
-			_, _ = io.WriteString(w, out)
+			_, _ = io.WriteString(w, filterGoalRowsByStatus(t, string(body), out))
 		case strings.HasSuffix(r.URL.Path, "customConversionGoals:mutate"):
 			f.record("goal", body)
 			var op struct {
@@ -163,6 +164,48 @@ func echoGoalMutate(body []byte) string {
 		}
 	}
 	return `{"mutateOperationResponses":[` + strings.Join(parts, ",") + `]}`
+}
+
+// filterGoalRowsByStatus drops the scripted rows a query's status predicate excludes, as Google
+// would, so a query that asks for the wrong statuses fails the scenario instead of being answered
+// regardless. It understands the two shapes this client sends: status = 'X' and status IN (...).
+func filterGoalRowsByStatus(t *testing.T, query, page string) string {
+	t.Helper()
+	var keep map[string]bool
+	if m := regexp.MustCompile(`custom_conversion_goal\.status IN \(([^)]*)\)`).FindStringSubmatch(query); m != nil {
+		keep = map[string]bool{}
+		for _, s := range regexp.MustCompile(`'([A-Z_]+)'`).FindAllStringSubmatch(m[1], -1) {
+			keep[s[1]] = true
+		}
+	} else if m := regexp.MustCompile(`custom_conversion_goal\.status = '([A-Z_]+)'`).FindStringSubmatch(query); m != nil {
+		keep = map[string]bool{m[1]: true}
+	}
+	if keep == nil {
+		return page
+	}
+	var resp struct {
+		Results []json.RawMessage `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(page), &resp); err != nil {
+		t.Errorf("scripted page %s: %v", page, err)
+		return page
+	}
+	kept := []json.RawMessage{}
+	for _, row := range resp.Results {
+		var r struct {
+			CustomConversionGoal struct {
+				Status string `json:"status"`
+			} `json:"customConversionGoal"`
+		}
+		_ = json.Unmarshal(row, &r)
+		if keep[r.CustomConversionGoal.Status] {
+			kept = append(kept, row)
+		}
+	}
+	out, _ := json.Marshal(struct {
+		Results []json.RawMessage `json:"results"`
+	}{kept})
+	return string(out)
 }
 
 func goalRow(status string, actions ...string) string {
@@ -339,6 +382,30 @@ func TestApplyCampaignConversionGoal_ReenablesARemovedGoalHoldingTheSet(t *testi
 				t.Errorf("atomic writes %v, want one pointing the campaign at the re-enabled goal", atomic)
 			}
 		})
+	}
+}
+
+// When Google definitely refuses to re-enable a removed goal holding the set, nothing changed,
+// so the set gets its own goal under the second name instead of the step failing for good.
+func TestApplyCampaignConversionGoal_ARefusedReenableFallsBackToTheSecondName(t *testing.T) {
+	removed := goalRow("REMOVED", goalTestAction1)
+	f := &goalFake{
+		searches: []string{removed, removed},
+		reenable: gaqlError(http.StatusBadRequest, "customConversionGoalError", "INVALID_CONVERSION_ACTION"),
+		create:   okGoalCreate,
+	}
+	c := goalClient(t, f)
+	step, err := c.applyCampaignConversionGoal(context.Background(), "222", goalPlan(biddingMaximizeConversions, goalTestAction1))
+	if err != nil {
+		t.Fatalf("applyCampaignConversionGoal: %v", err)
+	}
+	wantName := customConversionGoalName([]string{goalTestAction1}) + " | 2"
+	var created bool
+	for _, b := range f.sent("goal") {
+		created = created || (strings.Contains(b, `"create":`) && strings.Contains(b, `"name":"`+wantName+`"`))
+	}
+	if !created || !strings.Contains(step, "Google refused to re-enable the removed goal") {
+		t.Errorf("goal writes %v, step %q: want a create under the second name after the refusal", f.sent("goal"), step)
 	}
 }
 

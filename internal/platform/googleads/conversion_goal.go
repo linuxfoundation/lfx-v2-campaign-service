@@ -15,8 +15,8 @@ package googleads
 //     second goal holding the same action list under any name, so a goal someone made by hand
 //     for exactly that set is reused. No goal in use is ever written: the account is shared by
 //     every foundation, so an enabled goal may be counting conversions for live campaigns
-//     elsewhere. The one write is re-enabling a REMOVED goal that holds exactly the set, which is
-//     safe because Google refuses to remove a goal linked to a campaign
+//     elsewhere. The one write is re-enabling a REMOVED goal that holds exactly the set, even one
+//     someone removed by hand, which is safe because Google refuses to remove a goal linked to a campaign
 //     (CANNOT_REMOVE_LINKED_CUSTOM_CONVERSION_GOAL), so a removed goal counts for no campaign.
 //  2. the campaign's ConversionGoalCampaignConfig, updated to goal_config_level CAMPAIGN with
 //     that goal. The config exists for every campaign and is update-only, addressed as
@@ -299,16 +299,24 @@ func (c *Client) ensureCustomConversionGoal(ctx context.Context, actions []strin
 	if err != nil {
 		return "", "", err
 	}
+	how = "created under its second name: the goal named for this set was edited, and is left as it is"
 	if holder != nil {
-		return c.useGoalHoldingActionSet(ctx, holder)
+		resource, holderHow, err := c.useGoalHoldingActionSet(ctx, holder)
+		if err == nil || !definitelyRefused(err) {
+			return resource, holderHow, err
+		}
+		// Google definitely refused to re-enable the removed holder (whether a removed goal's
+		// status can be updated is not verified live), so nothing changed: the set gets its own
+		// goal under the second name instead, as when the named goal was edited.
+		how = "created under its second name: Google refused to re-enable the removed goal holding these actions"
 	}
-	return c.createCustomConversionGoal(ctx, name+customConversionGoalSecondName,
-		"created under its second name: the goal named for this set was edited, and is left as it is", actions)
+	return c.createCustomConversionGoal(ctx, name+customConversionGoalSecondName, how, actions)
 }
 
 // createCustomConversionGoal creates the goal name for actions. When Google refuses it because
 // another create for the same name won a race, or because another goal already holds the same
-// action list, that goal is used instead, provided it is enabled and holds exactly the set.
+// action list, that goal is used instead when it holds exactly the set: as it is when enabled,
+// re-enabled when removed (see useGoalHoldingActionSet).
 func (c *Client) createCustomConversionGoal(ctx context.Context, name, how string, actions []string) (string, string, error) {
 	req := mutateRequest{Operations: []mutateOperation{{Create: customConversionGoalWrite{
 		Name:              name,
@@ -363,7 +371,7 @@ func (c *Client) customConversionGoalNamed(ctx context.Context, name string) (*c
 	if err != nil {
 		return nil, err
 	}
-	rows, err := c.gaqlSearch(ctx, "SELECT custom_conversion_goal.resource_name, custom_conversion_goal.status, custom_conversion_goal.conversion_actions FROM custom_conversion_goal WHERE custom_conversion_goal.name = "+literal)
+	rows, err := c.gaqlSearch(ctx, "SELECT custom_conversion_goal.resource_name, custom_conversion_goal.status, custom_conversion_goal.conversion_actions FROM custom_conversion_goal WHERE custom_conversion_goal.status IN ('ENABLED', 'REMOVED') AND custom_conversion_goal.name = "+literal)
 	if err != nil {
 		return nil, fmt.Errorf("look up custom conversion goal %q: %w", name, err)
 	}
@@ -386,7 +394,9 @@ func (c *Client) customConversionGoalNamed(ctx context.Context, name string) (*c
 // goal with the same action list, so at most one enabled match is expected. Any other status
 // (UNKNOWN, UNSPECIFIED) is not used.
 func (c *Client) goalHoldingActionSet(ctx context.Context, actions []string) (*customConversionGoalRow, error) {
-	rows, err := c.gaqlSearch(ctx, "SELECT custom_conversion_goal.resource_name, custom_conversion_goal.status, custom_conversion_goal.conversion_actions FROM custom_conversion_goal")
+	// REMOVED is asked for explicitly, so the lookup never depends on whether Google returns
+	// removed rows to an unfiltered query.
+	rows, err := c.gaqlSearch(ctx, "SELECT custom_conversion_goal.resource_name, custom_conversion_goal.status, custom_conversion_goal.conversion_actions FROM custom_conversion_goal WHERE custom_conversion_goal.status IN ('ENABLED', 'REMOVED')")
 	if err != nil {
 		return nil, fmt.Errorf("look up the custom conversion goal holding the same actions: %w", err)
 	}
@@ -457,6 +467,13 @@ func (c *Client) decodeCustomConversionGoal(raw json.RawMessage) (*customConvers
 // goalHolds reports whether goal is enabled and holds exactly actions, so it can be used as is.
 func goalHolds(goal *customConversionGoalRow, actions []string) bool {
 	return goal.Status == customGoalStatusEnabled && sameActionSet(goal.ConversionActions, actions)
+}
+
+// definitelyRefused reports whether err is a definite client refusal that changed nothing: a
+// 4xx other than 429 that no earlier retried attempt could have applied.
+func definitelyRefused(err error) bool {
+	var ae *apiError
+	return errors.As(err, &ae) && isDefiniteClientError(ae) && !IsOutcomeUnconfirmed(err)
 }
 
 // unconfirmedGoalError marks a goal write Google ACCEPTED but did not acknowledge usably: the
