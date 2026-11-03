@@ -13,7 +13,8 @@ package googleads
 //     it is shared: its name is derived from the action set, and every LFX campaign naming the
 //     same set reuses the one goal rather than each creating its own. Google also refuses a
 //     second goal holding the same action list under any name, so a goal someone made by hand
-//     for exactly that set is reused as it stands, never edited.
+//     for exactly that set is reused. No existing goal is ever written: the account is shared by
+//     every foundation, so any goal may be counting conversions for live campaigns elsewhere.
 //  2. the campaign's ConversionGoalCampaignConfig, updated to goal_config_level CAMPAIGN with
 //     that goal. The config exists for every campaign and is update-only, addressed as
 //     customers/<cid>/conversionGoalCampaignConfigs/<campaignId>.
@@ -64,6 +65,14 @@ const (
 	// holding the same action list already exists, whatever its name.
 	errCodeDuplicateCustomGoalActions = "DUPLICATE_CONVERSION_ACTION_LIST"
 
+	// customConversionGoalSecondName is appended to a set's name when the goal holding that
+	// name was removed or edited to hold something else. That goal is left as it is, and the
+	// set gets a goal of its own under this second name, which later campaigns find the same way.
+	customConversionGoalSecondName = " | 2"
+
+	// goalHeldElsewhere is the step wording for a set some other enabled goal already holds.
+	goalHeldElsewhere = "reused: an existing goal already holds these actions"
+
 	goalConfigLevelCampaign = "CAMPAIGN"
 	customGoalStatusEnabled = "ENABLED"
 
@@ -81,11 +90,10 @@ func customConversionGoalName(actions []string) string {
 	return customConversionGoalNamePrefix + hex.EncodeToString(sum[:])[:16]
 }
 
-// customConversionGoalWrite is the create payload, and the update payload when an existing
-// goal has to be re-enabled or re-pointed at the set its name stands for.
+// customConversionGoalWrite is the create payload. There is no update: no existing goal is
+// ever written.
 type customConversionGoalWrite struct {
-	ResourceName      string   `json:"resourceName,omitempty"`
-	Name              string   `json:"name,omitempty"`
+	Name              string   `json:"name"`
 	ConversionActions []string `json:"conversionActions"`
 	Status            string   `json:"status"`
 }
@@ -110,6 +118,7 @@ type goalMutateOperation struct {
 	CampaignConversionGoalOperation       *mutateOperation `json:"campaignConversionGoalOperation,omitempty"`
 }
 
+// goalMutateRequest is the body of the goal step's one googleAds:mutate.
 type goalMutateRequest struct {
 	MutateOperations []goalMutateOperation `json:"mutateOperations"`
 }
@@ -130,6 +139,8 @@ type gaqlCustomConversionGoalRow struct {
 	} `json:"customConversionGoal"`
 }
 
+// gaqlCampaignConversionGoalRow is one campaign_conversion_goal GAQL row: a goal the campaign
+// inherited from the account, and whether it is still biddable.
 type gaqlCampaignConversionGoalRow struct {
 	CampaignConversionGoal struct {
 		ResourceName string `json:"resourceName"`
@@ -187,7 +198,7 @@ func (c *Client) applyCampaignConversionGoal(ctx context.Context, campaignID str
 	// campaign's config and each goal taken out of bidding, in order: a 2xx naming anything
 	// else would report a goal as applied to a campaign it never reached.
 	if !goalMutateConfirmed(resp, configResource, competing) {
-		return "", fmt.Errorf("google-ads conversion goal UNCONFIRMED for campaign %s (the update answered 2xx without naming %s and each of its %d account goal(s); verify the campaign's conversion goals in Google Ads; %s)", campaignID, configResource, len(competing), goalStoppedHere)
+		return "", &unconfirmedGoalError{err: fmt.Errorf("google-ads conversion goal UNCONFIRMED for campaign %s (the update answered 2xx without naming %s and each of its %d account goal(s); verify the campaign's conversion goals in Google Ads; %s)", campaignID, configResource, len(competing), goalStoppedHere)}
 	}
 
 	goalID := resourceID(goalResource)
@@ -248,16 +259,39 @@ func (c *Client) biddableCampaignConversionGoals(ctx context.Context, campaignID
 	return out, nil
 }
 
-// ensureCustomConversionGoal returns the enabled custom goal holding exactly actions, and says
-// how it came by it: the LFX goal named for this set, created or reused, or a goal made by
-// hand for exactly this set, reused as it stands.
+// ensureCustomConversionGoal returns an enabled custom goal holding exactly actions, and says
+// how it came by it. It never writes to a goal that already exists (see the file comment), so
+// it only ever reads, reuses or creates:
+//   - the LFX goal named for this set, when it is enabled and still holds the set;
+//   - when that name is held by a goal that was removed or edited to hold something else, any
+//     enabled goal holding exactly the set, or else a new goal under the set's second name;
+//   - when no goal has the name, a new goal under it. Google refuses one whose action list
+//     another goal already holds, and that goal is used instead.
 func (c *Client) ensureCustomConversionGoal(ctx context.Context, actions []string) (resource, how string, err error) {
 	name := customConversionGoalName(actions)
-	resource, err = c.reconcileCustomConversionGoal(ctx, name, actions)
-	if err != nil || resource != "" {
-		return resource, "reused", err
+	existing, err := c.customConversionGoalNamed(ctx, name)
+	if err != nil {
+		return "", "", err
 	}
+	if existing == nil {
+		return c.createCustomConversionGoal(ctx, name, "created", actions)
+	}
+	if goalHolds(existing, actions) {
+		return existing.ResourceName, "reused", nil
+	}
+	if resource, ok, err := c.goalHoldingActionSet(ctx, actions); err != nil {
+		return "", "", err
+	} else if ok {
+		return resource, goalHeldElsewhere, nil
+	}
+	return c.createCustomConversionGoal(ctx, name+customConversionGoalSecondName,
+		"created under its second name: the goal named for this set was removed or edited, and is left as it is", actions)
+}
 
+// createCustomConversionGoal creates the goal name for actions. When Google refuses it because
+// another create for the same name won a race, or because another goal already holds the same
+// action list, that goal is used instead, provided it is enabled and holds exactly the set.
+func (c *Client) createCustomConversionGoal(ctx context.Context, name, how string, actions []string) (string, string, error) {
 	req := mutateRequest{Operations: []mutateOperation{{Create: customConversionGoalWrite{
 		Name:              name,
 		ConversionActions: actions,
@@ -269,126 +303,116 @@ func (c *Client) ensureCustomConversionGoal(ctx context.Context, actions []strin
 		if errors.As(err, &ae) && isDefiniteClientError(ae) {
 			switch {
 			case ae.hasErrorCode(errCodeDuplicateCustomGoalName):
-				// Another create for the same set got there first. Its goal is the one to use.
-				resource, rErr := c.reconcileCustomConversionGoal(ctx, name, actions)
-				if rErr != nil {
-					return "", "", rErr
+				winner, lErr := c.customConversionGoalNamed(ctx, name)
+				if lErr != nil {
+					return "", "", lErr
 				}
-				if resource != "" {
-					return resource, "reused", nil
+				if winner != nil && goalHolds(winner, actions) {
+					return winner.ResourceName, "reused", nil
 				}
 			case ae.hasErrorCode(errCodeDuplicateCustomGoalActions):
-				if resource, how, ok, fErr := c.goalHoldingActionSet(ctx, actions); fErr != nil {
+				resource, ok, fErr := c.goalHoldingActionSet(ctx, actions)
+				if fErr != nil {
 					return "", "", fErr
-				} else if ok {
-					return resource, how, nil
+				}
+				if ok {
+					return resource, goalHeldElsewhere, nil
 				}
 			}
 		}
 		return "", "", fmt.Errorf("create custom conversion goal %q: %w", name, err)
 	}
-	resource, _, err = firstResourceName(resp)
+	// A 2xx without a usable name may still have created the goal, so it is UNCONFIRMED about
+	// the goal. The campaign is not pointed at anything here, so the caller still reports the
+	// goal NOT applied to it, and a retry finds the goal by this deterministic name and reuses it.
+	resource, _, err := firstResourceName(resp)
+	if err == nil {
+		err = c.validateResourceKind("customConversionGoals", resource, true)
+	}
 	if err != nil {
-		return "", "", fmt.Errorf("create custom conversion goal %q answered 2xx without a usable resource name: %w", name, err)
+		return "", "", &unconfirmedGoalError{err: fmt.Errorf("create custom conversion goal %q answered 2xx without a usable resource name, so the goal may exist; a retry finds it by name and reuses it: %w", name, err)}
 	}
-	if err := c.validateResourceKind("customConversionGoals", resource, true); err != nil {
-		return "", "", fmt.Errorf("create custom conversion goal %q: %w", name, err)
-	}
-	return resource, "created", nil
+	return resource, how, nil
 }
 
-// goalHoldingActionSet finds the enabled goal Google says already holds exactly actions, for
-// the DUPLICATE_CONVERSION_ACTION_LIST refusal. It is reused as it stands and never edited: it
-// may be a goal someone made by hand, which other campaigns already bid on. ok is false when no
-// enabled goal holds the set (a removed one can still hold it), and the refusal then stands.
-func (c *Client) goalHoldingActionSet(ctx context.Context, actions []string) (resource, how string, ok bool, err error) {
-	rows, err := c.gaqlSearch(ctx, "SELECT custom_conversion_goal.resource_name, custom_conversion_goal.status, custom_conversion_goal.conversion_actions FROM custom_conversion_goal WHERE custom_conversion_goal.status = 'ENABLED'")
-	if err != nil {
-		return "", "", false, fmt.Errorf("look up the custom conversion goal holding the same actions: %w", err)
-	}
-	for _, raw := range rows {
-		var row gaqlCustomConversionGoalRow
-		if err := json.Unmarshal(raw, &row); err != nil {
-			return "", "", false, fmt.Errorf("decode custom conversion goal: %w", err)
-		}
-		goal := row.CustomConversionGoal
-		if goal.Status != customGoalStatusEnabled || !sameActionSet(goal.ConversionActions, actions) {
-			continue
-		}
-		if err := c.validateResourceKind("customConversionGoals", goal.ResourceName, true); err != nil {
-			return "", "", false, fmt.Errorf("look up the custom conversion goal holding the same actions: %w", err)
-		}
-		return goal.ResourceName, "reused: an existing goal already holds these actions", true, nil
-	}
-	return "", "", false, nil
-}
-
-// reconcileCustomConversionGoal looks the goal up by name and returns its resource, or ""
-// when no goal has that name. A goal found removed, or holding a different set (edited by
-// hand), is put back to the set its name stands for before it is used. When Google refuses that
-// because another goal now holds the set, that goal is used instead and the LFX one is left.
-func (c *Client) reconcileCustomConversionGoal(ctx context.Context, name string, actions []string) (string, error) {
+// customConversionGoalNamed returns the goal with this exact name, or nil when there is none.
+func (c *Client) customConversionGoalNamed(ctx context.Context, name string) (*customConversionGoalRow, error) {
 	literal, err := gaqlNameLiteral("custom conversion goal", name)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	rows, err := c.gaqlSearch(ctx, "SELECT custom_conversion_goal.resource_name, custom_conversion_goal.status, custom_conversion_goal.conversion_actions FROM custom_conversion_goal WHERE custom_conversion_goal.name = "+literal)
 	if err != nil {
-		return "", fmt.Errorf("look up custom conversion goal %q: %w", name, err)
+		return nil, fmt.Errorf("look up custom conversion goal %q: %w", name, err)
 	}
 	switch len(rows) {
 	case 0:
-		return "", nil
+		return nil, nil
 	case 1:
 	default:
-		return "", fmt.Errorf("look up custom conversion goal %q: %d goals share the name, which Google keeps unique", name, len(rows))
+		return nil, fmt.Errorf("look up custom conversion goal %q: %d goals share the name, which Google keeps unique", name, len(rows))
 	}
-	var row gaqlCustomConversionGoalRow
-	if err := json.Unmarshal(rows[0], &row); err != nil {
-		return "", fmt.Errorf("decode custom conversion goal %q: %w", name, err)
-	}
-	goal := row.CustomConversionGoal
-	if err := c.validateResourceKind("customConversionGoals", goal.ResourceName, true); err != nil {
-		return "", fmt.Errorf("look up custom conversion goal %q: %w", name, err)
-	}
-	if goal.Status == customGoalStatusEnabled && sameActionSet(goal.ConversionActions, actions) {
-		return goal.ResourceName, nil
-	}
-
-	req := mutateRequest{Operations: []mutateOperation{{
-		Update: customConversionGoalWrite{
-			ResourceName:      goal.ResourceName,
-			ConversionActions: actions,
-			Status:            customGoalStatusEnabled,
-		},
-		UpdateMask: "conversion_actions,status",
-	}}}
-	resp, retries, err := c.doRequestCounted(ctx, http.MethodPost, c.customerPath("customConversionGoals:mutate"), req, true)
+	goal, err := c.decodeCustomConversionGoal(rows[0])
 	if err != nil {
-		var ae *apiError
-		if retries == 0 && errors.As(err, &ae) && isDefiniteClientError(ae) && ae.hasErrorCode(errCodeDuplicateCustomGoalActions) {
-			if resource, _, ok, fErr := c.goalHoldingActionSet(ctx, actions); fErr != nil {
-				return "", fErr
-			} else if ok {
-				return resource, nil
-			}
-		}
-		return "", fmt.Errorf("restore custom conversion goal %q (status %s, %d action(s)): %w", name, goal.Status, len(goal.ConversionActions), retriedUnconfirmed("custom conversion goal restore", retries, err))
+		return nil, fmt.Errorf("look up custom conversion goal %q: %w", name, err)
 	}
-	// The restore must be confirmed for THIS goal before the campaign is pointed at it.
-	if got, _, rErr := firstResourceName(resp); rErr != nil || got != goal.ResourceName {
-		return "", &unconfirmedGoalRestoreError{err: fmt.Errorf("restore custom conversion goal %q answered 2xx without naming %s; verify it in Google Ads", name, goal.ResourceName)}
-	}
-	return goal.ResourceName, nil
+	return goal, nil
 }
 
-// unconfirmedGoalRestoreError marks a restore Google ACCEPTED but did not acknowledge usably.
-// The goal may hold the restored set or not, so IsOutcomeUnconfirmed reports it as unknown.
-type unconfirmedGoalRestoreError struct{ err error }
+// goalHoldingActionSet finds an enabled goal holding exactly actions, whatever its name. It may
+// be a goal someone made by hand, which other campaigns already bid on, so it is only read.
+// Google refuses a second goal with the same action list, so at most one match is expected.
+func (c *Client) goalHoldingActionSet(ctx context.Context, actions []string) (string, bool, error) {
+	rows, err := c.gaqlSearch(ctx, "SELECT custom_conversion_goal.resource_name, custom_conversion_goal.status, custom_conversion_goal.conversion_actions FROM custom_conversion_goal WHERE custom_conversion_goal.status = 'ENABLED'")
+	if err != nil {
+		return "", false, fmt.Errorf("look up the custom conversion goal holding the same actions: %w", err)
+	}
+	for _, raw := range rows {
+		goal, err := c.decodeCustomConversionGoal(raw)
+		if err != nil {
+			return "", false, fmt.Errorf("look up the custom conversion goal holding the same actions: %w", err)
+		}
+		if goalHolds(goal, actions) {
+			return goal.ResourceName, true, nil
+		}
+	}
+	return "", false, nil
+}
 
-func (e *unconfirmedGoalRestoreError) Error() string     { return e.err.Error() }
-func (e *unconfirmedGoalRestoreError) Unwrap() error     { return e.err }
-func (e *unconfirmedGoalRestoreError) Unconfirmed() bool { return true }
+// customConversionGoalRow is one custom_conversion_goal GAQL row, decoded.
+type customConversionGoalRow struct {
+	ResourceName      string
+	Status            string
+	ConversionActions []string
+}
+
+// decodeCustomConversionGoal decodes one row and checks it names a goal in this account.
+func (c *Client) decodeCustomConversionGoal(raw json.RawMessage) (*customConversionGoalRow, error) {
+	var row gaqlCustomConversionGoalRow
+	if err := json.Unmarshal(raw, &row); err != nil {
+		return nil, fmt.Errorf("decode custom conversion goal: %w", err)
+	}
+	g := row.CustomConversionGoal
+	if err := c.validateResourceKind("customConversionGoals", g.ResourceName, true); err != nil {
+		return nil, err
+	}
+	return &customConversionGoalRow{ResourceName: g.ResourceName, Status: g.Status, ConversionActions: g.ConversionActions}, nil
+}
+
+// goalHolds reports whether goal is enabled and holds exactly actions, so it can be used as is.
+func goalHolds(goal *customConversionGoalRow, actions []string) bool {
+	return goal.Status == customGoalStatusEnabled && sameActionSet(goal.ConversionActions, actions)
+}
+
+// unconfirmedGoalError marks a goal write Google ACCEPTED but did not acknowledge usably: the
+// atomic campaign write, or a goal create. It may have been applied, so it satisfies the
+// Unconfirmed() interface IsOutcomeUnconfirmed honours, as the bid, budget and status updates'
+// own markers do.
+type unconfirmedGoalError struct{ err error }
+
+func (e *unconfirmedGoalError) Error() string     { return e.err.Error() }
+func (e *unconfirmedGoalError) Unwrap() error     { return e.err }
+func (e *unconfirmedGoalError) Unconfirmed() bool { return true }
 
 func sameActionSet(a, b []string) bool {
 	if len(a) != len(b) {

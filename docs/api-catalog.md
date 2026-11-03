@@ -1104,7 +1104,9 @@ conversionActions?: string[]    — OPTIONAL the conversion actions THIS campaig
                                   with that goal and every account goal it inherited set not
                                   biddable, so it bids only toward the chosen actions. When a goal
                                   made by hand already holds exactly that set, Google refuses a
-                                  second one, and that goal is reused as it stands, never edited.
+                                  second one, and that goal is reused. No existing goal is ever
+                                  written: one named for the set but removed or edited is left as
+                                  it is, and a new goal is created under the set's second name.
                                   Under a strategy that
                                   bids for clicks (manual CPC, maximize clicks, and Demand Gen's only
                                   strategy) the goal decides what the campaign counts as a conversion,

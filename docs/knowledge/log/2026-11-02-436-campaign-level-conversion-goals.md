@@ -20,13 +20,14 @@ Behaviour:
 - The goal step runs first among the post-create steps and every channel returns on its
   failure: the campaign id comes back with an error saying the goal was NOT applied and
   that nothing past the campaign was built.
-- A goal found REMOVED, or holding a different set, is restored to the set its name stands
-  for; the restore is counted for retries and must name that goal, or it is UNCONFIRMED and
-  the campaign is not pointed at it. A create that loses a `CUSTOM_GOAL_DUPLICATE_NAME`
-  race looks the winner up and uses it.
+- No existing goal is ever written: the account is shared by every foundation, so a goal may
+  count conversions for live campaigns in other projects. A goal named for the set but
+  REMOVED, or edited to hold something else, is left as it is; an enabled goal holding exactly
+  the set is reused, or a new one is created under the set's second name (`<name> | 2`).
+- A create that loses a `CUSTOM_GOAL_DUPLICATE_NAME` race uses the winner if it holds the set.
 - Google refuses a second goal holding the same action list under any name
   (`DUPLICATE_CONVERSION_ACTION_LIST`). The enabled goal holding exactly that set, often
-  one made by hand, is then reused as it stands and never edited.
+  one made by hand, is then reused.
 - An atomic write whose outcome is unknown (a 5xx, a transport failure, an exhausted 429, or
   a refusal after a retried 429) is UNCONFIRMED, as is a 2xx whose results do not name the
   config and each goal taken out of bidding. A failure before that write stays NOT applied:
@@ -34,10 +35,10 @@ Behaviour:
 - Under a click strategy (manual CPC, maximize clicks, and Demand Gen's only strategy) the
   step line says the goal sets what counts as a conversion, not what the campaign bids for.
 
-Tests: `conversion_goal_test.go` covers create, reuse, restore (removed and edited), the
-duplicate-name race, the duplicate-action-list reuse (on create and on restore), the
-biddable write and its result checks, unconfirmed restores, both failure arms, an
-UNCONFIRMED write and the click-strategy wording, plus one subtest per creating channel proving the step runs after its campaign
+Tests: `conversion_goal_test.go` covers create, reuse, a removed or edited goal left as it is
+(the second name, and the fallback to a goal holding the set), the duplicate-name race, the
+duplicate-action-list reuse, a create without a usable name, the biddable write and its result
+checks, both failure arms, an UNCONFIRMED write and the click-strategy wording, plus one subtest per creating channel proving the step runs after its campaign
 (each mutation-checked). `googleads_bidding_test.go` asserts the dispatch config reaches the
 goal create and the config update, and that no create carries `selectiveOptimization`.
 

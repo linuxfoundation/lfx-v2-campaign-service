@@ -2127,13 +2127,20 @@ its own (`EMPTY_CONVERSION_GOALS`); both halves together pass `validateOnly` aga
 account (2026-11-03), as does the custom goal create. The campaign goals are read first
 (`biddableCampaignConversionGoals`) and each must belong to this account and campaign.
 
-A goal found REMOVED, or holding a different set, is restored to the set its name stands
-for, through `doRequestCounted`, and the restore must name that goal before the campaign is
-pointed at it (otherwise UNCONFIRMED); a create that loses a `CUSTOM_GOAL_DUPLICATE_NAME`
-race looks the winner up and uses it. Google also refuses a second goal holding the same
-action list under ANY name (`DUPLICATE_CONVERSION_ACTION_LIST`, confirmed live): then the
-enabled goal holding exactly that set, often one made by hand, is reused as it stands and
-never edited, and the step line says so. With no enabled goal holding it, the refusal stands.
+NO EXISTING GOAL IS EVER WRITTEN. The Google Ads account is shared by every foundation
+(`docs/architecture.md`, Account Tenancy), so any goal may be counting conversions for live
+campaigns in other projects, and a goal edited by hand was edited on purpose. The step only
+reads, reuses or creates. The LFX goal named for the set is reused when it is enabled and
+still holds the set. When that name is held by a goal that was REMOVED or edited to hold
+something else, it is left as it is: any enabled goal holding exactly the set is reused, or
+else a new goal is created under the set's second name (`<name> | 2`), which later campaigns
+find the same way. With the second name also held by a changed goal, the goal is NOT applied.
+A create that loses a `CUSTOM_GOAL_DUPLICATE_NAME` race uses the winner, if it holds the set.
+Google refuses a second goal holding the same action list under ANY name
+(`DUPLICATE_CONVERSION_ACTION_LIST`, confirmed live); the enabled goal holding exactly that
+set, often one made by hand, is then reused, and the step line says so. A create answered
+2xx without a usable name may still have made the goal, so it is UNCONFIRMED about the goal
+while NOT applied to the campaign, which is pointed at nothing; a retry finds the goal by name.
 
 The goal step runs FIRST after the campaign create and every channel returns on its
 failure, so the error also says nothing past the campaign was built (no location targeting,
