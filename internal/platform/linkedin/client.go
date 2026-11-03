@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // Client is a standalone LinkedIn Marketing API client. Construct it with
@@ -1845,6 +1846,10 @@ func (c *Client) validateSchedule(startDate, endDate string) (startMs, endMs int
 // creates a new ACTIVE campaign group. Mirrors findOrCreateCampaignGroup():
 // campaign groups are always created with status ACTIVE.
 //
+// reused reports that the group already existed. Its runSchedule is whatever its creating call
+// set, so the caller widens it with ensureCampaignGroupCoversEnd before creating a campaign that
+// may run past it (multi-campaign: every slot of an event shares the group).
+//
 // Unexported by design: accountID is trusted to have already passed the
 // cross-tenant fail-closed check (resolveAccountID) in CreateCampaign. Exposing
 // it would let a caller create resources under an arbitrary, unvalidated account
@@ -1859,15 +1864,15 @@ func (c *Client) validateSchedule(startDate, endDate string) (startMs, endMs int
 // single-flight claim is PLANNED but NOT provided here (tracked separately as
 // LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
 // must serialize concurrent calls for the same name on their own.
-func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name, startDate string, endMs int64) (string, error) {
+func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name, startDate string, endMs int64) (id string, reused bool, err error) {
 	groupsPath := fmt.Sprintf("adAccounts/%s/adCampaignGroups", accountID)
 
 	existing, err := c.findByName(ctx, groupsPath, name)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if existing != "" {
-		return existing, nil
+		return existing, true, nil
 	}
 
 	// Re-derive the group's start JUST BEFORE this mutating POST, rather than reusing
@@ -1881,14 +1886,14 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name,
 	// not drift, so it is threaded through from validateSchedule unchanged.
 	startMs, err := c.toMs(startDate, false)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	// Guard the recomputed start against the (fixed) end: a start nudged forward by
 	// the buffer must still precede the end, or LinkedIn would reject the schedule.
 	// This can only trip for an end date very close to now; fail closed rather than
 	// POST an invalid schedule.
 	if endMs <= startMs {
-		return "", fmt.Errorf("campaign group start (now+%s buffer) is not before the end date — the run window is too short", startTimeBuffer)
+		return "", false, fmt.Errorf("campaign group start (now+%s buffer) is not before the end date — the run window is too short", startTimeBuffer)
 	}
 
 	body := map[string]any{
@@ -1903,14 +1908,14 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name,
 
 	resp, err := c.doRequest(ctx, http.MethodPost, groupsPath, body, nil, nil)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if resp.ID == "" {
 		// A 2xx with no id is a malformed SUCCESS: LinkedIn may have created the group
 		// but we can't read its id. Wrap as transportError so the caller classifies it
 		// as "may exist" (createOutcomeAmbiguous → UNCONFIRMED) rather than a definite
 		// failure that a retry would treat as safe-to-recreate. Mirrors the Meta client.
-		return "", &transportError{Method: http.MethodPost, Path: groupsPath, Err: fmt.Errorf("campaign group creation returned no ID")}
+		return "", false, &transportError{Method: http.MethodPost, Path: groupsPath, Err: fmt.Errorf("campaign group creation returned no ID")}
 	}
 	// Validate the EXTRACTED id, not just the raw field: a create response like
 	// "urn:li:sponsoredCampaignGroup:" passes the non-empty check above yet
@@ -1921,9 +1926,110 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name,
 	// success → "may exist") for the same reason as the no-id case above.
 	groupID := trailingID(resp.ID.String())
 	if groupID == "" {
-		return "", &transportError{Method: http.MethodPost, Path: groupsPath, Err: fmt.Errorf("campaign group creation returned an ID %q with an empty trailing segment", resp.ID.String())}
+		return "", false, &transportError{Method: http.MethodPost, Path: groupsPath, Err: fmt.Errorf("campaign group creation returned an ID %q with an empty trailing segment", resp.ID.String())}
 	}
-	return groupID, nil
+	return groupID, false, nil
+}
+
+// campaignGroupScheduleWire is the part of a campaign group a schedule check reads.
+type campaignGroupScheduleWire struct {
+	ID          flexibleID `json:"id"`
+	RunSchedule *struct {
+		End *int64 `json:"end"`
+	} `json:"runSchedule"`
+}
+
+// groupScheduleAttempts bounds ensureCampaignGroupCoversEnd's write-then-verify rounds. Each
+// round only ever widens, so the rounds converge on the latest end any caller needs; the bound
+// stops a group another writer keeps shortening from looping forever.
+const groupScheduleAttempts = 3
+
+// groupScheduleLocks serializes ensureCampaignGroupCoversEnd per (API base URL, account, group)
+// across every client in this PROCESS: the dispatcher builds a client per create, so a
+// per-client lock would serialize nothing. Replicas do not share it; the verify read covers them.
+var groupScheduleLocks = newKeyedLocks()
+
+// ensureCampaignGroupCoversEnd makes campaign group groupID's runSchedule end no earlier than
+// endMs, and reports whether it wrote. A group with no end, or one already ending on or after
+// endMs, is left alone, so the end never moves earlier through this call.
+//
+// CONCURRENCY. Every campaign of an event shares the group and different briefs dispatch
+// independently, so two creates can widen it at once; a write from a stale read could put back
+// a shorter end than a sibling just wrote. Within this process the read, write and verify run
+// under groupScheduleLocks, so a second caller reads the first one's end and writes nothing.
+// Across replicas each write is followed by a re-read, and a group found ending before endMs
+// again is widened again (each caller only ever writes its own, later, end, so the rounds
+// converge on the latest end needed); still short on the read after groupScheduleAttempts writes is an error. A
+// sibling's campaign created between another replica's stale write and its own re-widen can
+// still see a shorter group for that moment: cross-replica serialization of same-group
+// dispatches is LFXV2-2665's.
+//
+// THE WRITE is a Rest.li PARTIAL_UPDATE of runSchedule.end alone (a nested $set), so the group's
+// start, usually already in the past for a reused group, is never re-sent.
+//
+// Fails closed: a read that cannot be trusted (non-2xx, a duplicate key, a body describing
+// another group) is an error, never "covered", because the caller answers "covered" with a
+// campaign create.
+func (c *Client) ensureCampaignGroupCoversEnd(ctx context.Context, accountID, groupID string, endMs int64) (bool, error) {
+	path := fmt.Sprintf("adAccounts/%s/adCampaignGroups/%s", accountID, groupID)
+	release, err := groupScheduleLocks.acquire(ctx, c.baseURL+"\x00"+accountID+"\x00"+groupID)
+	if err != nil {
+		return false, fmt.Errorf("campaign group %s schedule check aborted before any write: %w", groupID, err)
+	}
+	defer release()
+
+	// Every write is followed by a read, the last one included, so a final write that sticks
+	// is reported as covered rather than as exhaustion.
+	wrote := false
+	for writes := 0; ; writes++ {
+		end, err := c.readCampaignGroupEnd(ctx, path, groupID)
+		if err != nil {
+			return wrote, err
+		}
+		if end == nil || *end >= endMs {
+			return wrote, nil
+		}
+		if writes == groupScheduleAttempts {
+			return wrote, fmt.Errorf("campaign group %s still ends before this campaign after %d widening writes; another writer keeps shortening it, so no campaign is created", groupID, groupScheduleAttempts)
+		}
+		body := map[string]any{"patch": map[string]any{"runSchedule": map[string]any{
+			"$set": map[string]any{"end": endMs},
+		}}}
+		headers := map[string]string{"X-Restli-Method": "PARTIAL_UPDATE"}
+		if _, err := c.doRequest(ctx, http.MethodPost, path, body, nil, headers, true); err != nil {
+			return wrote, fmt.Errorf("extend campaign group %s end date: %w", groupID, err)
+		}
+		wrote = true
+	}
+}
+
+// readCampaignGroupEnd reads the group at path and returns its runSchedule.end (nil: none).
+func (c *Client) readCampaignGroupEnd(ctx context.Context, path, groupID string) (*int64, error) {
+	raw, err := c.doEntityGET(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("read campaign group %s: %w", groupID, err)
+	}
+	if err := identityjson.Check(raw); err != nil {
+		return nil, fmt.Errorf("read campaign group %s: %w", groupID, err)
+	}
+	var wire campaignGroupScheduleWire
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, fmt.Errorf("read campaign group %s: the response is not a campaign group object", groupID)
+	}
+	// The id is the bare group id or exactly its sponsoredCampaignGroup URN. Any other URN type
+	// (a sponsoredCampaign with the same number, say) names a different entity whose schedule
+	// says nothing about this group's.
+	got := wire.ID.String()
+	if id, ok := urnTrailingID(got, "sponsoredCampaignGroup"); ok {
+		got = id
+	}
+	if got != groupID {
+		return nil, fmt.Errorf("read campaign group %s: the response does not describe the requested group, so its schedule cannot be trusted", groupID)
+	}
+	if wire.RunSchedule == nil {
+		return nil, nil
+	}
+	return wire.RunSchedule.End, nil
 }
 
 // createSponsoredCampaign returns an existing campaign's ID (idempotent by
@@ -2719,7 +2825,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.PreflightRefusalf("campaign name is %d characters, exceeds the %d-character limit; shorten the event name or project", n, maxNameLen)
 	}
 
-	groupID, err := c.findOrCreateCampaignGroup(ctx, accountID, groupName, in.StartDate, endMs)
+	groupID, groupReused, err := c.findOrCreateCampaignGroup(ctx, accountID, groupName, in.StartDate, endMs)
 	if err != nil {
 		// An AMBIGUOUS failure (transport/timeout after send, a 5xx, or an
 		// undecodable 2xx) can occur AFTER LinkedIn committed the group create: the
@@ -2747,6 +2853,26 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, err
 	}
 	steps = append(steps, fmt.Sprintf("Campaign group: %s (ID: %s)", groupName, groupID))
+
+	// A reused group keeps the schedule its creating call set, and LinkedIn refuses a campaign
+	// whose run window falls outside its group's. Every campaign of an event shares this group
+	// (multi-campaign), so a later one can end after it: widen the group's end first (see
+	// ensureCampaignGroupCoversEnd for the concurrency rules). Only the end is written.
+	//
+	// A failure here returns (nil, err), not a partial: the group existed before this call and
+	// no campaign was sent, so this call created nothing. A partial would be persisted as an
+	// orphan the orchestrator refuses to retry ("reconciliation required"), when a plain retry,
+	// which re-reads the group, is exactly what recovers it. A widening write whose outcome is
+	// unknown is safe to repeat.
+	if groupReused {
+		extended, err := c.ensureCampaignGroupCoversEnd(ctx, accountID, groupID, endMs)
+		if err != nil {
+			return nil, fmt.Errorf("campaign group %q (%q) could not be confirmed to cover the campaign's end date; nothing was created, and a retry re-reads the group: %w", groupID, groupName, err)
+		}
+		if extended {
+			steps = append(steps, fmt.Sprintf("Campaign group %s end date extended to %s to cover this campaign", groupID, time.UnixMilli(endMs).UTC().Format(time.RFC3339)))
+		}
+	}
 
 	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, in.LifetimeBudget, bidding)
 	if err != nil {
