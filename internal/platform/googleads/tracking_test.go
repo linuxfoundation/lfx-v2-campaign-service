@@ -43,6 +43,17 @@ func TestUTMCampaignCustomParameters_MatchesTheLiveEncoding(t *testing.T) {
 	}
 }
 
+// Characters that could end the query value or open a ValueTrack reference are escaped, so
+// the substituted parameter cannot add a utm_* pair, start a fragment or inject {lpurl}.
+// url.PathEscape would leave `&` and `=` raw, which is why the query escaper is the one used.
+func TestUTMCampaignCustomParameters_EscapesInjectionCharacters(t *testing.T) {
+	params, _ := utmCampaignCustomParameters("A&utm_source=x#{lpurl}")
+	want := []urlCustomParameter{{Key: "utmcampaign", Value: "A%26utm_source%3Dx%23%7Blpurl%7D"}}
+	if !reflect.DeepEqual(params, want) {
+		t.Errorf("params = %+v, want %+v", params, want)
+	}
+}
+
 // 250 is sent and 251 is not: a validateOnly probe on 2026-11-03 saw 251 refused with
 // TOO_LONG. Both sides of the boundary, so an off-by-one in either direction fails.
 func TestUTMCampaignCustomParameters_OmitsAValueOverTheLimit(t *testing.T) {
@@ -56,7 +67,7 @@ func TestUTMCampaignCustomParameters_OmitsAValueOverTheLimit(t *testing.T) {
 	if params != nil {
 		t.Errorf("a %d-character value must be omitted, got %+v", len(over), params)
 	}
-	want := "utm_campaign left empty: the query-escaped campaign name is 251 characters, over Google's 250-character limit for a URL custom parameter, so no utmcampaign custom parameter was set"
+	want := "tracking template's utm_campaign left empty: the query-escaped campaign name is 251 characters, over Google's 250-character limit for a URL custom parameter, so no utmcampaign custom parameter was set"
 	if step != want {
 		t.Errorf("step = %q, want %q", step, want)
 	}
@@ -319,7 +330,7 @@ func TestCampaignCreate_UTMCampaignAndMediumOnEveryChannel(t *testing.T) {
 				t.Errorf("CampaignName = %q — the expected value above assumes a different name", res.CampaignName)
 			}
 			for _, s := range res.Steps {
-				if strings.HasPrefix(s, "utm_campaign left empty") {
+				if strings.HasPrefix(s, "tracking template's utm_campaign left empty") {
 					t.Errorf("a sent parameter must not record the omission step: %q", s)
 				}
 			}
@@ -380,7 +391,7 @@ func TestCampaignCreate_OmitsUTMCampaignOverTheLimitOnEveryChannel(t *testing.T)
 				t.Errorf("urlCustomParameters = %#v, want the key absent", got)
 			}
 
-			wantStep := "utm_campaign left empty: the query-escaped campaign name is " + strconv.Itoa(escaped) +
+			wantStep := "tracking template's utm_campaign left empty: the query-escaped campaign name is " + strconv.Itoa(escaped) +
 				" characters, over Google's 250-character limit for a URL custom parameter, so no utmcampaign custom parameter was set"
 			at := -1
 			for i, s := range res.Steps {
@@ -414,7 +425,7 @@ func TestCreateCampaign_OmissionStepSurvivesALaterFailure(t *testing.T) {
 	if res == nil || res.CampaignID != "222" {
 		t.Fatalf("want the partial result carrying the campaign, got %+v", res)
 	}
-	if !strings.Contains(strings.Join(res.Steps, "\n"), "utm_campaign left empty") {
+	if !strings.Contains(strings.Join(res.Steps, "\n"), "tracking template's utm_campaign left empty") {
 		t.Errorf("the partial result lost the omission step:\n%s", strings.Join(res.Steps, "\n"))
 	}
 }

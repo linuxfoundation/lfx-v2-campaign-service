@@ -23,8 +23,10 @@ import (
 //
 // Setting the parameter on the campaign fills it. Its value must be the campaign name
 // QUERY-ESCAPED, because Google substitutes it into the URL as is. These rules were
-// verified by a validateOnly probe on 2026-11-03 (v23):
-//   - a url.QueryEscape'd campaign name was ACCEPTED on a Search campaign create;
+// verified by validateOnly probes on 2026-11-03 (v23):
+//   - a url.QueryEscape'd campaign name was ACCEPTED on Search, Demand Gen, Display and
+//     Performance Max campaign creates; Video was not probed — its creation is refused
+//     before any request (CreateVideoCampaign);
 //   - the RAW name (spaces, pipes) was REFUSED with stringFormatError ILLEGAL_CHARS on
 //     Search, Demand Gen and Display;
 //   - the key `_utmcampaign` was REFUSED (ILLEGAL_CHARS) — the key is `utmcampaign`;
@@ -53,13 +55,13 @@ type urlCustomParameter struct {
 //
 // A value over maxCustomParamValueChars is OMITTED rather than refused or cut. Refusing
 // would fail a create over reporting metadata, and cutting would hand the pipeline a
-// name that matches no campaign. Decided here, from the composed name alone, so it is
-// settled in the preflight before the budget mutate and can never be the reason a
-// campaign create fails after its budget exists.
+// name that matches no campaign. Decided here, from the composed name alone, so the length
+// decision is made in the preflight before the budget mutate, and it can never be what
+// fails a create after its budget exists.
 func utmCampaignCustomParameters(campaignName string) (params []urlCustomParameter, omittedStep string) {
 	value := url.QueryEscape(campaignName)
 	if n := len(value); n > maxCustomParamValueChars {
-		return nil, fmt.Sprintf("utm_campaign left empty: the query-escaped campaign name is %d characters, over Google's %d-character limit for a URL custom parameter, so no %s custom parameter was set", n, maxCustomParamValueChars, utmCampaignParamKey)
+		return nil, fmt.Sprintf("tracking template's utm_campaign left empty: the query-escaped campaign name is %d characters, over Google's %d-character limit for a URL custom parameter, so no %s custom parameter was set", n, maxCustomParamValueChars, utmCampaignParamKey)
 	}
 	return []urlCustomParameter{{Key: utmCampaignParamKey, Value: value}}, ""
 }
@@ -82,6 +84,8 @@ func utmMediumFor(kind string) string {
 		return utmMediumSearch
 	case campaignKindDemandGen, campaignKindDisplay, campaignKindVideo:
 		return utmMediumDisplay
+	case campaignKindPerformanceMax:
+		return utmMediumCPC
 	default:
 		return utmMediumCPC
 	}

@@ -1267,8 +1267,9 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	}
 	// The utmcampaign custom parameter (#476) is derived from the composed name alone, so
 	// whether it is sent is settled here, before the budget mutate: an over-long value is
-	// omitted with a step line rather than refused, and never fails a create after its
-	// budget exists. See utmCampaignCustomParameters.
+	// omitted with a step line rather than refused. The length decision is made before the
+	// budget mutate, so it can never be what fails a create after its budget exists. See
+	// utmCampaignCustomParameters.
 	urlCustomParameters, utmCampaignStep := utmCampaignCustomParameters(campaignName)
 	// Validate the ad-group/ad inputs (destination URL, ad copy, ad-group name,
 	// keywords/audience segments) BEFORE the first (budget) mutate: a failure

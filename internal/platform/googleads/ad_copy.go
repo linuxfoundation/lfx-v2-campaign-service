@@ -337,7 +337,7 @@ func capForError(s string) string {
 // is set unconditionally to google and utm_medium to the channel's medium
 // (utmMediumFor: paid-search, display or cpc), overwriting any existing values;
 // other utm_* parameters are preserved if already present (mirrors the
-// microsoft client's final-URL builder to avoid misattribution).
+// microsoft client's overwrite semantics; Microsoft keeps cpc).
 func buildAdFinalURL(medium, registrationURL, eventSlug, eventName, project, nameSuffix string) (string, error) {
 	return buildTaggedFinalURL("registration URL", medium, registrationURL, eventSlug, eventName, project, nameSuffix)
 }

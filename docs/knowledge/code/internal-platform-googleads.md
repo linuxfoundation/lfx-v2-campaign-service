@@ -2574,8 +2574,9 @@ The Google Ads account has an ACCOUNT-level tracking template that every campaig
 inherits. Beside HubSpot's `hsa_*` parameters it sets `utm_campaign={_utmcampaign}`,
 a reference to a campaign custom parameter named `utmcampaign`. Campaigns the team
 builds by hand override the template with a literal `utm_campaign` holding the
-campaign name; an LFX campaign defined no `utmcampaign`, so its clicks arrived with
-`utm_campaign` empty.
+campaign name; an LFX campaign defined no `utmcampaign`, so the template's
+`utm_campaign` came out empty on its clicks. The final URL's own event-level
+`utm_campaign` was never affected.
 
 Every channel's campaign create (`campaignCreate`, `demandGenCampaignCreate`,
 `displayCampaignCreate`, `performanceMaxCampaignCreate` and the retained
@@ -2583,18 +2584,21 @@ Every channel's campaign create (`campaignCreate`, `demandGenCampaignCreate`,
 `urlCustomParameters: [{key: "utmcampaign", value: url.QueryEscape(<composed name>)}]`.
 `url.QueryEscape` spells a space `+`, `|` `%7C` and `+` `%2B`, which is the
 encoding the hand-built campaigns' literal already uses. The rules come from
-validateOnly probes on 2026-11-03 (v23): the escaped name was accepted on Search;
-the raw name was refused with `ILLEGAL_CHARS` on Search, Demand Gen and Display;
-the key `_utmcampaign` was refused; and a 251-character value was refused with
-`TOO_LONG`. Performance Max and Video were not probed.
+validateOnly probes on 2026-11-03 (v23): a `url.QueryEscape`'d campaign name was
+accepted on Search, Demand Gen, Display and Performance Max campaign creates; the raw
+name was refused with `ILLEGAL_CHARS` on Search, Demand Gen and Display; the key
+`_utmcampaign` was refused; and a 251-character value was refused with `TOO_LONG`.
+Video was not probed — its creation is refused before any request.
 
 `utmCampaignCustomParameters` (in `tracking.go`) decides the parameter in
-`preflightCampaignKind`, from the composed campaign name alone, so it is settled
-before the budget mutate. An escaped value over 250 characters is OMITTED, not
+`preflightCampaignKind`, from the composed campaign name alone, so the length
+decision is made before the budget mutate and can never be what fails a create
+after its budget exists. An escaped value over 250 characters is OMITTED, not
 refused and not cut: the key is left out of the payload, the create goes ahead, and
-the cascade records `utm_campaign left empty: the query-escaped campaign name is
-<n> characters, …` directly after its `Campaign created` step. Because the step is
-added once the campaign exists, a later failure's partial result carries it too.
+the cascade records `tracking template's utm_campaign left empty: the query-escaped
+campaign name is <n> characters, …` directly after its `Campaign created` step.
+Because the step is added once the campaign exists, a later failure's partial result
+carries it too.
 Adoption (`adoptExisting`) creates nothing and sends no parameter.
 
 `utmMediumFor` maps the kind to the `utm_medium` every tagged final URL carries:
