@@ -1500,6 +1500,15 @@ level returns the partial carrying the campaign. Because the walk no longer stop
 match, a lookup that used to succeed on a page-1 match can now fail closed on a later full page
 with no usable cursor or at `maxListPages`; with the server-side `q=` filter that is unlikely.
 
+The campaign and line-item lookups' `q=` is `nameSearchQuery(name)`, not the name itself: the
+name up to its first `#`, trailing spaces trimmed. A name without `#` keeps its query unchanged.
+A `#` comes from a later slot's token (`Prospecting #2`) or from the event or project name
+(`C# Dev Summit`, which also reaches the line-item name). Whether X's search matches `#` is
+unverified, and a miss would read as not-found and create a duplicate on retry. The prefix is a
+superset under prefix or substring search, and the exact comparison above (plus the parent
+campaign check for line items) picks the right element out of it. A name starting with `#`
+sends no `q`. The media-library lookup is unchanged: its names are content hashes.
+
 `listPromotedTweets` (`promoted_tweet_lookup.go`) reads `GET promoted_tweets?line_item_ids=
 <id>&with_deleted=false&count=200` and fails closed exactly as `findByName` does (no data
 field, a full page with no usable cursor, a repeated cursor, the page cap), plus on any element
