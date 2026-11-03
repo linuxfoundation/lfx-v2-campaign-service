@@ -26,28 +26,33 @@ func ageBrief(ctx context.Context, t *testing.T, pool *pgxpool.Pool, briefID, st
 	}
 }
 
-// drainArchivedAssetPrune runs batches of two until one comes back short, as one sweeper pass
-// does, and returns how many batches ran.
+// pruneBatchLimit is the batch size drainArchivedAssetPrune asks for.
+const pruneBatchLimit = 2
+
+// drainArchivedAssetPrune runs batches of pruneBatchLimit until one comes back short, as one
+// sweeper pass does, and returns how many rows each batch deleted, in order.
 //
 // The prune is cluster-global, not scoped to a test's rows, so the tests in this file must stay
 // NON-parallel: a concurrent test's long-archived assets would be deleted too and change the
 // batch counts asserted here.
-func drainArchivedAssetPrune(ctx context.Context, t *testing.T, repo *postgres.CreativeAssetRepo) int {
+func drainArchivedAssetPrune(ctx context.Context, t *testing.T, repo *postgres.CreativeAssetRepo) []int {
 	t.Helper()
-	for i := range 1000 {
-		n, ran, err := repo.PruneArchivedBriefAssets(ctx, domain.ArchivedBriefAssetRetention, 2)
+	var batches []int
+	for range 1000 {
+		n, ran, err := repo.PruneArchivedBriefAssets(ctx, domain.ArchivedBriefAssetRetention, pruneBatchLimit)
 		if err != nil {
 			t.Fatalf("PruneArchivedBriefAssets: %v", err)
 		}
 		if !ran {
 			t.Fatal("the prune lock was held although no other pruner is running")
 		}
-		if n < 2 {
-			return i + 1
+		batches = append(batches, int(n))
+		if n < pruneBatchLimit {
+			return batches
 		}
 	}
 	t.Fatal("the prune never drained")
-	return 0
+	return nil
 }
 
 // TestLivePruneArchivedBriefAssetsDeletesOnlyPastTheWindow (#171): assets of a brief archived 91
@@ -74,8 +79,17 @@ func TestLivePruneArchivedBriefAssetsDeletesOnlyPastTheWindow(t *testing.T) {
 	ageBrief(ctx, t, pool, recentBrief, "archived", 89*24*time.Hour)
 	ageBrief(ctx, t, pool, activeBrief, "approved", 200*24*time.Hour)
 
-	if batches := drainArchivedAssetPrune(ctx, t, repo); batches < 2 {
-		t.Errorf("the prune drained in %d batch(es); three assets at a limit of two need at least two", batches)
+	// The batch limit must bound each delete: the first batch removes exactly the limit (two of
+	// the three expired assets) and no batch removes more. Counting batches alone cannot see a
+	// dropped LIMIT — an unbounded first delete of three, then an empty one, is also two batches.
+	batches := drainArchivedAssetPrune(ctx, t, repo)
+	if len(batches) < 2 || batches[0] != pruneBatchLimit {
+		t.Errorf("batches deleted %v; three expired assets at a limit of %d need a first batch of exactly %d, then more", batches, pruneBatchLimit, pruneBatchLimit)
+	}
+	for i, n := range batches {
+		if n > pruneBatchLimit {
+			t.Errorf("batch %d deleted %d rows, over the limit of %d", i+1, n, pruneBatchLimit)
+		}
 	}
 
 	for _, id := range expired {
