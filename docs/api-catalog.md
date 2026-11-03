@@ -1726,7 +1726,10 @@ demandGenVideoCreative?:        — OPTIONAL Demand Gen VIDEO responsive ad (#46
                                   `creativeAssetIds` (logo, videos, call to action) and `adId`; a
                                   failure of the atomic request means none of its assets or the ad
                                   exist, an ambiguous one is UNCONFIRMED. A short 2xx is UNCONFIRMED
-                                  and still records each same-account asset id it carried.
+                                  and still records each same-account asset id it carried, and so
+                                  does a full-length 2xx with an unusable asset result: every
+                                  same-account id in it is recorded once, wherever the bad result
+                                  sits, and the error names the first bad index.
 demandGenAds?:                  — OPTIONAL several ads in the single Demand Gen ad group (#474).
   {name: string,                  DEMAND GEN ONLY, and REFUSED on every other `channel`. INSTEAD of
    creative?:                     `demandGenCreative` / `demandGenVideoCreative`, which must then be

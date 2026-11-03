@@ -385,22 +385,36 @@ func (c *Client) createDemandGenVideoAd(ctx context.Context, adGroupResource, ad
 		// error, as the logo upload's short arm returns parsedAssetIDs. The logo count is
 		// taken first so the message still counts only the logo assets.
 		logoCount := len(assetIDs)
-		assetIDs = append(assetIDs, c.parsedMutateAssetIDs(results)...)
+		assetIDs = uniqueIDs(append(assetIDs, c.parsedMutateAssetIDs(results)...))
 		return assetIDs, "", fmt.Errorf("google-ads demand gen video ad %q creation UNCONFIRMED "+
 			"(ad group %s and %d logo asset(s) created; "+
 			"2xx returned %d result(s) for %d operation(s) — "+
 			"the ad and its assets may exist — verify in Google Ads before retrying)",
 			adName, adGroupID, logoCount, len(results.MutateOperationResponses), len(ops))
 	}
+	// An unusable asset result does not stop the walk (#481 review): a foreign-account video
+	// result followed by this account's call to action must still record the call to action,
+	// so every same-account id goes back, once, with the error naming the FIRST bad index.
+	firstBad := -1
 	for i, r := range results.MutateOperationResponses[:assetOpCount] {
 		id := ""
 		if r.AssetResult != nil {
 			id = c.assetID(r.AssetResult.ResourceName)
 		}
 		if id == "" {
-			return assetIDs, "", fmt.Errorf("google-ads demand gen video ad %q creation UNCONFIRMED (ad group %s created; no usable asset resource name at index %d — the ad and its assets may exist — verify in Google Ads before retrying)", adName, adGroupID, i)
+			if firstBad < 0 {
+				firstBad = i
+			}
+			continue
 		}
 		assetIDs = append(assetIDs, id)
+	}
+	if firstBad >= 0 {
+		return uniqueIDs(assetIDs), "", fmt.Errorf(
+			"google-ads demand gen video ad %q creation UNCONFIRMED (ad group %s "+
+				"created; no usable asset resource name at index %d — the ad and its "+
+				"assets may exist — verify in Google Ads before retrying)",
+			adName, adGroupID, firstBad)
 	}
 	adResult := results.MutateOperationResponses[assetOpCount].AdGroupAdResult
 	adResource := ""

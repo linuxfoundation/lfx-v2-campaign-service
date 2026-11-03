@@ -892,6 +892,14 @@ func TestCreateDemandGenCampaign_WrongAccountAssetIsUnconfirmed(t *testing.T) {
 	if res == nil {
 		t.Fatal("a failure past the campaign create must return a non-nil partial result")
 	}
+	// The bad result is FIRST; the same-account asset after it exists and still comes back
+	// (#481 review), and the error names the first bad index.
+	if !strings.Contains(err.Error(), "at index 0") {
+		t.Errorf("err = %v, want it to name index 0", err)
+	}
+	if got := strings.Join(res.CreativeAssetIDs, ","); got != "901" {
+		t.Errorf("CreativeAssetIDs = %q, want the later same-account id 901", got)
+	}
 }
 
 // Google returning fewer asset results than operations sent means images are

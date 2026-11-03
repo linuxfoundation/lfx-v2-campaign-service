@@ -189,6 +189,19 @@ func videoAdPlan(t *testing.T) videoCreativePlan {
 	return plan
 }
 
+// twoVideoPlan is videoAdPlan with a second YouTube video, so the asset mutate carries two
+// operations and an unusable result can come before a usable one.
+func twoVideoPlan(t *testing.T) videoCreativePlan {
+	t.Helper()
+	creative := videoCreativeFixture()
+	creative.YouTubeVideoIDs = []string{"dQw4w9WgXcQ", "abcdefghijk"}
+	plan, err := validateVideoCreative(campaignKindVideo, CampaignInput{VideoCreative: creative})
+	if err != nil {
+		t.Fatalf("fixture does not validate: %v", err)
+	}
+	return plan
+}
+
 // createVideoAdClient serves only the two creative mutates; anything else is a test
 // failure, because createVideoAd is reached with the campaign and ad group already
 // created and must send nothing else.
@@ -221,8 +234,10 @@ func TestCreateVideoAd_UnconfirmedArms(t *testing.T) {
 
 	cases := []struct {
 		name         string
+		plan         videoCreativePlan // videoAdPlan's one video when zero
 		assetH, adH  http.HandlerFunc
 		wantAssetIDs int
+		wantSub      string
 	}{
 		{
 			name:   "a 5xx on the asset mutate",
@@ -250,6 +265,17 @@ func TestCreateVideoAd_UnconfirmedArms(t *testing.T) {
 			adH:    failHandler(t, "adGroupAds:mutate"),
 		},
 		{
+			// Only the second video's result is usable; the foreign first one does not
+			// drop it (#481 review).
+			name: "a foreign result before this account's",
+			plan: twoVideoPlan(t),
+			assetH: respond(`{"results":[{"resourceName":"customers/9999999999/assets/900"},` +
+				`{"resourceName":"customers/1234567890/assets/901"}]}`),
+			adH:          failHandler(t, "adGroupAds:mutate"),
+			wantAssetIDs: 1,
+			wantSub:      "at index 0",
+		},
+		{
 			name:         "a 5xx on the ad mutate",
 			assetH:       okAssets,
 			adH:          serverError,
@@ -275,8 +301,12 @@ func TestCreateVideoAd_UnconfirmedArms(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := createVideoAdClient(t, tc.assetH, tc.adH)
+			plan := tc.plan
+			if len(plan.videos) == 0 {
+				plan = videoAdPlan(t)
+			}
 			assetIDs, adID, err := c.createVideoAd(context.Background(),
-				"customers/1234567890/adGroups/333", "333", "https://example.org/register", videoAdPlan(t))
+				"customers/1234567890/adGroups/333", "333", "https://example.org/register", plan)
 			if err == nil {
 				t.Fatal("want an error")
 			}
@@ -288,6 +318,9 @@ func TestCreateVideoAd_UnconfirmedArms(t *testing.T) {
 			}
 			if len(assetIDs) != tc.wantAssetIDs {
 				t.Errorf("assetIDs = %v, want %d: known ids are the only handle on account-level litter", assetIDs, tc.wantAssetIDs)
+			}
+			if tc.wantSub != "" && !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("err = %v, want it to name %q", err, tc.wantSub)
 			}
 		})
 	}

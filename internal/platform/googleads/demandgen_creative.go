@@ -1004,13 +1004,16 @@ func (c *Client) createDemandGenAd(ctx context.Context, adGroupResource, adGroup
 		// The body PARSED, so whatever ids it did carry are real — and they are the only
 		// handle an operator has on account-level assets that may already exist. They go
 		// back WITH the error rather than being dropped alongside it, the same way the
-		// malformed-resource-name arm below returns what it had got to.
+		// malformed-resource-name arm below returns every same-account id it carried.
 		return c.parsedAssetIDs(assetResults), "", fmt.Errorf("google-ads demand gen image asset creation UNCONFIRMED (ad group %s created; 2xx returned %d result(s) for %d image(s) — assets may exist — verify in Google Ads before retrying)", adGroupID, len(assetResults.Results), len(assetOps))
 	}
 
 	// Positional: result i is the asset for images[i], which carries its slot.
 	perSlot := make([][]adImageAsset, len(demandGenImageSlots))
 	assetIDs = make([]string, 0, len(assetOps))
+	// An unusable entry does not stop the walk: every same-account id goes back with the
+	// error, which names the FIRST unusable index.
+	firstBad, badName := -1, ""
 	for i, r := range assetResults.Results {
 		resource := r.ResourceName
 		// assetID checks the kind, the account AND the numeric trailing id, and
@@ -1018,10 +1021,20 @@ func (c *Client) createDemandGenAd(ctx context.Context, adGroupResource, adGroup
 		// would be referenced by the ad and persisted as this campaign's.
 		id := c.assetID(resource)
 		if id == "" {
-			return assetIDs, "", fmt.Errorf("google-ads demand gen image asset creation UNCONFIRMED (ad group %s created; malformed asset resource name %q at index %d — assets may exist — verify in Google Ads before retrying)", adGroupID, resource, i)
+			if firstBad < 0 {
+				firstBad, badName = i, resource
+			}
+			continue
 		}
 		assetIDs = append(assetIDs, id)
 		perSlot[images[i].slot] = append(perSlot[images[i].slot], adImageAsset{Asset: resource})
+	}
+	if firstBad >= 0 {
+		return uniqueIDs(assetIDs), "", fmt.Errorf(
+			"google-ads demand gen image asset creation UNCONFIRMED (ad group %s "+
+				"created; malformed asset resource name %q at index %d — assets may exist "+
+				"— verify in Google Ads before retrying)",
+			adGroupID, badName, firstBad)
 	}
 
 	ad := &demandGenMultiAssetAdInfo{

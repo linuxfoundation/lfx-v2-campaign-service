@@ -2241,7 +2241,11 @@ UNCONFIRMED. `CreativeAssetIDs` carries the logo, then the videos, then the call
 A short 2xx that parsed still records every asset id it carried that passes `assetID`'s
 account and shape checks (`parsedMutateAssetIDs`, #481), as the logo upload's short arm
 records `parsedAssetIDs`; a foreign-account or malformed name, and any non-asset result,
-is not recorded. An unparseable 2xx records the logo only.
+is not recorded. An unparseable 2xx records the logo only. A full-length 2xx with an
+unusable asset result is walked to the end the same way: every same-account id in it is
+recorded, once (`uniqueIDs`), before or after the bad result, and the UNCONFIRMED error
+names the FIRST bad index (#481 review). The same holds for the Demand Gen image ad, Display,
+Video and Performance Max asset mutates; see "Unusable asset results" below.
 `googleAdsMutateOperation`/`googleAdsMutateResponse` gained the `assetOperation` and
 `adGroupAdOperation` arms; the Performance Max request is unchanged because the new arms are
 omitted when nil.
@@ -2368,6 +2372,39 @@ with ONE ad in `DemandGenAds` it is not, exactly as the single creative is not.
 incomplete: it toggles the ads that exist and logs the group under `incomplete_ad_groups`,
 rather than launching ad 1 and saying nothing about ad 2. `PlannedAds` 0 (Search, older
 rows) keeps the old reading, because a Search group's ads come from one atomic mutate.
+
+## Unusable asset results (#481 review)
+
+An `assets:mutate` (or the Demand Gen video ad's atomic `googleAds:mutate`) whose 2xx has
+the expected number of results can still carry an asset result `assetID` refuses — another
+account's asset, another kind, a non-numeric id. That result makes the create UNCONFIRMED,
+but every OTHER same-account asset id in the response is a real handle on an account-level
+asset that may exist with nothing referencing it. The loops used to return at the first bad
+entry, keeping only the ids before it: a foreign-account video result followed by this
+account's call to action 951 recorded only the logo 900.
+
+Each loop now walks the whole response, records every usable id in order, notes the FIRST
+bad index, and returns after the loop with `uniqueIDs(assetIDs)` — so an id named twice is
+recorded once — and an error naming that index. The sites: the Demand Gen image ad
+(`createDemandGenAd`), the Demand Gen video ad's atomic request (`createDemandGenVideoAd`),
+Display (`createDisplayAd`), Video (`createVideoAd`) and the Performance Max asset mutate
+(`createPerformanceMaxAssetGroup`). `parsedAssetIDs` and `parsedMutateAssetIDs`, which the
+short arms return, also drop repeats.
+
+Left as they are, on purpose:
+
+- `createCampaignAssets` (sitelinks, callouts, snippets and the other extensions, Search and
+  Demand Gen) returns NO asset ids from an unusable or short 2xx: an all-or-nothing contract
+  `TestCreateCampaign_ShortAssetResponseIsUnconfirmed` pins. It never keeps the ids before
+  the bad entry and drops the ones after, so it is not this defect.
+- The Demand Gen video ad's logo upload takes exactly one logo (`maxDemandGenVideoLogos`),
+  so its one result has no later id to drop.
+- The criteria loops (geo, languages, schedules, devices, demographics, keywords, negative
+  keywords, audiences, placements) return no ids from an unconfirmed response, the
+  three-way ambiguity `CampaignResult.GeoCriterionIDs` documents. A criterion is a child of
+  its campaign or ad group, not an account-level asset left behind.
+- The campaign-asset link loop and the Performance Max link count confirm links, not assets;
+  the asset ids are already returned in full.
 
 ## Bidding strategies and conversion actions (LFXV2-2665)
 
@@ -2543,8 +2580,9 @@ so the link step uses `assetResources[i]`, the resource name Google returned, ne
 one rebuilt from the parsed id. Rebuilding would be this client asserting what Google
 said rather than repeating it. `c.assetID` checks kind, ACCOUNT and trailing numeric
 id and answers `""` for anything else, so a wrong-account asset can neither be linked
-into this campaign's group nor persisted as one of its ids; the ids parsed before the
-bad one are still returned, under the partial-result contract.
+into this campaign's group nor persisted as one of its ids; every other same-account id
+in the response, before or after the bad one, is still returned under the partial-result
+contract (see "Unusable asset results").
 
 **Google requires each of the two marketing shapes, not either.** Unlike Demand Gen's
 reciprocal pair, `marketingImages` (1.91:1) AND `squareMarketingImages` (1:1) are both

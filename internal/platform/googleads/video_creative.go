@@ -266,6 +266,9 @@ func (c *Client) createVideoAd(ctx context.Context, adGroupResource, adGroupID, 
 
 	videos := make([]adVideoAsset, 0, len(assetOps))
 	assetIDs = make([]string, 0, len(assetOps))
+	// An unusable entry does not stop the walk: every same-account id goes back with the
+	// error, which names the FIRST unusable index.
+	firstBad, badName := -1, ""
 	for i, r := range assetResults.Results {
 		resource := r.ResourceName
 		// assetID checks the kind, the account AND the numeric trailing id, returning
@@ -273,10 +276,20 @@ func (c *Client) createVideoAd(ctx context.Context, adGroupResource, adGroupID, 
 		// referenced by the ad and persisted as this campaign's.
 		id := c.assetID(resource)
 		if id == "" {
-			return assetIDs, "", fmt.Errorf("google-ads video asset creation UNCONFIRMED (ad group %s created; malformed asset resource name %q at index %d — assets may exist — verify in Google Ads before retrying)", adGroupID, resource, i)
+			if firstBad < 0 {
+				firstBad, badName = i, resource
+			}
+			continue
 		}
 		assetIDs = append(assetIDs, id)
 		videos = append(videos, adVideoAsset{Asset: resource})
+	}
+	if firstBad >= 0 {
+		return uniqueIDs(assetIDs), "", fmt.Errorf(
+			"google-ads video asset creation UNCONFIRMED (ad group %s created; "+
+				"malformed asset resource name %q at index %d — assets may exist — verify "+
+				"in Google Ads before retrying)",
+			adGroupID, badName, firstBad)
 	}
 
 	ad := &videoResponsiveAdInfo{

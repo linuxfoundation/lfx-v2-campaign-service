@@ -548,11 +548,26 @@ func (c *Client) createCampaignAssets(ctx context.Context, campaignResource, cam
 	return ids, linkIDs, nil
 }
 
-// parsedAssetIDs is every well-formed asset id in a mutate response, in order, skipping
-// any resource name assetID refuses. It exists for the arms that return an UNCONFIRMED
-// error over a response that nonetheless PARSED: the ids in it are the only handle an
-// operator has on account-level assets that may already exist, so the error carries them
-// rather than dropping them.
+// uniqueIDs returns ids in order with every repeat after the first dropped. The creative
+// paths' UNCONFIRMED arms record every asset id a parsed response carried, and a response
+// that names one asset twice must not record it twice.
+func uniqueIDs(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// parsedAssetIDs is every well-formed asset id in a mutate response, in order and once
+// each, skipping any resource name assetID refuses. It exists for the arms that return an
+// UNCONFIRMED error over a response that nonetheless PARSED: the ids in it are the only
+// handle an operator has on account-level assets that may already exist, so the error
+// carries them rather than dropping them.
 func (c *Client) parsedAssetIDs(resp mutateResponse) []string {
 	out := make([]string, 0, len(resp.Results))
 	for _, r := range resp.Results {
@@ -560,7 +575,7 @@ func (c *Client) parsedAssetIDs(resp mutateResponse) []string {
 			out = append(out, id)
 		}
 	}
-	return out
+	return uniqueIDs(out)
 }
 
 // parsedMutateAssetIDs is parsedAssetIDs for a googleAds:mutate response: every
@@ -577,7 +592,7 @@ func (c *Client) parsedMutateAssetIDs(resp googleAdsMutateResponse) []string {
 			out = append(out, id)
 		}
 	}
-	return out
+	return uniqueIDs(out)
 }
 
 // assetID applies to an Asset resource name the same four checks

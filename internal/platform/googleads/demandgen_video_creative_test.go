@@ -532,7 +532,9 @@ func TestCreateDemandGenCampaign_VideoAdFailuresArePartialResults(t *testing.T) 
 			overrides: map[string]func(int, []byte, http.ResponseWriter){"googleAds:mutate": func(_ int, _ []byte, w http.ResponseWriter) {
 				_, _ = io.WriteString(w, strings.Replace(wrongGroup, "customers/1234567890/assets/950", "customers/9999999999/assets/950", 1))
 			}},
-			wantSub: "no usable asset resource name at index 0", wantAssets: "900",
+			// The foreign video result at index 0 does not drop this account's call to
+			// action at index 1 (#481 review).
+			wantSub: "no usable asset resource name at index 0", wantAssets: "900,951",
 		},
 		"atomic ad in another ad group": {
 			overrides: map[string]func(int, []byte, http.ResponseWriter){"googleAds:mutate": func(_ int, _ []byte, w http.ResponseWriter) {
@@ -556,6 +558,55 @@ func TestCreateDemandGenCampaign_VideoAdFailuresArePartialResults(t *testing.T) 
 			}
 			if n := len(rig.sent("googleAds:mutate")); tc.noAtomic && n != 0 {
 				t.Errorf("the atomic mutate was sent after the logo upload failed")
+			}
+		})
+	}
+}
+
+// With two videos the atomic request carries three asset operations, so the unusable result
+// can sit in the MIDDLE: the ids on both sides of it are recorded, once each, and the error
+// names the FIRST bad index (#481 review).
+func TestCreateDemandGenCampaign_VideoAdKeepsEveryValidAssetID(t *testing.T) {
+	const (
+		video950 = `{"assetResult":{"resourceName":"customers/1234567890/assets/950"}}`
+		foreign  = `{"assetResult":{"resourceName":"customers/9999999999/assets/951"}}`
+		cta952   = `{"assetResult":{"resourceName":"customers/1234567890/assets/952"}}`
+		ad       = `{"adGroupAdResult":{"resourceName":"customers/1234567890/adGroupAds/333~444"}}`
+	)
+	answer := func(results ...string) string {
+		return `{"mutateOperationResponses":[` + strings.Join(results, ",") + `]}`
+	}
+	cases := map[string]struct {
+		body, wantSub, wantAssets string
+	}{
+		"bad in the middle": {
+			body:    answer(video950, foreign, cta952, ad),
+			wantSub: "at index 1", wantAssets: "900,950,952",
+		},
+		"two bad, the first named": {
+			body:    answer(foreign, video950, `{}`, ad),
+			wantSub: "at index 0", wantAssets: "900,950",
+		},
+		"a repeated id is recorded once": {
+			body:    answer(video950, foreign, video950, ad),
+			wantSub: "at index 1", wantAssets: "900,950",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, c, base := newDGRig(t, videoLogo(t), atomicAnswer(tc.body))
+			in := dgVideoInput(base)
+			in.DemandGenVideoCreative.YouTubeVideoIDs = []string{"dQw4w9WgXcQ", "abcdefghijk"}
+			res, err := c.CreateDemandGenCampaign(context.Background(), in)
+			if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") ||
+				!strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("err = %v, want UNCONFIRMED naming %q", err, tc.wantSub)
+			}
+			if res == nil || res.AdID != "" {
+				t.Fatalf("res = %+v, want a partial with no ad", res)
+			}
+			if got := strings.Join(res.CreativeAssetIDs, ","); got != tc.wantAssets {
+				t.Errorf("CreativeAssetIDs = %q, want %q", got, tc.wantAssets)
 			}
 		})
 	}
