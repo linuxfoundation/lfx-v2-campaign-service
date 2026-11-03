@@ -1959,7 +1959,7 @@ var groupScheduleLocks = newKeyedLocks()
 // under groupScheduleLocks, so a second caller reads the first one's end and writes nothing.
 // Across replicas each write is followed by a re-read, and a group found ending before endMs
 // again is widened again (each caller only ever writes its own, later, end, so the rounds
-// converge on the latest end needed); still short after groupScheduleAttempts is an error. A
+// converge on the latest end needed); still short on the read after groupScheduleAttempts writes is an error. A
 // sibling's campaign created between another replica's stale write and its own re-widen can
 // still see a shorter group for that moment: cross-replica serialization of same-group
 // dispatches is LFXV2-2665's.
@@ -1978,14 +1978,19 @@ func (c *Client) ensureCampaignGroupCoversEnd(ctx context.Context, accountID, gr
 	}
 	defer release()
 
+	// Every write is followed by a read, the last one included, so a final write that sticks
+	// is reported as covered rather than as exhaustion.
 	wrote := false
-	for attempt := 0; attempt < groupScheduleAttempts; attempt++ {
+	for writes := 0; ; writes++ {
 		end, err := c.readCampaignGroupEnd(ctx, path, groupID)
 		if err != nil {
 			return wrote, err
 		}
 		if end == nil || *end >= endMs {
 			return wrote, nil
+		}
+		if writes == groupScheduleAttempts {
+			return wrote, fmt.Errorf("campaign group %s still ends before this campaign after %d widening writes; another writer keeps shortening it, so no campaign is created", groupID, groupScheduleAttempts)
 		}
 		body := map[string]any{"patch": map[string]any{"runSchedule": map[string]any{
 			"$set": map[string]any{"end": endMs},
@@ -1996,7 +2001,6 @@ func (c *Client) ensureCampaignGroupCoversEnd(ctx context.Context, accountID, gr
 		}
 		wrote = true
 	}
-	return wrote, fmt.Errorf("campaign group %s still ends before this campaign after %d widening writes; another writer keeps shortening it, so no campaign is created", groupID, groupScheduleAttempts)
 }
 
 // readCampaignGroupEnd reads the group at path and returns its runSchedule.end (nil: none).

@@ -993,7 +993,7 @@ a shorter end. The read, write and verify run under `groupScheduleLocks`, a proc
 serialize nothing): a second caller reads the first one's end and writes nothing. Across replicas,
 each write is followed by a re-read, and a group found short again is widened again; each caller
 only writes its own later end, so the rounds converge on the latest end needed, and a group still
-short after `groupScheduleAttempts` (3) writes is an error. A sibling's campaign POST that lands
+short on the read after its `groupScheduleAttempts` (3)th write is an error. A sibling's campaign POST that lands
 between another replica's stale write and its re-widen can still be refused; cross-replica
 serialization of same-group dispatches is LFXV2-2665's.
 

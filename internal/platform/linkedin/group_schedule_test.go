@@ -190,6 +190,22 @@ func TestEnsureCampaignGroupCoversEnd_ReWidensAfterAConcurrentShortening(t *test
 		t.Fatalf("writes=%d end=%d, want 2 writes and end %d", len(g.patches), *g.currentEnd(), endMs)
 	}
 
+	// Shortened after the first two writes only: the third sticks, and the read after it must
+	// report the group covered, not exhaustion.
+	third := &groupScheduleServer{end: i64(3_000_000_000_000)}
+	m := 0
+	third.afterPatch = func(g *groupScheduleServer) {
+		if m++; m <= 2 {
+			shorten(g)
+		}
+	}
+	if wrote, err := third.client(t).ensureCampaignGroupCoversEnd(context.Background(), "123456789", "555", endMs); err != nil || !wrote {
+		t.Fatalf("wrote=%v err=%v, want the third write verified as covering", wrote, err)
+	}
+	if len(third.patches) != groupScheduleAttempts || *third.currentEnd() != endMs {
+		t.Fatalf("writes=%d end=%d, want %d writes and end %d", len(third.patches), *third.currentEnd(), groupScheduleAttempts, endMs)
+	}
+
 	always := &groupScheduleServer{end: i64(3_000_000_000_000), afterPatch: shorten}
 	if _, err := always.client(t).ensureCampaignGroupCoversEnd(context.Background(), "123456789", "555", endMs); err == nil || !strings.Contains(err.Error(), "keeps shortening") {
 		t.Fatalf("err = %v, want the bounded-attempts error", err)
