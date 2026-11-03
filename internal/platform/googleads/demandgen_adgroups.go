@@ -71,6 +71,11 @@ func validateDemandGenAdGroups(kind, customerID string, in CampaignInput, base d
 		if kind != campaignKindDemandGen {
 			return nil, nil
 		}
+		if base.video.present {
+			if err := validateDemandGenVideoAdName(base.name); err != nil {
+				return nil, err
+			}
+		}
 		return []demandGenGroupPlan{base}, nil
 	}
 	if kind != campaignKindDemandGen {
@@ -105,7 +110,10 @@ func validateDemandGenAdGroups(kind, customerID string, in CampaignInput, base d
 
 		plan := demandGenGroupPlan{name: name}
 		var err error
-		if plan.audience, err = validateDemandGenAudience(kind, customerID, g.Audience); err != nil {
+		// The same check as the campaign-level DemandGenAudience: shape and THIS account's
+		// customer id only. It is not a tenancy check — whether the Audience belongs to the
+		// brief's project is the accepted risk tracked by #468.
+		if plan.audience, err = validateDemandGenAudienceField(kind, customerID, fmt.Sprintf("the Audience of Demand Gen ad group %q", name), g.Audience); err != nil {
 			return nil, err
 		}
 		owner := fmt.Sprintf("Demand Gen ad group %q", name)
@@ -114,10 +122,13 @@ func validateDemandGenAdGroups(kind, customerID string, in CampaignInput, base d
 			return nil, errDemandGenTwoCreatives(owner)
 		case image:
 			if plan.creative, err = validateDemandGenCreativeSpec(g.Creative, in.ResolvedImages); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("google-ads: Demand Gen ad group %q: %w", name, err)
 			}
 		case video:
 			if plan.video, err = validateDemandGenVideoSpec(g.VideoCreative, in.ResolvedImages); err != nil {
+				return nil, fmt.Errorf("google-ads: Demand Gen ad group %q: %w", name, err)
+			}
+			if err := validateDemandGenVideoAdName(name); err != nil {
 				return nil, err
 			}
 		default:

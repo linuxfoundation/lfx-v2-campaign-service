@@ -2000,8 +2000,8 @@ guarantee depends on everything being decidable before the first budget mutate
 spends money. Image bytes cannot be validated without fetching them, so the
 locally-decidable half (`validateDemandGenCreative`, counts, copy widths, URL
 shape) runs in the preflight, and the fetch (`fetchDemandGenGroupImages`, which since
-#460 walks every ad group's images in one `fetchSlotImages` call)
-runs in the cascade but **still before the budget mutate**. A bad image therefore
+#460 walks every ad group's images in one `fetchSlotImages` call) runs in the cascade
+but **still before the budget mutate**. A bad image therefore
 fails with `result == nil` and nothing created, which
 `TestCreateDemandGenCampaign_BadImageFailsBeforeAnyMutate` pins.
 
@@ -2201,19 +2201,23 @@ a campaign type the API cannot create. The probe fixed the shape: `videos` and
 `logoImages` as `[{asset}]`, the three text lists as `[{text}]`, `businessName` as an
 AdTextAsset **object**, optional `callToActions` as `[{asset}]` naming a CALL_TO_ACTION
 asset, and a **required `ad.name`** (Google refuses the ad without it). The name is
-deterministic: `<ad group name> - Video ad`.
+deterministic: `<ad group name> - Video ad`, and `validateDemandGenVideoAdName` refuses it
+before the budget when it passes Google's 255-character Ad.name limit (probed: 256 is
+TOO_LONG).
 
 `validateDemandGenVideoCreative` runs in the pure preflight beside the other creatives:
 refused off Demand Gen, and refused beside `DemandGenCreative` — this client builds one ad
 per Demand Gen ad group and records one `AdID` for it. YouTube ids go through the shared
 `validateYouTubeVideoIDs` (bare ids only, 1-5, the length not pinned — the same answer the
-Video and Performance Max creatives give). Headlines and descriptions take the image ad's
-counts and widths; long headlines are 1-5 at 90 and required; the business name is required
-at 25. Three choices are deliberately conservative and say so in the code: exactly ONE logo
-(the probe sent one, and no cited source gives this ad type's range), a required long
-headline (the probed shape), and a call to action limited to SIGN_UP, LEARN_MORE,
-BOOK_NOW, VISIT_SITE and WATCH_NOW (SIGN_UP is the probed value; no CallToActionType list
-is cited in the repository).
+Video and Performance Max creatives give). Headlines are 1-5 at width 40
+(`maxDemandGenVideoHeadlineWeight`: a probe accepted 40 and refused 41 — the image ad keeps
+30, its own limit unprobed); descriptions 1-5 at 90; long headlines 1-5 at 90 and required
+(the probe accepted 90 for both); the business name is required at 25. The call to action
+is limited to SIGN_UP, LEARN_MORE, BOOK_NOW, VISIT_SITE and WATCH_NOW, each accepted by the
+2026-11-03 probe, which also showed REGISTER and GET_STARTED are not CallToActionType values
+at all. Two choices are deliberately conservative and say so in the code: exactly ONE logo
+(the probe sent one, and no cited source gives this ad type's range) and a required long
+headline (the probed shape).
 
 The logo is an image, so it is fetched before the budget mutate by `fetchSlotImages`
 (`demandGenVideoLogoSlot`: the image ad's logo geometry under its own label) and uploaded
@@ -2235,7 +2239,8 @@ omitted when nil.
 (dispatch `demandGenAdGroups`) names up to `maxDemandGenAdGroups` (5, a service bound:
 every group's images are held before the budget mutate and every group adds mutates after
 the campaign exists). Each `DemandGenAdGroup` has a `Name` label, an optional `Audience`
-under `validateDemandGenAudience`'s rules, and exactly one of `Creative` / `VideoCreative`
+under `validateDemandGenAudience`'s rules (shape and this account only — not a tenancy
+check; that accepted risk is #468), and exactly one of `Creative` / `VideoCreative`
 — a named group with no ad cannot serve, and the list has no older callers to keep. Names
 are `sanitizeNamePart`ed and appended to the single group's name
 (`<event> - Display | <label>`, as the Search list does); a duplicate ignoring case is

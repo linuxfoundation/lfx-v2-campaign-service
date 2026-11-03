@@ -121,7 +121,9 @@ const (
 	// spelled differently per platform is a cap a reader has to go looking for.
 	MaxImageBytes = 5 << 20 // 5 MiB
 
-	// maxCreativeTotalImageBytes caps the SUM of every image in one creative.
+	// maxCreativeTotalImageBytes caps the SUM of every image in one creative — and, on
+	// Demand Gen, in one create: fetchDemandGenGroupImages walks every ad group's
+	// creatives in one fetchSlotImages call, so the total spans them all (#460).
 	//
 	// The per-image cap bounds one file; nothing bounded the set. A Performance Max
 	// asset group takes up to 30 images across its slots and a Demand Gen ad up to 25,
@@ -137,9 +139,10 @@ const (
 	// Google would have accepted is the worse failure of the two.
 	maxCreativeTotalImageBytes = 64 << 20 // 64 MiB
 
-	// demandGenImageFetchTimeout bounds one image fetch. The cascade may fetch up
-	// to 25 images (20 marketing + 5 logos), so this is per-image and the caller's
-	// context still bounds the whole operation.
+	// demandGenImageFetchTimeout bounds one image fetch. A Demand Gen creative has up to
+	// 25 images (20 marketing + 5 logos), and since #460 one create's walk can cover up to
+	// maxDemandGenAdGroups creatives, so this is per-image; the whole walk is still under
+	// maxCreativeImageFetchWall and the 64 MiB total, and the caller's context bounds it.
 	demandGenImageFetchTimeout = 20 * time.Second
 
 	// creativeImageFetchDeadlineShare is the divisor applied to the caller's REMAINING
@@ -152,8 +155,9 @@ const (
 	// because the share above is conditional on the caller having a deadline at all. With
 	// no deadline — a background reconcile, a test harness, any call site that passes
 	// context.Background() — the share does nothing and the bound reverts to the one the
-	// walk implies: 25 images times demandGenImageFetchTimeout, which is over eight
-	// minutes of wall time chosen by whoever supplied the URLs. A host that accepts the
+	// walk implies: 25 images per creative — and one create's walk can cover up to
+	// maxDemandGenAdGroups creatives — times demandGenImageFetchTimeout, which is minutes of
+	// wall time chosen by whoever supplied the URLs. A host that accepts the
 	// connection and then trickles bytes just under the per-image timeout spends all of
 	// it. The share is still applied when there is a deadline and the SMALLER of the two
 	// wins, so this never widens the caller's budget — it only puts a floor under the

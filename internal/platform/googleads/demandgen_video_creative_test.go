@@ -236,22 +236,26 @@ func TestValidateDemandGenVideoCreative_Bounds(t *testing.T) {
 		mutate  func(v *DemandGenVideoCreative)
 		wantSub string
 	}{
-		"no video":              {func(v *DemandGenVideoCreative) { v.YouTubeVideoIDs = nil }, "needs at least 1 YouTube video"},
-		"video URL":             {func(v *DemandGenVideoCreative) { v.YouTubeVideoIDs = []string{"https://youtu.be/dQw4w9WgXcQ"} }, "looks like a URL"},
-		"bad video char":        {func(v *DemandGenVideoCreative) { v.YouTubeVideoIDs = []string{"dQw4w9WgX!Q"} }, "not a YouTube id character"},
-		"six videos":            {func(v *DemandGenVideoCreative) { v.YouTubeVideoIDs = videoIDs(6) }, "at most 5 YouTube videos"},
-		"no logo":               {func(v *DemandGenVideoCreative) { v.LogoImages = nil }, "needs exactly 1 logo image, got 0"},
-		"two logos":             {func(v *DemandGenVideoCreative) { v.LogoImages = []string{base + "/a.png", base + "/b.png"} }, "needs exactly 1 logo image, got 2"},
-		"http logo":             {func(v *DemandGenVideoCreative) { v.LogoImages = []string{"http://cdn.example.org/a.png"} }, "Demand Gen video logo image 0 must be an https URL"},
-		"no headline":           {func(v *DemandGenVideoCreative) { v.Headlines = nil }, "needs at least 1 headline"},
-		"wide headline":         {func(v *DemandGenVideoCreative) { v.Headlines = []string{strings.Repeat("a", 31)} }, "exceeding the 30 limit"},
-		"no long headline":      {func(v *DemandGenVideoCreative) { v.LongHeadlines = nil }, "needs at least 1 long headline"},
-		"wide long headline":    {func(v *DemandGenVideoCreative) { v.LongHeadlines = []string{strings.Repeat("a", 91)} }, "exceeding the 90 limit"},
-		"six long headlines":    {func(v *DemandGenVideoCreative) { v.LongHeadlines = repeatText("Long", 6) }, "at most 5 long headlines"},
-		"wide description":      {func(v *DemandGenVideoCreative) { v.Descriptions = []string{strings.Repeat("a", 91)} }, "exceeding the 90 limit"},
-		"no business name":      {func(v *DemandGenVideoCreative) { v.BusinessName = " " }, "requires a business name"},
-		"wide business name":    {func(v *DemandGenVideoCreative) { v.BusinessName = strings.Repeat("a", 26) }, "exceeding the 25 limit"},
+		"no video":       {func(v *DemandGenVideoCreative) { v.YouTubeVideoIDs = nil }, "needs at least 1 YouTube video"},
+		"video URL":      {func(v *DemandGenVideoCreative) { v.YouTubeVideoIDs = []string{"https://youtu.be/dQw4w9WgXcQ"} }, "looks like a URL"},
+		"bad video char": {func(v *DemandGenVideoCreative) { v.YouTubeVideoIDs = []string{"dQw4w9WgX!Q"} }, "not a YouTube id character"},
+		"six videos":     {func(v *DemandGenVideoCreative) { v.YouTubeVideoIDs = videoIDs(6) }, "at most 5 YouTube videos"},
+		"no logo":        {func(v *DemandGenVideoCreative) { v.LogoImages = nil }, "needs exactly 1 logo image, got 0"},
+		"two logos":      {func(v *DemandGenVideoCreative) { v.LogoImages = []string{base + "/a.png", base + "/b.png"} }, "needs exactly 1 logo image, got 2"},
+		"http logo":      {func(v *DemandGenVideoCreative) { v.LogoImages = []string{"http://cdn.example.org/a.png"} }, "Demand Gen video logo image 0 must be an https URL"},
+		"no headline":    {func(v *DemandGenVideoCreative) { v.Headlines = nil }, "needs at least 1 headline"},
+		// 41 refused, as Google refused it (validateOnly probe, 2026-11-03: TOO_LONG).
+		"wide headline":      {func(v *DemandGenVideoCreative) { v.Headlines = []string{strings.Repeat("a", 41)} }, "exceeding the 40 limit"},
+		"no long headline":   {func(v *DemandGenVideoCreative) { v.LongHeadlines = nil }, "needs at least 1 long headline"},
+		"wide long headline": {func(v *DemandGenVideoCreative) { v.LongHeadlines = []string{strings.Repeat("a", 91)} }, "exceeding the 90 limit"},
+		"six long headlines": {func(v *DemandGenVideoCreative) { v.LongHeadlines = repeatText("Long", 6) }, "at most 5 long headlines"},
+		"wide description":   {func(v *DemandGenVideoCreative) { v.Descriptions = []string{strings.Repeat("a", 91)} }, "exceeding the 90 limit"},
+		"no business name":   {func(v *DemandGenVideoCreative) { v.BusinessName = " " }, "requires a business name"},
+		"wide business name": {func(v *DemandGenVideoCreative) { v.BusinessName = strings.Repeat("a", 26) }, "exceeding the 25 limit"},
+		// REGISTER is not a CallToActionType at all: the 2026-11-03 validateOnly probe got
+		// 400 "Invalid value" for it (and for GET_STARTED).
 		"unlisted CTA":          {func(v *DemandGenVideoCreative) { v.CallToAction = "REGISTER" }, `call to action "REGISTER" is not one this client accepts`},
+		"GET_STARTED CTA":       {func(v *DemandGenVideoCreative) { v.CallToAction = "GET_STARTED" }, "is not one this client accepts"},
 		"lower-case CTA":        {func(v *DemandGenVideoCreative) { v.CallToAction = "sign_up" }, "is not one this client accepts"},
 		"duplicate description": {func(v *DemandGenVideoCreative) { v.Descriptions = []string{"Same", "same"} }, "listed more than once"},
 	}
@@ -266,6 +270,60 @@ func TestValidateDemandGenVideoCreative_Bounds(t *testing.T) {
 				t.Errorf("err = %v, want it to contain %q", err, tc.wantSub)
 			}
 		})
+	}
+}
+
+// The widths a validateOnly probe on 2026-11-03 accepted at the edge: a 40-character
+// headline and 90-character long headline and description, and each of the five calls to
+// action.
+func TestValidateDemandGenVideoCreative_ProbedEdgesAreAccepted(t *testing.T) {
+	for _, cta := range demandGenVideoCallToActions {
+		v := fullVideoCreative("https://cdn.example.org")
+		v.Headlines = []string{strings.Repeat("a", 40)}
+		v.LongHeadlines = []string{strings.Repeat("b", 90)}
+		v.Descriptions = []string{strings.Repeat("c", 90)}
+		v.CallToAction = cta
+		in := demandGenInput()
+		in.DemandGenVideoCreative = v
+		if _, err := validateDemandGenVideoCreative(campaignKindDemandGen, in); err != nil {
+			t.Errorf("CTA %s with 40/90/90 text: %v", cta, err)
+		}
+	}
+}
+
+// The composed ad name is held to Google's 255-character Ad.name limit before the budget
+// (validateOnly probe, 2026-11-03: 256 refused TOO_LONG), on the single group and on a
+// named one. The single group is driven through validateDemandGenAdGroups directly: in a
+// whole preflight the campaign-name limit refuses an EventName that long first.
+func TestPreflightRefusesAnOverLongVideoAdName(t *testing.T) {
+	video, err := validateDemandGenVideoSpec(fullVideoCreative("https://cdn.example.org"), nil)
+	if err != nil {
+		t.Fatalf("video: %v", err)
+	}
+	// " - Video ad" is 11 characters.
+	for _, tc := range []struct {
+		name    string
+		group   int
+		wantErr bool
+	}{{"at 255", 255 - 11, false}, {"at 256", 256 - 11, true}} {
+		t.Run("single group "+tc.name, func(t *testing.T) {
+			base := demandGenGroupPlan{name: strings.Repeat("e", tc.group), video: video}
+			_, err := validateDemandGenAdGroups(campaignKindDemandGen, "1234567890", demandGenInput(), base)
+			if gotErr := err != nil && strings.Contains(err.Error(), "video ad name"); gotErr != tc.wantErr || (err != nil && !gotErr) {
+				t.Errorf("err = %v, want refusal %v", err, tc.wantErr)
+			}
+		})
+	}
+	c := &Client{account: AccountConfig{CustomerID: "1234567890"}}
+	in := demandGenInput()
+	in.EventName = "E"
+	// "E - Display | " (14) + label + " - Video ad" (11): 230 is 255, 231 is 256.
+	for label, wantErr := range map[int]bool{230: false, 231: true} {
+		in.DemandGenAdGroups = []DemandGenAdGroup{{Name: strings.Repeat("g", label), VideoCreative: fullVideoCreative("https://cdn.example.org")}}
+		_, err := c.preflightCampaignKind(campaignKindDemandGen, in)
+		if gotErr := err != nil && strings.Contains(err.Error(), "video ad name"); gotErr != wantErr || (err != nil && !gotErr) {
+			t.Errorf("named group label %d: err = %v, want refusal %v", label, err, wantErr)
+		}
 	}
 }
 
@@ -426,7 +484,7 @@ func TestCreateDemandGenCampaign_VideoAdFailuresArePartialResults(t *testing.T) 
 			overrides: map[string]func(int, []byte, http.ResponseWriter){"googleAds:mutate": func(_ int, _ []byte, w http.ResponseWriter) {
 				_, _ = io.WriteString(w, `{"mutateOperationResponses":[{"assetResult":{"resourceName":"customers/1234567890/assets/950"}}]}`)
 			}},
-			wantSub: "malformed/short mutate response", wantAssets: "900",
+			wantSub: "and 1 logo asset(s) created; 2xx with a malformed/short mutate response", wantAssets: "900",
 		},
 		"atomic wrong-account asset": {
 			overrides: map[string]func(int, []byte, http.ResponseWriter){"googleAds:mutate": func(_ int, _ []byte, w http.ResponseWriter) {

@@ -44,7 +44,8 @@ func TestPlatformConfigsNameTheirAssetUnderOneKey(t *testing.T) {
 		"meta":      metaConfig{Variants: []meta.AdVariant{{ImageAssetID: assetID}}},
 		"linkedin":  linkedinConfig{Variants: []linkedin.CreativeVariant{{ImageAssetID: assetID}}},
 		// EVERY Google slot, not one of them: they are separate fields on several structs,
-		// and a fifteenth declared as a bare []string would carry no key on its elements at all.
+		// and one more slot declared as a bare []string would carry no key on its elements
+		// at all.
 		// Built through googleAdsCreativeSlots so a slot added later is covered by construction
 		// rather than by someone remembering to extend this literal.
 		"google": googleAdsConfigWithAssetInEverySlot(assetID),
@@ -73,8 +74,8 @@ func TestPlatformConfigsNameTheirAssetUnderOneKey(t *testing.T) {
 
 // The loop above only proves that the keys it FOUND are the right key; it passes when a slot
 // contributes no key at all, as long as one other slot does. For Google that is the whole risk —
-// twenty-one slots, one of which could be declared as a bare []string and silently contribute
-// nothing — so count them: one key per enumerated slot, no more and no fewer.
+// every slot the fixture enumerates, one of which could be declared as a bare []string and
+// silently contribute nothing — so count them: one key per enumerated slot, no more and no fewer.
 func TestGoogleAdsConfigNamesItsAssetInEverySlot(t *testing.T) {
 	const assetID = "11111111-1111-4111-8111-111111111111"
 	cfg := googleAdsConfigWithAssetInEverySlot(assetID)

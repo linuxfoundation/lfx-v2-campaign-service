@@ -389,8 +389,12 @@ The program type determines the AI brief generation strategy (copy tone, targeti
 | Element | Max Chars | Max Count |
 |---------|-----------|-----------|
 | Headline | 40 | 5 |
+| Long headline (video ad) | 90 | 5 |
 | Description | 90 | 5 |
 | Business name | 25 | 1 |
+
+The video ad's 40-character headline was confirmed by a validateOnly probe (2026-11-03); the
+image ad (`demandGenCreative`) is capped at 30 by this service, its own limit not probed.
 
 ### LinkedIn Sponsored Content
 
@@ -1019,9 +1023,8 @@ geoTargets?: string[]           — OPTIONAL locations the campaign should serve
                                   level for Search and Performance Max, AD GROUP level for Demand Gen
                                   (which rejects campaign-level location criteria) — on EVERY Demand
                                   Gen ad group when `demandGenAdGroups` names several (#460).
-                                  Case/whitespace-insensitive and
-                                  de-duplicated by the RESOLVED id — "US" and "2840" are one criterion;
-                                  at most 60 entries.
+                                  Case/whitespace-insensitive and de-duplicated by the RESOLVED
+                                  id — "US" and "2840" are one criterion; at most 60 entries.
 
                                   A numeric id is checked for SHAPE only, but that shape check is
                                   stricter than "all digits": the entry must be the CANONICAL base-10
@@ -1660,22 +1663,26 @@ demandGenVideoCreative?:        — OPTIONAL Demand Gen VIDEO responsive ad (#46
                                   `videoCreative`. `logoImages` exactly ONE, 1:1 and at least
                                   128x128, taking both `demandGenCreative` image shapes and
                                   fetched or loaded and checked BEFORE the budget mutate under the
-                                  same rules. `headlines` 1-5 (<=30 weighted chars) and
-                                  `descriptions` 1-5 (<=90) as on `demandGenCreative`;
-                                  `longHeadlines` 1-5 (<=90), REQUIRED. `businessName` REQUIRED,
-                                  <=25. `callToAction` is optional and must be one of SIGN_UP,
-                                  LEARN_MORE, BOOK_NOW, VISIT_SITE, WATCH_NOW — a deliberately
-                                  short list of Google CallToActionType values, of which SIGN_UP
-                                  is the one exercised live; anything else is REFUSED. One logo
-                                  and a required long headline are this service's conservative
-                                  reading of the shape a validateOnly probe accepted (2026-11-03),
-                                  not Google limits cited elsewhere.
+                                  same rules. `headlines` 1-5 (<=40 weighted chars — a
+                                  validateOnly probe on 2026-11-03 accepted 40 and refused 41; NOT
+                                  the image ad's 30), `descriptions` 1-5 (<=90) and
+                                  `longHeadlines` 1-5 (<=90), REQUIRED; the probe accepted 90 for
+                                  both. `businessName` REQUIRED, <=25. `callToAction` is optional
+                                  and must be one of SIGN_UP, LEARN_MORE, BOOK_NOW, VISIT_SITE,
+                                  WATCH_NOW — each accepted by the same probe; anything else is
+                                  REFUSED (REGISTER and GET_STARTED are not CallToActionType values
+                                  at all: the probe got 400 "Invalid value"). One logo and a
+                                  required long headline are this service's conservative reading
+                                  of the shape the probe accepted, not Google limits cited
+                                  elsewhere.
 
                                   Built as the logo by `assets:mutate`, then ONE atomic
                                   `googleAds:mutate` creating the YouTube and call-to-action
                                   assets and the PAUSED ad that names them; the ad's `name` (which
                                   Google requires for this ad type) is
-                                  `<ad group name> - Video ad`. The result carries
+                                  `<ad group name> - Video ad`, at most 255 characters (Google's
+                                  Ad.name limit, probed: 256 is TOO_LONG), refused before the
+                                  budget mutate when longer. The result carries
                                   `creativeAssetIds` (logo, videos, call to action) and `adId`; a
                                   failure of the atomic request means none of its assets or the ad
                                   exist, an ambiguous one is UNCONFIRMED.

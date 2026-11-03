@@ -118,6 +118,35 @@ func TestValidateDemandGenAdGroups_Refusals(t *testing.T) {
 	}
 }
 
+// A refusal inside a group names the group, and a bad Audience is called that group's
+// Audience rather than the campaign-level DemandGenAudience the caller did not set.
+func TestValidateDemandGenAdGroups_RefusalsNameTheGroup(t *testing.T) {
+	c := &Client{account: AccountConfig{CustomerID: "1234567890"}}
+	const group = `Demand Gen ad group "KubeCon Europe 2026 - Display | Prospecting"`
+	badImage := fullCreative()
+	badImage.BusinessName = ""
+	badVideo := fullVideoCreative("https://cdn.example.org")
+	badVideo.CallToAction = "REGISTER"
+	for name, g := range map[string]DemandGenAdGroup{
+		"image":    {Creative: badImage},
+		"video":    {VideoCreative: badVideo},
+		"audience": {Creative: fullCreative(), Audience: "customers/9999999999/audiences/1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := demandGenInput()
+			g.Name = "Prospecting"
+			in.DemandGenAdGroups = []DemandGenAdGroup{{Name: "Retargeting", Creative: fullCreative()}, g}
+			_, err := c.preflightCampaignKind(campaignKindDemandGen, in)
+			if err == nil || !strings.Contains(err.Error(), group) {
+				t.Fatalf("err = %v, want it to name %s", err, group)
+			}
+			if name == "audience" && (!strings.Contains(err.Error(), "the Audience of "+group) || strings.Contains(err.Error(), "DemandGenAudience")) {
+				t.Errorf("err = %v, want it to call this the group's Audience, not DemandGenAudience", err)
+			}
+		})
+	}
+}
+
 // Without the list the preflight resolves ONE group from the campaign-level fields,
 // under the name the single ad group always had; with it, one group per entry, named
 // "<that name> | <label>", each with its own Audience and creative.
@@ -315,6 +344,47 @@ func TestCreateDemandGenCampaign_SecondGroupFailuresArePartial(t *testing.T) {
 				t.Error("a failed create must not carry the closing step")
 			}
 		})
+	}
+}
+
+// The 64 MiB total spans every group's images, not each group's: groups whose images
+// each fit under it but together exceed it are refused before ANY mutate.
+func TestCreateDemandGenCampaign_TotalImageBytesSpanEveryGroup(t *testing.T) {
+	// Real PNGs padded past their IEND chunk: image.DecodeConfig reads the header only, so
+	// they still decode as the slot geometry while weighing what the test needs.
+	pad := func(img []byte, to int) []byte { return append(append([]byte{}, img...), make([]byte, to-len(img))...) }
+	const big = MaxImageBytes - 1024
+	ref := func(n int) string { return ResolvedImageRefPrefix + fmt.Sprintf("00000000-0000-4000-8000-%012d", n) }
+	resolved := map[string][]byte{}
+	group := func(n int) DemandGenAdGroup {
+		c := fullCreative()
+		c.MarketingImages, c.SquareMarketingImages, c.LogoImages = nil, nil, nil
+		for i := 0; i < 6; i++ {
+			r := ref(n*100 + i)
+			resolved[r] = pad(pngOf(t, 600, 600), big)
+			c.SquareMarketingImages = append(c.SquareMarketingImages, r)
+		}
+		r := ref(n*100 + 99)
+		resolved[r] = pngOf(t, 128, 128)
+		c.LogoImages = []string{r}
+		return DemandGenAdGroup{Name: fmt.Sprintf("G%d", n), Creative: c}
+	}
+	// Each group is about 30 MiB, well under the 64 MiB total; the three together are
+	// about 90 MiB, over it.
+	in := demandGenInput()
+	in.DemandGenAdGroups = []DemandGenAdGroup{group(1), group(2), group(3)}
+	in.ResolvedImages = resolved
+	perGroup := 6*big + len(resolved[ref(199)])
+	if perGroup >= maxCreativeTotalImageBytes || 3*perGroup <= maxCreativeTotalImageBytes {
+		t.Fatalf("fixture: per group %d, total %d against cap %d", perGroup, 3*perGroup, maxCreativeTotalImageBytes)
+	}
+	rig, c, _ := newDGRig(t, nil, nil)
+	res, err := c.CreateDemandGenCampaign(context.Background(), in)
+	if err == nil || !strings.Contains(err.Error(), "creative images total more than") {
+		t.Fatalf("err = %v, want the total-bytes refusal", err)
+	}
+	if res != nil || len(rig.mutatePaths()) != 0 {
+		t.Errorf("res = %+v, mutates = %v; nothing may be sent", res, rig.mutatePaths())
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // ---------------------------------------------------------------------------
@@ -48,26 +49,34 @@ const (
 	// by Google lands after the campaign and ad group exist.
 	minDemandGenVideoLogos = 1
 	maxDemandGenVideoLogos = 1
+	// maxDemandGenVideoHeadlineWeight is this ad type's own headline width: a validateOnly
+	// probe on 2026-11-03 accepted a 40-character headline and refused 41
+	// (stringLengthError TOO_LONG). Not maxHeadlineWeight (30), which the IMAGE ad keeps
+	// because its own limit has not been probed.
+	maxDemandGenVideoHeadlineWeight = 40
 	// minDemandGenVideoLongHeadlines/maxDemandGenVideoLongHeadlines bound the long
 	// headlines, which the image ad does not have. Required because the probe's accepted
-	// shape carried them; five, and a display width of maxVideoLongHeadlineWeight (90),
-	// borrowed from the responsive video ad (video_creative.go), the nearest documented
-	// long-headline field in this package.
+	// shape carried them; five, borrowed from the responsive video ad (video_creative.go).
+	// The display width is maxVideoLongHeadlineWeight (90), which the 2026-11-03 probe
+	// accepted for long headlines and descriptions alike.
 	minDemandGenVideoLongHeadlines = 1
 	maxDemandGenVideoLongHeadlines = 5
 	// demandGenVideoAdNameSuffix composes ad.name from the ad group name, so the name is
 	// deterministic: the same brief yields the same ad name, and an operator reconciling an
 	// UNCONFIRMED ad looks for exactly this string.
 	demandGenVideoAdNameSuffix = " - Video ad"
+	// maxAdNameRunes is Google's Ad.name limit: a validateOnly probe on 2026-11-03 accepted
+	// 255 characters and refused 256 (TOO_LONG). The composed video ad name is checked
+	// against it before the budget mutate (validateDemandGenVideoAdName).
+	maxAdNameRunes = 255
 )
 
 // demandGenVideoCallToActions is the CallToActionType values DemandGenVideoCreative
-// accepts. CONSERVATIVE on purpose: no CallToActionType list is cited anywhere in this
-// repository, and the only value exercised live is SIGN_UP (the 2026-11-03 validateOnly
-// probe). The other four are names from Google's CallToActionType enum that an event
-// campaign uses, NOT exercised here; were Google to refuse one, it would fail at the atomic
-// googleAds:mutate after the campaign exists, as a partial result. Anything outside the list
-// is refused before the budget. Widen it value by value, each with a probe.
+// accepts: the five an event campaign uses, each accepted by a validateOnly probe on
+// 2026-11-03. The list is deliberately short rather than Google's whole enum — names that
+// look plausible are not all values (the same probe got 400 "Invalid value" for REGISTER
+// and GET_STARTED), so anything outside it is refused before the budget. Widen it value by
+// value, each with a probe.
 var demandGenVideoCallToActions = []string{"SIGN_UP", "LEARN_MORE", "BOOK_NOW", "VISIT_SITE", "WATCH_NOW"}
 
 // demandGenVideoLogoSlot is the logo's slot: the image ad's logo geometry (square, at
@@ -93,8 +102,8 @@ type DemandGenVideoCreative struct {
 	// LogoImages is required: exactly one square image, as a URL or a resolved
 	// stored-asset entry, like every other image slot (validateImageEntries).
 	LogoImages []string
-	// Headlines and Descriptions follow the image ad's counts and widths (1-5; 30 and
-	// 90); LongHeadlines are 1-5 at width 90.
+	// Headlines are 1-5 at width 40 and Descriptions 1-5 at width 90; LongHeadlines are
+	// 1-5 at width 90.
 	Headlines     []string
 	LongHeadlines []string
 	Descriptions  []string
@@ -170,7 +179,7 @@ func validateDemandGenVideoSpec(v DemandGenVideoCreative, resolved map[string][]
 	}
 	plan.logos = logos
 
-	if plan.headlines, err = validateCreativeText(owner, "headline", v.Headlines, minDemandGenHeadlines, maxDemandGenHeadlines, maxHeadlineWeight); err != nil {
+	if plan.headlines, err = validateCreativeText(owner, "headline", v.Headlines, minDemandGenHeadlines, maxDemandGenHeadlines, maxDemandGenVideoHeadlineWeight); err != nil {
 		return demandGenVideoPlan{}, err
 	}
 	if plan.longHeadlines, err = validateCreativeText(owner, "long headline", v.LongHeadlines, minDemandGenVideoLongHeadlines, maxDemandGenVideoLongHeadlines, maxVideoLongHeadlineWeight); err != nil {
@@ -254,6 +263,17 @@ type demandGenVideoAdGroupAdCreate struct {
 // demandGenVideoAdName composes ad.name from the ad group's name.
 func demandGenVideoAdName(adGroupName string) string {
 	return adGroupName + demandGenVideoAdNameSuffix
+}
+
+// validateDemandGenVideoAdName refuses a composed video ad name over Google's Ad.name
+// limit before the budget mutate; Google refuses it only at the ad's mutate, after the
+// campaign and ad group exist.
+func validateDemandGenVideoAdName(adGroupName string) error {
+	name := demandGenVideoAdName(adGroupName)
+	if n := utf8.RuneCountInString(name); n > maxAdNameRunes {
+		return fmt.Errorf("google-ads Demand Gen video ad name %q is %d characters, over Google's %d; shorten EventName or the ad group's name", capForError(name), n, maxAdNameRunes)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -353,7 +373,7 @@ func (c *Client) createDemandGenVideoAd(ctx context.Context, adGroupResource, ad
 	}
 	var results googleAdsMutateResponse
 	if uErr := json.Unmarshal(resp, &results); uErr != nil || len(results.MutateOperationResponses) != len(ops) {
-		return assetIDs, "", fmt.Errorf("google-ads demand gen video ad %q creation UNCONFIRMED (ad group %s created; 2xx with a malformed/short mutate response — the ad and its assets may exist — verify in Google Ads before retrying)", adName, adGroupID)
+		return assetIDs, "", fmt.Errorf("google-ads demand gen video ad %q creation UNCONFIRMED (ad group %s and %d logo asset(s) created; 2xx with a malformed/short mutate response — the ad and its assets may exist — verify in Google Ads before retrying)", adName, adGroupID, len(assetIDs))
 	}
 	for i, r := range results.MutateOperationResponses[:assetOpCount] {
 		id := ""

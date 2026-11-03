@@ -81,22 +81,29 @@ type adGroupCriterionDemandGenCreate struct {
 // adapter keeps the field off by default (GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED, see
 // dispatch.googleAdsDemandGenAudienceEnabled) until #468 adds a foundation-scoped check.
 func validateDemandGenAudience(kind, customerID, audience string) (string, error) {
+	return validateDemandGenAudienceField(kind, customerID, "DemandGenAudience", audience)
+}
+
+// validateDemandGenAudienceField is validateDemandGenAudience with the field named in its
+// errors, so a DemandGenAdGroups entry's refusal names that group's Audience (#460)
+// rather than the campaign-level field the caller did not set.
+func validateDemandGenAudienceField(kind, customerID, field, audience string) (string, error) {
 	if audience == "" {
 		return "", nil
 	}
 	if kind != campaignKindDemandGen {
-		return "", fmt.Errorf("google-ads: a Demand Gen audience is not supported on %s (only a Demand Gen ad group takes an Audience criterion here); omit DemandGenAudience, or create a Demand Gen campaign to target an Audience (Search takes user lists through AudienceSegments)", kind)
+		return "", fmt.Errorf("google-ads: a Demand Gen audience is not supported on %s (only a Demand Gen ad group takes an Audience criterion here); omit %s, or create a Demand Gen campaign to target an Audience (Search takes user lists through AudienceSegments)", kind, field)
 	}
 	trimmed := strings.TrimSpace(audience)
 	if trimmed == "" {
-		return "", fmt.Errorf("google-ads: DemandGenAudience must not be blank; omit it, or name an existing customers/<id>/audiences/<id> Audience")
+		return "", fmt.Errorf("google-ads: %s must not be blank; omit it, or name an existing customers/<id>/audiences/<id> Audience", field)
 	}
 	m := demandGenAudienceRE.FindStringSubmatch(trimmed)
 	if m == nil || canonicalCampaignID(m[2]) == "" {
-		return "", fmt.Errorf("google-ads: DemandGenAudience %q is not a customers/<id>/audiences/<id> Audience resource name with a positive canonical id (user lists and custom audiences go inside that Audience in the Google Ads UI)", capForError(trimmed))
+		return "", fmt.Errorf("google-ads: %s %q is not a customers/<id>/audiences/<id> Audience resource name with a positive canonical id (user lists and custom audiences go inside that Audience in the Google Ads UI)", field, capForError(trimmed))
 	}
 	if m[1] != customerID {
-		return "", fmt.Errorf("google-ads: DemandGenAudience %q belongs to customer %s, not the campaign's account %s; Google refuses another customer's Audience on this account's ad group (INVALID_CUSTOMER_ID)", capForError(trimmed), m[1], customerID)
+		return "", fmt.Errorf("google-ads: %s %q belongs to customer %s, not the campaign's account %s; Google refuses another customer's Audience on this account's ad group (INVALID_CUSTOMER_ID)", field, capForError(trimmed), m[1], customerID)
 	}
 	return trimmed, nil
 }

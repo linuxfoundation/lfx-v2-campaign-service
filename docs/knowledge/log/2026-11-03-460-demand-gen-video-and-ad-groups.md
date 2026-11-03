@@ -13,12 +13,13 @@ temporary resource name. Two Demand Gen ad groups under one campaign, each with 
 ad, were accepted.
 
 `googleAdsConfig.demandGenVideoCreative` maps to `CampaignInput.DemandGenVideoCreative`
-(`demandgen_video_creative.go`): 1-5 bare YouTube ids, exactly one logo, 1-5 headlines (30),
-long headlines (90) and descriptions (90), a business name (25) and an optional call to
-action from a short allow-list. It is refused off Demand Gen and beside `demandGenCreative`.
-The logo is fetched before the budget and uploaded by `assets:mutate`; then one atomic
-`googleAds:mutate` creates the YouTube and call-to-action assets and the PAUSED ad, named
-`<ad group name> - Video ad`.
+(`demandgen_video_creative.go`): 1-5 bare YouTube ids, exactly one logo, 1-5 headlines (40,
+probed: 41 refused), long headlines (90) and descriptions (90), a business name (25) and an
+optional call to action from five probed CallToActionType values. The composed ad name is
+held to Google's 255-character limit before the budget. The creative is refused off Demand
+Gen and beside `demandGenCreative`. The logo is fetched before the budget and uploaded by
+`assets:mutate`; then one atomic `googleAds:mutate` creates the YouTube and call-to-action
+assets and the PAUSED ad, named `<ad group name> - Video ad`.
 
 `googleAdsConfig.demandGenAdGroups` maps to `CampaignInput.DemandGenAdGroups`
 (`demandgen_adgroups.go`): up to five named groups, each with its own Audience and exactly
@@ -30,11 +31,10 @@ is empty, which leaves that path unchanged — and reports each group in `AdGrou
 first group in the scalar fields. A failure on group k returns groups 1..k-1 complete and what
 exists of k.
 
-The api-catalog Google Ads entries and the googleads and dispatch concepts are updated. The
-api-catalog `keywords` entry's "Demand Gen's ad group takes no criteria at all", stale since
-#459, now says it takes no keyword criteria.
+The api-catalog Google Ads entries and the googleads and dispatch concepts are updated.
 
 Tests: `demandgen_video_creative_test.go` and `demandgen_adgroups_test.go` (payloads,
-refusals, partial and UNCONFIRMED results), `TestAdTypeWireKeysMatchTheAdOneof`, and
+refusals naming the group, the shared 64 MiB total, the ad-name limit, partial and
+UNCONFIRMED results), `TestAdTypeWireKeysMatchTheAdOneof`, and
 `googleads_demandgen_video_adgroups_test.go` (mapping, snapshot, pre-budget refusals through
 dispatch).
