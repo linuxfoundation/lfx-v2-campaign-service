@@ -1723,13 +1723,37 @@ func (c *Client) findCampaignByName(ctx context.Context, name string) (string, e
 	// instrument is refused rather than reused: it bills somewhere this connection is not
 	// configured to bill, so adopting it would spend through the wrong instrument, and
 	// creating beside it would leave two campaigns under one name.
+	//
+	// The q value is nameSearchQuery(name), not name itself: a later-slot name carries a
+	// "#n" token (and an event or project name may carry a '#'), and how X's search treats
+	// '#' is unverified. A prefix is a superset under prefix or substring matching alike, and
+	// the exact comparison stays local.
 	fi := c.account.FundingInstrumentID
-	return c.findByNameChecked(ctx, "campaigns?with_deleted=false&count="+strconv.Itoa(listPageSize)+"&q="+url.QueryEscape(name), name, func(it campaignElement) error {
+	path := "campaigns?with_deleted=false&count=" + strconv.Itoa(listPageSize)
+	if q := nameSearchQuery(name); q != "" {
+		path += "&q=" + url.QueryEscape(q)
+	}
+	return c.findByNameChecked(ctx, path, name, func(it campaignElement) error {
 		if got := strings.TrimSpace(it.FundingInstrumentID); got != "" && fi != "" && got != fi {
 			return fmt.Errorf("lookup %q: a same-named campaign is on a different funding instrument than this connection's, so it is not reused and no duplicate is created; rename or remove it in X Ads Manager", name)
 		}
 		return nil
 	})
+}
+
+// nameSearchQuery returns the q filter for a campaign or line-item name lookup: the name up to
+// its first '#', with trailing spaces trimmed. A name without '#' is returned unchanged, so its
+// query is byte-identical to before. A '#' comes from a later slot's token ("... Prospecting #2
+// | ...") or from the event or project name ("C# Dev Summit"), and X's search has not been
+// verified to match it; the shorter prefix still matches the full name under prefix or
+// substring search, and findByNameChecked compares names exactly. "" means no usable prefix:
+// the caller drops q and walks the whole list, which the page cap still bounds and fails
+// closed on.
+func nameSearchQuery(name string) string {
+	if i := strings.IndexByte(name, '#'); i >= 0 {
+		name = name[:i]
+	}
+	return strings.TrimRight(name, " ")
 }
 
 // findLineItemByName returns the id of a line item matching name within a
@@ -1747,7 +1771,14 @@ func (c *Client) findLineItemByName(ctx context.Context, campaignID, name string
 	// PROVENANCE. A match that reports a parent campaign other than campaignID means the
 	// campaign_ids filter was not honoured, so nothing in the page is known to belong to
 	// this campaign: refused, never reused.
-	return c.findByNameChecked(ctx, "line_items?campaign_ids="+url.QueryEscape(campaignID)+"&with_deleted=false&count="+strconv.Itoa(listPageSize)+"&q="+url.QueryEscape(name), name, func(it campaignElement) error {
+	//
+	// q is nameSearchQuery(name) for the same reason as the campaign lookup: a '#' in the
+	// event name reaches the line-item name.
+	path := "line_items?campaign_ids=" + url.QueryEscape(campaignID) + "&with_deleted=false&count=" + strconv.Itoa(listPageSize)
+	if q := nameSearchQuery(name); q != "" {
+		path += "&q=" + url.QueryEscape(q)
+	}
+	return c.findByNameChecked(ctx, path, name, func(it campaignElement) error {
 		if got := strings.TrimSpace(it.CampaignID); got != "" && got != campaignID {
 			return fmt.Errorf("lookup %q: a same-named line item reports a different parent campaign than the one looked up, so the lookup's campaign filter cannot be trusted; aborting to avoid reusing or duplicating the wrong line item", name)
 		}

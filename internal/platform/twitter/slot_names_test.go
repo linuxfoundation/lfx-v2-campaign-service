@@ -119,3 +119,123 @@ func TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest(t *testing.T
 		})
 	}
 }
+
+// A later-slot name carries a "#n" token, and whether X's q= search matches '#' is unverified.
+// The lookup must send only the prefix before '#' (a superset under prefix or substring search)
+// and still compare names exactly, so a slot-2 retry finds its own campaign even when X's search
+// ignores or rejects the '#'. A name with no '#' keeps its byte-identical query.
+func TestNameSearchQuery(t *testing.T) {
+	head := "Events | KubeCon | Global | Awareness | "
+	cases := []struct{ name, want string }{
+		{head + "Prospecting | Promoted Post | cncf | MoFU", head + "Prospecting | Promoted Post | cncf | MoFU"},
+		{head + "Prospecting #2 | Promoted Post | cncf | MoFU", head + "Prospecting"},
+		{head + "Prospecting retargeting #3 | Promoted Post | cncf | BoFU", head + "Prospecting retargeting"},
+		{"#2 | x", ""},
+		{"Events | C# Dev Summit | Promoted Tweets | AUTO", "Events | C"},
+	}
+	for _, tc := range cases {
+		if got := nameSearchQuery(tc.name); got != tc.want {
+			t.Errorf("nameSearchQuery(%q) = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestFindCampaignByName_SlotTokenNotSentToSearch(t *testing.T) {
+	slot1 := "Events | KubeCon | Global | Awareness | Prospecting | Promoted Post | cncf | MoFU"
+	slot2 := "Events | KubeCon | Global | Awareness | Prospecting #2 | Promoted Post | cncf | MoFU"
+	slot3 := "Events | KubeCon | Global | Awareness | Prospecting #3 | Promoted Post | cncf | MoFU"
+	for _, tc := range []struct {
+		lookup, wantID, wantQ string
+		wantNoQ               bool
+	}{
+		{slot1, "c1", slot1, false},
+		{slot2, "c2", "Events | KubeCon | Global | Awareness | Prospecting", false},
+		{"#2 | x", "", "", true},
+	} {
+		var gotQ []string
+		var hadQ atomic.Bool
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			gotQ = append(gotQ, q.Get("q"))
+			if q.Has("q") {
+				hadQ.Store(true)
+			}
+			// Model a search that never matches a '#': the worst case the fix must survive.
+			if strings.Contains(q.Get("q"), "#") {
+				_, _ = w.Write([]byte(`{"data":[],"next_cursor":null}`))
+				return
+			}
+			// Prefix match, as X documents; the walk must pick the exact name out of it.
+			var rows []string
+			for _, el := range []struct{ id, name string }{{"c1", slot1}, {"c2", slot2}, {"c3", slot3}} {
+				if strings.HasPrefix(el.name, q.Get("q")) {
+					rows = append(rows, `{"id":"`+el.id+`","name":`+strconv.Quote(el.name)+`}`)
+				}
+			}
+			_, _ = w.Write([]byte(`{"data":[` + strings.Join(rows, ",") + `],"next_cursor":null}`))
+		}))
+		c := NewClient(
+			Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+			AccountConfig{AccountID: "acc1"},
+			WithBaseURL(srv.URL),
+			WithWriteDelay(0),
+		)
+		c.nonceFn = func() string { return "n" }
+		c.timeFn = staticTime
+
+		id, err := c.findCampaignByName(context.Background(), tc.lookup)
+		srv.Close()
+		if err != nil {
+			t.Fatalf("findCampaignByName(%q): %v", tc.lookup, err)
+		}
+		if id != tc.wantID {
+			t.Errorf("findCampaignByName(%q) = %q, want %q", tc.lookup, id, tc.wantID)
+		}
+		if len(gotQ) != 1 {
+			t.Fatalf("lookup %q made %d requests, want 1", tc.lookup, len(gotQ))
+		}
+		if tc.wantNoQ {
+			if hadQ.Load() {
+				t.Errorf("lookup %q sent q=%q, want no q filter", tc.lookup, gotQ[0])
+			}
+		} else if gotQ[0] != tc.wantQ {
+			t.Errorf("lookup %q sent q=%q, want %q", tc.lookup, gotQ[0], tc.wantQ)
+		}
+	}
+}
+
+// An event name can carry a '#' ("C# Dev Summit"), which reaches the line-item name. The line-item
+// lookup must cut it the same way, so a retry finds the line item under the reused campaign.
+func TestFindLineItemByName_HashNotSentToSearch(t *testing.T) {
+	name := "Events | C# Dev Summit | Promoted Tweets | AUTO"
+	var gotQ []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		gotQ = append(gotQ, q.Get("q"))
+		if strings.Contains(q.Get("q"), "#") {
+			_, _ = w.Write([]byte(`{"data":[],"next_cursor":null}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"li1","name":` + strconv.Quote(name) + `,"campaign_id":"camp1"},{"id":"li2","name":"Events | C | Promoted Tweets | AUTO","campaign_id":"camp1"}],"next_cursor":null}`))
+	}))
+	defer srv.Close()
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	id, err := c.findLineItemByName(context.Background(), "camp1", name)
+	if err != nil {
+		t.Fatalf("findLineItemByName: %v", err)
+	}
+	if id != "li1" {
+		t.Errorf("findLineItemByName = %q, want li1", id)
+	}
+	if len(gotQ) != 1 || gotQ[0] != "Events | C" {
+		t.Errorf("line-item lookup sent q=%q, want [\"Events | C\"]", gotQ)
+	}
+}
