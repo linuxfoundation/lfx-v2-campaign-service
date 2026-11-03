@@ -78,6 +78,9 @@ type demandGenCampaignCreate struct {
 	// absent — blinding the drift detector precisely where it is needed.
 	StartDateTime string `json:"startDateTime,omitempty"`
 	EndDateTime   string `json:"endDateTime,omitempty"`
+	// URLCustomParameters is the utmcampaign custom parameter (#476), from the same
+	// shared preflight as on every sibling payload; see campaignCreate.URLCustomParameters.
+	URLCustomParameters []urlCustomParameter `json:"urlCustomParameters,omitempty"`
 }
 
 // demandGenAdGroupCreate omits the `type` field that the Search path sets to
@@ -225,8 +228,9 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		GeoTargetTypeSetting:           geoTargetTypeSetting{PositiveGeoTargetType: geoTargetPresence},
 		// Resolved by the SHARED preflight, so an invalid window is refused before the
 		// budget mutate on this channel exactly as it is on Search.
-		StartDateTime: pf.startDateTime,
-		EndDateTime:   pf.endDateTime,
+		StartDateTime:       pf.startDateTime,
+		EndDateTime:         pf.endDateTime,
+		URLCustomParameters: pf.urlCustomParameters,
 		// Resolved by the SHARED preflight. On this channel the plan can only ever be
 		// maximize clicks, so this renders `targetSpend: {}` — matching the legacy
 		// Express implementation's `target_spend: {}`, which is what serves this channel
@@ -262,6 +266,9 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		return budgetPartial(), fmt.Errorf("google-ads demand gen campaign creation UNCONFIRMED (budget %s in place; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, err)
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, DEMAND_GEN, target spend, %s)", campaignID, flightWindowStep(pf.startDateTime, pf.endDateTime)))
+	if pf.utmCampaignStep != "" {
+		steps = append(steps, pf.utmCampaignStep)
+	}
 
 	campaignPartial := func() *CampaignResult {
 		r := budgetPartial()

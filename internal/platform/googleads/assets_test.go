@@ -103,7 +103,7 @@ func sampleSitelink() Sitelink {
 // Sitelinks
 // ---------------------------------------------------------------------------
 
-// A sitelink click is an ad click and must attribute to google/cpc. An untagged
+// A sitelink click is an ad click and must attribute to google/paid-search. An untagged
 // sitelink destination lands in the attribution data as organic traffic while
 // the campaign paid for the click, which is a reporting defect no dashboard can
 // recover from after the fact.
@@ -111,7 +111,7 @@ func TestValidateSitelinks_TagsTheDestinationLikeTheAdsOwnURL(t *testing.T) {
 	in := sampleInput()
 	in.Sitelinks = []Sitelink{sampleSitelink()}
 
-	got, err := validateSitelinks(in)
+	got, err := validateSitelinks(in, utmMediumSearch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestValidateSitelinks_TagsTheDestinationLikeTheAdsOwnURL(t *testing.T) {
 		t.Fatalf("got %+v, want one sitelink with one final URL", got)
 	}
 	url := got[0].FinalURLs[0]
-	for _, want := range []string{"utm_source=google", "utm_medium=cpc", "events.example.org/register"} {
+	for _, want := range []string{"utm_source=google", "utm_medium=paid-search", "events.example.org/register"} {
 		if !strings.Contains(url, want) {
 			t.Errorf("sitelink destination %q is missing %q", url, want)
 		}
@@ -141,7 +141,7 @@ func TestValidateSitelinks_OmitsTheDescriptionKeysWhenUnset(t *testing.T) {
 	in := sampleInput()
 	in.Sitelinks = []Sitelink{{Text: "Register now", FinalURL: "https://events.example.org/register"}}
 
-	got, err := validateSitelinks(in)
+	got, err := validateSitelinks(in, utmMediumSearch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestValidateSitelinks_RejectsBadInput(t *testing.T) {
 	for name, sitelinks := range bad {
 		in := sampleInput()
 		in.Sitelinks = sitelinks
-		if _, err := validateSitelinks(in); err == nil {
+		if _, err := validateSitelinks(in, utmMediumSearch); err == nil {
 			t.Errorf("%s must be rejected", name)
 		}
 	}
@@ -201,7 +201,7 @@ func TestValidateSitelinks_ErrorDoesNotEchoTheRawURL(t *testing.T) {
 	in := sampleInput()
 	in.Sitelinks = []Sitelink{{Text: "Register", FinalURL: "ftp://e.example.org/r?token=s3cret"}}
 
-	_, err := validateSitelinks(in)
+	_, err := validateSitelinks(in, utmMediumSearch)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -215,11 +215,11 @@ func TestValidateSitelinks_CapsTheList(t *testing.T) {
 	for i := 0; i < maxSitelinks+1; i++ {
 		in.Sitelinks = append(in.Sitelinks, Sitelink{Text: "Link " + strconv.Itoa(i), FinalURL: "https://e.example.org/r"})
 	}
-	if _, err := validateSitelinks(in); err == nil {
+	if _, err := validateSitelinks(in, utmMediumSearch); err == nil {
 		t.Fatalf("expected %d sitelinks to exceed the cap of %d", len(in.Sitelinks), maxSitelinks)
 	}
 	in.Sitelinks = in.Sitelinks[:maxSitelinks]
-	if _, err := validateSitelinks(in); err != nil {
+	if _, err := validateSitelinks(in, utmMediumSearch); err != nil {
 		t.Fatalf("exactly %d sitelinks must be accepted, got %v", maxSitelinks, err)
 	}
 }

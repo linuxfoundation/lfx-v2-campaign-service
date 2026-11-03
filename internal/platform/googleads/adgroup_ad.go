@@ -292,9 +292,10 @@ func compositeResourceID(resourceName string) (parentID, id string) {
 // budget+campaign already committed — surfacing it only inside
 // createAdGroupAndAd (which runs after both prior mutates) would orphan a
 // real campaign+budget with no ad group/ad for what is purely a local
-// input-validation failure.
-func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, ad adPlan, adGroupName string, keywords []Keyword, audienceSegments []string, err error) {
-	finalURL, err = buildAdFinalURL(in.RegistrationURL, in.EventSlug, in.EventName, in.Project, in.utmCampaignFallback())
+// input-validation failure. medium is the final URL's utm_medium, from
+// utmMediumFor(kind).
+func precomputeAdGroupAdInputs(in CampaignInput, medium string) (finalURL string, ad adPlan, adGroupName string, keywords []Keyword, audienceSegments []string, err error) {
+	finalURL, err = buildAdFinalURL(medium, in.RegistrationURL, in.EventSlug, in.EventName, in.Project, in.utmCampaignFallback())
 	if err != nil {
 		return "", adPlan{}, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid destination URL): %w", err)
 	}

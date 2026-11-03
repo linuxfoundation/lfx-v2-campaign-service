@@ -33,7 +33,7 @@ func TestUTMCampaignFallbackIsTheBareBriefID(t *testing.T) {
 			// Caller copy, so an input without an event name still yields a valid ad.
 			in.Headlines = []string{"Join the community", "Register today", "Cloud native event"}
 			in.Descriptions = []string{"Three days of talks and workshops.", "Meet maintainers and end users."}
-			finalURL, _, _, _, _, err := precomputeAdGroupAdInputs(in)
+			finalURL, _, _, _, _, err := precomputeAdGroupAdInputs(in, utmMediumSearch)
 			if err != nil {
 				t.Fatalf("precompute: %v", err)
 			}
@@ -72,7 +72,7 @@ func TestValidateSitelinks_UTMCampaignFallbackIsTheBareBriefID(t *testing.T) {
 	in := sampleInput()
 	in.EventSlug, in.EventName, in.NameSuffix, in.UTMCampaignFallback = "", "", "brief-1-2", "brief-1"
 	in.Sitelinks = []Sitelink{sampleSitelink()}
-	got, err := validateSitelinks(in)
+	got, err := validateSitelinks(in, utmMediumSearch)
 	if err != nil {
 		t.Fatalf("validateSitelinks: %v", err)
 	}

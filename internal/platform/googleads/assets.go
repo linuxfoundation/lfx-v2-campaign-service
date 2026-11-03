@@ -185,8 +185,10 @@ func validateAssetPlan(kind string, in CampaignInput) (assetPlan, error) {
 	}
 
 	var plan assetPlan
+	// Extension destinations carry the same utm_medium as the ad's own final URL.
+	medium := utmMediumFor(kind)
 
-	sitelinks, err := validateSitelinks(in)
+	sitelinks, err := validateSitelinks(in, medium)
 	if err != nil {
 		return assetPlan{}, err
 	}
@@ -226,7 +228,7 @@ func validateAssetPlan(kind string, in CampaignInput) (assetPlan, error) {
 	}
 	plan.calls = len(calls)
 
-	promotions, err := validatePromotionExtensions(in)
+	promotions, err := validatePromotionExtensions(in, medium)
 	if err != nil {
 		return assetPlan{}, err
 	}
@@ -236,7 +238,7 @@ func validateAssetPlan(kind string, in CampaignInput) (assetPlan, error) {
 	}
 	plan.promotions = len(promotions)
 
-	prices, err := validatePriceExtensions(in)
+	prices, err := validatePriceExtensions(in, medium)
 	if err != nil {
 		return assetPlan{}, err
 	}
@@ -263,7 +265,7 @@ func validateAssetPlan(kind string, in CampaignInput) (assetPlan, error) {
 // is tagged exactly like the ad's own final URL — a sitelink click IS an ad
 // click, and an untagged one would land in the attribution data as organic
 // traffic while the campaign paid for it.
-func validateSitelinks(in CampaignInput) ([]assetCreate, error) {
+func validateSitelinks(in CampaignInput, medium string) ([]assetCreate, error) {
 	if len(in.Sitelinks) > maxSitelinks {
 		return nil, fmt.Errorf("google-ads campaign accepts at most %d sitelinks, got %d", maxSitelinks, len(in.Sitelinks))
 	}
@@ -296,7 +298,7 @@ func validateSitelinks(in CampaignInput) ([]assetCreate, error) {
 			}
 		}
 
-		finalURL, err := buildTaggedFinalURL(fmt.Sprintf("sitelink %q destination URL", text), s.FinalURL, in.EventSlug, in.EventName, in.Project, in.utmCampaignFallback())
+		finalURL, err := buildTaggedFinalURL(fmt.Sprintf("sitelink %q destination URL", text), medium, s.FinalURL, in.EventSlug, in.EventName, in.Project, in.utmCampaignFallback())
 		if err != nil {
 			return nil, fmt.Errorf("google-ads sitelink %d is unservable: %w", i, err)
 		}
