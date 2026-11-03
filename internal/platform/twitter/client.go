@@ -1723,13 +1723,35 @@ func (c *Client) findCampaignByName(ctx context.Context, name string) (string, e
 	// instrument is refused rather than reused: it bills somewhere this connection is not
 	// configured to bill, so adopting it would spend through the wrong instrument, and
 	// creating beside it would leave two campaigns under one name.
+	//
+	// The q value is campaignNameQuery(name), not name itself: a later-slot name carries a
+	// "#n" token, and how X's search treats '#' is unverified. A prefix is a superset under
+	// prefix or substring matching alike, and the exact comparison stays local.
 	fi := c.account.FundingInstrumentID
-	return c.findByNameChecked(ctx, "campaigns?with_deleted=false&count="+strconv.Itoa(listPageSize)+"&q="+url.QueryEscape(name), name, func(it campaignElement) error {
+	path := "campaigns?with_deleted=false&count=" + strconv.Itoa(listPageSize)
+	if q := campaignNameQuery(name); q != "" {
+		path += "&q=" + url.QueryEscape(q)
+	}
+	return c.findByNameChecked(ctx, path, name, func(it campaignElement) error {
 		if got := strings.TrimSpace(it.FundingInstrumentID); got != "" && fi != "" && got != fi {
 			return fmt.Errorf("lookup %q: a same-named campaign is on a different funding instrument than this connection's, so it is not reused and no duplicate is created; rename or remove it in X Ads Manager", name)
 		}
 		return nil
 	})
+}
+
+// campaignNameQuery returns the q filter for a campaign name lookup: the name up to its first
+// '#', with trailing spaces trimmed. Names without '#' (every slot-1 name) are returned
+// unchanged, so their query is byte-identical to before. A later-slot name ("... Prospecting #2
+// | ...") is cut before the slot token, which X's search has not been verified to match; the
+// shorter prefix still matches the full name under prefix or substring search, and
+// findByNameChecked compares names exactly. "" means no usable prefix: the caller drops q and
+// walks the whole list, which the page cap still bounds and fails closed on.
+func campaignNameQuery(name string) string {
+	if i := strings.IndexByte(name, '#'); i >= 0 {
+		name = name[:i]
+	}
+	return strings.TrimRight(name, " ")
 }
 
 // findLineItemByName returns the id of a line item matching name within a

@@ -1500,6 +1500,13 @@ level returns the partial carrying the campaign. Because the walk no longer stop
 match, a lookup that used to succeed on a page-1 match can now fail closed on a later full page
 with no usable cursor or at `maxListPages`; with the server-side `q=` filter that is unlikely.
 
+The campaign lookup's `q=` is `campaignNameQuery(name)`, not the name itself: the name up to its
+first `#`, trailing spaces trimmed. Every slot-1 name has no `#`, so its query is unchanged. A
+later-slot name (`Prospecting #2`) is searched by the prefix before the slot token, because
+whether X's search matches `#` is unverified and a miss would read as not-found and create a
+duplicate on retry. The prefix is a superset under prefix or substring search, and the exact
+comparison above picks the row's own campaign out of it. A name starting with `#` sends no `q`.
+
 `listPromotedTweets` (`promoted_tweet_lookup.go`) reads `GET promoted_tweets?line_item_ids=
 <id>&with_deleted=false&count=200` and fails closed exactly as `findByName` does (no data
 field, a full page with no usable cursor, a repeated cursor, the page cap), plus on any element
