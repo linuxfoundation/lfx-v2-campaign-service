@@ -15,20 +15,32 @@ import (
 )
 
 const (
-	goalTestAction1 = "customers/1234567890/conversionActions/11"
-	goalTestAction2 = "customers/1234567890/conversionActions/22"
-	goalTestGoal    = "customers/1234567890/customConversionGoals/777"
-	goalTestConfig  = "customers/1234567890/conversionGoalCampaignConfigs/222"
+	goalTestAction1  = "customers/1234567890/conversionActions/11"
+	goalTestAction2  = "customers/1234567890/conversionActions/22"
+	goalTestGoal     = "customers/1234567890/customConversionGoals/777"
+	goalTestHandGoal = "customers/1234567890/customConversionGoals/888"
+	goalTestConfig   = "customers/1234567890/conversionGoalCampaignConfigs/222"
+	goalTestBiddable = "customers/1234567890/campaignConversionGoals/222~PURCHASE~WEBSITE"
 )
 
-// goalFake scripts the four calls the goal step makes. searches answers each GAQL lookup in
-// turn; an unset handler fails the test, so a call the scenario does not expect is caught.
+// goalTestCampaignGoals is the default answer to the read of the campaign's inherited account
+// goals: one still biddable, one not.
+var goalTestCampaignGoals = `{"results":[` +
+	`{"campaignConversionGoal":{"resourceName":"` + goalTestBiddable + `","biddable":true}},` +
+	`{"campaignConversionGoal":{"resourceName":"customers/1234567890/campaignConversionGoals/222~SIGNUP~WEBSITE"}}]}`
+
+// goalFake scripts the calls the goal step makes. searches answers each custom-goal GAQL
+// lookup in turn; campaignGoals answers the read of the campaign's own goals (the default
+// above when empty). An unset create fails the test, so a call the scenario does not expect
+// is caught. restore and atomic override the default 2xx that echoes what was sent.
 type goalFake struct {
-	mu       sync.Mutex
-	searches []string
-	create   http.HandlerFunc
-	config   http.HandlerFunc
-	bodies   map[string][]string
+	mu            sync.Mutex
+	searches      []string
+	campaignGoals string
+	create        http.HandlerFunc
+	restore       http.HandlerFunc
+	atomic        http.HandlerFunc
+	bodies        map[string][]string
 }
 
 func (f *goalFake) record(path string, body []byte) {
@@ -54,6 +66,13 @@ func goalClient(t *testing.T, f *goalFake) *Client {
 		body, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case strings.HasSuffix(r.URL.Path, "googleAds:search") && strings.Contains(string(body), "FROM campaign_conversion_goal"):
+			f.record("campaign goals", body)
+			out := f.campaignGoals
+			if out == "" {
+				out = goalTestCampaignGoals
+			}
+			_, _ = io.WriteString(w, out)
 		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
 			f.record("search", body)
 			f.mu.Lock()
@@ -76,6 +95,10 @@ func goalClient(t *testing.T, f *goalFake) *Client {
 			}
 			_ = json.Unmarshal(body, &op)
 			if len(op.Operations) == 1 && len(op.Operations[0].Update) > 0 {
+				if f.restore != nil {
+					f.restore(w, r)
+					return
+				}
 				_, _ = io.WriteString(w, `{"results":[{"resourceName":"`+goalTestGoal+`"}]}`)
 				return
 			}
@@ -85,13 +108,13 @@ func goalClient(t *testing.T, f *goalFake) *Client {
 				return
 			}
 			f.create(w, r)
-		case strings.HasSuffix(r.URL.Path, "conversionGoalCampaignConfigs:mutate"):
-			f.record("config", body)
-			if f.config == nil {
-				_, _ = io.WriteString(w, `{"results":[{"resourceName":"`+goalTestConfig+`"}]}`)
+		case strings.HasSuffix(r.URL.Path, "googleAds:mutate"):
+			f.record("atomic", body)
+			if f.atomic != nil {
+				f.atomic(w, r)
 				return
 			}
-			f.config(w, r)
+			_, _ = io.WriteString(w, echoGoalMutate(body))
 		default:
 			t.Errorf("unexpected request %s", r.URL.Path)
 			http.Error(w, "unexpected", http.StatusNotFound)
@@ -99,6 +122,36 @@ func goalClient(t *testing.T, f *goalFake) *Client {
 	}))
 	t.Cleanup(apiSrv.Close)
 	return NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
+}
+
+// echoGoalMutate answers a googleAds:mutate with one result per operation, naming what it
+// updated, as Google does.
+func echoGoalMutate(body []byte) string {
+	var req struct {
+		MutateOperations []struct {
+			ConversionGoalCampaignConfigOperation *struct {
+				Update struct {
+					ResourceName string `json:"resourceName"`
+				} `json:"update"`
+			} `json:"conversionGoalCampaignConfigOperation"`
+			CampaignConversionGoalOperation *struct {
+				Update struct {
+					ResourceName string `json:"resourceName"`
+				} `json:"update"`
+			} `json:"campaignConversionGoalOperation"`
+		} `json:"mutateOperations"`
+	}
+	_ = json.Unmarshal(body, &req)
+	var parts []string
+	for _, op := range req.MutateOperations {
+		switch {
+		case op.ConversionGoalCampaignConfigOperation != nil:
+			parts = append(parts, `{"conversionGoalCampaignConfigResult":{"resourceName":"`+op.ConversionGoalCampaignConfigOperation.Update.ResourceName+`"}}`)
+		case op.CampaignConversionGoalOperation != nil:
+			parts = append(parts, `{"campaignConversionGoalResult":{"resourceName":"`+op.CampaignConversionGoalOperation.Update.ResourceName+`"}}`)
+		}
+	}
+	return `{"mutateOperationResponses":[` + strings.Join(parts, ",") + `]}`
 }
 
 func goalRow(status string, actions ...string) string {
@@ -122,7 +175,7 @@ func TestApplyCampaignConversionGoal_NoActionsWritesNothing(t *testing.T) {
 	if err != nil || step != "" {
 		t.Fatalf("got (%q, %v), want no step and no error", step, err)
 	}
-	if n := len(f.sent("search")) + len(f.sent("goal")) + len(f.sent("config")); n != 0 {
+	if n := len(f.sent("search")) + len(f.sent("goal")) + len(f.sent("atomic")); n != 0 {
 		t.Errorf("made %d requests with no actions named", n)
 	}
 }
@@ -150,14 +203,60 @@ func TestApplyCampaignConversionGoal_CreatesThenPointsTheCampaignAtIt(t *testing
 		}
 	}
 
-	config := f.sent("config")
-	if len(config) != 1 {
-		t.Fatalf("sent %d config updates, want 1", len(config))
+	atomic := f.sent("atomic")
+	if len(atomic) != 1 {
+		t.Fatalf("sent %d googleAds:mutate writes, want 1", len(atomic))
 	}
-	for _, want := range []string{`"resourceName":"` + goalTestConfig + `"`, `"goalConfigLevel":"CAMPAIGN"`, `"customConversionGoal":"` + goalTestGoal + `"`, `"updateMask":"goal_config_level,custom_conversion_goal"`} {
-		if !strings.Contains(config[0], want) {
-			t.Errorf("config update %s lacks %s", config[0], want)
+	for _, want := range []string{
+		`"conversionGoalCampaignConfigOperation":{"update":{"resourceName":"` + goalTestConfig + `"`,
+		`"goalConfigLevel":"CAMPAIGN"`, `"customConversionGoal":"` + goalTestGoal + `"`,
+		`"updateMask":"goal_config_level,custom_conversion_goal"`,
+	} {
+		if !strings.Contains(atomic[0], want) {
+			t.Errorf("atomic write %s lacks %s", atomic[0], want)
 		}
+	}
+}
+
+// The custom goal is ADDED to what the campaign bids toward, so every inherited account goal
+// still biddable is taken out of bidding in the same atomic write; one already not biddable is
+// left alone.
+func TestApplyCampaignConversionGoal_TakesTheAccountGoalsOutOfBidding(t *testing.T) {
+	f := &goalFake{searches: []string{goalRow("ENABLED", goalTestAction1)}}
+	c := goalClient(t, f)
+	step, err := c.applyCampaignConversionGoal(context.Background(), "222", goalPlan(biddingMaximizeConversions, goalTestAction1))
+	if err != nil {
+		t.Fatalf("applyCampaignConversionGoal: %v", err)
+	}
+	atomic := f.sent("atomic")
+	if len(atomic) != 1 {
+		t.Fatalf("sent %d googleAds:mutate writes, want 1", len(atomic))
+	}
+	want := `{"campaignConversionGoalOperation":{"update":{"resourceName":"` + goalTestBiddable + `","biddable":false},"updateMask":"biddable"}}`
+	if !strings.Contains(atomic[0], want) {
+		t.Errorf("atomic write %s lacks %s", atomic[0], want)
+	}
+	if strings.Contains(atomic[0], "SIGNUP") {
+		t.Errorf("atomic write %s touches a goal that was not biddable", atomic[0])
+	}
+	if !strings.Contains(step, "1 account goal(s) set not biddable") {
+		t.Errorf("step = %q, want it to count the goals taken out of bidding", step)
+	}
+}
+
+// A goal row that does not belong to this campaign is refused before anything is written.
+func TestApplyCampaignConversionGoal_RefusesAnotherCampaignsGoalRow(t *testing.T) {
+	f := &goalFake{
+		searches:      []string{goalRow("ENABLED", goalTestAction1)},
+		campaignGoals: `{"results":[{"campaignConversionGoal":{"resourceName":"customers/1234567890/campaignConversionGoals/999~PURCHASE~WEBSITE","biddable":true}}]}`,
+	}
+	c := goalClient(t, f)
+	_, err := c.applyCampaignConversionGoal(context.Background(), "222", goalPlan(biddingMaximizeConversions, goalTestAction1))
+	if err == nil || !strings.Contains(err.Error(), "NOT applied") {
+		t.Fatalf("err = %v, want the goal NOT applied", err)
+	}
+	if n := len(f.sent("atomic")); n != 0 {
+		t.Errorf("sent %d writes after refusing the read", n)
 	}
 }
 
@@ -175,8 +274,8 @@ func TestApplyCampaignConversionGoal_ReusesAnEnabledGoalForTheSameSet(t *testing
 	if n := len(f.sent("goal")); n != 0 {
 		t.Errorf("sent %d custom goal writes for a goal that already matched", n)
 	}
-	if n := len(f.sent("config")); n != 1 {
-		t.Errorf("sent %d config updates, want 1", n)
+	if n := len(f.sent("atomic")); n != 1 {
+		t.Errorf("sent %d googleAds:mutate writes, want 1", n)
 	}
 }
 
@@ -209,7 +308,7 @@ func TestApplyCampaignConversionGoal_RestoresARemovedOrEditedGoal(t *testing.T) 
 func TestApplyCampaignConversionGoal_ADuplicateNameUsesTheWinnersGoal(t *testing.T) {
 	f := &goalFake{
 		searches: []string{`{"results":[]}`, goalRow("ENABLED", goalTestAction1)},
-		create:   gaqlError(http.StatusBadRequest, "customConversionGoalError", "DUPLICATE_NAME"),
+		create:   gaqlError(http.StatusBadRequest, "customConversionGoalError", "CUSTOM_GOAL_DUPLICATE_NAME"),
 	}
 	c := goalClient(t, f)
 	step, err := c.applyCampaignConversionGoal(context.Background(), "222", goalPlan(biddingMaximizeConversions, goalTestAction1))
@@ -219,8 +318,107 @@ func TestApplyCampaignConversionGoal_ADuplicateNameUsesTheWinnersGoal(t *testing
 	if !strings.Contains(step, "reused") {
 		t.Errorf("step = %q, want the winner's goal reported as reused", step)
 	}
-	if n := len(f.sent("config")); n != 1 {
-		t.Errorf("sent %d config updates, want 1", n)
+	if n := len(f.sent("atomic")); n != 1 {
+		t.Errorf("sent %d googleAds:mutate writes, want 1", n)
+	}
+}
+
+func handGoalRows(actions ...string) string {
+	raw, _ := json.Marshal(actions)
+	return `{"results":[{"customConversionGoal":{"resourceName":"` + goalTestHandGoal + `","status":"ENABLED","conversionActions":` + string(raw) + `}}]}`
+}
+
+// Google refuses a second goal holding the same action list under any name. A goal made by
+// hand for exactly that set is reused as it stands: never edited, and named as such.
+func TestApplyCampaignConversionGoal_ReusesAHandMadeGoalHoldingTheSameActions(t *testing.T) {
+	f := &goalFake{
+		searches: []string{`{"results":[]}`, handGoalRows(goalTestAction2, goalTestAction1)},
+		create:   gaqlError(http.StatusBadRequest, "customConversionGoalError", "DUPLICATE_CONVERSION_ACTION_LIST"),
+	}
+	c := goalClient(t, f)
+	step, err := c.applyCampaignConversionGoal(context.Background(), "222", goalPlan(biddingMaximizeConversions, goalTestAction1, goalTestAction2))
+	if err != nil {
+		t.Fatalf("applyCampaignConversionGoal: %v", err)
+	}
+	if !strings.Contains(step, "custom goal 888, reused: an existing goal already holds these actions") {
+		t.Errorf("step = %q, want the hand-made goal named as reused", step)
+	}
+	if n := len(f.sent("goal")); n != 1 {
+		t.Errorf("sent %d custom goal writes, want only the refused create", n)
+	}
+	atomic := f.sent("atomic")
+	if len(atomic) != 1 || !strings.Contains(atomic[0], `"customConversionGoal":"`+goalTestHandGoal+`"`) {
+		t.Errorf("atomic writes %v, want one pointing the campaign at the hand-made goal", atomic)
+	}
+}
+
+// With no enabled goal holding the set (a removed one can still hold it), the refusal stands.
+func TestApplyCampaignConversionGoal_ADuplicateActionListWithNoEnabledGoalIsNotApplied(t *testing.T) {
+	f := &goalFake{
+		searches: []string{`{"results":[]}`, handGoalRows(goalTestAction1)},
+		create:   gaqlError(http.StatusBadRequest, "customConversionGoalError", "DUPLICATE_CONVERSION_ACTION_LIST"),
+	}
+	c := goalClient(t, f)
+	_, err := c.applyCampaignConversionGoal(context.Background(), "222", goalPlan(biddingMaximizeConversions, goalTestAction1, goalTestAction2))
+	if err == nil || !strings.Contains(err.Error(), "NOT applied") {
+		t.Fatalf("err = %v, want the goal NOT applied", err)
+	}
+	if n := len(f.sent("atomic")); n != 0 {
+		t.Errorf("sent %d writes with no goal to point at", n)
+	}
+}
+
+// A restore of the LFX goal that Google refuses because a hand-made goal now holds the set
+// uses that goal instead, and leaves the LFX one as it is.
+func TestApplyCampaignConversionGoal_ARestoreBlockedByAHandMadeGoalUsesIt(t *testing.T) {
+	f := &goalFake{
+		searches: []string{goalRow("ENABLED", goalTestAction1), handGoalRows(goalTestAction1, goalTestAction2)},
+		restore:  gaqlError(http.StatusBadRequest, "customConversionGoalError", "DUPLICATE_CONVERSION_ACTION_LIST"),
+	}
+	c := goalClient(t, f)
+	if _, err := c.applyCampaignConversionGoal(context.Background(), "222", goalPlan(biddingMaximizeConversions, goalTestAction1, goalTestAction2)); err != nil {
+		t.Fatalf("applyCampaignConversionGoal: %v", err)
+	}
+	atomic := f.sent("atomic")
+	if len(atomic) != 1 || !strings.Contains(atomic[0], `"customConversionGoal":"`+goalTestHandGoal+`"`) {
+		t.Errorf("atomic writes %v, want one pointing the campaign at the hand-made goal", atomic)
+	}
+}
+
+// A restore is confirmed for THIS goal before the campaign is pointed at it. One that answered
+// 2xx naming another goal, or failed after a retried 429, may or may not have applied: the
+// campaign is not pointed at it, and the error is UNCONFIRMED about the goal.
+func TestApplyCampaignConversionGoal_AnUnconfirmedRestoreIsNotUsed(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	for name, restore := range map[string]http.HandlerFunc{
+		"2xx naming another goal": func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"`+goalTestHandGoal+`"}]}`)
+		},
+		"400 after a retried 429": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			calls++
+			first := calls == 1
+			mu.Unlock()
+			if first {
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = io.WriteString(w, `{"error":{"code":8,"status":"RESOURCE_EXHAUSTED"}}`)
+				return
+			}
+			gaqlError(http.StatusBadRequest, "customConversionGoalError", "INVALID_CONVERSION_ACTION")(w, r)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &goalFake{searches: []string{goalRow("REMOVED", goalTestAction1)}, restore: restore}
+			c := goalClient(t, f)
+			_, err := c.applyCampaignConversionGoal(context.Background(), "222", goalPlan(biddingMaximizeConversions, goalTestAction1))
+			if err == nil || !IsOutcomeUnconfirmed(err) {
+				t.Fatalf("err = %v, want an unconfirmed restore", err)
+			}
+			if n := len(f.sent("atomic")); n != 0 {
+				t.Errorf("pointed the campaign at a goal whose restore was not confirmed (%d writes)", n)
+			}
+		})
 	}
 }
 
@@ -231,9 +429,9 @@ func TestApplyCampaignConversionGoal_FailuresSayTheGoalWasNotApplied(t *testing.
 			searches: []string{`{"results":[]}`},
 			create:   gaqlError(http.StatusBadRequest, "customConversionGoalError", "INVALID_CONVERSION_ACTION"),
 		},
-		"config update refused": {
+		"atomic write refused": {
 			searches: []string{goalRow("ENABLED", goalTestAction1)},
-			config:   gaqlError(http.StatusBadRequest, "conversionGoalCampaignConfigError", "INVALID_GOAL_CONFIG_LEVEL"),
+			atomic:   gaqlError(http.StatusBadRequest, "conversionGoalCampaignConfigError", "INVALID_GOAL_CONFIG_LEVEL"),
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -245,11 +443,16 @@ func TestApplyCampaignConversionGoal_FailuresSayTheGoalWasNotApplied(t *testing.
 			if !strings.Contains(err.Error(), "conversion goal NOT applied to campaign 222") {
 				t.Errorf("error %q does not say the goal was not applied", err)
 			}
+			// The goal step runs first and every channel returns on its failure, so the error
+			// must say nothing else was built.
+			if !strings.Contains(err.Error(), "nothing past the campaign was built") {
+				t.Errorf("error %q does not say the create stopped here", err)
+			}
 		})
 	}
 }
 
-// A config update whose outcome is unknown may already have pointed the campaign at the goal,
+// An atomic write whose outcome is unknown may already have pointed the campaign at the goal,
 // so it is UNCONFIRMED, never "NOT applied": a 5xx, which is not retried, and a definite 400
 // that follows a retried 429, which the first attempt may already have applied.
 func TestApplyCampaignConversionGoal_AnUnknownConfigOutcomeIsUnconfirmed(t *testing.T) {
@@ -274,7 +477,7 @@ func TestApplyCampaignConversionGoal_AnUnknownConfigOutcomeIsUnconfirmed(t *test
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			f := &goalFake{searches: []string{goalRow("ENABLED", goalTestAction1)}, config: config}
+			f := &goalFake{searches: []string{goalRow("ENABLED", goalTestAction1)}, atomic: config}
 			c := goalClient(t, f)
 			_, err := c.applyCampaignConversionGoal(context.Background(), "222", goalPlan(biddingMaximizeConversions, goalTestAction1))
 			if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") || strings.Contains(err.Error(), "NOT applied") {
@@ -284,18 +487,30 @@ func TestApplyCampaignConversionGoal_AnUnknownConfigOutcomeIsUnconfirmed(t *test
 	}
 }
 
-// A 2xx that names another campaign's config is not taken as this campaign's goal.
-func TestApplyCampaignConversionGoal_AConfigResultForAnotherCampaignIsUnconfirmed(t *testing.T) {
-	f := &goalFake{
-		searches: []string{goalRow("ENABLED", goalTestAction1)},
-		config: func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/conversionGoalCampaignConfigs/999"}]}`)
-		},
-	}
-	c := goalClient(t, f)
-	_, err := c.applyCampaignConversionGoal(context.Background(), "222", goalPlan(biddingMaximizeConversions, goalTestAction1))
-	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
-		t.Fatalf("err = %v, want an UNCONFIRMED goal", err)
+// A 2xx whose results do not name this campaign's config and each goal taken out of bidding,
+// in order, is not taken as this campaign's goal.
+func TestApplyCampaignConversionGoal_AResultNamingAnythingElseIsUnconfirmed(t *testing.T) {
+	config := `{"conversionGoalCampaignConfigResult":{"resourceName":"` + goalTestConfig + `"}}`
+	goal := `{"campaignConversionGoalResult":{"resourceName":"` + goalTestBiddable + `"}}`
+	for name, resp := range map[string]string{
+		"another campaign's config": `{"mutateOperationResponses":[{"conversionGoalCampaignConfigResult":{"resourceName":"customers/1234567890/conversionGoalCampaignConfigs/999"}},` + goal + `]}`,
+		"another goal":              `{"mutateOperationResponses":[` + config + `,{"campaignConversionGoalResult":{"resourceName":"customers/1234567890/campaignConversionGoals/222~SIGNUP~WEBSITE"}}]}`,
+		"a goal result missing":     `{"mutateOperationResponses":[` + config + `]}`,
+		"no results":                `{}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &goalFake{
+				searches: []string{goalRow("ENABLED", goalTestAction1)},
+				atomic: func(w http.ResponseWriter, _ *http.Request) {
+					_, _ = io.WriteString(w, resp)
+				},
+			}
+			c := goalClient(t, f)
+			_, err := c.applyCampaignConversionGoal(context.Background(), "222", goalPlan(biddingMaximizeConversions, goalTestAction1))
+			if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+				t.Fatalf("err = %v, want an UNCONFIRMED goal", err)
+			}
+		})
 	}
 }
 

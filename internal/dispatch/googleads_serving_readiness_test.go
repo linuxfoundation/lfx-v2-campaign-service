@@ -23,7 +23,8 @@ type servingCapture struct {
 	campaign         []byte
 	campaignCriteria []byte
 	adGroup          []byte
-	// customGoal and goalConfig are the two conversion-goal writes (#436).
+	// customGoal and goalConfig are the conversion-goal writes (#436): the custom goal create,
+	// and the googleAds:mutate that points the campaign's config at it.
 	customGoal []byte
 	goalConfig []byte
 }
@@ -74,12 +75,13 @@ func servingServers(t *testing.T) ([]googleads.Option, *servingCapture) {
 			cap.customGoal = body
 			cap.mu.Unlock()
 			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/customConversionGoals/777"}]}`)
-		case strings.HasSuffix(r.URL.Path, "conversionGoalCampaignConfigs:mutate"):
+		case strings.HasSuffix(r.URL.Path, "googleAds:mutate"):
+			// The search above answers no campaign goals, so the write is the config alone.
 			body, _ := io.ReadAll(r.Body)
 			cap.mu.Lock()
 			cap.goalConfig = body
 			cap.mu.Unlock()
-			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/conversionGoalCampaignConfigs/222"}]}`)
+			_, _ = io.WriteString(w, `{"mutateOperationResponses":[{"conversionGoalCampaignConfigResult":{"resourceName":"customers/1234567890/conversionGoalCampaignConfigs/222"}}]}`)
 		default:
 			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
 		}
@@ -100,23 +102,6 @@ func writeCriteria(t *testing.T, w http.ResponseWriter, body []byte, kind, paren
 		return
 	}
 	_, _ = io.WriteString(w, out)
-}
-
-// servingUpdate is servingCreate for an update operation.
-func servingUpdate(t *testing.T, body []byte) map[string]any {
-	t.Helper()
-	var req struct {
-		Operations []struct {
-			Update map[string]any `json:"update"`
-		} `json:"operations"`
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		t.Fatalf("decode request: %v (body=%s)", err, body)
-	}
-	if len(req.Operations) == 0 {
-		t.Fatalf("no operations in body %s", body)
-	}
-	return req.Operations[0].Update
 }
 
 func servingCreate(t *testing.T, body []byte) map[string]any {

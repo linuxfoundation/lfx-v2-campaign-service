@@ -2117,16 +2117,31 @@ than dropped.
 **Conversion actions become a campaign-level conversion goal after the create**
 (`conversion_goal.go`, #436), on every channel. `applyCampaignConversionGoal` finds or
 creates one `CustomConversionGoal` per action SET — named `LFX | conversion goal | <hash>`
-from the sorted set, so every campaign naming the same actions shares it — then updates
-the campaign's `ConversionGoalCampaignConfig`
+from the sorted set, so every campaign naming the same actions shares it. Then ONE atomic
+`googleAds:mutate` updates the campaign's `ConversionGoalCampaignConfig`
 (`customers/<cid>/conversionGoalCampaignConfigs/<campaignId>`) to `goal_config_level`
-CAMPAIGN with that goal. A goal found REMOVED, or holding a different set, is restored to
-the set its name stands for; a create that loses a `DUPLICATE_NAME` race looks the winner
-up and uses it. It runs first among the post-create steps, with the geo step's partial-result
-contract: a failure returns the campaign id with an error saying the goal was NOT applied.
-A config update whose outcome is unknown (a 5xx, a transport failure, an exhausted 429, or a
-refusal after a retried 429, through `retriedUnconfirmed`) is UNCONFIRMED, as is one whose 2xx
-names another campaign's config. Under a click
+CAMPAIGN with that goal AND sets every inherited `CampaignConversionGoal` still biddable to
+`biddable=false`: the custom goal is added to what the campaign bids toward, so without the
+second half the account's goals stay biddable beside it. Google refuses the biddable half on
+its own (`EMPTY_CONVERSION_GOALS`); both halves together pass `validateOnly` against the LF
+account (2026-11-03), as does the custom goal create. The campaign goals are read first
+(`biddableCampaignConversionGoals`) and each must belong to this account and campaign.
+
+A goal found REMOVED, or holding a different set, is restored to the set its name stands
+for, through `doRequestCounted`, and the restore must name that goal before the campaign is
+pointed at it (otherwise UNCONFIRMED); a create that loses a `CUSTOM_GOAL_DUPLICATE_NAME`
+race looks the winner up and uses it. Google also refuses a second goal holding the same
+action list under ANY name (`DUPLICATE_CONVERSION_ACTION_LIST`, confirmed live): then the
+enabled goal holding exactly that set, often one made by hand, is reused as it stands and
+never edited, and the step line says so. With no enabled goal holding it, the refusal stands.
+
+The goal step runs FIRST after the campaign create and every channel returns on its
+failure, so the error also says nothing past the campaign was built (no location targeting,
+ad group, asset group or ads). It is a partial result: the campaign id comes back with an
+error saying the goal was NOT applied. An atomic write whose outcome is unknown (a 5xx, a
+transport failure, an exhausted 429, or a refusal after a retried 429, through
+`retriedUnconfirmed`) is UNCONFIRMED, as is a 2xx whose results do not name the config and
+each goal taken out of bidding, in order. Under a click
 strategy (manual CPC, maximize clicks, and Demand Gen's only strategy) the step line says
 the goal sets what counts as a conversion, not what the campaign bids for.
 
@@ -2135,8 +2150,8 @@ Display and refused on Demand Gen and Performance Max. Google documents that fie
 campaigns only, and it never ran against the live account. `validateConversionActions`
 still takes either a bare numeric id or the full `customers/<cid>/conversionActions/<id>`
 name, qualifies the bare one with the campaign's own account, refuses a full name owned by
-a DIFFERENT customer, and deduplicates across the two spellings. The goal path itself has
-not yet run against the live account either: a `validateOnly` probe is the open check.
+a DIFFERENT customer, and deduplicates across the two spellings. The goal path has run
+against the live account only under `validateOnly`; a real create is still unexercised.
 
 `conversions.go` is the read half and is strictly read-only:
 `ListConversionActions` is one GAQL search returning id, resource name, name,

@@ -1099,17 +1099,23 @@ conversionActions?: string[]    — OPTIONAL the conversion actions THIS campaig
                                   actions become a campaign-level conversion goal: one
                                   `CustomConversionGoal` per action set (named
                                   `LFX | conversion goal | <hash>` and shared by every campaign naming
-                                  the same set), and the campaign's `ConversionGoalCampaignConfig` set
-                                  to `goal_config_level` CAMPAIGN with that goal. Under a strategy that
+                                  the same set), and, in one atomic write, the campaign's
+                                  `ConversionGoalCampaignConfig` set to `goal_config_level` CAMPAIGN
+                                  with that goal and every account goal it inherited set not
+                                  biddable, so it bids only toward the chosen actions. When a goal
+                                  made by hand already holds exactly that set, Google refuses a
+                                  second one, and that goal is reused as it stands, never edited.
+                                  Under a strategy that
                                   bids for clicks (manual CPC, maximize clicks, and Demand Gen's only
                                   strategy) the goal decides what the campaign counts as a conversion,
                                   not what it bids for, and the step line says so.
 
-                                  Both writes follow the campaign create, so a failure is a PARTIAL
-                                  result: the campaign exists, PAUSED. A definite refusal says the
-                                  goal was NOT applied and the campaign bids toward the account's
-                                  goals; a config update whose outcome is unknown (a 5xx, a timeout,
-                                  an exhausted 429) says UNCONFIRMED. The earlier
+                                  The goal is the first step after the campaign create and the create
+                                  stops on its failure, so a failure is a PARTIAL result: the campaign
+                                  exists, PAUSED, with nothing else built, and the error says so. A
+                                  definite refusal says the goal was NOT applied and the campaign bids
+                                  toward the account's goals; a write whose outcome is unknown (a 5xx,
+                                  a timeout, an exhausted 429) says UNCONFIRMED. The earlier
                                   create-time field, `campaign.selective_optimization`, is no longer
                                   sent: Google documents it for App campaigns only.
 

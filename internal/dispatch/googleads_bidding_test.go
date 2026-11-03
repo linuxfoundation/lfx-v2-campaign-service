@@ -75,7 +75,17 @@ func TestGoogleAds_BiddingConfigFieldsReachCampaignCreate(t *testing.T) {
 			t.Errorf("conversionActions[%d] = %#v, want %q", i, actions[i], w)
 		}
 	}
-	update := servingUpdate(t, cap.goalConfig)
+	var write struct {
+		MutateOperations []struct {
+			ConversionGoalCampaignConfigOperation struct {
+				Update map[string]any `json:"update"`
+			} `json:"conversionGoalCampaignConfigOperation"`
+		} `json:"mutateOperations"`
+	}
+	if err := json.Unmarshal(cap.goalConfig, &write); err != nil || len(write.MutateOperations) == 0 {
+		t.Fatalf("decode goal write: %v (body=%s)", err, cap.goalConfig)
+	}
+	update := write.MutateOperations[0].ConversionGoalCampaignConfigOperation.Update
 	if update["resourceName"] != "customers/1234567890/conversionGoalCampaignConfigs/222" {
 		t.Errorf("config update names %#v, want the created campaign's config", update["resourceName"])
 	}
