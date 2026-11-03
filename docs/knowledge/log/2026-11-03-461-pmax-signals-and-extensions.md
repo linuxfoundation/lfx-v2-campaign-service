@@ -20,7 +20,9 @@ resource name so the signals name the group as Google returned it.
 which the PMax cascade links at the campaign level through Search's `createCampaignAssets`
 before the asset group, so a failure there leaves no group for the activation gate to accept
 and says the group was not attempted; call extensions, promotions, prices and lead forms stay
-Search only. The Performance Max demographic-exclusion refusal no longer says this client
+Search only. A Performance Max sitelink's destination is tagged like the asset group's final
+URL, with `utm_medium=cpc` (#476's `utmMediumFor`, which `validateAssetPlan` already applies by
+kind). The Performance Max demographic-exclusion refusal no longer says this client
 creates no asset group signals.
 
 Live facts come from `validateOnly` probes on 2026-11-03 (v23) only: the theme and audience

@@ -824,8 +824,9 @@ account-level tracking template reads as `utm_campaign={_utmcampaign}`. Without 
 `utm_campaign` came out empty on every LFX campaign. When the escaped name is over Google's
 250-character limit the parameter is left out, the create still goes ahead, and the campaign
 result's steps record `tracking template's utm_campaign left empty: …`. An adopted campaign is
-not changed. The final URLs this service tags — the ad's, and on Search each sitelink,
-promotion and price-offering destination — carry `utm_source=google` and a per-channel
+not changed. The final URLs this service tags — the ad's, on Search each sitelink,
+promotion and price-offering destination, and on Performance Max each sitelink destination
+(#461) — carry `utm_source=google` and a per-channel
 `utm_medium`: `paid-search` on Search, `display` on Demand Gen, Display and Video, and `cpc` on
 Performance Max (it was `cpc` on every channel before). Both are set unconditionally,
 replacing any `utm_source` or `utm_medium` the caller's URL carried; `utm_campaign`

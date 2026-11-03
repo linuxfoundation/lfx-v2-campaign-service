@@ -3030,8 +3030,10 @@ carries it too.
 Adoption (`adoptExisting`) creates nothing and sends no parameter.
 
 `utmMediumFor` maps the kind to the `utm_medium` every tagged final URL carries:
-the ad's, and on Search each sitelink, promotion and price-offering destination
-(`validateAssetPlan` passes the same medium to the extension validators). The
+the ad's, on Search each sitelink, promotion and price-offering destination, and on
+Performance Max each sitelink destination (#461) — `validateAssetPlan` passes
+`utmMediumFor(kind)` to the extension validators, so a Performance Max sitelink
+carries `cpc`. The
 event-level `utm_campaign` and `utm_content` on those URLs are unchanged.
 
 The settings readback (`GetCampaignSettings`) does not read `url_custom_parameters`
