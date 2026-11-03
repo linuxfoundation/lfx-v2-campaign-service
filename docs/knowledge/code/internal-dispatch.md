@@ -1102,7 +1102,7 @@ are all refused on Demand Gen, which takes languages on its ad group instead (#4
 (`googleAdsDemandGenAudienceEnabled`). That gate is not a channel rule. It exists because the
 client's check is account-scoped and the LF account is shared by every foundation (#468), and a
 caller can reach `Dispatch` without lfx-self-serve's root-only form. It sits in the adapter so it
-also covers direct callers. The client refuses them inside its own preflight,
+also covers direct callers. The client refuses the channel rules inside its own preflight,
 before its first mutate, and `Dispatch` validates unconditionally (including on the adoption
 path), so both paths already refuse in one place. A second copy in the adapter could only
 drift from it.
