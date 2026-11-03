@@ -13,7 +13,7 @@ See [charts/lfx-v2-campaign-service/templates/ruleset.yaml](../../../charts/lfx-
 
 ## Rules
 
-Rendered only when `heimdall.enabled`. Four rules, one per routed path group (the
+Rendered only when `heimdall.enabled`. Five rules, one per routed path group (the
 chart↔route parity invariant — see [httproute.md](httproute.md)):
 
 1. **`openapi:get`** — `/_campaigns/openapi.*` docs are publicly readable
@@ -26,7 +26,7 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
    route over the placeholder's `/_campaigns/**`. See
    [signed-creative-asset-urls.md](../architecture/signed-creative-asset-urls.md);
    `signed_asset_rule_test.go` pins its scope and that no other rule is anonymous-only.
-2. **`project-api`** — every project-nested endpoint (`connection-*` — including three
+3. **`project-api`** — every project-nested endpoint (`connection-*` — including three
    provider-specific sub-path families that are ruled by their own entries rather than by
    the shared `connection-*` family: `/accounts` on each provider whose dispatcher
    implements `AccountLister` — google-ads, meta-ads, linkedin-ads, microsoft-ads,
@@ -69,14 +69,28 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
    `campaign_manager` relation (D2 — reads AND writes; no read-only audience),
    scoped to `project:{uid}` where `{uid}` is resolved from the URL-captured
    `:projectId` slug (see "Slug-to-UID resolution" below). A single rule covers
-   all families because they share the identical authorization.
-4. **`campaigns-placeholder:deny`** — the reserved `/campaigns`, `/campaigns/*`,
+   all families because they share the identical authorization. The one exception is
+   `google-ads/conversion-actions`, which is NOT here (next rule).
+4. **`root-campaign-admin:get`** (#458) — GET only, on exactly
+   `/projects/:projectId/google-ads/conversion-actions`. That read lists every foundation's
+   conversion actions on the shared Google Ads customer, so a project `campaign_manager` must
+   not reach it. `project_slug_resolver_contextualizer` is called once with the FIXED slug
+   `ROOT`, and one `openfga_or_check` admits `writer_guard` OR `global_marketing_ops` on that
+   project's uid — the two checks of lfx-self-serve's `isRootCampaignPrincipal`. `writer_guard`
+   rather than `writer` because the platform model says endpoints guard on the `_guard`
+   relation. The `:projectId` capture is not used for authorization (a ROOT principal is
+   cross-foundation by definition); it still selects the credential in the service. `oidc` +
+   `anonymous_authenticator` as in `project-api`; `allow_all` with OpenFGA disabled.
+   `TestRootAdminRuleEnforcesRootPrincipal` pins the rendered values, and
+   `TestConversionActionsIsRuledOnlyByTheRootAdminRule` pins that this rule holds exactly
+   that path and `project-api` matches it nowhere.
+5. **`campaigns-placeholder:deny`** — the reserved `/campaigns`, `/campaigns/*`,
    and every other `/_campaigns/*` path (not openapi, not the signed asset route) are routed through Heimdall but are not
    real endpoints yet, so they **fail closed** with `deny_all`.
 
 ## Authenticator pairing
 
-The `project-api` rule pairs `oidc` with `anonymous_authenticator`: `oidc` alone
+The `project-api` and `root-campaign-admin:get` rules pair `oidc` with `anonymous_authenticator`: `oidc` alone
 would reject a credential-less request *before* OpenFGA runs, and it is
 `openfga_check` that actually rejects the anonymous subject (committee-service
 pattern). The pairing also lets the `openfga.enabled=false` branch fall back to

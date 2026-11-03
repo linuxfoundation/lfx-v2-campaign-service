@@ -206,6 +206,10 @@ type Client struct {
 	// list-google-ads-user-lists endpoint.
 	ListGoogleAdsUserListsDoer goahttp.Doer
 
+	// ListGoogleAdsConversionActions Doer is the HTTP client used to make requests
+	// to the list-google-ads-conversion-actions endpoint.
+	ListGoogleAdsConversionActionsDoer goahttp.Doer
+
 	// GetMetaAdsAudience Doer is the HTTP client used to make requests to the
 	// get-meta-ads-audience endpoint.
 	GetMetaAdsAudienceDoer goahttp.Doer
@@ -339,86 +343,87 @@ func NewClient(
 	restoreBody bool,
 ) *Client {
 	return &Client{
-		CreateGoogleAdsDoer:             doer,
-		GetGoogleAdsDoer:                doer,
-		UpdateGoogleAdsDoer:             doer,
-		DeleteGoogleAdsDoer:             doer,
-		TestGoogleAdsDoer:               doer,
-		SetCredentialGoogleAdsDoer:      doer,
-		CreateLinkedinAdsDoer:           doer,
-		GetLinkedinAdsDoer:              doer,
-		UpdateLinkedinAdsDoer:           doer,
-		DeleteLinkedinAdsDoer:           doer,
-		TestLinkedinAdsDoer:             doer,
-		SetCredentialLinkedinAdsDoer:    doer,
-		CreateMetaAdsDoer:               doer,
-		GetMetaAdsDoer:                  doer,
-		UpdateMetaAdsDoer:               doer,
-		DeleteMetaAdsDoer:               doer,
-		TestMetaAdsDoer:                 doer,
-		SetCredentialMetaAdsDoer:        doer,
-		CreateRedditAdsDoer:             doer,
-		GetRedditAdsDoer:                doer,
-		UpdateRedditAdsDoer:             doer,
-		DeleteRedditAdsDoer:             doer,
-		TestRedditAdsDoer:               doer,
-		SetCredentialRedditAdsDoer:      doer,
-		CreateTwitterAdsDoer:            doer,
-		GetTwitterAdsDoer:               doer,
-		UpdateTwitterAdsDoer:            doer,
-		DeleteTwitterAdsDoer:            doer,
-		TestTwitterAdsDoer:              doer,
-		SetCredentialTwitterAdsDoer:     doer,
-		CreateMicrosoftAdsDoer:          doer,
-		GetMicrosoftAdsDoer:             doer,
-		UpdateMicrosoftAdsDoer:          doer,
-		DeleteMicrosoftAdsDoer:          doer,
-		TestMicrosoftAdsDoer:            doer,
-		SetCredentialMicrosoftAdsDoer:   doer,
-		CreateHubspotDoer:               doer,
-		GetHubspotDoer:                  doer,
-		UpdateHubspotDoer:               doer,
-		DeleteHubspotDoer:               doer,
-		TestHubspotDoer:                 doer,
-		SetCredentialHubspotDoer:        doer,
-		ListGoogleAdsAccountsDoer:       doer,
-		GetGoogleAdsKeywordsDoer:        doer,
-		GetGoogleAdsAudienceDoer:        doer,
-		SuggestGoogleAdsGeoTargetsDoer:  doer,
-		ListGoogleAdsUserListsDoer:      doer,
-		GetMetaAdsAudienceDoer:          doer,
-		GetTwitterAdsAudienceDoer:       doer,
-		GetLinkedinAdsAudienceDoer:      doer,
-		GetMicrosoftAdsKeywordsDoer:     doer,
-		GetMicrosoftAdsAudienceDoer:     doer,
-		GetRedditAdsAudienceDoer:        doer,
-		GetRedditAdsKeywordsDoer:        doer,
-		ResolveGoogleAdsCampaignDoer:    doer,
-		ResolveMicrosoftAdsCampaignDoer: doer,
-		ResolveMetaAdsCampaignDoer:      doer,
-		ResolveRedditAdsCampaignDoer:    doer,
-		ResolveTwitterAdsCampaignDoer:   doer,
-		ResolveLinkedinAdsCampaignDoer:  doer,
-		ListMetaAdsAccountsDoer:         doer,
-		ListLinkedinAdsAccountsDoer:     doer,
-		ListMicrosoftAdsAccountsDoer:    doer,
-		ListTwitterAdsAccountsDoer:      doer,
-		ListRedditAdsAccountsDoer:       doer,
-		ListHubspotEmailsDoer:           doer,
-		SearchHubspotCampaignsDoer:      doer,
-		CreateHubspotCampaignDoer:       doer,
-		MonitorGoogleAdsAccountDoer:     doer,
-		MonitorLinkedinAdsAccountDoer:   doer,
-		MonitorMetaAdsAccountDoer:       doer,
-		MonitorRedditAdsAccountDoer:     doer,
-		MonitorMicrosoftAdsAccountDoer:  doer,
-		MonitorTwitterAdsAccountDoer:    doer,
-		MonitorHubspotAccountDoer:       doer,
-		RestoreResponseBody:             restoreBody,
-		scheme:                          scheme,
-		host:                            host,
-		decoder:                         dec,
-		encoder:                         enc,
+		CreateGoogleAdsDoer:                doer,
+		GetGoogleAdsDoer:                   doer,
+		UpdateGoogleAdsDoer:                doer,
+		DeleteGoogleAdsDoer:                doer,
+		TestGoogleAdsDoer:                  doer,
+		SetCredentialGoogleAdsDoer:         doer,
+		CreateLinkedinAdsDoer:              doer,
+		GetLinkedinAdsDoer:                 doer,
+		UpdateLinkedinAdsDoer:              doer,
+		DeleteLinkedinAdsDoer:              doer,
+		TestLinkedinAdsDoer:                doer,
+		SetCredentialLinkedinAdsDoer:       doer,
+		CreateMetaAdsDoer:                  doer,
+		GetMetaAdsDoer:                     doer,
+		UpdateMetaAdsDoer:                  doer,
+		DeleteMetaAdsDoer:                  doer,
+		TestMetaAdsDoer:                    doer,
+		SetCredentialMetaAdsDoer:           doer,
+		CreateRedditAdsDoer:                doer,
+		GetRedditAdsDoer:                   doer,
+		UpdateRedditAdsDoer:                doer,
+		DeleteRedditAdsDoer:                doer,
+		TestRedditAdsDoer:                  doer,
+		SetCredentialRedditAdsDoer:         doer,
+		CreateTwitterAdsDoer:               doer,
+		GetTwitterAdsDoer:                  doer,
+		UpdateTwitterAdsDoer:               doer,
+		DeleteTwitterAdsDoer:               doer,
+		TestTwitterAdsDoer:                 doer,
+		SetCredentialTwitterAdsDoer:        doer,
+		CreateMicrosoftAdsDoer:             doer,
+		GetMicrosoftAdsDoer:                doer,
+		UpdateMicrosoftAdsDoer:             doer,
+		DeleteMicrosoftAdsDoer:             doer,
+		TestMicrosoftAdsDoer:               doer,
+		SetCredentialMicrosoftAdsDoer:      doer,
+		CreateHubspotDoer:                  doer,
+		GetHubspotDoer:                     doer,
+		UpdateHubspotDoer:                  doer,
+		DeleteHubspotDoer:                  doer,
+		TestHubspotDoer:                    doer,
+		SetCredentialHubspotDoer:           doer,
+		ListGoogleAdsAccountsDoer:          doer,
+		GetGoogleAdsKeywordsDoer:           doer,
+		GetGoogleAdsAudienceDoer:           doer,
+		SuggestGoogleAdsGeoTargetsDoer:     doer,
+		ListGoogleAdsUserListsDoer:         doer,
+		ListGoogleAdsConversionActionsDoer: doer,
+		GetMetaAdsAudienceDoer:             doer,
+		GetTwitterAdsAudienceDoer:          doer,
+		GetLinkedinAdsAudienceDoer:         doer,
+		GetMicrosoftAdsKeywordsDoer:        doer,
+		GetMicrosoftAdsAudienceDoer:        doer,
+		GetRedditAdsAudienceDoer:           doer,
+		GetRedditAdsKeywordsDoer:           doer,
+		ResolveGoogleAdsCampaignDoer:       doer,
+		ResolveMicrosoftAdsCampaignDoer:    doer,
+		ResolveMetaAdsCampaignDoer:         doer,
+		ResolveRedditAdsCampaignDoer:       doer,
+		ResolveTwitterAdsCampaignDoer:      doer,
+		ResolveLinkedinAdsCampaignDoer:     doer,
+		ListMetaAdsAccountsDoer:            doer,
+		ListLinkedinAdsAccountsDoer:        doer,
+		ListMicrosoftAdsAccountsDoer:       doer,
+		ListTwitterAdsAccountsDoer:         doer,
+		ListRedditAdsAccountsDoer:          doer,
+		ListHubspotEmailsDoer:              doer,
+		SearchHubspotCampaignsDoer:         doer,
+		CreateHubspotCampaignDoer:          doer,
+		MonitorGoogleAdsAccountDoer:        doer,
+		MonitorLinkedinAdsAccountDoer:      doer,
+		MonitorMetaAdsAccountDoer:          doer,
+		MonitorRedditAdsAccountDoer:        doer,
+		MonitorMicrosoftAdsAccountDoer:     doer,
+		MonitorTwitterAdsAccountDoer:       doer,
+		MonitorHubspotAccountDoer:          doer,
+		RestoreResponseBody:                restoreBody,
+		scheme:                             scheme,
+		host:                               host,
+		decoder:                            dec,
+		encoder:                            enc,
 	}
 }
 
@@ -1550,6 +1555,31 @@ func (c *Client) ListGoogleAdsUserLists() goa.Endpoint {
 		resp, err := c.ListGoogleAdsUserListsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListGoogleAdsConversionActions returns an endpoint that makes HTTP requests
+// to the lfx-v2-campaign-service-connections service
+// list-google-ads-conversion-actions server.
+func (c *Client) ListGoogleAdsConversionActions() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListGoogleAdsConversionActionsRequest(c.encoder)
+		decodeResponse = DecodeListGoogleAdsConversionActionsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListGoogleAdsConversionActionsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListGoogleAdsConversionActionsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
 		}
 		return decodeResponse(resp)
 	}

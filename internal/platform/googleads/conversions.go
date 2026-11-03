@@ -39,7 +39,7 @@ type ConversionAction struct {
 	ID           string `json:"id"`
 	ResourceName string `json:"resourceName"`
 	Name         string `json:"name"`
-	// Status is ENABLED / PAUSED / REMOVED. Reported rather than filtered on, below.
+	// Status is always ENABLED: conversionActionQuery filters on it (#458).
 	Status string `json:"status"`
 	// Type is the measurement mechanism (WEBPAGE, UPLOAD_CLICKS, GOOGLE_PLAY_DOWNLOAD …)
 	// and Category the business meaning (PURCHASE, SIGNUP, LEAD …). Both matter to the
@@ -69,17 +69,17 @@ type gaqlConversionActionRow struct {
 	} `json:"conversionAction"`
 }
 
-// conversionActionQuery selects every non-removed conversion action on the account.
+// conversionActionQuery selects the ENABLED conversion actions on the account.
 //
-// REMOVED is excluded in the WHERE clause rather than dropped row-side: a removed action
-// cannot be attached to a campaign at all, so returning it would offer the caller a choice
-// guaranteed to fail, and it would consume a slot against maxConversionActionRows. PAUSED is
-// kept — a paused action is attachable, and an operator setting up a campaign ahead of
-// re-enabling one has a legitimate reason to pick it.
-const conversionActionQuery = `SELECT conversion_action.id, conversion_action.resource_name, conversion_action.name, conversion_action.status, conversion_action.type, conversion_action.category, conversion_action.primary_for_goal FROM conversion_action WHERE conversion_action.status != 'REMOVED' ORDER BY conversion_action.name`
+// The status is filtered in the WHERE clause rather than row-side, so a dropped action never
+// consumes a slot against maxConversionActionRows. REMOVED is excluded because a removed action
+// cannot be attached to a campaign at all. PAUSED is excluded too (#458): the picker this
+// read serves offers only actions enabled now, and validateConversionActions does not check
+// status, so a paused action's id can still be entered into CampaignInput.ConversionActions.
+const conversionActionQuery = `SELECT conversion_action.id, conversion_action.resource_name, conversion_action.name, conversion_action.status, conversion_action.type, conversion_action.category, conversion_action.primary_for_goal FROM conversion_action WHERE conversion_action.status = 'ENABLED' ORDER BY conversion_action.name`
 
-// ListConversionActions returns the conversion actions configured on this client's account,
-// for a caller building a picker over CampaignInput.ConversionActions.
+// ListConversionActions returns the enabled conversion actions on this client's account, for a
+// caller building a picker over CampaignInput.ConversionActions.
 //
 // A row missing its id or resource name FAILS THE WHOLE RESPONSE rather than being skipped.
 // Both are what the caller would send back on a create, so a row without them is a choice

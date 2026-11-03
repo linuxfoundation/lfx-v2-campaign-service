@@ -15365,6 +15365,119 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/google-ads/conversion-actions:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-google-ads-conversion-actions lfx-v2-campaign-service-connections
+            description: 'List the ENABLED conversion actions on the Google Ads customer a Google create for this project uses, live from GAQL on conversion_action, for picking googleAdsConfig.conversionActions. Credentials resolve as for a create: the project''s own connection, or the shared LF system credential when it has none (or when the deployment forces the LF account). ROOT PRINCIPALS ONLY: the Google Ads customer is shared by every foundation, so the response lists EVERY foundation''s conversion action names, not only this project''s. The gateway therefore admits only a cross-foundation principal — writer_guard or global_marketing_ops on the ROOT project (resolved by the slug ROOT), the same two checks as lfx-self-serve''s isRootCampaignPrincipal. Being a campaign_manager of {project_id} is not enough. {project_id} still selects which project''s connection supplies the credential. More than 500 actions on the customer fails the read with 503 rather than truncating it. A pure read: the only upstream call is googleAds:search, and nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#list-google-ads-conversion-actions
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/GoogleAdsConversionActions'
+                            example:
+                                account_id: "1234567890"
+                                conversion_action_count: 1
+                                conversion_actions:
+                                    - category: SIGNUP
+                                      id: "1111111111"
+                                      name: Event Registrations
+                                      primary_for_goal: true
+                                      resource_name: customers/1234567890/conversionActions/1111111111
+                                      status: ENABLED
+                                      type: WEBPAGE
+                                    - category: SIGNUP
+                                      id: "1111111111"
+                                      name: Event Registrations
+                                      primary_for_goal: true
+                                      resource_name: customers/1234567890/conversionActions/1111111111
+                                      status: ENABLED
+                                      type: WEBPAGE
+                                    - category: SIGNUP
+                                      id: "1111111111"
+                                      name: Event Registrations
+                                      primary_for_goal: true
+                                      resource_name: customers/1234567890/conversionActions/1111111111
+                                      status: ENABLED
+                                      type: WEBPAGE
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/google-ads/geo-targets:
         get:
             tags:
@@ -22854,6 +22967,121 @@ components:
                 account_id: "8666746580"
                 label: TLF Main
                 login_customer_id: "9746983954"
+        GoogleAdsConversionAction:
+            type: object
+            properties:
+                category:
+                    type: string
+                    description: 'Google''s ConversionActionCategory, verbatim: what the conversion means (e.g. SIGNUP, PURCHASE, LEAD)'
+                    example: SIGNUP
+                id:
+                    type: string
+                    description: The numeric conversion action id, the short form googleAdsConfig.conversionActions accepts (qualified with the campaign's own account).
+                    example: "1111111111"
+                name:
+                    type: string
+                    description: The action's display name. Not an identifier.
+                    example: Event Registrations
+                primary_for_goal:
+                    type: boolean
+                    description: Whether the action counts toward the account's Conversions column and so drives bidding by default. A secondary action is still selectable.
+                    example: true
+                resource_name:
+                    type: string
+                    description: customers/{customerId}/conversionActions/{id}, the full form googleAdsConfig.conversionActions accepts. An action belongs to its own customer and cannot be attached to a campaign on another.
+                    example: customers/1234567890/conversionActions/1111111111
+                status:
+                    type: string
+                    description: 'Always ENABLED: only enabled actions are listed'
+                    example: ENABLED
+                type:
+                    type: string
+                    description: 'Google''s ConversionActionType, verbatim: how the conversion is measured (e.g. WEBPAGE, UPLOAD_CLICKS)'
+                    example: WEBPAGE
+            example:
+                category: SIGNUP
+                id: "1111111111"
+                name: Event Registrations
+                primary_for_goal: true
+                resource_name: customers/1234567890/conversionActions/1111111111
+                status: ENABLED
+                type: WEBPAGE
+            required:
+                - id
+                - resource_name
+                - name
+                - status
+                - type
+                - category
+                - primary_for_goal
+        GoogleAdsConversionActions:
+            type: object
+            properties:
+                account_id:
+                    type: string
+                    description: 'The Google Ads customer the actions were read from: the account a Google create for this project uses'
+                    example: "1234567890"
+                conversion_action_count:
+                    type: integer
+                    description: How many actions are in `conversion_actions`
+                    example: 1
+                    format: int64
+                conversion_actions:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/GoogleAdsConversionAction'
+                    description: The customer's enabled conversion actions, sorted by name
+                    example:
+                        - category: SIGNUP
+                          id: "1111111111"
+                          name: Event Registrations
+                          primary_for_goal: true
+                          resource_name: customers/1234567890/conversionActions/1111111111
+                          status: ENABLED
+                          type: WEBPAGE
+                        - category: SIGNUP
+                          id: "1111111111"
+                          name: Event Registrations
+                          primary_for_goal: true
+                          resource_name: customers/1234567890/conversionActions/1111111111
+                          status: ENABLED
+                          type: WEBPAGE
+                        - category: SIGNUP
+                          id: "1111111111"
+                          name: Event Registrations
+                          primary_for_goal: true
+                          resource_name: customers/1234567890/conversionActions/1111111111
+                          status: ENABLED
+                          type: WEBPAGE
+            example:
+                account_id: "1234567890"
+                conversion_action_count: 1
+                conversion_actions:
+                    - category: SIGNUP
+                      id: "1111111111"
+                      name: Event Registrations
+                      primary_for_goal: true
+                      resource_name: customers/1234567890/conversionActions/1111111111
+                      status: ENABLED
+                      type: WEBPAGE
+                    - category: SIGNUP
+                      id: "1111111111"
+                      name: Event Registrations
+                      primary_for_goal: true
+                      resource_name: customers/1234567890/conversionActions/1111111111
+                      status: ENABLED
+                      type: WEBPAGE
+                    - category: SIGNUP
+                      id: "1111111111"
+                      name: Event Registrations
+                      primary_for_goal: true
+                      resource_name: customers/1234567890/conversionActions/1111111111
+                      status: ENABLED
+                      type: WEBPAGE
+            required:
+                - account_id
+                - conversion_actions
+                - conversion_action_count
         GoogleAdsCredentials:
             type: object
             properties:

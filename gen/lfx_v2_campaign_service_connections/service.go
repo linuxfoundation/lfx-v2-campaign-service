@@ -184,6 +184,22 @@ type Service interface {
 	// cannot reach is refused by Google and answered 503, like the account
 	// monitor. A pure read: nothing is persisted.
 	ListGoogleAdsUserLists(context.Context, *ListGoogleAdsUserListsPayload) (res *GoogleAdsUserLists, err error)
+	// List the ENABLED conversion actions on the Google Ads customer a Google
+	// create for this project uses, live from GAQL on conversion_action, for
+	// picking googleAdsConfig.conversionActions. Credentials resolve as for a
+	// create: the project's own connection, or the shared LF system credential
+	// when it has none (or when the deployment forces the LF account). ROOT
+	// PRINCIPALS ONLY: the Google Ads customer is shared by every foundation, so
+	// the response lists EVERY foundation's conversion action names, not only this
+	// project's. The gateway therefore admits only a cross-foundation principal —
+	// writer_guard or global_marketing_ops on the ROOT project (resolved by the
+	// slug ROOT), the same two checks as lfx-self-serve's isRootCampaignPrincipal.
+	// Being a campaign_manager of {project_id} is not enough. {project_id} still
+	// selects which project's connection supplies the credential. More than 500
+	// actions on the customer fails the read with 503 rather than truncating it. A
+	// pure read: the only upstream call is googleAds:search, and nothing is
+	// persisted.
+	ListGoogleAdsConversionActions(context.Context, *ListGoogleAdsConversionActionsPayload) (res *GoogleAdsConversionActions, err error)
 	// Read Meta audience insights — age and gender (one combined breakdown) and
 	// placement (publisher_platform and platform_position) — for this project's
 	// own campaigns, live from the Meta Marketing API Insights edge of the
@@ -706,7 +722,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [75]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
+var MethodNames = [76]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -1365,6 +1381,43 @@ type GoogleAdsConnectionConfig struct {
 	LoginCustomerID *string
 }
 
+type GoogleAdsConversionAction struct {
+	// The numeric conversion action id, the short form
+	// googleAdsConfig.conversionActions accepts (qualified with the campaign's own
+	// account).
+	ID string
+	// customers/{customerId}/conversionActions/{id}, the full form
+	// googleAdsConfig.conversionActions accepts. An action belongs to its own
+	// customer and cannot be attached to a campaign on another.
+	ResourceName string
+	// The action's display name. Not an identifier.
+	Name string
+	// Always ENABLED: only enabled actions are listed
+	Status string
+	// Google's ConversionActionType, verbatim: how the conversion is measured
+	// (e.g. WEBPAGE, UPLOAD_CLICKS)
+	Type string
+	// Google's ConversionActionCategory, verbatim: what the conversion means (e.g.
+	// SIGNUP, PURCHASE, LEAD)
+	Category string
+	// Whether the action counts toward the account's Conversions column and so
+	// drives bidding by default. A secondary action is still selectable.
+	PrimaryForGoal bool
+}
+
+// GoogleAdsConversionActions is the result type of the
+// lfx-v2-campaign-service-connections service
+// list-google-ads-conversion-actions method.
+type GoogleAdsConversionActions struct {
+	// The Google Ads customer the actions were read from: the account a Google
+	// create for this project uses
+	AccountID string
+	// The customer's enabled conversion actions, sorted by name
+	ConversionActions []*GoogleAdsConversionAction
+	// How many actions are in `conversion_actions`
+	ConversionActionCount int
+}
+
 // Google Ads OAuth credential set. Write-only; never returned.
 type GoogleAdsCredentials struct {
 	// OAuth refresh token
@@ -1843,6 +1896,16 @@ type ListGoogleAdsAccountsPayload struct {
 // lfx-v2-campaign-service-connections service list-google-ads-accounts method.
 type ListGoogleAdsAccountsResult struct {
 	Accounts []*AccessibleAccount
+}
+
+// ListGoogleAdsConversionActionsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service
+// list-google-ads-conversion-actions method.
+type ListGoogleAdsConversionActionsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
 }
 
 // ListGoogleAdsUserListsPayload is the payload type of the

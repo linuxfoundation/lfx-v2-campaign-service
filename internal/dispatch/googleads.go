@@ -328,7 +328,8 @@ type googleAdsConfig struct {
 	// Every channel (#436). After the campaign is created they become a campaign-level
 	// conversion goal: one custom goal per action set, shared across campaigns, with the
 	// campaign's goal config pointed at it. A failure there is a partial result that says
-	// the goal was not applied. The ids come from the client's ListConversionActions read.
+	// the goal was not applied. The ids come from the client's ListConversionActions read,
+	// served as GET /projects/{project_id}/google-ads/conversion-actions (#458).
 	ConversionActions []string `json:"conversionActions"`
 	// StartDate/EndDate are the campaign's flight window as YYYY-MM-DD, spelled exactly
 	// as the meta and reddit configs spell them. Each is independently optional: an

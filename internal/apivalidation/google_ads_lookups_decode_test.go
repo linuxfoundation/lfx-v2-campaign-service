@@ -67,3 +67,32 @@ func TestGeoSuggestDecoder_RefusesWhatTheServiceWouldRefuse(t *testing.T) {
 		})
 	}
 }
+
+// The conversion-action picker (#458) is mounted for GET only, so no write method reaches it,
+// and the generated decoder takes the project from the path.
+func TestConversionActionsRoute_IsGetOnly(t *testing.T) {
+	mux := goahttp.NewMuxer()
+	var routed []*http.Request
+	connserver.MountListGoogleAdsConversionActionsHandler(mux, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		routed = append(routed, r)
+	}))
+	for _, m := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		req := httptest.NewRequest(m, "/projects/cncf/google-ads/conversion-actions", nil)
+		req.Header.Set("Authorization", "Bearer t")
+		mux.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	if len(routed) != 1 || routed[0].Method != http.MethodGet {
+		methods := make([]string, 0, len(routed))
+		for _, r := range routed {
+			methods = append(methods, r.Method)
+		}
+		t.Fatalf("methods routed = %v, want GET only", methods)
+	}
+	p, err := connserver.DecodeListGoogleAdsConversionActionsRequest(mux, goahttp.RequestDecoder)(routed[0])
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if p.ProjectID != "cncf" {
+		t.Errorf("project_id = %q, want cncf", p.ProjectID)
+	}
+}

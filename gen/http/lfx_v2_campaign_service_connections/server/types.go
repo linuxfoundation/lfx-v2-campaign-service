@@ -857,6 +857,19 @@ type ListGoogleAdsUserListsResponseBody struct {
 	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
 }
 
+// ListGoogleAdsConversionActionsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-google-ads-conversion-actions" endpoint HTTP response body.
+type ListGoogleAdsConversionActionsResponseBody struct {
+	// The Google Ads customer the actions were read from: the account a Google
+	// create for this project uses
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The customer's enabled conversion actions, sorted by name
+	ConversionActions []*GoogleAdsConversionActionResponseBody `form:"conversion_actions" json:"conversion_actions" xml:"conversion_actions"`
+	// How many actions are in `conversion_actions`
+	ConversionActionCount int `form:"conversion_action_count" json:"conversion_action_count" xml:"conversion_action_count"`
+}
+
 // GetMetaAdsAudienceResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body.
@@ -4320,6 +4333,72 @@ type ListGoogleAdsUserListsConflictResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListGoogleAdsConversionActionsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-google-ads-conversion-actions" endpoint HTTP response body for the
+// "BadRequest" error.
+type ListGoogleAdsConversionActionsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsConversionActionsServiceUnavailableResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "list-google-ads-conversion-actions" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type ListGoogleAdsConversionActionsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsConversionActionsInternalServerErrorResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "list-google-ads-conversion-actions" endpoint HTTP response body for the
+// "InternalServerError" error.
+type ListGoogleAdsConversionActionsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsConversionActionsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-google-ads-conversion-actions" endpoint HTTP response body for the
+// "NotFound" error.
+type ListGoogleAdsConversionActionsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsConversionActionsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-google-ads-conversion-actions" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type ListGoogleAdsConversionActionsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsConversionActionsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-google-ads-conversion-actions" endpoint HTTP response body for the
+// "Unauthorized" error.
+type ListGoogleAdsConversionActionsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetMetaAdsAudienceBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -6320,6 +6399,32 @@ type GoogleAdsUserListResponseBody struct {
 	EligibleForSearch bool `form:"eligible_for_search" json:"eligible_for_search" xml:"eligible_for_search"`
 }
 
+// GoogleAdsConversionActionResponseBody is used to define fields on response
+// body types.
+type GoogleAdsConversionActionResponseBody struct {
+	// The numeric conversion action id, the short form
+	// googleAdsConfig.conversionActions accepts (qualified with the campaign's own
+	// account).
+	ID string `form:"id" json:"id" xml:"id"`
+	// customers/{customerId}/conversionActions/{id}, the full form
+	// googleAdsConfig.conversionActions accepts. An action belongs to its own
+	// customer and cannot be attached to a campaign on another.
+	ResourceName string `form:"resource_name" json:"resource_name" xml:"resource_name"`
+	// The action's display name. Not an identifier.
+	Name string `form:"name" json:"name" xml:"name"`
+	// Always ENABLED: only enabled actions are listed
+	Status string `form:"status" json:"status" xml:"status"`
+	// Google's ConversionActionType, verbatim: how the conversion is measured
+	// (e.g. WEBPAGE, UPLOAD_CLICKS)
+	Type string `form:"type" json:"type" xml:"type"`
+	// Google's ConversionActionCategory, verbatim: what the conversion means (e.g.
+	// SIGNUP, PURCHASE, LEAD)
+	Category string `form:"category" json:"category" xml:"category"`
+	// Whether the action counts toward the account's Conversions column and so
+	// drives bidding by default. A secondary action is still selectable.
+	PrimaryForGoal bool `form:"primary_for_goal" json:"primary_for_goal" xml:"primary_for_goal"`
+}
+
 // MetaAdsAudienceBucketResponseBody is used to define fields on response body
 // types.
 type MetaAdsAudienceBucketResponseBody struct {
@@ -7825,6 +7930,29 @@ func NewListGoogleAdsUserListsResponseBody(res *lfxv2campaignserviceconnections.
 		}
 	} else {
 		body.UserLists = []*GoogleAdsUserListResponseBody{}
+	}
+	return body
+}
+
+// NewListGoogleAdsConversionActionsResponseBody builds the HTTP response body
+// from the result of the "list-google-ads-conversion-actions" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsConversionActionsResponseBody(res *lfxv2campaignserviceconnections.GoogleAdsConversionActions) *ListGoogleAdsConversionActionsResponseBody {
+	body := &ListGoogleAdsConversionActionsResponseBody{
+		AccountID:             res.AccountID,
+		ConversionActionCount: res.ConversionActionCount,
+	}
+	if res.ConversionActions != nil {
+		body.ConversionActions = make([]*GoogleAdsConversionActionResponseBody, len(res.ConversionActions))
+		for i, val := range res.ConversionActions {
+			if val == nil {
+				body.ConversionActions[i] = nil
+				continue
+			}
+			body.ConversionActions[i] = marshalLfxv2campaignserviceconnectionsGoogleAdsConversionActionToGoogleAdsConversionActionResponseBody(val)
+		}
+	} else {
+		body.ConversionActions = []*GoogleAdsConversionActionResponseBody{}
 	}
 	return body
 }
@@ -11896,6 +12024,74 @@ func NewListGoogleAdsUserListsConflictResponseBody(res *lfxv2campaignserviceconn
 	return body
 }
 
+// NewListGoogleAdsConversionActionsBadRequestResponseBody builds the HTTP
+// response body from the result of the "list-google-ads-conversion-actions"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsConversionActionsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListGoogleAdsConversionActionsBadRequestResponseBody {
+	body := &ListGoogleAdsConversionActionsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsConversionActionsServiceUnavailableResponseBody builds the
+// HTTP response body from the result of the
+// "list-google-ads-conversion-actions" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsConversionActionsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListGoogleAdsConversionActionsServiceUnavailableResponseBody {
+	body := &ListGoogleAdsConversionActionsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsConversionActionsInternalServerErrorResponseBody builds the
+// HTTP response body from the result of the
+// "list-google-ads-conversion-actions" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsConversionActionsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListGoogleAdsConversionActionsInternalServerErrorResponseBody {
+	body := &ListGoogleAdsConversionActionsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsConversionActionsNotFoundResponseBody builds the HTTP
+// response body from the result of the "list-google-ads-conversion-actions"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsConversionActionsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListGoogleAdsConversionActionsNotFoundResponseBody {
+	body := &ListGoogleAdsConversionActionsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsConversionActionsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "list-google-ads-conversion-actions"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsConversionActionsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListGoogleAdsConversionActionsPayloadTooLargeResponseBody {
+	body := &ListGoogleAdsConversionActionsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsConversionActionsUnauthorizedResponseBody builds the HTTP
+// response body from the result of the "list-google-ads-conversion-actions"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsConversionActionsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListGoogleAdsConversionActionsUnauthorizedResponseBody {
+	body := &ListGoogleAdsConversionActionsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetMetaAdsAudienceBadRequestResponseBody builds the HTTP response body
 // from the result of the "get-meta-ads-audience" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -14390,6 +14586,17 @@ func NewListGoogleAdsUserListsPayload(projectID string, accountID *string, beare
 	v := &lfxv2campaignserviceconnections.ListGoogleAdsUserListsPayload{}
 	v.ProjectID = projectID
 	v.AccountID = accountID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListGoogleAdsConversionActionsPayload builds a
+// lfx-v2-campaign-service-connections service
+// list-google-ads-conversion-actions endpoint payload.
+func NewListGoogleAdsConversionActionsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListGoogleAdsConversionActionsPayload {
+	v := &lfxv2campaignserviceconnections.ListGoogleAdsConversionActionsPayload{}
+	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 
 	return v

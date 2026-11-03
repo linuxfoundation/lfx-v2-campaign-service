@@ -469,9 +469,9 @@ var (
 	// importing the orchestration layer.
 	ErrAccountsUnsupported = errors.New("account discovery is not supported for this platform")
 
-	// ErrTargetingLookupUnsupported indicates the platform has no targeting-lookup capability
-	// wired (geo target suggestions, user lists). Maps to 400, like ErrAccountsUnsupported:
-	// the platform is never contacted.
+	// ErrTargetingLookupUnsupported indicates the platform has no create-form lookup capability
+	// wired (geo target suggestions, user lists, conversion actions). Maps to 400, like
+	// ErrAccountsUnsupported: the platform is never contacted.
 	ErrTargetingLookupUnsupported = errors.New("targeting lookup is not supported for this platform")
 
 	// ErrUserListsSharedTenancy refuses a user-list read on a platform whose ad account is

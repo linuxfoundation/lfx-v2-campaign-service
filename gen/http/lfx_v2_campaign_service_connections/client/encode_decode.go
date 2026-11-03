@@ -9804,6 +9804,207 @@ func DecodeListGoogleAdsUserListsResponse(decoder func(*http.Response) goahttp.D
 	}
 }
 
+// BuildListGoogleAdsConversionActionsRequest instantiates a HTTP request
+// object with method and path set to call the
+// "lfx-v2-campaign-service-connections" service
+// "list-google-ads-conversion-actions" endpoint
+func (c *Client) BuildListGoogleAdsConversionActionsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ListGoogleAdsConversionActionsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", "*lfxv2campaignserviceconnections.ListGoogleAdsConversionActionsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ListGoogleAdsConversionActionsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeListGoogleAdsConversionActionsRequest returns an encoder for requests
+// sent to the lfx-v2-campaign-service-connections
+// list-google-ads-conversion-actions server.
+func EncodeListGoogleAdsConversionActionsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ListGoogleAdsConversionActionsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", "*lfxv2campaignserviceconnections.ListGoogleAdsConversionActionsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		return nil
+	}
+}
+
+// DecodeListGoogleAdsConversionActionsResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// list-google-ads-conversion-actions endpoint. restoreBody controls whether
+// the response body should be restored after having been read.
+// DecodeListGoogleAdsConversionActionsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeListGoogleAdsConversionActionsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ListGoogleAdsConversionActionsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			err = ValidateListGoogleAdsConversionActionsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			res := NewListGoogleAdsConversionActionsGoogleAdsConversionActionsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ListGoogleAdsConversionActionsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			err = ValidateListGoogleAdsConversionActionsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			return nil, NewListGoogleAdsConversionActionsBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ListGoogleAdsConversionActionsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			err = ValidateListGoogleAdsConversionActionsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			return nil, NewListGoogleAdsConversionActionsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ListGoogleAdsConversionActionsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			err = ValidateListGoogleAdsConversionActionsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			return nil, NewListGoogleAdsConversionActionsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ListGoogleAdsConversionActionsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			err = ValidateListGoogleAdsConversionActionsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			return nil, NewListGoogleAdsConversionActionsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ListGoogleAdsConversionActionsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			err = ValidateListGoogleAdsConversionActionsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			return nil, NewListGoogleAdsConversionActionsPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ListGoogleAdsConversionActionsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			err = ValidateListGoogleAdsConversionActionsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			return nil, NewListGoogleAdsConversionActionsUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildGetMetaAdsAudienceRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-connections"
 // service "get-meta-ads-audience" endpoint
@@ -16114,6 +16315,24 @@ func unmarshalGoogleAdsUserListResponseBodyToLfxv2campaignserviceconnectionsGoog
 		SizeForSearch:      v.SizeForSearch,
 		SizeRangeForSearch: v.SizeRangeForSearch,
 		EligibleForSearch:  *v.EligibleForSearch,
+	}
+
+	return res
+}
+
+// unmarshalGoogleAdsConversionActionResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsConversionAction
+// builds a value of type
+// *lfxv2campaignserviceconnections.GoogleAdsConversionAction from a value of
+// type *GoogleAdsConversionActionResponseBody.
+func unmarshalGoogleAdsConversionActionResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsConversionAction(v *GoogleAdsConversionActionResponseBody) *lfxv2campaignserviceconnections.GoogleAdsConversionAction {
+	res := &lfxv2campaignserviceconnections.GoogleAdsConversionAction{
+		ID:             *v.ID,
+		ResourceName:   *v.ResourceName,
+		Name:           *v.Name,
+		Status:         *v.Status,
+		Type:           *v.Type,
+		Category:       *v.Category,
+		PrimaryForGoal: *v.PrimaryForGoal,
 	}
 
 	return res

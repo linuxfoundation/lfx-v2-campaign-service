@@ -8,7 +8,7 @@
 // patterns. If the two drift — a path the route forwards but the RuleSet does not
 // authorize — Heimdall is default-deny (a request matching no rule is REJECTED, per
 // specs/002-deployment-config/research.md), so that path becomes UNREACHABLE through
-// the gateway rather than an unauthenticated bypass: the campaign_manager FGA check
+// the gateway rather than an unauthenticated bypass: the FGA check
 // never gets the chance to run because Heimdall rejects the request first. (The
 // inverse drift — a path the RuleSet authorizes but the route does not forward — is
 // dead config.) Nothing but this test couples the two
@@ -83,9 +83,21 @@ func extractRouteRegex(t *testing.T, httproute string) *regexp.Regexp {
 // projectAPIRuleID is the Heimdall rule id whose paths must be in parity with the
 // route regex. Scoping extraction to THIS rule (not "any /projects/ path anywhere")
 // is the security point: the invariant is specifically that each forwarded path is
-// gated on campaign_manager for project:{projectId}. A path moved into an allow_all,
-// deny_all, or differently-scoped rule must FAIL parity, not silently satisfy it.
+// gated on campaign_manager for project:{projectId} — except the one path the
+// root-campaign-admin rule gates on the ROOT project (rootAdminRuleID). A path moved into
+// an allow_all, deny_all, or differently-scoped rule must FAIL parity, not silently
+// satisfy it.
 const projectAPIRuleID = "rule:lfx:lfx-v2-campaign-service:project-api"
+
+// rootAdminRuleID is the one other rule whose paths count toward parity: it gates the
+// cross-foundation Google Ads conversion-action list (#458) on the ROOT project instead of
+// on campaign_manager of the path's project. assertRootAdminAuthz pins its authorizer, and
+// TestConversionActionsIsRuledOnlyByTheRootAdminRule pins that it holds exactly that path and
+// that project-api does not.
+const rootAdminRuleID = "rule:lfx:lfx-v2-campaign-service:root-campaign-admin:get"
+
+// rootAdminPath is the single path the root-campaign-admin rule rules.
+const rootAdminPath = "/projects/:projectId/google-ads/conversion-actions"
 
 // ruleBlock isolates one rendered Heimdall rule (from its `- id: "<id>"` line up to
 // the next `- id:` or EOF) so path/authorizer extraction is scoped to a SINGLE rule.
@@ -113,15 +125,21 @@ func ruleBlock(t *testing.T, ruleset, ruleID string) string {
 	return strings.Join(lines[start:end], "\n")
 }
 
-// extractRulePatterns pulls the Traefik path patterns out of ONLY the project-api
-// rule block. /campaigns, /_campaigns/, and the openapi passthrough entries live in
-// OTHER rules (a deny_all placeholder and an allow_all openapi rule) and the route
-// regex deliberately does not cover them, so scoping to project-api both excludes
-// them and, crucially, ensures a path is counted as "authorized" only when it is
-// under the campaign_manager rule — not any unrelated rule.
+// extractRulePatterns pulls the Traefik path patterns out of ONLY the project-api and
+// root-campaign-admin rule blocks. /campaigns, /_campaigns/, and the openapi passthrough
+// entries live in OTHER rules (a deny_all placeholder and an allow_all openapi rule) and the
+// route regex deliberately does not cover them, so scoping to these two rules both excludes
+// them and, crucially, ensures a path is counted as "authorized" only when it is under one of
+// the two FGA-gated rules — not any unrelated rule. Callers pin both rules' authorizers.
 func extractRulePatterns(t *testing.T, ruleset string) []string {
 	t.Helper()
-	block := ruleBlock(t, ruleset, projectAPIRuleID)
+	return append(rulePatterns(t, ruleset, projectAPIRuleID), rulePatterns(t, ruleset, rootAdminRuleID)...)
+}
+
+// rulePatterns pulls the /projects/ Traefik path patterns out of one rule block.
+func rulePatterns(t *testing.T, ruleset, ruleID string) []string {
+	t.Helper()
+	block := ruleBlock(t, ruleset, ruleID)
 	var pats []string
 	for _, line := range strings.Split(block, "\n") {
 		s := strings.TrimSpace(line)
@@ -135,9 +153,74 @@ func extractRulePatterns(t *testing.T, ruleset string) []string {
 		pats = append(pats, p)
 	}
 	if len(pats) == 0 {
-		t.Fatalf("no /projects/ path patterns found in the %s rule:\n%s", projectAPIRuleID, block)
+		t.Fatalf("no /projects/ path patterns found in the %s rule:\n%s", ruleID, block)
 	}
 	return pats
+}
+
+// assertRootAdminAuthz verifies the root-campaign-admin rule admits only a cross-foundation
+// principal: one openfga_or_check on the ROOT project's resolved uid, `writer_guard` OR
+// `global_marketing_ops` (lfx-self-serve's isRootCampaignPrincipal), with the resolver fed the
+// fixed slug ROOT. It must not consult the :projectId capture, carry a campaign_manager check
+// (that would let a project's campaign_manager in), or fall back to allow_all while OpenFGA is
+// enabled. These are assertions on the rendered values; what Heimdall does with them is
+// lfx-v2-helm's openfga_or_check definition, which this test cannot exercise.
+func assertRootAdminAuthz(t *testing.T, ruleset string) {
+	t.Helper()
+	block := ruleBlock(t, ruleset, rootAdminRuleID)
+	const rootObject = `"project:{{- .Outputs.project_slug_resolver_contextualizer.uid -}}"`
+	for _, want := range []string{
+		"- authorizer: openfga_or_check",
+		"relation: writer_guard",
+		"object: " + rootObject,
+		"or_relation: global_marketing_ops",
+		"or_object: " + rootObject,
+		"- contextualizer: project_slug_resolver_contextualizer\n          config:\n            values:\n              slug: \"ROOT\"",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("%s rule is missing %q:\n%s", rootAdminRuleID, want, block)
+		}
+	}
+	if got := strings.Count(block, "- authorizer:"); got != 1 {
+		t.Errorf("%s rule must have exactly one authorizer (the openfga_or_check), got %d:\n%s", rootAdminRuleID, got, block)
+	}
+	for _, banned := range []string{"campaign_manager", "Captures.projectId", "authorizer: allow_all", "authorizer: openfga_check"} {
+		if strings.Contains(block, banned) {
+			t.Errorf("%s rule must not contain %q:\n%s", rootAdminRuleID, banned, block)
+		}
+	}
+	methods := block[strings.Index(block, "methods:"):strings.Index(block, "routes:")]
+	if strings.Count(methods, "- ") != 1 || !strings.Contains(methods, "- GET") {
+		t.Errorf("%s rule must match GET only:\n%s", rootAdminRuleID, methods)
+	}
+}
+
+// TestRootAdminRuleEnforcesRootPrincipal pins the root-campaign-admin rule's authorizer, so a
+// downgrade to campaign_manager, allow_all or a single check fails even if parity still holds.
+func TestRootAdminRuleEnforcesRootPrincipal(t *testing.T) {
+	assertRootAdminAuthz(t, helmTemplate(t, "templates/ruleset.yaml"))
+}
+
+// TestConversionActionsIsRuledOnlyByTheRootAdminRule pins WHERE the conversion-action list is
+// ruled (#458). It lists every foundation's conversion actions, so a project-api entry for it
+// would let any campaign_manager read it: project-api must not match it, the
+// root-campaign-admin rule must hold exactly that one path, and the route must forward it.
+func TestConversionActionsIsRuledOnlyByTheRootAdminRule(t *testing.T) {
+	ruleset := helmTemplate(t, "templates/ruleset.yaml")
+	routeRe := extractRouteRegex(t, helmTemplate(t, "templates/httproute.yaml"))
+	const path = "/projects/p1/google-ads/conversion-actions"
+
+	if got := rulePatterns(t, ruleset, rootAdminRuleID); len(got) != 1 || got[0] != rootAdminPath {
+		t.Errorf("%s rule patterns = %v, want exactly [%s]", rootAdminRuleID, got, rootAdminPath)
+	}
+	for _, p := range rulePatterns(t, ruleset, projectAPIRuleID) {
+		if ruleMatcher(t, p).MatchString(path) {
+			t.Errorf("%s pattern %q matches %s; it must be ruled by %s only", projectAPIRuleID, p, path, rootAdminRuleID)
+		}
+	}
+	if !routeRe.MatchString(path) {
+		t.Errorf("the route regex does not forward %s", path)
+	}
 }
 
 // assertProjectAPIAuthz verifies the project-api rule actually enforces the claimed
@@ -330,6 +413,7 @@ func TestRouteRuleSetParity(t *testing.T) {
 	// on campaign_manager for the correct object per branch (resolved UID for slug,
 	// raw capture for UUID); assert that before trusting parity.
 	assertProjectAPIAuthz(t, ruleset)
+	assertRootAdminAuthz(t, ruleset)
 	rulePats := extractRulePatterns(t, ruleset)
 	ruleMatchers := make([]*regexp.Regexp, 0, len(rulePats))
 	for _, p := range rulePats {
@@ -461,12 +545,19 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// --- accepted: hubspot base + descendants ---
 		{"/projects/p1/hubspot", true},
 		{"/projects/p1/hubspot/utm", true},
-		// --- accepted: the google-ads reads (keywords, audience, campaign-ref) ---
+		// --- accepted: the google-ads reads (keywords, audience, campaign-ref) and lookups ---
 		{"/projects/p1/google-ads/keywords", true},
 		{"/projects/p1/google-ads/audience", true},
 		{"/projects/p1/google-ads/campaign-ref", true},
 		{"/projects/p1/google-ads/geo-targets", true},
 		{"/projects/p1/google-ads/user-lists", true},
+		// The conversion-action picker (#458) is ruled at the base path only (by the
+		// root-campaign-admin rule), and only for google-ads: no other provider serves it,
+		// and it is not a connection sub-path.
+		{"/projects/p1/google-ads/conversion-actions", true},
+		{"/projects/p1/google-ads/conversion-actions/x", false},
+		{"/projects/p1/microsoft-ads/conversion-actions", false},
+		{"/projects/p1/connection-google-ads/conversion-actions", false},
 		{"/projects/p1/microsoft-ads/keywords", true},
 		{"/projects/p1/microsoft-ads/audience", true},
 		{"/projects/p1/microsoft-ads/audience/x", false},
@@ -694,6 +785,7 @@ func TestRouteRuleSetParityWitnesses(t *testing.T) {
 	routeRe := regexp.MustCompile(routeValue)
 	ruleset := helmTemplate(t, "templates/ruleset.yaml")
 	assertProjectAPIAuthz(t, ruleset)
+	assertRootAdminAuthz(t, ruleset)
 	rulePats := extractRulePatterns(t, ruleset)
 	ruleMatchers := make([]*regexp.Regexp, 0, len(rulePats))
 	for _, p := range rulePats {
