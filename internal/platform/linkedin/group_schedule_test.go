@@ -116,6 +116,7 @@ func TestEnsureCampaignGroupCoversEnd(t *testing.T) {
 		{"no schedule at all: nothing to widen", nil, `{"id":555}`, false, ""},
 		{"an end with no start is still widened, the start never being sent", nil, `{"id":555,"runSchedule":{"end":3000000000000}}`, true, ""},
 		{"URN id form is accepted", nil, `{"id":"urn:li:sponsoredCampaignGroup:555","runSchedule":{"start":1000,"end":3000000000000}}`, true, ""},
+		{"a campaign URN with the group's number: refused", nil, `{"id":"urn:li:sponsoredCampaign:555","runSchedule":{"start":1000,"end":5000000000000}}`, false, "does not describe the requested group"},
 		{"another group's body: refused", nil, `{"id":556,"runSchedule":{"start":1000,"end":3000000000000}}`, false, "does not describe the requested group"},
 		{"duplicate key: refused", nil, `{"id":555,"runSchedule":{"start":1000,"end":5000000000000,"end":3000000000000}}`, false, "read campaign group 555"},
 	}

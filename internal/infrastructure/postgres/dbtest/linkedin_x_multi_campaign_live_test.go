@@ -67,6 +67,11 @@ func (w *liveNamedWire) linkedInDispatcher(t *testing.T) service.PlatformDispatc
 			_ = json.NewEncoder(rw).Encode(map[string]any{"elements": els, "metadata": map[string]any{}})
 		}
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "adCampaignGroups/"):
+			// The single-group read before a reused group's campaign create: an open-ended
+			// schedule covers every campaign, so no extension is written.
+			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			_, _ = io.WriteString(rw, `{"id":`+id+`,"runSchedule":{"start":1}}`)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "adCampaignGroups"):
 			els := []map[string]any{}
 			for i, g := range w.groups {

@@ -2016,7 +2016,14 @@ func (c *Client) readCampaignGroupEnd(ctx context.Context, path, groupID string)
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return nil, fmt.Errorf("read campaign group %s: the response is not a campaign group object", groupID)
 	}
-	if got := trailingID(wire.ID.String()); got != groupID {
+	// The id is the bare group id or exactly its sponsoredCampaignGroup URN. Any other URN type
+	// (a sponsoredCampaign with the same number, say) names a different entity whose schedule
+	// says nothing about this group's.
+	got := wire.ID.String()
+	if id, ok := urnTrailingID(got, "sponsoredCampaignGroup"); ok {
+		got = id
+	}
+	if got != groupID {
 		return nil, fmt.Errorf("read campaign group %s: the response does not describe the requested group, so its schedule cannot be trusted", groupID)
 	}
 	if wire.RunSchedule == nil {
