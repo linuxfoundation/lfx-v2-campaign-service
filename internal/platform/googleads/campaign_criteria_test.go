@@ -857,13 +857,23 @@ func TestValidateAdSchedules_DistinctWindowsOnOneDayBothSurvive(t *testing.T) {
 // refused before any request rather than dropped (#457).
 func TestValidateCampaignInputKind_RefusesSearchPartnersOffSearch(t *testing.T) {
 	c := NewClient(testCreds(), testAccount(), WithClock(fixedClock()))
-	in := creativeInput(fullCreative())
-	if err := c.ValidateCampaignInputKind(campaignKindDemandGen, in); err != nil {
-		t.Fatalf("input must validate before SearchPartners is set: %v", err)
-	}
-	in.SearchPartners = true
-	if err := c.ValidateCampaignInputKind(campaignKindDemandGen, in); err == nil || !strings.Contains(err.Error(), "Search partners are not supported on") {
-		t.Errorf("err = %v, want Search partners refused off Search", err)
+	for _, tc := range []struct {
+		kind string
+		in   CampaignInput
+	}{
+		{campaignKindDemandGen, creativeInput(fullCreative())},
+		{campaignKindDisplay, displayInput("https://cdn.example.com")},
+		{campaignKindPerformanceMax, pmaxInput(fullPMaxCreative())},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			if err := c.ValidateCampaignInputKind(tc.kind, tc.in); err != nil {
+				t.Fatalf("input must validate before SearchPartners is set: %v", err)
+			}
+			tc.in.SearchPartners = true
+			if err := c.ValidateCampaignInputKind(tc.kind, tc.in); err == nil || !strings.Contains(err.Error(), "Search partners are not supported on") {
+				t.Errorf("err = %v, want Search partners refused off Search", err)
+			}
+		})
 	}
 	search := sampleInput()
 	search.SearchPartners = true

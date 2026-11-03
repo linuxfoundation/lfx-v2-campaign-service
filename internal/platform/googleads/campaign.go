@@ -156,7 +156,8 @@ type CampaignInput struct {
 	// SearchPartners opts a Search campaign into the Search partner network
 	// (networkSettings.targetSearchNetwork) as well as Google Search. False, the default,
 	// keeps Google Search only, which is what every campaign before #457 was. Search only:
-	// the other channels send no Search network setting, so it is refused there.
+	// the other channels either reject networkSettings or, on Display, pin
+	// targetSearchNetwork false, so it is refused there.
 	SearchPartners bool
 	// CPCBid is the ad group's manual CPC bid in whole units of the ad ACCOUNT's
 	// currency — the same no-FX-conversion caveat Budget carries applies here.
@@ -1304,6 +1305,11 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	// Search partners are a Search network setting (#457): refused off Search, as the other
+	// Search-only fields are, so asking for them never validates and then does nothing.
+	if in.SearchPartners && kind != campaignKindSearch {
+		return nil, fmt.Errorf("google-ads: Search partners are not supported on %s (the Search partner network is a Search campaign setting); omit SearchPartners, or create a Search campaign", kind)
+	}
 	// The bid is REFUSED on Demand Gen rather than dropped. demandGenAdGroupCreate has
 	// no cpcBidMicros field and demandgen.go never reads this value, so accepting the
 	// bid there would validate it, convert it, and then silently discard it — the same
@@ -1315,9 +1321,6 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	// the negatives above were: no other channel's payload carries an ad-group bid, and
 	// none of them has manual bidding at all, so accepting a bid there would validate a
 	// number and then discard it.
-	if in.SearchPartners && kind != campaignKindSearch {
-		return nil, fmt.Errorf("google-ads: Search partners are not supported on %s (the Search partner network is a Search campaign setting); omit SearchPartners, or create a Search campaign", kind)
-	}
 	if in.CPCBid != 0 && kind != campaignKindSearch {
 		return nil, fmt.Errorf("google-ads: a CPC bid is not supported on %s (only Search bids manually here; the other channels have no manual bidding strategy and their ad-group payloads carry no bid); omit CPCBid, or create a Search campaign for manual bidding", kind)
 	}
@@ -1326,7 +1329,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		return nil, err
 	}
 	// Ad-group keywords and audience segments are REFUSED on every non-Search channel
-	// for the same reason the two fences above are, and they are the last pair in this
+	// for the same reason the fences above are, and they are the last pair in this
 	// preflight that still validated and then dropped. createAdGroupTargeting is called
 	// only from createAdGroupAndAd, which is on CreateCampaign's Search cascade;
 	// CreateDemandGenCampaign and CreatePerformanceMaxCampaign never read
