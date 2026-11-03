@@ -26,15 +26,19 @@ import (
 // campaignCriteria:mutate — see createCampaignTargetingCriteria for why that
 // batch is atomic and why it is separate from geo's.
 //
-// SEARCH ONLY. Every one of these is refused on the Demand Gen path at preflight.
-// Demand Gen attaches its targeting at the AD GROUP level (geo.go has the same
-// split) and this client has verified none of these criteria there. Refusing
-// locally is free; discovering it after a paid campaign exists is not, and
-// silently dropping the caller's intent is the defect LFXV2-3283 already fixed
-// once for countries. Lift this per criterion as each is confirmed live.
+// Demand Gen is the exception to that level; validateCriteriaPlan says which kinds
+// each channel takes. Demand Gen attaches its targeting at the AD GROUP level
+// (geo.go has the same split) and refuses a campaign-level language. Languages are
+// the one kind confirmed live there (#459: an ad-group `language` criterion,
+// verified by a validateOnly probe on 2026-11-03), so a Demand Gen campaign takes
+// them on its ad group (createDemandGenAdGroupTargeting); ad schedules, devices and
+// demographics are still refused there at preflight. Refusing locally is free;
+// discovering it after a paid campaign exists is not, and silently dropping the
+// caller's intent is the defect LFXV2-3283 already fixed once for countries. Lift this
+// per criterion as each is confirmed live.
 //
 // The income-range and parental-status exclusions at the end of this file (#473) are
-// the exception: they are AD GROUP criteria with their own channel fence — see
+// another exception: they are AD GROUP criteria with their own channel fence — see
 // validateAdGroupDemographicExclusions.
 // ---------------------------------------------------------------------------
 
@@ -155,8 +159,8 @@ var adScheduleMinutes = map[int]string{
 // gained the two channels Google supports it on. Google's own device-targeting
 // documentation says of TV screens: "This targeting option is only available for
 // Display and Video campaigns." While Search and Demand Gen were the only kinds that
-// reached this map — every criterion in this file is refused outright on Demand Gen,
-// see validateCriteriaPlan — the omission restated an upstream rule and cost a caller
+// reached this map — device criteria are refused outright on Demand Gen, see
+// validateCriteriaPlan — the omission restated an upstream rule and cost a caller
 // nothing. Video and Display now reach it too, and on those two Google DOES accept the
 // device, so on those two the omission is this client's limitation rather than
 // Google's, and is stated as one — the same distinction displayBiddingStrategies draws
@@ -289,10 +293,16 @@ func (p criteriaPlan) count() int {
 // That is the same trade resolveGeoEntry documents: a lookup would make
 // ValidateCampaignInput send a request, which its contract forbids.
 func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
-	asked := len(in.Languages) + len(in.AdSchedules) + len(in.DeviceBidModifiers) +
+	// Languages are NOT in this sum (#459). A Demand Gen ad group accepts `language`
+	// criteria next to its audience, while a CAMPAIGN-level language on Demand Gen is
+	// refused — both verified by a validateOnly probe on 2026-11-03 — so the Demand Gen
+	// cascade attaches plan.languages to its ad group (createDemandGenAdGroupTargeting)
+	// rather than calling createCampaignTargetingCriteria. The other four kinds have not
+	// been verified on that ad group and stay refused.
+	asked := len(in.AdSchedules) + len(in.DeviceBidModifiers) +
 		len(in.ExcludedAgeRanges) + len(in.ExcludedGenders)
 	if asked > 0 && kind == campaignKindDemandGen {
-		return criteriaPlan{}, fmt.Errorf("google-ads: language, ad schedule, device and demographic criteria are not supported on %s (Demand Gen attaches targeting at the ad group level, where this client has not verified these criteria); create a Search campaign for them", kind)
+		return criteriaPlan{}, fmt.Errorf("google-ads: ad schedule, device and demographic criteria are not supported on %s (Demand Gen attaches targeting at the ad group level, where this client has verified only languages); omit AdSchedules, DeviceBidModifiers, ExcludedAgeRanges and ExcludedGenders, or create a Search campaign for them", kind)
 	}
 	// Performance Max SPLITS this set rather than refusing it whole, which is why the
 	// Demand Gen check above could not simply be widened to every non-Search channel.
@@ -308,10 +318,12 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 	// is nowhere upstream.
 	// Video and Display both take the UN-NARROWED set — every one of the five kinds,
 	// exactly as Search does — and that is why the Demand Gen fence above still names one
-	// channel rather than every non-Search one. A VIDEO or DISPLAY campaign carries
-	// LANGUAGE, AD_SCHEDULE, DEVICE (with a bid modifier) and campaign-level
-	// AGE_RANGE/GENDER exclusions as campaign criteria, and video.go and display.go each
-	// attach all five on their criteria step, so nothing accepted here is dropped. Widening the Demand Gen refusal to `!= Search` would
+	// channel rather than every non-Search one. (Demand Gen takes the languages, on its
+	// ad group; see above.) A VIDEO or DISPLAY campaign carries LANGUAGE, AD_SCHEDULE,
+	// DEVICE (with a bid modifier) and campaign-level AGE_RANGE/GENDER exclusions as
+	// campaign criteria, and video.go and display.go each attach all five on their criteria
+	// step, so nothing accepted here is dropped. Widening the Demand Gen refusal to
+	// `!= Search` would
 	// have refused a campaign Google creates happily — the over-refusal these guards
 	// exist to avoid.
 	// This arm is about the CHANNEL, not about automated bidding — Performance Max takes

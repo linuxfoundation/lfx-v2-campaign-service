@@ -799,11 +799,12 @@ that names none of them produces exactly the single-ad-group, single-ad campaign
 service created before they existed. Additive does NOT mean channel-independent — the
 entries below marked SEARCH ONLY are REFUSED, not ignored, on any other `channel`. Each
 entry states which channels accept it, because the channels do not refuse the same set:
-`performance-max` takes languages, ad schedules and proximity that `demand-gen` refuses, and
-refuses device bid modifiers and demographic exclusions alongside it. Each is validated
-BEFORE the first budget mutate, so a
-refused value cannot strand a paid campaign — and the same validation runs on the
-`adoptExisting` path, so a config is refused identically whether it creates or adopts.
+`performance-max` takes ad schedules and proximity that `demand-gen` refuses, and refuses
+device bid modifiers and demographic exclusions alongside it; `demand-gen` takes languages
+on its ad group, and is the only channel that takes `demandGenAudience`. Each is validated
+BEFORE the first budget mutate, so a refused value cannot strand a paid campaign — and the
+same validation runs on the `adoptExisting` path, so a config is refused identically whether
+it creates or adopts.
 
 **Click tracking (#476), on every channel and with no config field.** Every campaign create
 sets the campaign custom parameter `utmcampaign` to the composed campaign name, query-escaped
@@ -877,8 +878,9 @@ keywords?: {text, matchType}[]  — OPTIONAL positive Search keyword criteria (G
 
                                   SEARCH ONLY, and REFUSED rather than ignored on every other
                                   `channel`: keyword criteria are attached only on the Search cascade,
-                                  Demand Gen's ad group takes no criteria at all, and Performance Max
-                                  has no ad group to hang them on. Accepting them elsewhere would
+                                  Demand Gen has no keyword criteria (its ad group takes location,
+                                  language and one Audience criterion), and Performance Max has no
+                                  ad group to hang them on. Accepting them elsewhere would
                                   validate every term and then discard the lot.
 audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTING audiences to attach
                                   to the ad group (GA-4) as observation-only criteria — bid/report on
@@ -888,8 +890,8 @@ audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTI
                                   audiences are not supported: this client attaches audience criteria
                                   only on the Search ad-group cascade, and `audienceSegments` is refused
                                   outright on every other `channel` (below), so the Demand Gen and
-                                  Performance Max campaigns it now creates never reach an audience
-                                  attach at all.
+                                  Performance Max campaigns it now creates never reach a user-list
+                                  attach at all (Demand Gen takes `demandGenAudience` instead).
                                   Any other resource-name shape (customAudiences, userInterest,
                                   combinedAudience, etc.) is rejected. At most 20 entries; duplicates are
                                   deduped. When non-empty, the client sets the ad group's
@@ -901,7 +903,35 @@ audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTI
                                   `channel`, for the same reason `keywords` is: audience criteria are
                                   attached only on the Search cascade, so an audience named on any
                                   other channel would be validated and then dropped, leaving a campaign
-                                  that reads as targeted and is not.
+                                  that reads as targeted and is not. On `demand-gen` the refusal is
+                                  Google's own (#459): a Demand Gen ad group is AUDIENCE-GROUPED, and
+                                  Google refuses a user list or custom audience attached to it
+                                  directly, even with `useAudienceGrouped=false` (validateOnly probe,
+                                  2026-11-03). Put the segments in a Google Ads Audience and name it
+                                  in `demandGenAudience` instead.
+demandGenAudience?: string      — OPTIONAL one EXISTING Google Ads Audience,
+                                  `customers/<this account>/audiences/<id>`, attached to the Demand
+                                  Gen ad group as an `audience` criterion (#459). This client never
+                                  creates the Audience; its custom segments and user lists are built
+                                  in the Google Ads UI. One, not a list: Google admits exactly one
+                                  Audience per Demand Gen ad group and refuses a second
+                                  (`ONE_AUDIENCE_ALLOWED_PER_AD_GROUP`, validateOnly probe,
+                                  2026-11-03). Any other shape, a non-canonical id, or a resource
+                                  under ANOTHER customer is REFUSED before the budget mutate — Google
+                                  refuses the foreign one too, but only after the budget.
+
+                                  That check is ACCOUNT-scoped, not foundation-scoped: on the shared
+                                  LF Google Ads customer a project could name another foundation's
+                                  Audience, which on Demand Gen restricts who the ad group reaches.
+                                  So the field is OFF by default: unless the deployment sets
+                                  GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED to exactly "true", a create
+                                  naming it is refused before the budget mutate, whatever the value.
+                                  It stays off until this service can check the Audience against the
+                                  calling foundation (#468).
+
+                                  DEMAND GEN ONLY, and REFUSED on every other `channel`. It shares
+                                  one atomic `adGroupCriteria:mutate` with `languages`, after the geo
+                                  one; the criterion id is reported in `audienceCriteriaIds`.
 geoTargets?: string[]           — OPTIONAL locations the campaign should serve in (LFXV2-3283). Each
                                   entry is EITHER an ISO 3166-1 alpha-2 country code, spelled as in
                                   `metaConfig`/`redditConfig`, OR a raw numeric geo target constant id
@@ -1140,11 +1170,15 @@ conversionActions?: string[]    — OPTIONAL the conversion actions THIS campaig
                                   written: one edited by hand is left as it is, and a new goal is
                                   created under the set's second name. A removed goal holding the
                                   set is re-enabled, which is safe because a goal linked to a
-                                  campaign cannot be removed; if Google definitely refuses the
-                                  re-enable (an unknown outcome is UNCONFIRMED), a goal is created
-                                  under the second name instead. That create can still be refused
-                                  when Google counts the removed goal as holding the list, and the
-                                  goal is then NOT applied.
+                                  campaign cannot be removed; if Google definitely refuses to
+                                  re-enable the removed goal holding the set (found when the set's
+                                  own name is held by a goal that cannot be reused; an unknown
+                                  outcome is UNCONFIRMED), a goal is created under the second name
+                                  instead. That create can still be refused when Google counts the
+                                  removed goal as holding the list, and the goal is then NOT
+                                  applied. A create refused because a removed goal holds the list
+                                  (`DUPLICATE_CONVERSION_ACTION_LIST`) takes no second-name
+                                  fallback: a create under any name would be refused the same way.
                                   Under a strategy that
                                   bids for clicks (manual CPC, maximize clicks, and Demand Gen's only
                                   strategy) the goal decides what the campaign counts as a conversion,
@@ -1204,12 +1238,16 @@ languages?: string[]            — OPTIONAL languages the campaign targets (LFX
                                   eligible in every language, which is what every campaign created
                                   before this field existed did.
 
-                                  REFUSED rather than ignored on `demand-gen` — as are `adSchedules`,
-                                  `deviceBidModifiers`, `excludedAgeRanges` and `excludedGenders`,
-                                  which one guard refuses together there. Demand Gen attaches this
-                                  targeting at the AD GROUP level, where this client has not verified
-                                  it against a real account; accepting the field and dropping it would
-                                  create a campaign with none of the targeting the caller asked for.
+                                  ACCEPTED on `demand-gen` since #459, but as AD-GROUP language
+                                  criteria: Demand Gen refuses a CAMPAIGN-level language and its ad
+                                  group accepts `language` criteria next to its audience (validateOnly
+                                  probe, 2026-11-03). They share one atomic `adGroupCriteria:mutate`
+                                  with `demandGenAudience`, and their ids are reported in
+                                  `targetingCriterionIds` as adGroupCriterion ids. `adSchedules`,
+                                  `deviceBidModifiers`, `excludedAgeRanges` and `excludedGenders` stay
+                                  REFUSED there, by one guard: this client has not verified them on
+                                  the Demand Gen ad group, and accepting and dropping them would
+                                  create a campaign without the targeting the caller asked for.
 
                                   ACCEPTED on `performance-max`, which Google documents as taking
                                   LANGUAGE, LOCATION and AD_SCHEDULE campaign criteria. Only

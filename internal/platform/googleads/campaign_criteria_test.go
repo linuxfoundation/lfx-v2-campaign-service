@@ -225,11 +225,11 @@ func TestValidateDeviceBidModifiers_RejectsBadInput(t *testing.T) {
 		// Two criteria for one device is a conflict Google rejects after the campaign
 		// exists, and the caller plainly meant one of the two values.
 		"duplicate device": {{Device: "MOBILE", BidModifier: 1.5}, {Device: "mobile", BidModifier: 2}},
-		// Google supports TV screens only on Display and Video campaigns, and every
-		// criterion in this file is refused on Demand Gen — so Search is the only kind
-		// that reaches the vocabulary, and Search is not a type it works on. Accepting
-		// it offered a knob that is inert at best and rejects the criteria mutate at
-		// worst, after the budget and campaign are committed.
+		// Google supports TV screens only on Display and Video campaigns. Search, Video
+		// and Display all reach this vocabulary (device criteria are refused on Demand
+		// Gen and Performance Max), and this client sends the device on none of them — a
+		// named gap on Video and Display, see deviceTypes. Accepting it would risk a
+		// rejected criteria mutate after the budget and campaign are committed.
 		"connected TV":            {{Device: "CONNECTED_TV", BidModifier: 1.5}},
 		"connected TV lowercased": {{Device: " connected_tv ", BidModifier: 1.5}},
 		// OTHER is a reporting bucket, not something a campaign bids on.
@@ -320,11 +320,10 @@ func TestValidateExcludedGenders_NormalisesAndDedupes(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // Demand Gen attaches its targeting at the ad group level, where this client has
-// verified none of these criteria. Each field is refused on its own, so a caller
-// is told which one it was rather than being refused for a field it did not set.
-func TestValidateCriteriaPlan_RefusesEveryCriterionOnDemandGen(t *testing.T) {
+// verified only languages (#459). Each of the other four is refused on its own, so a
+// caller is told which one it was rather than being refused for a field it did not set.
+func TestValidateCriteriaPlan_RefusesAllButLanguagesOnDemandGen(t *testing.T) {
 	cases := map[string]func(in *CampaignInput){
-		"languages": func(in *CampaignInput) { in.Languages = []string{"EN"} },
 		"ad schedules": func(in *CampaignInput) {
 			in.AdSchedules = []AdSchedule{{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17}}
 		},
@@ -345,6 +344,31 @@ func TestValidateCriteriaPlan_RefusesEveryCriterionOnDemandGen(t *testing.T) {
 				t.Fatalf("the same input must be accepted on Search, got %v", err)
 			}
 		})
+	}
+}
+
+// Languages are the one criterion Demand Gen takes (#459): a validateOnly probe on
+// 2026-11-03 showed its ad group accepts `language` criteria. They resolve into the
+// plan exactly as on Search — deduped by the resolved id — for the Demand Gen cascade
+// to attach on the ad group.
+func TestValidateCriteriaPlan_AcceptsLanguagesOnDemandGen(t *testing.T) {
+	in := sampleInput()
+	in.Languages = []string{"EN", "1000", "de"}
+	plan, err := validateCriteriaPlan(campaignKindDemandGen, in)
+	if err != nil {
+		t.Fatalf("languages must be accepted on Demand Gen, got %v", err)
+	}
+	want := []languageInfo{{LanguageConstant: "languageConstants/1000"}, {LanguageConstant: "languageConstants/1001"}}
+	if len(plan.languages) != len(want) || plan.languages[0] != want[0] || plan.languages[1] != want[1] {
+		t.Errorf("plan.languages = %+v, want %+v", plan.languages, want)
+	}
+	if plan.count() != len(want) {
+		t.Errorf("plan.count() = %d, want %d — nothing but the languages was asked for", plan.count(), len(want))
+	}
+	// A bad entry is still refused on Demand Gen, by the same resolver.
+	in.Languages = []string{"Klingon"}
+	if _, err := validateCriteriaPlan(campaignKindDemandGen, in); err == nil {
+		t.Error("an unmapped language must be refused on Demand Gen as on Search")
 	}
 }
 

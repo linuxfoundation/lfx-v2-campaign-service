@@ -1092,11 +1092,20 @@ exclusions still serves wherever the account allows minus a few places, which is
 what the warning exists to say out loud. A warning an operator learns to distrust is worse
 than none.
 
-The Search-only channel rules — proximity, languages, schedules, devices, demographics,
-extensions and ad groups are all refused on Demand Gen — are deliberately **not** restated
-here. The client refuses them inside its own preflight, before its first mutate, and `Dispatch`
-validates unconditionally (including on the adoption path), so both paths already refuse in one
-place. A second copy in the adapter could only drift from it.
+The channel rules — proximity, schedules, devices, demographics, extensions and ad groups
+are all refused on Demand Gen, which takes languages on its ad group instead (#459), and
+`demandGenAudience` is refused everywhere else — are deliberately **not** restated here;
+`demandGenAudience` is mapped verbatim onto `CampaignInput.DemandGenAudience`, as
+`audienceSegments` and `geoTargets` are, once one deployment gate has passed: unless
+`GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`, `Dispatch` refuses any non-empty
+`demandGenAudience` as not-created, straight after decoding the config
+(`googleAdsDemandGenAudienceEnabled`). That gate is not a channel rule. It exists because the
+client's check is account-scoped and the LF account is shared by every foundation (#468), and a
+caller can reach `Dispatch` without lfx-self-serve's root-only form. It sits in the adapter so it
+also covers direct callers. The client refuses them inside its own preflight,
+before its first mutate, and `Dispatch` validates unconditionally (including on the adoption
+path), so both paths already refuse in one place. A second copy in the adapter could only
+drift from it.
 
 **Validate for the RESOLVED kind, which is why the channel switch runs first.** `Dispatch` calls
 `ValidateCampaignInputKind(campaignKind, in)`, not the Search-assuming `ValidateCampaignInput`,

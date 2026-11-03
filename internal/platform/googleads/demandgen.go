@@ -93,9 +93,10 @@ type demandGenAdGroupCreate struct {
 }
 
 // CreateDemandGenCampaign creates a PAUSED Demand Gen campaign: budget → campaign →
-// ad group → ad-group-level geo. It is a port of the legacy Express implementation
-// (`lfx-self-serve` `campaign-proxy.service.ts`'s `createDemandGenCampaign`), which
-// is what serves this channel today and is the behavioural reference.
+// ad group → ad-group-level geo → ad-group-level audience and languages (#459). It is a
+// port of the legacy Express implementation (`lfx-self-serve`
+// `campaign-proxy.service.ts`'s `createDemandGenCampaign`), which is what serves this
+// channel today and is the behavioural reference.
 //
 // It creates NO KEYWORDS: Demand Gen has no keyword criteria, and the preflight
 // refuses them rather than dropping them.
@@ -355,7 +356,22 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		res.Steps = steps
 	}
 
-	// Step 5: the creative. Images first as account-level assets, then the ad that
+	// Step 5: the Audience and the languages (#459), on the AD GROUP — the only level
+	// Demand Gen takes either at (see demandgen_targeting.go for the probe facts). Its
+	// own mutate after geo rather than inside geo's; createDemandGenAdGroupTargeting says
+	// why. Same partial-result contract as geo: a failure comes back with the non-nil res.
+	if pf.demandGenAudience != "" || len(pf.criteria.languages) > 0 {
+		audienceIDs, languageIDs, targetErr := c.createDemandGenAdGroupTargeting(ctx, adGroupResource, adGroupID, pf.demandGenAudience, pf.criteria.languages)
+		if targetErr != nil {
+			return res, targetErr
+		}
+		res.AudienceCriteriaIDs = audienceIDs
+		res.TargetingCriterionIDs = languageIDs
+		steps = append(steps, fmt.Sprintf("Audience and language targeting applied: %d ad-group criteria (%s)", len(audienceIDs)+len(languageIDs), demandGenTargetingStep(pf.demandGenAudience, pf.criteria.languages)))
+		res.Steps = steps
+	}
+
+	// Step 6: the creative. Images first as account-level assets, then the ad that
 	// references them — two mutates, because Google has no call that does both.
 	//
 	// Like the geo step, a failure is returned ALONGSIDE the non-nil res: the campaign
@@ -392,10 +408,10 @@ func demandGenClosingStep(hasGeo, hasAd bool) string {
 	case hasGeo && hasAd:
 		return "Demand Gen campaign created — review the creative and launch in the Google Ads UI"
 	case hasAd:
-		return "Demand Gen campaign created (no geo targeting set) — add targeting, then review the creative and launch in the Google Ads UI"
+		return "Demand Gen campaign created (no geo targeting set) — add geo targeting, then review the creative and launch in the Google Ads UI"
 	case hasGeo:
 		return "Demand Gen campaign created with NO AD — it cannot serve until an ad is added; upload images and publish in the Google Ads UI"
 	default:
-		return "Demand Gen campaign created with NO AD (no geo targeting set) — it cannot serve until an ad is added; add targeting, upload images and publish in the Google Ads UI"
+		return "Demand Gen campaign created with NO AD (no geo targeting set) — it cannot serve until an ad is added; add geo targeting, upload images and publish in the Google Ads UI"
 	}
 }

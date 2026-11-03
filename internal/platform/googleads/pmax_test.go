@@ -1002,7 +1002,8 @@ func TestCreatePerformanceMaxCampaign_NoAssetGroupSaysSoLoudly(t *testing.T) {
 
 // TestPreflightPerformanceMaxSplitsTheCriteria pins the channel split that is the
 // easiest thing in this path to get wrong by copying Demand Gen's fence: Demand
-// Gen refuses all five campaign criteria kinds, Performance Max refuses only two.
+// Gen refuses four of the five criteria kinds (its languages go on its ad group, #459),
+// Performance Max refuses only two.
 func TestPreflightPerformanceMaxSplitsTheCriteria(t *testing.T) {
 	c := &Client{account: AccountConfig{CustomerID: "1234567890"}}
 
