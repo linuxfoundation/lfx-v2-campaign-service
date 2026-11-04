@@ -1102,7 +1102,7 @@ func TestGoogleAds_DemandGenAudienceRefusalsArePreCreate(t *testing.T) {
 
 // With GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED anything but exactly "true", a create naming a
 // demandGenAudience is refused in Dispatch before the budget, even one the client would accept
-// (#468: the client's check is account-scoped only). The rest of Demand Gen is not gated:
+// (the client checks the account only). The rest of Demand Gen is not gated:
 // languages still reach the ad group with no Audience.
 func TestGoogleAds_DemandGenAudienceGate(t *testing.T) {
 	const valid = `"channel":"demand-gen","demandGenAudience":"customers/1234567890/audiences/4242"`
@@ -1128,8 +1128,9 @@ func TestGoogleAds_DemandGenAudienceGate(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected the dispatch to be refused while the gate is off")
 			}
-			if !strings.Contains(err.Error(), constants.EnvGoogleAdsDemandGenAudienceEnabled) || !strings.Contains(err.Error(), "#468") {
-				t.Errorf("error = %v, want it to name the gate and #468", err)
+			if !strings.Contains(err.Error(), "demandGenAudience is disabled on this deployment") ||
+				!strings.Contains(err.Error(), "omit demandGenAudience; or ask an operator to set "+constants.EnvGoogleAdsDemandGenAudienceEnabled+` to "true"`) {
+				t.Errorf("error = %v, want it to name the gate and how to enable it", err)
 			}
 			var pce *preCreateError
 			if !errors.As(err, &pce) {

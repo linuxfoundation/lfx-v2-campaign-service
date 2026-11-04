@@ -295,7 +295,7 @@ func TestGoogleAds_ExcludedPlacementsRefusedOnSearch(t *testing.T) {
 
 // With GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED anything but exactly "true", a create naming an
 // account-owned Display segment is refused in Dispatch before the budget, even one the client
-// would accept (#468: the client's check is account-scoped only). The refusal is a
+// would accept (the client checks the account only). The refusal is a
 // not-created PreflightRefusal, so the async job shows the gate's sentence verbatim rather than
 // the generic failure, and it names exactly the fields the request set.
 func TestGoogleAds_DisplayAudiencesGate(t *testing.T) {
@@ -306,18 +306,27 @@ func TestGoogleAds_DisplayAudiencesGate(t *testing.T) {
 	)
 	cases := []struct {
 		name, env, cfg, wantFields string
+		wantFull                   string // when set, the whole sentence, exactly
 	}{
-		{"unset", unsetEnv, `"channel":"display",` + userList, "(audienceSegments)"},
-		{"empty", "", `"channel":"display",` + custom, "(customAudiences)"},
-		{"false", "false", `"channel":"display",` + affinity, "(customAffinities)"},
-		{"wrong case", "TRUE", `"channel":"display",` + userList, "(audienceSegments)"},
-		{"leading space", " true", `"channel":"display",` + userList, "(audienceSegments)"},
-		{"one", "1", `"channel":"display",` + custom, "(customAudiences)"},
-		{"channel spelled loosely", "", `"channel":" Display ",` + userList, "(audienceSegments)"},
+		{"unset", unsetEnv, `"channel":"display",` + userList, "(audienceSegments)", ""},
+		{"empty", "", `"channel":"display",` + custom, "(customAudiences)", ""},
+		{"false", "false", `"channel":"display",` + affinity, "(customAffinities)", ""},
+		{"wrong case", "TRUE", `"channel":"display",` + userList, "(audienceSegments)", ""},
+		{"leading space", " true", `"channel":"display",` + userList, "(audienceSegments)", ""},
+		{"one", "1", `"channel":"display",` + custom, "(customAudiences)", ""},
+		{"channel spelled loosely", "", `"channel":" Display ",` + userList, "(audienceSegments)", ""},
 		{"all three", "", `"channel":"display",` + userList + `,` + custom + `,` + affinity,
-			"(audienceSegments, customAudiences, customAffinities)"},
-		{"blank entry", "", `"channel":"display","customAudiences":["  "]`, "(customAudiences)"},
-		{"custom list off display", "", custom, "(customAudiences)"},
+			"(audienceSegments, customAudiences, customAffinities)", ""},
+		{"blank entry", "", `"channel":"display","customAudiences":["  "]`, "(customAudiences)", ""},
+		{"custom list off display", "", custom, "(customAudiences)", ""},
+		// Two fields are joined by ", ", so the remedies are split by ";" and cannot read as
+		// one more field in the list.
+		{"two fields", "", `"channel":"display",` + userList + `,` + custom,
+			"(audienceSegments, customAudiences)",
+			`google-ads: Display audience targeting (audienceSegments, customAudiences) is disabled ` +
+				`on this deployment (GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED is not "true"); ` +
+				`omit audienceSegments, customAudiences; or ask an operator to set ` +
+				`GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED to "true"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -332,12 +341,15 @@ func TestGoogleAds_DisplayAudiencesGate(t *testing.T) {
 			}
 			for _, want := range []string{
 				"Display audience targeting " + tc.wantFields + " is disabled on this deployment",
-				constants.EnvGoogleAdsDisplayAudiencesEnabled, "#468",
 				"omit " + strings.Trim(tc.wantFields, "()"),
+				"; or ask an operator to set " + constants.EnvGoogleAdsDisplayAudiencesEnabled + ` to "true"`,
 			} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error = %v, want it to contain %q", err, want)
 				}
+			}
+			if tc.wantFull != "" && err.Error() != tc.wantFull {
+				t.Errorf("error = %q, want exactly %q", err.Error(), tc.wantFull)
 			}
 			var pce *preCreateError
 			if !errors.As(err, &pce) {

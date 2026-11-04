@@ -2035,12 +2035,12 @@ before the budget mutate, and refused on every channel but Search.
   runs right after the campaign-level negative keywords. Confirmed shared set ids land in
   `CampaignResult.SharedNegativeKeywordListIDs`; a result that does not name
   `<campaignId>~<sharedSetId>` for the operation at its index is UNCONFIRMED and keeps the
-  ids matched before it. That account check is ACCOUNT-scoped, not foundation-scoped: on the
-  shared LF Google Ads customer a project could name another foundation's list (#468). So
-  the dispatch adapter refuses any non-empty `sharedNegativeKeywordLists`, on any channel and
-  before the budget, unless `GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED` is exactly `"true"`;
-  the chart sets it to `"false"`. The client's own same-account check stays as defence in
-  depth. `searchAssets` names no account resource and is not gated.
+  ids matched before it. That check holds each list to the connected Google Ads account
+  (same customer id), which is the boundary; per-foundation ownership (#468) was closed as
+  won't do. The dispatch adapter refuses any non-empty `sharedNegativeKeywordLists`, on any
+  channel and before the budget, unless `GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED` is exactly
+  `"true"`: a per-deployment opt-in the chart sets to `"false"`, turned on in lfx-v2-argocd.
+  `searchAssets` names no account resource and is not gated.
 - `googleAdsMutateOperation` gained the `assetOperation` and `campaignAssetOperation` arms
   and `googleAdsMutateResponse` the `assetResult` and `campaignAssetResult` arms.
 
@@ -2222,12 +2222,12 @@ after its channel like `DemandGenCreative`. `validateDemandGenAudience` runs in
 fence is `!= campaignKindDemandGen`, so a new channel inherits it), refuses any shape
 but `customers/<id>/audiences/<id>` with a positive canonical id, and refuses a
 resource under another customer — the `validateConversionActions` check, for the same
-reason. That check is ACCOUNT-scoped, not foundation-scoped, and is not tenancy
-protection: on the shared LF Google Ads customer a project can name another foundation's
-Audience, which on Demand Gen restricts who the ad group reaches. So the dispatch adapter
-refuses the field — and, since #460, every `demandGenAdGroups[].audience` — unless
-`GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`, and the chart sets it to
-`"false"` until #468 adds a foundation-scoped check.
+reason. The connected Google Ads account (same customer id) is the boundary that check
+enforces; per-foundation ownership (#468) was closed as won't do, because campaign managers
+are the LF marketing team, who manage every foundation. The dispatch adapter refuses the
+field — and, since #460, every `demandGenAdGroups[].audience` — unless
+`GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`: a per-deployment opt-in the
+chart sets to `"false"`, turned on in lfx-v2-argocd (lfx-v2-argocd#2001).
 This client never creates the Audience. `AudienceSegments` stays refused on
 Demand Gen, now with a message that says why (audience-grouped) and names
 `DemandGenAudience`; Performance Max and Video keep the generic reason (audience criteria
@@ -2318,10 +2318,9 @@ omitted when nil.
 (dispatch `demandGenAdGroups`) names up to `maxDemandGenAdGroups` (5, a service bound:
 every group's images are held before the budget mutate and every group adds mutates after
 the campaign exists). Each `DemandGenAdGroup` has a `Name` label, an optional `Audience`
-under `validateDemandGenAudience`'s rules (shape and this account only — not a tenancy
-check, so the dispatch adapter refuses any group's Audience unless
-`GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`, as it does
-`DemandGenAudience`; #468), and exactly one of `Creative` / `VideoCreative`, or an `Ads`
+under `validateDemandGenAudience`'s rules (shape and this account; the dispatch adapter
+refuses any group's Audience unless `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly
+`"true"`, as it does `DemandGenAudience`), and exactly one of `Creative` / `VideoCreative`, or an `Ads`
 list (#474) — a named group with no ad cannot serve, and the list has no older callers to
 keep. Names
 are `sanitizeNamePart`ed and appended to the single group's name
@@ -2891,11 +2890,11 @@ with Demand Gen's `demandGenAudienceRE`), and a name in another account is refus
 `validateConversionActions` refuses a foreign conversion action. Either spelling's id must
 pass `canonicalCampaignID` — positive, base-10, no leading zero — the rule #459 set for
 `DemandGenAudience`, and a value that is only whitespace is refused rather than read as
-absent, as a blank `DemandGenAudience` is. That check is ACCOUNT-scoped,
-not foundation-scoped, and is not tenancy protection: on the shared LF Google Ads customer a
-project could name another foundation's audience (#468). So the dispatch adapter refuses any
-non-empty `performanceMaxAudienceSignal` unless `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is
-exactly `"true"`, and the chart sets it to `"false"`. The search themes (free text) and the
+absent, as a blank `DemandGenAudience` is. The connected Google Ads account is the boundary
+that check enforces; per-foundation ownership (#468) was closed as won't do. The dispatch
+adapter refuses any non-empty `performanceMaxAudienceSignal` unless
+`GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is exactly `"true"`: a per-deployment opt-in the
+chart sets to `"false"`. The search themes (free text) and the
 extensions (text and the campaign's own URLs) name no account resource and are not gated.
 One audience at most is
 enforced by the type, a string, because Google allows one per asset group. Verified by
@@ -3085,14 +3084,14 @@ AUDIENCE `bidOnly: false`, together with the four criteria, was accepted.
   `customers/{customerId}/{collection}/{id}` with numeric ids and the customer equal to THIS
   client's account — the account check `validateAudienceSegments` does not make. Another
   customer's list is not expected to be accepted (not probed); any refusal would come at the
-  criteria mutate, after the ad group exists. The check is ACCOUNT-scoped, not
-  foundation-scoped, and is not tenancy protection: on an account shared across foundations any
-  foundation's list on it passes (#468). So the dispatch adapter refuses Display user lists,
+  criteria mutate, after the ad group exists. The connected Google Ads account is the boundary
+  the check enforces; per-foundation ownership (#468) was closed as won't do. The dispatch
+  adapter refuses Display user lists,
   custom audiences and custom affinities — and since #475 the user-list exclusions and every
   `DisplayAdGroups` entry's lists but user interests — unless
   `GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` is exactly `"true"`, and the chart sets it to
-  `"false"`; user interests (Google's own categories) and placements (public domains) are not
-  gated. A well-formed name of the wrong kind
+  `"false"` (a per-deployment opt-in); user interests (Google's own categories) and
+  placements (public domains) are not gated. A well-formed name of the wrong kind
   is refused with the field it belongs in, and an Audience resource with Display's reason.
   Display's `AudienceSegments` are judged here, not by the Search validator:
   `preflightCampaignKind` clears them from the Search inputs on Display, so the off-Search
@@ -3144,7 +3143,7 @@ Display ad group (`{adGroup, userList:{userList}, negative:true}`) and on the ca
   campaign. Both are DISPLAY ONLY and refused elsewhere by name. Only USER LISTS can be
   excluded — the probed exclusion — so `validateDisplayExcludedUserLists` refuses another
   segment kind with its own reason before `validateDisplayAudienceList` applies the shape and
-  account rules; the same #468 tenancy note applies. That validator also refuses an id not in
+  account rules; the same deployment gate applies. That validator also refuses an id not in
   canonical form (`userLists/011`), which would otherwise pass its de-dupe and
   `refuseExcludedOverlap` as a second list beside `userLists/11`; Search's
   `validateAudienceSegments` refuses the same for both of its ids. `DisplayAdGroups` off Display

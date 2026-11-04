@@ -1184,10 +1184,14 @@ else — are deliberately **not** restated here;
 (`googleAdsDemandGenAudienceEnabled`), and likewise any `demandGenAdGroups` entry with a
 non-empty `audience` (`googleAdsDemandGenAdGroupAudiencesSet`, #460), whose refusal names the
 entries by 1-based position — never the caller's group names or Audience. A group without an
-audience is not gated. That gate is not a channel rule. It exists because the
-client's check is account-scoped and the LF account is shared by every foundation (#468), and a
-caller can reach `Dispatch` without lfx-self-serve's root-only form. It sits in the adapter so it
-also covers direct callers.
+audience is not gated. That gate is not a channel rule. It is a per-deployment opt-in, off by
+default, that ops turns on by setting it to exactly `"true"` in lfx-v2-argocd (lfx-v2-argocd#2001
+enables this one). The client checks the Audience against the connected Google Ads account (same
+customer id), which is the boundary. Per-foundation ownership (#468) was closed as won't do:
+campaign managers are the LF marketing team, who manage every foundation. This relies on
+`campaign_manager` being held only by LF marketing; revisit if foundation-level campaign
+managers are introduced. The gate sits in the adapter so it also covers callers that reach
+`Dispatch` directly.
 
 `GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` is the same gate for #462's account-owned Display
 segments (`googleAdsDisplayAudiencesEnabled`, `googleAdsDisplayAudienceFieldsSet`): unless it is
@@ -1207,16 +1211,17 @@ Search's `audienceSegments` are observation-only and predate it, so they are not
 own affinity and in-market categories, the same ids on every account. `excludedPlacements` are not gated: they are public domains, not
 account resources, and they only narrow where the campaign appears. Both gates refuse through
 `googleAdsInputDisabled`: not-created, and a `domain.PreflightRefusal`, so the asynchronous
-create job reports the gate's sentence (which input is disabled, and to omit it) instead of
-the generic "platform campaign creation failed".
+create job reports the gate's sentence instead of the generic "platform campaign creation
+failed": `google-ads: <fields> is disabled on this deployment (<FLAG> is not "true"); omit
+<fields>; or ask an operator to set <FLAG> to "true"`. The two remedies are split by `;`
+because a Display refusal joins several fields with `, `.
 
 `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the third gate of the kind, for #461's
 `performanceMaxAudienceSignal` (`googleAdsPMaxAudienceSignalEnabled`): unless it is exactly
 `"true"`, `Dispatch` refuses any non-empty value, whitespace included and on any channel, right
-after the Display gate, through the same `googleAdsInputDisabled`. The client checks the
-Audience against the account only, so on the shared LF customer a project could name another
-foundation's Audience as its signal (#468); on Performance Max a signal is a hint rather than
-a restriction, but the Audience is still another foundation's resource. The rest of #461 is
+after the Display gate, through the same `googleAdsInputDisabled`. Like the Demand Gen gate it is
+a per-deployment opt-in, and the client checks the Audience against the connected Google Ads
+account. The rest of #461 is
 not gated: `performanceMaxSearchThemes` are free text, and the sitelinks, callouts and
 structured snippets it admits on Performance Max are text and the caller's own destination
 URLs, created as new assets, so none names an existing account resource.
@@ -1227,9 +1232,8 @@ URLs, created as new assets, so none names an existing account resource.
 `sharedNegativeKeywordLists` (`googleAdsSharedNegativeListsEnabled`): unless it is exactly
 `"true"`, `Dispatch` refuses any non-empty list, whatever its entries hold and on any channel,
 right after the Performance Max gate, through the same `googleAdsInputDisabled`. A list names an
-EXISTING shared set, and the client checks it against the account only, so on the shared LF
-customer a project could attach another foundation's list (#468). The client's same-account
-check stays as defence in depth. `searchAssets` is not gated: its images, logo and business name
+EXISTING shared set, which the client checks against the connected Google Ads account; like the
+other three, the gate is a per-deployment opt-in. `searchAssets` is not gated: its images, logo and business name
 are the caller's own content, created as new assets. `TestGoogleAds_SharedNegativeListsGate`
 and `TestGoogleAds_SharedNegativeListsGateLeavesSearchAssetsAlone` pin both halves.
 

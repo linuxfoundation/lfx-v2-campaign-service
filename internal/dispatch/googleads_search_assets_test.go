@@ -339,7 +339,7 @@ func sharedListsConfig(t *testing.T, channel string, lists []string,
 }
 
 // sharedNegativeKeywordLists names existing shared sets, checked against the account only, so it
-// sits behind GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED (#468): anything but exactly "true" refuses
+// sits behind GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED: anything but exactly "true" refuses
 // any non-empty list, on any channel, before any request.
 func TestGoogleAds_SharedNegativeListsGate(t *testing.T) {
 	own := []string{gaSharedSet}
@@ -368,8 +368,8 @@ func TestGoogleAds_SharedNegativeListsGate(t *testing.T) {
 			}
 			for _, want := range []string{
 				"sharedNegativeKeywordLists is disabled on this deployment",
-				constants.EnvGoogleAdsSharedNegativeListsEnabled, "#468",
 				"omit sharedNegativeKeywordLists",
+				"; or ask an operator to set " + constants.EnvGoogleAdsSharedNegativeListsEnabled + ` to "true"`,
 			} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error = %v, want it to contain %q", err, want)

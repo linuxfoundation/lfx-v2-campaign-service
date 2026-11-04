@@ -798,7 +798,7 @@ budget at the campaign step (`adoptExisting` still works, and so does monitoring
 only creation is impossible); `display` creates a DISPLAY campaign with NO channel
 sub-type, an ad group of type `DISPLAY_STANDARD` targeted at the audiences named in
 `audienceSegments`/`customAudiences`/`customAffinities`/`userInterests` (the first three
-only where the deployment sets GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED, #468), campaign-level
+only where the deployment sets GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED), campaign-level
 `excludedPlacements` and `excludedAudienceSegments` (the latter under the same flag), and
 (given `displayCreative`) one
 responsive display ad built from images this service fetches and uploads — or, given
@@ -925,12 +925,11 @@ audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTI
                                   checked). Each entry must be a user list on the campaign's OWN
                                   account: a malformed name, another customer's list, or a
                                   well-formed name of another kind is refused before anything is
-                                  created, the last with the field it belongs in. The account check
-                                  is ACCOUNT-scoped, not foundation-scoped, and is not tenancy
-                                  protection: on an account shared across foundations any
-                                  foundation's list on it passes (#468). So on `display` the field
-                                  is OFF by default: unless the deployment sets
-                                  GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED to exactly "true", a create
+                                  created, the last with the field it belongs in. The connected
+                                  account (same customer id) is the boundary; per-foundation
+                                  ownership (#468) was closed as won't do. On `display` the field is
+                                  a per-deployment opt-in, OFF by default: unless the deployment
+                                  sets GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED to exactly "true", a create
                                   naming it is refused before the budget mutate, whatever the value.
                                   Search's observation-only use is not gated.
 
@@ -954,14 +953,14 @@ demandGenAudience?: string      — OPTIONAL one EXISTING Google Ads Audience,
                                   under ANOTHER customer is REFUSED before the budget mutate — Google
                                   refuses the foreign one too, but only after the budget.
 
-                                  That check is ACCOUNT-scoped, not foundation-scoped: on the shared
-                                  LF Google Ads customer a project could name another foundation's
-                                  Audience, which on Demand Gen restricts who the ad group reaches.
-                                  So the field is OFF by default: unless the deployment sets
-                                  GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED to exactly "true", a create
-                                  naming it is refused before the budget mutate, whatever the value.
-                                  It stays off until this service can check the Audience against the
-                                  calling foundation (#468). The same flag gates every
+                                  The connected Google Ads account (same customer id) is the
+                                  boundary that check enforces. Per-foundation ownership (#468) was
+                                  closed as won't do: campaign managers are the LF marketing team,
+                                  who manage every foundation. The field is a per-deployment opt-in,
+                                  OFF by default: unless the deployment sets
+                                  GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED to exactly "true" (set in
+                                  lfx-v2-argocd), a create naming it is refused before the budget
+                                  mutate, whatever the value. The same flag gates every
                                   `demandGenAdGroups[].audience` (#460).
 
                                   DEMAND GEN ONLY, and REFUSED on every other `channel`. It shares
@@ -989,11 +988,10 @@ userInterests?: string[]          `customers/{id}/customAudiences/{id}`, `custom
                                   Audience resource (`customers/{id}/audiences/{id}`) is refused in any
                                   of the four lists: a Display ad group is not audience-grouped, takes
                                   segments directly, and Google refuses an `audience` criterion on it.
-                                  The account check is ACCOUNT-scoped, not tenancy protection
-                                  (#468), so `customAudiences` and `customAffinities` are OFF by
-                                  default, like Display `audienceSegments`: unless the deployment
-                                  sets GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED to exactly "true", a
-                                  create naming either is refused before the budget mutate.
+                                  `customAudiences` and `customAffinities` are per-deployment
+                                  opt-ins, OFF by default, like Display `audienceSegments`: unless
+                                  the deployment sets GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED to exactly
+                                  "true", a create naming either is refused before the budget mutate.
                                   `userInterests` are not gated: they are Google's own categories,
                                   the same ids on every account, so no foundation owns one. The ad
                                   group is created with AUDIENCE bidOnly false whenever any of the
@@ -1031,9 +1029,8 @@ excludedAudienceSegments?:      — OPTIONAL user lists excluded from the whole 
                                   affinity, user interest or Audience name is refused, as are a
                                   malformed name and another customer's list. A list also targeted by
                                   `audienceSegments` or by any `displayAdGroups` entry, or also
-                                  excluded by an entry, is refused: name it once. The account check is
-                                  ACCOUNT-scoped, not tenancy protection; see `audienceSegments` and
-                                  #468. So the field is OFF by default, like Display
+                                  excluded by an entry, is refused: name it once. The field is a
+                                  per-deployment opt-in, OFF by default, like Display
                                   `audienceSegments`: unless the deployment sets
                                   GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED to exactly "true", a create
                                   naming it, on any `channel`, is refused before the budget mutate,
@@ -1170,13 +1167,12 @@ sharedNegativeKeywordLists?:    — OPTIONAL EXISTING shared negative keyword li
                                   (partial result), and an ambiguous or mismatched response is
                                   UNCONFIRMED.
 
-                                  The account check is ACCOUNT-scoped, not foundation-scoped, and is
-                                  not tenancy protection: on the shared LF Google Ads customer a
-                                  project could name another foundation's shared list (#468). So
-                                  the field is OFF by default: unless the deployment sets
-                                  GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED to exactly "true", a
-                                  create naming any list is refused before the budget mutate,
-                                  whatever the value and whatever the `channel`. `searchAssets`
+                                  The account check holds each list to the connected Google Ads
+                                  account; per-foundation ownership (#468) was closed as won't do.
+                                  The field is a per-deployment opt-in, OFF by default: unless the
+                                  deployment sets GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED to exactly
+                                  "true", a create naming any list is refused before the budget
+                                  mutate, whatever the value and whatever the `channel`. `searchAssets`
                                   (the caller's own images and text) is not gated.
 
                                   SEARCH ONLY, and REFUSED on every other `channel` before any
@@ -1859,7 +1855,7 @@ demandGenAdGroups?:             — OPTIONAL several Demand Gen ad groups (#460)
                                   `audience` under `demandGenAudience`'s, gate included: unless the
                                   deployment sets GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED to exactly
                                   "true", a create naming any group's `audience` is refused before
-                                  the budget mutate, naming the entries to clear (#468); a group
+                                  the budget mutate, naming the entries to clear; a group
                                   without one is unaffected. `geoTargets`,
                                   `excludedGeoTargets` and `languages` apply to EVERY group. With
                                   this list, `demandGenCreative`, `demandGenVideoCreative`,
@@ -1953,11 +1949,10 @@ performanceMaxAudienceSignal?:  — OPTIONAL ONE audience signal for the asset g
                                   only whitespace. One, because Google allows one audience signal
                                   per asset group.
 
-                                  The check is ACCOUNT-scoped, not foundation-scoped, and is not
-                                  tenancy protection: on the shared LF Google Ads customer a project
-                                  could name another foundation's audience (#468). So the field is
-                                  OFF by default: unless the deployment sets
-                                  GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED to exactly "true", a
+                                  The check holds the Audience to the connected Google Ads account;
+                                  per-foundation ownership (#468) was closed as won't do. The field
+                                  is a per-deployment opt-in, OFF by default: unless the deployment
+                                  sets GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED to exactly "true", a
                                   create naming it is refused before the budget mutate, whatever
                                   the value and whatever the `channel`. `performanceMaxSearchThemes`
                                   (free text) and the Performance Max extensions (text and the
@@ -2105,7 +2100,7 @@ displayAdGroups?:               — OPTIONAL several named Display ad groups (#4
 
                                   A group's `audienceSegments`, `customAudiences`,
                                   `customAffinities` and `excludedAudienceSegments` sit behind the
-                                  same flag as the campaign-level lists (#468): unless the
+                                  same flag as the campaign-level lists: unless the
                                   deployment sets GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED to exactly
                                   "true", a create naming any of them, on any group, is refused
                                   before the budget mutate, naming each one

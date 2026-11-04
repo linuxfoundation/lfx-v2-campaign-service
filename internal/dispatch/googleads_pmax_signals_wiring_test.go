@@ -22,7 +22,7 @@ import (
 // mapped by a refusal only the client's preflight can produce from it, and that cascade is
 // pinned in internal/platform/googleads/pmax_signals_test.go.
 //
-// performanceMaxAudienceSignal is behind GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED (#468), so
+// performanceMaxAudienceSignal is behind GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED, so
 // the mapping test turns the gate ON to reach the client's own refusals; the gate itself is
 // TestGoogleAds_PerformanceMaxAudienceSignalGate.
 
@@ -158,7 +158,7 @@ func TestGoogleAds_PerformanceMaxExtensionsReachTheCampaign(t *testing.T) {
 
 // With GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED anything but exactly "true", a create naming a
 // performanceMaxAudienceSignal is refused in Dispatch before the budget, even one the client
-// would accept (#468: the client's check is account-scoped only), as not-created and with the
+// would accept (the client checks the account only), as not-created and with the
 // gate's own sentence as the job's message.
 func TestGoogleAds_PerformanceMaxAudienceSignalGate(t *testing.T) {
 	valid := map[string]any{
@@ -195,8 +195,8 @@ func TestGoogleAds_PerformanceMaxAudienceSignalGate(t *testing.T) {
 			}
 			for _, want := range []string{
 				"performanceMaxAudienceSignal is disabled on this deployment",
-				constants.EnvGoogleAdsPMaxAudienceSignalEnabled, "#468",
 				"omit performanceMaxAudienceSignal",
+				"; or ask an operator to set " + constants.EnvGoogleAdsPMaxAudienceSignalEnabled + ` to "true"`,
 			} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error = %v, want it to contain %q", err, want)

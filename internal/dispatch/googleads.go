@@ -619,11 +619,12 @@ type googleAdsConfig struct {
 // googleAdsConfig.demandGenAudience. Read per call, like REDDIT_KEYWORD_TARGETING_WRITES_ENABLED,
 // so it flips without a rebuild.
 //
-// The gate is here, in Dispatch, rather than in lfx-self-serve's form or the client's preflight,
-// because the gap it closes (#468) is a caller who reaches this service directly: the gateway
-// authorizes a create on the project's campaign_manager relation and cannot see the body, and the
-// client's check is account-scoped, so on the shared LF customer it would accept another
-// foundation's Audience. Off, no caller can attach an Audience at all.
+// It is a per-deployment opt-in, off by default; ops turns it on by setting it to exactly "true"
+// in lfx-v2-argocd. The gate is here, in Dispatch, so it holds for every caller, including one
+// that reaches this service directly. The client checks the Audience against the connected
+// Google Ads account (same customer id), which is the boundary. Per-foundation ownership (#468)
+// was closed as won't do: campaign managers are the LF marketing team, who manage every
+// foundation. Off, no caller can attach an Audience at all.
 func googleAdsDemandGenAudienceEnabled() bool {
 	return os.Getenv(constants.EnvGoogleAdsDemandGenAudienceEnabled) == "true"
 }
@@ -632,7 +633,7 @@ func googleAdsDemandGenAudienceEnabled() bool {
 // entries that set an audience, by 1-based position ("the audience on demandGenAdGroups entry
 // 2 is", "the audiences on demandGenAdGroups entries 1, 2 are"), or "" when none does.
 // A group's audience is the same input as demandGenAudience, one existing Audience checked
-// against the account only (#468), so GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED gates both. Any
+// against the connected account, so GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED gates both. Any
 // non-empty value counts, whitespace included, as for demandGenAudience. The positions are
 // service-derived, so the sentence still carries no caller value.
 func googleAdsDemandGenAdGroupAudiencesSet(cfg googleAdsConfig) string {
@@ -657,44 +658,37 @@ func googleAdsDemandGenAdGroupAudiencesSet(cfg googleAdsConfig) string {
 // customAudiences and customAffinities, and since #475 the user-list exclusions
 // (excludedAudienceSegments, on the campaign and on a displayAdGroups entry) and the same three
 // lists on each displayAdGroups entry. Read per call, like googleAdsDemandGenAudienceEnabled,
-// and in Dispatch for the same reason: the client's check is account-scoped, so on the shared
-// LF customer it would accept another foundation's user list or custom segment. On Display the
-// targeting lists restrict who an ad group reaches, and an exclusion still puts another
-// foundation's customer list to work in this campaign.
+// and a per-deployment opt-in like it; the client checks each segment against the connected
+// Google Ads account.
 //
 // Two inputs are deliberately outside it, at both levels. userInterests name Google's own
-// affinity and in-market categories, the same ids on every account, so no foundation owns one.
-// And excludedPlacements are public domains, not account resources, and an exclusion only
-// narrows where the campaign appears. Neither can reach another foundation's data.
+// affinity and in-market categories, the same ids on every account. And excludedPlacements are
+// public domains, not account resources. Neither names an account-owned segment.
 func googleAdsDisplayAudiencesEnabled() bool {
 	return os.Getenv(constants.EnvGoogleAdsDisplayAudiencesEnabled) == "true"
 }
 
 // googleAdsPMaxAudienceSignalEnabled reports whether this deployment opted in to
 // googleAdsConfig.performanceMaxAudienceSignal (#461). Read per call, like
-// googleAdsDemandGenAudienceEnabled, and in Dispatch for the same reason: the client's check is
-// account-scoped, so on the shared LF customer it would accept another foundation's Audience
-// as this campaign's signal (#468). On Performance Max a signal is a hint rather than a
-// restriction, but the Audience, and the customer lists inside it, still belong to another
-// foundation.
+// googleAdsDemandGenAudienceEnabled, and a per-deployment opt-in like it; the client checks the
+// Audience against the connected Google Ads account.
 //
 // The rest of #461 is deliberately outside it. performanceMaxSearchThemes are free text, and
 // the sitelinks, callouts and structured snippets it admits on Performance Max are text and
 // the caller's own destination URLs, created as new assets in this campaign. None of them
-// names an existing account resource, so none can reach another foundation's data.
+// names an existing account resource.
 func googleAdsPMaxAudienceSignalEnabled() bool {
 	return os.Getenv(constants.EnvGoogleAdsPMaxAudienceSignalEnabled) == "true"
 }
 
 // googleAdsSharedNegativeListsEnabled reports whether this deployment opted in to
 // googleAdsConfig.sharedNegativeKeywordLists (#477). Read per call, like
-// googleAdsDemandGenAudienceEnabled, and in Dispatch for the same reason: a shared list names an
-// EXISTING sharedSet, and the client checks it against the account only, so on the shared LF
-// customer it would attach another foundation's list to this campaign (#468).
+// googleAdsDemandGenAudienceEnabled, and a per-deployment opt-in like it: a shared list names an
+// EXISTING sharedSet, which the client checks against the connected Google Ads account.
 //
 // searchAssets, the rest of #477, is deliberately outside it: its images and business name are
-// the caller's own content, created as new assets in this campaign, so they name nothing
-// another foundation owns.
+// the caller's own content, created as new assets in this campaign, so they name no existing
+// account resource.
 func googleAdsSharedNegativeListsEnabled() bool {
 	return os.Getenv(constants.EnvGoogleAdsSharedNegativeListsEnabled) == "true"
 }
@@ -702,12 +696,13 @@ func googleAdsSharedNegativeListsEnabled() bool {
 // googleAdsInputDisabled is the refusal for an input a deployment gate keeps off: not-created,
 // so the claim is released, and a domain.PreflightRefusal, so the asynchronous create job
 // copies the sentence verbatim instead of reporting a generic failure. The sentence is
-// service-authored throughout: subject and fields are fixed strings, never caller values.
-func googleAdsInputDisabled(subject, env, checked, fields string) error {
+// service-authored throughout: subject and fields are fixed strings, never caller values. It
+// tells the caller what to do: omit the fields, or have an operator enable the flag.
+func googleAdsInputDisabled(subject, env, fields string) error {
 	return notCreated(domain.PreflightRefusalf(
-		"google-ads: %s disabled on this deployment (%s is not \"true\") until %s can be "+
-			"checked against the calling foundation, not only the account (#468); omit %s",
-		subject, env, checked, fields))
+		"google-ads: %s disabled on this deployment (%s is not \"true\"); omit %s; "+
+			"or ask an operator to set %s to \"true\"",
+		subject, env, fields, env))
 }
 
 // googleAdsDisplayAudienceFieldsSet names, in config order, the gated Display audience fields
@@ -832,14 +827,14 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// refusal never depends on the client's own validation of the value.
 	if cfg.DemandGenAudience != "" && !googleAdsDemandGenAudienceEnabled() {
 		return nil, googleAdsInputDisabled("demandGenAudience is",
-			constants.EnvGoogleAdsDemandGenAudienceEnabled, "an Audience", "demandGenAudience")
+			constants.EnvGoogleAdsDemandGenAudienceEnabled, "demandGenAudience")
 	}
 	// The same gate for each demandGenAdGroups entry's audience (#460): the list replaces the
 	// single ad group, so without this a caller could move the gated Audience into a group.
 	if subject := googleAdsDemandGenAdGroupAudiencesSet(cfg); subject != "" &&
 		!googleAdsDemandGenAudienceEnabled() {
 		return nil, googleAdsInputDisabled(subject,
-			constants.EnvGoogleAdsDemandGenAudienceEnabled, "an Audience",
+			constants.EnvGoogleAdsDemandGenAudienceEnabled,
 			"the audience from each demandGenAdGroups entry")
 	}
 	// The Display gate, likewise before anything else is decoded or sent.
@@ -847,13 +842,13 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		!googleAdsDisplayAudiencesEnabled() {
 		fields := strings.Join(set, ", ")
 		return nil, googleAdsInputDisabled("Display audience targeting ("+fields+") is",
-			constants.EnvGoogleAdsDisplayAudiencesEnabled, "a user list or custom segment", fields)
+			constants.EnvGoogleAdsDisplayAudiencesEnabled, fields)
 	}
 	// The Performance Max audience signal gate (#461), on the same terms as demandGenAudience:
 	// any non-empty value, whitespace included and on any channel.
 	if cfg.PerformanceMaxAudienceSignal != "" && !googleAdsPMaxAudienceSignalEnabled() {
 		return nil, googleAdsInputDisabled("performanceMaxAudienceSignal is",
-			constants.EnvGoogleAdsPMaxAudienceSignalEnabled, "an Audience",
+			constants.EnvGoogleAdsPMaxAudienceSignalEnabled,
 			"performanceMaxAudienceSignal")
 	}
 	// The shared negative keyword list gate (#477), on the same terms: any non-empty list,
@@ -861,7 +856,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// client's own validation of the values.
 	if len(cfg.SharedNegativeKeywordLists) > 0 && !googleAdsSharedNegativeListsEnabled() {
 		return nil, googleAdsInputDisabled("sharedNegativeKeywordLists is",
-			constants.EnvGoogleAdsSharedNegativeListsEnabled, "a shared set",
+			constants.EnvGoogleAdsSharedNegativeListsEnabled,
 			"sharedNegativeKeywordLists")
 	}
 	bf, err := decodeBriefFields(brief)
