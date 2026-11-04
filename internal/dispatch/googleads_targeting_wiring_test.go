@@ -1129,7 +1129,7 @@ func TestGoogleAds_DemandGenAudienceGate(t *testing.T) {
 				t.Fatal("expected the dispatch to be refused while the gate is off")
 			}
 			if !strings.Contains(err.Error(), "demandGenAudience is disabled on this deployment") ||
-				!strings.Contains(err.Error(), "omit demandGenAudience, or ask an operator to enable "+constants.EnvGoogleAdsDemandGenAudienceEnabled) {
+				!strings.Contains(err.Error(), "omit demandGenAudience; or ask an operator to set "+constants.EnvGoogleAdsDemandGenAudienceEnabled+` to "true"`) {
 				t.Errorf("error = %v, want it to name the gate and how to enable it", err)
 			}
 			var pce *preCreateError

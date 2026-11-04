@@ -244,9 +244,9 @@ openssl rand -base64 32
   the Audience is checked against the connected Google Ads account (same
   customer id), which is the boundary. Per-foundation ownership (#468) was
   closed as won't do, because campaign managers are the LF marketing team,
-  who manage every foundation. The same flag gates each `demandGenAdGroups[].audience` (#460),
-  the same input on a named ad group: off, a create naming any is refused
-  before the budget. The rest of Demand Gen, including ad groups without
+  who manage every foundation. The same flag gates each
+  `demandGenAdGroups[].audience` (#460), the same input on a named ad
+  group: off, a create naming any is refused before the budget. The rest of Demand Gen, including ad groups without
   an audience, is not gated. The chart sets it to `"false"`
   (`app.environment.GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED.value`); enable
   both per-environment by setting it to `"true"` in the ArgoCD overlay.

@@ -375,7 +375,7 @@ func TestGoogleAds_DisplayAudienceExclusionsGate(t *testing.T) {
 				for _, want := range []string{
 					"Display audience targeting (" + in.field + ") is disabled on this deployment",
 					"omit " + in.field,
-					"or ask an operator to enable " + constants.EnvGoogleAdsDisplayAudiencesEnabled,
+					"; or ask an operator to set " + constants.EnvGoogleAdsDisplayAudiencesEnabled + ` to "true"`,
 				} {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("error = %v, want it to contain %q", err, want)

@@ -1188,8 +1188,10 @@ audience is not gated. That gate is not a channel rule. It is a per-deployment o
 default, that ops turns on by setting it to exactly `"true"` in lfx-v2-argocd (lfx-v2-argocd#2001
 enables this one). The client checks the Audience against the connected Google Ads account (same
 customer id), which is the boundary. Per-foundation ownership (#468) was closed as won't do:
-campaign managers are the LF marketing team, who manage every foundation. The gate sits in the
-adapter so it also covers callers that reach `Dispatch` directly.
+campaign managers are the LF marketing team, who manage every foundation. This relies on
+`campaign_manager` being held only by LF marketing; revisit if foundation-level campaign
+managers are introduced. The gate sits in the adapter so it also covers callers that reach
+`Dispatch` directly.
 
 `GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` is the same gate for #462's account-owned Display
 segments (`googleAdsDisplayAudiencesEnabled`, `googleAdsDisplayAudienceFieldsSet`): unless it is
@@ -1211,7 +1213,8 @@ account resources, and they only narrow where the campaign appears. Both gates r
 `googleAdsInputDisabled`: not-created, and a `domain.PreflightRefusal`, so the asynchronous
 create job reports the gate's sentence instead of the generic "platform campaign creation
 failed": `google-ads: <fields> is disabled on this deployment (<FLAG> is not "true"); omit
-<fields>, or ask an operator to enable <FLAG>`.
+<fields>; or ask an operator to set <FLAG> to "true"`. The two remedies are split by `;`
+because a Display refusal joins several fields with `, `.
 
 `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the third gate of the kind, for #461's
 `performanceMaxAudienceSignal` (`googleAdsPMaxAudienceSignalEnabled`): unless it is exactly

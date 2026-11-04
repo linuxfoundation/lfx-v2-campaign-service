@@ -700,8 +700,8 @@ func googleAdsSharedNegativeListsEnabled() bool {
 // tells the caller what to do: omit the fields, or have an operator enable the flag.
 func googleAdsInputDisabled(subject, env, fields string) error {
 	return notCreated(domain.PreflightRefusalf(
-		"google-ads: %s disabled on this deployment (%s is not \"true\"); omit %s, "+
-			"or ask an operator to enable %s",
+		"google-ads: %s disabled on this deployment (%s is not \"true\"); omit %s; "+
+			"or ask an operator to set %s to \"true\"",
 		subject, env, fields, env))
 }
 

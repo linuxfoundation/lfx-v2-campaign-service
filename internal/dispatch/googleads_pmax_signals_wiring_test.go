@@ -196,7 +196,7 @@ func TestGoogleAds_PerformanceMaxAudienceSignalGate(t *testing.T) {
 			for _, want := range []string{
 				"performanceMaxAudienceSignal is disabled on this deployment",
 				"omit performanceMaxAudienceSignal",
-				"or ask an operator to enable " + constants.EnvGoogleAdsPMaxAudienceSignalEnabled,
+				"; or ask an operator to set " + constants.EnvGoogleAdsPMaxAudienceSignalEnabled + ` to "true"`,
 			} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error = %v, want it to contain %q", err, want)

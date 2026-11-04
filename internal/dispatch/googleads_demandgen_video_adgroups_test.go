@@ -245,7 +245,7 @@ func TestGoogleAds_DemandGenAdGroupAudienceGate(t *testing.T) {
 			}
 			msg := err.Error()
 			if !strings.Contains(msg, constants.EnvGoogleAdsDemandGenAudienceEnabled) ||
-				!strings.Contains(msg, "or ask an operator to enable "+constants.EnvGoogleAdsDemandGenAudienceEnabled) ||
+				!strings.Contains(msg, "; or ask an operator to set "+constants.EnvGoogleAdsDemandGenAudienceEnabled+` to "true"`) ||
 				!strings.Contains(msg, tc.wantWhich) {
 				t.Errorf("error = %v, want it to name the gate, how to enable it and %q", err, tc.wantWhich)
 			}

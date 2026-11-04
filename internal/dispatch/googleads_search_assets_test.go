@@ -369,7 +369,7 @@ func TestGoogleAds_SharedNegativeListsGate(t *testing.T) {
 			for _, want := range []string{
 				"sharedNegativeKeywordLists is disabled on this deployment",
 				"omit sharedNegativeKeywordLists",
-				"or ask an operator to enable " + constants.EnvGoogleAdsSharedNegativeListsEnabled,
+				"; or ask an operator to set " + constants.EnvGoogleAdsSharedNegativeListsEnabled + ` to "true"`,
 			} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error = %v, want it to contain %q", err, want)
