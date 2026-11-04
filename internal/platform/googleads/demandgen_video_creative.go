@@ -222,8 +222,9 @@ type callToActionAssetCreate struct {
 }
 
 // demandGenVideoAssetCreate is an Asset created INSIDE the googleAds:mutate, under a
-// temporary resource name the ad references. Exactly one arm is set. No name is sent,
-// as no sibling creative sends one (Asset.name is optional).
+// temporary resource name the ad references. Exactly one arm is set. No name is sent:
+// the 2026-11-05 probes showed Google refusing an unnamed IMAGE asset (see imageAssetName),
+// and the logo, the one image here, is created separately, by assets:mutate.
 type demandGenVideoAssetCreate struct {
 	ResourceName      string                   `json:"resourceName"`
 	YouTubeVideoAsset *youTubeVideoAssetCreate `json:"youtubeVideoAsset,omitempty"`
@@ -298,7 +299,7 @@ func (c *Client) createDemandGenVideoAd(ctx context.Context, adGroupResource, ad
 	// Step A: the logo, by the same assets:mutate the image ad's images use.
 	logoOps := make([]mutateOperation, 0, len(logos))
 	for _, img := range logos {
-		logoOps = append(logoOps, mutateOperation{Create: demandGenAssetCreate{ImageAsset: imageAssetCreate{Data: base64Image(img.data)}}})
+		logoOps = append(logoOps, mutateOperation{Create: demandGenAssetCreate{Name: imageAssetName(img.data), ImageAsset: imageAssetCreate{Data: base64Image(img.data)}}})
 	}
 	logoResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("assets:mutate"), mutateRequest{Operations: logoOps}, false)
 	if err != nil {

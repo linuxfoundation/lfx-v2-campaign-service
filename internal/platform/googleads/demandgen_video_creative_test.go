@@ -379,6 +379,7 @@ func TestCreateDemandGenCampaign_VideoAdPayload(t *testing.T) {
 	if err := json.Unmarshal(logoReq, &logo); err != nil || len(logo.Operations) != 1 || logo.Operations[0].Create.ImageAsset.Data != base64Image(pngOf(t, 900, 900)) {
 		t.Errorf("logo asset mutate does not carry the logo's bytes: %.200s", logoReq)
 	}
+	assertImageAssetsNamed(t, string(logoReq))
 	jsonEqual(t, rig.sent("googleAds:mutate")[0], `{"mutateOperations":[
 		{"assetOperation":{"create":{"resourceName":"customers/1234567890/assets/-1","youtubeVideoAsset":{"youtubeVideoId":"dQw4w9WgXcQ"}}}},
 		{"assetOperation":{"create":{"resourceName":"customers/1234567890/assets/-2","callToActionAsset":{"callToAction":"SIGN_UP"}}}},

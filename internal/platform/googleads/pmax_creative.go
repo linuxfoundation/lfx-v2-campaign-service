@@ -522,9 +522,9 @@ type performanceMaxAssetCreate struct {
 	TextAsset         *textAssetCreate         `json:"textAsset,omitempty"`
 	ImageAsset        *imageAssetCreate        `json:"imageAsset,omitempty"`
 	YouTubeVideoAsset *youTubeVideoAssetCreate `json:"youtubeVideoAsset,omitempty"`
-	// Name is an optional human-visible asset label. This client NEVER sets it — see
-	// buildPerformanceMaxAssets for why an image's name would export the caller's URL
-	// into the shared account.
+	// Name is the asset's human-visible label. Google requires it on an image asset, so
+	// every image create sets imageAssetName, which carries no URL; text and video
+	// assets send none.
 	Name string `json:"name,omitempty"`
 }
 
@@ -656,19 +656,16 @@ func buildPerformanceMaxAssets(plan performanceMaxPlan, images []fetchedImage) [
 	}
 	for _, img := range images {
 		out = append(out, pendingAsset{
-			// NO Name. The obvious label — the slot plus the source URL — ships the
+			// Named by imageAssetName, from the bytes: Google refuses an image asset with no
+			// name (#491). The obvious label — the slot plus the source URL — would ship the
 			// caller's creative URL, query string and all, to Google as a permanent
-			// human-visible asset label in the shared Foundation account: the same
-			// value sanitizeSnapshotURL reduces to scheme+host before it may be
-			// written to this service's own database. Redacted going in, exported
-			// verbatim going out. It was also an unbounded caller-controlled string
+			// human-visible asset label in the shared Foundation account: the same value
+			// sanitizeSnapshotURL reduces to scheme+host before it may be written to this
+			// service's own database. It would also be an unbounded caller-controlled string
 			// in a payload sent AFTER the campaign exists, which is the orphan that
-			// maxAssetGroupNameRunes is positioned in preflight to prevent.
-			//
-			// Omitted rather than reduced to the bare slot label, which matches the
-			// Demand Gen sibling (demandGenAssetCreate sets no name either) and avoids
-			// handing Google twenty marketing images that share one name.
-			create:    performanceMaxAssetCreate{ImageAsset: &imageAssetCreate{Data: base64Image(img.data)}},
+			// maxAssetGroupNameRunes is positioned in preflight to prevent. The hash name is
+			// fixed-length and says nothing about where the image came from.
+			create:    performanceMaxAssetCreate{Name: imageAssetName(img.data), ImageAsset: &imageAssetCreate{Data: base64Image(img.data)}},
 			fieldType: performanceMaxImageSlots[img.slot].jsonKey,
 		})
 	}

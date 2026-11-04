@@ -38,6 +38,10 @@ package googleads
 // googleAds:mutate and linked in that same request — the exact shape sent below. Image asset
 // creation itself is the shape Display and Demand Gen send to assets:mutate, and the temporary-
 // id link is the shape the BUSINESS_NAME probe accepted; the two have not been probed together.
+// A 2026-11-05 validateOnly probe of that image creation (assets:mutate, #491) found the field
+// every image create was missing: Google refuses an image asset with no name
+// (NAME_REQUIRED_FOR_ASSET_TYPE) and accepts the same bytes named, so the creates below now
+// carry imageAssetName.
 // The slot minimums (300x300 for AD_IMAGE, 128x128 for BUSINESS_LOGO) and the twenty-image cap
 // are Google's documented asset specifications, not probed values.
 
@@ -190,9 +194,12 @@ func (c *Client) fetchSearchAssetImages(
 // extension oneof) and performanceMaxAssetCreate for the reason demandGenAssetCreate states: a
 // struct spanning two uses makes every reader work out which half applies.
 type searchAssetCreate struct {
-	ResourceName string            `json:"resourceName"`
-	ImageAsset   *imageAssetCreate `json:"imageAsset,omitempty"`
-	TextAsset    *textAssetCreate  `json:"textAsset,omitempty"`
+	ResourceName string `json:"resourceName"`
+	// Name is set on an image asset, which Google refuses without one (imageAssetName);
+	// the business-name text asset sends none.
+	Name       string            `json:"name,omitempty"`
+	ImageAsset *imageAssetCreate `json:"imageAsset,omitempty"`
+	TextAsset  *textAssetCreate  `json:"textAsset,omitempty"`
 }
 
 // pendingSearchAsset pairs one asset create with the field type its campaign link carries.
@@ -215,11 +222,12 @@ func (c *Client) buildSearchAssets(
 ) []pendingSearchAsset {
 	out := make([]pendingSearchAsset, 0, len(images)+1)
 	for _, img := range images {
-		// NO name, for the reason buildPerformanceMaxAssets gives: the obvious label would
-		// export the caller's creative URL into the shared account.
+		// Named from the bytes, never the URL, for the reason buildPerformanceMaxAssets
+		// gives; Google refuses an image asset with no name (#491).
 		out = append(out, pendingSearchAsset{
 			create: searchAssetCreate{
 				ResourceName: c.searchTempAssetName(len(out)),
+				Name:         imageAssetName(img.data),
 				ImageAsset:   &imageAssetCreate{Data: base64Image(img.data)},
 			},
 			fieldType: searchImageSlotFieldTypes[img.slot],

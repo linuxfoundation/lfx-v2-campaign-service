@@ -574,9 +574,11 @@ func TestCreateCampaign_SearchAssetsAndSharedListsPayloadsAndOrder(t *testing.T)
 			t.Errorf("link %d = %+v, want %+v", i, l.Create, want)
 		}
 	}
-	// No asset carries a name: the obvious label would export the caller's URL.
-	if strings.Contains(googleAds[0], `"name"`) {
-		t.Error("a Search asset carries a name")
+	// Every image asset carries the name built from its bytes (#491), and the business name
+	// text asset carries none.
+	assertImageAssetsNamed(t, googleAds[0])
+	if strings.Count(googleAds[0], `"name":`) != 3 {
+		t.Errorf("want a name on the 3 image assets only: %.400s", googleAds[0])
 	}
 
 	if got := res.SharedNegativeKeywordListIDs; !reflect.DeepEqual(got, []string{"501", "502"}) {
