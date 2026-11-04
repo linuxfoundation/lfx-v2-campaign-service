@@ -66,6 +66,12 @@ stays off for the same reason (#468). Only exactly `"true"` enables it; off, a c
 one is refused before anything upstream exists. `userInterests`, `excludedPlacements` and
 Search's `audienceSegments` are not gated.
 
+`GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the same kind of gate, defaulting to `"false"`
+(#461): it opts a cluster in to `googleAdsConfig.performanceMaxAudienceSignal`, one existing
+Google Ads Audience attached to a Performance Max asset group as a signal. It stays off for the
+same reason (#468). Only exactly `"true"` enables it; off, a create naming one is refused before
+anything upstream exists. Search themes and the Performance Max extensions are not gated.
+
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
 default `1841232183`: the LF Research survey-promo workflow a survey send series
 (`send-workflows`) is copied from when a request names none. That id exists only in the LF

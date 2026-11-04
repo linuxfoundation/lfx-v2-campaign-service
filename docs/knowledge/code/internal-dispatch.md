@@ -1173,6 +1173,19 @@ account resources, and they only narrow where the campaign appears. Both gates r
 create job reports the gate's sentence (which input is disabled, and to omit it) instead of
 the generic "platform campaign creation failed".
 
+`GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the third gate of the kind, for #461's
+`performanceMaxAudienceSignal` (`googleAdsPMaxAudienceSignalEnabled`): unless it is exactly
+`"true"`, `Dispatch` refuses any non-empty value, whitespace included and on any channel, right
+after the Display gate, through the same `googleAdsInputDisabled`. The client checks the
+Audience against the account only, so on the shared LF customer a project could name another
+foundation's Audience as its signal (#468); on Performance Max a signal is a hint rather than
+a restriction, but the Audience is still another foundation's resource. The rest of #461 is
+not gated: `performanceMaxSearchThemes` are free text, and the sitelinks, callouts and
+structured snippets it admits on Performance Max are text and the caller's own destination
+URLs, created as new assets, so none names an existing account resource.
+`TestGoogleAds_PerformanceMaxAudienceSignalGate` and
+`TestGoogleAds_PerformanceMaxAudienceSignalGateLeavesThemesAlone` pin both halves.
+
 The client refuses the channel rules inside its own preflight,
 before its first mutate, and `Dispatch` validates unconditionally (including on the adoption
 path), so both paths already refuse in one place. A second copy in the adapter could only

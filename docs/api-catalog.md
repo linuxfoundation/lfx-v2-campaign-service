@@ -1881,12 +1881,15 @@ performanceMaxAudienceSignal?:  — OPTIONAL ONE audience signal for the asset g
                                   only whitespace. One, because Google allows one audience signal
                                   per asset group.
 
-                                  The check is ACCOUNT-scoped, not foundation-scoped: on the shared
-                                  LF Google Ads customer a project can name another foundation's
-                                  audience. That is an accepted risk for now — on Performance Max
-                                  an audience is a signal, not a restriction — and lfx-self-serve
-                                  offers Google audience inputs only to root principals; a
-                                  follow-up issue tracks enforcement in this service.
+                                  The check is ACCOUNT-scoped, not foundation-scoped, and is not
+                                  tenancy protection: on the shared LF Google Ads customer a project
+                                  could name another foundation's audience (#468). So the field is
+                                  OFF by default: unless the deployment sets
+                                  GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED to exactly "true", a
+                                  create naming it is refused before the budget mutate, whatever
+                                  the value and whatever the `channel`. `performanceMaxSearchThemes`
+                                  (free text) and the Performance Max extensions (text and the
+                                  campaign's own URLs) name no account resource and are not gated.
 
                                   Both are PERFORMANCE MAX ONLY and REFUSED on every other `channel`,
                                   and REFUSED on `performance-max` too when `performanceMaxCreative` is

@@ -259,6 +259,18 @@ openssl rand -base64 32
   `userInterests` (Google's own categories), `excludedPlacements` (public
   domains) and Search's observation-only `audienceSegments` are not
   gated. The chart sets it to `"false"`.
+- `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` (default unset, i.e. OFF) —
+  opts a deployment IN to `googleAdsConfig.performanceMaxAudienceSignal`,
+  one existing Google Ads Audience attached to a Performance Max asset
+  group as a signal (#461). Only the exact value `true` enables it;
+  anything else fails closed, and a create naming one is refused before
+  the budget. Off by default for the reason
+  `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is (#468).
+  `performanceMaxSearchThemes` (free text) and the Performance Max
+  sitelinks, callouts and structured snippets are not gated. The chart
+  sets it to `"false"`
+  (`app.environment.GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED.value`); enable
+  it per-environment by setting it to `"true"` in the ArgoCD overlay.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code

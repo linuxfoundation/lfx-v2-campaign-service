@@ -165,6 +165,21 @@ const (
 	// the calling foundation; that fix removes this gate and this constant.
 	EnvGoogleAdsDisplayAudiencesEnabled = "GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED"
 
+	// EnvGoogleAdsPMaxAudienceSignalEnabled opts a deployment IN to
+	// googleAdsConfig.performanceMaxAudienceSignal (#461): one existing Google Ads Audience
+	// attached to a Performance Max asset group as a signal. Only the exact value "true"
+	// enables it; unset or any other value fails closed, and a create naming one is refused
+	// before anything upstream exists.
+	//
+	// Default-off for the reason EnvGoogleAdsDemandGenAudienceEnabled is (#468): the only
+	// ownership check is ACCOUNT-scoped, so on the shared LF Google Ads customer a project
+	// could name another foundation's Audience. On Performance Max that Audience is a hint,
+	// not a restriction, but it is still another foundation's resource. Search themes (free
+	// text) and the extensions (text and the campaign's own URLs) name no account resource
+	// and are not gated. Keep it off until this service can scope an Audience to the calling
+	// foundation; that fix removes this gate and this constant.
+	EnvGoogleAdsPMaxAudienceSignalEnabled = "GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any

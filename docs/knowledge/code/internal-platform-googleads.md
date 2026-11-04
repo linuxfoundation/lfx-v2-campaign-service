@@ -2724,10 +2724,12 @@ with Demand Gen's `demandGenAudienceRE`), and a name in another account is refus
 pass `canonicalCampaignID` — positive, base-10, no leading zero — the rule #459 set for
 `DemandGenAudience`, and a value that is only whitespace is refused rather than read as
 absent, as a blank `DemandGenAudience` is. That check is ACCOUNT-scoped,
-not foundation-scoped: on the shared LF Google Ads customer a project can name another
-foundation's audience — an accepted risk for now, because on Performance Max an audience is a
-signal, not a restriction, and lfx-self-serve offers Google audience inputs only to root
-principals; a follow-up issue tracks enforcement in this service. One audience at most is
+not foundation-scoped, and is not tenancy protection: on the shared LF Google Ads customer a
+project could name another foundation's audience (#468). So the dispatch adapter refuses any
+non-empty `performanceMaxAudienceSignal` unless `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is
+exactly `"true"`, and the chart sets it to `"false"`. The search themes (free text) and the
+extensions (text and the campaign's own URLs) name no account resource and are not gated.
+One audience at most is
 enforced by the type, a string, because Google allows one per asset group. Verified by
 `validateOnly` probes on 2026-11-03 (v23): the theme and audience create shapes, a theme
 over 80 characters refused with `stringLengthError` `TOO_LONG`, several themes in one request,

@@ -81,11 +81,12 @@ func (p performanceMaxSignalPlan) count() int {
 // pasted twenty themes and finds nineteen in the Google Ads UI deserves to have been
 // told which one collapsed, and the refusal names it before anything is paid for.
 //
-// The audience check is ACCOUNT-scoped, not foundation-scoped: on the shared LF Google Ads
-// customer, a project can name another foundation's Audience as its signal. That is an
-// accepted risk for now — on Performance Max an audience is a signal, not a restriction —
-// and lfx-self-serve offers Google audience inputs only to root principals; a follow-up
-// issue tracks enforcement in this service.
+// The audience check is ACCOUNT-scoped, not foundation-scoped, and is not tenancy
+// protection: on the shared LF Google Ads customer a project could name another
+// foundation's Audience as its signal. So the dispatch adapter keeps the audience signal
+// off by default (GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED, see
+// dispatch.googleAdsPMaxAudienceSignalEnabled) until #468 adds a foundation-scoped check.
+// The search themes are free text and are not gated.
 func validatePerformanceMaxSignals(kind, customerID string, in CampaignInput, assetGroup bool) (performanceMaxSignalPlan, error) {
 	if len(in.PerformanceMaxSearchThemes) == 0 && in.PerformanceMaxAudienceSignal == "" {
 		return performanceMaxSignalPlan{}, nil

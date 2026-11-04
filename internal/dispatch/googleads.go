@@ -550,7 +550,12 @@ type googleAdsConfig struct {
 	// id or a customers/<id>/audiences/<id> resource name in this account). PERFORMANCE
 	// MAX ONLY, and refused there too when PerformanceMaxCreative is absent, because a
 	// signal attaches to the asset group that field creates. Passed through verbatim; the
-	// client's preflight owns every rule. See googleads.CampaignInput.
+	// client's preflight owns every rule but one.
+	//
+	// PerformanceMaxAudienceSignal is refused outright unless
+	// GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED is "true" — see
+	// googleAdsPMaxAudienceSignalEnabled. The search themes are free text naming no account
+	// resource, and are not gated. See googleads.CampaignInput.
 	PerformanceMaxSearchThemes   []string `json:"performanceMaxSearchThemes"`
 	PerformanceMaxAudienceSignal string   `json:"performanceMaxAudienceSignal"`
 	// VideoCreative is the responsive video ad for a Video (YouTube) campaign, the
@@ -633,6 +638,22 @@ func googleAdsDemandGenAdGroupAudiencesSet(cfg googleAdsConfig) string {
 // where the campaign appears. Neither can reach another foundation's data.
 func googleAdsDisplayAudiencesEnabled() bool {
 	return os.Getenv(constants.EnvGoogleAdsDisplayAudiencesEnabled) == "true"
+}
+
+// googleAdsPMaxAudienceSignalEnabled reports whether this deployment opted in to
+// googleAdsConfig.performanceMaxAudienceSignal (#461). Read per call, like
+// googleAdsDemandGenAudienceEnabled, and in Dispatch for the same reason: the client's check is
+// account-scoped, so on the shared LF customer it would accept another foundation's Audience
+// as this campaign's signal (#468). On Performance Max a signal is a hint rather than a
+// restriction, but the Audience, and the customer lists inside it, still belong to another
+// foundation.
+//
+// The rest of #461 is deliberately outside it. performanceMaxSearchThemes are free text, and
+// the sitelinks, callouts and structured snippets it admits on Performance Max are text and
+// the caller's own destination URLs, created as new assets in this campaign. None of them
+// names an existing account resource, so none can reach another foundation's data.
+func googleAdsPMaxAudienceSignalEnabled() bool {
+	return os.Getenv(constants.EnvGoogleAdsPMaxAudienceSignalEnabled) == "true"
 }
 
 // googleAdsInputDisabled is the refusal for an input a deployment gate keeps off: not-created,
@@ -759,6 +780,13 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		fields := strings.Join(set, ", ")
 		return nil, googleAdsInputDisabled("Display audience targeting ("+fields+") is",
 			constants.EnvGoogleAdsDisplayAudiencesEnabled, "a user list or custom segment", fields)
+	}
+	// The Performance Max audience signal gate (#461), on the same terms as demandGenAudience:
+	// any non-empty value, whitespace included and on any channel.
+	if cfg.PerformanceMaxAudienceSignal != "" && !googleAdsPMaxAudienceSignalEnabled() {
+		return nil, googleAdsInputDisabled("performanceMaxAudienceSignal is",
+			constants.EnvGoogleAdsPMaxAudienceSignalEnabled, "an Audience",
+			"performanceMaxAudienceSignal")
 	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
