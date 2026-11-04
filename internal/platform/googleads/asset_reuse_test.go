@@ -355,3 +355,170 @@ func TestCreateCampaign_SearchRepeatedAssetOfOtherContentIsUnconfirmed(t *testin
 		t.Errorf("res = %+v, want 800 once and no ad group", res)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The same bytes twice in ONE slot (#487 review)
+// ---------------------------------------------------------------------------
+
+// Two different entries carrying identical bytes in the SAME slot resolve to one asset, so the
+// slot would carry it twice: a repeated campaign link on Search, a repeated asset-group link on
+// Performance Max, a repeated asset in one field of the Display or Demand Gen ad. Google refuses
+// each after the budget and campaign exist, so fetchSlotImages refuses it before any mutate.
+// Reuse ACROSS slots stays accepted: the ReusedImageFillsBothSlots tests above.
+
+const sameSlotRefusal = "are the same image (identical bytes)"
+
+// mutateRecorder wraps a cascade handler and records every API mutate it is asked for, so a
+// test can assert the refusal came before the first one.
+func mutateRecorder(h http.HandlerFunc) (http.HandlerFunc, func() []string) {
+	var (
+		mu    sync.Mutex
+		paths []string
+	)
+	read := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), paths...)
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ":mutate") {
+			mu.Lock()
+			paths = append(paths, r.URL.Path)
+			mu.Unlock()
+		}
+		h(w, r)
+	}, read
+}
+
+// wantSameSlotRefusal checks the refusal names the slot and both entry positions, and that
+// no mutate was sent.
+func wantSameSlotRefusal(t *testing.T, err error, label string, mutates []string) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), sameSlotRefusal) ||
+		!strings.Contains(err.Error(), label+" 0 (") ||
+		!strings.Contains(err.Error(), ") and 1 (") {
+		t.Fatalf("err = %v, want the %s 0 and 1 same-image refusal", err, label)
+	}
+	if len(mutates) != 0 {
+		t.Errorf("mutates sent = %v, want none before the refusal", mutates)
+	}
+}
+
+func TestCreateCampaign_SearchSameBytesInOneSlotRefusedBeforeAnyRequest(t *testing.T) {
+	s := &searchAssetServer{}
+	in := searchAssetInput(t)
+	in.ResolvedImages[searchImageRef2] = in.ResolvedImages[searchImageRef1]
+	res, err := newSearchAssetClient(t, s).CreateCampaign(context.Background(), in)
+	if res != nil {
+		t.Errorf("res = %+v, want none", res)
+	}
+	paths, _, _ := s.snapshot()
+	wantSameSlotRefusal(t, err, "Search ad image", paths)
+}
+
+func TestCreateDisplayCampaign_SameBytesInOneSlotRefusedBeforeAnyRequest(t *testing.T) {
+	adGroupH, _ := capturedMutate(1, displayAdGroupResource)
+	assetH, _ := contentAssets()
+	adH, _ := capturedMutate(1, displayAdResource)
+	images := displayImages(t)
+	images["/m2.png"] = images["/m.png"]
+	h, mutates := mutateRecorder(displayCascade(t, images, adGroupH, assetH, adH))
+	srv := demandGenTLSServer(t, h)
+	in := displayInput(srv.URL)
+	in.DisplayCreative.MarketingImages = []string{srv.URL + "/m.png", srv.URL + "/m2.png"}
+
+	res, err := demandGenClient(t, srv).CreateDisplayCampaign(context.Background(), in)
+	if res != nil {
+		t.Errorf("res = %+v, want none", res)
+	}
+	wantSameSlotRefusal(t, err, "Display marketing image", mutates())
+}
+
+func TestCreateDemandGenCampaign_SameBytesInOneSlotRefusedBeforeAnyRequest(t *testing.T) {
+	assetH, _ := contentAssets()
+	adH, _ := capturedMutate(1, func(int) string {
+		return "customers/1234567890/adGroupAds/333~444"
+	})
+	images := twoImages(t)
+	images["/m2.png"] = images["/m.png"]
+	h, mutates := mutateRecorder(demandGenCascade(t, images, assetH, adH))
+	srv := demandGenTLSServer(t, h)
+	creative := creativeAt(srv.URL)
+	creative.MarketingImages = []string{srv.URL + "/m.png", srv.URL + "/m2.png"}
+
+	res, err := demandGenClient(t, srv).CreateDemandGenCampaign(context.Background(),
+		creativeInput(creative))
+	if res != nil {
+		t.Errorf("res = %+v, want none", res)
+	}
+	wantSameSlotRefusal(t, err, "Demand Gen marketing image", mutates())
+}
+
+func TestCreatePerformanceMaxCampaign_SameBytesInOneSlotRefusedBeforeAnyRequest(t *testing.T) {
+	assetH, _ := contentAssets()
+	groupH, _ := okPMaxGroup()
+	images := pmaxImages(t)
+	images["/m2.png"] = images["/m.png"]
+	h, mutates := mutateRecorder(pmaxCascade(t, images, assetH, groupH))
+	srv := demandGenTLSServer(t, h)
+	in := demandGenInput()
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+	in.PerformanceMaxCreative.MarketingImages = []string{srv.URL + "/m.png", srv.URL + "/m2.png"}
+
+	res, err := demandGenClient(t, srv).CreatePerformanceMaxCampaign(context.Background(), in)
+	if res != nil {
+		t.Errorf("res = %+v, want none", res)
+	}
+	wantSameSlotRefusal(t, err, "Performance Max marketing image", mutates())
+}
+
+// The guard itself: a repeat inside one slot is refused naming both positions, whether the
+// entries are stored assets, URLs or one of each; the same bytes in two slots are accepted,
+// each slot keeping its own entry.
+func TestFetchSlotImages_RefusesSameBytesInOneSlotOnly(t *testing.T) {
+	square := pngOf(t, 400, 400)
+	other := pngOf(t, 300, 300)
+	resolved := map[string][]byte{
+		searchImageRef1: square, searchImageRef2: square, searchLogoRef: square,
+	}
+	c := NewClient(testCreds(), testAccount())
+
+	_, err := c.fetchSlotImages(context.Background(), searchImageSlots,
+		[][]string{{searchImageRef1, searchImageRef2}, nil}, resolved)
+	wantSameSlotRefusal(t, err, "Search ad image", nil)
+
+	got, err := c.fetchSlotImages(context.Background(), searchImageSlots,
+		[][]string{{searchImageRef1}, {searchLogoRef}}, resolved)
+	if err != nil || len(got) != 2 || got[0].slot != 0 || got[1].slot != 1 {
+		t.Fatalf("got %+v, err = %v; want the one image accepted in both slots", got, err)
+	}
+
+	// Two copies of one slot in the walk are two groups' or ads' creatives (Display and Demand
+	// Gen fetch every group in one walk), so the same image in each is accepted.
+	adImage := searchImageSlots[searchAdImageSlotIndex]
+	got, err = c.fetchSlotImages(context.Background(), []imageSlot{adImage, adImage},
+		[][]string{{searchImageRef1}, {searchImageRef2}}, resolved)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("got %d image(s), err = %v; want one image in each group accepted", len(got), err)
+	}
+
+	resolved[searchImageRef2] = other
+	got, err = c.fetchSlotImages(context.Background(), searchImageSlots,
+		[][]string{{searchImageRef1, searchImageRef2}, nil}, resolved)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("got %d image(s), err = %v; want two different images accepted", len(got), err)
+	}
+}
+
+// One fetched URL and one stored asset with the same bytes are the same image too.
+func TestFetchSlotImages_RefusesAURLAndAStoredAssetWithTheSameBytes(t *testing.T) {
+	square := pngOf(t, 400, 400)
+	srv := demandGenTLSServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(square)
+	})
+	c := demandGenClient(t, srv)
+	_, err := c.fetchSlotImages(context.Background(), searchImageSlots,
+		[][]string{{searchImageRef1, srv.URL + "/a.png"}, nil},
+		map[string][]byte{searchImageRef1: square})
+	wantSameSlotRefusal(t, err, "Search ad image", nil)
+}

@@ -392,6 +392,15 @@ func TestValidateSharedNegativeKeywordLists(t *testing.T) {
 	for i := range overCap {
 		overCap[i] = fmt.Sprintf("customers/1234567890/sharedSets/%d", 501+i)
 	}
+	// 21 entries, 20 distinct once trimmed: the cap counts what is attached.
+	atCapWithRepeat := append(append([]string(nil), overCap[:20]...), " "+overCap[0]+" ")
+	// 30 distinct: the walk refuses at the 21st, whatever follows.
+	farOverCap := make([]string, 30)
+	for i := range farOverCap {
+		farOverCap[i] = fmt.Sprintf("customers/1234567890/sharedSets/%d", 601+i)
+	}
+	// 21 distinct, then a malformed 22nd: the cap refusal wins, so the walk stopped at 21.
+	overCapThenMalformed := append(append([]string(nil), overCap...), "not-a-resource-name")
 	cases := []struct {
 		name  string
 		lists []string
@@ -407,11 +416,26 @@ func TestValidateSharedNegativeKeywordLists(t *testing.T) {
 		{name: "wrong kind", lists: []string{"customers/1234567890/userLists/501"},
 			err: "resource name"},
 		{name: "leading zero", lists: []string{"customers/1234567890/sharedSets/0501"},
-			err: "resource name"},
+			err: "with a positive canonical id"},
 		{name: "another account", lists: []string{"customers/9999999999/sharedSets/501"},
 			err: "belongs to customer 9999999999"},
+		{name: "id past int64",
+			lists: []string{"customers/1234567890/sharedSets/9223372036854775808"},
+			err:   "with a positive canonical id"},
+		{name: "id at int64 max",
+			lists: []string{"customers/1234567890/sharedSets/9223372036854775807"},
+			want:  []string{"customers/1234567890/sharedSets/9223372036854775807"}},
+		{name: "id zero", lists: []string{"customers/1234567890/sharedSets/0"},
+			err: "with a positive canonical id"},
+		{name: "leading-zero customer", lists: []string{"customers/01234567890/sharedSets/501"},
+			err: "belongs to customer 01234567890"},
+		{name: "21 entries, 20 distinct", lists: atCapWithRepeat, want: overCap[:20]},
 		{name: "over the cap", lists: overCap,
-			err: "21 shared negative keyword lists exceeds the maximum 20"},
+			err: "more than 20 distinct shared negative keyword lists; the maximum is 20"},
+		{name: "far over the cap", lists: farOverCap,
+			err: "more than 20 distinct shared negative keyword lists; the maximum is 20"},
+		{name: "over the cap, then malformed", lists: overCapThenMalformed,
+			err: "more than 20 distinct shared negative keyword lists; the maximum is 20"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

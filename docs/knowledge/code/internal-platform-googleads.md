@@ -2026,10 +2026,13 @@ before the budget mutate, and refused on every channel but Search.
   `customers/<cid>/sharedSets/<id>` lists through one `campaignSharedSets:mutate`
   (`{campaign, sharedSet}` per list). This client never creates or edits a shared set: a
   list is maintained once and attached to many campaigns. Each name must be that exact
-  shape, with a canonical id, and in THIS account; Google refuses another customer's set
+  shape, with a set id that passes `canonicalCampaignID` (a positive int64, no leading zero,
+  no overflow), and in THIS account; Google refuses another customer's set
   (`INVALID_CUSTOMER_ID`) only at the attach, after the budget, so it is refused locally.
-  Duplicates are de-duplicated; at most 20. The attach runs right after the campaign-level
-  negative keywords. Confirmed shared set ids land in
+  Duplicates are de-duplicated, and the cap then counts at most 20 DISTINCT lists (#487
+  review: it ran on the raw input before, refusing 21 entries naming 20 lists). The cap is
+  checked inside the walk, which stops at the 21st distinct list. The attach
+  runs right after the campaign-level negative keywords. Confirmed shared set ids land in
   `CampaignResult.SharedNegativeKeywordListIDs`; a result that does not name
   `<campaignId>~<sharedSetId>` for the operation at its index is UNCONFIRMED and keeps the
   ids matched before it. That account check is ACCOUNT-scoped, not foundation-scoped: on the
@@ -2545,6 +2548,32 @@ reuse test; accepting every repeat fails each loop's different-content test; rec
 reused id twice, comparing the Search or Demand Gen video temporary names, or dropping the
 Performance Max link position each fail a reuse test.
 
+**The same bytes twice in ONE slot are refused before the budget (#487 review).** The reuse
+above is ACROSS slots. Inside one slot, `validateImageEntries` refuses an entry string listed
+twice, but two different strings could carry the same bytes: two URLs serving one file, or a
+URL and a stored asset (two stored assets cannot collide: the library is unique on
+`(brief_id, checksum)`). Both then resolve to one asset (Google's duplicate-asset
+answer), and the slot carries it twice: a repeated `(campaign, asset, AD_IMAGE)` link on
+Search, a repeated asset-group link on Performance Max, a repeated asset in one field of the
+Display or Demand Gen ad. Each request runs after the budget and campaign exist. So
+`fetchSlotImages` calls `refuseRepeatedSlotImage` after each image's bytes are in hand: a
+SHA-256 of the bytes, keyed per slot index of the walk, refuses the second entry naming both
+positions, before any mutate. Keyed per slot index, not across the walk, so cross-slot reuse
+stays accepted, and so two groups or ads in one Display or Demand Gen walk (each group's slots
+are their own indexes) may each carry the same image. The Demand Gen video logo is at most one
+per ad, so it cannot repeat. Video has no image fetch; its YouTube ids are the content, and
+`validateYouTubeVideoIDs` already refuses one listed twice. Not live-verified: Google's own
+refusal of each repeat was not probed; the package's premise, stated at `validateImageEntries`,
+is that the same image twice on one ad is refused.
+
+Tests (`asset_reuse_test.go`): Search, Display, Demand Gen image and Performance Max each
+refuse two entries with identical bytes in one slot, naming positions 0 and 1, with no mutate
+sent; `fetchSlotImages` refuses a URL and a stored asset with the same bytes, and accepts the
+same bytes in two slots or in two copies of one slot. The byte-cap fixtures that filled one
+slot with copies of one image now tag each copy (`taggedImage`). Mutations: disabling the
+check fails every refusal test; keying one map across the walk fails each channel's
+cross-slot reuse test.
+
 ## Bidding strategies and conversion actions (LFXV2-2665)
 
 `bidding.go` makes the bidding strategy selectable. Until it existed the choice
@@ -2672,7 +2701,14 @@ Display and refused on Demand Gen and Performance Max. Google documents that fie
 campaigns only, and it never ran against the live account. `validateConversionActions`
 still takes either a bare numeric id or the full `customers/<cid>/conversionActions/<id>`
 name, qualifies the bare one with the campaign's own account, refuses a full name owned by
-a DIFFERENT customer, and deduplicates across the two spellings. The goal path has run
+a DIFFERENT customer, and deduplicates across the two spellings. Since the #487 review the id
+in either spelling must pass `canonicalCampaignID` (`nonCanonicalConversionAction`): the regexes
+took any digit run, so an id past int64, 0, or `0555` (a second spelling of 555 that slipped
+past the de-dupe) reached the conversion goal write, after the budget and campaign exist
+(`TestValidateConversionActions_RequiresACanonicalID`; disabling either arm's check fails it).
+The 100-action cap counts DISTINCT actions, after the two spellings are de-duplicated, and is
+checked inside the walk, which stops at the 101st distinct action
+(`TestValidateConversionActions_CapCountsDistinctActions`). The goal path has run
 against the live account only under `validateOnly`; a real create is still unexercised.
 
 `conversions.go` is the read half and is strictly read-only:

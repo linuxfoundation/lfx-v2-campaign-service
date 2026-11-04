@@ -38,14 +38,20 @@ import (
 // limit: the live reference campaign attaches three.
 const maxSharedNegativeKeywordLists = 20
 
-// sharedSetResourceRE is the one accepted spelling: customers/<cid>/sharedSets/<id>, with a
-// canonical (no leading zero) positive id, because the id is compared as a string against the
-// one Google echoes in the link's resource name.
-var sharedSetResourceRE = regexp.MustCompile(`^customers/(\d+)/sharedSets/([1-9]\d*)$`)
+// sharedSetResourceRE is the one accepted spelling: customers/<cid>/sharedSets/<id>. The regex
+// is the SHAPE only. The set id must also be canonicalCampaignID's positive int64 in canonical
+// form (no leading zero, no overflow), because it is compared as a string against the one
+// Google echoes in the link's resource name, and an id past int64 is no set Google has; the
+// customer id must equal the campaign's account exactly, as display_targeting.go's lists do.
+var sharedSetResourceRE = regexp.MustCompile(`^customers/(\d+)/sharedSets/(\d+)$`)
 
 // validateSharedNegativeKeywordLists checks each shared set resource name and returns them in
 // order, de-duplicated. SEARCH ONLY: refused on every other channel, because only the Search
-// cascade attaches them.
+// cascade attaches them. The cap counts the DISTINCT lists, after trimming and de-duplication,
+// because that is the number of attach operations sent. It is checked INSIDE the walk, as
+// validateCreativeText's count is: the walk stops at the first distinct list past the cap, so
+// an oversized input is never trimmed, matched and hashed whole, and out and seen are sized
+// from the cap rather than from the caller's length.
 func validateSharedNegativeKeywordLists(kind, customerID string, lists []string) ([]string, error) {
 	if len(lists) == 0 {
 		return nil, nil
@@ -55,13 +61,9 @@ func validateSharedNegativeKeywordLists(kind, customerID string, lists []string)
 			"(this client attaches them only on the Search cascade); omit "+
 			"SharedNegativeKeywordLists, or create a Search campaign", kind)
 	}
-	if len(lists) > maxSharedNegativeKeywordLists {
-		return nil, fmt.Errorf(
-			"google-ads: %d shared negative keyword lists exceeds the maximum %d",
-			len(lists), maxSharedNegativeKeywordLists)
-	}
-	out := make([]string, 0, len(lists))
-	seen := make(map[string]struct{}, len(lists))
+	n := min(len(lists), maxSharedNegativeKeywordLists+1)
+	out := make([]string, 0, n)
+	seen := make(map[string]struct{}, n)
 	for i, raw := range lists {
 		name := strings.TrimSpace(raw)
 		if name == "" {
@@ -71,6 +73,15 @@ func validateSharedNegativeKeywordLists(kind, customerID string, lists []string)
 		if m == nil {
 			return nil, fmt.Errorf("google-ads: shared negative keyword list %q is not a "+
 				"customers/<id>/sharedSets/<id> resource name", capForError(name))
+		}
+		// Refused here, not left to Google: an id past int64 or 0 names no set, and a leading
+		// zero may be echoed under another spelling, which the link check treats as
+		// UNCONFIRMED; either way it surfaces only after the budget.
+		if canonicalCampaignID(m[2]) == "" {
+			return nil, fmt.Errorf("google-ads: shared negative keyword list %q is not a "+
+				"customers/<id>/sharedSets/<id> resource name with a positive canonical id "+
+				"(base-10, no leading zero, within int64); write it as Google returns it",
+				capForError(name))
 		}
 		// Refused here, not left to Google: Google refuses another customer's set only at the
 		// attach (INVALID_CUSTOMER_ID), after the budget and campaign exist.
@@ -83,6 +94,11 @@ func validateSharedNegativeKeywordLists(kind, customerID string, lists []string)
 		// a harmless paste, and two link operations for one set would fail the atomic attach.
 		if _, dup := seen[name]; dup {
 			continue
+		}
+		if len(out) == maxSharedNegativeKeywordLists {
+			return nil, fmt.Errorf("google-ads: more than %d distinct shared negative keyword "+
+				"lists; the maximum is %d", maxSharedNegativeKeywordLists,
+				maxSharedNegativeKeywordLists)
 		}
 		seen[name] = struct{}{}
 		out = append(out, name)

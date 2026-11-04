@@ -6,6 +6,7 @@ package googleads
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -632,7 +633,11 @@ func (c *Client) fetchSlotImages(ctx context.Context, slots []imageSlot, urls []
 	fetched := 0
 	for slotIdx, slotURLs := range urls {
 		slot := slots[slotIdx]
-		for _, u := range slotURLs {
+		// Keyed per slot, not across the walk: one image in two slots (a square marketing
+		// image that is also the square logo) is the cross-slot reuse resultIDSet.reuse
+		// accepts, and two groups or ads each carrying an image are two creatives.
+		firstAt := make(map[[sha256.Size]byte]int, len(slotURLs))
+		for pos, u := range slotURLs {
 			// An entry the caller already resolved is NOT fetched — there is nowhere
 			// to fetch it from — but it is validated identically, runs through the same
 			// running byte total, and is attached in the same slot position. Checked by
@@ -646,6 +651,9 @@ func (c *Client) fetchSlotImages(ctx context.Context, slots []imageSlot, urls []
 				fetched += len(data)
 				if fetched > maxCreativeTotalImageBytes {
 					return nil, fmt.Errorf("google-ads creative images total more than the %d byte limit across all slots", maxCreativeTotalImageBytes)
+				}
+				if err := refuseRepeatedSlotImage(slot, slotURLs, firstAt, pos, data); err != nil {
+					return nil, err
 				}
 				out = append(out, fetchedImage{slot: slotIdx, url: u, data: data})
 				continue
@@ -664,10 +672,38 @@ func (c *Client) fetchSlotImages(ctx context.Context, slots []imageSlot, urls []
 			if fetched > maxCreativeTotalImageBytes {
 				return nil, fmt.Errorf("google-ads creative images total more than the %d byte limit across all slots", maxCreativeTotalImageBytes)
 			}
+			if err := refuseRepeatedSlotImage(slot, slotURLs, firstAt, pos, data); err != nil {
+				return nil, err
+			}
 			out = append(out, fetchedImage{slot: slotIdx, url: u, data: data})
 		}
 	}
 	return out, nil
+}
+
+// refuseRepeatedSlotImage refuses the entry at pos when an earlier entry of the SAME slot
+// carried identical bytes, and otherwise records it in firstAt.
+//
+// validateImageEntries refuses an entry string listed twice, but two different strings can
+// carry the same bytes: two URLs serving one file, or a URL and a stored asset (two stored
+// assets cannot collide: the library is unique on (brief_id, checksum)). Google returns the
+// EXISTING asset for a duplicate asset create (result_ids.go), so both entries resolve to one
+// asset and the slot would carry it twice: a repeated (campaign, asset, field type) link on
+// Search, a repeated asset-group link on Performance Max, a repeated asset in one field of the
+// Display or Demand Gen ad. Google refuses each, and each request runs after the budget and
+// campaign exist, so the repeat is refused here, after the bounded fetch and before any
+// mutate. Compared by a SHA-256 of the bytes, so the walk holds no second copy of an image.
+func refuseRepeatedSlotImage(slot imageSlot, entries []string, firstAt map[[sha256.Size]byte]int,
+	pos int, data []byte) error {
+	sum := sha256.Sum256(data)
+	if j, dup := firstAt[sum]; dup {
+		return fmt.Errorf("google-ads %s %d (%q) and %d (%q) are the same image (identical "+
+			"bytes); Google stores identical content as one asset, so the slot would carry it "+
+			"twice and be refused after the budget and campaign exist — list the image once",
+			slot.label, j, imageRefForError(entries[j]), pos, imageRefForError(entries[pos]))
+	}
+	firstAt[sum] = pos
+	return nil
 }
 
 // fetchOneImage downloads a single image and validates it.

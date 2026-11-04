@@ -1156,17 +1156,19 @@ negativeKeywords?:              — OPTIONAL Search keyword EXCLUSIONS, attached
                                   its positive keywords match.
 sharedNegativeKeywordLists?:    — OPTIONAL EXISTING shared negative keyword lists to attach to the
   string[]                        campaign (#477), as `customers/<id>/sharedSets/<id>` resource
-                                  names (a canonical id, no leading zero). This service ATTACHES
+                                  names (a positive int64 id in canonical form: no leading zero, not
+                                  0, not past int64). This service ATTACHES
                                   them through `campaignSharedSets:mutate` and never creates, edits
                                   or removes a shared set or a keyword in one. Each name must belong
                                   to the connected account: Google refuses another customer's set
                                   (`INVALID_CUSTOMER_ID`) only at the attach, after the budget and
                                   campaign exist, so it is refused before any request. Trimmed and
-                                  de-duplicated, at most 20. The attach runs right after the
-                                  campaign-level `negativeKeywords`, in one atomic request; the
-                                  confirmed set ids are in `sharedNegativeKeywordListIds`. A failure
-                                  keeps the campaign (partial result), and an ambiguous or
-                                  mismatched response is UNCONFIRMED.
+                                  de-duplicated, then at most 20 DISTINCT lists. The attach runs
+                                  right after the campaign-level `negativeKeywords`, in one atomic
+                                  request; the confirmed set ids are in
+                                  `sharedNegativeKeywordListIds`. A failure keeps the campaign
+                                  (partial result), and an ambiguous or mismatched response is
+                                  UNCONFIRMED.
 
                                   The account check is ACCOUNT-scoped, not foundation-scoped, and is
                                   not tenancy protection: on the shared LF Google Ads customer a
@@ -1296,8 +1298,10 @@ conversionActions?: string[]    — OPTIONAL the conversion actions THIS campaig
                                   overriding the account-level conversion goals. Each entry is either a
                                   bare numeric id (`987654321`) or the full resource name
                                   (`customers/<customer-id>/conversionActions/<id>`); bare ids are
-                                  qualified with the campaign's own account. At most 100 entries;
-                                  duplicates across the two spellings are deduplicated, not refused.
+                                  qualified with the campaign's own account. In both spellings the
+                                  id must be a positive int64 in canonical form (no leading zero,
+                                  not 0, not past int64). Duplicates across the two spellings are
+                                  deduplicated, not refused, and then at most 100 DISTINCT actions.
 
                                   A full resource name naming a DIFFERENT customer is refused — a
                                   conversion action cannot be shared across accounts, and the create
@@ -1735,7 +1739,14 @@ demandGenCreative?:             — OPTIONAL Demand Gen ad (LFXV2-2665). DEMAND 
                                   Aspect ratios are allowed Google's documented +-1%. A URL must be
                                   https with a host, and an `imageAssetId` must name a creative asset
                                   stored for this brief. No entry may repeat within its list. A URL
-                                  may also be written as an object, {"url": "<https url>"}.
+                                  may also be written as an object, {"url": "<https url>"}. Two
+                                  entries of ONE list may not carry identical bytes either (two URLs
+                                  serving one file, or a URL and a stored asset), checked after the
+                                  fetch and before the budget: Google stores identical content as
+                                  one asset, so the list would hold it twice and be refused after
+                                  the campaign exists. The refusal names both positions. The same
+                                  image in two DIFFERENT lists (a square marketing image that is
+                                  also the logo) is accepted.
 
                                   At most 20 marketing images COMBINED across the four marketing lists
                                   (not 20 each), and at least one `marketingImages` OR one
@@ -1882,6 +1893,8 @@ performanceMaxCreative?:        — OPTIONAL Performance Max ASSET GROUP (LFXV2-
    descriptions?: string[],       that field's rules (anonymous, no redirects, public IPs only, 5 MiB per
    businessName?: string,         image, 64 MiB per creative, PNG/JPEG/GIF only, every image resolved and
                                   checked BEFORE the first budget mutate). Google never gets the URL.
+                                  Two entries of one image list may not carry identical bytes (see
+                                  `demandGenCreative`).
    youtubeVideoIds?: string[],
    assetGroupName?: string,       Each list has its own shape, checked against the decoded image:
    path1?: string,                  marketingImages          1.91:1, min 600x314
@@ -2028,6 +2041,8 @@ displayCreative?:               — OPTIONAL Display RESPONSIVE DISPLAY AD (LFXV
    callToActionText?: string}     that field's rules (anonymous, no redirects, public IPs only, 5 MiB per
                                   image, 64 MiB per creative, PNG/JPEG/GIF only, every image resolved and
                                   checked BEFORE the first budget mutate). Google never gets the URL.
+                                  Two entries of one image list may not carry identical bytes (see
+                                  `demandGenCreative`).
 
                                   FOUR image slots, and they are neither Demand Gen's five nor
                                   Performance Max's five — there is no portrait shape here, and
@@ -2139,7 +2154,8 @@ searchAssets?:                  — OPTIONAL Search campaign image, logo and nam
                                   defines — an https URL this service fetches, or {"imageAssetId":
                                   "<uuid>"} naming a stored creative asset — under that field's
                                   rules, every image resolved and checked BEFORE the first budget
-                                  mutate.
+                                  mutate. Two entries of one image list may not carry identical
+                                  bytes (see `demandGenCreative`).
 
                                   The assets and their campaign links are created in ONE atomic
                                   `googleAds:mutate` (each asset under a temporary id the link

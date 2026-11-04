@@ -853,12 +853,12 @@ func TestCreateDisplayCampaign_TotalImageBytesSpanEveryGroup(t *testing.T) {
 		c := displayCreativeAt("")
 		c.LogoImages = nil
 		r := ref(n * 100)
-		resolved[r] = pad(pngOf(t, 1200, 628), big)
+		resolved[r] = pad(taggedImage(pngOf(t, 1200, 628), n*100), big)
 		c.MarketingImages = []string{r}
 		c.SquareMarketingImages = nil
 		for i := 1; i < 6; i++ {
 			r := ref(n*100 + i)
-			resolved[r] = pad(pngOf(t, 400, 400), big)
+			resolved[r] = pad(taggedImage(pngOf(t, 400, 400), n*100+i), big)
 			c.SquareMarketingImages = append(c.SquareMarketingImages, r)
 		}
 		return DisplayAdGroup{Name: fmt.Sprintf("G%d", n), Creative: c}
