@@ -208,7 +208,7 @@ func TestLinkedInImage_RefusedBeforeAnythingIsCreated(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			api := newLIImageAPI(t)
 			assets := tc.assets(t)
-			reserver := NewAssetReserver(10<<20, time.Millisecond)
+			reserver := NewAssetReserver(10<<20, testAssetReserveWait)
 			d := newLIImageDispatcher(api, assets, reserver)
 			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, liImageConfig(tc.variant))
 			if camp != nil || !isNoUpstreamCreate(err) {
@@ -246,7 +246,7 @@ func TestLinkedInImage_RefusedBeforeAnythingIsCreated(t *testing.T) {
 func TestLinkedInImage_UploadFailureRetainsClaimAndDegrades(t *testing.T) {
 	api := newLIImageAPI(t)
 	api.initStatus = http.StatusForbidden
-	reserver := NewAssetReserver(10<<20, time.Millisecond)
+	reserver := NewAssetReserver(10<<20, testAssetReserveWait)
 	d := newLIImageDispatcher(api, liPNGAsset(t, 1200, 627), reserver)
 	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, liImageConfig(liVariant(`"imageAssetId":"`+msAssetID+`"`)))
 	if err == nil || camp == nil {

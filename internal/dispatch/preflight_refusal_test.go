@@ -592,7 +592,7 @@ func TestDispatch_XComposedNameOverflowIsARefusal(t *testing.T) {
 // size/shape/format only and nothing is sent to LinkedIn.
 func TestDispatch_LinkedInInvalidStoredImageReachesTheJobResult(t *testing.T) {
 	api := newLIImageAPI(t)
-	d := newLIImageDispatcher(api, liPNGAsset(t, 300, 200), NewAssetReserver(10<<20, time.Millisecond))
+	d := newLIImageDispatcher(api, liPNGAsset(t, 300, 200), NewAssetReserver(10<<20, testAssetReserveWait))
 	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, liImageConfig(liVariant(`"imageAssetId":"`+msAssetID+`"`)))
 	if camp != nil || !isNoUpstreamCreate(err) {
 		t.Fatalf("want a pre-create refusal, got camp=%v err=%v", camp, err)
