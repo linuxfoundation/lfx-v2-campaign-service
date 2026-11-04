@@ -287,6 +287,7 @@ func (c *Client) mutateCampaignNegativeKeywords(ctx context.Context, campaignRes
 	}
 
 	ids := make([]string, 0, len(ops))
+	seen := newResultIDSet(len(mr.Results))
 	for i, r := range mr.Results {
 		returnedCampaignID, critID := c.campaignCriterionID(r.ResourceName)
 		if critID == "" || returnedCampaignID == "" {
@@ -297,6 +298,11 @@ func (c *Client) mutateCampaignNegativeKeywords(ctx context.Context, campaignRes
 		// this call created, so the ids cannot be trusted enough to persist.
 		if returnedCampaignID != campaignID {
 			return nil, &unconfirmedNegativeKeywordError{err: fmt.Errorf("google-ads negative keywords UNCONFIRMED (campaign %s; campaignCriterion resource name %q reports a different campaign id %q — verify in Google Ads before retrying)", campaignID, r.ResourceName, returnedCampaignID)}
+		}
+		if dup := seen.repeat(critID, i); dup != "" {
+			return nil, &unconfirmedNegativeKeywordError{err: fmt.Errorf("google-ads negative "+
+				"keywords UNCONFIRMED (campaign %s; %s — verify in Google Ads before retrying)",
+				campaignID, dup)}
 		}
 		ids = append(ids, critID)
 	}

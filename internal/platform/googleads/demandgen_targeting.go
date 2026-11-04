@@ -191,6 +191,7 @@ func (c *Client) createDemandGenAdGroupTargeting(ctx context.Context, adGroupRes
 	}
 
 	audienceCount := len(ops) - len(languages)
+	seen := newResultIDSet(len(mr.Results))
 	for i, r := range mr.Results {
 		returnedAdGroupID, critID := c.adGroupCriterionID(r.ResourceName)
 		if critID == "" || returnedAdGroupID == "" {
@@ -198,6 +199,11 @@ func (c *Client) createDemandGenAdGroupTargeting(ctx context.Context, adGroupRes
 		}
 		if returnedAdGroupID != adGroupID {
 			return nil, nil, fmt.Errorf("google-ads demand gen audience/language targeting UNCONFIRMED (ad group %s; adGroupCriterion resource name %q reports a different ad group id %q — verify in Google Ads before retrying)", adGroupID, r.ResourceName, returnedAdGroupID)
+		}
+		if dup := seen.repeat(critID, i); dup != "" {
+			return nil, nil, fmt.Errorf("google-ads demand gen audience/language targeting "+
+				"UNCONFIRMED (ad group %s; %s — verify in Google Ads before retrying)",
+				adGroupID, dup)
 		}
 		if i < audienceCount {
 			audienceIDs = append(audienceIDs, critID)

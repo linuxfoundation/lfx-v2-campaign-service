@@ -31,6 +31,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/textfold"
 )
 
 const (
@@ -153,6 +155,60 @@ func everyAdGroupBringsAds(groups []AdGroupSpec) bool {
 	return true
 }
 
+// adGroupNameKey is the duplicate key for a named ad group's composed name, shared by the
+// Search, Demand Gen and Display lists. It is textfold.Key — simple case folding, so two
+// names collide exactly when strings.EqualFold says they are equal — not strings.ToLower,
+// which keeps "ſ"/"s" and "ς"/"σ" apart. Google's own folding is not probed: this errs
+// toward refusing a pair Google might accept over sending one it refuses after the earlier
+// groups exist.
+func adGroupNameKey(name string) string { return textfold.Key(name) }
+
+// The caller fields each channel's ad group base name is composed from, for
+// namedAdGroupNameTooLong's advice. Search's base is ComposeName("Ad Group", in), which
+// carries Project and EventName (its stage, tactic and suffix are service-derived); the
+// Demand Gen and Display bases (demandGenAdGroupName, displayAdGroupName) carry
+// EventName alone.
+const (
+	adGroupBaseFieldsSearch    = "Project, EventName"
+	adGroupBaseFieldsEventName = "EventName"
+)
+
+// namedAdGroupNameTooLong refuses a named ad group's composed "<base> | <label>" name
+// over Google's limit, naming the group by its 1-based position. Its own message, not
+// validateEntityName's: that one calls the suffix fixed, but here the suffix is the
+// caller's own label and the likeliest thing to cut. baseFields names the caller fields
+// the channel's base is built from (adGroupBaseFieldsSearch or
+// adGroupBaseFieldsEventName), so the advice names only fields that shorten it. Shared by
+// the Search, Demand Gen and Display lists.
+func namedAdGroupNameTooLong(position int, name, baseFields string) error {
+	if n := utf8.RuneCountInString(name); n > maxAdGroupNameRunes {
+		return fmt.Errorf("ad group %d name %q is %d characters, over Google's limit of %d; "+
+			"shorten %s or this group's name", position, name, n, maxAdGroupNameRunes, baseFields)
+	}
+	return nil
+}
+
+// adGroupShapeHint names the ad-group shape a channel takes, for the refusal of another
+// channel's ad-group list on it, so the refusal points at that channel's own field rather
+// than at one fixed sibling. Shared by the Demand Gen and Display list refusals.
+func adGroupShapeHint(kind string) string {
+	switch kind {
+	case campaignKindSearch:
+		return "a Search campaign takes its own ad-group list, AdGroups"
+	case campaignKindDemandGen:
+		return "a Demand Gen campaign takes its own ad-group list, DemandGenAdGroups"
+	case campaignKindDisplay:
+		return "a Display campaign takes its own ad-group list, DisplayAdGroups"
+	case campaignKindVideo:
+		return "a Video campaign creates one ad group, from VideoCreative"
+	case campaignKindPerformanceMax:
+		return "a Performance Max campaign has no ad groups; its asset group comes from " +
+			"PerformanceMaxCreative"
+	default:
+		return "no other channel takes it"
+	}
+}
+
 // validateAdGroupPlans turns the caller's AdGroups into the list the cascade
 // creates, or returns the single default group when none were asked for.
 //
@@ -173,6 +229,11 @@ func validateAdGroupPlans(kind string, in CampaignInput, base adGroupPlan) ([]ad
 	if kind == campaignKindDemandGen {
 		return nil, fmt.Errorf("google-ads campaign creation aborted before any request (%d ad groups requested, but AdGroups is the SEARCH ad-group list; a Demand Gen campaign takes DemandGenAdGroups, each with its own creative and Audience)", len(in.AdGroups))
 	}
+	// Display has its own list (#475), whose groups carry a responsive display ad and
+	// audiences rather than keywords and responsive search ads, so the refusal names it.
+	if kind == campaignKindDisplay {
+		return nil, fmt.Errorf("google-ads campaign creation aborted before any request (%d ad groups requested, but AdGroups is the SEARCH ad-group list; a Display campaign takes DisplayAdGroups, each with its own creative and audiences)", len(in.AdGroups))
+	}
 	if kind != campaignKindSearch {
 		return nil, fmt.Errorf("google-ads campaign creation aborted before any request (%d ad groups requested, but multiple ad groups are a SEARCH capability; the %s channel creates its own single ad group and no ad)", len(in.AdGroups), kind)
 	}
@@ -188,13 +249,14 @@ func validateAdGroupPlans(kind string, in CampaignInput, base adGroupPlan) ([]ad
 			return nil, fmt.Errorf("google-ads campaign creation aborted before any request (ad group %d has no name; each ad group needs a distinct theme label)", i+1)
 		}
 		name := base.name + " | " + label
-		if err := validateEntityName("ad group", name, utf8.RuneCountInString(name), maxAdGroupNameRunes, "characters"); err != nil {
-			return nil, err
+		if err := namedAdGroupNameTooLong(i+1, name, adGroupBaseFieldsSearch); err != nil {
+			return nil, fmt.Errorf(
+				"google-ads campaign creation aborted before any request (%w)", err)
 		}
 		// Case-insensitive, because Google's own duplicate check is: two groups
 		// differing only in case collide at the mutate, by which point the
 		// earlier groups in this list already exist.
-		key := strings.ToLower(name)
+		key := adGroupNameKey(name)
 		if _, dup := seen[key]; dup {
 			return nil, fmt.Errorf("google-ads campaign creation aborted before any request (ad group name %q is used more than once; Google rejects duplicate ad group names)", name)
 		}

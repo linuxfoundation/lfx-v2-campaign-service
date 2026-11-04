@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"unicode/utf8"
 )
 
 // ---------------------------------------------------------------------------
@@ -42,8 +41,9 @@ const maxDemandGenAdGroups = 5
 type DemandGenAdGroup struct {
 	// Name labels the group. It is sanitized like every other name part and appended to
 	// the campaign's ad group name ("<event> - Display | <Name>"), as the Search
-	// ad-group list does; two names equal ignoring case are refused, because Google
-	// refuses DUPLICATE_ADGROUP_NAME only after the earlier groups exist.
+	// ad-group list does; two names equal under simple case folding (adGroupNameKey, as
+	// on the Search and Display lists) are refused, because Google refuses
+	// DUPLICATE_ADGROUP_NAME only after the earlier groups exist.
 	Name string
 	// Audience is this group's single Google Ads Audience, under the same rules as
 	// CampaignInput.DemandGenAudience. Optional.
@@ -96,7 +96,8 @@ func validateDemandGenAdGroups(kind, customerID string, in CampaignInput, base d
 		return []demandGenGroupPlan{base}, nil
 	}
 	if kind != campaignKindDemandGen {
-		return nil, fmt.Errorf("google-ads: Demand Gen ad groups are not supported on %s; omit DemandGenAdGroups (Search takes its own ad-group list, AdGroups)", kind)
+		return nil, fmt.Errorf("google-ads: Demand Gen ad groups are not supported on %s; omit "+
+			"DemandGenAdGroups (%s)", kind, adGroupShapeHint(kind))
 	}
 	// The campaign-level creative and Audience describe the ONE group the list replaces;
 	// with a list there is no single group for them to go on, and guessing would put an ad
@@ -116,10 +117,11 @@ func validateDemandGenAdGroups(kind, customerID string, in CampaignInput, base d
 			return nil, fmt.Errorf("google-ads: Demand Gen ad group %d has no name; each ad group needs a distinct label", i+1)
 		}
 		name := base.name + " | " + label
-		if err := validateEntityName("ad group", name, utf8.RuneCountInString(name), maxAdGroupNameRunes, "characters"); err != nil {
-			return nil, err
+		if err := namedAdGroupNameTooLong(i+1, name, adGroupBaseFieldsEventName); err != nil {
+			return nil, fmt.Errorf("google-ads: Demand Gen %w", err)
 		}
-		key := strings.ToLower(name)
+		// Simple case folding, the key the Search and Display lists use (adGroupNameKey).
+		key := adGroupNameKey(name)
 		if _, dup := seen[key]; dup {
 			return nil, fmt.Errorf("google-ads: Demand Gen ad group name %q is used more than once; Google refuses duplicate ad group names (DUPLICATE_ADGROUP_NAME)", name)
 		}

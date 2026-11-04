@@ -176,6 +176,16 @@ func TestValidateAudienceSegments(t *testing.T) {
 		}
 	})
 
+	// A leading zero would pass the de-dupe as a second name for one list.
+	t.Run("non-canonical ids are an error", func(t *testing.T) {
+		for _, seg := range []string{"customers/1/userLists/011", "customers/01/userLists/11"} {
+			_, err := validateAudienceSegments([]string{"customers/1/userLists/11", seg})
+			if err == nil || !strings.Contains(err.Error(), "does not spell its ids canonically") {
+				t.Errorf("%q: err = %v, want the canonical-id refusal", seg, err)
+			}
+		}
+	})
+
 	t.Run("unrecognized resource name is an error", func(t *testing.T) {
 		if _, err := validateAudienceSegments([]string{"customers/1/userInterests/2"}); err == nil {
 			t.Error("expected an error for an unrecognized audience resource name")

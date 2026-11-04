@@ -52,6 +52,22 @@ func TestValidateDemandGenAdGroups_Refusals(t *testing.T) {
 		"off demand gen": {campaignKindSearch, func(in *CampaignInput) {
 			in.DemandGenAdGroups = []DemandGenAdGroup{group("A")}
 		}, "Demand Gen ad groups are not supported on Search Campaign"},
+		// Each channel is pointed at its OWN ad-group shape (adGroupShapeHint), not at
+		// Search's list: Display at DisplayAdGroups (#475).
+		"off demand gen/search": {campaignKindSearch, func(in *CampaignInput) {
+			in.DemandGenAdGroups = []DemandGenAdGroup{group("A")}
+		}, "omit DemandGenAdGroups (a Search campaign takes its own ad-group list, AdGroups)"},
+		"off demand gen/display": {campaignKindDisplay, func(in *CampaignInput) {
+			in.DemandGenAdGroups = []DemandGenAdGroup{group("A")}
+		}, "omit DemandGenAdGroups (a Display campaign takes its own ad-group list, " +
+			"DisplayAdGroups)"},
+		"off demand gen/video": {campaignKindVideo, func(in *CampaignInput) {
+			in.DemandGenAdGroups = []DemandGenAdGroup{group("A")}
+		}, "omit DemandGenAdGroups (a Video campaign creates one ad group, from VideoCreative)"},
+		"off demand gen/performance max": {campaignKindPerformanceMax, func(in *CampaignInput) {
+			in.DemandGenAdGroups = []DemandGenAdGroup{group("A")}
+		}, "omit DemandGenAdGroups (a Performance Max campaign has no ad groups; its asset " +
+			"group comes from PerformanceMaxCreative)"},
 		"campaign-level image creative too": {campaignKindDemandGen, func(in *CampaignInput) {
 			in.DemandGenAdGroups = []DemandGenAdGroup{group("A")}
 			in.DemandGenCreative = fullCreative()
@@ -75,9 +91,25 @@ func TestValidateDemandGenAdGroups_Refusals(t *testing.T) {
 		"duplicate name ignoring case and spacing": {campaignKindDemandGen, func(in *CampaignInput) {
 			in.DemandGenAdGroups = []DemandGenAdGroup{group("Retargeting"), group("  RETARGETING ")}
 		}, "is used more than once"},
+		// Simple case folding (adGroupNameKey), the key the Search and Display lists use:
+		// LONG S folds with s and FINAL SIGMA with capital sigma, which strings.ToLower keeps
+		// apart.
+		"duplicate name under long s": {campaignKindDemandGen, func(in *CampaignInput) {
+			in.DemandGenAdGroups = []DemandGenAdGroup{group("\u017fale"), group("SALE")}
+		}, "is used more than once"},
+		"duplicate name under final sigma": {campaignKindDemandGen, func(in *CampaignInput) {
+			in.DemandGenAdGroups = []DemandGenAdGroup{
+				group("Kubecon\u03c2"), group("KUBECON\u03a3"),
+			}
+		}, "is used more than once"},
+		// namedAdGroupNameTooLong, shared with Search and Display: the group by position,
+		// and the advice names EventName — the only caller field in the Demand Gen base
+		// (demandGenAdGroupName) — and the label, not validateEntityName's Project.
 		"over-long name": {campaignKindDemandGen, func(in *CampaignInput) {
 			in.DemandGenAdGroups = []DemandGenAdGroup{group(strings.Repeat("a", 250))}
-		}, "ad group name exceeds 255"},
+		}, "google-ads: Demand Gen ad group 1 name \"KubeCon Europe 2026 - Display | " +
+			strings.Repeat("a", 250) + "\" is 282 characters, over Google's limit of 255; " +
+			"shorten EventName or this group's name"},
 		"no creative": {campaignKindDemandGen, func(in *CampaignInput) {
 			in.DemandGenAdGroups = []DemandGenAdGroup{{Name: "A"}}
 		}, "has no creative"},

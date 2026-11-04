@@ -170,7 +170,7 @@ type displayCreativePlan struct {
 // adoption path refuses exactly what the create path refuses.
 //
 // What it cannot check is whether a URL actually serves a decodable image of the right
-// shape. That is fetchDisplayImages' job, and it still runs before the budget mutate.
+// shape. That is fetchDisplayGroupImages' job, and it still runs before the budget mutate.
 func validateDisplayCreative(kind string, in CampaignInput) (displayCreativePlan, error) {
 	d := in.DisplayCreative
 	if d.empty() {
@@ -263,19 +263,6 @@ func validateDisplayCreative(kind string, in CampaignInput) (displayCreativePlan
 	plan.callToActionText = cta
 
 	return plan, nil
-}
-
-// fetchDisplayImages downloads every image this creative references, in slot order.
-//
-// A one-line wrapper over the shared fetcher, kept because the slot TABLE is the
-// channel-specific part, and naming the channel at the call site is what keeps the caller
-// in display.go from having to know which table belongs to it. (Demand Gen's own wrapper
-// became fetchDemandGenGroupImages, which walks every ad group's tables at once, #460.)
-func (c *Client) fetchDisplayImages(ctx context.Context, plan displayCreativePlan) ([]fetchedImage, error) {
-	if !plan.present {
-		return nil, nil
-	}
-	return c.fetchSlotImages(ctx, displayImageSlots, plan.urls, plan.resolved)
 }
 
 // ---------------------------------------------------------------------------
@@ -371,7 +358,8 @@ func (c *Client) createDisplayAd(ctx context.Context, adGroupResource, adGroupID
 	assetIDs = make([]string, 0, len(assetOps))
 	// An unusable entry does not stop the walk: every same-account id goes back with the
 	// error, which names the FIRST unusable index.
-	firstBad, badName := -1, ""
+	firstBad, badWhy := -1, ""
+	seen := newResultIDSet(len(assetResults.Results))
 	for i, r := range assetResults.Results {
 		resource := r.ResourceName
 		// assetID checks the kind, the account AND the numeric trailing id, returning ""
@@ -380,7 +368,16 @@ func (c *Client) createDisplayAd(ctx context.Context, adGroupResource, adGroupID
 		id := c.assetID(resource)
 		if id == "" {
 			if firstBad < 0 {
-				firstBad, badName = i, resource
+				firstBad = i
+				badWhy = fmt.Sprintf("malformed asset resource name %q at index %d", resource, i)
+			}
+			continue
+		}
+		// A repeat is unusable too: its operation is unaccounted for. The id is already
+		// recorded once, so it is not appended again.
+		if dup := seen.repeat(id, i); dup != "" {
+			if firstBad < 0 {
+				firstBad, badWhy = i, dup
 			}
 			continue
 		}
@@ -390,9 +387,8 @@ func (c *Client) createDisplayAd(ctx context.Context, adGroupResource, adGroupID
 	if firstBad >= 0 {
 		return uniqueIDs(assetIDs), "", fmt.Errorf(
 			"google-ads display image asset creation UNCONFIRMED (ad group %s "+
-				"created; malformed asset resource name %q at index %d — assets may exist "+
-				"— verify in Google Ads before retrying)",
-			adGroupID, badName, firstBad)
+				"created; %s — assets may exist — verify in Google Ads before retrying)",
+			adGroupID, badWhy)
 	}
 
 	ad := &responsiveDisplayAdInfo{
@@ -450,9 +446,10 @@ func displayCreativeStep(plan displayCreativePlan) string {
 		marketing, logos, len(plan.headlines), len(plan.descriptions))
 }
 
-// displayAdGroupName composes the single ad group this channel creates, mirroring
-// videoAdGroupName: one group per campaign, named off the event so an operator reading
-// the Google Ads UI sees which brief it came from.
+// displayAdGroupName composes this channel's ad group name, mirroring videoAdGroupName:
+// named off the event so an operator reading the Google Ads UI sees which brief it came
+// from. It is the single group's name, and the prefix every DisplayAdGroups entry's label
+// is appended to (#475).
 //
 // The suffix is " - Display Network", not " - Display": Demand Gen's ad group
 // (demandgen.go) has used the bare " - Display" since it was the Display channel, and

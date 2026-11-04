@@ -345,14 +345,18 @@ app:
 
     # Opts this deployment IN to the Display audience lists that name an
     # account-owned segment (#462): googleAdsConfig.audienceSegments on the
-    # "display" channel, customAudiences and customAffinities. Default off for
-    # the reason GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED is: the service checks
-    # each segment against the Google Ads account only, so on the shared LF
-    # customer a project could target with another foundation's user list or
-    # custom segment (#468). While off, a create naming one is refused before
-    # anything upstream exists. userInterests (Google's own categories),
-    # excludedPlacements (public domains) and Search's observation-only
-    # audienceSegments are unaffected. Any value other than "true" is treated
+    # "display" channel, customAudiences and customAffinities, and (#475) the
+    # user-list exclusions excludedAudienceSegments plus each displayAdGroups
+    # entry's audienceSegments, customAudiences, customAffinities and
+    # excludedAudienceSegments. Default off for the reason
+    # GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED is: the service checks each
+    # segment against the Google Ads account only, so on the shared LF
+    # customer a project could target or exclude with another foundation's
+    # user list or custom segment (#468). While off, a create naming one is
+    # refused before anything upstream exists. userInterests (Google's own
+    # categories, at either level), excludedPlacements (public domains),
+    # Search's observation-only audienceSegments and displayAdGroups entries
+    # without those lists are unaffected. Any value other than "true" is treated
     # as off, so a typo fails closed. Keep it off until #468 lands; that fix
     # removes the gate and this key.
     GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED:

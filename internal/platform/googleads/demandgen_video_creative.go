@@ -395,7 +395,8 @@ func (c *Client) createDemandGenVideoAd(ctx context.Context, adGroupResource, ad
 	// An unusable asset result does not stop the walk (#481 review): a foreign-account video
 	// result followed by this account's call to action must still record the call to action,
 	// so every same-account id goes back, once, with the error naming the FIRST bad index.
-	firstBad := -1
+	firstBad, badWhy := -1, ""
+	seen := newResultIDSet(assetOpCount)
 	for i, r := range results.MutateOperationResponses[:assetOpCount] {
 		id := ""
 		if r.AssetResult != nil {
@@ -404,6 +405,14 @@ func (c *Client) createDemandGenVideoAd(ctx context.Context, adGroupResource, ad
 		if id == "" {
 			if firstBad < 0 {
 				firstBad = i
+				badWhy = fmt.Sprintf("no usable asset resource name at index %d", i)
+			}
+			continue
+		}
+		// A repeat is unusable too; its id is already recorded once.
+		if dup := seen.repeat(id, i); dup != "" {
+			if firstBad < 0 {
+				firstBad, badWhy = i, dup
 			}
 			continue
 		}
@@ -412,9 +421,9 @@ func (c *Client) createDemandGenVideoAd(ctx context.Context, adGroupResource, ad
 	if firstBad >= 0 {
 		return uniqueIDs(assetIDs), "", fmt.Errorf(
 			"google-ads demand gen video ad %q creation UNCONFIRMED (ad group %s "+
-				"created; no usable asset resource name at index %d — the ad and its "+
-				"assets may exist — verify in Google Ads before retrying)",
-			adName, adGroupID, firstBad)
+				"created; %s — the ad and its assets may exist — verify in Google Ads "+
+				"before retrying)",
+			adName, adGroupID, badWhy)
 	}
 	adResult := results.MutateOperationResponses[assetOpCount].AdGroupAdResult
 	adResource := ""

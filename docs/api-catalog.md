@@ -799,8 +799,10 @@ only creation is impossible); `display` creates a DISPLAY campaign with NO chann
 sub-type, an ad group of type `DISPLAY_STANDARD` targeted at the audiences named in
 `audienceSegments`/`customAudiences`/`customAffinities`/`userInterests` (the first three
 only where the deployment sets GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED, #468), campaign-level
-`excludedPlacements`, and (given `displayCreative`) one
-responsive display ad built from images this service fetches and uploads. **Budget is in whole units of the ad ACCOUNT's
+`excludedPlacements` and `excludedAudienceSegments` (the latter under the same flag), and
+(given `displayCreative`) one
+responsive display ad built from images this service fetches and uploads — or, given
+`displayAdGroups`, several named ad groups, each with its own audiences and ad (#475). **Budget is in whole units of the ad ACCOUNT's
 currency**, not USD — the service does no FX conversion (mirroring `metaConfig`).
 
 Every field below is OPTIONAL except `budget`, and every one of them is additive: a config
@@ -897,8 +899,11 @@ keywords?: {text, matchType}[]  — OPTIONAL positive Search keyword criteria (G
 audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTING Customer Match /
                                   remarketing user lists (`customers/{id}/userLists/{id}`) to attach to
                                   the ad group. This client does not create audiences. At most 20
-                                  entries; duplicates are deduped. SEARCH and DISPLAY, and the two use
-                                  them differently:
+                                  entries; duplicates are deduped. Each id must be in canonical form
+                                  — `userLists/011` is refused rather than deduped against
+                                  `userLists/11` (#475); this holds for every Display audience and
+                                  exclusion list too. SEARCH and DISPLAY, and the two use them
+                                  differently:
 
                                   On `search` (GA-4) they are OBSERVATION-only — bid/report on the
                                   segment without narrowing delivery to it. The client sets the ad
@@ -1014,6 +1019,26 @@ excludedPlacements?: string[]   — OPTIONAL websites a Display campaign must ne
                                   Google's exclusion of one covers the other is Google's rule, not
                                   checked here). A definite refusal of the mutate fails the job with
                                   the campaign recorded; an ambiguous one is UNCONFIRMED.
+excludedAudienceSegments?:      — OPTIONAL user lists excluded from the whole Display campaign (#475),
+  string[]                        each an EXISTING `customers/{id}/userLists/{id}` on the campaign's
+                                  OWN account. DISPLAY ONLY, and REFUSED on every other `channel`.
+                                  Attached at the CAMPAIGN level as negative user-list criteria, so
+                                  they cover every ad group, in ONE atomic `campaignCriteria:mutate`
+                                  after the placement exclusions and before any ad; the ids are
+                                  returned in `excludedAudienceCriteriaIds`. At most 20 entries,
+                                  deduped. Only user lists can be excluded — the exclusion a
+                                  validateOnly probe established — so a custom audience, custom
+                                  affinity, user interest or Audience name is refused, as are a
+                                  malformed name and another customer's list. A list also targeted by
+                                  `audienceSegments` or by any `displayAdGroups` entry, or also
+                                  excluded by an entry, is refused: name it once. The account check is
+                                  ACCOUNT-scoped, not tenancy protection; see `audienceSegments` and
+                                  #468. So the field is OFF by default, like Display
+                                  `audienceSegments`: unless the deployment sets
+                                  GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED to exactly "true", a create
+                                  naming it, on any `channel`, is refused before the budget mutate,
+                                  whatever the value. A definite refusal of the mutate fails the job
+                                  with the campaign recorded; an ambiguous one is UNCONFIRMED.
 geoTargets?: string[]           — OPTIONAL locations the campaign should serve in (LFXV2-3283). Each
                                   entry is EITHER an ISO 3166-1 alpha-2 country code, spelled as in
                                   `metaConfig`/`redditConfig`, OR a raw numeric geo target constant id
@@ -1470,11 +1495,12 @@ excludedParentalStatuses?:        criteria like the two above, because the ad gr
                                   before any request. Both are REFUSED on every other `channel`.
 
                                   On `search` they ride in each ad group's criteria mutate with its
-                                  keywords; on `display` they are one mutate after the ad group is
-                                  created, before the audience criteria (#462). Their ids are in `adGroupDemographicCriteriaIds` (on
-                                  `search` the first ad group's; every group's own are in
-                                  `adGroups[].demographicCriteriaIds`; on `display` its one ad
-                                  group's).
+                                  keywords; on `display` they are one mutate after each ad group is
+                                  created, before its audience criteria (#462), on every
+                                  `displayAdGroups` entry when that list is set (#475). Their ids
+                                  are in `adGroupDemographicCriteriaIds` (the first ad group's on
+                                  both channels; every group's own are in
+                                  `adGroups[].demographicCriteriaIds`).
 
                                   Positive (targeting or observation) demographic criteria are not
                                   added; no probe covered them.
@@ -1612,10 +1638,11 @@ leadForms?:                     — OPTIONAL lead form (LFXV2-2665). The one ext
 adGroups?:                      — OPTIONAL multiple themed ad groups (LFXV2-2665), each with its own
   {name, cpcBid?, keywords?,      keywords and up to 3 Responsive Search Ads. SEARCH ONLY and REFUSED on
    audienceSegments?,             every other `channel`: Demand Gen takes `demandGenAdGroups`
-   negativeKeywords?,             instead, and Performance Max has no ad groups at all. At most 20
-   ads?: {headlines?,             groups, at most 3 ads per group.
-          descriptions?,
-          path1?, path2?}[]}[]    `negativeKeywords` (#473) are the group's OWN exclusions, attached as
+   negativeKeywords?,             instead, Display takes its own list (`displayAdGroups`), and
+   ads?: {headlines?,             Performance Max has no ad groups at all. At most 20 groups, at
+          descriptions?,          most 3 ads per group.
+          path1?, path2?}[]}[]
+                                  `negativeKeywords` (#473) are the group's OWN exclusions, attached as
                                   negative ad-group criteria in the same mutate as its keywords. They
                                   are added beside the campaign-level `negativeKeywords`, never
                                   inherited from them, and follow the same `text`/`matchType` rules
@@ -1623,8 +1650,9 @@ adGroups?:                      — OPTIONAL multiple themed ad groups (LFXV2-26
                                   rules above; an ad that sets neither takes the campaign-level pair.
                                   `name` is REQUIRED per group and is a THEME LABEL, not the full name:
                                   the created ad group is named `<composed campaign name> | <label>`.
-                                  Names must be distinct case-insensitively — Google rejects duplicates
-                                  at the mutate, by which point the earlier groups already exist.
+                                  Names must be distinct under simple case folding (Go's
+                                  `strings.EqualFold`) — Google rejects duplicates at the mutate, by
+                                  which point the earlier groups already exist.
 
                                   Every other key except `negativeKeywords` is a PER-FIELD override of
                                   the campaign-level value, and inheritance is per field rather than
@@ -1781,9 +1809,11 @@ demandGenAdGroups?:             — OPTIONAL several Demand Gen ad groups (#460)
    creative?:                     and every group adds mutates after the campaign exists).
      <demandGenCreative>,
    videoCreative?:                `name` is REQUIRED and a label: the ad group is named
-     <demandGenVideoCreative>,    `<event name> - Display | <name>`; names equal ignoring case
-   ads?: <demandGenAds>}[]        are REFUSED (Google refuses `DUPLICATE_ADGROUP_NAME`, but only
-                                  after the earlier groups exist). Each group takes EXACTLY ONE of
+     <demandGenVideoCreative>,    `<event name> - Display | <name>`, at most 255 characters; names
+   ads?: <demandGenAds>}[]        equal under simple case folding (Go's `strings.EqualFold`, as on
+                                  Search's `adGroups` and `displayAdGroups`) are REFUSED (Google
+                                  refuses `DUPLICATE_ADGROUP_NAME`, but only after the earlier
+                                  groups exist). Each group takes EXACTLY ONE of
                                   `creative` / `videoCreative`, under those fields' rules, or an
                                   `ads` list under `demandGenAds`' rules (#474), and an optional
                                   `audience` under `demandGenAudience`'s, gate included: unless the
@@ -2008,6 +2038,63 @@ displayCreative?:               — OPTIONAL Display RESPONSIVE DISPLAY AD (LFXV
                                   them, and an AMBIGUOUS failure is reported UNCONFIRMED rather than
                                   failed, so a retry does not create a second ad. The same validation
                                   runs on the `adoptExisting` path.
+displayAdGroups?:               — OPTIONAL several named Display ad groups (#475), each with its own
+  {name, creative,                responsive display ad and audiences — the shape of a Display campaign
+   audienceSegments?,             split into, say, Retargeting and Prospecting. DISPLAY ONLY, and
+   customAudiences?,              REFUSED on every other `channel`. At most 5 groups.
+   customAffinities?,
+   userInterests?,                `name` is REQUIRED and is a label: the ad group is named
+   excludedAudienceSegments?}[]   `<event> - Display Network | <name>`, at most 255 characters, and
+                                  two names equal under simple case folding (Go's
+                                  `strings.EqualFold`, so `ſ` matches `s` and KELVIN SIGN matches
+                                  `k`) are refused, as on Search's `adGroups`. `creative` is
+                                  REQUIRED and takes the `displayCreative` shape and rules, images
+                                  included. The four audience lists take the shapes and rules of the
+                                  campaign-level fields of the same names and are attached as
+                                  TARGETING on that group alone; every group with audiences is
+                                  created with the AUDIENCE bidOnly false targeting setting.
+                                  `excludedAudienceSegments` excludes user lists from that group
+                                  alone, as negative ad-group criteria; a list a group both targets
+                                  and excludes, or that the campaign already excludes, is refused. A
+                                  refusal names the group — by its position when the name itself is
+                                  what is refused.
+
+                                  A group's `audienceSegments`, `customAudiences`,
+                                  `customAffinities` and `excludedAudienceSegments` sit behind the
+                                  same flag as the campaign-level lists (#468): unless the
+                                  deployment sets GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED to exactly
+                                  "true", a create naming any of them, on any group, is refused
+                                  before the budget mutate, naming each one
+                                  (`displayAdGroups entry 2 excludedAudienceSegments`). A group's
+                                  `userInterests`, name and creative are not gated.
+
+                                  With the list set, `displayCreative`, `audienceSegments`,
+                                  `customAudiences`, `customAffinities` and `userInterests` must be
+                                  empty — they describe the single group the list replaces — while
+                                  geo, the other campaign criteria, `excludedPlacements` and
+                                  `excludedAudienceSegments` stay campaign-level and cover every group.
+                                  Every group's images are fetched in ONE pass before the budget mutate,
+                                  under one 64 MiB total for the whole campaign.
+
+                                  Each group's ad group, income and parental exclusions
+                                  (`excludedIncomeRanges` / `excludedParentalStatuses`, applied to
+                                  every group), audience criteria and user-list exclusions are
+                                  created in order, then the campaign-level exclusions, then each
+                                  group's image assets and ad, so every criteria step runs before
+                                  any ad. Every ad's final URL carries the Display tracking
+                                  (`utm_medium=display`). The result lists every group in
+                                  `adGroups` ({name, id, adIds, demographicCriteriaIds,
+                                  audienceCriteriaIds, excludedAudienceCriteriaIds,
+                                  creativeAssetIds}); the scalar `adGroupId`, `adId`,
+                                  `adGroupDemographicCriteriaIds`, `audienceCriteriaIds` and
+                                  `creativeAssetIds` are the FIRST group's. A failure returns what exists: a group whose ad group
+                                  create failed is listed with no id; a failure in the ad pass
+                                  leaves that group and every later one listed with its id and no
+                                  `adIds`, and the error names the later groups. An ambiguous
+                                  outcome is UNCONFIRMED. A status toggle cascades over every
+                                  group's ad. Omitted, the campaign gets the single ad group it
+                                  always had, byte-for-byte. The same validation runs on the
+                                  `adoptExisting` path.
 adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When true, the dispatcher first
                                   looks the composed campaign name up on the account and, if a single
                                   live campaign already carries it, ADOPTS that campaign instead of

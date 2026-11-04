@@ -500,10 +500,15 @@ func (c *Client) createCampaignAssets(ctx context.Context, campaignResource, cam
 
 	assetResources := make([]string, 0, len(assetOps))
 	ids := make([]string, 0, len(assetOps))
+	seen := newResultIDSet(len(assetResults.Results))
 	for i, r := range assetResults.Results {
 		id := c.assetID(r.ResourceName)
 		if id == "" {
 			return nil, nil, fmt.Errorf("google-ads ad extension assets UNCONFIRMED (campaign %s; malformed/wrong-kind/wrong-account asset resource name %q at index %d — verify in Google Ads before retrying)", campaignID, r.ResourceName, i)
+		}
+		if dup := seen.repeat(id, i); dup != "" {
+			return nil, nil, fmt.Errorf("google-ads ad extension assets UNCONFIRMED (campaign %s; "+
+				"%s — verify in Google Ads before retrying)", campaignID, dup)
 		}
 		// The resource name Google returned is what gets linked, never one
 		// rebuilt from the id: a rebuilt name would paper over exactly the

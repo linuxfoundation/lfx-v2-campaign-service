@@ -122,6 +122,10 @@ type displayTargetingPlan struct {
 	customAffinities   []string
 	userInterests      []string
 	excludedPlacements []string
+	// excludedUserLists are the user lists excluded at THIS plan's level (#475): the
+	// campaign's on the campaign-level plan, a named ad group's on that group's plan. See
+	// display_adgroups.go.
+	excludedUserLists []string
 }
 
 // audienceCount is how many ad-group audience criteria the plan creates.
@@ -133,9 +137,10 @@ func (p displayTargetingPlan) audienceCount() int {
 // given campaign KIND. Called from preflightCampaignKind, so it fails before the budget
 // mutate and the adoption path refuses exactly what the create path would.
 //
-// Off Display the three segment lists Display adds and the placement exclusions are
-// REFUSED, never dropped: no other cascade reads them, so accepting one would validate
-// it and then create a campaign without it. AudienceSegments is not judged here off
+// Off Display the three segment lists Display adds, the placement exclusions and the
+// audience exclusions (#475) are REFUSED, never dropped: no other cascade reads them, so
+// accepting one would validate it and then create a campaign without it. AudienceSegments
+// is not judged here off
 // Display — the Search cascade owns it there, and the preflight's own fence refuses it
 // on the other channels.
 //
@@ -160,6 +165,9 @@ func validateDisplayTargeting(kind, customerID string, in CampaignInput) (displa
 		if len(in.ExcludedPlacements) > 0 {
 			return displayTargetingPlan{}, fmt.Errorf("google-ads: placement exclusions are not supported on %s (this client attaches placement criteria only on the Display cascade); omit ExcludedPlacements, or create a Display campaign to keep its ads off a site", kind)
 		}
+		if len(in.ExcludedAudienceSegments) > 0 {
+			return displayTargetingPlan{}, fmt.Errorf("google-ads: audience exclusions are not supported on %s (this client attaches negative user lists only on the Display cascade); omit ExcludedAudienceSegments, or create a Display campaign to exclude a user list", kind)
+		}
 		return displayTargetingPlan{}, nil
 	}
 
@@ -180,6 +188,15 @@ func validateDisplayTargeting(kind, customerID string, in CampaignInput) (displa
 	if plan.excludedPlacements, err = validateExcludedPlacements(in.ExcludedPlacements); err != nil {
 		return displayTargetingPlan{}, err
 	}
+	// The campaign-level user-list exclusions (#475), under the same account rule. A list
+	// both targeted here and excluded is refused; a named ad group's lists are checked
+	// against these in validateDisplayAdGroups.
+	if plan.excludedUserLists, err = validateDisplayExcludedUserLists("ExcludedAudienceSegments", customerID, in.ExcludedAudienceSegments); err != nil {
+		return displayTargetingPlan{}, err
+	}
+	if err := refuseExcludedOverlap("the ad group targets", plan.userLists, "the campaign excludes", plan.excludedUserLists); err != nil {
+		return displayTargetingPlan{}, err
+	}
 	return plan, nil
 }
 
@@ -197,8 +214,9 @@ func validateDisplayTargeting(kind, customerID string, in CampaignInput) (displa
 // on a Google Ads account shared across foundations, any foundation's list on that
 // account passes it. So the dispatch adapter keeps the account-owned kinds (user lists,
 // custom audiences, custom affinities) off by default (GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED,
-// see dispatch.googleAdsDisplayAudiencesEnabled) until #468 adds a foundation-scoped check.
-// User interests are Google's own categories, owned by no foundation, and are not gated.
+// see dispatch.googleAdsDisplayAudiencesEnabled) until #468 adds a foundation-scoped check —
+// the user-list exclusions and every DisplayAdGroups entry's lists included (#475). User
+// interests are Google's own categories, owned by no foundation, and are not gated.
 //
 // An Audience resource (customers/{id}/audiences/{id}) is refused with its own reason:
 // Display takes segments directly, and Google refuses an audience criterion on a
@@ -235,6 +253,14 @@ func validateDisplayAudienceList(field, collection, customerID string, names []s
 		}
 		if parts[1] != customerID {
 			return nil, fmt.Errorf("google-ads: %s entry %q is on customer %s, not this campaign's account %s; name a resource on the campaign's own account", field, name, parts[1], customerID)
+		}
+		// Digits alone are not the id test: "userLists/011" and "userLists/11" would pass
+		// as two names for one list, slipping past this de-dupe and refuseExcludedOverlap.
+		// The customer id needs no such check: it must equal customerID exactly, above.
+		if canonicalCampaignID(parts[3]) == "" {
+			return nil, fmt.Errorf("google-ads: %s entry %q has the id %q, which is not the "+
+				"canonical base-10 spelling of a positive id (no leading zeros); write the id "+
+				"as Google returns it", field, name, parts[3])
 		}
 		if _, dup := seen[name]; dup {
 			continue
@@ -447,6 +473,7 @@ func (c *Client) createDisplayAudienceCriteria(ctx context.Context, adGroupResou
 		return nil, fmt.Errorf("google-ads display audience targeting UNCONFIRMED (ad group %s; 2xx with a malformed/short mutate response — criteria may exist — verify in Google Ads before retrying)", adGroupID)
 	}
 	ids := make([]string, 0, len(ops))
+	seen := newResultIDSet(len(mr.Results))
 	for i, r := range mr.Results {
 		returnedAdGroupID, critID := c.adGroupCriterionID(r.ResourceName)
 		if critID == "" || returnedAdGroupID == "" {
@@ -454,6 +481,10 @@ func (c *Client) createDisplayAudienceCriteria(ctx context.Context, adGroupResou
 		}
 		if returnedAdGroupID != adGroupID {
 			return nil, fmt.Errorf("google-ads display audience targeting UNCONFIRMED (ad group %s; adGroupCriterion resource name %q reports a different ad group id %q — verify in Google Ads before retrying)", adGroupID, r.ResourceName, returnedAdGroupID)
+		}
+		if dup := seen.repeat(critID, i); dup != "" {
+			return nil, fmt.Errorf("google-ads display audience targeting UNCONFIRMED "+
+				"(ad group %s; %s — verify in Google Ads before retrying)", adGroupID, dup)
 		}
 		ids = append(ids, critID)
 	}
@@ -506,6 +537,7 @@ func (c *Client) createCampaignPlacementExclusions(ctx context.Context, campaign
 		return nil, fmt.Errorf("google-ads placement exclusions UNCONFIRMED (campaign %s; 2xx with a malformed/short mutate response — exclusions may exist — verify in Google Ads before retrying)", campaignID)
 	}
 	ids := make([]string, 0, len(ops))
+	seen := newResultIDSet(len(mr.Results))
 	for i, r := range mr.Results {
 		returnedCampaignID, critID := c.campaignCriterionID(r.ResourceName)
 		if critID == "" || returnedCampaignID == "" {
@@ -513,6 +545,10 @@ func (c *Client) createCampaignPlacementExclusions(ctx context.Context, campaign
 		}
 		if returnedCampaignID != campaignID {
 			return nil, fmt.Errorf("google-ads placement exclusions UNCONFIRMED (campaign %s; campaignCriterion resource name %q reports a different campaign id %q — verify in Google Ads before retrying)", campaignID, r.ResourceName, returnedCampaignID)
+		}
+		if dup := seen.repeat(critID, i); dup != "" {
+			return nil, fmt.Errorf("google-ads placement exclusions UNCONFIRMED "+
+				"(campaign %s; %s — verify in Google Ads before retrying)", campaignID, dup)
 		}
 		ids = append(ids, critID)
 	}

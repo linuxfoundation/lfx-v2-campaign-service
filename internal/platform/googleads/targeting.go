@@ -371,6 +371,15 @@ func validateAudienceSegments(segments []string) ([]string, error) {
 		if field == "customAudience" {
 			return nil, fmt.Errorf("google-ads: custom audiences are not supported for SEARCH campaigns; only userLists are accepted (a Display campaign takes custom audiences in CustomAudiences)")
 		}
+		// audienceCriterionField accepts any digit run, so "customers/1/userLists/011" and
+		// ".../userLists/11" would pass the de-dupe below as two names for one list. Both
+		// ids must be canonical; the shape check above guarantees exactly four parts.
+		if parts := strings.Split(s, "/"); canonicalCampaignID(parts[1]) == "" ||
+			canonicalCampaignID(parts[3]) == "" {
+			return nil, fmt.Errorf("google-ads: audience segment %q does not spell its ids "+
+				"canonically (base-10, positive, no leading zeros); write it as Google "+
+				"returns it", s)
+		}
 		if _, dup := seen[s]; dup {
 			continue
 		}
@@ -486,6 +495,7 @@ func (c *Client) createAdGroupTargeting(ctx context.Context, adGroupResource, ad
 	}
 
 	all := make([]string, 0, len(ops))
+	seen := newResultIDSet(len(mr.Results))
 	for i, r := range mr.Results {
 		returnedAdGroupID, critID := c.adGroupCriterionID(r.ResourceName)
 		if critID == "" || returnedAdGroupID == "" {
@@ -497,6 +507,10 @@ func (c *Client) createAdGroupTargeting(ctx context.Context, adGroupResource, ad
 		// returned criterion ID cannot be trusted enough to persist.
 		if returnedAdGroupID != adGroupID {
 			return adGroupCriteriaIDs{}, fmt.Errorf("google-ads ad group criteria UNCONFIRMED (ad group %s; adGroupCriterion resource name %q reports a different ad group id %q — verify in Google Ads before retrying)", adGroupID, r.ResourceName, returnedAdGroupID)
+		}
+		if dup := seen.repeat(critID, i); dup != "" {
+			return adGroupCriteriaIDs{}, fmt.Errorf("google-ads ad group criteria UNCONFIRMED "+
+				"(ad group %s; %s — verify in Google Ads before retrying)", adGroupID, dup)
 		}
 		all = append(all, critID)
 	}

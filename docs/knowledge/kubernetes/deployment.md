@@ -61,10 +61,15 @@ exists, and a Demand Gen ad group without an audience is unaffected.
 
 `GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` is the same kind of gate, defaulting to `"false"` (#462):
 it opts a cluster in to the Display audience lists that name an account-owned segment —
-`googleAdsConfig.audienceSegments` on `display`, `customAudiences` and `customAffinities`. It
-stays off for the same reason (#468). Only exactly `"true"` enables it; off, a create naming
-one is refused before anything upstream exists. `userInterests`, `excludedPlacements` and
-Search's `audienceSegments` are not gated.
+`googleAdsConfig.audienceSegments` on `display`, `customAudiences` and `customAffinities`, and
+since #475 the user-list exclusions `excludedAudienceSegments` and each `displayAdGroups`
+entry's `audienceSegments`, `customAudiences`, `customAffinities` and
+`excludedAudienceSegments`. It stays off for the same reason (#468). Only exactly `"true"`
+enables it; off, a create naming one is refused before anything upstream exists.
+`userInterests` (at either level), `excludedPlacements`, Search's `audienceSegments` and
+`displayAdGroups` entries without those lists are not gated. To enable it on a cluster, set
+`app.environment.GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED.value` to `"true"` in that environment's
+ArgoCD overlay.
 
 `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the same kind of gate, defaulting to `"false"`
 (#461): it opts a cluster in to `googleAdsConfig.performanceMaxAudienceSignal`, one existing
