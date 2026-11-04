@@ -10,7 +10,7 @@ budget mutate, and refused on every channel but Search.
   (square, at least 128x128), `businessName` is one `BUSINESS_NAME` text asset of at most 25
   display-width units. The images use the shared slot, fetch, decode and geometry machinery in
   one bounded pass before the budget, and stored-asset entries resolve through
-  `googleAdsCreativeSlots` (now sixteen slots) with snapshot sanitising. The assets and their
+  `googleAdsCreativeSlots` with snapshot sanitising. The assets and their
   campaign links are ONE atomic `googleAds:mutate` under temporary asset ids, after the
   extensions and before the ad group. Ids: `searchAssetIds`.
 - `sharedNegativeKeywordLists` (`CampaignInput.SharedNegativeKeywordLists`,

@@ -781,3 +781,22 @@ func TestSearchAssetMutateWireKeys(t *testing.T) {
 		t.Errorf("result arms did not decode: %+v", resp)
 	}
 }
+
+// A link result that repeats an earlier one is UNCONFIRMED and named as a repeat, as in every
+// other link loop (result_ids.go); the first link's id is kept.
+func TestCreateCampaign_SharedListRepeatedLinkIsUnconfirmed(t *testing.T) {
+	linkA := `{"resourceName":"customers/1234567890/campaignSharedSets/222~501"}`
+	s := &searchAssetServer{sharedReply: func([]byte) (int, string) {
+		return http.StatusOK, `{"results":[` + linkA + `,` + linkA + `]}`
+	}}
+	in := sampleInput()
+	in.SharedNegativeKeywordLists = []string{sharedSetA, sharedSetB}
+	res, err := newSearchAssetClient(t, s).CreateCampaign(context.Background(), in)
+	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") ||
+		!strings.Contains(err.Error(), "at index 0 and again at index 1") {
+		t.Fatalf("err = %v, want UNCONFIRMED naming the repeat", err)
+	}
+	if res == nil || !reflect.DeepEqual(res.SharedNegativeKeywordListIDs, []string{"501"}) {
+		t.Errorf("res = %+v, want the first link's id kept", res)
+	}
+}

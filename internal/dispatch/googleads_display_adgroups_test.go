@@ -249,7 +249,7 @@ func TestGoogleAds_ToggleStatus_TwoGroupDisplayCoversEveryGroupsAd(t *testing.T)
 	}
 }
 
-// TestGoogleAdsSnapshotConfig_EachEarlyReturnFieldAlone sets each of the eleven fields the
+// TestGoogleAdsSnapshotConfig_EachEarlyReturnFieldAlone sets each of the twelve fields the
 // snapshot's early return names, ALONE, with a signed URL, and asserts the snapshot loses the
 // signature. A config carrying only one of them taking the early return is exactly the leak
 // each condition was added to prevent, and the table is the list docs/knowledge cites.
@@ -284,6 +284,7 @@ func TestGoogleAdsSnapshotConfig_EachEarlyReturnFieldAlone(t *testing.T) {
 		"displayAdGroups": {DisplayAdGroups: []googleAdsDisplayAdGroupConfig{{
 			Creative: &googleAdsDisplayCreativeConfig{MarketingImages: refs},
 		}}},
+		"searchAssets": {SearchAssets: &googleAdsSearchAssetsConfig{AdImages: refs}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			raw, err := json.Marshal(googleAdsSnapshotConfig(cfg))

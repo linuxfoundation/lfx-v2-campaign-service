@@ -2490,6 +2490,13 @@ ids, now distinct), `goalMutateConfirmed`, `checkStatusMutateResults` and the ke
 The Demand Gen video logo upload sends exactly one operation. `result_ids_test.go` has one
 repeated-id case per changed loop, and each fails with that loop's check removed.
 
+The #477 loops joined on its rebase. `attachSharedNegativeKeywordLists` runs
+`resultIDSet.repeat` on the shared set id of each link result before its positional match, so a
+repeat is UNCONFIRMED and named as one, keeping the ids confirmed before it
+(`TestCreateCampaign_SharedListRepeatedLinkIsUnconfirmed`). `createSearchCampaignAssets` keeps
+its asset ids POSITIONAL while it matches each campaign link to the asset at its own index, and
+reports them once each through `uniqueIDs`, as the creative asset loops do.
+
 ## Bidding strategies and conversion actions (LFXV2-2665)
 
 `bidding.go` makes the bidding strategy selectable. Until it existed the choice

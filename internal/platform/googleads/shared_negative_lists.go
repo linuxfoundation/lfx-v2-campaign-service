@@ -145,9 +145,19 @@ func (c *Client) attachSharedNegativeKeywordLists(
 			"attached — verify in Google Ads before retrying)", campaignID)
 	}
 	ids := make([]string, 0, len(lists))
+	seen := newResultIDSet(len(results.Results))
 	for i, r := range results.Results {
 		want := resourceID(lists[i])
 		gotCampaign, gotSet := c.campaignSharedSetID(r.ResourceName)
+		// A repeated link is UNCONFIRMED (result_ids.go), checked before the positional match
+		// so the error names the repeat. The lists are de-duplicated at preflight, so a repeat
+		// cannot also pass the positional check; this names it rather than the mismatch.
+		if gotSet != "" {
+			if dup := seen.repeat(gotSet, i); dup != "" {
+				return ids, fmt.Errorf("google-ads shared negative keyword lists UNCONFIRMED "+
+					"(campaign %s; %s — verify in Google Ads before retrying)", campaignID, dup)
+			}
+		}
 		if gotCampaign != campaignID || gotSet != want {
 			return ids, fmt.Errorf("google-ads shared negative keyword lists UNCONFIRMED "+
 				"(campaign %s; campaignSharedSet resource name %q at index %d is not the attach "+

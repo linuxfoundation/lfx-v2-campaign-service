@@ -340,12 +340,12 @@ the snapshot loses the signing query, and the caller's config keeps the full URL
 requires. A shallow slice copy suffices here; only the price extension's nested
 `Offerings` needs the deep one.
 
-The early return that skips the whole copy names ELEVEN fields now — sitelinks,
+The early return that skips the whole copy names TWELVE fields now — sitelinks,
 promotions, prices, lead forms, the Demand Gen creative, video creative, ad list and ad
-groups (#460, #474), the asset group, the Display creative and the Display ad groups
-(#475), and deliberately NOT `videoCreative`, which carries YouTube video ids and text and
+groups (#460, #474), the asset group, the Display creative, the Display ad groups
+(#475) and the Search campaign assets (#477), and deliberately NOT `videoCreative`, which carries YouTube video ids and text and
 no URL of any kind, so a config holding only a video creative has nothing to sanitize.
-`TestGoogleAdsSnapshotConfig_EachEarlyReturnFieldAlone` sets each of the eleven ALONE with
+`TestGoogleAdsSnapshotConfig_EachEarlyReturnFieldAlone` sets each of the twelve ALONE with
 a signed URL and asserts the snapshot loses the signature, because a config carrying only
 one of them taking that return is precisely the bug each condition was added to prevent;
 `TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone`,
@@ -1022,8 +1022,8 @@ The #477 fields follow the same rule. `sharedNegativeKeywordLists` is passed thr
 verbatim. `searchAssets` is `googleAdsSearchAssetsConfig`: `adImages` and
 `businessLogoImages` are `googleAdsImageRefs`, so each entry is a URL or an
 `{"imageAssetId": …}` object. Both lists are enumerated by `googleAdsCreativeSlots` (as
-`search adImages` and `search businessLogoImages`), which brings the Google slot count to
-sixteen, so stored assets resolve and are budgeted with every other Google image slot.
+`search adImages` and `search businessLogoImages`), beside every other Google image slot, so
+stored assets resolve and are budgeted with the rest.
 `googleAdsSnapshotConfig` sanitizes both lists on a deep copy and names `SearchAssets` in its
 early return. `googleAdsSearchAssets` maps nil to the zero value.
 

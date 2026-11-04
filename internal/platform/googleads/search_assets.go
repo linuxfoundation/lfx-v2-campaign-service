@@ -313,6 +313,7 @@ func (c *Client) createSearchCampaignAssets(
 				"result %d is not an asset of this account — verify in Google Ads before "+
 				"retrying)", campaignID, i)
 		}
+		// Positional, repeats included: link i is checked against the asset at index i.
 		assetIDs = append(assetIDs, id)
 	}
 	// Each link result must name exactly the link its operation asked for: this campaign, the
@@ -321,20 +322,21 @@ func (c *Client) createSearchCampaignAssets(
 	for i := range pending {
 		r := results.MutateOperationResponses[len(pending)+i].CampaignAssetResult
 		if r == nil {
-			return assetIDs, fmt.Errorf("google-ads Search campaign asset linking UNCONFIRMED "+
-				"(campaign %s; result %d carries no campaign asset — verify in Google Ads before "+
-				"retrying)", campaignID, len(pending)+i)
+			return uniqueIDs(assetIDs), fmt.Errorf("google-ads Search campaign asset linking "+
+				"UNCONFIRMED (campaign %s; result %d carries no campaign asset — verify in "+
+				"Google Ads before retrying)", campaignID, len(pending)+i)
 		}
 		gotCampaign, gotAsset, gotField := c.campaignAssetID(r.ResourceName)
 		if gotCampaign != campaignID || gotAsset != assetIDs[i] ||
 			!strings.EqualFold(gotField, pending[i].fieldType) {
-			return assetIDs, fmt.Errorf("google-ads Search campaign asset linking UNCONFIRMED "+
-				"(campaign %s; campaignAsset resource name %q at index %d is not the %s link of "+
-				"asset %s — verify in Google Ads before retrying)",
+			return uniqueIDs(assetIDs), fmt.Errorf("google-ads Search campaign asset linking "+
+				"UNCONFIRMED (campaign %s; campaignAsset resource name %q at index %d is not "+
+				"the %s link of asset %s — verify in Google Ads before retrying)",
 				campaignID, r.ResourceName, i, pending[i].fieldType, assetIDs[i])
 		}
 	}
-	return assetIDs, nil
+	// Reported once each, as every creative-asset path reports its ids (uniqueIDs).
+	return uniqueIDs(assetIDs), nil
 }
 
 // searchAssetResultIDs is every well-formed same-account asset id among the first n results,
@@ -353,7 +355,7 @@ func (c *Client) searchAssetResultIDs(results googleAdsMutateResponse, n int) []
 			out = append(out, id)
 		}
 	}
-	return out
+	return uniqueIDs(out)
 }
 
 // searchAssetStep summarises the linked assets for the step list, naming only what was asked.
