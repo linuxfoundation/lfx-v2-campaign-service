@@ -205,8 +205,12 @@ func validateAssetPlan(kind string, in CampaignInput) (assetPlan, error) {
 	if kind == campaignKindPerformanceMax && len(in.CallExtensions)+len(in.Promotions)+len(in.Prices)+len(in.LeadForms) > 0 {
 		return assetPlan{}, fmt.Errorf("google-ads call extensions, promotions, prices and lead forms are supported on Search campaigns only, not on %s (it takes sitelinks, callouts and structured snippets); omit CallExtensions, Promotions, Prices and LeadForms, or create a Search campaign for them", kind)
 	}
-	if kind != campaignKindSearch && kind != campaignKindDemandGen && kind != campaignKindPerformanceMax {
-		return assetPlan{}, fmt.Errorf("google-ads ad extensions (sitelinks, callouts, structured snippets, call extensions, promotions, prices, lead forms) are supported on Search campaigns only (sitelinks, callouts and structured snippets also on Performance Max, and sitelinks on Demand Gen), not on %s", kind)
+	if kind != campaignKindSearch && kind != campaignKindDemandGen &&
+		kind != campaignKindPerformanceMax {
+		return assetPlan{}, fmt.Errorf("google-ads ad extensions (sitelinks, callouts, "+
+			"structured snippets, call extensions, promotions, prices, lead forms) are "+
+			"supported on Search campaigns only (sitelinks, callouts and structured snippets "+
+			"also on Performance Max, and sitelinks on Demand Gen), not on %s", kind)
 	}
 
 	var plan assetPlan

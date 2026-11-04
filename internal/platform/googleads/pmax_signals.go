@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -47,13 +46,12 @@ const (
 	maxSearchThemes = 50
 )
 
-// audienceResourceRE and audienceIDRE pin the two spellings an audience signal may take,
-// as validateConversionActions pins its two: the full resource name a GAQL read returns,
-// and the bare id a human reads off the Google Ads UI.
-var (
-	audienceIDRE       = regexp.MustCompile(`^\d+$`)
-	audienceResourceRE = regexp.MustCompile(`^customers/(\d+)/audiences/(\d+)$`)
-)
+// An audience signal takes two spellings, as validateConversionActions takes two: the full
+// resource name a GAQL read returns, matched by demandGenAudienceRE (the Demand Gen
+// Audience's own pattern, demandgen_targeting.go), and the bare id a human reads off the
+// Google Ads UI. Either way the audience id must be a positive canonical base-10 number
+// (canonicalCampaignID), the rule #459 set for DemandGenAudience: "0", "007" or an id past
+// int64 names no Audience, and Google would refuse it only after the asset group exists.
 
 // performanceMaxSignalPlan is the validated signal set: trimmed themes in input order and
 // the audience as a full resource name in THIS account, or empty.
@@ -89,7 +87,7 @@ func (p performanceMaxSignalPlan) count() int {
 // and lfx-self-serve offers Google audience inputs only to root principals; a follow-up
 // issue tracks enforcement in this service.
 func validatePerformanceMaxSignals(kind, customerID string, in CampaignInput, assetGroup bool) (performanceMaxSignalPlan, error) {
-	if len(in.PerformanceMaxSearchThemes) == 0 && strings.TrimSpace(in.PerformanceMaxAudienceSignal) == "" {
+	if len(in.PerformanceMaxSearchThemes) == 0 && in.PerformanceMaxAudienceSignal == "" {
 		return performanceMaxSignalPlan{}, nil
 	}
 	if kind != campaignKindPerformanceMax {
@@ -120,24 +118,46 @@ func validatePerformanceMaxSignals(kind, customerID string, in CampaignInput, as
 		plan.searchThemes = append(plan.searchThemes, theme)
 	}
 
-	if audience := strings.TrimSpace(in.PerformanceMaxAudienceSignal); audience != "" {
-		switch {
-		case audienceIDRE.MatchString(audience):
-			plan.audience = "customers/" + customerID + "/audiences/" + audience
-		case audienceResourceRE.MatchString(audience):
-			// Another account's audience is refused rather than re-pointed: an audience
-			// belongs to the account that built it, and the same id here names a
-			// different audience or none, which Google would refuse after the asset
-			// group exists.
-			if owner := audienceResourceRE.FindStringSubmatch(audience)[1]; owner != customerID {
-				return performanceMaxSignalPlan{}, fmt.Errorf("google-ads: audience signal %q belongs to customer %s, not the campaign's account %s; an audience cannot be shared across accounts", capForError(audience), owner, customerID)
-			}
-			plan.audience = audience
-		default:
-			return performanceMaxSignalPlan{}, fmt.Errorf("google-ads: audience signal %q is neither a numeric audience id nor a customers/<id>/audiences/<id> resource name", capForError(audience))
+	if in.PerformanceMaxAudienceSignal != "" {
+		audience, err := resolvePerformanceMaxAudience(customerID, in.PerformanceMaxAudienceSignal)
+		if err != nil {
+			return performanceMaxSignalPlan{}, err
 		}
+		plan.audience = audience
 	}
 	return plan, nil
+}
+
+// resolvePerformanceMaxAudience turns a non-empty audience signal into a full Audience
+// resource name in THIS account. A value that is only whitespace is refused rather than
+// read as absent, as validateDemandGenAudienceField refuses a blank DemandGenAudience: the
+// caller set the field, and dropping it would create a campaign without the signal they
+// named.
+func resolvePerformanceMaxAudience(customerID, raw string) (string, error) {
+	audience := strings.TrimSpace(raw)
+	if audience == "" {
+		return "", fmt.Errorf("google-ads: PerformanceMaxAudienceSignal must not be blank; " +
+			"omit it, or name an existing Audience by its numeric id or its " +
+			"customers/<id>/audiences/<id> resource name")
+	}
+	if canonicalCampaignID(audience) != "" {
+		return "customers/" + customerID + "/audiences/" + audience, nil
+	}
+	m := demandGenAudienceRE.FindStringSubmatch(audience)
+	if m == nil || canonicalCampaignID(m[2]) == "" {
+		return "", fmt.Errorf("google-ads: audience signal %q is neither a positive canonical "+
+			"audience id nor a customers/<id>/audiences/<id> resource name with one",
+			capForError(audience))
+	}
+	// Another account's audience is refused rather than re-pointed: an audience belongs to
+	// the account that built it, and the same id here names a different audience or none,
+	// which Google would refuse after the asset group exists.
+	if m[1] != customerID {
+		return "", fmt.Errorf("google-ads: audience signal %q belongs to customer %s, not the "+
+			"campaign's account %s; an audience cannot be shared across accounts",
+			capForError(audience), m[1], customerID)
+	}
+	return audience, nil
 }
 
 // searchThemeInfo is SearchThemeInfo: only `text` exists on the input side.
@@ -147,8 +167,9 @@ type searchThemeInfo struct {
 
 // assetGroupSignalCreate is AssetGroupSignal. Its audience arm reuses audienceInfo
 // (demandgen_targeting.go), the same AudienceInfo payload the Demand Gen ad group sends.
-// Its signal is a oneof, so exactly one of the two pointers is set — by construction in createPerformanceMaxSignals, which builds
-// each operation from one theme or the one audience.
+// Its signal is a oneof, so exactly one of the two pointers is set — by construction in
+// createPerformanceMaxSignals, which builds each operation from one theme or the one
+// audience.
 type assetGroupSignalCreate struct {
 	AssetGroup  string           `json:"assetGroup"`
 	SearchTheme *searchThemeInfo `json:"searchTheme,omitempty"`

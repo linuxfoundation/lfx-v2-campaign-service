@@ -2396,16 +2396,20 @@ short arms return, also drop repeats.
 
 Left as they are, on purpose:
 
-- `createCampaignAssets` (sitelinks, callouts, snippets and the other extensions, Search and
-  Demand Gen) returns NO asset ids from an unusable or short 2xx: an all-or-nothing contract
-  `TestCreateCampaign_ShortAssetResponseIsUnconfirmed` pins. It never keeps the ids before
-  the bad entry and drops the ones after, so it is not this defect.
+- `createCampaignAssets` (sitelinks, callouts, snippets and the other extensions, Search,
+  Demand Gen and Performance Max) returns NO asset ids from an unusable or short 2xx: an
+  all-or-nothing contract `TestCreateCampaign_ShortAssetResponseIsUnconfirmed` pins. It
+  never keeps the ids before the bad entry and drops the ones after, so it is not this
+  defect.
 - The Demand Gen video ad's logo upload takes exactly one logo (`maxDemandGenVideoLogos`),
   so its one result has no later id to drop.
 - The criteria loops (geo, languages, schedules, devices, demographics, keywords, negative
   keywords, audiences, placements) return no ids from an unconfirmed response, the
   three-way ambiguity `CampaignResult.GeoCriterionIDs` documents. A criterion is a child of
-  its campaign or ad group, not an account-level asset left behind.
+  its campaign or ad group, not an account-level asset left behind. The Performance Max
+  asset group signals (`createPerformanceMaxSignals`, #461) are the same case: each is an
+  `AssetGroupSignal` criterion on its asset group, recorded in `AssetGroupSignalIDs` under
+  the same three-way ambiguity, so an unusable result records no id.
 - The campaign-asset link loop and the Performance Max link count confirm links, not assets;
   the asset ids are already returned in full.
 
@@ -2714,8 +2718,12 @@ compared case-insensitively are REFUSED, as callouts and sitelinks are, so the c
 UI is the count sent. At most 50 per group, verified by a `validateOnly` probe on
 2026-11-03 (a 51st theme → `resourceCountLimitExceededError` `RESOURCE_LIMIT`); Google's help
 page still says 25. The audience is a bare numeric id (resolved in this account) or a
-`customers/<id>/audiences/<id>` name, and a name in another account is refused, as
-`validateConversionActions` refuses a foreign conversion action. That check is ACCOUNT-scoped,
+`customers/<id>/audiences/<id>` name (`resolvePerformanceMaxAudience`, matching the name
+with Demand Gen's `demandGenAudienceRE`), and a name in another account is refused, as
+`validateConversionActions` refuses a foreign conversion action. Either spelling's id must
+pass `canonicalCampaignID` — positive, base-10, no leading zero — the rule #459 set for
+`DemandGenAudience`, and a value that is only whitespace is refused rather than read as
+absent, as a blank `DemandGenAudience` is. That check is ACCOUNT-scoped,
 not foundation-scoped: on the shared LF Google Ads customer a project can name another
 foundation's audience — an accepted risk for now, because on Performance Max an audience is a
 signal, not a restriction, and lfx-self-serve offers Google audience inputs only to root

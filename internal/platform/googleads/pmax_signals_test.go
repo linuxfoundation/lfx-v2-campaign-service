@@ -56,7 +56,15 @@ func TestValidatePerformanceMaxSignals_AbsentIsAnEmptyPlan(t *testing.T) {
 	}
 }
 
+// notAnAudience is the refusal for an audience signal that is neither spelling.
+const notAnAudience = "neither a positive canonical audience id nor a " +
+	"customers/<id>/audiences/<id> resource name"
+
 func TestValidatePerformanceMaxSignals_RefusesBadInput(t *testing.T) {
+	const (
+		thisAccount   = "customers/1234567890/audiences/"
+		blankAudience = "PerformanceMaxAudienceSignal must not be blank"
+	)
 	// maxSearchThemes+1 = 51: the probe's own refusal point.
 	tooMany := make([]string, maxSearchThemes+1)
 	for i := range tooMany {
@@ -72,11 +80,20 @@ func TestValidatePerformanceMaxSignals_RefusesBadInput(t *testing.T) {
 		"duplicate theme":   {themes: []string{"KubeCon", "kubecon "}, want: `"kubecon" is listed more than once`},
 		"too many themes":   {themes: tooMany, want: "at most 50 search themes, got 51"},
 		"foreign audience":  {audience: "customers/9999999999/audiences/5", want: "belongs to customer 9999999999, not the campaign's account 1234567890"},
-		"user list":         {audience: "customers/1234567890/userLists/5", want: "neither a numeric audience id nor"},
-		"non-numeric id":    {audience: "customers/1234567890/audiences/abc", want: "neither a numeric audience id nor"},
-		"two audiences":     {audience: "5,6", want: "neither a numeric audience id nor"},
-		"trailing segment":  {audience: "customers/1234567890/audiences/5/x", want: "neither a numeric audience id nor"},
+		"user list":         {audience: "customers/1234567890/userLists/5", want: notAnAudience},
+		"non-numeric id":    {audience: "customers/1234567890/audiences/abc", want: notAnAudience},
+		"two audiences":     {audience: "5,6", want: notAnAudience},
+		"trailing segment":  {audience: "customers/1234567890/audiences/5/x", want: notAnAudience},
 		"theme and foreign": {themes: []string{"kubecon"}, audience: "customers/1/audiences/5", want: "belongs to customer 1"},
+		// #459's canonical-id rule, as validateDemandGenAudienceField applies it.
+		"zero id":               {audience: "0", want: notAnAudience},
+		"leading-zero id":       {audience: "007", want: notAnAudience},
+		"id past int64":         {audience: "99999999999999999999", want: notAnAudience},
+		"zero resource id":      {audience: thisAccount + "0", want: notAnAudience},
+		"leading-zero resource": {audience: thisAccount + "012", want: notAnAudience},
+		// Set but blank is refused, not read as absent, as a blank DemandGenAudience is.
+		"blank audience":         {audience: "   ", want: blankAudience},
+		"blank audience, themes": {themes: []string{"kubecon"}, audience: " ", want: blankAudience},
 	} {
 		t.Run(name, func(t *testing.T) {
 			in := pmaxSignalInput()
@@ -163,11 +180,14 @@ func TestValidateAssetPlan_PerformanceMaxTakesTheThreeVerifiedTypes(t *testing.T
 	// Demand Gen takes sitelinks alone (#474), so the callout and snippet refuse it with
 	// its own sentence; Video and Display refuse the whole set.
 	for kind, want := range map[string]string{
-		campaignKindDemandGen: "other than sitelinks (callouts, structured snippets, call extensions, promotions, prices, lead forms) are not supported on " + campaignKindDemandGen,
-		campaignKindVideo:     "not on " + campaignKindVideo,
-		campaignKindDisplay:   "not on " + campaignKindDisplay,
+		campaignKindDemandGen: "other than sitelinks (callouts, structured snippets, call " +
+			"extensions, promotions, prices, lead forms) are not supported on " +
+			campaignKindDemandGen,
+		campaignKindVideo:   "not on " + campaignKindVideo,
+		campaignKindDisplay: "not on " + campaignKindDisplay,
 	} {
-		if _, err := validateAssetPlan(kind, in); err == nil || !strings.Contains(err.Error(), want) {
+		_, err := validateAssetPlan(kind, in)
+		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: err = %v, want the extensions refused", kind, err)
 		}
 	}
@@ -356,7 +376,8 @@ func TestCreatePerformanceMaxCampaign_ThemesAloneSendNoAudience(t *testing.T) {
 	if body := rec.get("signals"); strings.Contains(body, "audience") || strings.Count(body, "assetGroupSignalOperation") != 1 {
 		t.Errorf("signals body = %s, want one theme and no audience", body)
 	}
-	if !hasExactStep(res.Steps, "Asset group signals applied: 1 signal(s) on asset group 555 (1 search theme(s))") {
+	wantSignals := "Asset group signals applied: 1 signal(s) on asset group 555 (1 search theme(s))"
+	if !hasExactStep(res.Steps, wantSignals) {
 		t.Errorf("Steps = %v, want the themes-only signal step", res.Steps)
 	}
 }
@@ -531,7 +552,9 @@ func TestCreatePerformanceMaxCampaign_LinksExtensionsAtTheCampaignLevel(t *testi
 	if got := strings.Join(res.ExtensionLinkIDs, ","); got != "800,801,802" {
 		t.Errorf("ExtensionLinkIDs = %s, want 800,801,802", got)
 	}
-	if !hasExactStep(res.Steps, "Ad extensions applied: 3 assets (1 sitelinks, 1 callouts, 1 structured snippets)") {
+	wantExtensions := "Ad extensions applied: 3 assets " +
+		"(1 sitelinks, 1 callouts, 1 structured snippets)"
+	if !hasExactStep(res.Steps, wantExtensions) {
 		t.Errorf("Steps = %v, want the Search extension step", res.Steps)
 	}
 	if res.AssetGroupID != "555" {

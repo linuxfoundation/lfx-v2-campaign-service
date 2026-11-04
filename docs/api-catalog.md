@@ -1873,10 +1873,13 @@ performanceMaxSearchThemes?:    — OPTIONAL search themes for the asset group (
                                   says 25.
 performanceMaxAudienceSignal?:  — OPTIONAL ONE audience signal for the asset group (#461): an EXISTING
   string                          Google Ads audience, as a numeric id or a
-                                  `customers/<id>/audiences/<id>` resource name. This service does not
-                                  build audiences. A resource name naming ANOTHER customer is REFUSED
-                                  — an audience belongs to the account that built it. One, because
-                                  Google allows one audience signal per asset group.
+                                  `customers/<id>/audiences/<id>` resource name, the id a positive
+                                  canonical number ("0" and "007" are REFUSED, as on
+                                  `demandGenAudience`). This service does not build audiences. A
+                                  resource name naming ANOTHER customer is REFUSED — an audience
+                                  belongs to the account that built it — and so is a value that is
+                                  only whitespace. One, because Google allows one audience signal
+                                  per asset group.
 
                                   The check is ACCOUNT-scoped, not foundation-scoped: on the shared
                                   LF Google Ads customer a project can name another foundation's
