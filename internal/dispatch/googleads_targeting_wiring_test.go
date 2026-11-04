@@ -610,20 +610,23 @@ func TestGoogleAds_WithoutTheNewFieldsTheCascadeIsUnchanged(t *testing.T) {
 	}
 }
 
-// The Search-only fields must be refused BEFORE the budget mutate on Demand Gen:
+// The fields Demand Gen cannot take must be refused BEFORE the budget mutate there:
 // discovering the channel cannot take them after the campaign exists leaves a paid
-// campaign behind. Each is listed separately because they are refused by three
+// campaign behind. Not all of them are Search-only any more (#474: Demand Gen takes an
+// unmodified ad schedule, device exclusions and sitelinks; Video and Display take
+// demographics), hence the name. Each is listed separately because they are refused by three
 // different validators, and a regression in one would be hidden by the others.
-func TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenBeforeAnyCreate(t *testing.T) {
+func TestGoogleAds_UnsupportedFieldsAreRefusedOnDemandGenBeforeAnyCreate(t *testing.T) {
 	cases := []struct {
 		name string
 		cfg  string
 	}{
 		{"proximity targets", `"proximityTargets":[{"latitude":37.7749,"longitude":-122.4194,"radius":25,"radiusUnit":"MILES"}]`},
-		{"ad schedules", `"adSchedules":[{"dayOfWeek":"MONDAY","startHour":9,"startMinute":0,"endHour":17,"endMinute":0}]`},
+		// Demand Gen takes ad schedules and sitelinks (#474), but only an unmodified
+		// schedule was verified there, so a schedule bid modifier is still refused.
+		{"ad schedule bid modifier", `"adSchedules":[{"dayOfWeek":"MONDAY","startHour":9,"startMinute":0,"endHour":17,"endMinute":0,"bidModifier":1.2}]`},
 		{"device bid modifiers", `"deviceBidModifiers":[{"device":"MOBILE","bidModifier":1.2}]`},
 		{"excluded age ranges", `"excludedAgeRanges":["18-24"]`},
-		{"sitelinks", `"sitelinks":[{"text":"Register","finalUrl":"https://events.example/kc/register"}]`},
 		{"callouts", `"callouts":["Free workshops"]`},
 		{"ad groups", `"adGroups":[{"name":"Training"}]`},
 		// Validated on BOTH channels but attached only by CreateCampaign's cascade:
@@ -719,7 +722,7 @@ func TestGoogleAdsAdSchedules_CarriesTheBidModifierPointer(t *testing.T) {
 	}
 }
 
-// The Search-only refusals must hold on the ADOPTION path too, which is the half the
+// The Demand Gen refusals must hold on the ADOPTION path too, which is the half the
 // per-field table above cannot reach: adoption returns before any create runs, so a
 // request that CreateDemandGenCampaign would refuse is never handed to it.
 //
@@ -732,16 +735,17 @@ func TestGoogleAdsAdSchedules_CarriesTheBidModifierPointer(t *testing.T) {
 //
 // The server fails on ANY request: the refusal must land before the adoption lookup,
 // not merely before a create, so there is nothing legitimate for it to serve.
-func TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenAdoptionToo(t *testing.T) {
+func TestGoogleAds_UnsupportedFieldsAreRefusedOnDemandGenAdoptionToo(t *testing.T) {
 	cases := []struct {
 		name string
 		cfg  string
 	}{
 		{"proximity targets", `"proximityTargets":[{"latitude":37.7749,"longitude":-122.4194,"radius":25,"radiusUnit":"MILES"}]`},
-		{"ad schedules", `"adSchedules":[{"dayOfWeek":"MONDAY","startHour":9,"startMinute":0,"endHour":17,"endMinute":0}]`},
+		// Demand Gen takes ad schedules and sitelinks (#474), but only an unmodified
+		// schedule was verified there, so a schedule bid modifier is still refused.
+		{"ad schedule bid modifier", `"adSchedules":[{"dayOfWeek":"MONDAY","startHour":9,"startMinute":0,"endHour":17,"endMinute":0,"bidModifier":1.2}]`},
 		{"device bid modifiers", `"deviceBidModifiers":[{"device":"MOBILE","bidModifier":1.2}]`},
 		{"excluded age ranges", `"excludedAgeRanges":["18-24"]`},
-		{"sitelinks", `"sitelinks":[{"text":"Register","finalUrl":"https://events.example/kc/register"}]`},
 		{"callouts", `"callouts":["Free workshops"]`},
 		{"ad groups", `"adGroups":[{"name":"Training"}]`},
 		{"negative keywords", `"negativeKeywords":[{"text":"free","matchType":"PHRASE"}]`},
@@ -831,7 +835,7 @@ func TestGoogleAdsClient_ValidateCampaignInputKindGatesOnTheKind(t *testing.T) {
 //
 // This is the SEARCH channel, where all of these fields are supported — so a
 // refusal here is about the value, not the channel, which is what separates this
-// table from TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenBeforeAnyCreate.
+// table from TestGoogleAds_UnsupportedFieldsAreRefusedOnDemandGenBeforeAnyCreate.
 // One case per validator: they fail independently, and a regression in one would
 // be invisible behind the others.
 func TestGoogleAds_BadTargetingConfigIsPreCreate(t *testing.T) {

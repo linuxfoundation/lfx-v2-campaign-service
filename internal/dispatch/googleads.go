@@ -351,20 +351,23 @@ type googleAdsConfig struct {
 	// Absent or empty means the CHANNEL DEFAULT — manual CPC on Search, maximize
 	// clicks on Demand Gen, maximize conversions on Performance Max — which is what
 	// this adapter has always sent for the channels that predate this field, so an
-	// older config produces a byte-identical campaign payload. Demand Gen accepts ONLY
-	// `maximize-clicks`; see googleads.demandGenBiddingStrategies for the live-API
-	// evidence behind that fence. Performance Max accepts only the four
-	// conversion-oriented strategies and has no manual form at all; see
-	// googleads.performanceMaxBiddingStrategies.
+	// older config produces a byte-identical campaign payload. Demand Gen accepts
+	// `maximize-clicks`, `maximize-conversions`, `target-cpa` and
+	// `maximize-conversion-value` (#474) and refuses `target-roas` and any targetRoas; see
+	// googleads.demandGenBiddingStrategies for the validateOnly probes behind that set.
+	// Performance Max accepts only the four conversion-oriented strategies and has no
+	// manual form at all; see googleads.performanceMaxBiddingStrategies.
 	BiddingStrategy string `json:"biddingStrategy"`
 	// TargetCPA is the target cost per acquisition in whole units of the ad ACCOUNT's
 	// currency (no FX conversion, same as Budget). Optional under
 	// `maximize-conversions`, required under `target-cpa`, refused under any other
-	// strategy rather than accepted and discarded.
+	// strategy rather than accepted and discarded. On "demand-gen" it is sent as the
+	// standalone `targetCpa` strategy (#474).
 	TargetCPA float64 `json:"targetCpa"`
 	// TargetROAS is the target return on ad spend as a RATIO, not a percentage: 4.0
 	// means four units of conversion value per unit spent. Optional under
-	// `maximize-conversion-value`, required under `target-roas`, refused elsewhere.
+	// `maximize-conversion-value`, required under `target-roas`, refused elsewhere —
+	// including on "demand-gen", where it is not verified (#474).
 	TargetROAS float64 `json:"targetRoas"`
 	// ConversionActions are the conversion actions the campaign should optimize
 	// toward, as bare numeric ids or full `customers/<id>/conversionActions/<id>`
@@ -430,11 +433,14 @@ type googleAdsConfig struct {
 	// Languages are the languages the campaign serves in, as ISO 639-1 codes (EN, DE,
 	// JA) or raw numeric language constant ids. All FIVE slices below — Languages,
 	// AdSchedules, DeviceBidModifiers, ExcludedAgeRanges and ExcludedGenders — are
-	// campaign-level criteria everywhere but "demand-gen", and the channels differ:
-	// "demand-gen" takes Languages alone, attached to its AD GROUP (#459), and refuses
-	// the other four; "performance-max" takes languages and ad schedules (Google
-	// documents them as PMax campaign criteria) and refuses only DeviceBidModifiers and
-	// the two demographic exclusions. Refused, never silently dropped.
+	// campaign-level criteria everywhere but "demand-gen" languages, and the channels
+	// differ: "demand-gen" takes Languages on its AD GROUP (#459) and AdSchedules and
+	// DeviceBidModifiers at the campaign level (#474) — a schedule without a bidModifier,
+	// a device only with bidModifier 0 — and refuses the two demographic exclusions,
+	// which belong inside the Audience demandGenAudience references; "performance-max"
+	// takes languages and ad schedules (Google documents them as PMax campaign criteria)
+	// and refuses only DeviceBidModifiers and the two demographic exclusions. Refused,
+	// never silently dropped.
 	//
 	// Left empty the campaign serves in EVERY language, which is Google's default and
 	// rarely what an event campaign wants.
@@ -447,12 +453,12 @@ type googleAdsConfig struct {
 	// exclude a device outright with a modifier of 0. Left empty, every device bids the
 	// campaign's own bid.
 	//
-	// There is no TV-screen entry: CONNECTED_TV is a device Google supports only on
-	// Display and Video campaigns, and `deviceTypes` in the googleads package does not
-	// list it, so a caller cannot ask for it on any channel. Search, Video and Display
-	// all reach these criteria; Demand Gen and Performance Max refuse them outright.
-	// Admitting CONNECTED_TV on the two channels that support it is a known gap, not a
-	// deliberate exclusion. See deviceTypes in the googleads package.
+	// "CONNECTED_TV" is accepted on "demand-gen" only (#474), where a validateOnly probe
+	// verified its exclusion. Google documents TV screens for Display and Video
+	// campaigns, and `deviceTypes` in the googleads package does not list it for them —
+	// a known gap, not a deliberate exclusion; Search does not support it. Search, Video,
+	// Display and Demand Gen reach these criteria; Performance Max refuses them outright.
+	// See deviceTypes and demandGenDeviceTypes in the googleads package.
 	//
 	// bidModifier is REQUIRED on every entry — it is a *float64 so that an OMITTED one
 	// is refused rather than decoded as 0, which is the -100% opt-out and would switch
@@ -474,8 +480,9 @@ type googleAdsConfig struct {
 	ExcludedIncomeRanges     []string `json:"excludedIncomeRanges"`
 	ExcludedParentalStatuses []string `json:"excludedParentalStatuses"`
 	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions. All
-	// Search only — refused on every other channel, none of which has a text ad to
-	// extend — and all created as account-level assets then linked to the campaign.
+	// Search only except Sitelinks, which "demand-gen" takes too (#474, verified by a
+	// validateOnly probe) — refused on every other channel — and all created as
+	// account-level assets then linked to the campaign.
 	//
 	// Left empty the ad serves as a bare headline+description, which costs more per
 	// click than the same bid with extensions attached — but it is the behaviour of
@@ -515,13 +522,19 @@ type googleAdsConfig struct {
 	// ids, one logo, text and an optional call to action. DEMAND GEN ONLY, and set INSTEAD
 	// of demandGenCreative, never beside it — the client's preflight refuses both.
 	DemandGenVideoCreative *googleAdsDemandGenVideoCreativeConfig `json:"demandGenVideoCreative"`
+	// DemandGenAds gives the single Demand Gen ad group several named ads (#474), each with
+	// one image or video creative, INSTEAD of demandGenCreative/demandGenVideoCreative.
+	// DEMAND GEN ONLY, and empty when demandGenAdGroups is set (each entry takes its own
+	// ads). Refusals are the client's preflight's.
+	DemandGenAds []googleAdsDemandGenAdConfig `json:"demandGenAds"`
 	// DemandGenAdGroups names several Demand Gen ad groups (#460), each with its own
-	// creative (image or video) and Audience; geo and languages apply to every one. Left
-	// empty the campaign gets the single ad group it always had, from demandGenCreative,
-	// demandGenVideoCreative and demandGenAudience — which must then be empty when this
-	// list is set. DEMAND GEN ONLY. Refusals are the client's preflight's, except one: a
-	// group's audience is refused outright unless GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED is
-	// "true", as demandGenAudience is — see googleAdsDemandGenAdGroupAudiencesSet.
+	// creative (image or video, or several ads) and Audience; geo and languages apply to
+	// every one. Left empty the campaign gets the single ad group it always had, from
+	// demandGenCreative, demandGenVideoCreative (or demandGenAds) and demandGenAudience —
+	// which must then be empty when this list is set. DEMAND GEN ONLY. Refusals are the
+	// client's preflight's, except one: a group's audience is refused outright unless
+	// GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED is "true", as demandGenAudience is — see
+	// googleAdsDemandGenAdGroupAudiencesSet.
 	DemandGenAdGroups []googleAdsDemandGenAdGroupConfig `json:"demandGenAdGroups"`
 	// PerformanceMaxCreative is the ASSET GROUP for a Performance Max campaign, the
 	// third member of the same family and PERFORMANCE MAX ONLY.
@@ -822,6 +835,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		AdGroups:                 googleAdsAdGroups(cfg.AdGroups),
 		DemandGenCreative:        googleAdsDemandGenCreative(cfg.DemandGenCreative),
 		DemandGenVideoCreative:   googleAdsDemandGenVideoCreative(cfg.DemandGenVideoCreative),
+		DemandGenAds:             googleAdsDemandGenAds(cfg.DemandGenAds),
 		DemandGenAdGroups:        googleAdsDemandGenAdGroups(cfg.DemandGenAdGroups),
 		PerformanceMaxCreative:   googleAdsPerformanceMaxCreative(cfg.PerformanceMaxCreative),
 		VideoCreative:            googleAdsVideoCreative(cfg.VideoCreative),
@@ -1322,10 +1336,19 @@ func googleAdsDemandGenVideoCreative(in *googleAdsDemandGenVideoCreativeConfig) 
 }
 
 // googleAdsDemandGenAdGroupConfig is one entry of demandGenAdGroups (#460): a name, an
-// optional Audience, and exactly one of creative / videoCreative.
+// optional Audience, and exactly one of creative / videoCreative — or ads (#474).
 type googleAdsDemandGenAdGroupConfig struct {
 	Name          string                                 `json:"name"`
 	Audience      string                                 `json:"audience"`
+	Creative      *googleAdsDemandGenCreativeConfig      `json:"creative"`
+	VideoCreative *googleAdsDemandGenVideoCreativeConfig `json:"videoCreative"`
+	Ads           []googleAdsDemandGenAdConfig           `json:"ads"`
+}
+
+// googleAdsDemandGenAdConfig is one entry of demandGenAds or of a group's ads (#474): a
+// name and exactly one of creative / videoCreative.
+type googleAdsDemandGenAdConfig struct {
+	Name          string                                 `json:"name"`
 	Creative      *googleAdsDemandGenCreativeConfig      `json:"creative"`
 	VideoCreative *googleAdsDemandGenVideoCreativeConfig `json:"videoCreative"`
 }
@@ -1342,6 +1365,23 @@ func googleAdsDemandGenAdGroups(in []googleAdsDemandGenAdGroupConfig) []googlead
 			Audience:      g.Audience,
 			Creative:      googleAdsDemandGenCreative(g.Creative),
 			VideoCreative: googleAdsDemandGenVideoCreative(g.VideoCreative),
+			Ads:           googleAdsDemandGenAds(g.Ads),
+		}
+	}
+	return out
+}
+
+// googleAdsDemandGenAds maps an ad list verbatim; every refusal is the client's.
+func googleAdsDemandGenAds(in []googleAdsDemandGenAdConfig) []googleads.DemandGenAd {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.DemandGenAd, len(in))
+	for i, a := range in {
+		out[i] = googleads.DemandGenAd{
+			Name:          a.Name,
+			Creative:      googleAdsDemandGenCreative(a.Creative),
+			VideoCreative: googleAdsDemandGenVideoCreative(a.VideoCreative),
 		}
 	}
 	return out
@@ -1582,7 +1622,7 @@ func googleAdsDisplayCreative(in *googleAdsDisplayCreativeConfig) googleads.Disp
 func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 	if len(cfg.Sitelinks) == 0 && len(cfg.Promotions) == 0 && len(cfg.Prices) == 0 &&
 		len(cfg.LeadForms) == 0 && cfg.DemandGenCreative == nil &&
-		cfg.DemandGenVideoCreative == nil && len(cfg.DemandGenAdGroups) == 0 &&
+		cfg.DemandGenVideoCreative == nil && len(cfg.DemandGenAds) == 0 && len(cfg.DemandGenAdGroups) == 0 &&
 		cfg.PerformanceMaxCreative == nil && cfg.DisplayCreative == nil {
 		return cfg
 	}
@@ -1645,6 +1685,8 @@ func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 	// carry image URLs with the same exposure, and are deep-copied the same way: the
 	// group slice and each creative pointer are shared with the caller's config.
 	snapshot.DemandGenVideoCreative = sanitizeSnapshotDemandGenVideo(cfg.DemandGenVideoCreative)
+	// The several-ads lists (#474) carry the same creatives and get the same deep copy.
+	snapshot.DemandGenAds = sanitizeSnapshotDemandGenAds(cfg.DemandGenAds)
 	if len(cfg.DemandGenAdGroups) > 0 {
 		snapshot.DemandGenAdGroups = make([]googleAdsDemandGenAdGroupConfig, len(cfg.DemandGenAdGroups))
 		copy(snapshot.DemandGenAdGroups, cfg.DemandGenAdGroups)
@@ -1652,6 +1694,7 @@ func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 			g := &snapshot.DemandGenAdGroups[i]
 			g.Creative = sanitizeSnapshotDemandGenImage(g.Creative)
 			g.VideoCreative = sanitizeSnapshotDemandGenVideo(g.VideoCreative)
+			g.Ads = sanitizeSnapshotDemandGenAds(g.Ads)
 		}
 	}
 	// The Performance Max asset group carries image URLs with exactly the same
@@ -1705,6 +1748,23 @@ func sanitizeSnapshotDemandGenVideo(in *googleAdsDemandGenVideoCreativeConfig) *
 	creative := *in
 	creative.LogoImages = sanitizeSnapshotImageRefs(in.LogoImages)
 	return &creative
+}
+
+// sanitizeSnapshotDemandGenAds deep-copies an ad list (#474), sanitizing each ad's
+// creative; nil stays nil. A new slice, because the caller's still reaches Google.
+func sanitizeSnapshotDemandGenAds(in []googleAdsDemandGenAdConfig) []googleAdsDemandGenAdConfig {
+	if len(in) == 0 {
+		return in
+	}
+	out := make([]googleAdsDemandGenAdConfig, len(in))
+	for i, a := range in {
+		out[i] = googleAdsDemandGenAdConfig{
+			Name:          a.Name,
+			Creative:      sanitizeSnapshotDemandGenImage(a.Creative),
+			VideoCreative: sanitizeSnapshotDemandGenVideo(a.VideoCreative),
+		}
+	}
+	return out
 }
 
 // campaignFromGoogleAds maps the client result to the persistence model. The
@@ -2447,12 +2507,13 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 			return gErr
 		}
 	}
-	// A group recorded but not toggleable is reported, never silently skipped. The toggle
-	// below still applies to every group that CAN take it — refusing the whole campaign
-	// because one group's create failed would strand a campaign that is otherwise ready —
-	// but the operator needs to know the campaign's state is not uniform.
+	// A group recorded but not toggleable — or, on Demand Gen (#474), toggleable for only
+	// the ads it got — is reported, never silently skipped. The toggle below still applies
+	// to every group that CAN take it — refusing the whole campaign because one group's
+	// create failed would strand a campaign that is otherwise ready — but the operator
+	// needs to know the campaign's state is not uniform.
 	if len(incompleteGroups) > 0 {
-		slog.WarnContext(ctx, "google ads campaign has ad groups that were never fully created; the status toggle cannot reach them",
+		slog.WarnContext(ctx, "google ads campaign has ad groups that were never fully created; the status toggle cannot reach what is missing from them",
 			"campaign_id", campaign.ID,
 			"platform_campaign_id", campaign.PlatformCampaignID,
 			"status", status,
@@ -3039,10 +3100,13 @@ func googleAdsToggleChildren(ctx context.Context, client *googleads.Client, targ
 //     delivers if one of its groups has keywords; asking only about the first group
 //     refuses a campaign that would have served, which is the over-refusal this gate
 //     must not commit.
-//   - incomplete: groups recorded in the blob that cannot be toggled because their create
-//     did not finish — present with an empty id, or with no ad. The create path appends an
-//     entry BEFORE the group's mutate precisely so a failed group leaves a trace, and the
-//     caller reports these rather than silently acting on a subset.
+//   - incomplete: groups recorded in the blob whose create did not finish — present with
+//     an empty id, or with no ad, and so not toggled at all; or (#474) a Demand Gen group
+//     holding fewer ads than its PlannedAds, whose ad j failed or was never reached. That
+//     one IS toggled, for the ads it has, and reported too: treating it as complete would
+//     launch ad 1 and say nothing about ad 2. The create path appends an entry BEFORE the
+//     group's mutate precisely so a failed group leaves a trace, and the caller reports
+//     these rather than silently acting on a subset.
 //
 // Falls back to the scalar pair when AdGroups is absent: rows written before that field
 // existed are single-group by construction, so the pair IS the whole campaign there.
@@ -3073,15 +3137,18 @@ func googleAdsToggleTargets(campaign *model.Campaign) (targets []googleads.AdGro
 				adIDs = append(adIDs, adID)
 			}
 		}
+		// Named by what the operator will recognise in the Google Ads UI, falling back to the
+		// position when the name is empty too.
+		name := strings.TrimSpace(g.Name)
+		if name == "" {
+			name = fmt.Sprintf("#%d", i+1)
+		}
 		if adGroupID == "" || len(adIDs) == 0 {
-			// Named by what the operator will recognise in the Google Ads UI, falling back
-			// to the position when the name is empty too.
-			name := strings.TrimSpace(g.Name)
-			if name == "" {
-				name = fmt.Sprintf("#%d", i+1)
-			}
 			incomplete = append(incomplete, name)
 			continue
+		}
+		if len(adIDs) < g.PlannedAds {
+			incomplete = append(incomplete, name)
 		}
 		targets = append(targets, googleads.AdGroupStatusTarget{AdGroupID: adGroupID, AdIDs: adIDs})
 	}
@@ -3133,8 +3200,9 @@ const (
 	// the comparison would have to map this client's UI vocabulary onto Google's OUTPUT_ONLY
 	// BiddingStrategyTypeEnum, and that mapping is not live-verified at exactly the point it
 	// is ambiguous — `target-cpa` and `maximize-conversions` are both sent as
-	// maximize_conversions (with and without a target), and which enum value Google reports
-	// back for the targeted one has not been observed. A mapping guessed wrong reports a
+	// maximize_conversions (with and without a target), except on Demand Gen, which sends
+	// the standalone targetCpa (#474) — and which enum value Google reports back for the
+	// targeted one has not been observed. A mapping guessed wrong reports a
 	// false divergence, which sends an operator to investigate a campaign that is set
 	// exactly as asked. Reporting `unknown` under-informs; a false divergence misinforms,
 	// and only the second is a cost the operator pays. Comparing this field is a follow-up

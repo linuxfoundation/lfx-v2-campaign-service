@@ -26,8 +26,8 @@ import (
 // a caller that omits the list sends the same requests and gets the same result.
 
 // maxDemandGenAdGroups caps the list. A SERVICE bound, not Google's: every group's images
-// are fetched and held in memory before the budget mutate, and every group adds four to
-// five sequential mutates after the campaign exists — each one a point where a failure
+// are fetched and held in memory before the budget mutate, and every group adds four or
+// more sequential mutates after the campaign exists — each one a point where a failure
 // leaves a partial campaign to reconcile. Five covers the audience splits an event
 // campaign uses (the live one has two) with room to spare.
 const maxDemandGenAdGroups = 5
@@ -48,18 +48,22 @@ type DemandGenAdGroup struct {
 	// Audience is this group's single Google Ads Audience, under the same rules as
 	// CampaignInput.DemandGenAudience. Optional.
 	Audience string
-	// Creative and VideoCreative are this group's ad: exactly one of them. A named group
-	// with no ad cannot serve, and the list is new, so no caller depends on that shape.
+	// Creative and VideoCreative are this group's ad: exactly one of them, or Ads instead.
+	// A named group with no ad cannot serve, and the list is new, so no caller depends on
+	// that shape.
 	Creative      DemandGenCreative
 	VideoCreative DemandGenVideoCreative
+	// Ads gives the group several ads (#474), each its own image or video creative, in
+	// place of Creative/VideoCreative. See demandgen_ads.go.
+	Ads []DemandGenAd
 }
 
-// demandGenGroupPlan is one validated Demand Gen ad group.
+// demandGenGroupPlan is one validated Demand Gen ad group and its ads — none for the
+// single group of a campaign created without a creative.
 type demandGenGroupPlan struct {
 	name     string
 	audience string
-	creative demandGenCreativePlan
-	video    demandGenVideoPlan
+	ads      []demandGenAdPlan
 }
 
 // validateDemandGenAdGroups resolves the groups the Demand Gen cascade creates. base is
@@ -69,10 +73,23 @@ type demandGenGroupPlan struct {
 func validateDemandGenAdGroups(kind, customerID string, in CampaignInput, base demandGenGroupPlan) ([]demandGenGroupPlan, error) {
 	if len(in.DemandGenAdGroups) == 0 {
 		if kind != campaignKindDemandGen {
+			if len(in.DemandGenAds) > 0 {
+				return nil, fmt.Errorf("google-ads: Demand Gen ads are not supported on %s; omit DemandGenAds", kind)
+			}
 			return nil, nil
 		}
-		if base.video.present {
-			if err := validateDemandGenVideoAdName(base.name); err != nil {
+		// DemandGenAds (#474) replaces the single ad the two creative fields describe.
+		if len(in.DemandGenAds) > 0 {
+			if !in.DemandGenCreative.empty() || !in.DemandGenVideoCreative.empty() {
+				return nil, fmt.Errorf("google-ads: DemandGenAds replaces the single Demand Gen ad, so DemandGenCreative and DemandGenVideoCreative must be empty; set each ad's creative instead")
+			}
+			ads, err := validateDemandGenAds("the campaign", base.name, in.DemandGenAds, in.ResolvedImages)
+			if err != nil {
+				return nil, err
+			}
+			base.ads = ads
+		} else if len(base.ads) > 0 && base.ads[0].video.present {
+			if err := validateDemandGenVideoAdName(demandGenVideoAdName(base.name)); err != nil {
 				return nil, err
 			}
 		}
@@ -84,8 +101,8 @@ func validateDemandGenAdGroups(kind, customerID string, in CampaignInput, base d
 	// The campaign-level creative and Audience describe the ONE group the list replaces;
 	// with a list there is no single group for them to go on, and guessing would put an ad
 	// or an Audience on a group the caller did not name.
-	if !in.DemandGenCreative.empty() || !in.DemandGenVideoCreative.empty() || strings.TrimSpace(in.DemandGenAudience) != "" {
-		return nil, fmt.Errorf("google-ads: DemandGenAdGroups replaces the single ad group, so DemandGenCreative, DemandGenVideoCreative and DemandGenAudience must be empty; set the creative and Audience on each ad group instead")
+	if !in.DemandGenCreative.empty() || !in.DemandGenVideoCreative.empty() || len(in.DemandGenAds) > 0 || strings.TrimSpace(in.DemandGenAudience) != "" {
+		return nil, fmt.Errorf("google-ads: DemandGenAdGroups replaces the single ad group, so DemandGenCreative, DemandGenVideoCreative, DemandGenAds and DemandGenAudience must be empty; set the creative and Audience on each ad group instead")
 	}
 	if len(in.DemandGenAdGroups) > maxDemandGenAdGroups {
 		return nil, fmt.Errorf("google-ads: %d Demand Gen ad groups requested, limit %d", len(in.DemandGenAdGroups), maxDemandGenAdGroups)
@@ -118,45 +135,57 @@ func validateDemandGenAdGroups(kind, customerID string, in CampaignInput, base d
 			return nil, err
 		}
 		owner := fmt.Sprintf("Demand Gen ad group %q", name)
-		switch image, video := !g.Creative.empty(), !g.VideoCreative.empty(); {
-		case image && video:
-			return nil, errDemandGenTwoCreatives(owner)
-		case image:
-			if plan.creative, err = validateDemandGenCreativeSpec(g.Creative, in.ResolvedImages); err != nil {
-				return nil, fmt.Errorf("google-ads: Demand Gen ad group %q: %w", name, err)
-			}
-		case video:
-			if plan.video, err = validateDemandGenVideoSpec(g.VideoCreative, in.ResolvedImages); err != nil {
-				return nil, fmt.Errorf("google-ads: Demand Gen ad group %q: %w", name, err)
-			}
-			if err := validateDemandGenVideoAdName(name); err != nil {
+		var creative demandGenCreativePlan
+		var video demandGenVideoPlan
+		switch hasImage, hasVideo, hasAds := !g.Creative.empty(), !g.VideoCreative.empty(), len(g.Ads) > 0; {
+		case hasAds && (hasImage || hasVideo):
+			return nil, fmt.Errorf("google-ads: %s sets Ads beside Creative or VideoCreative; Ads replaces the single ad, so set each ad's creative there instead", owner)
+		case hasAds:
+			if plan.ads, err = validateDemandGenAds(owner, name, g.Ads, in.ResolvedImages); err != nil {
 				return nil, err
 			}
+		case hasImage && hasVideo:
+			return nil, errDemandGenTwoCreatives(owner)
+		case hasImage:
+			if creative, err = validateDemandGenCreativeSpec(g.Creative, in.ResolvedImages); err != nil {
+				return nil, fmt.Errorf("google-ads: Demand Gen ad group %q: %w", name, err)
+			}
+			plan.ads = singleDemandGenAd(name, creative, video)
+		case hasVideo:
+			if video, err = validateDemandGenVideoSpec(g.VideoCreative, in.ResolvedImages); err != nil {
+				return nil, fmt.Errorf("google-ads: Demand Gen ad group %q: %w", name, err)
+			}
+			if err := validateDemandGenVideoAdName(demandGenVideoAdName(name)); err != nil {
+				return nil, err
+			}
+			plan.ads = singleDemandGenAd(name, creative, video)
 		default:
-			return nil, fmt.Errorf("google-ads: %s has no creative; set its Creative (image) or VideoCreative, because an ad group with no ad cannot serve", owner)
+			return nil, fmt.Errorf("google-ads: %s has no creative; set its Creative (image), VideoCreative or Ads, because an ad group with no ad cannot serve", owner)
 		}
 		plans = append(plans, plan)
 	}
 	return plans, nil
 }
 
-// demandGenGroupImages is one group's fetched images: the image ad's, slot-indexed into
+// demandGenAdImages is one ad's fetched images: the image ad's, slot-indexed into
 // demandGenImageSlots, or the video ad's logo.
-type demandGenGroupImages struct {
+type demandGenAdImages struct {
 	images []fetchedImage
 	logos  []fetchedImage
 }
 
-// fetchDemandGenGroupImages fetches every group's images in ONE fetchSlotImages walk, so
-// the whole campaign shares one wall-clock budget and one maxCreativeTotalImageBytes total
-// rather than one per group — N groups must not multiply what one create may hold in
-// memory or spend fetching. Runs before the budget mutate, like every image fetch.
+// fetchDemandGenGroupImages fetches every ad's images in every group in ONE
+// fetchSlotImages walk, so the whole campaign shares one wall-clock budget and one
+// maxCreativeTotalImageBytes total rather than one per group or ad — N groups or ads must
+// not multiply what one create may hold in memory or spend fetching. Runs before the
+// budget mutate, like every image fetch. The result is indexed [group][ad].
 //
 // For a single image-ad group the walk is exactly the one this cascade made before #460:
 // the same five slots and the same URLs.
-func (c *Client) fetchDemandGenGroupImages(ctx context.Context, groups []demandGenGroupPlan) ([]demandGenGroupImages, error) {
+func (c *Client) fetchDemandGenGroupImages(ctx context.Context, groups []demandGenGroupPlan) ([][]demandGenAdImages, error) {
 	type owner struct {
 		group int
+		ad    int
 		base  int
 		logo  bool
 	}
@@ -168,24 +197,27 @@ func (c *Client) fetchDemandGenGroupImages(ctx context.Context, groups []demandG
 		// map is the map.
 		resolved map[string][]byte
 	)
+	out := make([][]demandGenAdImages, len(groups))
 	for gi, g := range groups {
-		if g.creative.present {
-			resolved = g.creative.resolved
-			base := len(slots)
-			for si, s := range demandGenImageSlots {
-				slots = append(slots, s)
-				urls = append(urls, g.creative.urls[si])
-				owners = append(owners, owner{group: gi, base: base})
+		out[gi] = make([]demandGenAdImages, len(g.ads))
+		for ai, a := range g.ads {
+			if a.creative.present {
+				resolved = a.creative.resolved
+				base := len(slots)
+				for si, s := range demandGenImageSlots {
+					slots = append(slots, s)
+					urls = append(urls, a.creative.urls[si])
+					owners = append(owners, owner{group: gi, ad: ai, base: base})
+				}
+			}
+			if a.video.present {
+				resolved = a.video.resolved
+				slots = append(slots, demandGenVideoLogoSlot)
+				urls = append(urls, a.video.logos)
+				owners = append(owners, owner{group: gi, ad: ai, base: len(slots) - 1, logo: true})
 			}
 		}
-		if g.video.present {
-			resolved = g.video.resolved
-			slots = append(slots, demandGenVideoLogoSlot)
-			urls = append(urls, g.video.logos)
-			owners = append(owners, owner{group: gi, base: len(slots) - 1, logo: true})
-		}
 	}
-	out := make([]demandGenGroupImages, len(groups))
 	if len(slots) == 0 {
 		return out, nil
 	}
@@ -199,9 +231,9 @@ func (c *Client) fetchDemandGenGroupImages(ctx context.Context, groups []demandG
 		// createDemandGenAd's per-slot bucketing reads.
 		img.slot -= o.base
 		if o.logo {
-			out[o.group].logos = append(out[o.group].logos, img)
+			out[o.group][o.ad].logos = append(out[o.group][o.ad].logos, img)
 		} else {
-			out[o.group].images = append(out[o.group].images, img)
+			out[o.group][o.ad].images = append(out[o.group][o.ad].images, img)
 		}
 	}
 	return out, nil

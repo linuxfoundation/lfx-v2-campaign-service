@@ -193,12 +193,12 @@ type CampaignInput struct {
 	// currency, carried only by the conversion-bidding strategies. 0 means UNSET:
 	// optional under `maximize-conversions`, REQUIRED under `target-cpa`, and
 	// REFUSED under any strategy that cannot bid to it rather than accepted and
-	// discarded.
+	// discarded. On Demand Gen it is sent as the standalone `targetCpa` strategy (#474).
 	TargetCPA float64
 	// TargetROAS is the target return on ad spend as a RATIO, not a percentage —
 	// 4.0 means four units of conversion value per unit spent. Same unset/required/
 	// refused rules as TargetCPA, against `maximize-conversion-value` and
-	// `target-roas`.
+	// `target-roas`. Refused on Demand Gen, where it is not verified (#474).
 	TargetROAS float64
 	// ConversionActions are the conversion actions this campaign optimizes toward,
 	// as bare numeric ids or full `customers/<id>/conversionActions/<id>` resource
@@ -327,14 +327,19 @@ type CampaignInput struct {
 	Languages []string
 	// AdSchedules restrict WHEN the campaign serves, one interval per day of week,
 	// optionally each with its own bid modifier. Optional; left empty the campaign
-	// runs around the clock.
+	// runs around the clock. Campaign criteria on every channel, Demand Gen included
+	// (#474), where a bid modifier is refused because only an unmodified schedule was
+	// verified.
 	AdSchedules []AdSchedule
 	// DeviceBidModifiers adjust the bid per device, or exclude a device outright
-	// with a modifier of 0. Optional.
+	// with a modifier of 0. Optional. On Demand Gen (#474) they are campaign criteria
+	// that take only the 0 exclusion, and CONNECTED_TV joins the vocabulary there.
 	DeviceBidModifiers []DeviceBidModifier
 	// ExcludedAgeRanges and ExcludedGenders are campaign-level demographic
 	// EXCLUSIONS ("18-24", "MALE", …). Optional. Exclusion-only is Google's own
-	// shape at campaign level, not a narrowing — see campaign_criteria.go.
+	// shape at campaign level, not a narrowing — see campaign_criteria.go. Refused on
+	// Demand Gen: Google refuses demographics on its audience-grouped ad group, so they
+	// belong inside the Audience DemandGenAudience references.
 	ExcludedAgeRanges []string
 	ExcludedGenders   []string
 	// ExcludedIncomeRanges and ExcludedParentalStatuses are demographic EXCLUSIONS too
@@ -346,8 +351,8 @@ type CampaignInput struct {
 	ExcludedIncomeRanges     []string
 	ExcludedParentalStatuses []string
 	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions.
-	// All optional, all SEARCH ONLY (refused at preflight on Demand Gen), and all
-	// created as account-level assets that are then linked to the campaign — see
+	// All optional, all SEARCH ONLY except Sitelinks, which Demand Gen takes too (#474),
+	// and all created as account-level assets that are then linked to the campaign — see
 	// assets.go. Left empty the ad serves as a bare headline+description, which
 	// costs more per click than the same bid with extensions attached.
 	Sitelinks          []Sitelink
@@ -391,9 +396,14 @@ type CampaignInput struct {
 	// a logo and text. DEMAND GEN ONLY, and the alternative to DemandGenCreative on the
 	// same ad group, never beside it. See demandgen_video_creative.go.
 	DemandGenVideoCreative DemandGenVideoCreative
-	// DemandGenAdGroups names several Demand Gen ad groups, each with its own creative and
-	// Audience (#460). Empty keeps the single ad group built from DemandGenCreative,
-	// DemandGenVideoCreative and DemandGenAudience. DEMAND GEN ONLY. See
+	// DemandGenAds gives the single Demand Gen ad group several ads (#474), each named and
+	// each its own image or video creative, in place of DemandGenCreative and
+	// DemandGenVideoCreative. DEMAND GEN ONLY, and refused beside DemandGenAdGroups, whose
+	// entries take their own Ads. See demandgen_ads.go.
+	DemandGenAds []DemandGenAd
+	// DemandGenAdGroups names several Demand Gen ad groups, each with its own creative (or
+	// Ads) and Audience (#460). Empty keeps the single ad group built from DemandGenCreative,
+	// DemandGenVideoCreative (or DemandGenAds) and DemandGenAudience. DEMAND GEN ONLY. See
 	// demandgen_adgroups.go.
 	DemandGenAdGroups []DemandGenAdGroup
 	// PerformanceMaxCreative is the asset group for a Performance Max campaign, and
@@ -454,11 +464,26 @@ type CampaignInput struct {
 
 // AdGroupResult is one ad group the cascade attempted, and everything created
 // under it. ID empty means the ad group's own mutate failed or was unconfirmed;
-// AdIDs empty means the group exists but its ads did not get created.
+// AdIDs empty means the group exists but its ads did not get created. On a Demand
+// Gen group (#474) AdIDs SHORTER than PlannedAds means the same for the ads past
+// its end: ad j failed, was unconfirmed or was never reached, and ads 1..j-1 exist.
 type AdGroupResult struct {
 	Name  string   `json:"name"`
 	ID    string   `json:"id,omitempty"`
 	AdIDs []string `json:"adIds,omitempty"`
+	// PlannedAds is how many ads the Demand Gen cascade meant to create in this group
+	// (#474), set when the entry is appended, before any ad exists. It is what lets the
+	// launch toggle tell a group whose ad 2 failed — AdIDs ["444"] of 2 planned — from a
+	// complete one-ad group. 0 on every other channel and on rows written before it
+	// existed, where the toggle keeps reading a non-empty AdIDs as complete: the Search
+	// ads of a group are created by one atomic mutate, so its AdIDs is all or nothing.
+	PlannedAds int `json:"plannedAds,omitempty"`
+	// Ads is every Demand Gen ad of this group the cascade attempted, in order (#474),
+	// each with its OWN creative assets. An entry is appended before the ad's requests,
+	// so an ad that failed is present with an empty ID and whatever assets it got, and
+	// an ad never reached has no entry. It is the per-ad record a reconciler needs:
+	// CreativeAssetIDs below is the FIRST ad's alone, as the scalar fields are.
+	Ads []DemandGenAdResult `json:"ads,omitempty"`
 	// KeywordCriteriaIDs/AudienceCriteriaIDs are this group's own criteria, with
 	// the same three-way ambiguity on empty that CampaignResult.GeoCriterionIDs
 	// documents: none asked for, the mutate failed, or it was unconfirmed.
@@ -471,10 +496,21 @@ type AdGroupResult struct {
 	DemographicCriteriaIDs     []string `json:"demographicCriteriaIds,omitempty"`
 	// GeoCriterionIDs, TargetingCriterionIDs and CreativeAssetIDs are this group's own, set
 	// on a Demand Gen campaign built from DemandGenAdGroups (#460), with the meanings the
-	// CampaignResult fields of the same names document.
+	// CampaignResult fields of the same names document. CreativeAssetIDs is the group's
+	// FIRST ad's; with several ads (#474), Ads holds each ad's.
 	GeoCriterionIDs       []string `json:"geoCriterionIds,omitempty"`
 	TargetingCriterionIDs []string `json:"targetingCriterionIds,omitempty"`
 	CreativeAssetIDs      []string `json:"creativeAssetIds,omitempty"`
+}
+
+// DemandGenAdResult is one Demand Gen ad the cascade attempted (#474). Name is the ad's
+// label, empty for the single unnamed ad a group's creative fields describe. ID empty
+// with CreativeAssetIDs non-empty is the orphan case CampaignResult.CreativeAssetIDs
+// documents, for THIS ad: its assets exist account-wide and no ad references them.
+type DemandGenAdResult struct {
+	Name             string   `json:"name,omitempty"`
+	ID               string   `json:"id,omitempty"`
+	CreativeAssetIDs []string `json:"creativeAssetIds,omitempty"`
 }
 
 // CampaignResult reports what CreateCampaign created. The Google Ads hierarchy is
@@ -518,9 +554,10 @@ type CampaignResult struct {
 	// is appended BEFORE the group's mutate is sent, so a group that failed is
 	// present with an empty ID, and a group never reached has no entry at all.
 	// On Search, always at least one entry once the ad group stage started, including for
-	// a single-group campaign. On Demand Gen, set only when the caller named
-	// DemandGenAdGroups (#460): a single Demand Gen group is reported by the scalar fields
-	// alone, as it was before the list existed.
+	// a single-group campaign. On Demand Gen, set when the caller named DemandGenAdGroups
+	// (#460) or gave the single group several DemandGenAds (#474), whose ad ids only this
+	// list can hold; a single group with one ad is reported by the scalar fields alone, as
+	// it was before the list existed.
 	AdGroups []AdGroupResult `json:"adGroups,omitempty"`
 	// KeywordCriteriaIDs/AudienceCriteriaIDs are set by the GA-4 targeting step
 	// (createAdGroupTargeting in targeting.go) when the corresponding input list
@@ -579,8 +616,9 @@ type CampaignResult struct {
 	// ERROR is what tells them apart.
 	//
 	// The level differs per channel exactly as GeoCriterionIDs' does: campaignCriterion
-	// ids on every channel but Demand Gen, which takes only languages and takes them on
-	// the ad group (#459), so there they are adGroupCriterion ids.
+	// ids on every channel but Demand Gen, which takes its languages on the ad group
+	// (#459), so there they are adGroupCriterion ids — and the languages alone; its
+	// campaign-level criteria are in CampaignTargetingCriterionIDs.
 	TargetingCriterionIDs []string `json:"targetingCriterionIds,omitempty"`
 	// AdGroupDemographicCriteriaIDs are the income-range and parental-status exclusions
 	// (#473). They are adGroupCriterion ids, not campaignCriterion ids like the age and
@@ -594,6 +632,12 @@ type CampaignResult struct {
 	// Display path only. Empty is ambiguous in exactly the three ways GeoCriterionIDs
 	// documents, and the returned ERROR is what tells them apart.
 	ExcludedPlacementCriteriaIDs []string `json:"excludedPlacementCriteriaIds,omitempty"`
+	// CampaignTargetingCriterionIDs are a Demand Gen campaign's CAMPAIGN-level ad schedule
+	// and device criteria (#474), in that order — campaignCriterion ids, kept apart from
+	// TargetingCriterionIDs because on this channel that field holds the first ad group's
+	// language criteria. Empty on every other channel, whose campaign criteria are all in
+	// TargetingCriterionIDs; empty is ambiguous in the three ways GeoCriterionIDs documents.
+	CampaignTargetingCriterionIDs []string `json:"campaignTargetingCriterionIds,omitempty"`
 	// ExtensionAssetIDs are the sitelink/callout/structured-snippet ASSETS created
 	// for this campaign, in that order; ExtensionLinkIDs are the asset ids Google
 	// confirmed LINKED to the campaign.
@@ -608,11 +652,11 @@ type CampaignResult struct {
 	// CreativeAssetIDs are the IMAGE assets created for a Demand Gen ad — marketing
 	// images, then logos, in the order demandGenImageSlots lists them.
 	//
-	// Kept separate from ExtensionAssetIDs rather than folded into it, even though
-	// both are account-level `assets` ids created by an `assets:mutate`: the two
-	// exist on different channels (extensions are Search-only, these Demand Gen-only)
-	// and are attached to different things — an extension is linked to the CAMPAIGN
-	// by a second mutate, an image is referenced by the AD itself. A reconciler
+	// Kept separate from ExtensionAssetIDs rather than folded into it, even though both are
+	// account-level `assets` ids created by an `assets:mutate`: the two come from different
+	// inputs (extensions, Search's and Demand Gen's sitelinks; these, Demand Gen's
+	// creatives) and are attached to different things — an extension is linked to the
+	// CAMPAIGN by a second mutate, an image is referenced by the AD itself. A reconciler
 	// chasing one would look in the wrong place for the other.
 	//
 	// Non-empty with AdID empty is the Demand Gen counterpart of the
@@ -625,6 +669,10 @@ type CampaignResult struct {
 	// exist with nothing referencing them.
 	// On a Demand Gen VIDEO ad (#460) it carries the logo image, then the YouTube video
 	// assets, then the call-to-action asset.
+	// On Demand Gen it is the FIRST group's FIRST ad's, beside AdID, so the orphan signal
+	// above holds for that ad. A group with several ads (#474) records every ad's own
+	// assets in AdGroups[].Ads, where an entry with an empty ID is the same signal for
+	// that ad; a flat list of every ad's assets could not say which ones are orphaned.
 	CreativeAssetIDs []string `json:"creativeAssetIds,omitempty"`
 	// AssetGroupID is the Performance Max asset group, empty on every other channel
 	// and on a Performance Max campaign created without a creative. Non-empty with a
@@ -1049,8 +1097,9 @@ type campaignPreflight struct {
 	// validateDemandGenCreative and fetchDemandGenGroupImages.
 	creative demandGenCreativePlan
 	// demandGenGroups are the Demand Gen ad groups the cascade creates, each with its
-	// Audience and its image or video creative — the single campaign-level group when
-	// DemandGenAdGroups is empty, nil off Demand Gen. See validateDemandGenAdGroups.
+	// Audience and its ads (#474), each ad an image or video creative — the single
+	// campaign-level group when DemandGenAdGroups is empty, nil off Demand Gen. See
+	// validateDemandGenAdGroups.
 	demandGenGroups []demandGenGroupPlan
 	// pmax is the validated Performance Max asset group — image URLs bucketed by
 	// slot, the three text field types, the business name and the group's own name
@@ -1208,15 +1257,16 @@ func (c *Client) ValidateCampaignInput(in CampaignInput) error {
 // preflightCampaignKind used to take kind only to compose the name, so validating as
 // Search was harmless for every channel. It now GATES refusals, and those refusals are
 // PER CHANNEL rather than Search-versus-everything. Demand Gen refuses the widest set:
-// proximity targeting, four of the five campaign criteria kinds (it takes languages, on
-// its ad group), the extension assets, the ad-group list, the CPC bid, keywords, audience
-// segments, and Display's custom audiences, custom affinities, user interests and
-// placement exclusions. Performance Max refuses only the half it genuinely cannot carry
-// — device bid modifiers and campaign-level demographic exclusions, plus the Search-only
-// and Display-only targeting fields — and accepts proximity, languages and ad schedules
-// at the campaign level like Search. Video refuses the Search targeting fields
-// (keywords, audience segments, the CPC bid, negative keywords, Search partners, the
-// extension assets and the ad-group list) and Display's own audience lists and placement
+// proximity targeting, the demographic exclusions (it takes languages on its ad group,
+// and ad schedules and device exclusions at the campaign level, #474), every extension
+// asset but sitelinks, the ad-group list, the CPC bid, keywords, audience segments, and
+// Display's custom audiences, custom affinities, user interests and placement
+// exclusions. Performance Max refuses only the half it genuinely cannot carry — device
+// bid modifiers and campaign-level demographic exclusions, plus the Search-only and
+// Display-only targeting fields — and accepts proximity, languages and ad schedules at
+// the campaign level like Search. Video refuses the Search targeting fields (keywords,
+// audience segments, the CPC bid, negative keywords, Search partners, the extension
+// assets and the ad-group list) and Display's own audience lists and placement
 // exclusions, because it carries its location and its other campaign criteria at the
 // campaign level exactly as Search does. Display refuses the narrowest set of the four:
 // the same Search fields minus audience segments, which it attaches with its own lists
@@ -1423,7 +1473,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		return nil, err
 	}
 	// The Demand Gen creative is the mirror of the extension assets above: refused
-	// on Search for the same capability reason they are refused on Demand Gen. Only
+	// on Search for the same capability reason most of them are refused on Demand Gen. Only
 	// its locally decidable half is settled here — counts, display widths, business
 	// name, URL shape — so ValidateCampaignInputKind refuses exactly what the create
 	// cascade refuses. The bytes are fetched by that cascade, still before the budget
@@ -1479,9 +1529,9 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	// read "campaign created" and believe the exclusions are live while the campaign
 	// keeps paying for exactly the queries they named. A silent drop is worse here than
 	// anywhere else in this preflight precisely because the field's whole purpose is to
-	// STOP spend. Every other Search-only input in this block already refuses
-	// (proximity, the five criteria kinds, extension assets, the ad-group list, the
-	// bid); this was the one that neither refused nor applied.
+	// STOP spend. Every other input in this block Demand Gen cannot take already refuses
+	// (proximity, demographic exclusions, every extension but sitelinks, the ad-group
+	// list, the bid); this was the one that neither refused nor applied.
 	//
 	// The fence is `!= campaignKindSearch` rather than `== campaignKindDemandGen`:
 	// createCampaignNegativeKeywords is reached only from CreateCampaign's cascade, so
@@ -1508,8 +1558,8 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	// bid there would validate it, convert it, and then silently discard it — the same
 	// defect LFXV2-3283 fixed for geo, and the reason every other Search-only input in
 	// this preflight refuses instead of ignoring. The refusal costs nothing upstream:
-	// Demand Gen bids via targetSpend and rejects manualCpc, so no bid supplied here
-	// could ever have reached a Google call that wanted it.
+	// Demand Gen has no manual CPC strategy here (demandGenBiddingStrategies), so no bid
+	// supplied here could ever have reached a Google call that wanted it.
 	// Widened from a Demand Gen test to every non-Search channel for the same reason
 	// the negatives above were: no other channel's payload carries an ad-group bid, and
 	// none of them has manual bidding at all, so accepting a bid there would validate a
@@ -1599,8 +1649,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	demandGenGroups, err := validateDemandGenAdGroups(kind, c.account.CustomerID, in, demandGenGroupPlan{
 		name:     demandGenAdGroupName(in),
 		audience: demandGenAudience,
-		creative: creative,
-		video:    demandGenVideo,
+		ads:      singleDemandGenAd(demandGenAdGroupName(in), creative, demandGenVideo),
 	})
 	if err != nil {
 		return nil, err

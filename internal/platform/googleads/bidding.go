@@ -24,8 +24,9 @@ import (
 // vocabularies genuinely disagree: Google folded the standalone TargetCpa and TargetRoas
 // strategies into MaximizeConversions and MaximizeConversionValue with a target set, and the
 // UI still calls them by the old names. So both spellings are accepted and both resolve to
-// the surviving strategy — the difference being only that the target is REQUIRED when the
-// caller names the target-bearing label, and optional when they name the maximize- one.
+// the surviving strategy, except on Demand Gen, which sends the standalone targetCpa (see
+// targetCPA) — the difference being only that the target is REQUIRED when the caller names
+// the target-bearing label, and optional when they name the maximize- one.
 const (
 	biddingManualCPC               = "manual-cpc"
 	biddingMaximizeClicks          = "maximize-clicks"
@@ -95,6 +96,20 @@ type maximizeConversions struct {
 	TargetCpaMicros int64 `json:"targetCpaMicros,omitempty"`
 }
 
+// targetCPA is `campaign.target_cpa`, the standalone strategy the note above says Google
+// folded into maximizeConversions. Demand Gen is the only channel this client sends it on
+// (#474). A validateOnly probe on 2026-11-03 at v23 found a Demand Gen campaign
+// with a non-shared budget accepts `targetCpa: {targetCpaMicros}` and refuses
+// `maximizeConversions: {targetCpaMicros}` (OPERATION_NOT_PERMITTED_FOR_CONTEXT). No
+// omitempty: this arm is rendered only when a target exists, and the target is its content.
+//
+// VERSION-SCOPED to v23: settingsQueryFields (campaign_settings.go) records target_cpa.*
+// leaving the selectable set in v25, so a client API version bump must re-probe this
+// payload on Demand Gen before trusting it.
+type targetCPA struct {
+	TargetCpaMicros int64 `json:"targetCpaMicros"`
+}
+
 // maximizeConversionValue is `campaign.maximize_conversion_value`, with the same
 // omitted-versus-zero argument as maximizeConversions: no TargetRoas means "maximize value
 // within the budget", and minTargetROAS keeps an accepted target clear of the unset zero.
@@ -106,7 +121,7 @@ type maximizeConversionValue struct {
 // both channel payloads so its JSON keys flatten into the campaign object.
 //
 // It is one shared type rather than a copy per channel because the oneof invariant — at most
-// one of these four is ever non-nil — is a property of the Google Ads campaign resource, not
+// one of these five is ever non-nil — is a property of the Google Ads campaign resource, not
 // of a channel. Two copies would be two places to break it. The channels still disagree
 // about WHICH strategies they accept, and that disagreement lives in validateBiddingPlan
 // where it can be stated once with its reasons.
@@ -115,6 +130,10 @@ type biddingFields struct {
 	TargetSpend             *targetSpend             `json:"targetSpend,omitempty"`
 	MaximizeConversions     *maximizeConversions     `json:"maximizeConversions,omitempty"`
 	MaximizeConversionValue *maximizeConversionValue `json:"maximizeConversionValue,omitempty"`
+	// TargetCpa is set on Demand Gen only; see targetCPA and biddingPlan.standaloneTargetCPA.
+	// Probed at v23 only: settingsQueryFields (campaign_settings.go) records target_cpa.*
+	// leaving the selectable set in v25, so a version bump must re-probe it (see targetCPA).
+	TargetCpa *targetCPA `json:"targetCpa,omitempty"`
 }
 
 // biddingPlan is the validated, resolved bidding intent: which strategy, its target if it
@@ -135,6 +154,10 @@ type biddingPlan struct {
 	// the caller gave them. They are NOT part of the create payload: they become a
 	// campaign-level conversion goal after the campaign exists (conversion_goal.go, #436).
 	conversionActions []string
+	// standaloneTargetCPA renders a target CPA as the standalone `targetCpa` strategy
+	// rather than as maximizeConversions.targetCpaMicros. Set on Demand Gen only, the one
+	// channel whose probe refused the folded form (see targetCPA).
+	standaloneTargetCPA bool
 }
 
 // fields renders the plan as the payload half of a campaign create. Exactly one strategy
@@ -147,6 +170,10 @@ func (p biddingPlan) fields() biddingFields {
 	case biddingMaximizeClicks:
 		f.TargetSpend = &targetSpend{}
 	case biddingMaximizeConversions, biddingTargetCPA:
+		if p.standaloneTargetCPA && p.targetCPAMicros != 0 {
+			f.TargetCpa = &targetCPA{TargetCpaMicros: p.targetCPAMicros}
+			break
+		}
 		f.MaximizeConversions = &maximizeConversions{TargetCpaMicros: p.targetCPAMicros}
 	case biddingMaximizeConversionValue, biddingTargetROAS:
 		f.MaximizeConversionValue = &maximizeConversionValue{TargetRoas: p.targetROAS}
@@ -218,18 +245,26 @@ func defaultBiddingStrategy(kind string) string {
 
 // demandGenBiddingStrategies is the set this client will send on DEMAND_GEN.
 //
-// Only Maximize Clicks, and that is a fence built on recorded evidence rather than caution.
-// A validateOnly campaigns:mutate run against the live API at v23 (2026-08-14) returned HTTP
-// 400 BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET for DEMAND_GEN +
-// maximizeConversions, and HTTP 200 for DEMAND_GEN + targetSpend — see the long note in
-// demandgen.go. Refusing a payload we have observed Google reject is not over-refusal; it is
-// the preflight guarantee doing its job, because that rejection lands AFTER the budget
-// mutate and orphans the budget.
+// Maximize clicks, maximize conversions, target CPA and maximize conversion value, each
+// accepted by a validateOnly campaigns:mutate on 2026-11-03 at v23 with a NON-shared budget —
+// the kind every LFX create makes (explicitlyShared false). Target CPA is sent as the
+// standalone `targetCpa`, because the same probe refused maximizeConversions.targetCpaMicros
+// on this channel; see targetCPA.
 //
-// Widening this set is a live-API question, not a code-reading one: re-run that validateOnly
-// check before adding a strategy here.
+// The set was maximize clicks alone until #474. A 2026-08-14 probe had returned
+// BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET for DEMAND_GEN + maximizeConversions,
+// and that refusal was about a SHARED budget, not the channel; see the note in demandgen.go.
+//
+// TARGET ROAS IS REFUSED because it was not probed: the accepted maximize-conversion-value
+// payload carried no target, and the folded target CPA is refused here, so the folded
+// targetRoas cannot be assumed to pass. validateBiddingPlan refuses `target-roas` (absent
+// from this set) and a TargetROAS under `maximize-conversion-value` on this channel.
+// Widening this set is a live-API question, not a code-reading one.
 var demandGenBiddingStrategies = map[string]bool{
-	biddingMaximizeClicks: true,
+	biddingMaximizeClicks:          true,
+	biddingMaximizeConversions:     true,
+	biddingTargetCPA:               true,
+	biddingMaximizeConversionValue: true,
 }
 
 // performanceMaxBiddingStrategies is the set this client will send on PERFORMANCE_MAX.
@@ -250,21 +285,20 @@ var performanceMaxBiddingStrategies = map[string]bool{
 //
 // NOT LIVE-VERIFIED, and that is why it is the narrowest set of the four rather than the
 // widest. Every other set here was settled by running a validateOnly campaigns:mutate
-// against the live API — demandGenBiddingStrategies records the exact call, its date and
-// its two HTTP codes. No such call has been made for VIDEO_ACTION, because the only
-// reachable Google account is a production one and a validateOnly mutate is still a POST
-// to it.
+// against the live API — demandGenBiddingStrategies records the probes and their dates.
+// No such call has been made for VIDEO_ACTION, because the only reachable Google account
+// is a production one and a validateOnly mutate is still a POST to it.
 //
 // So the set is chosen the way an unverified set has to be: the two strategies Google's
 // published VIDEO_ACTION documentation names — maximize conversions, and target CPA, the
 // same strategy with a target attached — and nothing else. The error for the rest is
 // explicit and lands at preflight, before any mutate, which costs a caller one clear
 // message. Guessing wider costs them an HTTP 400 AFTER the budget has been created and
-// paid for, which is exactly what Demand Gen's recorded 400 was.
+// paid for.
 //
 // Widening this set is a live-API question, not a code-reading one: run a validateOnly
 // campaigns:mutate for VIDEO/VIDEO_ACTION with the candidate strategy on a non-production
-// account and record the result here, as demandgen.go does for its own.
+// account and record the result here, as demandGenBiddingStrategies does for its own.
 var videoBiddingStrategies = map[string]bool{
 	biddingMaximizeConversions: true,
 	biddingTargetCPA:           true,
@@ -392,8 +426,9 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 	//
 	// Resolved BEFORE the unknown-name check so that check can advertise the set that
 	// actually applies here. Listing every name the package recognizes answered a typo on
-	// Demand Gen with six names of which the next guard accepts one, so the caller fixed
-	// the typo from the list and got a second error for it — one mistake, two round trips.
+	// Demand Gen with six names of which the next guard then accepted one, so the caller
+	// fixed the typo from the list and got a second error for it — one mistake, two round
+	// trips.
 	var allowed map[string]bool
 	switch kind {
 	case campaignKindDemandGen:
@@ -422,6 +457,9 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 		// been live-verified", one fact per channel, and a chain of channel tests here
 		// would have to be found and extended again by whoever adds the sixth.
 		reason := "which is the only combination verified against the live API; the others were rejected AFTER the budget was created"
+		if kind == campaignKindDemandGen {
+			reason = "the set verified by validateOnly probes; target ROAS was not probed on this channel, and an unverified strategy fails AFTER the budget is created"
+		}
 		if !biddingSetIsLiveVerified(kind) {
 			reason = "a set read off Google's published documentation for this channel; this client has NOT yet verified it against the live API, and sending an unverified strategy fails AFTER the budget is created"
 		}
@@ -434,6 +472,16 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 	// believes Google is bidding to their number while it is bidding to nothing of the
 	// kind, and the one field whose entire purpose is to CAP what a conversion costs is
 	// the worst place in this payload to lose silently.
+	//
+	// Demand Gen takes maximize-conversion-value with NO target (#474): the probe sent none,
+	// and the folded target CPA is refused on this channel, so the folded targetRoas is not
+	// assumed to pass. Refused rather than dropped, for the reason given above. Checked
+	// BEFORE the strategy-carries-a-target arms: under any strategy, the answer on this
+	// channel is "omit it", and the generic arm would send a caller on maximize-clicks to a
+	// strategy that refuses the same target, one mistake in two round trips.
+	if in.TargetROAS != 0 && kind == campaignKindDemandGen {
+		return biddingPlan{}, fmt.Errorf("google-ads: a target ROAS is not supported on %s (this client has verified %q there only without a target); omit TargetROAS", kind, biddingMaximizeConversionValue)
+	}
 	takesCPA := strategy == biddingMaximizeConversions || strategy == biddingTargetCPA
 	takesROAS := strategy == biddingMaximizeConversionValue || strategy == biddingTargetROAS
 	if in.TargetCPA != 0 && !takesCPA {
@@ -507,10 +555,11 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 	}
 
 	return biddingPlan{
-		strategy:          strategy,
-		targetCPAMicros:   targetCPAMicros,
-		targetROAS:        targetROAS,
-		conversionActions: conversionActions,
+		strategy:            strategy,
+		targetCPAMicros:     targetCPAMicros,
+		targetROAS:          targetROAS,
+		conversionActions:   conversionActions,
+		standaloneTargetCPA: kind == campaignKindDemandGen,
 	}, nil
 }
 

@@ -4138,6 +4138,19 @@ func TestReconcileRefKeepsNestedIdentifiers(t *testing.T) {
 		},
 		"steps": []string{"provider said: partial failure"},
 	})
+	// A Demand Gen group with several ads (#474) records each ad's assets under adGroups[i].ads[j]
+	// — depth 3, the deepest the walk keeps — so a reconciler can tell ad 2's orphaned assets
+	// (no id) from ad 1's.
+	demandGen, _ := json.Marshal(map[string]any{
+		"campaignId": "222", "campaignName": "LFX | Demand Gen Campaign | x",
+		"adGroups": []map[string]any{{
+			"name": "grp", "id": "333", "adIds": []string{"444"}, "plannedAds": 2,
+			"ads": []map[string]any{
+				{"name": "Cut A", "id": "444", "creativeAssetIds": []string{"900", "950"}},
+				{"name": "Cut B", "creativeAssetIds": []string{"901"}},
+			},
+		}},
+	})
 	meta, _ := json.Marshal(map[string]any{
 		"CampaignID": "c-1", "AdSetID": "as-1", "AdCount": 2, "MetaURL": "https://example.invalid/meta",
 		"Ads": []map[string]any{
@@ -4161,6 +4174,14 @@ func TestReconcileRefKeepsNestedIdentifiers(t *testing.T) {
 			"adGroups[0].name": "grp-a", "adGroups[0].id": "111",
 			"adGroups[0].adIds": []string{"a1", "a2"}, "adGroups[0].keywordCriteriaIds": []string{"k1"},
 			"adGroups[1].name": "grp-b",
+		}},
+		{"google demand gen ads", demandGen, map[string]any{
+			"campaignId": "222", "campaignName": "LFX | Demand Gen Campaign | x",
+			"adGroups[0].name": "grp", "adGroups[0].id": "333", "adGroups[0].adIds": []string{"444"},
+			"adGroups[0].ads[0].name": "Cut A", "adGroups[0].ads[0].id": "444",
+			"adGroups[0].ads[0].creativeAssetIds": []string{"900", "950"},
+			"adGroups[0].ads[1].name":             "Cut B",
+			"adGroups[0].ads[1].creativeAssetIds": []string{"901"},
 		}},
 		{"meta", meta, map[string]any{
 			"CampaignID": "c-1", "AdSetID": "as-1",

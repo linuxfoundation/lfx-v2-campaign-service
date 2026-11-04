@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over whichever serving resources the campaign actually has — the ad group/ad on Search, Demand Gen, Video and Display, the asset group on Performance Max — behind a channel-specific activation gate (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); project-scoped keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641); and a read-only campaign settings readback via GAQL with campaign_budget attributed from campaign, whose every field is optional so a setting Google did not return stays ABSENT rather than defaulting to zero (LFXV2-3067); and Search serving readiness — an optional manual CPC bid on the ad group (0 means unset, no default invented), an optional campaign flight window rendered into the v23 startDateTime/endDateTime request fields on both channels, and optional campaign-level negative keywords batched into one atomic campaignCriteria:mutate with negative:true, all three validated before the first paid mutate and each a no-op when absent; and Search campaign completeness — geo exclusions on both channels, raw geo target constant ids alongside country codes so a caller can target a city, region or postal code, Search-only proximity radius targeting, campaign-level language/ad-schedule/device/demographic criteria (of which Demand Gen refuses only ad-schedule/device/demographic) whose bid modifier is pointer-typed so an explicit 0 stays Google's -100% opt-out, sitelink/callout/structured-snippet extension assets linked by the resource name the create returned, and multiple themed ad groups each carrying multiple responsive search ads that inherit the campaign-level fields PER FIELD, every one of them optional, refused on Demand Gen where it is a Search capability, and validated before the first paid mutate (LFXV2-2665); Demand Gen ad-group audience and language criteria — one existing Audience checked against this account, plus languages, in one atomic adGroupCriteria:mutate after geo (#459); and Demand Gen ad creation — an optional caller-supplied creative (marketing/square/portrait/tall-portrait/logo image URLs, 1-5 headlines and 1-5 descriptions refused rather than truncated, business name, call to action) whose locally-decidable half validates in the PURE preflight while its images are fetched by this service over a hardened credential-free transport (https only, no redirects, public-IP dial guard, 5 MiB cap, decoder-set format allowlist, geometry checked against the decoded image) and uploaded as base64 image assets still BEFORE the first budget mutate, then assembled into a PAUSED DemandGenMultiAssetAd whose asset ids are reported even when the ad create fails, refused on Search as the mirror of every Search-only field (LFXV2-2665); and selectable bidding with conversion selection — one of six UI-vocabulary strategies (manual-cpc, maximize-clicks, maximize-conversions, target-cpa, maximize-conversion-value, target-roas) resolved in the pure preflight into a single proto oneof carried by an anonymously-embedded biddingFields on both channel payloads, defaulting byte-identically to the legacy per-channel payloads, with a target CPA in micros and a target ROAS as a RATIO inside Google's own documented bounds, a CPC bid refused under any automated strategy at campaign or ad-group level, Demand Gen fenced to maximize-clicks on recorded live-API evidence, and conversion actions applied on every channel as a campaign-level conversion goal after the create, one shared custom goal per action set with the campaign's goal config pointed at it and a failure reported as a partial result, replacing campaign.selective_optimization (bare ids qualified to the campaign's account, foreign-account names refused, duplicates deduplicated) alongside a strictly read-only ListConversionActions for building a picker (LFXV2-2665); and Performance Max campaign creation — a third channel whose creative is an ASSET GROUP rather than an ad (the assets first, then the group together with its assetGroupAssets links carrying an AssetFieldType in ONE atomic googleAds:mutate under a temporary group resource name, because Google refuses a non-retail asset group created on its own) created over two mutates against positional responses, with both marketing image shapes and a square logo required rather than reciprocal, headlines/long headlines/descriptions kept as three distinct asset field types, a PERFORMANCE_MAX shell that sends brandGuidelinesEnabled false explicitly so an account with Brand Guidelines on does not reject the create for unlinked business-name and logo assets after the budget has already been paid for, sends no networkSettings and bids maximize-conversions by default, with v23's removal of url_expansion_opt_out answered by opting out of FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION through campaign.asset_automation_settings at create, so the opt-out ships with the campaign rather than waiting on a manual per-campaign toggle in the Google Ads UI, campaign-level geo as on Search, a PAUSED asset group, and an empty creative supported as a campaign that says NO ASSET GROUP rather than one that silently cannot serve (LFXV2-2665); and creative-URL containment across the three channels that carry caller-supplied URLs — Video is the exception, referencing a YouTube video by id and fetching nothing — every image-fetch error renders the URL through redactURLForError and wraps its cause in redactedCause so a signed query string reaches neither the message nor the *url.Error underneath it, Performance Max image assets carry NO caller-derived name so the URL is not exported to Google as a permanent asset label, a 64 MiB running total caps the whole creative rather than only each image, and a 5xx on the Demand Gen assets:mutate reports UNCONFIRMED rather than failed (LFXV2-2665); and Video (YouTube) — CREATION IS REFUSED, because the Google Ads API cannot create or mutate a Video campaign at all: CreateVideoCampaign returns the ErrVideoCreateUnsupported sentinel in its FIRST statement, before any request, so not one orphaned budget is stranded, while fetching, reporting, ADOPTION, the activation gate, the variant slot and monitoring are untouched — only creation is impossible; the cascade is RETAINED unexported, unreachable and still fully tested, preserving the channel's shape against the day Google supports it: a fourth channel whose shell is VIDEO/VIDEO_ACTION bidding maximize-conversions by default and accepting only that strategy or target-cpa, the narrowest set VIDEO_ACTION documents and one this client has NOT verified against the live API, whose creative is a VIDEO_RESPONSIVE ad built from YouTube video ids the caller already owns — no URL, no fetch phase and no network at all before the budget mutate, which is what lets the whole Video preflight stay pure — with 1-5 YouTube videos, 1-5 headlines (15), long headlines (90) and descriptions (70) each kept as its own asset field type and 0-5 call-to-action texts (10) where ABSENT means Google's default and empty means no text, campaign-level geo including proximity and the whole un-narrowed campaign-criteria set exactly as on Search, conversion actions accepted, keywords/audience segments/CPC bid/negative keywords refused, an ENABLED ad group as on Demand Gen and a PAUSED ad over two mutates whose ids are reported even when the ad create fails, under a PAUSED campaign, and its own adoption slot so a VIDEO campaign is never filed as the default one (LFXV2-2665); and Display campaign creation — a fifth channel whose shell is DISPLAY with NO advertisingChannelSubType at all (the deliberate contrast with Video's pinned VIDEO_ACTION), an ENABLED DISPLAY_STANDARD ad group and a PAUSED responsive display ad whose longHeadline is a SCALAR rather than a list — the one place this channel's shape departs from its siblings — built from marketing, square marketing, logo and square logo images this service fetches over the same hardened transport BEFORE the first budget mutate, with a landscape AND a square marketing image each required and the two logo arrays capped at five combined (Google states both rules on ResponsiveDisplayAdInfo), 1-5 headlines (30), 1-5 descriptions (90), a required long headline (90) and business name (25) and an optional call to action, campaign-level geo including proximity and the whole campaign-criteria set as on Video, conversion actions accepted, user-list audience segments plus custom audiences, custom affinities and user interests on this account accepted as targeting criteria and bare-domain placement exclusions as campaign-level negatives (#462), keywords/CPC bid/negative keywords/extensions/multiple ad groups refused, five automated bidding strategies that are NOT live-verified, manual CPC and CONNECTED_TV refused as named limitations of this client rather than of Google, and its own adoption slot (LFXV2-2665); and the remaining extension types — call, promotion and price assets created and linked by the same two-mutate account-asset shape as sitelinks, with vanity phone numbers refused because Google rejects them, both of a promotion's Google oneofs enforced locally (exactly one discount arm, at most one eligibility arm), a percentage sent as micros of a FRACTION so 25% is 250,000, the serving and redemption windows ordered INDEPENDENTLY because an offer may outlive the ad, 3..8 price offerings each carrying its own tagged and bounded destination, and the occasion/type/qualifier/unit enums checked for SHAPE only on the structured-snippet-header precedent — all SEARCH only, and image and location extensions left as NAMED gaps because the first would give the Search preflight a fetch phase and the second cannot be created through this API at all (LFXV2-2665); and lead form extensions — the seventh asset type and the only one that changes WHERE THE LEAD GOES, collecting the user's details inside Google rather than at the registration URL, at most ONE per campaign because Google links a single form and a second would be created as an asset and then refused at the link, with business name/headline/description/call-to-action description required and rune-bounded, at least one de-duplicated input-type field because a form collecting nothing cannot generate a lead, a post-submit headline and description that are ALL-OR-NOTHING while the post-submit button stands alone, the call-to-action/intent/field enums SHAPE-checked on the same precedent, and a REQUIRED privacy-policy URL run through validateServableURL — split out of buildTaggedFinalURL so one implementation decides what this client will send — validated and snapshot-reduced like every other caller URL but deliberately NOT UTM-tagged, since a policy read is not an ad click (LFXV2-2665). Plus the two post-create levers this client exposes without a create: an ad group max CPC bid write through adGroups:mutate carrying cpc_bid_micros under the create path's own 0.01-100,000 bound, sent retry-safe because re-applying the same amount converges, and confirmed by checking that the returned resource name is an adGroups name in this account and names the ad group that was asked for; and campaign-level negative KEYWORD criteria through campaignCriteria:mutate, which is ATOMIC with no partialFailure, so a GAQL read of the campaign's live negatives (REMOVED is excluded by default) runs first and a negative already present is reported as such rather than failing the whole batch (LFXV2-2665); and budget-name ADOPTION on all five creating channels — a CampaignBudgetError DUPLICATE_NAME at campaignBudgets:mutate no longer dead-ends the brief, because a non-shared budget left behind by a failed attempt has no Google Ads UI surface to delete it from and the composed name is deterministic, so the name would block that brief forever; instead the budget holding the name is looked up by GAQL and reused only after every scoping gate passes — it is in this customer, live, explicitly non-shared with an OMITTED sharing flag refused rather than read as false, DAILY/STANDARD/STANDARD so its amount means what the create meant, carries a positive amount, has reference_count 0, is confirmed unattached a second time from the campaign side because reference_count counts campaigns ACTIVELY using a budget and this client creates every campaign PAUSED, and is the only live budget of that name — with zero rows treated as a CONTRADICTION of Google's own refusal rather than a clean absence, an amount differing from the brief aligned through UpdateCampaignBudget and recorded in the steps rather than silently inherited, and a declined reuse leaving the previous already-exists refusal, its partial result and Performance Max's final-URL-expansion hedge exactly as they were (LFXV2-2665). ImageSlotCatalog() republishes the same per-channel image geometry the create path enforces -- built from the existing slot tables, never re-typed -- as a platform-agnostic creative.Catalog, including the shared marketing-image ceilings, Display's combined logo ceiling and Demand Gen's reciprocal landscape-or-square requirement no per-slot minimum can express (LFXV2-2665)."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over whichever serving resources the campaign actually has — the ad group/ad on Search, Demand Gen, Video and Display, the asset group on Performance Max — behind a channel-specific activation gate (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); project-scoped keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641); and a read-only campaign settings readback via GAQL with campaign_budget attributed from campaign, whose every field is optional so a setting Google did not return stays ABSENT rather than defaulting to zero (LFXV2-3067); and Search serving readiness — an optional manual CPC bid on the ad group (0 means unset, no default invented), an optional campaign flight window rendered into the v23 startDateTime/endDateTime request fields on both channels, and optional campaign-level negative keywords batched into one atomic campaignCriteria:mutate with negative:true, all three validated before the first paid mutate and each a no-op when absent; and Search campaign completeness — geo exclusions on both channels, raw geo target constant ids alongside country codes so a caller can target a city, region or postal code, Search-only proximity radius targeting, campaign-level language/ad-schedule/device/demographic criteria (of which Demand Gen takes languages on its ad group and ad schedules and device exclusions at campaign level, and refuses demographics) whose bid modifier is pointer-typed so an explicit 0 stays Google's -100% opt-out, sitelink/callout/structured-snippet extension assets linked by the resource name the create returned, and multiple themed ad groups each carrying multiple responsive search ads that inherit the campaign-level fields PER FIELD, every one of them optional, refused on Demand Gen where it is a Search capability, and validated before the first paid mutate (LFXV2-2665); Demand Gen ad-group audience and language criteria — one existing Audience checked against this account, plus languages, in one atomic adGroupCriteria:mutate after geo (#459); and Demand Gen ad creation — an optional caller-supplied creative (marketing/square/portrait/tall-portrait/logo image URLs, 1-5 headlines and 1-5 descriptions refused rather than truncated, business name, call to action) whose locally-decidable half validates in the PURE preflight while its images are fetched by this service over a hardened credential-free transport (https only, no redirects, public-IP dial guard, 5 MiB cap, decoder-set format allowlist, geometry checked against the decoded image) and uploaded as base64 image assets still BEFORE the first budget mutate, then assembled into a PAUSED DemandGenMultiAssetAd whose asset ids are reported even when the ad create fails, refused on Search as the mirror of every Search-only field (LFXV2-2665); and selectable bidding with conversion selection — one of six UI-vocabulary strategies (manual-cpc, maximize-clicks, maximize-conversions, target-cpa, maximize-conversion-value, target-roas) resolved in the pure preflight into a single proto oneof carried by an anonymously-embedded biddingFields on both channel payloads, defaulting byte-identically to the legacy per-channel payloads, with a target CPA in micros and a target ROAS as a RATIO inside Google's own documented bounds, a CPC bid refused under any automated strategy at campaign or ad-group level, Demand Gen limited to the four strategies validateOnly probes accepted, its target CPA sent as a standalone targetCpa, and conversion actions applied on every channel as a campaign-level conversion goal after the create, one shared custom goal per action set with the campaign's goal config pointed at it and a failure reported as a partial result, replacing campaign.selective_optimization (bare ids qualified to the campaign's account, foreign-account names refused, duplicates deduplicated) alongside a strictly read-only ListConversionActions for building a picker (LFXV2-2665); and Performance Max campaign creation — a third channel whose creative is an ASSET GROUP rather than an ad (the assets first, then the group together with its assetGroupAssets links carrying an AssetFieldType in ONE atomic googleAds:mutate under a temporary group resource name, because Google refuses a non-retail asset group created on its own) created over two mutates against positional responses, with both marketing image shapes and a square logo required rather than reciprocal, headlines/long headlines/descriptions kept as three distinct asset field types, a PERFORMANCE_MAX shell that sends brandGuidelinesEnabled false explicitly so an account with Brand Guidelines on does not reject the create for unlinked business-name and logo assets after the budget has already been paid for, sends no networkSettings and bids maximize-conversions by default, with v23's removal of url_expansion_opt_out answered by opting out of FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION through campaign.asset_automation_settings at create, so the opt-out ships with the campaign rather than waiting on a manual per-campaign toggle in the Google Ads UI, campaign-level geo as on Search, a PAUSED asset group, and an empty creative supported as a campaign that says NO ASSET GROUP rather than one that silently cannot serve (LFXV2-2665); and creative-URL containment across the three channels that carry caller-supplied URLs — Video is the exception, referencing a YouTube video by id and fetching nothing — every image-fetch error renders the URL through redactURLForError and wraps its cause in redactedCause so a signed query string reaches neither the message nor the *url.Error underneath it, Performance Max image assets carry NO caller-derived name so the URL is not exported to Google as a permanent asset label, a 64 MiB running total caps the whole creative rather than only each image, and a 5xx on the Demand Gen assets:mutate reports UNCONFIRMED rather than failed (LFXV2-2665); and Video (YouTube) — CREATION IS REFUSED, because the Google Ads API cannot create or mutate a Video campaign at all: CreateVideoCampaign returns the ErrVideoCreateUnsupported sentinel in its FIRST statement, before any request, so not one orphaned budget is stranded, while fetching, reporting, ADOPTION, the activation gate, the variant slot and monitoring are untouched — only creation is impossible; the cascade is RETAINED unexported, unreachable and still fully tested, preserving the channel's shape against the day Google supports it: a fourth channel whose shell is VIDEO/VIDEO_ACTION bidding maximize-conversions by default and accepting only that strategy or target-cpa, the narrowest set VIDEO_ACTION documents and one this client has NOT verified against the live API, whose creative is a VIDEO_RESPONSIVE ad built from YouTube video ids the caller already owns — no URL, no fetch phase and no network at all before the budget mutate, which is what lets the whole Video preflight stay pure — with 1-5 YouTube videos, 1-5 headlines (15), long headlines (90) and descriptions (70) each kept as its own asset field type and 0-5 call-to-action texts (10) where ABSENT means Google's default and empty means no text, campaign-level geo including proximity and the whole un-narrowed campaign-criteria set exactly as on Search, conversion actions accepted, keywords/audience segments/CPC bid/negative keywords refused, an ENABLED ad group as on Demand Gen and a PAUSED ad over two mutates whose ids are reported even when the ad create fails, under a PAUSED campaign, and its own adoption slot so a VIDEO campaign is never filed as the default one (LFXV2-2665); and Display campaign creation — a fifth channel whose shell is DISPLAY with NO advertisingChannelSubType at all (the deliberate contrast with Video's pinned VIDEO_ACTION), an ENABLED DISPLAY_STANDARD ad group and a PAUSED responsive display ad whose longHeadline is a SCALAR rather than a list — the one place this channel's shape departs from its siblings — built from marketing, square marketing, logo and square logo images this service fetches over the same hardened transport BEFORE the first budget mutate, with a landscape AND a square marketing image each required and the two logo arrays capped at five combined (Google states both rules on ResponsiveDisplayAdInfo), 1-5 headlines (30), 1-5 descriptions (90), a required long headline (90) and business name (25) and an optional call to action, campaign-level geo including proximity and the whole campaign-criteria set as on Video, conversion actions accepted, user-list audience segments plus custom audiences, custom affinities and user interests on this account accepted as targeting criteria and bare-domain placement exclusions as campaign-level negatives (#462), keywords/CPC bid/negative keywords/extensions/multiple ad groups refused, five automated bidding strategies that are NOT live-verified, manual CPC and CONNECTED_TV refused as named limitations of this client rather than of Google, and its own adoption slot (LFXV2-2665); and the remaining extension types — call, promotion and price assets created and linked by the same two-mutate account-asset shape as sitelinks, with vanity phone numbers refused because Google rejects them, both of a promotion's Google oneofs enforced locally (exactly one discount arm, at most one eligibility arm), a percentage sent as micros of a FRACTION so 25% is 250,000, the serving and redemption windows ordered INDEPENDENTLY because an offer may outlive the ad, 3..8 price offerings each carrying its own tagged and bounded destination, and the occasion/type/qualifier/unit enums checked for SHAPE only on the structured-snippet-header precedent — all SEARCH only, and image and location extensions left as NAMED gaps because the first would give the Search preflight a fetch phase and the second cannot be created through this API at all (LFXV2-2665); and lead form extensions — the seventh asset type and the only one that changes WHERE THE LEAD GOES, collecting the user's details inside Google rather than at the registration URL, at most ONE per campaign because Google links a single form and a second would be created as an asset and then refused at the link, with business name/headline/description/call-to-action description required and rune-bounded, at least one de-duplicated input-type field because a form collecting nothing cannot generate a lead, a post-submit headline and description that are ALL-OR-NOTHING while the post-submit button stands alone, the call-to-action/intent/field enums SHAPE-checked on the same precedent, and a REQUIRED privacy-policy URL run through validateServableURL — split out of buildTaggedFinalURL so one implementation decides what this client will send — validated and snapshot-reduced like every other caller URL but deliberately NOT UTM-tagged, since a policy read is not an ad click (LFXV2-2665). Plus the two post-create levers this client exposes without a create: an ad group max CPC bid write through adGroups:mutate carrying cpc_bid_micros under the create path's own 0.01-100,000 bound, sent retry-safe because re-applying the same amount converges, and confirmed by checking that the returned resource name is an adGroups name in this account and names the ad group that was asked for; and campaign-level negative KEYWORD criteria through campaignCriteria:mutate, which is ATOMIC with no partialFailure, so a GAQL read of the campaign's live negatives (REMOVED is excluded by default) runs first and a negative already present is reported as such rather than failing the whole batch (LFXV2-2665); and budget-name ADOPTION on all five creating channels — a CampaignBudgetError DUPLICATE_NAME at campaignBudgets:mutate no longer dead-ends the brief, because a non-shared budget left behind by a failed attempt has no Google Ads UI surface to delete it from and the composed name is deterministic, so the name would block that brief forever; instead the budget holding the name is looked up by GAQL and reused only after every scoping gate passes — it is in this customer, live, explicitly non-shared with an OMITTED sharing flag refused rather than read as false, DAILY/STANDARD/STANDARD so its amount means what the create meant, carries a positive amount, has reference_count 0, is confirmed unattached a second time from the campaign side because reference_count counts campaigns ACTIVELY using a budget and this client creates every campaign PAUSED, and is the only live budget of that name — with zero rows treated as a CONTRADICTION of Google's own refusal rather than a clean absence, an amount differing from the brief aligned through UpdateCampaignBudget and recorded in the steps rather than silently inherited, and a declined reuse leaving the previous already-exists refusal, its partial result and Performance Max's final-URL-expansion hedge exactly as they were (LFXV2-2665). ImageSlotCatalog() republishes the same per-channel image geometry the create path enforces -- built from the existing slot tables, never re-typed -- as a platform-agnostic creative.Catalog, including the shared marketing-image ceilings, Display's combined logo ceiling and Demand Gen's reciprocal landscape-or-square requirement no per-slot minimum can express (LFXV2-2665)."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -929,9 +929,11 @@ child-cascade contract:
   that field existed (single-group by construction). Toggling only the scalar pair — a
   copy of the first group's — left every later group and ad PAUSED while the campaign
   reported ENABLED. A group recorded in the blob but not fully created (no id, or no ad)
-  cannot be toggled; it is logged by name as `incomplete_ad_groups` and the toggle still
-  applies to every group that CAN take it, because refusing the whole campaign over one
-  failed group would strand a campaign that is otherwise ready.
+  cannot be toggled; nor is a Demand Gen group with fewer `AdIDs` than its `PlannedAds`
+  (#474) complete, though its created ads are toggled. Either is logged by name as
+  `incomplete_ad_groups` and the toggle still applies to every group that CAN take it,
+  because refusing the whole campaign over one failed group would strand a campaign that
+  is otherwise ready.
 
 - **ACTIVATE is refused** with `domain.ErrCampaignNotProvisioned` (mapped to a 409 without
   calling Google) unless this campaign's own serving resources are fully provisioned. When the
@@ -1535,8 +1537,8 @@ two are no longer the same number, and that is deliberate.
 accepting one there would validate it, convert it, and silently discard it —
 the same defect LFXV2-3283 fixed for geo. The refusal keys on a SUPPLIED bid,
 not on the channel, so the unset shape every existing Demand Gen caller sends
-still validates. It costs nothing upstream either: Demand Gen bids via
-`targetSpend` and rejects `manualCpc`, so no bid supplied here could have
+still validates. It costs nothing upstream either: Demand Gen has no manual CPC
+strategy here (`demandGenBiddingStrategies`), so no bid supplied here could have
 reached a Google call that wanted it. The ad-group step string says what was set or that nothing was, and
 does NOT claim a serving consequence; whether a bid is what makes a given ad
 group eligible has not been verified live.
@@ -1761,15 +1763,18 @@ earlier in the same loop iteration. `DeviceBidModifiers` refuse a repeated
 device, which Google rejects as a criterion conflict only after the campaign
 exists.
 
-The accepted device vocabulary is MOBILE, DESKTOP and TABLET. `OTHER` is absent
-because it is a reporting bucket rather than something a campaign bids on, and
-TV screens are absent because Google supports that device only on Display and
-Video campaigns. When this vocabulary was written, Demand Gen refused every
-criterion in the group and Search was the only kind that reached the map, so the
-omission merely restated an upstream rule and cost nothing. **Video and Display
-now reach it too** (`validateCriteriaPlan` narrows only Demand Gen and
-Performance Max), and on exactly those two channels Google DOES support TV
-screens — so the omission has become this client's own limitation rather than
+The accepted device vocabulary is MOBILE, DESKTOP and TABLET (`deviceTypes`), plus
+CONNECTED_TV on Demand Gen alone (`demandGenDeviceTypes`, #474; see "Demand Gen
+parity" below). `OTHER` is absent because it is a reporting bucket rather than
+something a campaign bids on, and TV screens are absent elsewhere because Google
+documents that device only for Display and Video campaigns — a sentence the Demand Gen
+probe contradicts, since it accepted CONNECTED_TV there, so that documentation is not a
+reliable boundary in either direction. When this vocabulary was
+written, Demand Gen refused every criterion in the group and Search was the only kind
+that reached the map, so the omission merely restated an upstream rule and cost
+nothing. **Video and Display now reach it too** (`validateCriteriaPlan` narrows only
+Demand Gen and Performance Max), and on exactly those two channels Google DOES support
+TV screens — so the omission has become this client's own limitation rather than
 Google's. It stays closed deliberately: Google's documentation does not settle
 whether a `CONNECTED_TV` campaign criterion carries a BID MODIFIER, this client
 cannot send the criterion without one, and a wrong guess lands at the
@@ -1781,9 +1786,9 @@ value whose best case was silently inert and whose worst case was a rejected
 mutate after the spend was committed. Neither is the over-refusal this package
 guards against: over-refusal is failing a create Google would have accepted and
 MEANT, and no caller has yet asked this service to bid on a TV screen.
-`maxDeviceBidModifiers` tracks the size of that vocabulary rather than Google's
-enum, and a test asserts the two agree — the cap's claim is "a longer list must
-contain a duplicate", which stops being true the moment the two drift.
+The device list is capped at the size of the channel's vocabulary (3, or 4 on Demand
+Gen) rather than Google's enum — the cap's claim is "a longer list must contain a
+duplicate", which is true by construction when the cap IS the vocabulary's size.
 `ExcludedAgeRanges`/`ExcludedGenders` are exclusions by construction, because
 Google targets demographics by excluding the buckets you do not want.
 
@@ -1795,13 +1800,12 @@ takes a plain `float64` because a device listed without a modifier would say
 nothing at all. `validateBidModifier` mirrors Google's own rule — exactly 0, or
 `0.1`..`10.0`.
 
-Four of the five are refused on Demand Gen, for the reason proximity is: that
-channel attaches targeting on the ad group, and these criteria have not been
-verified there. Languages are the exception since #459: Demand Gen refuses a
-CAMPAIGN-level language and its ad group accepts `language` criteria (validateOnly
-probe, 2026-11-03), so `validateCriteriaPlan` leaves them out of the Demand Gen
-refusal and the Demand Gen cascade attaches `plan.languages` to its ad group — see
-"Demand Gen audience and language criteria" below.
+Demand Gen takes four of the five, at two levels, each verified by a validateOnly probe
+on 2026-11-03. Languages go on its AD GROUP (#459): Demand Gen refuses a CAMPAIGN-level
+language and its ad group accepts `language` criteria, so the cascade attaches
+`plan.languages` there — see "Demand Gen audience and language criteria" below. Ad
+schedules and devices go on the CAMPAIGN (#474), in the probed shapes only; the
+demographic exclusions stay refused — see "Demand Gen parity" below.
 
 **A device bid ADJUSTMENT is refused by the bidding strategy, not by the channel,
 and the two rules must not be folded together.** `validateBiddingPlan` refuses a
@@ -1910,9 +1914,11 @@ without a background image renders on Google's default and is servable. All are 
 gaps, not oversights.
 
 All seven extension types are SEARCH only and refused on every other channel, which
-use different asset models entirely. The fence is `kind != campaignKindSearch`, so a
-sixth channel added later refuses them automatically rather than inheriting Search's
-treatment by default.
+use different asset models entirely — except sitelinks on Demand Gen (#474), verified by a
+validateOnly probe and created by the same `createCampaignAssets`; Demand Gen refuses the
+other six. The fence is `kind != campaignKindSearch && kind != campaignKindDemandGen`, so
+a channel added later refuses them automatically rather than inheriting Search's treatment
+by default.
 
 **Multiple ad groups and multiple RSAs (`adgroup_plan.go`).**
 `CampaignInput.AdGroups` turns the single-group cascade into one group per theme,
@@ -2164,7 +2170,7 @@ Demand Gen, now with a message that says why (audience-grouped) and names
 attach only on the Search and Display cascades), and Display accepts them as targeting
 criteria (#462).
 `Languages` reach Demand Gen through `validateCriteriaPlan`, which refuses only the
-other four criteria kinds there.
+demographic exclusions and the unprobed modifier shapes there (#474).
 
 **The step.** After geo and before the creative, `createDemandGenAdGroupTargeting`
 sends ONE `adGroupCriteria:mutate`: the audience first, then the languages in order,
@@ -2207,14 +2213,14 @@ before the budget when it passes Google's 255-character Ad.name limit (probed: 2
 TOO_LONG).
 
 `validateDemandGenVideoCreative` runs in the pure preflight beside the other creatives:
-refused off Demand Gen, and refused beside `DemandGenCreative` — this client builds one ad
-per Demand Gen ad group and records one `AdID` for it. YouTube ids go through the shared
-`validateYouTubeVideoIDs` (bare ids only, 1-5, the length not pinned — the same answer the
-Video and Performance Max creatives give). Headlines are 1-5 at width 40
+refused off Demand Gen, and refused beside `DemandGenCreative` — the pair describes one ad;
+several ads on one group are named in `DemandGenAds` or a group's `Ads` (#474). YouTube ids
+go through the shared `validateYouTubeVideoIDs` (bare ids only, 1-5, the length not pinned —
+the same answer the Video and Performance Max creatives give). Headlines are 1-5 at width 40
 (`maxDemandGenVideoHeadlineWeight`: a probe accepted 40 and refused 41 — the image ad keeps
 30, its own limit unprobed); descriptions 1-5 at 90; long headlines 1-5 at 90 and required
-(the probe accepted 90 for both); the business name is required at 25. The call to action
-is limited to SIGN_UP, LEARN_MORE, BOOK_NOW, VISIT_SITE and WATCH_NOW, each accepted by the
+(the probe accepted 90 for both); the business name is required at 25. The call to action is
+limited to SIGN_UP, LEARN_MORE, BOOK_NOW, VISIT_SITE and WATCH_NOW, each accepted by the
 2026-11-03 probe, which also showed REGISTER and GET_STARTED are not CallToActionType values
 at all. Two choices are deliberately conservative and say so in the code: exactly ONE logo
 (the probe sent one, and no cited source gives this ad type's range) and a required long
@@ -2235,7 +2241,11 @@ UNCONFIRMED. `CreativeAssetIDs` carries the logo, then the videos, then the call
 A short 2xx that parsed still records every asset id it carried that passes `assetID`'s
 account and shape checks (`parsedMutateAssetIDs`, #481), as the logo upload's short arm
 records `parsedAssetIDs`; a foreign-account or malformed name, and any non-asset result,
-is not recorded. An unparseable 2xx records the logo only.
+is not recorded. An unparseable 2xx records the logo only. A full-length 2xx with an
+unusable asset result is walked to the end the same way: every same-account id in it is
+recorded, once (`uniqueIDs`), before or after the bad result, and the UNCONFIRMED error
+names the FIRST bad index (#481 review). The same holds for the Demand Gen image ad, Display,
+Video and Performance Max asset mutates; see "Unusable asset results" below.
 `googleAdsMutateOperation`/`googleAdsMutateResponse` gained the `assetOperation` and
 `adGroupAdOperation` arms; the Performance Max request is unchanged because the new arms are
 omitted when nil.
@@ -2247,8 +2257,9 @@ the campaign exists). Each `DemandGenAdGroup` has a `Name` label, an optional `A
 under `validateDemandGenAudience`'s rules (shape and this account only — not a tenancy
 check, so the dispatch adapter refuses any group's Audience unless
 `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`, as it does
-`DemandGenAudience`; #468), and exactly one of `Creative` / `VideoCreative`
-— a named group with no ad cannot serve, and the list has no older callers to keep. Names
+`DemandGenAudience`; #468), and exactly one of `Creative` / `VideoCreative`, or an `Ads`
+list (#474) — a named group with no ad cannot serve, and the list has no older callers to
+keep. Names
 are `sanitizeNamePart`ed and appended to the single group's name
 (`<event> - Display | <label>`, as the Search list does); a duplicate ignoring case is
 refused before the budget, because Google's `DUPLICATE_ADGROUP_NAME` arrives after the
@@ -2258,27 +2269,142 @@ campaign-level and are attached to EVERY group: Demand Gen takes both only on th
 and a group created without them would serve worldwide in every language. The Search
 `AdGroups` list on Demand Gen is refused with a message naming `DemandGenAdGroups`.
 
-`validateDemandGenAdGroups` returns `pf.demandGenGroups` — the ONE group the
-campaign-level fields describe when the list is empty — so `CreateDemandGenCampaign` walks
-one shape: per group, the ad group, geo, the Audience and languages, then the image or
-video ad. For the single group every request, step line and result field is what the
-cascade produced before (the existing Demand Gen tests are unchanged). With a list, each
-group's `AdGroupResult` (now also carrying `GeoCriterionIDs`, `TargetingCriterionIDs` and
-`CreativeAssetIDs`) is appended BEFORE its mutate, so a failure on group k returns groups
-1..k-1 complete and what exists of k; the scalar fields stay the FIRST group's; each
-group step line ends `[ad group "<name>"]`; and a context that ends between groups stops
-before the next group with `aborted after k of N ad group(s)`. `AdGroups` is left empty for
-the single group, as before. The launch toggle already reads `AdGroups` entries and their
+`validateDemandGenAdGroups` returns `pf.demandGenGroups` — the ONE group the campaign-level
+fields describe when the list is empty — so `CreateDemandGenCampaign` walks one shape: per
+group, the ad group, geo, the Audience and languages, then the image or video ad. For the
+single group every request, step line and result field is what the cascade produced before
+(the existing Demand Gen tests are unchanged). With a list, each group's `AdGroupResult`
+(now also carrying `GeoCriterionIDs`, `TargetingCriterionIDs` and `CreativeAssetIDs`, and
+since #474 `PlannedAds` and the per-ad `Ads`) is appended BEFORE its mutate, so a failure on
+group k returns groups 1..k-1 complete and what exists of k; the scalar fields stay the
+FIRST group's; each group step line ends `[ad group "<name>"]`; and a context that ends
+between groups stops before the next group with `aborted after k of N ad group(s)`.
+`AdGroups` is left empty for a single group with one ad, as before (#474 records it when
+that group has several ads). The launch toggle already reads `AdGroups` entries and their
 `AdIDs`, so activation flips every group's ad. `fetchDemandGenGroupImages` fetches every
 group's images in one walk, sharing one fetch-phase deadline and the 64 MiB total, and
 re-indexes each image to its slot within its own creative. The closing step reads the first
-group and is true for all: every group gets the same geo, every named group must have an
-ad, and the loop returns on the first failure.
+group and is true for all: every group gets the same geo, every named group must have an ad,
+and the loop returns on the first failure.
 
-Click tracking (#476) needs nothing per group: every group's ad, image or video, takes
-`pf.finalURL`, which the preflight tagged with Demand Gen's `utm_medium=display`, and the
-`utmcampaign` custom parameter is set once on the campaign create, which every ad group and
-ad under it inherits. `TestCreateDemandGenCampaign_TwoAdGroups` pins both.
+Click tracking (#476) needs nothing per group or per ad: every ad in every group, image or
+video, takes `pf.finalURL`, which the preflight tagged with Demand Gen's
+`utm_medium=display`, and the `utmcampaign` custom parameter is set once on the campaign
+create, which every ad group and ad under it inherits. `TestCreateDemandGenCampaign_TwoAdGroups` pins both.
+
+## Demand Gen parity: conversion bidding, campaign criteria, sitelinks, several ads (#474)
+
+The live KubeCon NA 2026 Demand Gen campaigns bid maximize conversions, exclude Connected
+TV, carry an ad schedule and sitelinks, and run several ads per ad group. Each shape below
+was accepted by a `validateOnly` probe on 2026-11-03 (v23), and the refusals name what was
+not probed — with ONE exception, stated here plainly: ad multiplicity was probed with two
+VIDEO ads in one group, and several IMAGE ads, or image and video ads mixed, in one group
+were not probed. The code admits them all the same, on purpose (see "Several ads per ad
+group").
+
+**Bidding.** `demandGenBiddingStrategies` holds `maximize-clicks` (still the default),
+`maximize-conversions`, `target-cpa` and `maximize-conversion-value`. A target CPA renders as
+the standalone `targetCpa` strategy on this channel; target ROAS is refused. See "Bidding
+strategies" below. The conversion-goal step (#436) runs as before: under a conversion
+strategy it is what the campaign bids toward, and with no `ConversionActions` the campaign
+bids toward the account's goals, so it needs conversions recorded there.
+
+**Ad schedules and devices, at the CAMPAIGN level.** Unlike Demand Gen's geo, Audience and
+languages, which go on each ad group, these are campaign criteria: the cascade calls
+`createCampaignTargetingCriteria` with `pf.criteria` minus its languages, after the goal and
+before the first ad group, and reports the ids in the new
+`CampaignResult.CampaignTargetingCriterionIDs` (`TargetingCriterionIDs` keeps the first ad
+group's language ids on this channel). `validateCriteriaPlan` admits only the probed shapes:
+an ad schedule with no bid modifier, and a device with bid modifier 0 — the exclusion — with
+`CONNECTED_TV` added to the vocabulary for this channel alone (`demandGenDeviceTypes`). A
+schedule modifier or a non-zero device modifier is refused with a Demand Gen message; the
+automated-bidding device refusal in `validateBiddingPlan` would refuse the latter anyway,
+but its escape (`manual-cpc`) does not exist on this channel, which is why the criteria arm
+answers first.
+
+**Demographics stay refused**, with a message that says where they go: Google refuses age,
+gender, income and parental criteria on the audience-grouped Demand Gen ad group
+(`CANNOT_ADD_AUDIENCE_SEGMENT_CRITERION_WHEN_AUDIENCE_GROUPED_IS_SET`), and the campaign
+level was not probed, so `ExcludedAgeRanges`/`ExcludedGenders` belong inside the Audience
+that `DemandGenAudience` or a group's `Audience` references.
+
+**Sitelinks.** `validateAssetPlan` admits `Sitelinks` on Demand Gen and refuses every other
+extension type there (callouts and snippets were not probed). The cascade calls the Search
+path's `createCampaignAssets` after the campaign criteria; the probe sent the asset and its
+SITELINK campaign asset in one `googleAds:mutate` by temporary id, and this client sends the
+same two resources in the two mutates Search uses. Ids go to `ExtensionAssetIDs` /
+`ExtensionLinkIDs` with Search's partial semantics. The sitelink's final URL goes through the
+same per-channel tagging as the ads (#476), so it carries `utm_medium=display`, not Search's
+`paid-search`.
+
+**Several ads per ad group** (`demandgen_ads.go`). `CampaignInput.DemandGenAds` (the single
+group, instead of `DemandGenCreative`/`DemandGenVideoCreative`) and `DemandGenAdGroup.Ads` (a
+named group, instead of its `Creative`/`VideoCreative`) list up to `maxDemandGenAdsPerGroup`
+(5, a service bound like the group cap) `DemandGenAd`s, each a `Name` label and exactly one
+image or video creative. Labels are `sanitizeNamePart`ed and unique ignoring case within the
+group; a video ad's required `ad.name` is `<ad group name> - <label>`, refused before the
+budget past 255 characters, while an image ad still sends no name (its `ad.name` was not
+probed). `demandGenGroupPlan` now carries `ads []demandGenAdPlan` — the legacy creative pair
+becomes one unnamed ad (`singleDemandGenAd`), so the single-ad path sends exactly what it did.
+`fetchDemandGenGroupImages` walks every ad of every group in one fetch and returns images
+indexed `[group][ad]`. The cascade creates the ads in order, each by its own requests; each
+step line ends `[ad "<label>"]`, and a failure on ad j returns ads 1..j-1 complete. Several
+image ads, or a mix, in one group are admitted though only two video ads were probed. The
+reason: each extra image ad is sent by exactly the requests the single image ad sends
+(`createDemandGenAd`: its own `assets:mutate`, then its own `adGroupAds:mutate`), so no
+request shape is new and only the count per group is unverified. A refusal of a later ad
+lands after the campaign and ad group exist and is reported per ad (`PlannedAds` against
+`Ads`). The fetch walk then spans up to `maxDemandGenAdGroups` × `maxDemandGenAdsPerGroup`
+(25) creatives, still in one `fetchSlotImages` call under one fetch-phase deadline and one
+64 MiB total.
+
+Assets are recorded PER AD. Each `AdGroupResult` entry gets `PlannedAds` (the ad count, set
+before any ad exists) and `Ads []DemandGenAdResult`, one `{Name, ID, CreativeAssetIDs}` per
+ad attempted, appended before its requests: an ad that failed is there with an empty `ID`
+and whatever assets it got, the per-ad form of the "assets with no ad" orphan signal, and an
+ad never reached has no entry. The scalar `CreativeAssetIDs` and the entry's own are the
+FIRST ad's alone, beside `AdID`, so the scalar signal still names the ad it belongs to: one
+flat list of every ad's assets could not say which of them are orphaned. `reconcileRef`
+keeps `adGroups[i].ads[j]`'s ids (depth 3, its limit). A single group with several ads is
+recorded in `AdGroups` so the launch toggle reaches every ad id, not only the scalar `AdID`;
+with ONE ad in `DemandGenAds` it is not, exactly as the single creative is not.
+`googleAdsToggleTargets` reads a group whose `AdIDs` is shorter than its `PlannedAds` as
+incomplete: it toggles the ads that exist and logs the group under `incomplete_ad_groups`,
+rather than launching ad 1 and saying nothing about ad 2. `PlannedAds` 0 (Search, older
+rows) keeps the old reading, because a Search group's ads come from one atomic mutate.
+
+## Unusable asset results (#481 review)
+
+An `assets:mutate` (or the Demand Gen video ad's atomic `googleAds:mutate`) whose 2xx has
+the expected number of results can still carry an asset result `assetID` refuses — another
+account's asset, another kind, a non-numeric id. That result makes the create UNCONFIRMED,
+but every OTHER same-account asset id in the response is a real handle on an account-level
+asset that may exist with nothing referencing it. The loops used to return at the first bad
+entry, keeping only the ids before it: a foreign-account video result followed by this
+account's call to action 951 recorded only the logo 900.
+
+Each loop now walks the whole response, records every usable id in order, notes the FIRST
+bad index, and returns after the loop with `uniqueIDs(assetIDs)` — so an id named twice is
+recorded once — and an error naming that index. The sites: the Demand Gen image ad
+(`createDemandGenAd`), the Demand Gen video ad's atomic request (`createDemandGenVideoAd`),
+Display (`createDisplayAd`), Video (`createVideoAd`) and the Performance Max asset mutate
+(`createPerformanceMaxAssetGroup`). `parsedAssetIDs` and `parsedMutateAssetIDs`, which the
+short arms return, also drop repeats.
+
+Left as they are, on purpose:
+
+- `createCampaignAssets` (sitelinks, callouts, snippets and the other extensions, Search and
+  Demand Gen) returns NO asset ids from an unusable or short 2xx: an all-or-nothing contract
+  `TestCreateCampaign_ShortAssetResponseIsUnconfirmed` pins. It never keeps the ids before
+  the bad entry and drops the ones after, so it is not this defect.
+- The Demand Gen video ad's logo upload takes exactly one logo (`maxDemandGenVideoLogos`),
+  so its one result has no later id to drop.
+- The criteria loops (geo, languages, schedules, devices, demographics, keywords, negative
+  keywords, audiences, placements) return no ids from an unconfirmed response, the
+  three-way ambiguity `CampaignResult.GeoCriterionIDs` documents. A criterion is a child of
+  its campaign or ad group, not an account-level asset left behind.
+- The campaign-asset link loop and the Performance Max link count confirm links, not assets;
+  the asset ids are already returned in full.
 
 ## Bidding strategies and conversion actions (LFXV2-2665)
 
@@ -2289,8 +2415,9 @@ conversion at all.
 
 **A campaign carries EXACTLY ONE strategy.** It is a proto `oneof`: the create
 names one of `manualCpc`, `targetSpend`, `maximizeConversions`,
-`maximizeConversionValue`, and naming two is rejected — AFTER the budget mutate,
-which is why the resolution happens in the pure preflight. `biddingFields` is one
+`maximizeConversionValue` or (Demand Gen only, #474) `targetCpa`, and naming two is
+rejected — AFTER the budget mutate, which is why the resolution happens in the pure
+preflight. `biddingFields` is one
 shared type embedded ANONYMOUSLY into both channel payloads so its keys flatten
 into the campaign object, rather than a copy per channel: the oneof is a property
 of the campaign resource, not of a channel, and two copies would be two places to
@@ -2304,7 +2431,8 @@ reading that UI. `target-cpa`/`target-roas` are where the two vocabularies
 genuinely disagree: Google folded the standalone TargetCpa and TargetRoas
 strategies into MaximizeConversions and MaximizeConversionValue with a target
 set, and the UI still uses the old names. Both spellings resolve to the surviving
-strategy; the only difference is that the target is REQUIRED under the
+strategy, except on Demand Gen, which sends the standalone `targetCpa` (#474, below); the
+only difference is that the target is REQUIRED under the
 target-bearing label and optional under the maximize- one.
 
 **The defaults are byte-identical to the legacy payloads.**
@@ -2317,11 +2445,19 @@ remaining proto fields are deprecated, and sending a deprecated field risks a
 rejection landing after the budget mutate. That is also why `cpcBidCeiling` is
 not offered — `target_spend.cpc_bid_ceiling_micros` is marked deprecated.
 
-**Demand Gen is fenced to `maximize-clicks` alone**, on recorded evidence rather
-than caution: a live `validateOnly` check (2026-08-14, v23) had DEMAND_GEN accept
-`targetSpend` with HTTP 200 and reject `maximizeConversions` with HTTP 400
-`BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET`. Widening
-`demandGenBiddingStrategies` is a live-API question, not a reading of the proto.
+**Demand Gen takes four strategies (#474)**: `maximize-clicks`, `maximize-conversions`,
+`target-cpa` and `maximize-conversion-value`, each accepted by a `validateOnly`
+`campaigns:mutate` on 2026-11-03 (v23) with a NON-shared budget, which is what every LFX
+create makes. Its target CPA is sent as the standalone `targetCpa: {targetCpaMicros}`
+(`targetCPA`, rendered when `biddingPlan.standaloneTargetCPA` is set, on Demand Gen only)
+because the same probe refused `maximizeConversions: {targetCpaMicros}`
+(`OPERATION_NOT_PERMITTED_FOR_CONTEXT`). `target-roas`, and a `TargetROAS` under
+`maximize-conversion-value`, are refused there: only the targetless strategy was probed.
+History: a 2026-08-14 check had DEMAND_GEN reject `maximizeConversions` with
+`BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET`, which fenced the channel to
+`maximize-clicks` until #474 — that refusal was about a shared budget, not the channel.
+Widening `demandGenBiddingStrategies` further is a live-API question, not a reading of
+the proto.
 
 **Targets.** `validateTargetCPA` is micros like every other currency field here,
 bounded `0.01`..`1_000_000.0` — this client's sanity bound, not a Google limit.
@@ -2389,8 +2525,8 @@ error saying the goal was NOT applied. An atomic write whose outcome is unknown 
 transport failure, an exhausted 429, or a refusal after a retried 429, through
 `retriedUnconfirmed`) is UNCONFIRMED, as is a 2xx whose results do not name the config and
 each goal taken out of bidding, in order. Under a click
-strategy (manual CPC, maximize clicks, and Demand Gen's only strategy) the step line says
-the goal sets what counts as a conversion, not what the campaign bids for.
+strategy (manual CPC, maximize clicks — Demand Gen's default) the step line says the goal
+sets what counts as a conversion, not what the campaign bids for.
 
 This replaced `campaign.selective_optimization`, sent at create time on Search, Video and
 Display and refused on Demand Gen and Performance Max. Google documents that field for App
@@ -2444,8 +2580,9 @@ so the link step uses `assetResources[i]`, the resource name Google returned, ne
 one rebuilt from the parsed id. Rebuilding would be this client asserting what Google
 said rather than repeating it. `c.assetID` checks kind, ACCOUNT and trailing numeric
 id and answers `""` for anything else, so a wrong-account asset can neither be linked
-into this campaign's group nor persisted as one of its ids; the ids parsed before the
-bad one are still returned, under the partial-result contract.
+into this campaign's group nor persisted as one of its ids; every other same-account id
+in the response, before or after the bad one, is still returned under the partial-result
+contract (see "Unusable asset results").
 
 **Google requires each of the two marketing shapes, not either.** Unlike Demand Gen's
 reciprocal pair, `marketingImages` (1.91:1) AND `squareMarketingImages` (1:1) are both
@@ -2766,8 +2903,9 @@ payload carries no bid field and `cpcBid` is refused off Search. The five automa
 strategies it does accept are **not live-verified**, on Video's terms and for the same
 reason. `CONNECTED_TV` is the second: Google supports TV screens on Display and Video
 campaigns, so the `deviceTypes` omission that merely restated an upstream rule while Search
-and Demand Gen were the only kinds reaching that map became this client's own limitation
-the moment Video and Display started reaching it. It stays closed because the documentation
+was the only kind reaching that map became this client's own limitation the moment Video
+and Display started reaching it (Demand Gen takes CONNECTED_TV since #474, on its own
+probe). It stays closed because the documentation
 does not settle whether a CONNECTED_TV campaign criterion carries a BID MODIFIER, this
 client cannot send one without, and a wrong guess lands at the `campaignCriteria:mutate`
 AFTER the budget and campaign are committed — the orphan the preflight exists to prevent —

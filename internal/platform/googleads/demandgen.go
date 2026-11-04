@@ -37,8 +37,8 @@ func demandGenAdGroupName(in CampaignInput) string {
 
 // demandGenCampaignCreate is a SEPARATE payload from campaignCreate rather than a
 // widened version of it, because the two channels disagree on required fields:
-// campaignCreate always sends `networkSettings` and `manualCpc`, and Demand Gen
-// accepts neither (it bids with targetSpend and has no Search network to target).
+// campaignCreate always sends `networkSettings`, and Demand Gen has no Search network
+// to target; nor does it take `manualCpc`, which validateBiddingPlan never admits here.
 // Sending the Search shape here is rejected by the API, and adding pointers to
 // campaignCreate would make every Search create carry fields it must never omit.
 type demandGenCampaignCreate struct {
@@ -50,9 +50,8 @@ type demandGenCampaignCreate struct {
 	// biddingFields is embedded ANONYMOUSLY, exactly as on campaignCreate, so the
 	// oneof invariant has ONE definition rather than one per channel. It replaced a
 	// fixed `targetSpend` field. What is channel-specific is not the shape but which
-	// strategies may be sent, and that lives in validateBiddingPlan — which refuses
-	// everything except maximize clicks here, on recorded live-API evidence (see the
-	// note at the campaign create below).
+	// strategies may be sent, and that lives in validateBiddingPlan — see
+	// demandGenBiddingStrategies and the note at the campaign create below.
 	biddingFields
 	// Carried even though this channel attaches its geo criteria at the AD GROUP level:
 	// geoTargetTypeSetting is a CAMPAIGN-level field in the Google Ads API and governs how
@@ -94,8 +93,9 @@ type demandGenAdGroupCreate struct {
 }
 
 // CreateDemandGenCampaign creates a PAUSED Demand Gen campaign: budget → campaign →
-// ad group → ad-group-level geo → ad-group-level audience and languages (#459) → ad,
-// repeated per ad group when DemandGenAdGroups names several (#460). It is a port of the
+// conversion goal → campaign-level ad schedule and device criteria → sitelinks (#474) →
+// ad group → ad-group-level geo → ad-group-level audience and languages (#459) → ad, the
+// last four repeated per ad group when DemandGenAdGroups names several (#460). It is a port of the
 // legacy Express implementation (`lfx-self-serve` `campaign-proxy.service.ts`'s
 // `createDemandGenCampaign`), which is what serves this channel today and is the
 // behavioural reference.
@@ -238,20 +238,25 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		StartDateTime:       pf.startDateTime,
 		EndDateTime:         pf.endDateTime,
 		URLCustomParameters: pf.urlCustomParameters,
-		// Resolved by the SHARED preflight. On this channel the plan can only ever be
-		// maximize clicks, so this renders `targetSpend: {}` — matching the legacy
-		// Express implementation's `target_spend: {}`, which is what serves this channel
-		// on app.lfx.dev today.
+		// Resolved by the SHARED preflight. The default is maximize clicks, rendering
+		// `targetSpend: {}` — matching the legacy Express implementation's
+		// `target_spend: {}`, which is what serves this channel on app.lfx.dev today.
 		//
-		// VERIFIED against the live API (2026-08-14): a validateOnly campaigns:mutate at
-		// v23 on a real account returned HTTP 200 for DEMAND_GEN + targetSpend. A review
-		// had flagged it as unsupported on this channel and proposed maximizeConversions
-		// instead; that payload returned HTTP 400
-		// BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET against the same budget.
-		// That recorded rejection is why demandGenBiddingStrategies holds exactly one
-		// entry: the rejection lands AFTER the budget is created, which orphans it, so
-		// widening the set is a live-API question and not a code-reading one. Re-run that
-		// validateOnly check before adding a strategy there.
+		// HISTORY (2026-08-14): a validateOnly campaigns:mutate at v23 on a real account
+		// returned HTTP 200 for DEMAND_GEN + targetSpend, and HTTP 400
+		// BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET for maximizeConversions
+		// against the same budget. That rejection kept demandGenBiddingStrategies to
+		// maximize clicks alone until #474.
+		//
+		// NEW PROBE (2026-11-03, v23, #474): with a NON-shared budget — what every LFX
+		// create makes, explicitlyShared false above — validateOnly accepted
+		// `maximizeConversions: {}`, `targetCpa: {targetCpaMicros}` and
+		// `maximizeConversionValue: {}`, and refused `maximizeConversions:
+		// {targetCpaMicros}` (OPERATION_NOT_PERMITTED_FOR_CONTEXT). The 2026-08-14 refusal
+		// was about a shared budget, not the channel. So the set now holds those four
+		// strategies, and a target CPA renders as the standalone `targetCpa`
+		// (biddingPlan.standaloneTargetCPA). Widening it further is still a live-API
+		// question, not a code-reading one.
 		biddingFields: pf.bidding.fields(),
 	}}}}
 	campaignResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), campaignReq, false)
@@ -272,20 +277,29 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	if err := c.validateCampaignResource(campaignResource); err != nil {
 		return budgetPartial(), fmt.Errorf("google-ads demand gen campaign creation UNCONFIRMED (budget %s in place; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, err)
 	}
-	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, DEMAND_GEN, target spend, %s)", campaignID, flightWindowStep(pf.startDateTime, pf.endDateTime)))
+	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, DEMAND_GEN, %s, %s)", campaignID, pf.bidding.describe(), flightWindowStep(pf.startDateTime, pf.endDateTime)))
 	if pf.utmCampaignStep != "" {
 		steps = append(steps, pf.utmCampaignStep)
 	}
 
+	// The campaign-level criteria and sitelink ids (#474), set by the two steps after the
+	// conversion goal and carried on every later partial.
+	var campaignCriterionIDs, extensionAssetIDs, extensionLinkIDs []string
 	campaignPartial := func() *CampaignResult {
 		r := budgetPartial()
 		r.CampaignID = campaignID
+		r.CampaignTargetingCriterionIDs = campaignCriterionIDs
+		r.ExtensionAssetIDs = extensionAssetIDs
+		r.ExtensionLinkIDs = extensionLinkIDs
 		return r
 	}
 
 	// The campaign-level conversion goal (#436), first of the post-create steps so a failure
-	// leaves as little built on the campaign as possible. Demand Gen bids for clicks here, so
-	// the goal sets what the campaign counts as a conversion, and the step line says so.
+	// leaves as little built on the campaign as possible. Under maximize clicks the goal sets
+	// what the campaign counts as a conversion and the step line says so; under a
+	// conversion strategy (#474) it is what the campaign bids toward. With no
+	// ConversionActions a conversion strategy bids toward the ACCOUNT's goals, as on every
+	// other channel, so it needs conversions recorded there to have anything to optimize.
 	goalStep, goalErr := c.applyCampaignConversionGoal(ctx, campaignID, pf.bidding)
 	if goalErr != nil {
 		return campaignPartial(), goalErr
@@ -294,20 +308,52 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		steps = append(steps, goalStep)
 	}
 
+	// Ad schedules and device criteria are CAMPAIGN criteria on Demand Gen (#474), unlike
+	// its geo, Audience and languages, which go on each ad group below. The languages are
+	// left out of this plan for that reason: Google refuses a campaign-level language here.
+	// After the goal and before the ad groups, as on Search, so a failure has as little
+	// built on it as possible. Same partial-result contract: the campaign exists either way.
+	campaignCriteria := pf.criteria
+	campaignCriteria.languages = nil
+	if !campaignCriteria.empty() {
+		critIDs, critErr := c.createCampaignTargetingCriteria(ctx, campaignResource, campaignID, campaignCriteria)
+		if critErr != nil {
+			return campaignPartial(), critErr
+		}
+		campaignCriterionIDs = critIDs
+		steps = append(steps, fmt.Sprintf("Campaign targeting applied: %d criteria (%s)", len(critIDs), criteriaStep(campaignCriteria)))
+	}
+
+	// Sitelinks (#474), the one extension type Demand Gen takes, created and linked to the
+	// campaign by the Search path's createCampaignAssets. The asset ids are reported even
+	// when the linking half fails, as on Search.
+	if !pf.assets.empty() {
+		assetIDs, linkIDs, assetErr := c.createCampaignAssets(ctx, campaignResource, campaignID, pf.assets)
+		extensionAssetIDs = assetIDs
+		if assetErr != nil {
+			return campaignPartial(), assetErr
+		}
+		extensionLinkIDs = linkIDs
+		steps = append(steps, fmt.Sprintf("Ad extensions applied: %d assets (%s)", len(linkIDs), assetStep(pf.assets)))
+	}
+
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return campaignPartial(), fmt.Errorf("google-ads demand gen creation aborted after campaign %s created (context done before ad group create): %w", campaignID, ctxErr)
 	}
 
 	// Steps 3-6, once per ad group (#460): the ad group, its geo, its Audience and
-	// languages, and its ad. pf.demandGenGroups holds ONE group when the caller named none,
-	// built from the campaign-level fields, and for that group every request, step line and
-	// result field is what this cascade produced before the list existed.
+	// languages, and its ads. pf.demandGenGroups holds ONE group when the caller named none,
+	// built from the campaign-level fields, and for that group with one ad every request,
+	// step line and result field is what this cascade produced before the list existed.
 	//
-	// With a list, each group gets an AdGroups entry appended BEFORE its mutate, as on the
-	// Search cascade, so a failure on group k returns groups 1..k-1 complete and what
-	// exists of k; the scalar ad group fields stay the FIRST group's. Every failure below is
-	// returned ALONGSIDE the non-nil res: the campaign exists either way.
+	// With a list, or a single group carrying several ads (#474), each group gets an
+	// AdGroups entry appended BEFORE its mutate, as on the Search cascade, so a failure on
+	// group k returns groups 1..k-1 complete and what exists of k, and every ad id has a
+	// place for the launch toggle to find it; the scalar ad group fields stay the FIRST
+	// group's. Every failure below is returned ALONGSIDE the non-nil res: the campaign
+	// exists either way.
 	multi := len(in.DemandGenAdGroups) > 0
+	record := multi || len(pf.demandGenGroups[0].ads) > 1
 	var res *CampaignResult
 	fail := func(err error) (*CampaignResult, error) {
 		res.Steps = steps
@@ -337,8 +383,10 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 			res.AdGroupName = adGroupName
 		}
 		var entry *AdGroupResult
-		if multi {
-			res.AdGroups = append(res.AdGroups, AdGroupResult{Name: adGroupName})
+		if record {
+			// PlannedAds (#474) is set now, before any ad exists, so a group whose ad j
+			// fails reads as incomplete to the launch toggle rather than as a group of j-1.
+			res.AdGroups = append(res.AdGroups, AdGroupResult{Name: adGroupName, PlannedAds: len(g.ads)})
 			entry = &res.AdGroups[len(res.AdGroups)-1]
 		}
 		adGroupResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), adGroupReq, false)
@@ -417,43 +465,61 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 			res.Steps = steps
 		}
 
-		// Step 6: the creative — the image ad (images first as account-level assets, then
-		// the ad that references them) or the video ad (#460; logo first, then the videos,
-		// the call to action and the ad in one atomic googleAds:mutate). The preflight
-		// admits at most one of the two per group.
+		// Step 6: the ads, in order (#474) — each an image ad (images first as account-level
+		// assets, then the ad that references them) or a video ad (#460; logo first, then
+		// the videos, the call to action and the ad in one atomic googleAds:mutate). The
+		// preflight admits exactly one of the two per ad.
 		//
 		// The asset ids are carried even when the ad itself failed, so the operator can find
-		// assets created with nothing referencing them.
-		if g.creative.present || g.video.present {
+		// assets created with nothing referencing them; a failure on ad j returns ads
+		// 1..j-1 complete. They are recorded PER AD (#474): each ad gets an entry.Ads entry,
+		// appended before its requests, holding its own assets and, once created, its id. The
+		// scalar CreativeAssetIDs and the entry's own are the first ad's alone, beside AdID,
+		// so "assets with no ad id" keeps naming the ad they belong to.
+		for j, ad := range g.ads {
+			if j > 0 {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return fail(fmt.Errorf("google-ads demand gen creation aborted after %d of %d ad(s) were created in ad group %s (campaign %s; context done before ad %q): %w", j, len(g.ads), adGroupID, campaignID, ad.label, ctxErr))
+				}
+			}
 			var (
 				assetIDs []string
 				adID     string
 				adErr    error
 				adStep   string
+				adEntry  *DemandGenAdResult
 			)
-			if g.creative.present {
-				assetIDs, adID, adErr = c.createDemandGenAd(ctx, adGroupResource, adGroupID, pf.finalURL, g.creative, groupImages[k].images)
-				adStep = fmt.Sprintf("Demand Gen ad created: %s (PAUSED, %s)", adID, demandGenCreativeStep(g.creative))
-			} else {
-				assetIDs, adID, adErr = c.createDemandGenVideoAd(ctx, adGroupResource, adGroupID, demandGenVideoAdName(adGroupName), pf.finalURL, g.video, groupImages[k].logos)
-				adStep = fmt.Sprintf("Demand Gen video ad created: %s (PAUSED, %s)", adID, demandGenVideoCreativeStep(g.video))
+			if entry != nil {
+				entry.Ads = append(entry.Ads, DemandGenAdResult{Name: ad.label})
+				adEntry = &entry.Ads[len(entry.Ads)-1]
 			}
-			if k == 0 {
+			if ad.creative.present {
+				assetIDs, adID, adErr = c.createDemandGenAd(ctx, adGroupResource, adGroupID, pf.finalURL, ad.creative, groupImages[k][j].images)
+				adStep = fmt.Sprintf("Demand Gen ad created: %s (PAUSED, %s)", adID, demandGenCreativeStep(ad.creative))
+			} else {
+				assetIDs, adID, adErr = c.createDemandGenVideoAd(ctx, adGroupResource, adGroupID, ad.adName, pf.finalURL, ad.video, groupImages[k][j].logos)
+				adStep = fmt.Sprintf("Demand Gen video ad created: %s (PAUSED, %s)", adID, demandGenVideoCreativeStep(ad.video))
+			}
+			if k == 0 && j == 0 {
 				res.CreativeAssetIDs = assetIDs
 			}
 			if entry != nil {
-				entry.CreativeAssetIDs = assetIDs
+				if j == 0 {
+					entry.CreativeAssetIDs = assetIDs
+				}
+				adEntry.CreativeAssetIDs = assetIDs
 			}
 			if adErr != nil {
 				return fail(adErr)
 			}
-			if k == 0 {
+			if k == 0 && j == 0 {
 				res.AdID = adID
 			}
 			if entry != nil {
-				entry.AdIDs = []string{adID}
+				entry.AdIDs = append(entry.AdIDs, adID)
+				adEntry.ID = adID
 			}
-			steps = append(steps, adStep+tag)
+			steps = append(steps, adStep+demandGenAdStep(ad.label)+tag)
 			res.Steps = steps
 		}
 	}
@@ -465,7 +531,7 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	//
 	// It reads the FIRST group's fields, and that is true for every group (#460): the same
 	// geo goes on each, every named group must carry a creative, and the loop above
-	// returns on the first failure — so reaching here means every group got its ad.
+	// returns on the first failure — so reaching here means every group got its ads.
 	steps = append(steps, demandGenClosingStep(len(res.GeoCriterionIDs) > 0, res.AdID != ""))
 	res.Steps = steps
 	return res, nil

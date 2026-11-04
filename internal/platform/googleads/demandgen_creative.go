@@ -140,9 +140,10 @@ const (
 	maxCreativeTotalImageBytes = 64 << 20 // 64 MiB
 
 	// demandGenImageFetchTimeout bounds one image fetch. A Demand Gen creative has up to
-	// 25 images (20 marketing + 5 logos), and since #460 one create's walk can cover up to
-	// maxDemandGenAdGroups creatives, so this is per-image; the whole walk is still under
-	// maxCreativeImageFetchWall and the 64 MiB total, and the caller's context bounds it.
+	// 25 images (20 marketing + 5 logos), and one create's walk can cover up to
+	// maxDemandGenAdGroups × maxDemandGenAdsPerGroup (25) creatives (#460, #474), so this is
+	// per-image; the whole walk is ONE fetchSlotImages call, still under one
+	// maxCreativeImageFetchWall and one 64 MiB total, and the caller's context bounds it.
 	demandGenImageFetchTimeout = 20 * time.Second
 
 	// creativeImageFetchDeadlineShare is the divisor applied to the caller's REMAINING
@@ -156,8 +157,9 @@ const (
 	// no deadline — a background reconcile, a test harness, any call site that passes
 	// context.Background() — the share does nothing and the bound reverts to the one the
 	// walk implies: 25 images per creative — and one create's walk can cover up to
-	// maxDemandGenAdGroups creatives — times demandGenImageFetchTimeout, which is minutes of
-	// wall time chosen by whoever supplied the URLs. A host that accepts the
+	// maxDemandGenAdGroups × maxDemandGenAdsPerGroup (25) creatives (#460, #474) — times
+	// demandGenImageFetchTimeout, which is hours of wall time chosen by whoever supplied
+	// the URLs. A host that accepts the
 	// connection and then trickles bytes just under the per-image timeout spends all of
 	// it. The share is still applied when there is a deadline and the SMALLER of the two
 	// wins, so this never widens the caller's budget — it only puts a floor under the
@@ -294,7 +296,7 @@ func validateDemandGenCreative(kind string, in CampaignInput) (demandGenCreative
 	if d.empty() {
 		return demandGenCreativePlan{}, nil
 	}
-	// Refused as a channel capability, exactly as validateAssetPlan refuses
+	// Refused as a channel capability, exactly as validateAssetPlan refuses most
 	// extensions on Demand Gen: a Search campaign takes its creative as RSA copy
 	// and campaign-level extension assets, and DemandGenMultiAssetAdInfo is not a
 	// shape a Search ad group accepts.
@@ -1002,13 +1004,16 @@ func (c *Client) createDemandGenAd(ctx context.Context, adGroupResource, adGroup
 		// The body PARSED, so whatever ids it did carry are real — and they are the only
 		// handle an operator has on account-level assets that may already exist. They go
 		// back WITH the error rather than being dropped alongside it, the same way the
-		// malformed-resource-name arm below returns what it had got to.
+		// malformed-resource-name arm below returns every same-account id it carried.
 		return c.parsedAssetIDs(assetResults), "", fmt.Errorf("google-ads demand gen image asset creation UNCONFIRMED (ad group %s created; 2xx returned %d result(s) for %d image(s) — assets may exist — verify in Google Ads before retrying)", adGroupID, len(assetResults.Results), len(assetOps))
 	}
 
 	// Positional: result i is the asset for images[i], which carries its slot.
 	perSlot := make([][]adImageAsset, len(demandGenImageSlots))
 	assetIDs = make([]string, 0, len(assetOps))
+	// An unusable entry does not stop the walk: every same-account id goes back with the
+	// error, which names the FIRST unusable index.
+	firstBad, badName := -1, ""
 	for i, r := range assetResults.Results {
 		resource := r.ResourceName
 		// assetID checks the kind, the account AND the numeric trailing id, and
@@ -1016,10 +1021,20 @@ func (c *Client) createDemandGenAd(ctx context.Context, adGroupResource, adGroup
 		// would be referenced by the ad and persisted as this campaign's.
 		id := c.assetID(resource)
 		if id == "" {
-			return assetIDs, "", fmt.Errorf("google-ads demand gen image asset creation UNCONFIRMED (ad group %s created; malformed asset resource name %q at index %d — assets may exist — verify in Google Ads before retrying)", adGroupID, resource, i)
+			if firstBad < 0 {
+				firstBad, badName = i, resource
+			}
+			continue
 		}
 		assetIDs = append(assetIDs, id)
 		perSlot[images[i].slot] = append(perSlot[images[i].slot], adImageAsset{Asset: resource})
+	}
+	if firstBad >= 0 {
+		return uniqueIDs(assetIDs), "", fmt.Errorf(
+			"google-ads demand gen image asset creation UNCONFIRMED (ad group %s "+
+				"created; malformed asset resource name %q at index %d — assets may exist "+
+				"— verify in Google Ads before retrying)",
+			adGroupID, badName, firstBad)
 	}
 
 	ad := &demandGenMultiAssetAdInfo{

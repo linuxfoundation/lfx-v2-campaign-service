@@ -193,8 +193,8 @@ func TestGoogleAds_BadBiddingConfigIsPreCreate(t *testing.T) {
 			`a CPC bid is ignored by the "maximize-conversions" bidding strategy`,
 		},
 		"strategy not on this channel": {
-			`{"googleAdsConfig":{"budget":50,"channel":"demand-gen","biddingStrategy":"target-cpa","targetCpa":25}}`,
-			`bidding strategy "target-cpa" is not supported on`,
+			`{"googleAdsConfig":{"budget":50,"channel":"demand-gen","biddingStrategy":"target-roas","targetRoas":4}}`,
+			`bidding strategy "target-roas" is not supported on`,
 		},
 		"conversion action of another account": {
 			`{"googleAdsConfig":{"budget":50,"conversionActions":["customers/9999999999/conversionActions/123456789"]}}`,

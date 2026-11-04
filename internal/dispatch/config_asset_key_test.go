@@ -98,8 +98,9 @@ func TestGoogleAdsConfigNamesItsAssetInEverySlot(t *testing.T) {
 
 // googleAdsConfigWithAssetInEverySlot returns a config naming assetID once in each of the image
 // slots googleAdsCreativeSlots enumerates, with every creative present — the three channels,
-// the Demand Gen video ad and one Demand Gen ad group carrying both creative kinds (#460) — so
-// the enumeration returns all of them.
+// the Demand Gen video ad, one Demand Gen ad group carrying both creative kinds (#460) and an
+// ad list carrying both, on the campaign and on the group (#474) — so the enumeration returns
+// all of them.
 func googleAdsConfigWithAssetInEverySlot(assetID string) googleAdsConfig {
 	cfg := googleAdsConfig{
 		DemandGenCreative:      &googleAdsDemandGenCreativeConfig{},
@@ -107,6 +108,14 @@ func googleAdsConfigWithAssetInEverySlot(assetID string) googleAdsConfig {
 		DisplayCreative:        &googleAdsDisplayCreativeConfig{},
 		DemandGenVideoCreative: &googleAdsDemandGenVideoCreativeConfig{},
 		DemandGenAdGroups: []googleAdsDemandGenAdGroupConfig{{
+			Creative:      &googleAdsDemandGenCreativeConfig{},
+			VideoCreative: &googleAdsDemandGenVideoCreativeConfig{},
+			Ads: []googleAdsDemandGenAdConfig{{
+				Creative:      &googleAdsDemandGenCreativeConfig{},
+				VideoCreative: &googleAdsDemandGenVideoCreativeConfig{},
+			}},
+		}},
+		DemandGenAds: []googleAdsDemandGenAdConfig{{
 			Creative:      &googleAdsDemandGenCreativeConfig{},
 			VideoCreative: &googleAdsDemandGenVideoCreativeConfig{},
 		}},

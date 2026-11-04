@@ -90,8 +90,8 @@ var demandGenVideoLogoSlot = func() imageSlot {
 
 // DemandGenVideoCreative is a Demand Gen VIDEO responsive ad: YouTube videos plus text
 // and a logo. DEMAND GEN ONLY, and an alternative to DemandGenCreative rather than an
-// addition to it — an ad group here carries one ad, image or video, so setting both is
-// refused (see validateDemandGenVideoCreative).
+// addition to it — the pair describes one ad, image or video, so setting both is refused
+// (see validateDemandGenVideoCreative); several ads go in DemandGenAds (#474).
 //
 // Breadcrumbs (display-URL path text) are not offered: there is no field, so nothing is
 // silently dropped; an operator who wants them adds them in the Google Ads UI.
@@ -150,11 +150,11 @@ func validateDemandGenVideoCreative(kind string, in CampaignInput) (demandGenVid
 	return validateDemandGenVideoSpec(in.DemandGenVideoCreative, in.ResolvedImages)
 }
 
-// errDemandGenTwoCreatives refuses an image and a video creative on one ad group. This
-// client builds one ad per Demand Gen ad group and records one AdID for it; a second ad
-// would have no place in the result and no status toggle at launch.
+// errDemandGenTwoCreatives refuses an image and a video creative on one ad. One creative
+// field pair describes ONE ad; several ads on one ad group are named explicitly (#474,
+// DemandGenAds or an ad group's Ads), so each has a label and its own AdIDs entry.
 func errDemandGenTwoCreatives(owner string) error {
-	return fmt.Errorf("google-ads: %s sets both a Demand Gen image creative and a Demand Gen video creative; a Demand Gen ad group here carries one ad, so set one of them (use a second ad group for the other)", owner)
+	return fmt.Errorf("google-ads: %s sets both a Demand Gen image creative and a Demand Gen video creative; one creative pair describes one ad, so set one of them (list several ads in DemandGenAds, or an ad group's Ads, for both)", owner)
 }
 
 // validateDemandGenVideoSpec checks one video creative. The channel fence is the caller's.
@@ -267,11 +267,12 @@ func demandGenVideoAdName(adGroupName string) string {
 
 // validateDemandGenVideoAdName refuses a composed video ad name over Google's Ad.name
 // limit before the budget mutate; Google refuses it only at the ad's mutate, after the
-// campaign and ad group exist.
-func validateDemandGenVideoAdName(adGroupName string) error {
-	name := demandGenVideoAdName(adGroupName)
+// campaign and ad group exist. name is the composed ad.name: demandGenVideoAdName's for
+// the single unnamed ad, "<ad group name> - <label>" for a DemandGenAd (#474). One check
+// and one message for both, so the two paths cannot drift apart.
+func validateDemandGenVideoAdName(name string) error {
 	if n := utf8.RuneCountInString(name); n > maxAdNameRunes {
-		return fmt.Errorf("google-ads Demand Gen video ad name %q is %d characters, over Google's %d; shorten EventName or the ad group's name", capForError(name), n, maxAdNameRunes)
+		return fmt.Errorf("google-ads: Demand Gen video ad name %q is %d characters, over Google's %d; shorten EventName, the ad group's name or the ad's name", capForError(name), n, maxAdNameRunes)
 	}
 	return nil
 }
@@ -384,22 +385,36 @@ func (c *Client) createDemandGenVideoAd(ctx context.Context, adGroupResource, ad
 		// error, as the logo upload's short arm returns parsedAssetIDs. The logo count is
 		// taken first so the message still counts only the logo assets.
 		logoCount := len(assetIDs)
-		assetIDs = append(assetIDs, c.parsedMutateAssetIDs(results)...)
+		assetIDs = uniqueIDs(append(assetIDs, c.parsedMutateAssetIDs(results)...))
 		return assetIDs, "", fmt.Errorf("google-ads demand gen video ad %q creation UNCONFIRMED "+
 			"(ad group %s and %d logo asset(s) created; "+
 			"2xx returned %d result(s) for %d operation(s) — "+
 			"the ad and its assets may exist — verify in Google Ads before retrying)",
 			adName, adGroupID, logoCount, len(results.MutateOperationResponses), len(ops))
 	}
+	// An unusable asset result does not stop the walk (#481 review): a foreign-account video
+	// result followed by this account's call to action must still record the call to action,
+	// so every same-account id goes back, once, with the error naming the FIRST bad index.
+	firstBad := -1
 	for i, r := range results.MutateOperationResponses[:assetOpCount] {
 		id := ""
 		if r.AssetResult != nil {
 			id = c.assetID(r.AssetResult.ResourceName)
 		}
 		if id == "" {
-			return assetIDs, "", fmt.Errorf("google-ads demand gen video ad %q creation UNCONFIRMED (ad group %s created; no usable asset resource name at index %d — the ad and its assets may exist — verify in Google Ads before retrying)", adName, adGroupID, i)
+			if firstBad < 0 {
+				firstBad = i
+			}
+			continue
 		}
 		assetIDs = append(assetIDs, id)
+	}
+	if firstBad >= 0 {
+		return uniqueIDs(assetIDs), "", fmt.Errorf(
+			"google-ads demand gen video ad %q creation UNCONFIRMED (ad group %s "+
+				"created; no usable asset resource name at index %d — the ad and its "+
+				"assets may exist — verify in Google Ads before retrying)",
+			adName, adGroupID, firstBad)
 	}
 	adResult := results.MutateOperationResponses[assetOpCount].AdGroupAdResult
 	adResource := ""

@@ -718,21 +718,34 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 		// The body PARSED, so whatever ids it did carry are real — and they are the only
 		// handle an operator has on account-level assets that may already exist. They go
 		// back WITH the error rather than being dropped alongside it, the same way the
-		// malformed-resource-name arm below returns what it had got to.
+		// malformed-resource-name arm below returns every same-account id it carried.
 		return c.parsedAssetIDs(assetResults), "", 0, fmt.Errorf("google-ads Performance Max asset creation UNCONFIRMED (campaign %s created; 2xx returned %d result(s) for %d asset(s) — assets may exist — verify in Google Ads before retrying)", campaignID, len(assetResults.Results), len(assetOps))
 	}
 	assetResources := make([]string, 0, len(assetOps))
 	assetIDs = make([]string, 0, len(assetOps))
+	// An unusable entry does not stop the walk: every same-account id goes back with the
+	// error, which names the FIRST unusable index.
+	firstBad, badName := -1, ""
 	for i, r := range assetResults.Results {
 		// assetID checks the kind, the ACCOUNT and the numeric trailing id, and returns
 		// "" for anything else — so a wrong-account assets resource can neither be
 		// linked into this campaign's asset group nor persisted as one of its ids.
 		id := c.assetID(r.ResourceName)
 		if id == "" {
-			return assetIDs, "", 0, fmt.Errorf("google-ads Performance Max asset creation UNCONFIRMED (campaign %s created; malformed asset resource name %q at index %d — assets may exist — verify in Google Ads before retrying)", campaignID, r.ResourceName, i)
+			if firstBad < 0 {
+				firstBad, badName = i, r.ResourceName
+			}
+			continue
 		}
 		assetIDs = append(assetIDs, id)
 		assetResources = append(assetResources, r.ResourceName)
+	}
+	if firstBad >= 0 {
+		return uniqueIDs(assetIDs), "", 0, fmt.Errorf(
+			"google-ads Performance Max asset creation UNCONFIRMED (campaign %s "+
+				"created; malformed asset resource name %q at index %d — assets may exist "+
+				"— verify in Google Ads before retrying)",
+			campaignID, badName, firstBad)
 	}
 
 	// Step B: the asset group AND its links, in ONE GoogleAdsService.Mutate (#437).
