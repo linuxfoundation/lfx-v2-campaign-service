@@ -1028,15 +1028,21 @@ func (c *Client) createDemandGenAd(ctx context.Context, adGroupResource, adGroup
 			}
 			continue
 		}
-		// A repeat is unusable too: its operation is unaccounted for. The id is already
-		// recorded once, so it is not appended again.
-		if dup := seen.repeat(id, i); dup != "" {
+		// A repeat of the SAME image is Google returning the existing asset (result_ids.go):
+		// it is referenced in this slot too and its id reported once. Any other repeat is
+		// unusable, its operation unaccounted for.
+		first, dup := seen.reuse(id, i, func(j int) bool {
+			return bytes.Equal(images[j].data, images[i].data)
+		})
+		if dup != "" {
 			if firstBad < 0 {
 				firstBad, badWhy = i, dup
 			}
 			continue
 		}
-		assetIDs = append(assetIDs, id)
+		if first {
+			assetIDs = append(assetIDs, id)
+		}
 		perSlot[images[i].slot] = append(perSlot[images[i].slot], adImageAsset{Asset: resource})
 	}
 	if firstBad >= 0 {

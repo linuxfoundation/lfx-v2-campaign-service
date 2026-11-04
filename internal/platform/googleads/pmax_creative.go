@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -744,15 +745,22 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 			}
 			continue
 		}
-		// A repeat is unusable too: its operation is unaccounted for. The id is already
-		// recorded once, so it is not appended again.
-		if dup := seen.repeat(id, i); dup != "" {
+		// A repeat of the SAME content is Google returning the existing asset (result_ids.go):
+		// it is linked at this position too, under this position's field type, and its id
+		// reported once. Any other repeat is unusable, its operation unaccounted for.
+		first, dup := seen.reuse(id, i, func(j int) bool {
+			return reflect.DeepEqual(pending[j].create, pending[i].create)
+		})
+		if dup != "" {
 			if firstBad < 0 {
 				firstBad, badWhy = i, dup
 			}
 			continue
 		}
-		assetIDs = append(assetIDs, id)
+		if first {
+			assetIDs = append(assetIDs, id)
+		}
+		// Positional, repeats included: link i names the asset at index i.
 		assetResources = append(assetResources, r.ResourceName)
 	}
 	if firstBad >= 0 {

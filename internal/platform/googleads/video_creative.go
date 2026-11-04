@@ -283,15 +283,21 @@ func (c *Client) createVideoAd(ctx context.Context, adGroupResource, adGroupID, 
 			}
 			continue
 		}
-		// A repeat is unusable too: its operation is unaccounted for. The id is already
-		// recorded once, so it is not appended again.
-		if dup := seen.repeat(id, i); dup != "" {
+		// A repeat of the SAME video is Google returning the existing asset (result_ids.go):
+		// it is referenced at this position too and its id reported once. Any other repeat
+		// is unusable, its operation unaccounted for.
+		first, dup := seen.reuse(id, i, func(j int) bool {
+			return plan.videos[j] == plan.videos[i]
+		})
+		if dup != "" {
 			if firstBad < 0 {
 				firstBad, badWhy = i, dup
 			}
 			continue
 		}
-		assetIDs = append(assetIDs, id)
+		if first {
+			assetIDs = append(assetIDs, id)
+		}
 		videos = append(videos, adVideoAsset{Asset: resource})
 	}
 	if firstBad >= 0 {

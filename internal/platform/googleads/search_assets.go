@@ -46,6 +46,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -302,6 +303,7 @@ func (c *Client) createSearchCampaignAssets(
 			campaignID, len(results.MutateOperationResponses), len(ops))
 	}
 	assetIDs := make([]string, 0, len(pending))
+	seen := newResultIDSet(len(pending))
 	for i := range pending {
 		r := results.MutateOperationResponses[i].AssetResult
 		id := ""
@@ -312,6 +314,15 @@ func (c *Client) createSearchCampaignAssets(
 			return ids, fmt.Errorf("google-ads Search campaign assets UNCONFIRMED (campaign %s; "+
 				"result %d is not an asset of this account — verify in Google Ads before "+
 				"retrying)", campaignID, i)
+		}
+		// A repeat of the SAME content is Google returning the existing asset (result_ids.go),
+		// and its link at this index names it under this index's field type. Any other repeat
+		// leaves an operation unaccounted for.
+		if _, dup := seen.reuse(id, i, func(j int) bool {
+			return sameSearchAsset(pending[j].create, pending[i].create)
+		}); dup != "" {
+			return ids, fmt.Errorf("google-ads Search campaign assets UNCONFIRMED (campaign %s; "+
+				"%s — verify in Google Ads before retrying)", campaignID, dup)
 		}
 		// Positional, repeats included: link i is checked against the asset at index i.
 		assetIDs = append(assetIDs, id)
@@ -356,6 +367,13 @@ func (c *Client) searchAssetResultIDs(results googleAdsMutateResponse, n int) []
 		}
 	}
 	return uniqueIDs(out)
+}
+
+// sameSearchAsset reports whether two asset creates carry the same content: the same image
+// bytes or the same text. The temporary resource names always differ, so they are not compared.
+func sameSearchAsset(a, b searchAssetCreate) bool {
+	a.ResourceName, b.ResourceName = "", ""
+	return reflect.DeepEqual(a, b)
 }
 
 // searchAssetStep summarises the linked assets for the step list, naming only what was asked.

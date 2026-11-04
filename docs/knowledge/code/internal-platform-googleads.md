@@ -2488,10 +2488,11 @@ loops, `mutateCampaignNegativeKeywords`, `createAdGroupTargeting`,
 `createPerformanceMaxSignals`), the Search ads loop in `createAdGroupAndAd` and the extension
 asset loop in `createCampaignAssets` return no ids; the creative asset loops (Demand Gen image,
 the Demand Gen video ad's atomic request, Display, Video, Performance Max) treat the repeat as
-an unusable entry and return every valid id once. Not changed, because each already matches
-every result against the exact resource its operation named, so a repeat leaves one expected
-name unmatched: the extension link loop and the Performance Max link count (against the asset
-ids, now distinct), `goalMutateConfirmed`, `checkStatusMutateResults` and the keyword actions.
+an unusable entry and return every valid id once — except the reused asset below. Not
+changed, because each already matches every result against the exact resource its operation
+named, so a repeat leaves one expected name unmatched: the extension link loop and the
+Performance Max link count (each link against the asset and field type at its own position),
+`goalMutateConfirmed`, `checkStatusMutateResults` and the keyword actions.
 The Demand Gen video logo upload sends exactly one operation. `result_ids_test.go` has one
 repeated-id case per changed loop, and each fails with that loop's check removed.
 
@@ -2501,6 +2502,48 @@ repeat is UNCONFIRMED and named as one, keeping the ids confirmed before it
 (`TestCreateCampaign_SharedListRepeatedLinkIsUnconfirmed`). `createSearchCampaignAssets` keeps
 its asset ids POSITIONAL while it matches each campaign link to the asset at its own index, and
 reports them once each through `uniqueIDs`, as the creative asset loops do.
+
+**A reused creative asset is not a repeat (promised on #480's review, fixed on #477).** Google
+returns the EXISTING asset for a duplicate asset create instead of creating a second one
+(Google Ads Developer Blog, "Changes to handling duplicate assets in the Google Ads API",
+2022-03). So one image used in two slots — a square marketing image that is also the square
+logo or the logo — legitimately comes back with ONE asset id at two indexes, and no operation is
+unaccounted for: both asked for that asset. Rejecting it stopped the cascade before the ad or
+asset group, over a correct response. Assets and criteria therefore differ:
+
+- A criterion or a link is created per operation and never shared, so in the criteria and link
+  loops (and the Search ads loop) a repeated id still means an operation is unaccounted for,
+  and `resultIDSet.repeat` keeps it UNCONFIRMED.
+- In the creative asset loops — Display (`createDisplayAd`), Demand Gen image
+  (`createDemandGenAd`), Performance Max (`createPerformanceMaxAssetGroup`), the Demand Gen
+  video ad's atomic request (`createDemandGenVideoAd`), Video (`createVideoAd`) and the #477
+  Search assets (`createSearchCampaignAssets`) — `resultIDSet.reuse` accepts a repeat when the
+  operation at the id's first index sent the SAME content (the image bytes; the YouTube id or
+  call to action; the image or text with the temporary resource name ignored; the Performance
+  Max asset create). The asset is referenced at every slot and field-type position it fills,
+  and its id is reported once (`uniqueIDs`' contract). A repeat for DIFFERENT content is still
+  UNCONFIRMED: no duplicate explains it.
+- The positional matchers already work with a repeated asset: the Performance Max links are
+  built from `assetResources[i]` per position and `isAssetGroupAssetLink` checks each against
+  its own index and field type, so the link count is every link sent; the Search campaign links
+  check `assetIDs[i]` per position. Neither needed a change.
+- The extension asset loop (`createCampaignAssets`) keeps the rejection. The preflight refuses
+  a sitelink, callout or other extension listed twice, and two identical extensions would be
+  two links with the same campaign, asset and field type, which Google refuses; there is no
+  legitimate reuse to accept.
+- On Video and the Demand Gen video ad the preflight already refuses a YouTube id listed twice,
+  so a validated input never reaches the accepted repeat there; the loops follow the same rule
+  so the contract is one.
+
+Tests (`asset_reuse_test.go`): one image fills two slots and the ad or group is created with
+both slots referencing it, on Display, Demand Gen image, Performance Max (both links name the
+asset, under their own field types, and all links are counted), Video, the Demand Gen video
+ad and Search; and a Search repeat for different content stays UNCONFIRMED. The existing
+`result_ids_test.go` cases, every one a repeat for different content, still reject on each
+creative loop and on every criteria and link loop. Mutations: accepting no repeat fails each
+reuse test; accepting every repeat fails each loop's different-content test; recording a
+reused id twice, comparing the Search or Demand Gen video temporary names, or dropping the
+Performance Max link position each fail a reuse test.
 
 ## Bidding strategies and conversion actions (LFXV2-2665)
 

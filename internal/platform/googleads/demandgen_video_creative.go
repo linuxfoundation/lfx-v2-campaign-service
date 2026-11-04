@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -409,14 +410,21 @@ func (c *Client) createDemandGenVideoAd(ctx context.Context, adGroupResource, ad
 			}
 			continue
 		}
-		// A repeat is unusable too; its id is already recorded once.
-		if dup := seen.repeat(id, i); dup != "" {
+		// A repeat of the SAME video or call to action is Google returning the existing asset
+		// (result_ids.go): the ad's references to both temporary names resolved to it, and
+		// its id is reported once. Any other repeat is unusable.
+		first, dup := seen.reuse(id, i, func(j int) bool {
+			return sameDemandGenVideoAsset(ops[j].AssetOperation, ops[i].AssetOperation)
+		})
+		if dup != "" {
 			if firstBad < 0 {
 				firstBad, badWhy = i, dup
 			}
 			continue
 		}
-		assetIDs = append(assetIDs, id)
+		if first {
+			assetIDs = append(assetIDs, id)
+		}
 	}
 	if firstBad >= 0 {
 		return uniqueIDs(assetIDs), "", fmt.Errorf(
@@ -448,4 +456,20 @@ func demandGenVideoCreativeStep(plan demandGenVideoPlan) string {
 		s += ", call to action " + plan.callToAction
 	}
 	return s
+}
+
+// sameDemandGenVideoAsset reports whether two asset operations of the video ad's atomic request
+// create the same content: the same YouTube video or the same call to action. The temporary
+// resource names always differ, so they are not compared.
+func sameDemandGenVideoAsset(a, b *mutateOperation) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	x, ok1 := a.Create.(demandGenVideoAssetCreate)
+	y, ok2 := b.Create.(demandGenVideoAssetCreate)
+	if !ok1 || !ok2 {
+		return false
+	}
+	x.ResourceName, y.ResourceName = "", ""
+	return reflect.DeepEqual(x, y)
 }
