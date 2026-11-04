@@ -2422,6 +2422,27 @@ Left as they are, on purpose:
 - The campaign-asset link loop and the Performance Max link count confirm links, not assets;
   the asset ids are already returned in full.
 
+**A repeated id in a confirmed result (#470 review, fixed on #480).** Every loop above, and
+every criteria loop, checked that a 2xx had one result per operation and that each result was
+a well-formed resource of the right kind, in this account and under the right parent. None
+checked that the results were DISTINCT: n operations create n resources, so a response naming
+one resource twice leaves another operation unaccounted for, and it was confirmed with one id
+recorded where two resources may exist. `result_ids.go` adds the one shared check,
+`resultIDSet.repeat`, and a repeat is UNCONFIRMED, naming both indexes. Each loop keeps its own
+id contract on that path: the criteria loops (`createCampaignTargetingCriteria`, both geo
+loops, `mutateCampaignNegativeKeywords`, `createAdGroupTargeting`,
+`createDemandGenAdGroupTargeting`, `createDisplayAudienceCriteria`,
+`createCampaignPlacementExclusions`, both #475 exclusion loops and
+`createPerformanceMaxSignals`), the Search ads loop in `createAdGroupAndAd` and the extension
+asset loop in `createCampaignAssets` return no ids; the creative asset loops (Demand Gen image,
+the Demand Gen video ad's atomic request, Display, Video, Performance Max) treat the repeat as
+an unusable entry and return every valid id once. Not changed, because each already matches
+every result against the exact resource its operation named, so a repeat leaves one expected
+name unmatched: the extension link loop and the Performance Max link count (against the asset
+ids, now distinct), `goalMutateConfirmed`, `checkStatusMutateResults` and the keyword actions.
+The Demand Gen video logo upload sends exactly one operation. `result_ids_test.go` has one
+repeated-id case per changed loop, and each fails with that loop's check removed.
+
 ## Bidding strategies and conversion actions (LFXV2-2665)
 
 `bidding.go` makes the bidding strategy selectable. Until it existed the choice

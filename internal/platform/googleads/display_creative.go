@@ -358,7 +358,8 @@ func (c *Client) createDisplayAd(ctx context.Context, adGroupResource, adGroupID
 	assetIDs = make([]string, 0, len(assetOps))
 	// An unusable entry does not stop the walk: every same-account id goes back with the
 	// error, which names the FIRST unusable index.
-	firstBad, badName := -1, ""
+	firstBad, badWhy := -1, ""
+	seen := newResultIDSet(len(assetResults.Results))
 	for i, r := range assetResults.Results {
 		resource := r.ResourceName
 		// assetID checks the kind, the account AND the numeric trailing id, returning ""
@@ -367,7 +368,16 @@ func (c *Client) createDisplayAd(ctx context.Context, adGroupResource, adGroupID
 		id := c.assetID(resource)
 		if id == "" {
 			if firstBad < 0 {
-				firstBad, badName = i, resource
+				firstBad = i
+				badWhy = fmt.Sprintf("malformed asset resource name %q at index %d", resource, i)
+			}
+			continue
+		}
+		// A repeat is unusable too: its operation is unaccounted for. The id is already
+		// recorded once, so it is not appended again.
+		if dup := seen.repeat(id, i); dup != "" {
+			if firstBad < 0 {
+				firstBad, badWhy = i, dup
 			}
 			continue
 		}
@@ -377,9 +387,8 @@ func (c *Client) createDisplayAd(ctx context.Context, adGroupResource, adGroupID
 	if firstBad >= 0 {
 		return uniqueIDs(assetIDs), "", fmt.Errorf(
 			"google-ads display image asset creation UNCONFIRMED (ad group %s "+
-				"created; malformed asset resource name %q at index %d — assets may exist "+
-				"— verify in Google Ads before retrying)",
-			adGroupID, badName, firstBad)
+				"created; %s — assets may exist — verify in Google Ads before retrying)",
+			adGroupID, badWhy)
 	}
 
 	ad := &responsiveDisplayAdInfo{

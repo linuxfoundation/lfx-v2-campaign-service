@@ -573,6 +573,7 @@ func (c *Client) createCampaignGeoTargeting(ctx context.Context, campaignResourc
 	}
 
 	ids := make([]string, 0, len(ops))
+	seen := newResultIDSet(len(mr.Results))
 	for i, r := range mr.Results {
 		returnedCampaignID, critID := c.campaignCriterionID(r.ResourceName)
 		if critID == "" || returnedCampaignID == "" {
@@ -580,6 +581,10 @@ func (c *Client) createCampaignGeoTargeting(ctx context.Context, campaignResourc
 		}
 		if returnedCampaignID != campaignID {
 			return nil, fmt.Errorf("google-ads geo targeting UNCONFIRMED (campaign %s; campaignCriterion resource name %q reports a different campaign id %q — verify in Google Ads before retrying)", campaignID, r.ResourceName, returnedCampaignID)
+		}
+		if dup := seen.repeat(critID, i); dup != "" {
+			return nil, fmt.Errorf("google-ads geo targeting UNCONFIRMED "+
+				"(campaign %s; %s — verify in Google Ads before retrying)", campaignID, dup)
 		}
 		ids = append(ids, critID)
 	}
@@ -633,6 +638,7 @@ func (c *Client) createAdGroupGeoTargeting(ctx context.Context, adGroupResource,
 	}
 
 	ids := make([]string, 0, len(ops))
+	seen := newResultIDSet(len(mr.Results))
 	for i, r := range mr.Results {
 		returnedAdGroupID, critID := c.adGroupCriterionID(r.ResourceName)
 		if critID == "" || returnedAdGroupID == "" {
@@ -640,6 +646,10 @@ func (c *Client) createAdGroupGeoTargeting(ctx context.Context, adGroupResource,
 		}
 		if returnedAdGroupID != adGroupID {
 			return nil, fmt.Errorf("google-ads geo targeting UNCONFIRMED (ad group %s; adGroupCriterion resource name %q reports a different ad group id %q — verify in Google Ads before retrying)", adGroupID, r.ResourceName, returnedAdGroupID)
+		}
+		if dup := seen.repeat(critID, i); dup != "" {
+			return nil, fmt.Errorf("google-ads geo targeting UNCONFIRMED "+
+				"(ad group %s; %s — verify in Google Ads before retrying)", adGroupID, dup)
 		}
 		ids = append(ids, critID)
 	}

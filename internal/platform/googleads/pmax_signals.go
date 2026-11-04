@@ -229,6 +229,7 @@ func (c *Client) createPerformanceMaxSignals(ctx context.Context, groupResource,
 		return nil, fmt.Errorf("google-ads Performance Max asset group signals UNCONFIRMED (asset group %s created; 2xx with a malformed or mis-sized response for %d signal(s) — they may exist — verify in Google Ads before retrying)", groupID, len(ops))
 	}
 	ids := make([]string, 0, len(ops))
+	seen := newResultIDSet(len(results.MutateOperationResponses))
 	for i, r := range results.MutateOperationResponses {
 		var name string
 		if r.AssetGroupSignalResult != nil {
@@ -237,6 +238,10 @@ func (c *Client) createPerformanceMaxSignals(ctx context.Context, groupResource,
 		id := c.assetGroupSignalCriterionID(name, groupID)
 		if id == "" {
 			return nil, fmt.Errorf("google-ads Performance Max asset group signals UNCONFIRMED (asset group %s created; result %d names %q, not a signal on that asset group in this account — verify in Google Ads before retrying)", groupID, i, capForError(name))
+		}
+		if dup := seen.repeat(id, i); dup != "" {
+			return nil, fmt.Errorf("google-ads Performance Max asset group signals UNCONFIRMED "+
+				"(asset group %s created; %s — verify in Google Ads before retrying)", groupID, dup)
 		}
 		ids = append(ids, id)
 	}

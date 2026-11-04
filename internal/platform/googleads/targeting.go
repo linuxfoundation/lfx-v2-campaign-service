@@ -495,6 +495,7 @@ func (c *Client) createAdGroupTargeting(ctx context.Context, adGroupResource, ad
 	}
 
 	all := make([]string, 0, len(ops))
+	seen := newResultIDSet(len(mr.Results))
 	for i, r := range mr.Results {
 		returnedAdGroupID, critID := c.adGroupCriterionID(r.ResourceName)
 		if critID == "" || returnedAdGroupID == "" {
@@ -506,6 +507,10 @@ func (c *Client) createAdGroupTargeting(ctx context.Context, adGroupResource, ad
 		// returned criterion ID cannot be trusted enough to persist.
 		if returnedAdGroupID != adGroupID {
 			return adGroupCriteriaIDs{}, fmt.Errorf("google-ads ad group criteria UNCONFIRMED (ad group %s; adGroupCriterion resource name %q reports a different ad group id %q — verify in Google Ads before retrying)", adGroupID, r.ResourceName, returnedAdGroupID)
+		}
+		if dup := seen.repeat(critID, i); dup != "" {
+			return adGroupCriteriaIDs{}, fmt.Errorf("google-ads ad group criteria UNCONFIRMED "+
+				"(ad group %s; %s — verify in Google Ads before retrying)", adGroupID, dup)
 		}
 		all = append(all, critID)
 	}

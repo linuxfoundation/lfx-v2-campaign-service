@@ -985,6 +985,7 @@ func (c *Client) createCampaignTargetingCriteria(ctx context.Context, campaignRe
 	}
 
 	ids := make([]string, 0, len(ops))
+	seen := newResultIDSet(len(mr.Results))
 	for i, r := range mr.Results {
 		returnedCampaignID, critID := c.campaignCriterionID(r.ResourceName)
 		if critID == "" || returnedCampaignID == "" {
@@ -992,6 +993,10 @@ func (c *Client) createCampaignTargetingCriteria(ctx context.Context, campaignRe
 		}
 		if returnedCampaignID != campaignID {
 			return nil, fmt.Errorf("google-ads campaign targeting criteria UNCONFIRMED (campaign %s; campaignCriterion resource name %q reports a different campaign id %q — verify in Google Ads before retrying)", campaignID, r.ResourceName, returnedCampaignID)
+		}
+		if dup := seen.repeat(critID, i); dup != "" {
+			return nil, fmt.Errorf("google-ads campaign targeting criteria UNCONFIRMED "+
+				"(campaign %s; %s — verify in Google Ads before retrying)", campaignID, dup)
 		}
 		ids = append(ids, critID)
 	}

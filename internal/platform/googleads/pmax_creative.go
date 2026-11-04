@@ -729,7 +729,8 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 	assetIDs = make([]string, 0, len(assetOps))
 	// An unusable entry does not stop the walk: every same-account id goes back with the
 	// error, which names the FIRST unusable index.
-	firstBad, badName := -1, ""
+	firstBad, badWhy := -1, ""
+	seen := newResultIDSet(len(assetResults.Results))
 	for i, r := range assetResults.Results {
 		// assetID checks the kind, the ACCOUNT and the numeric trailing id, and returns
 		// "" for anything else — so a wrong-account assets resource can neither be
@@ -737,7 +738,17 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 		id := c.assetID(r.ResourceName)
 		if id == "" {
 			if firstBad < 0 {
-				firstBad, badName = i, r.ResourceName
+				firstBad = i
+				badWhy = fmt.Sprintf("malformed asset resource name %q at index %d",
+					r.ResourceName, i)
+			}
+			continue
+		}
+		// A repeat is unusable too: its operation is unaccounted for. The id is already
+		// recorded once, so it is not appended again.
+		if dup := seen.repeat(id, i); dup != "" {
+			if firstBad < 0 {
+				firstBad, badWhy = i, dup
 			}
 			continue
 		}
@@ -747,9 +758,8 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 	if firstBad >= 0 {
 		return uniqueIDs(assetIDs), "", 0, fmt.Errorf(
 			"google-ads Performance Max asset creation UNCONFIRMED (campaign %s "+
-				"created; malformed asset resource name %q at index %d — assets may exist "+
-				"— verify in Google Ads before retrying)",
-			campaignID, badName, firstBad)
+				"created; %s — assets may exist — verify in Google Ads before retrying)",
+			campaignID, badWhy)
 	}
 
 	// Step B: the asset group AND its links, in ONE GoogleAdsService.Mutate (#437).
