@@ -180,6 +180,20 @@ const (
 	// foundation; that fix removes this gate and this constant.
 	EnvGoogleAdsPMaxAudienceSignalEnabled = "GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED"
 
+	// EnvGoogleAdsSharedNegativeListsEnabled opts a deployment IN to
+	// googleAdsConfig.sharedNegativeKeywordLists (#477): existing shared negative keyword lists
+	// (sharedSets) attached to a Search campaign. Only the exact value "true" enables it; unset
+	// or any other value fails closed, and a create naming one is refused before anything
+	// upstream exists.
+	//
+	// Default-off for the reason EnvGoogleAdsDemandGenAudienceEnabled is (#468): the only
+	// ownership check is ACCOUNT-scoped, so on the shared LF Google Ads customer a project could
+	// attach another foundation's shared list. searchAssets (the caller's own images and text,
+	// created as new assets) names no account resource and is not gated. Keep it off until
+	// this service can scope a shared set to the calling foundation; that fix removes this gate
+	// and this constant.
+	EnvGoogleAdsSharedNegativeListsEnabled = "GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any

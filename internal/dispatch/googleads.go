@@ -686,6 +686,19 @@ func googleAdsPMaxAudienceSignalEnabled() bool {
 	return os.Getenv(constants.EnvGoogleAdsPMaxAudienceSignalEnabled) == "true"
 }
 
+// googleAdsSharedNegativeListsEnabled reports whether this deployment opted in to
+// googleAdsConfig.sharedNegativeKeywordLists (#477). Read per call, like
+// googleAdsDemandGenAudienceEnabled, and in Dispatch for the same reason: a shared list names an
+// EXISTING sharedSet, and the client checks it against the account only, so on the shared LF
+// customer it would attach another foundation's list to this campaign (#468).
+//
+// searchAssets, the rest of #477, is deliberately outside it: its images and business name are
+// the caller's own content, created as new assets in this campaign, so they name nothing
+// another foundation owns.
+func googleAdsSharedNegativeListsEnabled() bool {
+	return os.Getenv(constants.EnvGoogleAdsSharedNegativeListsEnabled) == "true"
+}
+
 // googleAdsInputDisabled is the refusal for an input a deployment gate keeps off: not-created,
 // so the claim is released, and a domain.PreflightRefusal, so the asynchronous create job
 // copies the sentence verbatim instead of reporting a generic failure. The sentence is
@@ -842,6 +855,14 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return nil, googleAdsInputDisabled("performanceMaxAudienceSignal is",
 			constants.EnvGoogleAdsPMaxAudienceSignalEnabled, "an Audience",
 			"performanceMaxAudienceSignal")
+	}
+	// The shared negative keyword list gate (#477), on the same terms: any non-empty list,
+	// whatever its entries hold and on any channel, so the refusal never depends on the
+	// client's own validation of the values.
+	if len(cfg.SharedNegativeKeywordLists) > 0 && !googleAdsSharedNegativeListsEnabled() {
+		return nil, googleAdsInputDisabled("sharedNegativeKeywordLists is",
+			constants.EnvGoogleAdsSharedNegativeListsEnabled, "a shared set",
+			"sharedNegativeKeywordLists")
 	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {

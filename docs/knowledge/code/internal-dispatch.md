@@ -1223,6 +1223,16 @@ URLs, created as new assets, so none names an existing account resource.
 `TestGoogleAds_PerformanceMaxAudienceSignalGate` and
 `TestGoogleAds_PerformanceMaxAudienceSignalGateLeavesThemesAlone` pin both halves.
 
+`GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED` is the fourth, for #477's
+`sharedNegativeKeywordLists` (`googleAdsSharedNegativeListsEnabled`): unless it is exactly
+`"true"`, `Dispatch` refuses any non-empty list, whatever its entries hold and on any channel,
+right after the Performance Max gate, through the same `googleAdsInputDisabled`. A list names an
+EXISTING shared set, and the client checks it against the account only, so on the shared LF
+customer a project could attach another foundation's list (#468). The client's same-account
+check stays as defence in depth. `searchAssets` is not gated: its images, logo and business name
+are the caller's own content, created as new assets. `TestGoogleAds_SharedNegativeListsGate`
+and `TestGoogleAds_SharedNegativeListsGateLeavesSearchAssetsAlone` pin both halves.
+
 The client refuses the channel rules inside its own preflight,
 before its first mutate, and `Dispatch` validates unconditionally (including on the adoption
 path), so both paths already refuse in one place. A second copy in the adapter could only

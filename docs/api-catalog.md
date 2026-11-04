@@ -1168,6 +1168,15 @@ sharedNegativeKeywordLists?:    — OPTIONAL EXISTING shared negative keyword li
                                   keeps the campaign (partial result), and an ambiguous or
                                   mismatched response is UNCONFIRMED.
 
+                                  The account check is ACCOUNT-scoped, not foundation-scoped, and is
+                                  not tenancy protection: on the shared LF Google Ads customer a
+                                  project could name another foundation's shared list (#468). So
+                                  the field is OFF by default: unless the deployment sets
+                                  GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED to exactly "true", a
+                                  create naming any list is refused before the budget mutate,
+                                  whatever the value and whatever the `channel`. `searchAssets`
+                                  (the caller's own images and text) is not gated.
+
                                   SEARCH ONLY, and REFUSED on every other `channel` before any
                                   request. The 2026-11-03 validateOnly probe accepted a
                                   campaignSharedSet naming an existing NEGATIVE_KEYWORDS set and

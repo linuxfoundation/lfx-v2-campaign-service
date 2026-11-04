@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -15,6 +16,8 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // #477: the Search campaign assets and shared negative keyword lists must reach the outbound
@@ -116,6 +119,7 @@ func searchAssetLibrary(t *testing.T) *gaAssetLibrary {
 // The whole chain: stored-asset entries under searchAssets resolve to bytes that reach the
 // googleAds:mutate, linked under the right field types, and the shared lists reach the attach.
 func TestGoogleAds_SearchAssetsAndSharedListsReachTheCascade(t *testing.T) {
+	setGateEnv(t, constants.EnvGoogleAdsSharedNegativeListsEnabled, "true")
 	store := searchAssetLibrary(t)
 	budget := NewAssetReserver(MaxConcurrentVariantAssetBytes, time.Second)
 	d, cap := gaWireDispatcher(t, store, budget)
@@ -166,8 +170,10 @@ func TestGoogleAds_SearchAssetsAndSharedListsReachTheCascade(t *testing.T) {
 }
 
 // Both fields are refused before the budget on every channel but Search, and another account's
-// shared set and an over-long name are refused before the budget on Search.
+// shared set and an over-long name are refused before the budget on Search. The shared-list
+// gate is ON here, so these are the client's own checks, kept as defence in depth.
 func TestGoogleAds_SearchAssetFieldsAreRefusedBeforeAnyCreate(t *testing.T) {
+	setGateEnv(t, constants.EnvGoogleAdsSharedNegativeListsEnabled, "true")
 	const (
 		searchOnly   = "supported on Search campaigns only"
 		listsRefused = "shared negative keyword lists are not supported"
@@ -311,5 +317,120 @@ func TestGoogleAdsSnapshotConfig_SanitizesTheSearchAssets(t *testing.T) {
 	}
 	if snapshot.SearchAssets.BusinessName != "Linux Foundation" {
 		t.Errorf("business name = %q, want it kept", snapshot.SearchAssets.BusinessName)
+	}
+}
+
+// sharedListsConfig is a create on channel naming one shared negative keyword list, with extra
+// merged into the config.
+func sharedListsConfig(t *testing.T, channel string, lists []string,
+	extra map[string]any) json.RawMessage {
+	t.Helper()
+	cfg := map[string]any{
+		"budget": 50, "channel": channel, "sharedNegativeKeywordLists": lists,
+	}
+	for k, v := range extra {
+		cfg[k] = v
+	}
+	raw, err := json.Marshal(map[string]any{"googleAdsConfig": cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+// sharedNegativeKeywordLists names existing shared sets, checked against the account only, so it
+// sits behind GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED (#468): anything but exactly "true" refuses
+// any non-empty list, on any channel, before any request.
+func TestGoogleAds_SharedNegativeListsGate(t *testing.T) {
+	own := []string{gaSharedSet}
+	cases := []struct {
+		name, env, channel string
+		lists              []string
+	}{
+		{"unset", unsetEnv, "search", own},
+		{"empty", "", "search", own},
+		{"false", "false", "search", own},
+		{"wrong case", "TRUE", "search", own},
+		{"leading space", " true", "search", own},
+		{"blank entry", "", "search", []string{"  "}},
+		{"off search", "", "demand-gen", own},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setGateEnv(t, constants.EnvGoogleAdsSharedNegativeListsEnabled, tc.env)
+			opts, cap := targetingServers(t)
+			conn := fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}
+			d := NewGoogleAdsDispatcher(conn, identityEncryptor{}, opts...)
+			cfg := sharedListsConfig(t, tc.channel, tc.lists, nil)
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+			if err == nil {
+				t.Fatal("expected the dispatch to be refused while the gate is off")
+			}
+			for _, want := range []string{
+				"sharedNegativeKeywordLists is disabled on this deployment",
+				constants.EnvGoogleAdsSharedNegativeListsEnabled, "#468",
+				"omit sharedNegativeKeywordLists",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %v, want it to contain %q", err, want)
+				}
+			}
+			var pce *preCreateError
+			if !errors.As(err, &pce) {
+				t.Errorf("error = %v, want a not-created error so the claim is released", err)
+			}
+			got := service.DispatchFailureMessage(model.ProviderGoogleAds, err, true)
+			if got != err.Error() {
+				t.Errorf("job message = %q, want the gate's own sentence %q", got, err.Error())
+			}
+			if camp != nil {
+				t.Errorf("nothing may be created for a refused input, got %+v", camp)
+			}
+			cap.mu.Lock()
+			defer cap.mu.Unlock()
+			if cap.sawBudget || len(cap.campaigns) != 0 || len(cap.sharedSets) != 0 {
+				t.Error("the refusal must happen BEFORE any request")
+			}
+		})
+	}
+
+	// Exactly "true" lets the same list through to the cascade's attach.
+	t.Run("exactly true", func(t *testing.T) {
+		setGateEnv(t, constants.EnvGoogleAdsSharedNegativeListsEnabled, "true")
+		opts, cap := targetingServers(t)
+		conn := fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}
+		d := NewGoogleAdsDispatcher(conn, identityEncryptor{}, opts...)
+		cfg := sharedListsConfig(t, "search", own, nil)
+		if _, err := d.Dispatch(context.Background(), testBrief(),
+			model.ProviderGoogleAds, cfg); err != nil {
+			t.Fatalf("Dispatch: %v", err)
+		}
+		cap.mu.Lock()
+		defer cap.mu.Unlock()
+		if len(cap.sharedSets) != 1 ||
+			!strings.Contains(string(cap.sharedSets[0]), `"sharedSet":"`+gaSharedSet+`"`) {
+			t.Errorf("campaignSharedSets bodies = %s, want one naming sharedSets/501",
+				cap.sharedSets)
+		}
+	})
+}
+
+// The gate leaves searchAssets alone: with it unset, a business name reaches the cascade.
+func TestGoogleAds_SharedNegativeListsGateLeavesSearchAssetsAlone(t *testing.T) {
+	setGateEnv(t, constants.EnvGoogleAdsSharedNegativeListsEnabled, unsetEnv)
+	opts, cap := targetingServers(t)
+	conn := fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}
+	d := NewGoogleAdsDispatcher(conn, identityEncryptor{}, opts...)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"search",` +
+		`"searchAssets":{"businessName":"Linux Foundation"}}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(),
+		model.ProviderGoogleAds, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	cap.mu.Lock()
+	defer cap.mu.Unlock()
+	if len(cap.googleAdsMutates) != 1 ||
+		!strings.Contains(string(cap.googleAdsMutates[0]), `"text":"Linux Foundation"`) {
+		t.Errorf("googleAds:mutate bodies = %s, want the business name", cap.googleAdsMutates)
 	}
 }

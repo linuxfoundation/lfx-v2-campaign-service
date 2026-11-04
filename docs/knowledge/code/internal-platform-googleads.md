@@ -2032,7 +2032,12 @@ before the budget mutate, and refused on every channel but Search.
   negative keywords. Confirmed shared set ids land in
   `CampaignResult.SharedNegativeKeywordListIDs`; a result that does not name
   `<campaignId>~<sharedSetId>` for the operation at its index is UNCONFIRMED and keeps the
-  ids matched before it.
+  ids matched before it. That account check is ACCOUNT-scoped, not foundation-scoped: on the
+  shared LF Google Ads customer a project could name another foundation's list (#468). So
+  the dispatch adapter refuses any non-empty `sharedNegativeKeywordLists`, on any channel and
+  before the budget, unless `GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED` is exactly `"true"`;
+  the chart sets it to `"false"`. The client's own same-account check stays as defence in
+  depth. `searchAssets` names no account resource and is not gated.
 - `googleAdsMutateOperation` gained the `assetOperation` and `campaignAssetOperation` arms
   and `googleAdsMutateResponse` the `assetResult` and `campaignAssetResult` arms.
 
