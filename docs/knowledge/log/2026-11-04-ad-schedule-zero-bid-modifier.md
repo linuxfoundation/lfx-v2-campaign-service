@@ -9,10 +9,14 @@ raised it on lfx-self-serve #5088, whose targeting panel could send a −100% sc
 adjustment as 0.
 
 `validateBidModifier` now takes an `allowZero` argument, and the 0.1..10.0 range stays one
-shared rule. Schedules pass `false`: a 0 is refused before any Google Ads request with
-`ad schedule <i> bid modifier 0 must be between 0.1 and 10 (Google has no 0 opt-out here);
-omit BidModifier to serve at the normal bid, or leave the interval out to stop serving then`.
-Devices pass `true` and keep 0 as the exclusion. Those are the only two callers.
+shared rule, with a generic `<noun> bid modifier <v> must be between 0.1 and 10` message.
+Schedules pass `false`, so a 0 is refused before any Google Ads request, and
+`validateAdSchedules` appends `adScheduleZeroHint` to that refusal only when the value is 0:
+omit BidModifier to serve at the normal bid in that window; to stop serving in it, remove the
+interval and keep at least one other. "Remove the interval" alone would be wrong for a
+one-interval schedule, because an empty schedule serves around the clock — there is no
+schedule-level "never serve". Devices pass `true` and keep 0 as the exclusion. Those are the
+only two callers.
 
 Unchanged: Demand Gen still refuses any schedule modifier, with its own message, before the
 range check runs. `validateBiddingPlan`'s smart-bidding arm still keys on a non-zero device

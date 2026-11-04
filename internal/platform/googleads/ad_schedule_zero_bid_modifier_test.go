@@ -140,3 +140,45 @@ func TestCriteriaPlan_DemandGenScheduleRulesUnchanged(t *testing.T) {
 		t.Fatalf("an unmodified schedule and a device exclusion must still pass on Demand Gen: %v", err)
 	}
 }
+
+// A schedule of ONE interval whose modifier is 0 is the case "remove the interval" alone
+// gets wrong: an empty schedule list serves around the clock, not never. The refusal must
+// say to keep at least one other interval, and why.
+func TestValidateAdSchedules_SingleZeroIntervalHintKeepsAnotherInterval(t *testing.T) {
+	_, _, err := validateAdSchedules([]AdSchedule{
+		{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17, BidModifier: floatPtr(0)},
+	})
+	if err == nil {
+		t.Fatal("a lone 0 ad-schedule bid modifier must be refused")
+	}
+	for _, want := range []string{
+		"ad schedule 0 bid modifier 0 must be between 0.1 and 10",
+		"omit BidModifier to serve at the normal bid in that window",
+		"remove the interval and keep at least one other",
+		"an empty schedule serves around the clock",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to contain %q", err, want)
+		}
+	}
+}
+
+// Only a 0 gets the zero hint. Any other out-of-range schedule modifier is an ordinary
+// range error, and telling that caller about a 0 opt-out would be advice about a value
+// they never wrote.
+func TestValidateAdSchedules_OutOfRangeNonZeroGetsNoZeroHint(t *testing.T) {
+	for _, modifier := range []float64{15, 0.05, -1} {
+		_, _, err := validateAdSchedules([]AdSchedule{
+			{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17, BidModifier: floatPtr(modifier)},
+		})
+		if err == nil {
+			t.Fatalf("modifier %v must be refused", modifier)
+		}
+		if !strings.Contains(err.Error(), "must be between 0.1 and 10") {
+			t.Errorf("modifier %v: err = %v, want the generic range message", modifier, err)
+		}
+		if strings.Contains(err.Error(), adScheduleZeroHint) || strings.Contains(err.Error(), "no 0 opt-out") {
+			t.Errorf("modifier %v: err = %v, must not carry the zero hint", modifier, err)
+		}
+	}
+}

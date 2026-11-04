@@ -1449,8 +1449,10 @@ adSchedules?:                   — OPTIONAL dayparting (LFXV2-2665): the interv
                                   CampaignCriterion contract admits only 0.1..10.0 for an ad-schedule
                                   modifier and reserves 0 for a DEVICE exclusion, so a 0 would fail
                                   the criteria mutate after the budget and campaign exist. Omit
-                                  `bidModifier` to serve at the normal bid; leave the interval out
-                                  to stop serving then.
+                                  `bidModifier` to serve at the normal bid in that window; to stop
+                                  serving in it, remove the interval and keep at least one other
+                                  (an empty schedule serves around the clock — there is no
+                                  schedule-level "never serve").
 
                                   Omitted/empty, no schedule criteria are created and the campaign is
                                   eligible around the clock. Supplying ANY interval restricts the

@@ -242,8 +242,9 @@ type AdSchedule struct {
 	// which is the ordinary case. When set it must be 0.1..10.0: unlike a device, a
 	// schedule has no 0 opt-out (Google refuses it), so an explicit 0 is refused
 	// before the budget rather than read as "no adjustment" — the caller who wrote
-	// it meant "do not serve then", and the way to say that is to leave the
-	// interval out.
+	// it meant "do not serve then", and the way to say that is to remove the interval
+	// while keeping at least one other (an empty schedule serves around the clock;
+	// see adScheduleZeroHint).
 	BidModifier *float64
 }
 
@@ -548,7 +549,13 @@ func validateAdSchedules(schedules []AdSchedule) ([]adScheduleInfo, []*float64, 
 		if s.BidModifier != nil {
 			// allowZero false: Google takes 0.1..10.0 on an ad schedule and has no 0
 			// opt-out there, so a 0 would fail the criteria mutate after the budget.
+			// Only a 0 gets adScheduleZeroHint: the caller who wrote it meant "do not
+			// serve then", which a schedule says differently; any other out-of-range
+			// value gets the plain range message.
 			if err := validateBidModifier(fmt.Sprintf("ad schedule %d", i), *s.BidModifier, false); err != nil {
+				if *s.BidModifier == 0 {
+					return nil, nil, fmt.Errorf("%w; %s", err, adScheduleZeroHint)
+				}
 				return nil, nil, err
 			}
 		}
@@ -644,6 +651,12 @@ func validateDeviceBidModifiers(kind string, devices []DeviceBidModifier) ([]dev
 	return out, mods, nil
 }
 
+// adScheduleZeroHint is appended to the refusal of a 0 ad-schedule bid modifier, and
+// only to that one. "Remove the interval" alone would be wrong advice for a schedule
+// of one interval: an EMPTY schedule list creates no schedule criteria, so the
+// campaign serves around the clock rather than never.
+const adScheduleZeroHint = "an ad schedule has no 0 opt-out (0 excludes a device, not a window): omit BidModifier to serve at the normal bid in that window; to stop serving in it, remove the interval and keep at least one other (an empty schedule serves around the clock — there is no schedule-level \"never serve\")"
+
 // validateBidModifier mirrors Google's own rule: within 0.1..10.0, plus exactly 0
 // (the -100% opt-out) where allowZero says the criterion takes one. Only a DEVICE
 // does; an ad schedule passes false, because Google refuses a 0 schedule modifier
@@ -656,7 +669,7 @@ func validateBidModifier(noun string, modifier float64, allowZero bool) error {
 	}
 	if !allowZero {
 		if modifier < minBidModifier || modifier > maxBidModifier {
-			return fmt.Errorf("google-ads: %s bid modifier %v must be between %v and %v (Google has no 0 opt-out here); omit BidModifier to serve at the normal bid, or leave the interval out to stop serving then", noun, modifier, minBidModifier, maxBidModifier)
+			return fmt.Errorf("google-ads: %s bid modifier %v must be between %v and %v", noun, modifier, minBidModifier, maxBidModifier)
 		}
 		return nil
 	}
