@@ -725,8 +725,9 @@ func TestGoogleAdsMappers_EmptyInputStaysNil(t *testing.T) {
 }
 
 // The bid-modifier pointer must be carried, not copied through a value: an absent
-// modifier and an explicit 0 mean opposite things (no adjustment vs the -100%
-// opt-out), and a value-typed hop would collapse them.
+// modifier means "no adjustment" and an explicit 0 is a value the client REFUSES on
+// an ad schedule (Google has no 0 opt-out there), and a value-typed hop would collapse
+// them — either failing every unadjusted interval or hiding the caller's 0.
 func TestGoogleAdsAdSchedules_CarriesTheBidModifierPointer(t *testing.T) {
 	zero := 0.0
 	out := googleAdsAdSchedules([]googleAdsAdScheduleConfig{

@@ -155,18 +155,33 @@ func TestValidateAdSchedules_RejectsMalformedIntervals(t *testing.T) {
 	}
 }
 
-// 0 is the -100% opt-out and is NOT the same as "no modifier": both must be
-// accepted, and they must stay distinguishable all the way to the wire.
-func TestValidateAdSchedules_ZeroBidModifierIsNotUnset(t *testing.T) {
-	_, mods, err := validateAdSchedules([]AdSchedule{
+// An ad schedule has no 0 opt-out: Google's CampaignCriterion contract admits only
+// 0.1..10.0 for a schedule bid modifier and reserves 0 for a device exclusion, so a 0
+// here would fail the criteria mutate after the budget exists. It is refused, naming
+// the interval and the escape; an UNSET modifier is still "no adjustment" and stays nil.
+func TestValidateAdSchedules_ZeroBidModifierIsRefusedNotUnset(t *testing.T) {
+	_, _, err := validateAdSchedules([]AdSchedule{
+		{DayOfWeek: "TUESDAY", StartHour: 9, EndHour: 17},
 		{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17, BidModifier: floatPtr(0)},
+	})
+	if err == nil {
+		t.Fatal("a 0 ad-schedule bid modifier must be refused")
+	}
+	for _, want := range []string{"ad schedule 1 bid modifier 0", "omit BidModifier to serve at the normal bid"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to contain %q", err, want)
+		}
+	}
+
+	_, mods, err := validateAdSchedules([]AdSchedule{
+		{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17, BidModifier: floatPtr(minBidModifier)},
 		{DayOfWeek: "TUESDAY", StartHour: 9, EndHour: 17},
 	})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("0.1 is the bottom of Google's schedule range and must be accepted, got %v", err)
 	}
-	if mods[0] == nil || *mods[0] != 0 {
-		t.Errorf("an explicit zero modifier must survive as 0, got %v", mods[0])
+	if mods[0] == nil || *mods[0] != minBidModifier {
+		t.Errorf("the 0.1 modifier must survive as 0.1, got %v", mods[0])
 	}
 	if mods[1] != nil {
 		t.Errorf("an unset modifier must stay nil, got %v", *mods[1])
@@ -190,7 +205,8 @@ func TestValidateAdSchedules_CapsTheList(t *testing.T) {
 // Device bid modifiers
 // ---------------------------------------------------------------------------
 
-// The accepted range is Google's own (0 to opt out, else 0.1..10.0), so both
+// The accepted range is Google's own for a DEVICE (0 to exclude it, else 0.1..10.0 —
+// unlike an ad schedule, which has no 0 opt-out), so both
 // boundaries must be INSIDE it — a guard that refuses its own boundary refuses a
 // create upstream would have taken.
 func TestValidateDeviceBidModifiers_AcceptsGooglesOwnRange(t *testing.T) {

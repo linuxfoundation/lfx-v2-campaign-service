@@ -116,11 +116,14 @@ const maxAdSchedulesPerDay = 6
 // push an unbounded payload into the mutate.
 const maxDemographicExclusions = 20
 
-// Bid-modifier bounds. These are Google's own documented device/schedule bid
-// adjustment range (-100%..+900%), not a broker opinion: 0.1 halves-and-then-some,
-// 10.0 is +900%, and exactly 0 is the "do not serve here at all" opt-out. A value
-// strictly between 0 and minBidModifier is what Google rejects, so this guard
-// mirrors upstream rather than narrowing it.
+// Bid-modifier bounds. 0.1..10.0 (-90%..+900%) is Google's own documented range
+// for a CampaignCriterion bid modifier, not a broker opinion, and it is the ONE
+// range rule both criteria share. Exactly 0 is an extra value only a DEVICE
+// criterion takes — the "do not serve on this device" exclusion. An AD SCHEDULE
+// modifier has no such opt-out: Google's CampaignCriterion contract admits only
+// 0.1..10.0 there, so a 0 schedule modifier fails the criteria mutate after the
+// budget and campaign exist. validateBidModifier takes that difference as its
+// allowZero argument rather than each caller restating the range.
 const (
 	minBidModifier = 0.1
 	maxBidModifier = 10.0
@@ -233,10 +236,15 @@ type AdSchedule struct {
 	StartMinute int
 	EndHour     int
 	EndMinute   int
-	// BidModifier is a POINTER because 0 is a meaningful value here — it is the
-	// -100% opt-out — so it cannot double as "unset" the way CampaignInput.CPCBid's
-	// zero does. nil means the interval restricts WHEN the campaign serves without
-	// changing what it bids, which is the ordinary case.
+	// BidModifier is a POINTER so that "unset" stays distinct from an explicit 0,
+	// which it cannot be the way CampaignInput.CPCBid's zero is. nil means the
+	// interval restricts WHEN the campaign serves without changing what it bids,
+	// which is the ordinary case. When set it must be 0.1..10.0: unlike a device, a
+	// schedule has no 0 opt-out (Google refuses it), so an explicit 0 is refused
+	// before the budget rather than read as "no adjustment" — the caller who wrote
+	// it meant "do not serve then", and the way to say that is to remove the interval
+	// while keeping at least one other (an empty schedule serves around the clock;
+	// see adScheduleZeroHint).
 	BidModifier *float64
 }
 
@@ -539,7 +547,15 @@ func validateAdSchedules(schedules []AdSchedule) ([]adScheduleInfo, []*float64, 
 			return nil, nil, fmt.Errorf("google-ads: ad schedule %d ends at 24:%02d, past the end of the day (end hour 24 admits only minute 0)", i, s.EndMinute)
 		}
 		if s.BidModifier != nil {
-			if err := validateBidModifier(fmt.Sprintf("ad schedule %d", i), *s.BidModifier); err != nil {
+			// allowZero false: Google takes 0.1..10.0 on an ad schedule and has no 0
+			// opt-out there, so a 0 would fail the criteria mutate after the budget.
+			// Only a 0 gets adScheduleZeroHint: the caller who wrote it meant "do not
+			// serve then", which a schedule says differently; any other out-of-range
+			// value gets the plain range message.
+			if err := validateBidModifier(fmt.Sprintf("ad schedule %d", i), *s.BidModifier, false); err != nil {
+				if *s.BidModifier == 0 {
+					return nil, nil, fmt.Errorf("%w; %s", err, adScheduleZeroHint)
+				}
 				return nil, nil, err
 			}
 		}
@@ -625,7 +641,8 @@ func validateDeviceBidModifiers(kind string, devices []DeviceBidModifier) ([]dev
 			return nil, nil, fmt.Errorf("google-ads: device %s appears more than once in the device bid modifiers — Google accepts one criterion per device, and the second value would be the one silently dropped", device)
 		}
 		seen[device] = struct{}{}
-		if err := validateBidModifier(fmt.Sprintf("device bid modifier %d", i), d.BidModifier); err != nil {
+		// allowZero true: 0 is the device exclusion Google honours.
+		if err := validateBidModifier(fmt.Sprintf("device bid modifier %d", i), d.BidModifier, true); err != nil {
 			return nil, nil, err
 		}
 		out = append(out, deviceInfo{Type: device})
@@ -634,13 +651,27 @@ func validateDeviceBidModifiers(kind string, devices []DeviceBidModifier) ([]dev
 	return out, mods, nil
 }
 
-// validateBidModifier mirrors Google's own rule: exactly 0 (the -100% opt-out) or
-// within 0.1..10.0. NaN/Inf are rejected first, because every ordered comparison
-// against NaN is false and a bare range check would let them through to a paid
-// campaign.
-func validateBidModifier(noun string, modifier float64) error {
+// adScheduleZeroHint is appended to the refusal of a 0 ad-schedule bid modifier, and
+// only to that one. "Remove the interval" alone would be wrong advice for a schedule
+// of one interval: an EMPTY schedule list creates no schedule criteria, so the
+// campaign serves around the clock rather than never.
+const adScheduleZeroHint = "an ad schedule has no 0 opt-out (0 excludes a device, not a window): omit BidModifier to serve at the normal bid in that window; to stop serving in it, remove the interval and keep at least one other (an empty schedule serves around the clock — there is no schedule-level \"never serve\")"
+
+// validateBidModifier mirrors Google's own rule: within 0.1..10.0, plus exactly 0
+// (the -100% opt-out) where allowZero says the criterion takes one. Only a DEVICE
+// does; an ad schedule passes false, because Google refuses a 0 schedule modifier
+// at the criteria mutate, after the budget and campaign exist. NaN/Inf are
+// rejected first, because every ordered comparison against NaN is false and a bare
+// range check would let them through to a paid campaign.
+func validateBidModifier(noun string, modifier float64, allowZero bool) error {
 	if math.IsNaN(modifier) || math.IsInf(modifier, 0) {
 		return fmt.Errorf("google-ads: %s bid modifier must be a finite number, got %v", noun, modifier)
+	}
+	if !allowZero {
+		if modifier < minBidModifier || modifier > maxBidModifier {
+			return fmt.Errorf("google-ads: %s bid modifier %v must be between %v and %v", noun, modifier, minBidModifier, maxBidModifier)
+		}
+		return nil
 	}
 	if modifier == 0 {
 		return nil
