@@ -763,6 +763,7 @@ func TestCreateDemandGenCampaign_WithCreative(t *testing.T) {
 	if !strings.Contains(assetReq, `"imageAsset"`) || !strings.Contains(assetReq, `"data"`) {
 		t.Errorf("asset mutate is not an image asset create: %s", assetReq)
 	}
+	assertImageAssetsNamed(t, assetReq)
 	wantPrefix := base64.StdEncoding.EncodeToString(pngOf(t, 1200, 628))[:32]
 	if !strings.Contains(assetReq, wantPrefix) {
 		t.Error("asset mutate does not carry the fetched image bytes")

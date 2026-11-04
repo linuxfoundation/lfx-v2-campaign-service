@@ -210,6 +210,7 @@ func TestCreateDisplayCampaign_HappyPath(t *testing.T) {
 	if strings.Contains(assetReq, srv.URL) {
 		t.Error("the asset mutate sent the image URL; Google cannot fetch it")
 	}
+	assertImageAssetsNamed(t, assetReq)
 	wantPrefix := base64.StdEncoding.EncodeToString(images["/m.png"])[:32]
 	if !strings.Contains(assetReq, wantPrefix) {
 		t.Error("asset mutate does not carry the fetched image bytes")

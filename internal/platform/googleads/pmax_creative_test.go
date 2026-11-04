@@ -4,6 +4,7 @@
 package googleads
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -469,18 +470,20 @@ func TestBuildPerformanceMaxAssets_OrderAndFieldTypes(t *testing.T) {
 	}
 }
 
-// An image asset carries NO name, and in particular never the source URL.
+// An image asset carries the name built from its BYTES, and in particular never the source
+// URL (#491).
 //
-// The obvious label — slot plus source URL — ships the caller's creative URL to
-// Google as a permanent, human-visible asset label in the shared Foundation ad
-// account. That is the same value sanitizeSnapshotURL reduces to scheme+host before
-// this service may write it to its own database, so shipping it whole to a third
-// party redacts going in and exports going out. The URL is also unbounded and
-// caller-controlled, in a payload sent AFTER the campaign exists.
+// Google refuses an image asset with no name (NAME_REQUIRED_FOR_ASSET_TYPE), so one has to be
+// sent. The obvious label — slot plus source URL — ships the caller's creative URL to Google
+// as a permanent, human-visible asset label in the shared Foundation ad account. That is the
+// same value sanitizeSnapshotURL reduces to scheme+host before this service may write it to
+// its own database, so shipping it whole to a third party redacts going in and exports going
+// out. The URL is also unbounded and caller-controlled, in a payload sent AFTER the campaign
+// exists.
 //
 // Pinned on the URL's QUERY specifically: a signed CDN URL is the case where the
 // query string IS the credential.
-func TestBuildPerformanceMaxAssets_ImageAssetsCarryNoName(t *testing.T) {
+func TestBuildPerformanceMaxAssets_ImageAssetsNamedFromTheirBytes(t *testing.T) {
 	plan, err := validatePerformanceMaxCreative(campaignKindPerformanceMax, pmaxInput(fullPMaxCreative()))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -492,18 +495,26 @@ func TestBuildPerformanceMaxAssets_ImageAssetsCarryNoName(t *testing.T) {
 	}
 
 	assets := buildPerformanceMaxAssets(plan, images)
+	named := 0
 	for i, a := range assets {
 		if a.create.ImageAsset == nil {
+			if a.create.Name != "" {
+				t.Errorf("non-image asset %d carries a name %q", i, a.create.Name)
+			}
 			continue
 		}
-		if a.create.Name != "" {
-			t.Errorf("image asset %d carries a name %q; Google names it, and any name we build from caller input is a leak or an unbounded string", i, a.create.Name)
+		named++
+		data, _ := base64.StdEncoding.DecodeString(a.create.ImageAsset.Data)
+		if want := imageAssetName(data); a.create.Name != want {
+			t.Errorf("image asset %d name = %q, want %q", i, a.create.Name, want)
 		}
 	}
+	if named != len(images) {
+		t.Errorf("found %d image assets, want %d", named, len(images))
+	}
 
-	// Against the MARSHALLED operation, not against the name field: the name is already
-	// asserted empty above, so a second check on it can never fire. What has to be true
-	// is that the signed query string reaches Google in NO field — a description, a
+	// Against the MARSHALLED operation, not only the name field: what has to be true is
+	// that the signed query string reaches Google in NO field — a description, a
 	// tracking template or a future field added beside them would carry it just as far.
 	// pendingAsset.create is unexported, so the slice itself marshals to [{},{}] — the
 	// creates are marshalled individually, which is what actually goes on the wire.

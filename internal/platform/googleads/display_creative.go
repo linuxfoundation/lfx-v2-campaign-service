@@ -327,6 +327,7 @@ func (c *Client) createDisplayAd(ctx context.Context, adGroupResource, adGroupID
 	assetOps := make([]mutateOperation, 0, len(images))
 	for _, img := range images {
 		assetOps = append(assetOps, mutateOperation{Create: demandGenAssetCreate{
+			Name:       imageAssetName(img.data),
 			ImageAsset: imageAssetCreate{Data: base64Image(img.data)},
 		}})
 	}
