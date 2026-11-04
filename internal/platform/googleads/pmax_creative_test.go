@@ -504,7 +504,10 @@ func TestBuildPerformanceMaxAssets_ImageAssetsNamedFromTheirBytes(t *testing.T) 
 			continue
 		}
 		named++
-		data, _ := base64.StdEncoding.DecodeString(a.create.ImageAsset.Data)
+		data, err := base64.StdEncoding.DecodeString(a.create.ImageAsset.Data)
+		if err != nil {
+			t.Fatalf("image asset %d data is not base64: %v", i, err)
+		}
 		if want := imageAssetName(data); a.create.Name != want {
 			t.Errorf("image asset %d name = %q, want %q", i, a.create.Name, want)
 		}

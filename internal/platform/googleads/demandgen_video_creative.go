@@ -223,8 +223,8 @@ type callToActionAssetCreate struct {
 
 // demandGenVideoAssetCreate is an Asset created INSIDE the googleAds:mutate, under a
 // temporary resource name the ad references. Exactly one arm is set. No name is sent:
-// Google requires one only on an image asset (see imageAssetName), and the logo is created
-// separately, by assets:mutate.
+// the 2026-11-05 probes showed Google refusing an unnamed IMAGE asset (see imageAssetName),
+// and the logo, the one image here, is created separately, by assets:mutate.
 type demandGenVideoAssetCreate struct {
 	ResourceName      string                   `json:"resourceName"`
 	YouTubeVideoAsset *youTubeVideoAssetCreate `json:"youtubeVideoAsset,omitempty"`
