@@ -1490,11 +1490,12 @@ excludedParentalStatuses?:        criteria like the two above, because the ad gr
                                   before any request. Both are REFUSED on every other `channel`.
 
                                   On `search` they ride in each ad group's criteria mutate with its
-                                  keywords; on `display` they are one mutate after the ad group is
-                                  created, before the audience criteria (#462). Their ids are in `adGroupDemographicCriteriaIds` (on
-                                  `search` the first ad group's; every group's own are in
-                                  `adGroups[].demographicCriteriaIds`; on `display` its one ad
-                                  group's).
+                                  keywords; on `display` they are one mutate after each ad group is
+                                  created, before its audience criteria (#462), on every
+                                  `displayAdGroups` entry when that list is set (#475). Their ids
+                                  are in `adGroupDemographicCriteriaIds` (the first ad group's on
+                                  both channels; every group's own are in
+                                  `adGroups[].demographicCriteriaIds`).
 
                                   Positive (targeting or observation) demographic criteria are not
                                   added; no probe covered them.
@@ -1803,9 +1804,11 @@ demandGenAdGroups?:             — OPTIONAL several Demand Gen ad groups (#460)
    creative?:                     and every group adds mutates after the campaign exists).
      <demandGenCreative>,
    videoCreative?:                `name` is REQUIRED and a label: the ad group is named
-     <demandGenVideoCreative>,    `<event name> - Display | <name>`; names equal ignoring case
-   ads?: <demandGenAds>}[]        are REFUSED (Google refuses `DUPLICATE_ADGROUP_NAME`, but only
-                                  after the earlier groups exist). Each group takes EXACTLY ONE of
+     <demandGenVideoCreative>,    `<event name> - Display | <name>`, at most 255 characters; names
+   ads?: <demandGenAds>}[]        equal under simple case folding (Go's `strings.EqualFold`, as on
+                                  Search's `adGroups` and `displayAdGroups`) are REFUSED (Google
+                                  refuses `DUPLICATE_ADGROUP_NAME`, but only after the earlier
+                                  groups exist). Each group takes EXACTLY ONE of
                                   `creative` / `videoCreative`, under those fields' rules, or an
                                   `ads` list under `demandGenAds`' rules (#474), and an optional
                                   `audience` under `demandGenAudience`'s, gate included: unless the
@@ -2059,14 +2062,18 @@ displayAdGroups?:               — OPTIONAL several named Display ad groups (#4
                                   Every group's images are fetched in ONE pass before the budget mutate,
                                   under one 64 MiB total for the whole campaign.
 
-                                  Each group's ad group, audience criteria and exclusions are
+                                  Each group's ad group, income and parental exclusions
+                                  (`excludedIncomeRanges` / `excludedParentalStatuses`, applied to
+                                  every group), audience criteria and user-list exclusions are
                                   created in order, then the campaign-level exclusions, then each
                                   group's image assets and ad, so every criteria step runs before
-                                  any ad. The result lists every group in `adGroups` ({name, id,
-                                  adIds, audienceCriteriaIds, excludedAudienceCriteriaIds,
+                                  any ad. Every ad's final URL carries the Display tracking
+                                  (`utm_medium=display`). The result lists every group in
+                                  `adGroups` ({name, id, adIds, demographicCriteriaIds,
+                                  audienceCriteriaIds, excludedAudienceCriteriaIds,
                                   creativeAssetIds}); the scalar `adGroupId`, `adId`,
-                                  `audienceCriteriaIds` and `creativeAssetIds` are the FIRST
-                                  group's. A failure returns what exists: a group whose ad group
+                                  `adGroupDemographicCriteriaIds`, `audienceCriteriaIds` and
+                                  `creativeAssetIds` are the FIRST group's. A failure returns what exists: a group whose ad group
                                   create failed is listed with no id; a failure in the ad pass
                                   leaves that group and every later one listed with its id and no
                                   `adIds`, and the error names the later groups. An ambiguous

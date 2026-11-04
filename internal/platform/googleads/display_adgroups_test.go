@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -180,7 +181,7 @@ func TestValidateDisplayAdGroups_Refusals(t *testing.T) {
 		"off display/search": {campaignKindSearch, withGroups(group("A")),
 			"(a Search campaign takes its own ad-group list, AdGroups)"},
 		"off display/demand gen": {campaignKindDemandGen, withGroups(group("A")),
-			"(a Demand Gen campaign creates one ad group, from DemandGenCreative)"},
+			"(a Demand Gen campaign takes its own ad-group list, DemandGenAdGroups)"},
 		"off display/video": {campaignKindVideo, withGroups(group("A")),
 			"(a Video campaign creates one ad group, from VideoCreative)"},
 		"off display/performance max": {campaignKindPerformanceMax, withGroups(group("A")),
@@ -210,12 +211,12 @@ func TestValidateDisplayAdGroups_Refusals(t *testing.T) {
 			"6 Display ad groups requested, limit 5"},
 		"blank name": {campaignKindDisplay, withGroups(group(" | ")), "Display ad group 1 has no name"},
 		"duplicate name ignoring case and spacing": {campaignKindDisplay, withGroups(group("Retargeting"), group("  RETARGETING ")), "is used more than once"},
-		// Simple case folding, as strings.EqualFold: LONG S folds with s and KELVIN SIGN
-		// with k, which strings.ToLower keeps apart.
+		// Simple case folding, as strings.EqualFold: LONG S folds with s and FINAL SIGMA
+		// with capital sigma, which strings.ToLower keeps apart.
 		"duplicate name under long s": {campaignKindDisplay,
 			withGroups(group("ſale"), group("SALE")), "is used more than once"},
-		"duplicate name under kelvin sign": {campaignKindDisplay,
-			withGroups(group("KubeCon"), group("kubecon")), "is used more than once"},
+		"duplicate name under final sigma": {campaignKindDisplay,
+			withGroups(group("Kubecon\u03c2"), group("KUBECON\u03a3")), "is used more than once"},
 		"over-long name": {campaignKindDisplay, withGroups(group(strings.Repeat("a", 250))),
 			"google-ads: Display ad group 1 name \"" + displayGroupBase + " | " +
 				strings.Repeat("a", 250) + "\" is 290 characters, over Google's limit of 255; " +
@@ -487,6 +488,92 @@ func TestCreateDisplayCampaign_TwoAdGroups(t *testing.T) {
 	}
 }
 
+// Every group's ad carries the Display tracking (#479): the final URL each ad is sent with
+// is tagged utm_source=google and utm_medium=display, on group 2 as on group 1, because
+// every group's ad is built from the one tagged final URL the preflight composes.
+func TestCreateDisplayCampaign_EveryGroupAdIsTagged(t *testing.T) {
+	rig, c, base := newDisplayRig(t, twoDisplayGroupImages(t), nil)
+	_, err := c.CreateDisplayCampaign(context.Background(), twoDisplayGroupInput(base))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	ads := rig.sent("adGroupAds:mutate")
+	if len(ads) != 2 {
+		t.Fatalf("ad mutates = %d, want one per group", len(ads))
+	}
+	for i, body := range ads {
+		var req struct {
+			Operations []struct {
+				Create struct {
+					Ad struct {
+						FinalURLs []string `json:"finalUrls"`
+					} `json:"ad"`
+				} `json:"create"`
+			} `json:"operations"`
+		}
+		if err := json.Unmarshal([]byte(body), &req); err != nil || len(req.Operations) != 1 {
+			t.Fatalf("group %d ad body = %s (%v)", i+1, body, err)
+		}
+		urls := req.Operations[0].Create.Ad.FinalURLs
+		if len(urls) != 1 {
+			t.Fatalf("group %d finalUrls = %v, want one", i+1, urls)
+		}
+		u, err := url.Parse(urls[0])
+		if err != nil {
+			t.Fatalf("group %d finalUrl %q: %v", i+1, urls[0], err)
+		}
+		q := u.Query()
+		if q.Get("utm_medium") != utmMediumDisplay || q.Get("utm_source") != "google" {
+			t.Errorf("group %d finalUrl = %q, want utm_source=google and utm_medium=%s",
+				i+1, urls[0], utmMediumDisplay)
+		}
+	}
+}
+
+// The income-range and parental-status exclusions (#473) go on EVERY named group, each in
+// its own adGroupCriteria mutate after the group and before its audiences, with the ids on
+// the group's AdGroups entry and the scalar field the first group's.
+func TestCreateDisplayCampaign_DemographicsOnEveryGroup(t *testing.T) {
+	rig, c, base := newDisplayRig(t, twoDisplayGroupImages(t), nil)
+	in := twoDisplayGroupInput(base)
+	in.ExcludedIncomeRanges = []string{"INCOME_RANGE_0_50"}
+	in.ExcludedParentalStatuses = []string{"PARENT"}
+	res, err := c.CreateDisplayCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "campaignBudgets:mutate,campaigns:mutate," +
+		"adGroups:mutate,adGroupCriteria:mutate,adGroupCriteria:mutate," +
+		"adGroups:mutate,adGroupCriteria:mutate,adGroupCriteria:mutate,adGroupCriteria:mutate," +
+		"campaignCriteria:mutate,campaignCriteria:mutate," +
+		"assets:mutate,adGroupAds:mutate,assets:mutate,adGroupAds:mutate"
+	if got := rig.ops(); got != want {
+		t.Errorf("mutates =\n  %s\nwant\n  %s", got, want)
+	}
+	criteria := rig.sent("adGroupCriteria:mutate")
+	for _, i := range []int{0, 2} {
+		group := map[int]string{0: "333", 2: "334"}[i]
+		adGroup := `"adGroup":"customers/1234567890/adGroups/` + group + `","negative":true`
+		sameJSON(t, criteria[i], `{"operations":[
+			{"create":{`+adGroup+`,"incomeRange":{"type":"INCOME_RANGE_0_50"}}},
+			{"create":{`+adGroup+`,"parentalStatus":{"type":"PARENT"}}}]}`)
+	}
+	if got := strings.Join(res.AdGroupDemographicCriteriaIDs, ","); got != "800,801" {
+		t.Errorf("AdGroupDemographicCriteriaIDs = %s, want the first group's", got)
+	}
+	if len(res.AdGroups) != 2 ||
+		strings.Join(res.AdGroups[0].DemographicCriteriaIDs, ",") != "800,801" ||
+		strings.Join(res.AdGroups[1].DemographicCriteriaIDs, ",") != "820,821" {
+		t.Errorf("AdGroups demographics = %+v", res.AdGroups)
+	}
+	if steps := strings.Join(res.Steps, "\n"); !strings.Contains(steps,
+		`Ad group exclusions applied: 2 criteria (1 income range exclusion(s); `+
+			`1 parental status exclusion(s)) [ad group "`+
+			displayGroupBase+` | Prospecting"]`) {
+		t.Errorf("steps lack group 2's exclusions:\n%s", steps)
+	}
+}
+
 // Only a group with audiences carries the targetingSetting: a named group with no audience
 // keeps the pre-#462 ad group payload, exclusions or not.
 func TestCreateDisplayCampaign_TargetingSettingPerGroup(t *testing.T) {
@@ -713,21 +800,6 @@ func TestCreateDisplayCampaign_AdGroupsPartialResults(t *testing.T) {
 	}
 }
 
-// displayErrAfterFlagCtx reports Canceled from Err once its flag is set, while its Done
-// channel never fires — so a request already in flight completes, and the cascade's own
-// ctx.Err() check between groups is what sees it.
-type displayErrAfterFlagCtx struct {
-	context.Context
-	flag *atomic.Bool
-}
-
-func (c displayErrAfterFlagCtx) Err() error {
-	if c.flag.Load() {
-		return context.Canceled
-	}
-	return nil
-}
-
 // A context that dies between groups stops the cascade before the next group's mutate —
 // in the ad-group pass and in the ad pass — with what exists reported.
 func TestCreateDisplayCampaign_ContextDoneBetweenGroups(t *testing.T) {
@@ -752,7 +824,8 @@ func TestCreateDisplayCampaign_ContextDoneBetweenGroups(t *testing.T) {
 			})
 			in := twoDisplayGroupInput(base)
 			in.ExcludedPlacements, in.ExcludedAudienceSegments = nil, nil
-			res, err := c.CreateDisplayCampaign(displayErrAfterFlagCtx{Context: context.Background(), flag: &flag}, in)
+			ctx := errAfterFlagCtx{Context: context.Background(), flag: &flag}
+			res, err := c.CreateDisplayCampaign(ctx, in)
 			if err == nil || !strings.Contains(err.Error(), tc.wantSub) {
 				t.Fatalf("err = %v, want %q", err, tc.wantSub)
 			}

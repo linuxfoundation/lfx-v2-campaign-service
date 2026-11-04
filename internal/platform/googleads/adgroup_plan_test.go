@@ -274,12 +274,13 @@ func TestValidateAdGroupPlans_RefusesDuplicateNamesCaseInsensitively(t *testing.
 }
 
 // The duplicate key is simple case folding (adGroupNameKey), the strings.EqualFold
-// relation: LONG S folds with s and KELVIN SIGN with k, where strings.ToLower keeps
-// each pair apart and the duplicate would reach Google.
+// relation: LONG S folds with s and FINAL SIGMA with capital sigma, where strings.ToLower
+// keeps each pair apart and the duplicate would reach Google. (KELVIN SIGN is not a case
+// here: strings.ToLower already maps it to k.)
 func TestValidateAdGroupPlans_RefusesDuplicateNamesUnderSimpleFolding(t *testing.T) {
 	for name, pair := range map[string][2]string{
 		"long s":      {"\u017fale", "SALE"},
-		"kelvin sign": {"\u212aubeCon", "kubecon"},
+		"final sigma": {"Kubecon\u03c2", "KUBECON\u03a3"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			in := sampleInput()
@@ -389,13 +390,14 @@ func TestValidateAdGroupPlans_ComposesTheNameAndBoundsItsLength(t *testing.T) {
 	}
 
 	// The label is the caller's own, so the refusal names the group by position and says
-	// to shorten it — not validateEntityName's "the suffix is fixed".
+	// to shorten it — not validateEntityName's "the suffix is fixed". Search's base is
+	// ComposeName, which carries Project as well as EventName, so the advice names both.
 	long := strings.Repeat("x", maxAdGroupNameRunes)
 	in.AdGroups = []AdGroupSpec{{Name: "Training"}, {Name: long}}
 	_, err = validateAdGroupPlans(campaignKindSearch, in, base)
 	composed := base.name + " | " + long
 	want := fmt.Sprintf("ad group 2 name %q is %d characters, over Google's limit of %d; "+
-		"shorten EventName or this group's name",
+		"shorten Project, EventName or this group's name",
 		composed, utf8.RuneCountInString(composed), maxAdGroupNameRunes)
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %v, want it to contain %q", err, want)

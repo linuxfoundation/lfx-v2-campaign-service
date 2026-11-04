@@ -1942,9 +1942,11 @@ A group's name is a THEME LABEL appended to the composed campaign name, and
 duplicates are refused CASE-INSENSITIVELY: Google's own duplicate check is, and a
 collision surfaces at the mutate, by which point the earlier groups in the list
 already exist. The key is `adGroupNameKey` (`textfold.Key`, the `strings.EqualFold`
-relation, shared with the Display list since #475's review), and an over-long
-composed name is refused by `namedAdGroupNameTooLong`, which names the group by
-position and says to shorten `EventName` or the label. Duplicate ad COPY across two
+relation, shared with the Display list since #475's review and the Demand Gen list since
+#480), and an over-long composed name is refused by `namedAdGroupNameTooLong`, which names
+the group by position and says to shorten `Project`, `EventName` or the label — Search's
+base is `ComposeName`, which carries both caller fields, where the Demand Gen and Display
+bases carry `EventName` alone. Duplicate ad COPY across two
 ads in one group is NOT refused —
 Google accepts it, it is wasteful rather than invalid, and a guard upstream would
 not apply is the expensive kind of wrong.
@@ -2268,9 +2270,12 @@ check, so the dispatch adapter refuses any group's Audience unless
 list (#474) — a named group with no ad cannot serve, and the list has no older callers to
 keep. Names
 are `sanitizeNamePart`ed and appended to the single group's name
-(`<event> - Display | <label>`, as the Search list does); a duplicate ignoring case is
-refused before the budget, because Google's `DUPLICATE_ADGROUP_NAME` arrives after the
-earlier groups exist. With the list, the campaign-level `DemandGenCreative`,
+(`<event> - Display | <label>`, as the Search list does); a duplicate under simple case
+folding (`adGroupNameKey`, shared with the Search and Display lists since #480) is refused
+before the budget, because Google's `DUPLICATE_ADGROUP_NAME` arrives after the earlier
+groups exist, and a composed name over 255 characters is refused by
+`namedAdGroupNameTooLong`, which names the group and says to shorten `EventName` or the
+label. With the list, the campaign-level `DemandGenCreative`,
 `DemandGenVideoCreative` and `DemandGenAudience` must be empty. Geo and languages stay
 campaign-level and are attached to EVERY group: Demand Gen takes both only on the ad group,
 and a group created without them would serve worldwide in every language. The Search
@@ -2982,24 +2987,30 @@ Display ad group (`{adGroup, userList:{userList}, negative:true}`) and on the ca
   canonical form (`userLists/011`), which would otherwise pass its de-dupe and
   `refuseExcludedOverlap` as a second list beside `userLists/11`; Search's
   `validateAudienceSegments` refuses the same for both of its ids. `DisplayAdGroups` off Display
-  is refused with a hint naming that channel's own shape (`offDisplayAdGroupsHint`).
+  is refused with a hint naming that channel's own shape (`adGroupShapeHint`, which the
+  `DemandGenAdGroups` refusal shares since #480, so `DemandGenAdGroups` on Display names
+  `DisplayAdGroups` rather than Search's `AdGroups`).
 - **Preflight.** `validateDisplayAdGroups` runs last in `preflightCampaignKind`. Without the
   list it returns ONE group built from the campaign-level creative and audience lists, named
   `displayAdGroupName`, which keeps that path byte-identical. With it: the campaign-level
   `DisplayCreative` and four audience lists must be empty; each group is named
   `"<event> - Display Network | <label>"`, held to 255 characters (`namedAdGroupNameTooLong`,
-  which Search's list shares, names the group and says to shorten `EventName` or the label) and
-  unique under `adGroupNameKey` — `textfold.Key`, the `strings.EqualFold` relation, also shared
-  with Search, so `ſ`/`s` and KELVIN SIGN/`k` collide where `strings.ToLower` kept them apart;
+  which the Search and Demand Gen lists share, names the group and says to shorten `EventName`
+  or the label) and unique under `adGroupNameKey` — `textfold.Key`, the `strings.EqualFold`
+  relation, also shared with Search and Demand Gen, so `ſ`/`s` and final sigma `ς`/`Σ` collide
+  where `strings.ToLower` kept them apart;
   each list and creative is validated with the group named in the error. `refuseExcludedOverlap`
   refuses a user list a group both targets and excludes, one the campaign excludes while a group
   (or the single group's `AudienceSegments`) targets it, and one excluded at both levels.
 - **Cascade.** `fetchDisplayGroupImages` fetches every group's images in ONE `fetchSlotImages`
   walk before the budget, so the wall-clock budget and the 64 MiB total span the campaign, and
   re-indexes each image to its own creative's slot. After the campaign criteria, per group: the
-  ad group (with `displayAudienceTargetingSetting` only when THAT group has audiences), its
+  ad group (with `displayAudienceTargetingSetting` only when THAT group has audiences), #473's
+  income and parental-status exclusions (the campaign's `ExcludedIncomeRanges` /
+  `ExcludedParentalStatuses`, applied to every group since #480's rebase onto #478), its
   audience criteria, then its exclusions as one atomic `adGroupCriteria:mutate` of negative
-  user lists (`createAdGroupAudienceExclusions`). Then the campaign-level placement exclusions,
+  user lists (`createAdGroupAudienceExclusions`). Every group's ad is built from the one
+  tagged final URL, so each carries #479's `utm_medium=display`. Then the campaign-level placement exclusions,
   then the campaign-level user-list exclusions as one atomic `campaignCriteria:mutate`
   (`createCampaignAudienceExclusions`), then per group the image assets and ad — a second pass,
   so every criteria step still runs before any ad. Why a second pass: the ad is the only step
@@ -3010,8 +3021,9 @@ Display ad group (`{adGroup, userList:{userList}, negative:true}`) and on the ca
   sent explicitly and no status is sent on either exclusion payload. The context is checked
   between groups in both passes.
 - **Result.** With the list, `AdGroups` holds one entry per group, appended BEFORE its mutate
-  (`ID`, `AdIDs`, `AudienceCriteriaIDs`, `ExcludedAudienceCriteriaIDs`, `CreativeAssetIDs`),
-  and the scalar ad group, ad, audience and creative fields are the FIRST group's; without it
+  (`ID`, `AdIDs`, `DemographicCriteriaIDs`, `AudienceCriteriaIDs`,
+  `ExcludedAudienceCriteriaIDs`, `CreativeAssetIDs`), and the scalar ad group, ad,
+  demographic, audience and creative fields are the FIRST group's; without it
   `AdGroups` stays empty, as before. `ExcludedAudienceCriteriaIDs` on the result holds the
   campaign-level exclusions. Group step lines end ` [ad group "<name>"]`. Every failure after
   the campaign returns the partial result; a definite 4xx is failed and an ambiguous outcome, a

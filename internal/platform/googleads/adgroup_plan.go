@@ -156,22 +156,57 @@ func everyAdGroupBringsAds(groups []AdGroupSpec) bool {
 }
 
 // adGroupNameKey is the duplicate key for a named ad group's composed name, shared by the
-// Search and Display lists. It is textfold.Key — simple case folding, so two names collide
-// exactly when strings.EqualFold says they are equal — not strings.ToLower, which keeps
-// "ſ"/"s" and "ς"/"σ" apart. Google's own folding is not probed: this errs toward refusing
-// a pair Google might accept over sending one it refuses after the earlier groups exist.
+// Search, Demand Gen and Display lists. It is textfold.Key — simple case folding, so two
+// names collide exactly when strings.EqualFold says they are equal — not strings.ToLower,
+// which keeps "ſ"/"s" and "ς"/"σ" apart. Google's own folding is not probed: this errs
+// toward refusing a pair Google might accept over sending one it refuses after the earlier
+// groups exist.
 func adGroupNameKey(name string) string { return textfold.Key(name) }
+
+// The caller fields each channel's ad group base name is composed from, for
+// namedAdGroupNameTooLong's advice. Search's base is ComposeName("Ad Group", in), which
+// carries Project and EventName (its stage, tactic and suffix are service-derived); the
+// Demand Gen and Display bases (demandGenAdGroupName, displayAdGroupName) carry
+// EventName alone.
+const (
+	adGroupBaseFieldsSearch    = "Project, EventName"
+	adGroupBaseFieldsEventName = "EventName"
+)
 
 // namedAdGroupNameTooLong refuses a named ad group's composed "<base> | <label>" name
 // over Google's limit, naming the group by its 1-based position. Its own message, not
-// validateEntityName's: that one says to shorten EventName/Project and calls the suffix
-// fixed, but here the suffix is the caller's own label and the likeliest thing to cut.
-func namedAdGroupNameTooLong(position int, name string) error {
+// validateEntityName's: that one calls the suffix fixed, but here the suffix is the
+// caller's own label and the likeliest thing to cut. baseFields names the caller fields
+// the channel's base is built from (adGroupBaseFieldsSearch or
+// adGroupBaseFieldsEventName), so the advice names only fields that shorten it. Shared by
+// the Search, Demand Gen and Display lists.
+func namedAdGroupNameTooLong(position int, name, baseFields string) error {
 	if n := utf8.RuneCountInString(name); n > maxAdGroupNameRunes {
 		return fmt.Errorf("ad group %d name %q is %d characters, over Google's limit of %d; "+
-			"shorten EventName or this group's name", position, name, n, maxAdGroupNameRunes)
+			"shorten %s or this group's name", position, name, n, maxAdGroupNameRunes, baseFields)
 	}
 	return nil
+}
+
+// adGroupShapeHint names the ad-group shape a channel takes, for the refusal of another
+// channel's ad-group list on it, so the refusal points at that channel's own field rather
+// than at one fixed sibling. Shared by the Demand Gen and Display list refusals.
+func adGroupShapeHint(kind string) string {
+	switch kind {
+	case campaignKindSearch:
+		return "a Search campaign takes its own ad-group list, AdGroups"
+	case campaignKindDemandGen:
+		return "a Demand Gen campaign takes its own ad-group list, DemandGenAdGroups"
+	case campaignKindDisplay:
+		return "a Display campaign takes its own ad-group list, DisplayAdGroups"
+	case campaignKindVideo:
+		return "a Video campaign creates one ad group, from VideoCreative"
+	case campaignKindPerformanceMax:
+		return "a Performance Max campaign has no ad groups; its asset group comes from " +
+			"PerformanceMaxCreative"
+	default:
+		return "no other channel takes it"
+	}
 }
 
 // validateAdGroupPlans turns the caller's AdGroups into the list the cascade
@@ -214,7 +249,7 @@ func validateAdGroupPlans(kind string, in CampaignInput, base adGroupPlan) ([]ad
 			return nil, fmt.Errorf("google-ads campaign creation aborted before any request (ad group %d has no name; each ad group needs a distinct theme label)", i+1)
 		}
 		name := base.name + " | " + label
-		if err := namedAdGroupNameTooLong(i+1, name); err != nil {
+		if err := namedAdGroupNameTooLong(i+1, name, adGroupBaseFieldsSearch); err != nil {
 			return nil, fmt.Errorf(
 				"google-ads campaign creation aborted before any request (%w)", err)
 		}

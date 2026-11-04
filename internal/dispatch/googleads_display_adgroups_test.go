@@ -240,3 +240,54 @@ func TestGoogleAds_ToggleStatus_TwoGroupDisplayCoversEveryGroupsAd(t *testing.T)
 		})
 	}
 }
+
+// TestGoogleAdsSnapshotConfig_EachEarlyReturnFieldAlone sets each of the eleven fields the
+// snapshot's early return names, ALONE, with a signed URL, and asserts the snapshot loses the
+// signature. A config carrying only one of them taking the early return is exactly the leak
+// each condition was added to prevent, and the table is the list docs/knowledge cites.
+func TestGoogleAdsSnapshotConfig_EachEarlyReturnFieldAlone(t *testing.T) {
+	const signed = "https://cdn.example.org/a.png?X-Amz-Signature=s3cr3t"
+	refs := googleAdsImageRefs{{URL: signed}}
+	for name, cfg := range map[string]googleAdsConfig{
+		"sitelinks":  {Sitelinks: []googleAdsSitelinkConfig{{FinalURL: signed}}},
+		"promotions": {Promotions: []googleAdsPromotionConfig{{FinalURL: signed}}},
+		"prices": {Prices: []googleAdsPriceConfig{{
+			Offerings: []googleAdsPriceOfferingConfig{{FinalURL: signed}},
+		}}},
+		"leadForms": {LeadForms: []googleAdsLeadFormConfig{{PrivacyPolicyURL: signed}}},
+		"demandGenCreative": {
+			DemandGenCreative: &googleAdsDemandGenCreativeConfig{MarketingImages: refs},
+		},
+		"demandGenVideoCreative": {
+			DemandGenVideoCreative: &googleAdsDemandGenVideoCreativeConfig{LogoImages: refs},
+		},
+		"demandGenAds": {DemandGenAds: []googleAdsDemandGenAdConfig{{
+			Creative: &googleAdsDemandGenCreativeConfig{MarketingImages: refs},
+		}}},
+		"demandGenAdGroups": {DemandGenAdGroups: []googleAdsDemandGenAdGroupConfig{{
+			Creative: &googleAdsDemandGenCreativeConfig{MarketingImages: refs},
+		}}},
+		"performanceMaxCreative": {
+			PerformanceMaxCreative: &googleAdsPerformanceMaxCreativeConfig{MarketingImages: refs},
+		},
+		"displayCreative": {
+			DisplayCreative: &googleAdsDisplayCreativeConfig{MarketingImages: refs},
+		},
+		"displayAdGroups": {DisplayAdGroups: []googleAdsDisplayAdGroupConfig{{
+			Creative: &googleAdsDisplayCreativeConfig{MarketingImages: refs},
+		}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := json.Marshal(googleAdsSnapshotConfig(cfg))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(raw), "s3cr3t") {
+				t.Errorf("snapshot keeps the signature: %s", raw)
+			}
+			if !strings.Contains(string(raw), "cdn.example.org") {
+				t.Errorf("snapshot lost the URL entirely, so this case proves nothing: %s", raw)
+			}
+		})
+	}
+}

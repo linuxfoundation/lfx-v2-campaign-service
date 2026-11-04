@@ -340,16 +340,18 @@ the snapshot loses the signing query, and the caller's config keeps the full URL
 requires. A shallow slice copy suffices here; only the price extension's nested
 `Offerings` needs the deep one.
 
-The early return that skips the whole copy names EIGHT fields now — sitelinks,
-promotions, prices, lead forms, the Demand Gen creative, the asset group, the Display
-creative and the Display ad groups (#475), and deliberately NOT `videoCreative`, which
-carries YouTube video ids and text and no URL of any kind, so a config holding only a video
-creative has nothing to sanitize — and `TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone`,
+The early return that skips the whole copy names ELEVEN fields now — sitelinks,
+promotions, prices, lead forms, the Demand Gen creative, video creative, ad list and ad
+groups (#460, #474), the asset group, the Display creative and the Display ad groups
+(#475), and deliberately NOT `videoCreative`, which carries YouTube video ids and text and
+no URL of any kind, so a config holding only a video creative has nothing to sanitize.
+`TestGoogleAdsSnapshotConfig_EachEarlyReturnFieldAlone` sets each of the eleven ALONE with
+a signed URL and asserts the snapshot loses the signature, because a config carrying only
+one of them taking that return is precisely the bug each condition was added to prevent;
+`TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone`,
 `..._SanitizesTheDisplayCreativeAlone`, `..._SanitizesEachNewExtensionAlone`,
-`..._SanitizesTheLeadFormPrivacyPolicyURL` and `..._SanitizesEveryDisplayAdGroup` pin the last
-six, because a config carrying
-only one of them taking that return is precisely the bug each condition was added to
-prevent.
+`..._SanitizesTheLeadFormPrivacyPolicyURL`, `..._SanitizesDemandGenAdsAlone` and
+`..._SanitizesEveryDisplayAdGroup` pin the same per channel with their full slot sets.
 
 This is not redundant with the X client's `rejectCredentialQueryParams`. That refuses a
 credential-SHAPED parameter because the text is about to be PUBLISHED, and it is a

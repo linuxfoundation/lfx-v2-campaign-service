@@ -96,7 +96,7 @@ func validateDisplayAdGroups(kind, customerID string, in CampaignInput, base dis
 	}
 	if kind != campaignKindDisplay {
 		return nil, fmt.Errorf("google-ads: Display ad groups are not supported on %s; omit "+
-			"DisplayAdGroups (%s)", kind, offDisplayAdGroupsHint(kind))
+			"DisplayAdGroups (%s)", kind, adGroupShapeHint(kind))
 	}
 	// The campaign-level creative and audience lists describe the ONE group the list
 	// replaces; with a list there is no single group for them to go on, and guessing would put
@@ -117,7 +117,7 @@ func validateDisplayAdGroups(kind, customerID string, in CampaignInput, base dis
 			return nil, fmt.Errorf("google-ads: Display ad group %d has no name; each ad group needs a distinct label", i+1)
 		}
 		name := base.name + " | " + label
-		if err := namedAdGroupNameTooLong(i+1, name); err != nil {
+		if err := namedAdGroupNameTooLong(i+1, name, adGroupBaseFieldsEventName); err != nil {
 			return nil, fmt.Errorf("google-ads: Display %w", err)
 		}
 		key := adGroupNameKey(name)
@@ -264,24 +264,6 @@ func displayGroupStep(multi bool, name string) string {
 		return ""
 	}
 	return fmt.Sprintf(" [ad group %q]", name)
-}
-
-// offDisplayAdGroupsHint names the ad-group shape a non-Display channel takes instead, so
-// the refusal of DisplayAdGroups points at that channel's own field rather than Search's.
-func offDisplayAdGroupsHint(kind string) string {
-	switch kind {
-	case campaignKindSearch:
-		return "a Search campaign takes its own ad-group list, AdGroups"
-	case campaignKindDemandGen:
-		return "a Demand Gen campaign creates one ad group, from DemandGenCreative"
-	case campaignKindVideo:
-		return "a Video campaign creates one ad group, from VideoCreative"
-	case campaignKindPerformanceMax:
-		return "a Performance Max campaign has no ad groups; its asset group comes from " +
-			"PerformanceMaxCreative"
-	default:
-		return "only a Display campaign takes it"
-	}
 }
 
 // displayGroupNames renders groups' names as a quoted, comma-separated list for an error.
