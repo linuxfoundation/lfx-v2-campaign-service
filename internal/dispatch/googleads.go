@@ -76,8 +76,10 @@ type googleAdsProximityConfig struct {
 // googleAdsAdScheduleConfig is one day-of-week serving interval.
 //
 // BidModifier is a POINTER on the wire as well as in the client, and for the same
-// reason: 0 is the -100% opt-out, so it cannot double as "unset". An absent
-// "bidModifier" restricts WHEN the campaign serves without changing what it bids.
+// reason: an explicit 0 must stay distinct from "unset". An absent "bidModifier"
+// restricts WHEN the campaign serves without changing what it bids; a present one
+// must be 0.1..10.0, and an explicit 0 is refused before the budget (Google has no
+// 0 opt-out on an ad schedule, only on a device).
 type googleAdsAdScheduleConfig struct {
 	DayOfWeek   string   `json:"dayOfWeek"`
 	StartHour   int      `json:"startHour"`
@@ -1235,7 +1237,8 @@ func googleAdsProximityTargets(in []googleAdsProximityConfig) []googleads.Proxim
 
 // googleAdsAdSchedules carries BidModifier across as the pointer it is on both sides.
 // Copying the value would make an absent modifier indistinguishable from an explicit
-// 0, which is the -100% opt-out — the interval would stop serving entirely.
+// 0 — and the client refuses an explicit 0 schedule modifier, so an ordinary
+// unadjusted interval would fail the job.
 func googleAdsAdSchedules(in []googleAdsAdScheduleConfig) []googleads.AdSchedule {
 	if len(in) == 0 {
 		return nil

@@ -1443,9 +1443,14 @@ adSchedules?:                   — OPTIONAL dayparting (LFXV2-2665): the interv
                                   written twice, and collapses (or is refused for a conflicting
                                   `bidModifier`, below). Intervals on DIFFERENT days never interact.
 
-                                  `bidModifier` is OPTIONAL PER INTERVAL and is a true tri-state: absent
-                                  means no adjustment, and an explicit 0 is Google's -100% opt-out
-                                  (do not serve). Otherwise it must be between 0.1 and 10.0.
+                                  `bidModifier` is OPTIONAL PER INTERVAL: absent means no adjustment;
+                                  present, it must be between 0.1 and 10.0 (-90%..+900%). An
+                                  explicit 0 is REFUSED before any Google Ads request: Google's
+                                  CampaignCriterion contract admits only 0.1..10.0 for an ad-schedule
+                                  modifier and reserves 0 for a DEVICE exclusion, so a 0 would fail
+                                  the criteria mutate after the budget and campaign exist. Omit
+                                  `bidModifier` to serve at the normal bid; leave the interval out
+                                  to stop serving then.
 
                                   Omitted/empty, no schedule criteria are created and the campaign is
                                   eligible around the clock. Supplying ANY interval restricts the
@@ -1476,9 +1481,9 @@ deviceBidModifiers?:            — OPTIONAL per-device bid adjustments (LFXV2-2
 
                                   `bidModifier` is REQUIRED here (unlike on `adSchedules`, where the
                                   absent case means "listed but unadjusted"; a device entry with no
-                                  modifier would say nothing at all). Same range: exactly 0 is the
-                                  -100% opt-out that stops the campaign serving on that device,
-                                  otherwise 0.1..10.0.
+                                  modifier would say nothing at all). Same 0.1..10.0 range, plus
+                                  exactly 0 — the -100% opt-out that stops the campaign serving on
+                                  that device. Unlike `adSchedules`, a device takes that 0.
 
                                   Omitted/empty, no device criteria are created and the campaign bids
                                   equally on every device.

@@ -1793,12 +1793,18 @@ duplicate", which is true by construction when the cap IS the vocabulary's size.
 Google targets demographics by excluding the buckets you do not want.
 
 `AdSchedule.BidModifier` is a `*float64` on BOTH this type and the dispatcher's
-wire type, and the pointer is load-bearing: exactly `0` is Google's -100% opt-out,
-so it cannot double as "unset", and a value-typed hop anywhere along the path
-would turn an absent modifier into an instruction not to serve. `DeviceBidModifier`
-takes a plain `float64` because a device listed without a modifier would say
-nothing at all. `validateBidModifier` mirrors Google's own rule — exactly 0, or
-`0.1`..`10.0`.
+wire type, and the pointer is load-bearing: an explicit `0` must stay distinct from
+"unset", and a value-typed hop anywhere along the path would make every unadjusted
+interval look like a `0`. `DeviceBidModifier` takes a plain `float64` because a
+device listed without a modifier would say nothing at all. `validateBidModifier`
+mirrors Google's own rule — `0.1`..`10.0`, the ONE range both criteria share — and
+takes `allowZero` for the one difference: exactly `0` is the -100% opt-out on a
+DEVICE only. An ad schedule passes `false`, because Google's CampaignCriterion
+contract admits only `0.1`..`10.0` for a schedule modifier, so a `0` would fail the
+criteria mutate after the budget and campaign exist (lfx-self-serve #5088). The
+refusal names the schedule index and the escape: omit `BidModifier` to serve at the
+normal bid, or leave the interval out to stop serving then. No validateOnly probe of
+a `0` schedule modifier exists; the rule rests on Google's documented contract.
 
 Demand Gen takes four of the five, at two levels, each verified by a validateOnly probe
 on 2026-11-03. Languages go on its AD GROUP (#459): Demand Gen refuses a CAMPAIGN-level

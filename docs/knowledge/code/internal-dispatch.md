@@ -1032,8 +1032,9 @@ Two details of those mappers are load-bearing. Each returns **nil** for an empty
 empty-but-non-nil slice — and for the per-ad-group fields nil is specifically what the client
 reads as "inherit the campaign-level value", so the distinction is not cosmetic. And
 `adSchedules[].bidModifier` is a POINTER on the wire type as well as in the client, because an
-explicit `0` is Google's -100% opt-out: a value-typed hop would make an absent modifier
-indistinguishable from an instruction to stop serving in that interval.
+absent modifier ("no adjustment") must stay distinct from an explicit `0`, which the client
+refuses on an ad schedule (Google admits only `0.1`..`10.0` there; `0` is a device exclusion):
+a value-typed hop would make every unadjusted interval fail as a `0`.
 
 `demandGenCreative` follows the same pattern one level deeper: a `*googleAdsDemandGenCreativeConfig`
 POINTER on the config, so absent and present-but-empty stay distinguishable, mapped by
