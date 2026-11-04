@@ -277,6 +277,19 @@ openssl rand -base64 32
   sets it to `"false"`
   (`app.environment.GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED.value`); enable
   it per-environment by setting it to `"true"` in the ArgoCD overlay.
+- `GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED` (default unset, i.e. OFF) —
+  opts a deployment IN to `googleAdsConfig.sharedNegativeKeywordLists`,
+  existing shared negative keyword lists attached to a Search campaign
+  (#477). Only the exact value `true` enables it; anything else fails
+  closed, and a create naming one, on any channel, is refused before the
+  budget. Off by default for the reason
+  `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is (#468): a shared list is
+  checked against the Google Ads account only. `searchAssets` (the
+  caller's own images, logo and business name) is not gated. The chart
+  sets it to `"false"`
+  (`app.environment.GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED.value`);
+  enable it per-environment by setting it to `"true"` in the ArgoCD
+  overlay.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code

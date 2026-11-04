@@ -140,6 +140,12 @@ func googleAdsCreativeSlots(cfg *googleAdsConfig) []googleAdsCreativeSlot {
 			googleAdsCreativeSlot{prefix + "squareLogoImages", &c.SquareLogoImages},
 		)
 	}
+	if c := cfg.SearchAssets; c != nil {
+		out = append(out,
+			googleAdsCreativeSlot{"search adImages", &c.AdImages},
+			googleAdsCreativeSlot{"search businessLogoImages", &c.BusinessLogoImages},
+		)
+	}
 	return out
 }
 

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -744,15 +745,22 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 			}
 			continue
 		}
-		// A repeat is unusable too: its operation is unaccounted for. The id is already
-		// recorded once, so it is not appended again.
-		if dup := seen.repeat(id, i); dup != "" {
+		// A repeat of the SAME content is Google returning the existing asset (result_ids.go):
+		// it is linked at this position too, under this position's field type, and its id
+		// reported once. Any other repeat is unusable, its operation unaccounted for.
+		first, dup := seen.reuse(id, i, func(j int) bool {
+			return reflect.DeepEqual(pending[j].create, pending[i].create)
+		})
+		if dup != "" {
 			if firstBad < 0 {
 				firstBad, badWhy = i, dup
 			}
 			continue
 		}
-		assetIDs = append(assetIDs, id)
+		if first {
+			assetIDs = append(assetIDs, id)
+		}
+		// Positional, repeats included: link i names the asset at index i.
 		assetResources = append(assetResources, r.ResourceName)
 	}
 	if firstBad >= 0 {
@@ -873,8 +881,9 @@ const performanceMaxTempAssetGroupID = "-1"
 // googleAdsMutateRequest is the body of GoogleAdsService.Mutate (googleAds:mutate): a list of
 // typed operations over different resources, applied together. Only the operation kinds this
 // client sends are modelled: the Performance Max asset group, its links and its signals
-// (pmax_signals.go, #461), and the Demand Gen video ad with its assets
-// (demandgen_video_creative.go, #460).
+// (pmax_signals.go, #461), the Demand Gen video ad with its assets
+// (demandgen_video_creative.go, #460), and the Search campaign's assets and their campaign
+// links (search_assets.go, #477).
 type googleAdsMutateRequest struct {
 	MutateOperations []googleAdsMutateOperation `json:"mutateOperations"`
 }
@@ -888,6 +897,9 @@ type googleAdsMutateOperation struct {
 	AssetGroupSignalOperation *mutateOperation `json:"assetGroupSignalOperation,omitempty"`
 	AssetOperation            *mutateOperation `json:"assetOperation,omitempty"`
 	AdGroupAdOperation        *mutateOperation `json:"adGroupAdOperation,omitempty"`
+	// CampaignAssetOperation is MutateOperation's campaign_asset_operation arm, sent with
+	// AssetOperation by the Search campaign assets (#477).
+	CampaignAssetOperation *mutateOperation `json:"campaignAssetOperation,omitempty"`
 }
 
 // googleAdsMutateResponse is the (subset of the) GoogleAdsService.Mutate response consumed
@@ -900,6 +912,7 @@ type googleAdsMutateResponse struct {
 		AssetGroupSignalResult *resourceNameResult `json:"assetGroupSignalResult"`
 		AssetResult            *resourceNameResult `json:"assetResult"`
 		AdGroupAdResult        *resourceNameResult `json:"adGroupAdResult"`
+		CampaignAssetResult    *resourceNameResult `json:"campaignAssetResult"`
 	} `json:"mutateOperationResponses"`
 }
 

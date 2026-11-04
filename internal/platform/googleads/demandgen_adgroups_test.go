@@ -406,7 +406,7 @@ func TestCreateDemandGenCampaign_TotalImageBytesSpanEveryGroup(t *testing.T) {
 		c.MarketingImages, c.SquareMarketingImages, c.LogoImages = nil, nil, nil
 		for i := 0; i < 6; i++ {
 			r := ref(n*100 + i)
-			resolved[r] = pad(pngOf(t, 600, 600), big)
+			resolved[r] = pad(taggedImage(pngOf(t, 600, 600), n*100+i), big)
 			c.SquareMarketingImages = append(c.SquareMarketingImages, r)
 		}
 		r := ref(n*100 + 99)
@@ -451,7 +451,7 @@ func TestCreateDemandGenCampaign_TotalImageBytesSpanEveryAd(t *testing.T) {
 		c.MarketingImages, c.SquareMarketingImages, c.LogoImages = nil, nil, nil
 		for i := 0; i < 6; i++ {
 			r := ref(n*100 + i)
-			resolved[r] = pad(pngOf(t, 600, 600), big)
+			resolved[r] = pad(taggedImage(pngOf(t, 600, 600), n*100+i), big)
 			c.SquareMarketingImages = append(c.SquareMarketingImages, r)
 		}
 		r := ref(n*100 + 99)

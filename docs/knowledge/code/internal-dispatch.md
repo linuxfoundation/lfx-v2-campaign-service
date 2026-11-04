@@ -340,12 +340,12 @@ the snapshot loses the signing query, and the caller's config keeps the full URL
 requires. A shallow slice copy suffices here; only the price extension's nested
 `Offerings` needs the deep one.
 
-The early return that skips the whole copy names ELEVEN fields now — sitelinks,
+The early return that skips the whole copy names TWELVE fields now — sitelinks,
 promotions, prices, lead forms, the Demand Gen creative, video creative, ad list and ad
-groups (#460, #474), the asset group, the Display creative and the Display ad groups
-(#475), and deliberately NOT `videoCreative`, which carries YouTube video ids and text and
+groups (#460, #474), the asset group, the Display creative, the Display ad groups
+(#475) and the Search campaign assets (#477), and deliberately NOT `videoCreative`, which carries YouTube video ids and text and
 no URL of any kind, so a config holding only a video creative has nothing to sanitize.
-`TestGoogleAdsSnapshotConfig_EachEarlyReturnFieldAlone` sets each of the eleven ALONE with
+`TestGoogleAdsSnapshotConfig_EachEarlyReturnFieldAlone` sets each of the twelve ALONE with
 a signed URL and asserts the snapshot loses the signature, because a config carrying only
 one of them taking that return is precisely the bug each condition was added to prevent;
 `TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone`,
@@ -1018,6 +1018,15 @@ top level and on each `adGroups[].ads[]` entry, `adGroups[].negativeKeywords` (m
 `excludedParentalStatuses`. Which channel takes each is the client preflight's decision, so
 an off-channel value is refused there for the create and the adoption path alike.
 
+The #477 fields follow the same rule. `sharedNegativeKeywordLists` is passed through
+verbatim. `searchAssets` is `googleAdsSearchAssetsConfig`: `adImages` and
+`businessLogoImages` are `googleAdsImageRefs`, so each entry is a URL or an
+`{"imageAssetId": …}` object. Both lists are enumerated by `googleAdsCreativeSlots` (as
+`search adImages` and `search businessLogoImages`), beside every other Google image slot, so
+stored assets resolve and are budgeted with the rest.
+`googleAdsSnapshotConfig` sanitizes both lists on a deep copy and names `SearchAssets` in its
+early return. `googleAdsSearchAssets` maps nil to the zero value.
+
 Two details of those mappers are load-bearing. Each returns **nil** for an empty input, as
 `googleAdsKeywords` does, so an omitted field stays nil end-to-end rather than becoming an
 empty-but-non-nil slice — and for the per-ad-group fields nil is specifically what the client
@@ -1213,6 +1222,16 @@ structured snippets it admits on Performance Max are text and the caller's own d
 URLs, created as new assets, so none names an existing account resource.
 `TestGoogleAds_PerformanceMaxAudienceSignalGate` and
 `TestGoogleAds_PerformanceMaxAudienceSignalGateLeavesThemesAlone` pin both halves.
+
+`GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED` is the fourth, for #477's
+`sharedNegativeKeywordLists` (`googleAdsSharedNegativeListsEnabled`): unless it is exactly
+`"true"`, `Dispatch` refuses any non-empty list, whatever its entries hold and on any channel,
+right after the Performance Max gate, through the same `googleAdsInputDisabled`. A list names an
+EXISTING shared set, and the client checks it against the account only, so on the shared LF
+customer a project could attach another foundation's list (#468). The client's same-account
+check stays as defence in depth. `searchAssets` is not gated: its images, logo and business name
+are the caller's own content, created as new assets. `TestGoogleAds_SharedNegativeListsGate`
+and `TestGoogleAds_SharedNegativeListsGateLeavesSearchAssetsAlone` pin both halves.
 
 The client refuses the channel rules inside its own preflight,
 before its first mutate, and `Dispatch` validates unconditionally (including on the adoption

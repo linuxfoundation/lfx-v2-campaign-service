@@ -70,11 +70,22 @@ const (
 // conversionActionIDRE and conversionActionResourceRE pin the two spellings a caller may
 // use for a conversion action. Both are checked against the string BEFORE it reaches a
 // create payload, because a malformed resource name is rejected by Google AFTER the budget
-// mutate has committed — the orphan this package's whole preflight exists to avoid.
+// mutate has committed — the orphan this package's whole preflight exists to avoid. They pin
+// the SHAPE; the id must also be canonical (nonCanonicalConversionAction).
 var (
 	conversionActionIDRE       = regexp.MustCompile(`^\d+$`)
 	conversionActionResourceRE = regexp.MustCompile(`^customers/(\d+)/conversionActions/(\d+)$`)
 )
+
+// nonCanonicalConversionAction refuses a conversion action whose id is not canonicalCampaignID's
+// positive int64 in canonical form. The regexes accept any digit run, so an id past int64, 0,
+// or "0555" (a second spelling of 555 that would slip past the de-dupe) would otherwise reach
+// the conversion goal write, which runs after the budget and campaign exist.
+func nonCanonicalConversionAction(action string) error {
+	return fmt.Errorf("google-ads: conversion action %q does not carry a positive canonical id "+
+		"(base-10, no leading zero, within int64); write it as Google returns it",
+		capForError(action))
+}
 
 // manualCPC is `campaign.manual_cpc`. It has fields in the proto (enhanced_cpc_enabled,
 // long deprecated) and this client sends none of them, so the type is deliberately empty
@@ -636,26 +647,35 @@ func validateTargetROAS(roas float64) (float64, error) {
 // the campaign exists (conversion_goal.go), which Search, Display, Video, Demand Gen and
 // Performance Max all take. The earlier create-time field, campaign.selective_optimization,
 // is documented by Google as App-campaign only, which is why it was dropped.
+//
+// The cap counts DISTINCT actions, after the two spellings are de-duplicated, and is checked
+// inside the walk (as validateSharedNegativeKeywordLists checks its own): the walk stops at
+// the first distinct action past the cap, and out and seen are sized from the cap.
 func validateConversionActions(customerID string, actions []string) ([]string, error) {
 	if len(actions) == 0 {
 		return nil, nil
 	}
-	if len(actions) > maxConversionActions {
-		return nil, fmt.Errorf("google-ads: %d conversion actions exceeds the maximum %d", len(actions), maxConversionActions)
-	}
-	out := make([]string, 0, len(actions))
-	seen := make(map[string]struct{}, len(actions))
+	n := min(len(actions), maxConversionActions+1)
+	out := make([]string, 0, n)
+	seen := make(map[string]struct{}, n)
 	for i, raw := range actions {
 		action := strings.TrimSpace(raw)
 		if action == "" {
 			return nil, fmt.Errorf("google-ads: conversion action %d is empty", i+1)
 		}
 		var resource string
+		m := conversionActionResourceRE.FindStringSubmatch(action)
 		switch {
 		case conversionActionIDRE.MatchString(action):
+			if canonicalCampaignID(action) == "" {
+				return nil, nonCanonicalConversionAction(action)
+			}
 			resource = "customers/" + customerID + "/conversionActions/" + action
-		case conversionActionResourceRE.MatchString(action):
-			owner := conversionActionResourceRE.FindStringSubmatch(action)[1]
+		case m != nil:
+			if canonicalCampaignID(m[2]) == "" {
+				return nil, nonCanonicalConversionAction(action)
+			}
+			owner := m[1]
 			if owner != customerID {
 				return nil, fmt.Errorf("google-ads: conversion action %q belongs to customer %s, not the campaign's account %s; a conversion action cannot be shared across accounts", capForError(action), owner, customerID)
 			}
@@ -668,6 +688,10 @@ func validateConversionActions(customerID string, actions []string) ([]string, e
 		// without changing the set it stands for.
 		if _, dup := seen[resource]; dup {
 			continue
+		}
+		if len(out) == maxConversionActions {
+			return nil, fmt.Errorf("google-ads: more than %d distinct conversion actions; the "+
+				"maximum is %d", maxConversionActions, maxConversionActions)
 		}
 		seen[resource] = struct{}{}
 		out = append(out, resource)

@@ -41,6 +41,15 @@ func pngOf(t *testing.T, w, h int) []byte {
 	return buf.Bytes()
 }
 
+// taggedImage returns a copy of img with an 8-byte tag appended past its end. The decoder reads
+// the header only, so the copy decodes as img does while its bytes differ: fetchSlotImages
+// refuses identical bytes twice in one slot (refuseRepeatedSlotImage), so a fixture filling
+// one slot with many images gives each its own bytes. Every copy is the same length.
+func taggedImage(img []byte, tag int) []byte {
+	out := make([]byte, 0, len(img)+8)
+	return append(append(out, img...), fmt.Sprintf("%08d", tag)...)
+}
+
 func jpegOf(t *testing.T, w, h int) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
@@ -1039,13 +1048,17 @@ func TestFetchSlotImages_TotalBytesCapIsAcrossEverySlot(t *testing.T) {
 	wide := append(pngOf(t, 1200, 628), pad...)  // Demand Gen marketing image, 1.91:1
 	square := append(pngOf(t, 600, 600), pad...) // Demand Gen square marketing image, 1:1
 
+	// Each path's bytes end in the path itself, at the same size: identical bytes twice in
+	// one slot are refused on their own (refuseRepeatedSlotImage).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
+		body := wide
 		if strings.HasPrefix(r.URL.Path, "/square") {
-			_, _ = w.Write(square)
-			return
+			body = square
 		}
-		_, _ = w.Write(wide)
+		body = append([]byte(nil), body...)
+		copy(body[len(body)-len(r.URL.Path):], r.URL.Path)
+		_, _ = w.Write(body)
 	}))
 	t.Cleanup(srv.Close)
 

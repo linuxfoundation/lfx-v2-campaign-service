@@ -376,6 +376,19 @@ app:
     GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to googleAdsConfig.sharedNegativeKeywordLists
+    # (#477): existing shared negative keyword lists (sharedSets) attached to
+    # a Search campaign. Default off for the reason
+    # GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED is: the service checks a shared
+    # set against the Google Ads account only, so on the shared LF customer a
+    # project could attach another foundation's list (#468). While off, a
+    # create naming one is refused before anything upstream exists.
+    # searchAssets (images, logo, business name) is unaffected. Any value
+    # other than "true" is treated as off, so a typo fails closed. Keep it off
+    # until #468 lands; that fix removes the gate and this key.
+    GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR
     # (/projects/{project_id}/connection-twitter-ads/account-monitor). Default
     # off for the same reason as MICROSOFT_METRICS_ENABLED above: the X account

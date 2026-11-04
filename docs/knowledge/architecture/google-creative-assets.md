@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Google Ads Creative Image Assets"
-description: "How a Google Ads dispatch uses stored creative assets: any of the Demand Gen, Performance Max and Display image slots, plus the Demand Gen video logo, each demandGenAdGroups entry's slots (#460), each demandGenAds entry's (#474) and each displayAdGroups entry's (#475), accepts an imageAssetId object beside a plain URL string, the dispatcher canonicalizes and loads those bytes under the container's shared asset budget before anything upstream exists, and hands them to the platform client as ResolvedImages keyed by the lfx-asset slot entry it rendered, where a pre-resolved image runs the same per-image cap, decode and geometry checks as a downloaded one."
+description: "How a Google Ads dispatch uses stored creative assets: any of the Demand Gen, Performance Max and Display image slots, plus the Demand Gen video logo, each demandGenAdGroups entry's slots (#460), each demandGenAds entry's (#474), each displayAdGroups entry's (#475) and the Search campaign's two searchAssets slots (#477), accepts an imageAssetId object beside a plain URL string, the dispatcher canonicalizes and loads those bytes under the container's shared asset budget before anything upstream exists, and hands them to the platform client as ResolvedImages keyed by the lfx-asset slot entry it rendered, where a pre-resolved image runs the same per-image cap, decode and geometry checks as a downloaded one."
 resource: "internal/dispatch/googleads_creative_assets.go"
 ---
 
@@ -24,7 +24,8 @@ and everything after it is the path that already existed.
 The second difference is the number of places an image can appear. Google has many image
 slots — five Demand Gen, five Performance Max and four Display, plus the Demand Gen video logo,
 each `demandGenAdGroups` entry's slots (#460), each ad's in `demandGenAds` or a group's `ads`
-(#474) and four more for each `displayAdGroups` entry (#475), so no fixed number — where the
+(#474), four more for each `displayAdGroups` entry (#475) and the Search campaign's two
+(`searchAssets.adImages` and `searchAssets.businessLogoImages`, #477), so no fixed number — where the
 siblings have one slot, or one per variant. `googleAdsCreativeSlots` enumerates them
 by pointer, and the resolve, the config-key contract test and the fixture that exercises every
 slot all drive off that one enumeration rather than off a hand-written list.

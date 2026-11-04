@@ -5,6 +5,7 @@ package googleads
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -648,6 +649,30 @@ func TestValidateConversionActions_RefusesAForeignAccountsAction(t *testing.T) {
 	}
 }
 
+// The id must be a positive int64 in canonical form, in both spellings: past int64, 0 and a
+// leading zero name no conversion action ("0555" would also slip past the de-dupe as a second
+// spelling of 555), and Google would say so only at the conversion goal write, after the
+// budget and campaign exist. The int64 maximum is accepted: the check bounds the id, it does
+// not refuse a long one.
+func TestValidateConversionActions_RequiresACanonicalID(t *testing.T) {
+	resource := func(id string) string {
+		return "customers/" + biddingTestCustomer + "/conversionActions/" + id
+	}
+	for _, id := range []string{"9223372036854775808", "0", "0555"} {
+		for _, action := range []string{id, resource(id)} {
+			_, err := validateConversionActions(biddingTestCustomer, []string{action})
+			if err == nil || !strings.Contains(err.Error(), "positive canonical id") {
+				t.Errorf("%q: err = %v, want the canonical-id refusal", action, err)
+			}
+		}
+	}
+	const maxID = "9223372036854775807"
+	got, err := validateConversionActions(biddingTestCustomer, []string{maxID, resource(maxID)})
+	if err != nil || len(got) != 1 || got[0] != resource(maxID) {
+		t.Errorf("got %v, err = %v; want [%s]", got, err, resource(maxID))
+	}
+}
+
 // Duplicates are DEDUPLICATED, not refused: naming the same conversion twice is a harmless
 // paste, and it would otherwise name a different goal for the same set (conversion_goal.go).
 func TestValidateConversionActions_DeduplicatesAcrossSpellings(t *testing.T) {
@@ -678,12 +703,32 @@ func TestValidateConversionActions_RefusesMalformedAndEmpty(t *testing.T) {
 			t.Errorf("accepted %q, which cannot address a conversion action", tc)
 		}
 	}
-	over := make([]string, maxConversionActions+1)
-	for i := range over {
-		over[i] = "1000" + strings.Repeat("0", i%3) + string(rune('0'+i%10))
+}
+
+// The cap counts DISTINCT actions: 101 entries naming 100 (one repeated in the other spelling)
+// pass, 101 distinct are refused, and the walk stops there — a malformed entry after the
+// 101st distinct one is never reached.
+func TestValidateConversionActions_CapCountsDistinctActions(t *testing.T) {
+	distinct := make([]string, maxConversionActions+1)
+	for i := range distinct {
+		distinct[i] = fmt.Sprint(1000 + i)
 	}
-	if _, err := validateConversionActions(biddingTestCustomer, over); err == nil {
-		t.Errorf("accepted %d conversion actions, over the %d cap", len(over), maxConversionActions)
+	atCap := append(append([]string(nil), distinct[:maxConversionActions]...),
+		"customers/"+biddingTestCustomer+"/conversionActions/"+distinct[0])
+	got, err := validateConversionActions(biddingTestCustomer, atCap)
+	if err != nil || len(got) != maxConversionActions {
+		t.Fatalf("got %d action(s), err = %v; want %d entries naming %d distinct accepted",
+			len(got), err, len(atCap), maxConversionActions)
+	}
+	const want = "more than 100 distinct conversion actions; the maximum is 100"
+	for name, in := range map[string][]string{
+		"101 distinct":           distinct,
+		"101 distinct, then bad": append(append([]string(nil), distinct...), "not-an-id"),
+	} {
+		if _, err := validateConversionActions(biddingTestCustomer, in); err == nil ||
+			!strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want %q", name, err, want)
+		}
 	}
 }
 
