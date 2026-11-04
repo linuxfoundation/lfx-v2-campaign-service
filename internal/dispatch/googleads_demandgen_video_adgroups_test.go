@@ -212,8 +212,8 @@ func gateAssetBudget() *AssetReserver {
 	return NewAssetReserver(MaxConcurrentVariantAssetBytes, time.Second)
 }
 
-// A demandGenAdGroups entry's audience is the same account-scoped input as demandGenAudience
-// (#468), so GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED gates it too: anything but exactly "true"
+// A demandGenAdGroups entry's audience is the same account-checked input as demandGenAudience,
+// so GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED gates it too: anything but exactly "true"
 // refuses it in Dispatch before the budget, even an Audience the client would accept, with the
 // gate's own sentence on the job. Exactly "true" lets it through to the ad group, and a group
 // without an audience is never gated.
@@ -245,8 +245,9 @@ func TestGoogleAds_DemandGenAdGroupAudienceGate(t *testing.T) {
 			}
 			msg := err.Error()
 			if !strings.Contains(msg, constants.EnvGoogleAdsDemandGenAudienceEnabled) ||
-				!strings.Contains(msg, "#468") || !strings.Contains(msg, tc.wantWhich) {
-				t.Errorf("error = %v, want it to name the gate, #468 and %q", err, tc.wantWhich)
+				!strings.Contains(msg, "or ask an operator to enable "+constants.EnvGoogleAdsDemandGenAudienceEnabled) ||
+				!strings.Contains(msg, tc.wantWhich) {
+				t.Errorf("error = %v, want it to name the gate, how to enable it and %q", err, tc.wantWhich)
 			}
 			if strings.Contains(msg, "Group A") || strings.Contains(msg, own) {
 				t.Errorf("error = %v, want no caller value in the sentence", err)

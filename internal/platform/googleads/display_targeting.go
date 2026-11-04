@@ -210,13 +210,13 @@ func validateDisplayTargeting(kind, customerID string, in CampaignInput) (displa
 // come at the adGroupCriteria:mutate, after the budget, the campaign and the ad group
 // exist. A resource on another account is refused here, with the account it named.
 //
-// The check is ACCOUNT-scoped, not foundation-scoped, and is NOT tenancy protection:
-// on a Google Ads account shared across foundations, any foundation's list on that
-// account passes it. So the dispatch adapter keeps the account-owned kinds (user lists,
-// custom audiences, custom affinities) off by default (GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED,
-// see dispatch.googleAdsDisplayAudiencesEnabled) until #468 adds a foundation-scoped check —
-// the user-list exclusions and every DisplayAdGroups entry's lists included (#475). User
-// interests are Google's own categories, owned by no foundation, and are not gated.
+// The connected Google Ads account (same customer id) is the boundary this check enforces;
+// per-foundation ownership (#468) was closed as won't do. The dispatch adapter keeps the
+// account-owned kinds (user lists, custom audiences, custom affinities) behind a
+// per-deployment opt-in that is off by default (GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED, see
+// dispatch.googleAdsDisplayAudiencesEnabled) — the user-list exclusions and every
+// DisplayAdGroups entry's lists included (#475). User interests are Google's own
+// categories, not account resources, and are not gated.
 //
 // An Audience resource (customers/{id}/audiences/{id}) is refused with its own reason:
 // Display takes segments directly, and Google refuses an audience criterion on a

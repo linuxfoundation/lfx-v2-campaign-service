@@ -326,7 +326,7 @@ func displayGateConfig(t *testing.T, extra, group2 map[string]any) json.RawMessa
 }
 
 // The #475 inputs that name an account-owned user list or custom segment sit behind the
-// Display audiences gate, as the campaign-level lists do (#468): the campaign-level
+// Display audiences gate, as the campaign-level lists do: the campaign-level
 // excludedAudienceSegments and each displayAdGroups entry's audienceSegments,
 // customAudiences, customAffinities and excludedAudienceSegments. With
 // GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED anything but exactly "true", each is refused in
@@ -374,7 +374,8 @@ func TestGoogleAds_DisplayAudienceExclusionsGate(t *testing.T) {
 				}
 				for _, want := range []string{
 					"Display audience targeting (" + in.field + ") is disabled on this deployment",
-					constants.EnvGoogleAdsDisplayAudiencesEnabled, "#468", "omit " + in.field,
+					"omit " + in.field,
+					"or ask an operator to enable " + constants.EnvGoogleAdsDisplayAudiencesEnabled,
 				} {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("error = %v, want it to contain %q", err, want)

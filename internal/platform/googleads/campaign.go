@@ -282,8 +282,8 @@ type CampaignInput struct {
 	// negative user-list criteria, so they cover every ad group (#475). DISPLAY ONLY,
 	// refused on every other channel. A list also targeted by an ad group is refused; a
 	// named ad group can exclude lists of its own (DisplayAdGroup.ExcludedAudienceSegments).
-	// See display_adgroups.go. Account-checked only, so the dispatch adapter gates it with the
-	// Display audience lists (GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED, #468).
+	// See display_adgroups.go. Account-checked, and the dispatch adapter gates it with the
+	// Display audience lists (GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED, a per-deployment opt-in).
 	ExcludedAudienceSegments []string
 	// GeoTargets are ISO 3166-1 alpha-2 country codes the campaign should serve
 	// in (LFXV2-3283), resolved to Google's numeric geo target constants by

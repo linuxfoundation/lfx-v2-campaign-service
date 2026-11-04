@@ -295,7 +295,7 @@ func TestGoogleAds_ExcludedPlacementsRefusedOnSearch(t *testing.T) {
 
 // With GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED anything but exactly "true", a create naming an
 // account-owned Display segment is refused in Dispatch before the budget, even one the client
-// would accept (#468: the client's check is account-scoped only). The refusal is a
+// would accept (the client checks the account only). The refusal is a
 // not-created PreflightRefusal, so the async job shows the gate's sentence verbatim rather than
 // the generic failure, and it names exactly the fields the request set.
 func TestGoogleAds_DisplayAudiencesGate(t *testing.T) {
@@ -332,8 +332,8 @@ func TestGoogleAds_DisplayAudiencesGate(t *testing.T) {
 			}
 			for _, want := range []string{
 				"Display audience targeting " + tc.wantFields + " is disabled on this deployment",
-				constants.EnvGoogleAdsDisplayAudiencesEnabled, "#468",
 				"omit " + strings.Trim(tc.wantFields, "()"),
+				"or ask an operator to enable " + constants.EnvGoogleAdsDisplayAudiencesEnabled,
 			} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error = %v, want it to contain %q", err, want)

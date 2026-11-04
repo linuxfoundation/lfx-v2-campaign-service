@@ -75,12 +75,11 @@ type adGroupCriterionDemandGenCreate struct {
 // criteria mutate, after the budget, the campaign and the ad group exist. This is the
 // check validateConversionActions makes for conversion actions, for the same reason.
 //
-// The check is ACCOUNT-scoped, not foundation-scoped, and is not tenancy protection: on
-// the shared LF Google Ads customer a project can name another foundation's Audience,
-// and on Demand Gen that Audience restricts who the ad group reaches. So the dispatch
-// adapter keeps the field, and every DemandGenAdGroup.Audience (#460), off by default
-// (GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED, see dispatch.googleAdsDemandGenAudienceEnabled)
-// until #468 adds a foundation-scoped check.
+// The connected Google Ads account (same customer id) is the boundary this check enforces;
+// per-foundation ownership (#468) was closed as won't do. The dispatch adapter keeps the
+// field, and every DemandGenAdGroup.Audience (#460), behind a per-deployment opt-in that is
+// off by default (GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED, see
+// dispatch.googleAdsDemandGenAudienceEnabled).
 func validateDemandGenAudience(kind, customerID, audience string) (string, error) {
 	return validateDemandGenAudienceField(kind, customerID, "DemandGenAudience", audience)
 }
