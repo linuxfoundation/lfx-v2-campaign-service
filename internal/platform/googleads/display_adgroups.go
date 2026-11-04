@@ -129,7 +129,9 @@ func validateDisplayAdGroups(kind, customerID string, in CampaignInput, base dis
 		owner := fmt.Sprintf("Display ad group %q", name)
 		plan := displayGroupPlan{name: name}
 		// The same checks as the campaign-level lists: shape and THIS account's customer id.
-		// Not a tenancy check — that is the accepted risk tracked by #468.
+		// Not a tenancy check (#468), so the dispatch adapter refuses a group's user lists,
+		// custom audiences, custom affinities and exclusions under the campaign-level lists'
+		// gate (GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED, dispatch.googleAdsDisplayAudienceFieldsSet).
 		var err error
 		for _, l := range []struct {
 			field, collection string

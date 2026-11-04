@@ -799,7 +799,8 @@ only creation is impossible); `display` creates a DISPLAY campaign with NO chann
 sub-type, an ad group of type `DISPLAY_STANDARD` targeted at the audiences named in
 `audienceSegments`/`customAudiences`/`customAffinities`/`userInterests` (the first three
 only where the deployment sets GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED, #468), campaign-level
-`excludedPlacements` and `excludedAudienceSegments`, and (given `displayCreative`) one
+`excludedPlacements` and `excludedAudienceSegments` (the latter under the same flag), and
+(given `displayCreative`) one
 responsive display ad built from images this service fetches and uploads — or, given
 `displayAdGroups`, several named ad groups, each with its own audiences and ad (#475). **Budget is in whole units of the ad ACCOUNT's
 currency**, not USD — the service does no FX conversion (mirroring `metaConfig`).
@@ -1032,8 +1033,12 @@ excludedAudienceSegments?:      — OPTIONAL user lists excluded from the whole 
                                   `audienceSegments` or by any `displayAdGroups` entry, or also
                                   excluded by an entry, is refused: name it once. The account check is
                                   ACCOUNT-scoped, not tenancy protection; see `audienceSegments` and
-                                  #468. A definite refusal of the mutate fails the job with the
-                                  campaign recorded; an ambiguous one is UNCONFIRMED.
+                                  #468. So the field is OFF by default, like Display
+                                  `audienceSegments`: unless the deployment sets
+                                  GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED to exactly "true", a create
+                                  naming it, on any `channel`, is refused before the budget mutate,
+                                  whatever the value. A definite refusal of the mutate fails the job
+                                  with the campaign recorded; an ambiguous one is UNCONFIRMED.
 geoTargets?: string[]           — OPTIONAL locations the campaign should serve in (LFXV2-3283). Each
                                   entry is EITHER an ISO 3166-1 alpha-2 country code, spelled as in
                                   `metaConfig`/`redditConfig`, OR a raw numeric geo target constant id
@@ -2053,6 +2058,15 @@ displayAdGroups?:               — OPTIONAL several named Display ad groups (#4
                                   and excludes, or that the campaign already excludes, is refused. A
                                   refusal names the group — by its position when the name itself is
                                   what is refused.
+
+                                  A group's `audienceSegments`, `customAudiences`,
+                                  `customAffinities` and `excludedAudienceSegments` sit behind the
+                                  same flag as the campaign-level lists (#468): unless the
+                                  deployment sets GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED to exactly
+                                  "true", a create naming any of them, on any group, is refused
+                                  before the budget mutate, naming each one
+                                  (`displayAdGroups entry 2 excludedAudienceSegments`). A group's
+                                  `userInterests`, name and creative are not gated.
 
                                   With the list set, `displayCreative`, `audienceSegments`,
                                   `customAudiences`, `customAffinities` and `userInterests` must be

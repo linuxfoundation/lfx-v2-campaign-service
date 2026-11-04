@@ -1184,9 +1184,18 @@ also covers direct callers.
 segments (`googleAdsDisplayAudiencesEnabled`, `googleAdsDisplayAudienceFieldsSet`): unless it is
 exactly `"true"`, `Dispatch` refuses a non-empty `customAudiences` or `customAffinities` on any
 channel, and a non-empty `audienceSegments` on `display`, right after the Demand Gen gate.
+Since #475 it also refuses a non-empty `excludedAudienceSegments` on any channel and, on any
+`displayAdGroups` entry, a non-empty `audienceSegments`, `customAudiences`,
+`customAffinities` or `excludedAudienceSegments`, named by 1-based position
+(`displayAdGroups entry 2 excludedAudienceSegments`): the group list replaces the single ad
+group, so without that a caller could move a gated list into a group, and a user list is
+account-owned whether it targets or excludes. `TestGoogleAds_DisplayAudienceExclusionsGate`
+pins each of the five fields against unset, `""`, `"false"`, `"TRUE"` and `" true"`;
+`..._GateOpensOnExactlyTrue` and `..._GateLeavesUngatedGroupInputsAlone` pin the two open
+paths.
 Search's `audienceSegments` are observation-only and predate it, so they are not gated.
-`userInterests` are not gated either: they are Google's own affinity and in-market categories,
-the same ids on every account. `excludedPlacements` are not gated: they are public domains, not
+`userInterests` are not gated either, at the campaign level or on a group: they are Google's
+own affinity and in-market categories, the same ids on every account. `excludedPlacements` are not gated: they are public domains, not
 account resources, and they only narrow where the campaign appears. Both gates refuse through
 `googleAdsInputDisabled`: not-created, and a `domain.PreflightRefusal`, so the asynchronous
 create job reports the gate's sentence (which input is disabled, and to omit it) instead of

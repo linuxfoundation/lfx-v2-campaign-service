@@ -326,6 +326,9 @@ type googleAdsConfig struct {
 	// user-list criteria (#475), so they cover every ad group. DISPLAY ONLY, refused on
 	// every other channel; a list also targeted is refused. See
 	// googleads.CampaignInput.ExcludedAudienceSegments.
+	//
+	// Refused outright unless GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED is "true" — see
+	// googleAdsDisplayAudiencesEnabled: a user list is account-owned, excluded or not.
 	ExcludedAudienceSegments []string `json:"excludedAudienceSegments"`
 	// NegativeKeywords are optional CAMPAIGN-level keyword exclusions — queries the
 	// campaign must never pay for, however broadly Keywords match. SEARCH ONLY, and
@@ -640,15 +643,18 @@ func googleAdsDemandGenAdGroupAudiencesSet(cfg googleAdsConfig) string {
 
 // googleAdsDisplayAudiencesEnabled reports whether this deployment opted in to the Display
 // audience lists that name an account-owned segment (#462): audienceSegments on Display,
-// customAudiences and customAffinities. Read per call, like googleAdsDemandGenAudienceEnabled,
+// customAudiences and customAffinities, and since #475 the user-list exclusions
+// (excludedAudienceSegments, on the campaign and on a displayAdGroups entry) and the same three
+// lists on each displayAdGroups entry. Read per call, like googleAdsDemandGenAudienceEnabled,
 // and in Dispatch for the same reason: the client's check is account-scoped, so on the shared
-// LF customer it would accept another foundation's user list or custom segment, and on Display
-// those TARGET, restricting who the ad group reaches.
+// LF customer it would accept another foundation's user list or custom segment. On Display the
+// targeting lists restrict who an ad group reaches, and an exclusion still puts another
+// foundation's customer list to work in this campaign.
 //
-// Two inputs are deliberately outside it. userInterests name Google's own affinity and
-// in-market categories, the same ids on every account, so no foundation owns one. And
-// excludedPlacements are public domains, not account resources, and an exclusion only narrows
-// where the campaign appears. Neither can reach another foundation's data.
+// Two inputs are deliberately outside it, at both levels. userInterests name Google's own
+// affinity and in-market categories, the same ids on every account, so no foundation owns one.
+// And excludedPlacements are public domains, not account resources, and an exclusion only
+// narrows where the campaign appears. Neither can reach another foundation's data.
 func googleAdsDisplayAudiencesEnabled() bool {
 	return os.Getenv(constants.EnvGoogleAdsDisplayAudiencesEnabled) == "true"
 }
@@ -681,9 +687,13 @@ func googleAdsInputDisabled(subject, env, checked, fields string) error {
 }
 
 // googleAdsDisplayAudienceFieldsSet names, in config order, the gated Display audience fields
-// this config sets. audienceSegments counts only on Display: on Search they are
-// observation-only and predate the gate. Every non-empty list counts, whatever its entries
-// hold, so the refusal never depends on the client's own validation of the values.
+// this config sets: the campaign-level lists, then each displayAdGroups entry's by 1-based
+// position ("displayAdGroups entry 2 excludedAudienceSegments"). audienceSegments counts only
+// on Display at the campaign level: on Search they are observation-only and predate the gate.
+// A displayAdGroups entry's lists count on any channel, as customAudiences does, because the
+// list exists only for Display. Every non-empty list counts, whatever its entries hold, so the
+// refusal never depends on the client's own validation of the values; the names are
+// service-derived, so the sentence carries no caller value.
 func googleAdsDisplayAudienceFieldsSet(cfg googleAdsConfig) []string {
 	var set []string
 	if len(cfg.AudienceSegments) > 0 &&
@@ -695,6 +705,27 @@ func googleAdsDisplayAudienceFieldsSet(cfg googleAdsConfig) []string {
 	}
 	if len(cfg.CustomAffinities) > 0 {
 		set = append(set, "customAffinities")
+	}
+	if len(cfg.ExcludedAudienceSegments) > 0 {
+		set = append(set, "excludedAudienceSegments")
+	}
+	// The list replaces the single ad group, so without this a caller could move a gated list
+	// into a group. userInterests stay outside it here too.
+	for i, g := range cfg.DisplayAdGroups {
+		prefix := "displayAdGroups entry " + strconv.Itoa(i+1) + " "
+		for _, f := range []struct {
+			name string
+			list []string
+		}{
+			{"audienceSegments", g.AudienceSegments},
+			{"customAudiences", g.CustomAudiences},
+			{"customAffinities", g.CustomAffinities},
+			{"excludedAudienceSegments", g.ExcludedAudienceSegments},
+		} {
+			if len(f.list) > 0 {
+				set = append(set, prefix+f.name)
+			}
+		}
 	}
 	return set
 }
@@ -1658,6 +1689,11 @@ func googleAdsDisplayCreative(in *googleAdsDisplayCreativeConfig) googleads.Disp
 // creative in the displayCreative shape, the four optional audience lists in the shapes of
 // the campaign-level fields of the same names, and optional user-list exclusions for this
 // group alone.
+//
+// audienceSegments, customAudiences, customAffinities and excludedAudienceSegments are
+// refused outright unless GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED is "true", exactly as the
+// campaign-level fields are; userInterests are not gated, at either level — see
+// googleAdsDisplayAudiencesEnabled.
 type googleAdsDisplayAdGroupConfig struct {
 	Name                     string                          `json:"name"`
 	Creative                 *googleAdsDisplayCreativeConfig `json:"creative"`

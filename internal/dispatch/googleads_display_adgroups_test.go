@@ -6,12 +6,15 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // The dispatch half of #475: displayAdGroups and excludedAudienceSegments on the wire must
@@ -66,6 +69,7 @@ func TestGoogleAdsDisplayAdGroups_MapsEveryField(t *testing.T) {
 // The campaign-level exclusion reaches the campaign criteria mutate through Dispatch, as a
 // negative user list.
 func TestGoogleAds_DisplayAudienceExclusionReachesTheCampaignCriteria(t *testing.T) {
+	t.Setenv(constants.EnvGoogleAdsDisplayAudiencesEnabled, "true")
 	opts, cap := targetingServers(t)
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"display",
@@ -88,6 +92,7 @@ func TestGoogleAds_DisplayAudienceExclusionReachesTheCampaignCriteria(t *testing
 // refused by that group's name, before the budget — so the list, its order and the field are
 // all carried.
 func TestGoogleAds_DisplayAdGroupsReachThePreflight(t *testing.T) {
+	t.Setenv(constants.EnvGoogleAdsDisplayAudiencesEnabled, "true")
 	opts, cap := targetingServers(t)
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 	group := func(name, excluded string) map[string]any {
@@ -118,8 +123,11 @@ func TestGoogleAds_DisplayAdGroupsReachThePreflight(t *testing.T) {
 	}
 }
 
-// Off Display both new fields are refused before anything is created.
+// Off Display both new fields are refused before anything is created. The Display audiences
+// gate is open here so the client's own refusal is what is tested; with it shut, the gate
+// refuses excludedAudienceSegments first (TestGoogleAds_DisplayAudienceExclusionsGate).
 func TestGoogleAds_DisplayAdGroupFieldsRefusedOnSearch(t *testing.T) {
+	t.Setenv(constants.EnvGoogleAdsDisplayAudiencesEnabled, "true")
 	for name, tc := range map[string]struct{ cfg, want string }{
 		"excludedAudienceSegments": {`{"googleAdsConfig":{"budget":50,"excludedAudienceSegments":["customers/1234567890/userLists/70"]}}`,
 			"audience exclusions are not supported on Search Campaign"},
@@ -289,5 +297,183 @@ func TestGoogleAdsSnapshotConfig_EachEarlyReturnFieldAlone(t *testing.T) {
 				t.Errorf("snapshot lost the URL entirely, so this case proves nothing: %s", raw)
 			}
 		})
+	}
+}
+
+// displayGateConfig is a Display create naming two groups, each with a creative; extra is
+// merged into the config and group2 into the second group.
+func displayGateConfig(t *testing.T, extra, group2 map[string]any) json.RawMessage {
+	t.Helper()
+	second := map[string]any{"name": "Prospecting", "creative": displayWireCreative()}
+	for k, v := range group2 {
+		second[k] = v
+	}
+	cfg := map[string]any{
+		"budget": 50, "channel": "display",
+		"displayAdGroups": []any{
+			map[string]any{"name": "Retargeting", "creative": displayWireCreative()}, second,
+		},
+	}
+	for k, v := range extra {
+		cfg[k] = v
+	}
+	raw, err := json.Marshal(map[string]any{"googleAdsConfig": cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+// The #475 inputs that name an account-owned user list or custom segment sit behind the
+// Display audiences gate, as the campaign-level lists do (#468): the campaign-level
+// excludedAudienceSegments and each displayAdGroups entry's audienceSegments,
+// customAudiences, customAffinities and excludedAudienceSegments. With
+// GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED anything but exactly "true", each is refused in
+// Dispatch before the budget, as a not-created PreflightRefusal naming the field.
+func TestGoogleAds_DisplayAudienceExclusionsGate(t *testing.T) {
+	const (
+		userList = "customers/1234567890/userLists/11"
+		custom   = "customers/1234567890/customAudiences/22"
+		affinity = "customers/1234567890/customInterests/33"
+		excluded = "customers/1234567890/userLists/70"
+	)
+	inputs := []struct {
+		name          string
+		extra, group2 map[string]any
+		field         string
+	}{
+		{"campaign exclusions", map[string]any{"excludedAudienceSegments": []string{excluded}}, nil,
+			"excludedAudienceSegments"},
+		{"group user lists", nil, map[string]any{"audienceSegments": []string{userList}},
+			"displayAdGroups entry 2 audienceSegments"},
+		{"group custom audiences", nil, map[string]any{"customAudiences": []string{custom}},
+			"displayAdGroups entry 2 customAudiences"},
+		{"group custom affinities", nil, map[string]any{"customAffinities": []string{affinity}},
+			"displayAdGroups entry 2 customAffinities"},
+		{"group exclusions", nil, map[string]any{"excludedAudienceSegments": []string{excluded}},
+			"displayAdGroups entry 2 excludedAudienceSegments"},
+		// Any non-empty list counts, whatever it holds.
+		{"blank group exclusion", nil, map[string]any{"excludedAudienceSegments": []string{" "}},
+			"displayAdGroups entry 2 excludedAudienceSegments"},
+	}
+	for _, in := range inputs {
+		for _, env := range []struct{ name, value string }{
+			{"unset", unsetEnv}, {"empty", ""}, {"false", "false"}, {"wrong case", "TRUE"},
+			{"leading space", " true"},
+		} {
+			t.Run(in.name+"/"+env.name, func(t *testing.T) {
+				setGateEnv(t, constants.EnvGoogleAdsDisplayAudiencesEnabled, env.value)
+				opts, cap := targetingServers(t)
+				conn := fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}
+				d := NewGoogleAdsDispatcher(conn, identityEncryptor{}, opts...)
+				camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds,
+					displayGateConfig(t, in.extra, in.group2))
+				if err == nil {
+					t.Fatal("expected the dispatch to be refused while the gate is off")
+				}
+				for _, want := range []string{
+					"Display audience targeting (" + in.field + ") is disabled on this deployment",
+					constants.EnvGoogleAdsDisplayAudiencesEnabled, "#468", "omit " + in.field,
+				} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error = %v, want it to contain %q", err, want)
+					}
+				}
+				var pce *preCreateError
+				if !errors.As(err, &pce) {
+					t.Errorf("error = %v, want a not-created error so the claim is released", err)
+				}
+				got := service.DispatchFailureMessage(model.ProviderGoogleAds, err, true)
+				if got != err.Error() {
+					t.Errorf("job message = %q, want the gate's own sentence %q", got, err.Error())
+				}
+				if camp != nil {
+					t.Errorf("nothing may be created for a refused input, got %+v", camp)
+				}
+				cap.mu.Lock()
+				defer cap.mu.Unlock()
+				if cap.sawBudget {
+					t.Error("the refusal must happen BEFORE the budget mutate")
+				}
+			})
+		}
+	}
+}
+
+// Every gated field a config sets is named, campaign-level first, then each group in order.
+func TestGoogleAdsDisplayAudienceFieldsSet_NamesEveryGroupField(t *testing.T) {
+	cfg := googleAdsConfig{
+		Channel:                  "display",
+		ExcludedAudienceSegments: []string{"x"},
+		DisplayAdGroups: []googleAdsDisplayAdGroupConfig{
+			{
+				AudienceSegments: []string{"x"}, CustomAudiences: []string{"x"},
+				UserInterests: []string{"x"},
+			},
+			{},
+			{CustomAffinities: []string{"x"}, ExcludedAudienceSegments: []string{"x"}},
+		},
+	}
+	want := []string{
+		"excludedAudienceSegments",
+		"displayAdGroups entry 1 audienceSegments", "displayAdGroups entry 1 customAudiences",
+		"displayAdGroups entry 3 customAffinities",
+		"displayAdGroups entry 3 excludedAudienceSegments",
+	}
+	if got := googleAdsDisplayAudienceFieldsSet(cfg); !reflect.DeepEqual(got, want) {
+		t.Errorf("fields = %q, want %q", got, want)
+	}
+}
+
+// With the gate exactly "true", every gated #475 input passes Dispatch and reaches the
+// client's preflight: a foreign exclusion on the LAST group is refused there by that group's
+// name, which it can only be if the gate let every earlier list through.
+func TestGoogleAds_DisplayAudienceExclusionsGateOpensOnExactlyTrue(t *testing.T) {
+	t.Setenv(constants.EnvGoogleAdsDisplayAudiencesEnabled, "true")
+	opts, cap := targetingServers(t)
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	raw := displayGateConfig(t,
+		map[string]any{"excludedAudienceSegments": []string{"customers/1234567890/userLists/71"}},
+		map[string]any{
+			"audienceSegments":         []string{"customers/1234567890/userLists/11"},
+			"customAudiences":          []string{"customers/1234567890/customAudiences/22"},
+			"customAffinities":         []string{"customers/1234567890/customInterests/33"},
+			"excludedAudienceSegments": []string{"customers/9999999999/userLists/70"},
+		})
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, raw)
+	if err == nil || strings.Contains(err.Error(), "disabled on this deployment") ||
+		!strings.Contains(err.Error(), `| Prospecting": google-ads: ExcludedAudienceSegments `+
+			`entry "customers/9999999999/userLists/70" is on customer 9999999999`) {
+		t.Fatalf("err = %v, want the client's refusal of group 2's foreign exclusion, "+
+			"not the gate", err)
+	}
+	cap.mu.Lock()
+	defer cap.mu.Unlock()
+	if cap.sawBudget {
+		t.Error("a budget mutate was sent for a config the preflight must refuse")
+	}
+}
+
+// With the gate off, a displayAdGroups config naming none of the gated lists is untouched:
+// creatives, names and userInterests (Google's own categories, ungated at both levels) pass
+// Dispatch and reach the client's preflight, which here refuses group 2's foreign user
+// interest by name.
+func TestGoogleAds_DisplayAudienceExclusionsGateLeavesUngatedGroupInputsAlone(t *testing.T) {
+	t.Setenv(constants.EnvGoogleAdsDisplayAudiencesEnabled, "")
+	opts, cap := targetingServers(t)
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	raw := displayGateConfig(t, map[string]any{"excludedPlacements": []string{"example.com"}},
+		map[string]any{"userInterests": []string{"customers/9999999999/userInterests/44"}})
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, raw)
+	if err == nil || strings.Contains(err.Error(), "disabled on this deployment") ||
+		!strings.Contains(err.Error(), `| Prospecting": google-ads: UserInterests entry `+
+			`"customers/9999999999/userInterests/44" is on customer 9999999999`) {
+		t.Fatalf("err = %v, want the client's refusal of group 2's foreign user interest, "+
+			"not the gate", err)
+	}
+	cap.mu.Lock()
+	defer cap.mu.Unlock()
+	if cap.sawBudget {
+		t.Error("a budget mutate was sent for a config the preflight must refuse")
 	}
 }

@@ -252,13 +252,19 @@ openssl rand -base64 32
 - `GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to the Display audience lists that name an
   account-owned segment (#462): `googleAdsConfig.audienceSegments` on the
-  `display` channel, `customAudiences` and `customAffinities`. Only the
-  exact value `true` enables them; anything else fails closed, and a
-  create naming one is refused before the budget. Off by default for the
-  reason `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is (#468).
-  `userInterests` (Google's own categories), `excludedPlacements` (public
-  domains) and Search's observation-only `audienceSegments` are not
-  gated. The chart sets it to `"false"`.
+  `display` channel, `customAudiences` and `customAffinities`, and since
+  #475 the user-list exclusions `excludedAudienceSegments` and, on each
+  `displayAdGroups` entry, its `audienceSegments`, `customAudiences`,
+  `customAffinities` and `excludedAudienceSegments`. Only the exact value
+  `true` enables them; anything else fails closed, and a create naming
+  one is refused before the budget, naming the fields to omit. Off by
+  default for the reason `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is
+  (#468). `userInterests` (Google's own categories, at either level),
+  `excludedPlacements` (public domains), Search's observation-only
+  `audienceSegments` and `displayAdGroups` entries without those lists
+  are not gated. The chart sets it to `"false"`
+  (`app.environment.GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED.value`); enable
+  it per-environment by setting it to `"true"` in the ArgoCD overlay.
 - `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.performanceMaxAudienceSignal`,
   one existing Google Ads Audience attached to a Performance Max asset
