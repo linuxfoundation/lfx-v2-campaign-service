@@ -141,7 +141,7 @@ const (
 // PerformanceMaxCreative is the asset-group creative for a Performance Max campaign. It
 // is PERFORMANCE MAX ONLY — refused at preflight on every other channel, the mirror of
 // the way DemandGenCreative is refused off Demand Gen and the extension assets off
-// Search.
+// Search and, for three types, Performance Max.
 //
 // Images are given as URLs and downloaded by this service, for the reason stated in
 // demandgen_creative.go's header: Google's ImageAsset carries bytes and will not fetch a
@@ -689,7 +689,11 @@ func buildPerformanceMaxAssets(plan performanceMaxPlan, images []fetchedImage) [
 // Every mutate past the campaign returns its error ALONGSIDE whatever was created, for
 // the reason the whole package does: the campaign exists either way, and an operator
 // reconciling it needs the ids of what got as far as being created.
-func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignResource, campaignID, finalURL string, plan performanceMaxPlan, images []fetchedImage) (assetIDs []string, assetGroupID string, linkCount int, err error) {
+//
+// The group comes back as the RESOURCE NAME Google returned, already checked for kind,
+// account and numeric id, so the signals step (#461) names the group by what Google said
+// rather than by a name rebuilt from its id.
+func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignResource, campaignID, finalURL string, plan performanceMaxPlan, images []fetchedImage) (assetIDs []string, assetGroupResource string, linkCount int, err error) {
 	pending := buildPerformanceMaxAssets(plan, images)
 	if len(pending) == 0 {
 		return nil, "", 0, nil
@@ -822,9 +826,9 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 		}
 	}
 	if len(results.MutateOperationResponses) != len(ops) || confirmed != wantLinks {
-		return assetIDs, groupID, 0, fmt.Errorf("google-ads Performance Max asset group link creation UNCONFIRMED (asset group %s created; 2xx described %d of %d link(s) — verify in Google Ads before retrying)", groupID, confirmed, wantLinks)
+		return assetIDs, first.ResourceName, 0, fmt.Errorf("google-ads Performance Max asset group link creation UNCONFIRMED (asset group %s created; 2xx described %d of %d link(s) — verify in Google Ads before retrying)", groupID, confirmed, wantLinks)
 	}
-	return assetIDs, groupID, wantLinks, nil
+	return assetIDs, first.ResourceName, wantLinks, nil
 }
 
 // isAssetGroupAssetLink reports whether name is exactly the assetGroupAssets resource, in
@@ -858,8 +862,9 @@ const performanceMaxTempAssetGroupID = "-1"
 
 // googleAdsMutateRequest is the body of GoogleAdsService.Mutate (googleAds:mutate): a list of
 // typed operations over different resources, applied together. Only the operation kinds this
-// client sends are modelled: the Performance Max asset group and its links, and the Demand Gen
-// video ad with its assets (demandgen_video_creative.go, #460).
+// client sends are modelled: the Performance Max asset group, its links and its signals
+// (pmax_signals.go, #461), and the Demand Gen video ad with its assets
+// (demandgen_video_creative.go, #460).
 type googleAdsMutateRequest struct {
 	MutateOperations []googleAdsMutateOperation `json:"mutateOperations"`
 }
@@ -868,10 +873,11 @@ type googleAdsMutateRequest struct {
 // arm reuses mutateOperation, which is the same {create|update|remove} shape the resource
 // services take.
 type googleAdsMutateOperation struct {
-	AssetGroupOperation      *mutateOperation `json:"assetGroupOperation,omitempty"`
-	AssetGroupAssetOperation *mutateOperation `json:"assetGroupAssetOperation,omitempty"`
-	AssetOperation           *mutateOperation `json:"assetOperation,omitempty"`
-	AdGroupAdOperation       *mutateOperation `json:"adGroupAdOperation,omitempty"`
+	AssetGroupOperation       *mutateOperation `json:"assetGroupOperation,omitempty"`
+	AssetGroupAssetOperation  *mutateOperation `json:"assetGroupAssetOperation,omitempty"`
+	AssetGroupSignalOperation *mutateOperation `json:"assetGroupSignalOperation,omitempty"`
+	AssetOperation            *mutateOperation `json:"assetOperation,omitempty"`
+	AdGroupAdOperation        *mutateOperation `json:"adGroupAdOperation,omitempty"`
 }
 
 // googleAdsMutateResponse is the (subset of the) GoogleAdsService.Mutate response consumed
@@ -879,10 +885,11 @@ type googleAdsMutateOperation struct {
 // each carries the result arm matching its operation.
 type googleAdsMutateResponse struct {
 	MutateOperationResponses []struct {
-		AssetGroupResult      *resourceNameResult `json:"assetGroupResult"`
-		AssetGroupAssetResult *resourceNameResult `json:"assetGroupAssetResult"`
-		AssetResult           *resourceNameResult `json:"assetResult"`
-		AdGroupAdResult       *resourceNameResult `json:"adGroupAdResult"`
+		AssetGroupResult       *resourceNameResult `json:"assetGroupResult"`
+		AssetGroupAssetResult  *resourceNameResult `json:"assetGroupAssetResult"`
+		AssetGroupSignalResult *resourceNameResult `json:"assetGroupSignalResult"`
+		AssetResult            *resourceNameResult `json:"assetResult"`
+		AdGroupAdResult        *resourceNameResult `json:"adGroupAdResult"`
 	} `json:"mutateOperationResponses"`
 }
 

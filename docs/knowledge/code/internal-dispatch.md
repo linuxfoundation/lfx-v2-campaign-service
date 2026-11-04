@@ -1068,6 +1068,17 @@ campaign shell (`PERFORMANCE_MAX`, `maximizeConversions`, no ad group and no ad)
 a complete asset group gets past every bound and into the fetch, with each list omitted in
 turn producing that list's own refusal.
 
+`performanceMaxSearchThemes` and `performanceMaxAudienceSignal` (#461) are top-level config
+fields, not members of `performanceMaxCreative`, named for the channel like it and passed
+through verbatim; the client's preflight owns every rule, including the refusal off
+Performance Max and without a creative. Their dispatch test,
+`googleads_pmax_signals_wiring_test.go`, cannot reach the signals mutate for the image-fetch
+reason above, so it proves each field mapped by a refusal only the client can produce from
+it — signals without a creative, a foreign audience, an over-long theme, either field on
+another channel — each before the budget mutate. The same file proves sitelinks, callouts
+and structured snippets on `performance-max` reach `campaignAssets:mutate` on the created
+campaign, and that a call extension there is refused before anything is created.
+
 `videoCreative` is the same shape a fourth time — a pointer, a mapper that validates nothing,
 the zero `googleads.VideoCreative` for nil — but `googleads_video_wiring_test.go` is the one
 file of the five that cannot assert a campaign body, because **the Google Ads API cannot
@@ -1161,6 +1172,19 @@ account resources, and they only narrow where the campaign appears. Both gates r
 `googleAdsInputDisabled`: not-created, and a `domain.PreflightRefusal`, so the asynchronous
 create job reports the gate's sentence (which input is disabled, and to omit it) instead of
 the generic "platform campaign creation failed".
+
+`GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the third gate of the kind, for #461's
+`performanceMaxAudienceSignal` (`googleAdsPMaxAudienceSignalEnabled`): unless it is exactly
+`"true"`, `Dispatch` refuses any non-empty value, whitespace included and on any channel, right
+after the Display gate, through the same `googleAdsInputDisabled`. The client checks the
+Audience against the account only, so on the shared LF customer a project could name another
+foundation's Audience as its signal (#468); on Performance Max a signal is a hint rather than
+a restriction, but the Audience is still another foundation's resource. The rest of #461 is
+not gated: `performanceMaxSearchThemes` are free text, and the sitelinks, callouts and
+structured snippets it admits on Performance Max are text and the caller's own destination
+URLs, created as new assets, so none names an existing account resource.
+`TestGoogleAds_PerformanceMaxAudienceSignalGate` and
+`TestGoogleAds_PerformanceMaxAudienceSignalGateLeavesThemesAlone` pin both halves.
 
 The client refuses the channel rules inside its own preflight,
 before its first mutate, and `Dispatch` validates unconditionally (including on the adoption
@@ -3688,9 +3712,10 @@ stops delivery. An adapter that returns an empty
 variant is refused by the service layer too, so a contract violation cannot fall back to `default`.
 
 **A Performance Max asset group id is not a serving campaign, and the gate stopped treating it as
-one.** `createPerformanceMaxAssetGroup` returns the group id whenever Google answered 2xx, even when not
-every link could be read back, deliberately — the group then exists, and clearing the id would hide
-it; rows written by the earlier three-call cascade can also hold a group whose link step failed
+one.** `createPerformanceMaxAssetGroup` returns the group's resource name (`pmax.go` records the
+id) whenever Google answered 2xx, even when not every link could be read back, deliberately —
+the group then exists, and clearing the id would hide it; rows written by the earlier
+three-call cascade can also hold a group whose link step failed
 outright (#437 made the group and its links one atomic request). But the activation gate used to key on that id alone, so
 exactly the campaign that cannot serve was the one it called provisioned: it un-paused a campaign
 whose asset group was empty and reported success. The gate now reads a second recorded fact,

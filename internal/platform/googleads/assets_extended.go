@@ -17,9 +17,10 @@ import (
 //
 // Three more members of the asset oneof assets.go already creates and links.
 // Everything structural — the two mutates, the positional asset/fieldType
-// pairing, the resource-name verification, the SEARCH-ONLY fence — is that
-// file's and is not repeated here. What lives here is each type's own shape and
-// the validation that has to happen BEFORE the budget mutate.
+// pairing, the resource-name verification, the channel fence (these three
+// are Search only) — is that file's and is not repeated here. What lives here
+// is each type's own shape and the validation that has to happen BEFORE the
+// budget mutate.
 //
 // Why these three and not the other three Google publishes:
 //

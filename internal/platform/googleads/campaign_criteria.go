@@ -344,10 +344,12 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 	//
 	// Device BID MODIFIERS and campaign-level demographic exclusions are the half that
 	// is genuinely absent: Performance Max sets no device bid adjustments (the
-	// automated strategy owns the bid entirely) and excludes demographics through
-	// asset-group signals rather than campaign criteria. Both are refused, not dropped,
-	// so an operator never reads "campaign created" while an exclusion they asked for
-	// is nowhere upstream.
+	// automated strategy owns the bid entirely), and this client attaches no demographic
+	// exclusion there. Demographics can reach Performance Max as dimensions of an
+	// Audience used as an asset group signal (#461), but a signal is a hint and not an
+	// exclusion, so it is no substitute. Both are refused, not dropped, so an operator
+	// never reads "campaign created" while an exclusion they asked for is nowhere
+	// upstream.
 	// Video and Display both take the UN-NARROWED set — every one of the five kinds,
 	// exactly as Search does — and that is why the Demand Gen arm above names one channel
 	// rather than every non-Search one. A VIDEO or DISPLAY campaign carries LANGUAGE,
@@ -368,7 +370,7 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 			return criteriaPlan{}, fmt.Errorf("google-ads: device bid modifiers are not supported on %s (its automated bidding owns the bid and sets no device adjustment); omit DeviceBidModifiers, or create a Search campaign to bid by device", kind)
 		}
 		if len(in.ExcludedAgeRanges)+len(in.ExcludedGenders) > 0 {
-			return criteriaPlan{}, fmt.Errorf("google-ads: campaign-level demographic exclusions are not supported on %s (it takes demographics as asset-group signals, which this client does not create); omit ExcludedAgeRanges and ExcludedGenders, or create a Search campaign to exclude demographics", kind)
+			return criteriaPlan{}, fmt.Errorf("google-ads: campaign-level demographic exclusions are not supported on %s (this client attaches no demographic exclusion there; an audience signal can carry demographics, but as a hint, not an exclusion); omit ExcludedAgeRanges and ExcludedGenders, or create a Search campaign to exclude demographics", kind)
 		}
 	}
 

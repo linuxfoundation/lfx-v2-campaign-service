@@ -25,10 +25,21 @@ import (
 // to the campaign. So this is two mutates and they cannot be collapsed: the link
 // operation needs the asset resource names the first mutate returns.
 //
-// SEARCH ONLY, with one exception: Demand Gen takes SITELINKS (#474), verified by a
-// validateOnly probe on 2026-11-03 (a sitelink asset plus a SITELINK campaignAsset).
-// Every other extension type is refused on Demand Gen at preflight, and the whole set
-// on every other channel. Lift it per asset type as each is confirmed live.
+// Search takes every type here. Two other channels take a subset, each linked at the
+// campaign level exactly as on Search and each verified by a validateOnly probe on
+// 2026-11-03:
+//
+//   - Performance Max takes sitelinks, callouts and structured snippets (#461): a
+//     campaignAssets create carrying each of those three field types on a Performance
+//     Max campaign was accepted.
+//   - Demand Gen takes SITELINKS alone (#474): a sitelink asset plus a SITELINK
+//     campaignAsset was accepted.
+//
+// Both probes sent the assets and their links in one googleAds:mutate by temporary id;
+// this client sends the same create operations as the two mutates below, the Search
+// path's, unchanged. Every other type stays refused on those two channels at preflight,
+// and every other channel refuses the whole set. Lift each further pairing only as it is
+// confirmed live.
 // ---------------------------------------------------------------------------
 
 // Extension caps. Google permits up to 20 sitelinks and 20 callouts per
@@ -187,8 +198,19 @@ func validateAssetPlan(kind string, in CampaignInput) (assetPlan, error) {
 	if kind == campaignKindDemandGen && asked > len(in.Sitelinks) {
 		return assetPlan{}, fmt.Errorf("google-ads ad extensions other than sitelinks (callouts, structured snippets, call extensions, promotions, prices, lead forms) are not supported on %s; omit them, or create a Search campaign for them", kind)
 	}
-	if kind != campaignKindSearch && kind != campaignKindDemandGen {
-		return assetPlan{}, fmt.Errorf("google-ads ad extensions (sitelinks, callouts, structured snippets, call extensions, promotions, prices, lead forms) are supported on Search campaigns only, not on %s", kind)
+	// Performance Max takes the three types verified on it (#461) and no others. The
+	// remaining four are refused rather than sent, because no probe has confirmed their
+	// campaign-level link on this channel and a refusal there would come after the
+	// campaign exists.
+	if kind == campaignKindPerformanceMax && len(in.CallExtensions)+len(in.Promotions)+len(in.Prices)+len(in.LeadForms) > 0 {
+		return assetPlan{}, fmt.Errorf("google-ads call extensions, promotions, prices and lead forms are supported on Search campaigns only, not on %s (it takes sitelinks, callouts and structured snippets); omit CallExtensions, Promotions, Prices and LeadForms, or create a Search campaign for them", kind)
+	}
+	if kind != campaignKindSearch && kind != campaignKindDemandGen &&
+		kind != campaignKindPerformanceMax {
+		return assetPlan{}, fmt.Errorf("google-ads ad extensions (sitelinks, callouts, "+
+			"structured snippets, call extensions, promotions, prices, lead forms) are "+
+			"supported on Search campaigns only (sitelinks, callouts and structured snippets "+
+			"also on Performance Max, and sitelinks on Demand Gen), not on %s", kind)
 	}
 
 	var plan assetPlan

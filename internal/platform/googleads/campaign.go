@@ -351,16 +351,18 @@ type CampaignInput struct {
 	ExcludedIncomeRanges     []string
 	ExcludedParentalStatuses []string
 	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions.
-	// All optional, all SEARCH ONLY except Sitelinks, which Demand Gen takes too (#474),
-	// and all created as account-level assets that are then linked to the campaign — see
-	// assets.go. Left empty the ad serves as a bare headline+description, which
-	// costs more per click than the same bid with extensions attached.
+	// All optional, all created as account-level assets that are then linked to the
+	// campaign — see assets.go — and accepted on Search, on Performance Max (#461), and,
+	// for Sitelinks alone, on Demand Gen (#474), linking at the campaign level exactly as
+	// on Search. Refused at preflight on every other channel. Left empty the ad serves as
+	// a bare headline+description, which costs more per click than the same bid with
+	// extensions attached.
 	Sitelinks          []Sitelink
 	Callouts           []string
 	StructuredSnippets []StructuredSnippet
 	// CallExtensions, Promotions and Prices are the other three extension types
-	// this client creates, under exactly the same rules as the three above:
-	// optional, SEARCH ONLY, and account-level assets linked to the campaign.
+	// this client creates, under the same rules as the three above except the
+	// channel: optional, account-level assets linked to the campaign, and SEARCH ONLY.
 	// Their shapes and validators live in assets_extended.go, which also says
 	// why image and location extensions are not here.
 	CallExtensions []CallExtension
@@ -415,6 +417,18 @@ type CampaignInput struct {
 	// kept rather than refused because it is also what ADOPTION of a campaign whose
 	// asset group was built by hand upstream looks like. See pmax_creative.go.
 	PerformanceMaxCreative PerformanceMaxCreative
+	// PerformanceMaxSearchThemes and PerformanceMaxAudienceSignal are the asset group's
+	// SIGNALS (#461): search themes are free text telling Google which searches the
+	// campaign is for, and the audience signal is an EXISTING Audience resource
+	// (`customers/<id>/audiences/<id>` or the bare numeric id) whose people Google treats
+	// as a starting point. Both are hints, not targeting — Performance Max may serve
+	// beyond them. Both optional, PERFORMANCE MAX ONLY, and refused when no asset group
+	// will be created (an empty PerformanceMaxCreative), because a signal hangs off an
+	// asset group and there would be nothing to attach it to. ONE audience signal at
+	// most, which is why it is a string and not a list: Google allows one per asset
+	// group. See pmax_signals.go.
+	PerformanceMaxSearchThemes   []string
+	PerformanceMaxAudienceSignal string
 	// VideoCreative is the responsive video ad for a Video (YouTube) campaign, and
 	// is the fourth member of the same family: optional and VIDEO ONLY, refused at
 	// preflight on every other channel.
@@ -654,10 +668,10 @@ type CampaignResult struct {
 	//
 	// Kept separate from ExtensionAssetIDs rather than folded into it, even though both are
 	// account-level `assets` ids created by an `assets:mutate`: the two come from different
-	// inputs (extensions, Search's and Demand Gen's sitelinks; these, Demand Gen's
-	// creatives) and are attached to different things — an extension is linked to the
-	// CAMPAIGN by a second mutate, an image is referenced by the AD itself. A reconciler
-	// chasing one would look in the wrong place for the other.
+	// inputs (extensions, on Search, Performance Max and, for sitelinks, Demand Gen; these,
+	// Demand Gen's creatives) and are attached to different things — an extension is linked
+	// to the CAMPAIGN by a second mutate, an image is referenced by the AD itself. A
+	// reconciler chasing one would look in the wrong place for the other.
 	//
 	// Non-empty with AdID empty is the Demand Gen counterpart of the
 	// created-but-unlinked case ExtensionAssetIDs documents: the images exist
@@ -699,9 +713,16 @@ type CampaignResult struct {
 	// than nothing, deliberately: links may exist, this client cannot say they do, and the
 	// safe reading of "cannot say" is to send the operator to the Google Ads UI rather than
 	// to claim a launch.
-	AssetGroupAssetLinks *int     `json:"assetGroupAssetLinks,omitempty"`
-	GoogleAdsURL         string   `json:"googleAdsUrl"`
-	Steps                []string `json:"steps"`
+	AssetGroupAssetLinks *int `json:"assetGroupAssetLinks,omitempty"`
+	// AssetGroupSignalIDs are the criterion ids of the asset group signals created for
+	// CampaignInput.PerformanceMaxSearchThemes and PerformanceMaxAudienceSignal (#461):
+	// the search themes in input order, then the audience signal. Empty is ambiguous in
+	// the three ways GeoCriterionIDs documents — none asked for, the mutate failed, or it
+	// was unconfirmed — and the returned ERROR tells them apart. Every signal goes in one
+	// atomic request, so a definite failure means none exists.
+	AssetGroupSignalIDs []string `json:"assetGroupSignalIds,omitempty"`
+	GoogleAdsURL        string   `json:"googleAdsUrl"`
+	Steps               []string `json:"steps"`
 }
 
 // mutateOperation is one {create: <resource>} entry in a :mutate request.
@@ -1107,6 +1128,11 @@ type campaignPreflight struct {
 	// creative is, and its image bytes are fetched by the Performance Max cascade in
 	// the same pre-budget step. See validatePerformanceMaxCreative.
 	pmax performanceMaxPlan
+	// pmaxSignals are the validated asset group signals — search themes and at most one
+	// audience — resolved here so an over-long theme or another account's audience is
+	// refused before the budget mutate rather than at a mutate that runs after the asset
+	// group exists. See validatePerformanceMaxSignals.
+	pmaxSignals performanceMaxSignalPlan
 	// video is the validated responsive video ad — YouTube video ids and the four
 	// text field types. Resolved here with everything else, and unlike creative and
 	// pmax it needs no later fetch step at all, because this channel holds no binary
@@ -1263,20 +1289,21 @@ func (c *Client) ValidateCampaignInput(in CampaignInput) error {
 // Display's custom audiences, custom affinities, user interests and placement
 // exclusions. Performance Max refuses only the half it genuinely cannot carry — device
 // bid modifiers and campaign-level demographic exclusions, plus the Search-only and
-// Display-only targeting fields — and accepts proximity, languages and ad schedules at
-// the campaign level like Search. Video refuses the Search targeting fields (keywords,
-// audience segments, the CPC bid, negative keywords, Search partners, the extension
-// assets and the ad-group list) and Display's own audience lists and placement
-// exclusions, because it carries its location and its other campaign criteria at the
-// campaign level exactly as Search does. Display refuses the narrowest set of the four:
-// the same Search fields minus audience segments, which it attaches with its own lists
-// (#462). (Each channel also refuses the other channels' creative fields, and every
-// channel but Demand Gen refuses DemandGenAudience.) So a Demand Gen request carrying
-// one of the fields Demand Gen refuses validates clean as Search and is then refused by
-// CreateDemandGenCampaign. On the create path that is merely a late error; on the
-// ADOPTION path, which returns before any create runs, it is the exact defect this
-// function exists to prevent: the same request accepted when a campaign happens to exist
-// and refused when it does not.
+// Display-only targeting fields — and accepts proximity, languages, ad schedules and the
+// sitelink, callout and structured-snippet extensions at the campaign level like Search
+// (#461). Video refuses the Search targeting fields (keywords, audience segments, the
+// CPC bid, negative keywords, Search partners, the extension assets and the ad-group
+// list) and Display's own audience lists and placement exclusions, because it carries
+// its location and its other campaign criteria at the campaign level exactly as Search
+// does. Display refuses the narrowest set of the four: the same Search fields minus
+// audience segments, which it attaches with its own lists (#462). (Each channel also
+// refuses the other channels' creative fields, every channel but Demand Gen refuses
+// DemandGenAudience, and every channel but Performance Max refuses the asset group
+// signals.) So a Demand Gen request carrying one of the fields Demand Gen refuses
+// validates clean as Search and is then refused by CreateDemandGenCampaign. On the
+// create path that is merely a late error; on the ADOPTION path, which returns before
+// any create runs, it is the exact defect this function exists to prevent: the same
+// request accepted when a campaign happens to exist and refused when it does not.
 //
 // The ad-group income and parental-status exclusions (#473) cut across all of this:
 // every channel but Search and Display refuses income ranges, and every channel but
@@ -1490,6 +1517,12 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	// The asset group's signals ride on the plan above: they are refused off Performance
+	// Max, and refused on it when that plan creates no asset group to attach them to.
+	pmaxSignals, err := validatePerformanceMaxSignals(kind, c.account.CustomerID, in, pmax.present)
+	if err != nil {
+		return nil, err
+	}
 	video, err := validateVideoCreative(kind, in)
 	if err != nil {
 		return nil, err
@@ -1672,6 +1705,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		assets:              assets,
 		creative:            creative,
 		pmax:                pmax,
+		pmaxSignals:         pmaxSignals,
 		video:               video,
 		display:             display,
 		displayTargeting:    displayTargeting,

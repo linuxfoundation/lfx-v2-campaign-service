@@ -479,10 +479,11 @@ type googleAdsConfig struct {
 	// other channel. See googleads.validateAdGroupDemographicExclusions.
 	ExcludedIncomeRanges     []string `json:"excludedIncomeRanges"`
 	ExcludedParentalStatuses []string `json:"excludedParentalStatuses"`
-	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions. All
-	// Search only except Sitelinks, which "demand-gen" takes too (#474, verified by a
-	// validateOnly probe) — refused on every other channel — and all created as
-	// account-level assets then linked to the campaign.
+	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions,
+	// created as account-level assets then linked to the campaign. Accepted on Search,
+	// on Performance Max (#461), which links them at the campaign level too, and, for
+	// Sitelinks alone, on "demand-gen" (#474); each pairing was verified by a
+	// validateOnly probe. Refused on every other channel.
 	//
 	// Left empty the ad serves as a bare headline+description, which costs more per
 	// click than the same bid with extensions attached — but it is the behaviour of
@@ -491,10 +492,10 @@ type googleAdsConfig struct {
 	Callouts           []string                           `json:"callouts"`
 	StructuredSnippets []googleAdsStructuredSnippetConfig `json:"structuredSnippets"`
 	// CallExtensions, Promotions and Prices are the other three extension types,
-	// under exactly the same rules: optional, Search only, account-level assets
-	// linked to the campaign. Image and location extensions are NOT here — see
-	// internal/platform/googleads/assets_extended.go for why each is a gap rather
-	// than an omission.
+	// under the same rules except the channel: optional, account-level assets
+	// linked to the campaign, and Search only. Image and location extensions are NOT
+	// here — see internal/platform/googleads/assets_extended.go for why each is a gap
+	// rather than an omission.
 	CallExtensions []googleAdsCallExtensionConfig `json:"callExtensions"`
 	Promotions     []googleAdsPromotionConfig     `json:"promotions"`
 	Prices         []googleAdsPriceConfig         `json:"prices"`
@@ -544,6 +545,19 @@ type googleAdsConfig struct {
 	// hand upstream looks like. That campaign cannot serve until a group exists; the
 	// result's closing step says so.
 	PerformanceMaxCreative *googleAdsPerformanceMaxCreativeConfig `json:"performanceMaxCreative"`
+	// PerformanceMaxSearchThemes and PerformanceMaxAudienceSignal are the asset group's
+	// signals (#461): search-theme text, and ONE existing Google Ads audience (a numeric
+	// id or a customers/<id>/audiences/<id> resource name in this account). PERFORMANCE
+	// MAX ONLY, and refused there too when PerformanceMaxCreative is absent, because a
+	// signal attaches to the asset group that field creates. Passed through verbatim; the
+	// client's preflight owns every rule but one.
+	//
+	// PerformanceMaxAudienceSignal is refused outright unless
+	// GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED is "true" — see
+	// googleAdsPMaxAudienceSignalEnabled. The search themes are free text naming no account
+	// resource, and are not gated. See googleads.CampaignInput.
+	PerformanceMaxSearchThemes   []string `json:"performanceMaxSearchThemes"`
+	PerformanceMaxAudienceSignal string   `json:"performanceMaxAudienceSignal"`
 	// VideoCreative is the responsive video ad for a Video (YouTube) campaign, the
 	// fourth member of the same family and VIDEO ONLY.
 	//
@@ -624,6 +638,22 @@ func googleAdsDemandGenAdGroupAudiencesSet(cfg googleAdsConfig) string {
 // where the campaign appears. Neither can reach another foundation's data.
 func googleAdsDisplayAudiencesEnabled() bool {
 	return os.Getenv(constants.EnvGoogleAdsDisplayAudiencesEnabled) == "true"
+}
+
+// googleAdsPMaxAudienceSignalEnabled reports whether this deployment opted in to
+// googleAdsConfig.performanceMaxAudienceSignal (#461). Read per call, like
+// googleAdsDemandGenAudienceEnabled, and in Dispatch for the same reason: the client's check is
+// account-scoped, so on the shared LF customer it would accept another foundation's Audience
+// as this campaign's signal (#468). On Performance Max a signal is a hint rather than a
+// restriction, but the Audience, and the customer lists inside it, still belong to another
+// foundation.
+//
+// The rest of #461 is deliberately outside it. performanceMaxSearchThemes are free text, and
+// the sitelinks, callouts and structured snippets it admits on Performance Max are text and
+// the caller's own destination URLs, created as new assets in this campaign. None of them
+// names an existing account resource, so none can reach another foundation's data.
+func googleAdsPMaxAudienceSignalEnabled() bool {
+	return os.Getenv(constants.EnvGoogleAdsPMaxAudienceSignalEnabled) == "true"
 }
 
 // googleAdsInputDisabled is the refusal for an input a deployment gate keeps off: not-created,
@@ -751,6 +781,13 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return nil, googleAdsInputDisabled("Display audience targeting ("+fields+") is",
 			constants.EnvGoogleAdsDisplayAudiencesEnabled, "a user list or custom segment", fields)
 	}
+	// The Performance Max audience signal gate (#461), on the same terms as demandGenAudience:
+	// any non-empty value, whitespace included and on any channel.
+	if cfg.PerformanceMaxAudienceSignal != "" && !googleAdsPMaxAudienceSignalEnabled() {
+		return nil, googleAdsInputDisabled("performanceMaxAudienceSignal is",
+			constants.EnvGoogleAdsPMaxAudienceSignalEnabled, "an Audience",
+			"performanceMaxAudienceSignal")
+	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -840,6 +877,9 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		PerformanceMaxCreative:   googleAdsPerformanceMaxCreative(cfg.PerformanceMaxCreative),
 		VideoCreative:            googleAdsVideoCreative(cfg.VideoCreative),
 		DisplayCreative:          googleAdsDisplayCreative(cfg.DisplayCreative),
+		// The asset group's signals (#461), verbatim like the creative they attach to.
+		PerformanceMaxSearchThemes:   cfg.PerformanceMaxSearchThemes,
+		PerformanceMaxAudienceSignal: cfg.PerformanceMaxAudienceSignal,
 		// The Display-only audience lists and placement exclusions (#462), passed through
 		// verbatim like the inputs above: the client's preflight refuses them off Display
 		// and checks every resource name against the account, before its first mutate.

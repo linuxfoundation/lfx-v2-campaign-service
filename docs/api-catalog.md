@@ -808,7 +808,8 @@ that names none of them produces exactly the single-ad-group, single-ad campaign
 service created before they existed. Additive does NOT mean channel-independent — the
 entries below marked SEARCH ONLY are REFUSED, not ignored, on any other `channel`. Each
 entry states which channels accept it, because the channels do not refuse the same set:
-`performance-max` takes proximity that `demand-gen` refuses, and refuses device bid modifiers
+`performance-max` takes proximity that `demand-gen` refuses, takes the sitelink, callout and
+structured-snippet extensions at the campaign level (#461), and refuses device bid modifiers
 and demographic exclusions; `demand-gen` takes languages on its ad group, ad schedules,
 device exclusions and sitelinks at the campaign level (#474), refuses demographic
 exclusions, and is the only channel that takes `demandGenAudience`. Each is validated
@@ -823,8 +824,9 @@ account-level tracking template reads as `utm_campaign={_utmcampaign}`. Without 
 `utm_campaign` came out empty on every LFX campaign. When the escaped name is over Google's
 250-character limit the parameter is left out, the create still goes ahead, and the campaign
 result's steps record `tracking template's utm_campaign left empty: …`. An adopted campaign is
-not changed. The final URLs this service tags — the ad's, and on Search each sitelink,
-promotion and price-offering destination — carry `utm_source=google` and a per-channel
+not changed. The final URLs this service tags — the ad's, on Search each sitelink,
+promotion and price-offering destination, and on Performance Max each sitelink destination
+(#461) — carry `utm_source=google` and a per-channel
 `utm_medium`: `paid-search` on Search, `display` on Demand Gen, Display and Video, and `cpc` on
 Performance Max (it was `cpc` on every channel before). Both are set unconditionally,
 replacing any `utm_source` or `utm_medium` the caller's URL carried; `utm_campaign`
@@ -1591,10 +1593,14 @@ leadForms?:                     — OPTIONAL lead form (LFXV2-2665). The one ext
                                   for it, which this client cannot check — an account without the
                                   allow-list is refused at the mutate.
 
-                                  All seven extension fields are SEARCH ONLY, except `sitelinks` on
-                                  `demand-gen` (above), and are REFUSED, not ignored, on every other
-                                  channel. Omitted/empty, no assets are created
-                                  and the ad serves with no extensions — the pre-LFXV2-2665 behaviour.
+                                  `sitelinks`, `callouts` and `structuredSnippets` are accepted on
+                                  `search` AND on `performance-max` (#461), where they are created and
+                                  linked to the campaign by the same two requests and the same rules
+                                  as on Search; `sitelinks` alone is accepted on `demand-gen` too
+                                  (above). The other four extension fields are SEARCH ONLY. All
+                                  seven are REFUSED, not ignored, on every channel that does not take
+                                  them. Omitted/empty, no assets are created and the ad serves with
+                                  no extensions — the pre-LFXV2-2665 behaviour.
 
                                   IMAGE and LOCATION extensions, and the lead form's optional
                                   BACKGROUND IMAGE, are NOT supported. Each of the first two carries
@@ -1856,6 +1862,47 @@ performanceMaxCreative?:        — OPTIONAL Performance Max ASSET GROUP (LFXV2-
                                   The result carries `creativeAssetIds` and `assetGroupId`, so a
                                   failure after the assets upload does not lose them. The same
                                   validation runs on the `adoptExisting` path.
+performanceMaxSearchThemes?:    — OPTIONAL search themes for the asset group (#461): free text naming
+  string[]                        searches the campaign is for ("kubecon", "kubecon agenda"). A HINT
+                                  to Google, not keyword targeting. Each is trimmed and must be
+                                  non-empty and ≤80 characters (Google refuses longer); duplicates,
+                                  compared case-insensitively, are REFUSED rather than collapsed, so
+                                  the count in the Google Ads UI is the count sent. At most 50 per
+                                  asset group — verified by a validateOnly probe on 2026-11-03 (a
+                                  51st is refused with RESOURCE_LIMIT); Google's help page still
+                                  says 25.
+performanceMaxAudienceSignal?:  — OPTIONAL ONE audience signal for the asset group (#461): an EXISTING
+  string                          Google Ads audience, as a numeric id or a
+                                  `customers/<id>/audiences/<id>` resource name, the id a positive
+                                  canonical number ("0" and "007" are REFUSED, as on
+                                  `demandGenAudience`). This service does not build audiences. A
+                                  resource name naming ANOTHER customer is REFUSED — an audience
+                                  belongs to the account that built it — and so is a value that is
+                                  only whitespace. One, because Google allows one audience signal
+                                  per asset group.
+
+                                  The check is ACCOUNT-scoped, not foundation-scoped, and is not
+                                  tenancy protection: on the shared LF Google Ads customer a project
+                                  could name another foundation's audience (#468). So the field is
+                                  OFF by default: unless the deployment sets
+                                  GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED to exactly "true", a
+                                  create naming it is refused before the budget mutate, whatever
+                                  the value and whatever the `channel`. `performanceMaxSearchThemes`
+                                  (free text) and the Performance Max extensions (text and the
+                                  campaign's own URLs) name no account resource and are not gated.
+
+                                  Both are PERFORMANCE MAX ONLY and REFUSED on every other `channel`,
+                                  and REFUSED on `performance-max` too when `performanceMaxCreative` is
+                                  absent: a signal attaches to the asset group, and without the
+                                  creative none is created. Every check runs BEFORE the first budget
+                                  mutate, and on the `adoptExisting` path.
+
+                                  The signals are created AFTER the asset group and its links, in ONE
+                                  atomic request: themes in the order given, then the audience. A
+                                  refusal there means none exists; an ambiguous outcome is reported
+                                  UNCONFIRMED. Either way the campaign, the asset group and its links
+                                  are already in place and the result carries them. The result's
+                                  `assetGroupSignalIds` are the created signals' criterion ids.
 videoCreative?:                 — OPTIONAL Video RESPONSIVE VIDEO AD (LFXV2-2665). VIDEO ONLY, and
   {youtubeVideoIds?: string[],    REFUSED on every other `channel`.
    headlines?: string[],
