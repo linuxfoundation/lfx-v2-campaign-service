@@ -41,6 +41,15 @@ func pngOf(t *testing.T, w, h int) []byte {
 	return buf.Bytes()
 }
 
+// taggedImage returns a copy of img with an 8-byte tag appended past its end. The decoder reads
+// the header only, so the copy decodes as img does while its bytes differ: fetchSlotImages
+// refuses identical bytes twice in one slot (refuseRepeatedSlotImage), so a fixture filling
+// one slot with many images gives each its own bytes. Every copy is the same length.
+func taggedImage(img []byte, tag int) []byte {
+	out := make([]byte, 0, len(img)+8)
+	return append(append(out, img...), fmt.Sprintf("%08d", tag)...)
+}
+
 func jpegOf(t *testing.T, w, h int) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
@@ -754,6 +763,7 @@ func TestCreateDemandGenCampaign_WithCreative(t *testing.T) {
 	if !strings.Contains(assetReq, `"imageAsset"`) || !strings.Contains(assetReq, `"data"`) {
 		t.Errorf("asset mutate is not an image asset create: %s", assetReq)
 	}
+	assertImageAssetsNamed(t, assetReq)
 	wantPrefix := base64.StdEncoding.EncodeToString(pngOf(t, 1200, 628))[:32]
 	if !strings.Contains(assetReq, wantPrefix) {
 		t.Error("asset mutate does not carry the fetched image bytes")
@@ -891,6 +901,14 @@ func TestCreateDemandGenCampaign_WrongAccountAssetIsUnconfirmed(t *testing.T) {
 	}
 	if res == nil {
 		t.Fatal("a failure past the campaign create must return a non-nil partial result")
+	}
+	// The bad result is FIRST; the same-account asset after it exists and still comes back
+	// (#481 review), and the error names the first bad index.
+	if !strings.Contains(err.Error(), "at index 0") {
+		t.Errorf("err = %v, want it to name index 0", err)
+	}
+	if got := strings.Join(res.CreativeAssetIDs, ","); got != "901" {
+		t.Errorf("CreativeAssetIDs = %q, want the later same-account id 901", got)
 	}
 }
 
@@ -1031,13 +1049,17 @@ func TestFetchSlotImages_TotalBytesCapIsAcrossEverySlot(t *testing.T) {
 	wide := append(pngOf(t, 1200, 628), pad...)  // Demand Gen marketing image, 1.91:1
 	square := append(pngOf(t, 600, 600), pad...) // Demand Gen square marketing image, 1:1
 
+	// Each path's bytes end in the path itself, at the same size: identical bytes twice in
+	// one slot are refused on their own (refuseRepeatedSlotImage).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
+		body := wide
 		if strings.HasPrefix(r.URL.Path, "/square") {
-			_, _ = w.Write(square)
-			return
+			body = square
 		}
-		_, _ = w.Write(wide)
+		body = append([]byte(nil), body...)
+		copy(body[len(body)-len(r.URL.Path):], r.URL.Path)
+		_, _ = w.Write(body)
 	}))
 	t.Cleanup(srv.Close)
 

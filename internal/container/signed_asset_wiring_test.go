@@ -124,7 +124,7 @@ func TestBindCreativeAssetSharing_LinkedInSharesTheContainerReserver(t *testing.
 }
 
 // TestBindCreativeAssetSharing_GoogleSharesTheContainerReserver: Google is the newest and the
-// heaviest asset holder — fourteen creative image slots, each of which may name a stored asset — so
+// heaviest asset holder — many creative image slots, each of which may name a stored asset — so
 // it is the one dispatcher whose omission from bindCreativeAssetSharing would cost the most. Same
 // identity assertion as LinkedIn's, for the same reason: AssetReserverIsSet is true for either
 // budget, so only identity distinguishes the container's reserver from registerDispatchers' own.

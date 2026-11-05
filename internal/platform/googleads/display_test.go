@@ -210,6 +210,7 @@ func TestCreateDisplayCampaign_HappyPath(t *testing.T) {
 	if strings.Contains(assetReq, srv.URL) {
 		t.Error("the asset mutate sent the image URL; Google cannot fetch it")
 	}
+	assertImageAssetsNamed(t, assetReq)
 	wantPrefix := base64.StdEncoding.EncodeToString(images["/m.png"])[:32]
 	if !strings.Contains(assetReq, wantPrefix) {
 		t.Error("asset mutate does not carry the fetched image bytes")
@@ -430,6 +431,35 @@ func TestCreateDisplayCampaign_AdGroupFailureKeepsThePartial(t *testing.T) {
 
 // Image assets created with nothing referencing them are account-level litter, so the
 // ids an operator needs in order to find them must survive a failure of the ad half.
+// A foreign-account asset result in the MIDDLE of an expected-length response does not
+// drop the same-account ids after it (#481 review): the landscape image 900 and the logo
+// 902 both exist and both come back, with an UNCONFIRMED error naming index 1, and no ad.
+func TestCreateDisplayCampaign_WrongAccountAssetKeepsEveryValidID(t *testing.T) {
+	adGroupH, _ := capturedMutate(1, displayAdGroupResource)
+	assetH, _ := capturedMutate(3, func(i int) string {
+		return []string{
+			"customers/1234567890/assets/900",
+			"customers/9999999999/assets/901",
+			"customers/1234567890/assets/902",
+		}[i]
+	})
+	srv := demandGenTLSServer(t, displayCascade(t, displayImages(t), adGroupH, assetH,
+		failHandler(t, "the ad mutate after a wrong-account asset")))
+	c := demandGenClient(t, srv)
+
+	res, err := c.CreateDisplayCampaign(context.Background(), displayInput(srv.URL))
+	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") ||
+		!strings.Contains(err.Error(), "at index 1") {
+		t.Fatalf("err = %v, want UNCONFIRMED naming index 1", err)
+	}
+	if res == nil || res.AdID != "" {
+		t.Fatalf("res = %+v, want a partial with no ad", res)
+	}
+	if got := strings.Join(res.CreativeAssetIDs, ","); got != "900,902" {
+		t.Errorf("CreativeAssetIDs = %q, want 900,902", got)
+	}
+}
+
 func TestCreateDisplayCampaign_AdFailureReportsTheAssets(t *testing.T) {
 	adGroupH, _ := capturedMutate(1, displayAdGroupResource)
 	assetH, _ := displayAssets()
@@ -472,6 +502,11 @@ func TestDisplayClosingStep(t *testing.T) {
 		}
 		if strings.Contains(got, "no geo targeting") != tc.wantNoGeo {
 			t.Errorf("displayClosingStep(%v,%v) = %q, geo mismatch", tc.hasGeo, tc.hasAd, got)
+		}
+		// The remedy names GEO targeting: since #462 a campaign with no geo may still carry
+		// audiences and placement exclusions, so a bare "add targeting" would be false.
+		if strings.Contains(got, "add geo targeting") != tc.wantNoGeo {
+			t.Errorf("displayClosingStep(%v,%v) = %q, want the remedy to name geo targeting exactly when geo is missing", tc.hasGeo, tc.hasAd, got)
 		}
 	}
 }

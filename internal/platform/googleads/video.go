@@ -95,9 +95,9 @@ type videoAdGroupCreate struct {
 // CreateVideoCampaign creates a PAUSED Video (YouTube) campaign: budget → campaign →
 // campaign-level geo → campaign-level criteria → ad group → video assets → ad.
 //
-// Seven steps, the longest cascade in this package, because Video is the only channel
-// that has BOTH campaign-level criteria (like Search and Performance Max) AND an ad
-// group with an ad under it (like Search and Demand Gen). Performance Max has the
+// Seven steps; Display's cascade is longer (see display.go). Video has BOTH
+// campaign-level criteria (like Search and Performance Max) AND an ad group with an ad
+// under it (like Search and Demand Gen), as Display does. Performance Max has the
 // first half and an asset group; Demand Gen has the second half with its geo on the
 // ad group. This channel is the union.
 //
@@ -317,7 +317,8 @@ func (c *Client) createVideoCampaignCascade(ctx context.Context, in CampaignInpu
 
 	// Step 4: the remaining campaign criteria — all five kinds, as on Search. See
 	// validateCriteriaPlan for why this channel takes the un-narrowed set where
-	// Demand Gen takes only languages (on its ad group) and Performance Max takes half.
+	// Demand Gen splits it across two levels and refuses demographics, and Performance Max
+	// takes half.
 	if !pf.criteria.empty() {
 		critIDs, critErr := c.createCampaignTargetingCriteria(ctx, campaignResource, campaignID, pf.criteria)
 		res.TargetingCriterionIDs = critIDs

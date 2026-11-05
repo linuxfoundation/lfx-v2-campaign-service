@@ -471,6 +471,7 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 		return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; 2xx with a malformed/short mutate response for %d ad(s) — ads may exist — verify in Google Ads before retrying)", adGroupID, len(adOps))
 	}
 	adIDs := make([]string, 0, len(adOps))
+	seen := newResultIDSet(len(adResults.Results))
 	for i, r := range adResults.Results {
 		adResource := r.ResourceName
 		// adGroupAdID validates the resource KIND but not the account; without this, a
@@ -490,6 +491,10 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 		// returned adID cannot be trusted enough to persist.
 		if returnedAdGroupID != adGroupID {
 			return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; adGroupAd resource name %q reports a different ad group id %q — verify in Google Ads before retrying)", adGroupID, adResource, returnedAdGroupID)
+		}
+		if dup := seen.repeat(adID, i); dup != "" {
+			return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; %s — "+
+				"verify in Google Ads before retrying)", adGroupID, dup)
 		}
 		adIDs = append(adIDs, adID)
 	}

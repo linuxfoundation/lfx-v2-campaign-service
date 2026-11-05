@@ -322,15 +322,65 @@ app:
       value: "false"
 
     # Opts this deployment IN to googleAdsConfig.demandGenAudience (#459): one
-    # existing Google Ads Audience on a Demand Gen ad group. Default off: the
-    # service checks that Audience against the Google Ads account only, and on
-    # the shared LF customer every foundation's Audiences sit under one account,
-    # so a project could target with another foundation's Audience (#468).
+    # existing Google Ads Audience on a Demand Gen ad group. The same flag
+    # gates each googleAdsConfig.demandGenAdGroups[].audience (#460), the same
+    # input on a named ad group. A per-deployment opt-in, off by default; ops
+    # turns it on by setting it to exactly "true" in lfx-v2-argocd. The service
+    # checks the Audience against the connected Google Ads account (same
+    # customer id), which is the boundary. Per-foundation ownership (#468) was
+    # closed as won't do: campaign managers are the LF marketing team, who
+    # manage every foundation.
     # While off, a create naming one is refused before anything upstream exists;
-    # the rest of Demand Gen, languages included, is unaffected. Any value other
-    # than "true" is treated as off, so a typo fails closed. Keep it off until
-    # #468 lands; that fix removes the gate and this key.
+    # the rest of Demand Gen, languages and ad groups without an audience
+    # included, is unaffected. Any value other
+    # than "true" is treated as off, so a typo fails closed.
     GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to the Display audience lists that name an
+    # account-owned segment (#462): googleAdsConfig.audienceSegments on the
+    # "display" channel, customAudiences and customAffinities, and (#475) the
+    # user-list exclusions excludedAudienceSegments plus each displayAdGroups
+    # entry's audienceSegments, customAudiences, customAffinities and
+    # excludedAudienceSegments. A per-deployment opt-in, off by default, like
+    # GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED; set it to exactly "true" in
+    # lfx-v2-argocd to turn it on. The service checks each segment against the
+    # connected Google Ads account (same customer id), which is the boundary;
+    # per-foundation ownership (#468) was closed as won't do. While off, a
+    # create naming one is refused before anything upstream exists.
+    # userInterests (Google's own categories, at either level),
+    # excludedPlacements (public domains), Search's observation-only
+    # audienceSegments and displayAdGroups entries without those lists are
+    # unaffected. Any value other than "true" is treated as off, so a typo
+    # fails closed.
+    GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to googleAdsConfig.performanceMaxAudienceSignal
+    # (#461): one existing Google Ads Audience attached to a Performance Max
+    # asset group as a signal. A per-deployment opt-in, off by default, like
+    # GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED; set it to exactly "true" in
+    # lfx-v2-argocd to turn it on. The service checks the Audience against the
+    # connected Google Ads account (same customer id), which is the boundary;
+    # per-foundation ownership (#468) was closed as won't do.
+    # While off, a create naming one is refused before anything upstream
+    # exists. Search themes and the Performance Max sitelinks, callouts and
+    # structured snippets are unaffected. Any value other than "true" is
+    # treated as off, so a typo fails closed.
+    GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to googleAdsConfig.sharedNegativeKeywordLists
+    # (#477): existing shared negative keyword lists (sharedSets) attached to
+    # a Search campaign. A per-deployment opt-in, off by default, like
+    # GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED; set it to exactly "true" in
+    # lfx-v2-argocd to turn it on. The service checks each shared set against
+    # the connected Google Ads account (same customer id), which is the
+    # boundary; per-foundation ownership (#468) was closed as won't do. While
+    # off, a create naming one is refused before anything upstream exists.
+    # searchAssets (images, logo, business name) is unaffected. Any value
+    # other than "true" is treated as off, so a typo fails closed.
+    GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED:
       value: "false"
 
     # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR

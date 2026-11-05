@@ -5,6 +5,7 @@ package googleads
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -33,7 +34,7 @@ func strategyKeys(t *testing.T, f biddingFields) []string {
 		t.Fatalf("decode bidding fields: %v", err)
 	}
 	var keys []string
-	for _, k := range []string{"manualCpc", "targetSpend", "maximizeConversions", "maximizeConversionValue"} {
+	for _, k := range []string{"manualCpc", "targetSpend", "maximizeConversions", "maximizeConversionValue", "targetCpa"} {
 		if _, ok := obj[k]; ok {
 			keys = append(keys, k)
 		}
@@ -235,10 +236,10 @@ func TestBiddingPlan_RefusesACPCBidUnderAnAutomatedStrategy(t *testing.T) {
 	}
 }
 
-// Demand Gen accepts exactly one strategy, on recorded live-API evidence. A strategy that is
-// VALID but wrong for the channel gets a different error from an unknown name, because the
-// two need different fixes.
-func TestBiddingPlan_DemandGenAcceptsOnlyMaximizeClicks(t *testing.T) {
+// Demand Gen accepts the four strategies a validateOnly probe on 2026-11-03 accepted (#474)
+// and refuses target-roas, which was not probed. A strategy that is VALID but wrong for the
+// channel gets a different error from an unknown name, because the two need different fixes.
+func TestBiddingPlan_DemandGenAcceptsTheProbedStrategies(t *testing.T) {
 	for strategy := range searchBiddingStrategies {
 		in := CampaignInput{BiddingStrategy: strategy}
 		switch strategy {
@@ -248,27 +249,99 @@ func TestBiddingPlan_DemandGenAcceptsOnlyMaximizeClicks(t *testing.T) {
 			in.TargetROAS = 4
 		}
 		_, err := validateBiddingPlan(campaignKindDemandGen, biddingTestCustomer, in)
-		if strategy == biddingMaximizeClicks {
+		if demandGenBiddingStrategies[strategy] {
 			if err != nil {
-				t.Errorf("%s refused on Demand Gen, but it is the channel default: %v", strategy, err)
+				t.Errorf("%s refused on Demand Gen, which the probe accepted: %v", strategy, err)
 			}
 			continue
 		}
 		if err == nil {
-			t.Errorf("%s accepted on Demand Gen; the live API rejected it AFTER the budget mutate", strategy)
+			t.Errorf("%s accepted on Demand Gen, where it is not verified", strategy)
 			continue
 		}
 		if !strings.Contains(err.Error(), "not supported on") {
 			t.Errorf("%s: error %v reads as a typo rather than a channel mismatch", strategy, err)
 		}
 	}
+	want := []string{biddingMaximizeClicks, biddingMaximizeConversionValue, biddingMaximizeConversions, biddingTargetCPA}
+	if got := sortedKeys(demandGenBiddingStrategies); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("Demand Gen set = %v, want %v", got, want)
+	}
 }
 
-// Performance Max is the mirror image of Demand Gen: the four CONVERSION-based
-// strategies are accepted and manual CPC is refused, because the channel has no
-// manual bidding at all. Written as its own test rather than a shared table, for
-// the reason the Demand Gen one gives — a shared table that drifted would make the
-// two channels' sets look like one rule, and they are two.
+// The payload is the probed one: a target CPA is the standalone `targetCpa` on Demand Gen
+// (Google refuses maximizeConversions.targetCpaMicros there), and the targetless strategies
+// keep their empty objects. Search keeps the folded form.
+func TestBiddingPlan_DemandGenSendsTheProbedPayload(t *testing.T) {
+	cases := []struct {
+		in   CampaignInput
+		want string
+	}{
+		{CampaignInput{}, `{"targetSpend":{}}`},
+		{CampaignInput{BiddingStrategy: biddingMaximizeConversions}, `{"maximizeConversions":{}}`},
+		{CampaignInput{BiddingStrategy: biddingMaximizeConversions, TargetCPA: 25}, `{"targetCpa":{"targetCpaMicros":25000000}}`},
+		{CampaignInput{BiddingStrategy: biddingTargetCPA, TargetCPA: 12.5}, `{"targetCpa":{"targetCpaMicros":12500000}}`},
+		{CampaignInput{BiddingStrategy: biddingMaximizeConversionValue}, `{"maximizeConversionValue":{}}`},
+	}
+	for _, tc := range cases {
+		plan, err := validateBiddingPlan(campaignKindDemandGen, biddingTestCustomer, tc.in)
+		if err != nil {
+			t.Fatalf("%+v: %v", tc.in, err)
+		}
+		raw, err := json.Marshal(plan.fields())
+		if err != nil {
+			t.Fatalf("%+v: marshal: %v", tc.in, err)
+		}
+		if string(raw) != tc.want {
+			t.Errorf("%+v: payload %s, want %s", tc.in, raw, tc.want)
+		}
+	}
+	plan, err := validateBiddingPlan(campaignKindSearch, biddingTestCustomer, CampaignInput{BiddingStrategy: biddingTargetCPA, TargetCPA: 25})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(plan.fields())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(raw) != `{"maximizeConversions":{"targetCpaMicros":25000000}}` {
+		t.Errorf("Search target CPA payload %s, want the folded maximizeConversions form", raw)
+	}
+}
+
+// A target ROAS is refused on Demand Gen under maximize-conversion-value as well as under
+// target-roas: only the targetless maximizeConversionValue was probed there.
+func TestBiddingPlan_DemandGenRefusesTargetROAS(t *testing.T) {
+	_, err := validateBiddingPlan(campaignKindDemandGen, biddingTestCustomer, CampaignInput{BiddingStrategy: biddingMaximizeConversionValue, TargetROAS: 4})
+	if err == nil || !strings.Contains(err.Error(), "a target ROAS is not supported on "+campaignKindDemandGen) {
+		t.Errorf("err = %v, want the Demand Gen target ROAS refusal", err)
+	}
+	_, err = validateBiddingPlan(campaignKindDemandGen, biddingTestCustomer, CampaignInput{BiddingStrategy: biddingTargetROAS, TargetROAS: 4})
+	if err == nil || !strings.Contains(err.Error(), "target ROAS was not probed on this channel") {
+		t.Errorf("err = %v, want the channel refusal naming the unprobed target ROAS", err)
+	}
+	if _, err := validateBiddingPlan(campaignKindSearch, biddingTestCustomer, CampaignInput{BiddingStrategy: biddingMaximizeConversionValue, TargetROAS: 4}); err != nil {
+		t.Errorf("Search must keep its target ROAS: %v", err)
+	}
+	// Under a strategy that carries no target at all, the Demand Gen refusal still answers
+	// first: the generic "choose maximize-conversion-value or target-roas" would send the
+	// caller to a strategy that refuses the same target here — two round trips for one fix.
+	for _, strategy := range []string{biddingMaximizeClicks, biddingMaximizeConversions, biddingTargetCPA} {
+		in := CampaignInput{BiddingStrategy: strategy, TargetROAS: 4}
+		if strategy == biddingTargetCPA {
+			in.TargetCPA = 25
+		}
+		_, err := validateBiddingPlan(campaignKindDemandGen, biddingTestCustomer, in)
+		if err == nil || !strings.Contains(err.Error(), "a target ROAS is not supported on "+campaignKindDemandGen) || strings.Contains(err.Error(), "choose one of those strategies") {
+			t.Errorf("%s + target ROAS: err = %v, want the Demand Gen refusal, not the generic one", strategy, err)
+		}
+	}
+}
+
+// Performance Max accepts the four CONVERSION-based strategies and refuses manual
+// CPC, because the channel has no manual bidding at all. Written as its own test
+// rather than a table shared with Demand Gen — a shared table that drifted would make
+// the two channels' sets look like one rule, and they are two.
 func TestBiddingPlan_PerformanceMaxRefusesManualBidding(t *testing.T) {
 	for strategy := range searchBiddingStrategies {
 		in := CampaignInput{BiddingStrategy: strategy}
@@ -373,12 +446,14 @@ func TestBiddingPlan_UnverifiedRefusalsDoNotClaimLiveVerification(t *testing.T) 
 		}
 	}
 
-	for _, kind := range []string{campaignKindDemandGen, campaignKindPerformanceMax} {
+	// Demand Gen's verified clause is its own (#474): its set came from validateOnly
+	// probes, and it names the strategy that was not probed.
+	for kind, clause := range map[string]string{campaignKindDemandGen: "the set verified by validateOnly probes", campaignKindPerformanceMax: verified} {
 		_, err := validateBiddingPlan(kind, biddingTestCustomer, CampaignInput{BiddingStrategy: biddingManualCPC})
 		if err == nil {
 			t.Fatalf("accepted manual CPC on %s", kind)
 		}
-		if !strings.Contains(err.Error(), verified) {
+		if !strings.Contains(err.Error(), clause) {
 			t.Errorf("%s lost its live-verification clause when the unverified channels gained their own: %v", kind, err)
 		}
 		if strings.Contains(err.Error(), unverified) {
@@ -454,8 +529,8 @@ func TestBiddingPlan_DeviceAdjustmentRefusedUnderAutomatedBidding(t *testing.T) 
 }
 
 // The DEFAULT differs per channel and is the thing most likely to be copied wrong:
-// Demand Gen bids to clicks (the live API rejected maximizeConversions there with a
-// shared budget), Performance Max and Video to conversions, Search manually.
+// Demand Gen defaults to clicks (the strategy it was created with before #474 widened its
+// set), Performance Max and Video to conversions, Search manually.
 func TestBiddingPlan_DefaultsAreChannelSpecific(t *testing.T) {
 	for kind, want := range map[string]string{
 		campaignKindSearch:         biddingManualCPC,
@@ -574,6 +649,30 @@ func TestValidateConversionActions_RefusesAForeignAccountsAction(t *testing.T) {
 	}
 }
 
+// The id must be a positive int64 in canonical form, in both spellings: past int64, 0 and a
+// leading zero name no conversion action ("0555" would also slip past the de-dupe as a second
+// spelling of 555), and Google would say so only at the conversion goal write, after the
+// budget and campaign exist. The int64 maximum is accepted: the check bounds the id, it does
+// not refuse a long one.
+func TestValidateConversionActions_RequiresACanonicalID(t *testing.T) {
+	resource := func(id string) string {
+		return "customers/" + biddingTestCustomer + "/conversionActions/" + id
+	}
+	for _, id := range []string{"9223372036854775808", "0", "0555"} {
+		for _, action := range []string{id, resource(id)} {
+			_, err := validateConversionActions(biddingTestCustomer, []string{action})
+			if err == nil || !strings.Contains(err.Error(), "positive canonical id") {
+				t.Errorf("%q: err = %v, want the canonical-id refusal", action, err)
+			}
+		}
+	}
+	const maxID = "9223372036854775807"
+	got, err := validateConversionActions(biddingTestCustomer, []string{maxID, resource(maxID)})
+	if err != nil || len(got) != 1 || got[0] != resource(maxID) {
+		t.Errorf("got %v, err = %v; want [%s]", got, err, resource(maxID))
+	}
+}
+
 // Duplicates are DEDUPLICATED, not refused: naming the same conversion twice is a harmless
 // paste, and it would otherwise name a different goal for the same set (conversion_goal.go).
 func TestValidateConversionActions_DeduplicatesAcrossSpellings(t *testing.T) {
@@ -604,12 +703,32 @@ func TestValidateConversionActions_RefusesMalformedAndEmpty(t *testing.T) {
 			t.Errorf("accepted %q, which cannot address a conversion action", tc)
 		}
 	}
-	over := make([]string, maxConversionActions+1)
-	for i := range over {
-		over[i] = "1000" + strings.Repeat("0", i%3) + string(rune('0'+i%10))
+}
+
+// The cap counts DISTINCT actions: 101 entries naming 100 (one repeated in the other spelling)
+// pass, 101 distinct are refused, and the walk stops there — a malformed entry after the
+// 101st distinct one is never reached.
+func TestValidateConversionActions_CapCountsDistinctActions(t *testing.T) {
+	distinct := make([]string, maxConversionActions+1)
+	for i := range distinct {
+		distinct[i] = fmt.Sprint(1000 + i)
 	}
-	if _, err := validateConversionActions(biddingTestCustomer, over); err == nil {
-		t.Errorf("accepted %d conversion actions, over the %d cap", len(over), maxConversionActions)
+	atCap := append(append([]string(nil), distinct[:maxConversionActions]...),
+		"customers/"+biddingTestCustomer+"/conversionActions/"+distinct[0])
+	got, err := validateConversionActions(biddingTestCustomer, atCap)
+	if err != nil || len(got) != maxConversionActions {
+		t.Fatalf("got %d action(s), err = %v; want %d entries naming %d distinct accepted",
+			len(got), err, len(atCap), maxConversionActions)
+	}
+	const want = "more than 100 distinct conversion actions; the maximum is 100"
+	for name, in := range map[string][]string{
+		"101 distinct":           distinct,
+		"101 distinct, then bad": append(append([]string(nil), distinct...), "not-an-id"),
+	} {
+		if _, err := validateConversionActions(biddingTestCustomer, in); err == nil ||
+			!strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want %q", name, err, want)
+		}
 	}
 }
 

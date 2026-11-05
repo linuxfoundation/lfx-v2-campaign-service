@@ -341,7 +341,7 @@ func TestResolveGoogleCreativeAssets_NoCreativeReturnsAUsableReleaser(t *testing
 // second resolve can only succeed if the first one's reservation came back.
 func TestResolveGoogleCreativeAssets_ReleasesOnFailure(t *testing.T) {
 	const size = 16
-	budget := NewAssetReserver(size, 10*time.Millisecond)
+	budget := NewAssetReserver(size, testAssetReserveWait)
 
 	// Fails AFTER the reservation is taken: the size is priced and reserved, then the read
 	// returns empty bytes, which is refused.

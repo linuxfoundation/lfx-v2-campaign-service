@@ -140,15 +140,59 @@ const (
 	EnvTwitterMetricsEnabled = "TWITTER_METRICS_ENABLED"
 
 	// EnvGoogleAdsDemandGenAudienceEnabled opts a deployment IN to googleAdsConfig.demandGenAudience
-	// (#459): one existing Google Ads Audience attached to a Demand Gen ad group. Only the exact
-	// value "true" enables it; unset or any other value fails closed, and a create naming one is
-	// refused before anything upstream exists.
+	// (#459): one existing Google Ads Audience attached to a Demand Gen ad group, and to each
+	// googleAdsConfig.demandGenAdGroups[].audience (#460), the same input on a named ad group.
+	// Only the exact value "true" enables them; unset or any other value fails closed, and a
+	// create naming one is refused before anything upstream exists.
 	//
-	// Default-off because the only ownership check is ACCOUNT-scoped (#468): on the shared LF
-	// Google Ads customer a project could name another foundation's Audience, and on Demand Gen
-	// that Audience restricts who the ad group reaches. Keep it off until this service can scope
-	// an Audience to the calling foundation; that fix removes this gate and this constant.
+	// A per-deployment opt-in, off by default; ops turns it on by setting it to exactly "true"
+	// in lfx-v2-argocd. The Audience is checked against the connected Google Ads account (same
+	// customer id), which is the boundary. Per-foundation ownership (#468) was closed as won't
+	// do: campaign managers are the LF marketing team, who manage every foundation. This relies
+	// on campaign_manager being held only by LF marketing; revisit if foundation-level campaign
+	// managers are introduced. The Display, Performance Max and shared-list flags rest on the
+	// same reasoning.
 	EnvGoogleAdsDemandGenAudienceEnabled = "GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED"
+
+	// EnvGoogleAdsDisplayAudiencesEnabled opts a deployment IN to the Display audience lists
+	// that name an ACCOUNT-OWNED segment (#462): googleAdsConfig.audienceSegments on the
+	// "display" channel, customAudiences and customAffinities. Only the exact value "true"
+	// enables them; unset or any other value fails closed, and a create naming one is refused
+	// before anything upstream exists.
+	//
+	// A per-deployment opt-in, off by default, like EnvGoogleAdsDemandGenAudienceEnabled: ops
+	// turns it on by setting it to exactly "true" in lfx-v2-argocd. Each segment is checked
+	// against the connected Google Ads account (same customer id), which is the boundary;
+	// per-foundation ownership (#468) was closed as won't do. userInterests (Google's own
+	// affinity and in-market categories) and excludedPlacements (public domains) name no
+	// account resource and are not gated.
+	EnvGoogleAdsDisplayAudiencesEnabled = "GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED"
+
+	// EnvGoogleAdsPMaxAudienceSignalEnabled opts a deployment IN to
+	// googleAdsConfig.performanceMaxAudienceSignal (#461): one existing Google Ads Audience
+	// attached to a Performance Max asset group as a signal. Only the exact value "true"
+	// enables it; unset or any other value fails closed, and a create naming one is refused
+	// before anything upstream exists.
+	//
+	// A per-deployment opt-in, off by default, like EnvGoogleAdsDemandGenAudienceEnabled: ops
+	// turns it on by setting it to exactly "true" in lfx-v2-argocd. The Audience is checked
+	// against the connected Google Ads account (same customer id), which is the boundary;
+	// per-foundation ownership (#468) was closed as won't do. Search themes (free text) and the
+	// extensions (text and the campaign's own URLs) name no account resource and are not gated.
+	EnvGoogleAdsPMaxAudienceSignalEnabled = "GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED"
+
+	// EnvGoogleAdsSharedNegativeListsEnabled opts a deployment IN to
+	// googleAdsConfig.sharedNegativeKeywordLists (#477): existing shared negative keyword lists
+	// (sharedSets) attached to a Search campaign. Only the exact value "true" enables it; unset
+	// or any other value fails closed, and a create naming one is refused before anything
+	// upstream exists.
+	//
+	// A per-deployment opt-in, off by default, like EnvGoogleAdsDemandGenAudienceEnabled: ops
+	// turns it on by setting it to exactly "true" in lfx-v2-argocd. Each shared set is checked
+	// against the connected Google Ads account (same customer id), which is the boundary;
+	// per-foundation ownership (#468) was closed as won't do. searchAssets (the caller's own
+	// images and text, created as new assets) names no account resource and is not gated.
+	EnvGoogleAdsSharedNegativeListsEnabled = "GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED"
 
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,

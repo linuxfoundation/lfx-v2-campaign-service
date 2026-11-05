@@ -41,7 +41,7 @@ var GoogleAdsGeoTargetSuggestions = Type("google-ads-geo-target-suggestions", fu
 
 // GoogleAdsUserList is one Google Ads user list.
 var GoogleAdsUserList = Type("google-ads-user-list", func() {
-	Attribute("resource_name", String, "customers/{customerId}/userLists/{id}, in exactly the form googleAdsConfig.audienceSegments accepts (Search only). A list targets campaigns on its own customer.", func() {
+	Attribute("resource_name", String, "customers/{customerId}/userLists/{id}, in exactly the form googleAdsConfig.audienceSegments accepts (Search and Display). A list targets campaigns on its own customer.", func() {
 		Pattern(`^customers/[0-9]+/userLists/[1-9][0-9]{0,18}$`)
 		Example("customers/8666746580/userLists/7012345678")
 	})
@@ -52,7 +52,7 @@ var GoogleAdsUserList = Type("google-ads-user-list", func() {
 	Attribute("account_status", String, "The list's account_user_list_status (ENABLED or DISABLED), verbatim. Absent when Google sent none.", func() { Example("ENABLED") })
 	Attribute("size_for_search", Int64, "Google's estimated Search-network size. Absent when Google sent none, which is not a size of 0.", func() { Example(12000) })
 	Attribute("size_range_for_search", String, "Google's bucketed Search-network size, verbatim. Absent when Google sent none.", func() { Example("TEN_THOUSAND_TO_FIFTY_THOUSAND") })
-	Attribute("eligible_for_search", Boolean, "Whether Google reports the list usable on Search. audienceSegments applies to Search campaigns, so an ineligible list will not serve there.", func() { Example(true) })
+	Attribute("eligible_for_search", Boolean, "Whether Google reports the list usable on Search. An ineligible list will not serve on a Search campaign; this read does not report Display eligibility.", func() { Example(true) })
 	Required("resource_name", "id", "name", "type", "membership_status", "eligible_for_search")
 })
 
@@ -147,7 +147,7 @@ func googleAdsLookupMethods() {
 
 	Method("list-google-ads-user-lists", func() {
 		Description("List the Google Ads user lists (audiences) on a customer, live from GAQL on user_list, for " +
-			"picking googleAdsConfig.audienceSegments (Search only). account_id names the customer; omitted, " +
+			"picking googleAdsConfig.audienceSegments (Search and Display). account_id names the customer; omitted, " +
 			"the customer the project's connection is bound to is read. Like the account monitor, this resolves " +
 			"the project's OWN connection only and never falls back to the shared LF system credential: user " +
 			"lists are account data on a customer shared across foundations, so a project with no Google Ads " +

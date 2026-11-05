@@ -224,9 +224,10 @@ type trackingChannel struct {
 }
 
 // trackingChannels is every channel this client has a create cascade for. Search carries
-// a sitelink, a promotion and a three-row price extension so the extension destinations
-// are checked on the one channel that takes them; Video is the retained cascade, called
-// directly because CreateVideoCampaign refuses before step 1.
+// a sitelink, a promotion and a three-row price extension, and Performance Max a sitelink
+// (#461: the one tagged extension it takes), so every extension destination is checked on
+// each channel that takes it; Video is the retained cascade, called directly because
+// CreateVideoCampaign refuses before step 1.
 func trackingChannels() []trackingChannel {
 	return []trackingChannel{
 		{
@@ -273,12 +274,15 @@ func trackingChannels() []trackingChannel {
 			input: func(base string) CampaignInput {
 				in := demandGenInput()
 				in.PerformanceMaxCreative = pmaxCreativeAt(base)
+				in.Sitelinks = []Sitelink{sampleSitelink()}
 				return in
 			},
 			create: func(c *Client, ctx context.Context, in CampaignInput) (*CampaignResult, error) {
 				return c.CreatePerformanceMaxCampaign(ctx, in)
 			},
-			finalURLs: 1,
+			// The asset group's final URL and one sitelink, which takes Performance Max's
+			// cpc medium because validateAssetPlan tags it with utmMediumFor(kind).
+			finalURLs: 2,
 		},
 		{
 			name:   "video",
@@ -295,8 +299,8 @@ func trackingChannels() []trackingChannel {
 
 // Every channel's campaign create carries exactly the utmcampaign custom parameter, its
 // value the composed campaign name query-escaped, and every final URL the cascade sends —
-// the ad's, and on Search each extension's — carries that channel's utm_medium with the
-// event-level utm_campaign unchanged.
+// the ad's, and each extension's on Search and Performance Max — carries that channel's
+// utm_medium with the event-level utm_campaign unchanged.
 func TestCampaignCreate_UTMCampaignAndMediumOnEveryChannel(t *testing.T) {
 	wantMedium := map[string]string{
 		CampaignKindSearch:         "paid-search",

@@ -169,8 +169,8 @@ type Service interface {
 	// .../connection-google-ads/accounts does. A pure read: nothing is persisted.
 	SuggestGoogleAdsGeoTargets(context.Context, *SuggestGoogleAdsGeoTargetsPayload) (res *GoogleAdsGeoTargetSuggestions, err error)
 	// List the Google Ads user lists (audiences) on a customer, live from GAQL on
-	// user_list, for picking googleAdsConfig.audienceSegments (Search only).
-	// account_id names the customer; omitted, the customer the project's
+	// user_list, for picking googleAdsConfig.audienceSegments (Search and
+	// Display). account_id names the customer; omitted, the customer the project's
 	// connection is bound to is read. Like the account monitor, this resolves the
 	// project's OWN connection only and never falls back to the shared LF system
 	// credential: user lists are account data on a customer shared across
@@ -1529,8 +1529,8 @@ type GoogleAdsKeywords struct {
 
 type GoogleAdsUserList struct {
 	// customers/{customerId}/userLists/{id}, in exactly the form
-	// googleAdsConfig.audienceSegments accepts (Search only). A list targets
-	// campaigns on its own customer.
+	// googleAdsConfig.audienceSegments accepts (Search and Display). A list
+	// targets campaigns on its own customer.
 	ResourceName string
 	// The user list id
 	ID string
@@ -1550,8 +1550,9 @@ type GoogleAdsUserList struct {
 	// Google's bucketed Search-network size, verbatim. Absent when Google sent
 	// none.
 	SizeRangeForSearch *string
-	// Whether Google reports the list usable on Search. audienceSegments applies
-	// to Search campaigns, so an ineligible list will not serve there.
+	// Whether Google reports the list usable on Search. An ineligible list will
+	// not serve on a Search campaign; this read does not report Display
+	// eligibility.
 	EligibleForSearch bool
 }
 

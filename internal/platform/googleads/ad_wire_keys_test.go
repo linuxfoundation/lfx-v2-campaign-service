@@ -28,6 +28,8 @@ func TestAdTypeWireKeysMatchTheAdOneof(t *testing.T) {
 		{"demand gen", demandGenAdCreate{DemandGenMultiAssetAd: &demandGenMultiAssetAdInfo{}}, "demandGenMultiAssetAd"}, // demand_gen_multi_asset_ad = 62
 		{"display", displayAdCreate{ResponsiveDisplayAd: &responsiveDisplayAdInfo{}}, "responsiveDisplayAd"},            // responsive_display_ad = 31
 		{"video", videoAdCreate{VideoResponsiveAd: &videoResponsiveAdInfo{}}, "videoResponsiveAd"},                      // video_responsive_ad = 39
+		// The key a validateOnly probe on 2026-11-03 accepted for a Demand Gen video ad (#460).
+		{"demand gen video", demandGenVideoAdCreate{DemandGenVideoResponsiveAd: &demandGenVideoResponsiveAdInfo{}}, "demandGenVideoResponsiveAd"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -42,10 +44,11 @@ func TestAdTypeWireKeysMatchTheAdOneof(t *testing.T) {
 			if _, ok := keys[tc.want]; !ok {
 				t.Errorf("ad payload %s carries no %q key; Google refuses any other spelling", raw, tc.want)
 			}
-			// Exactly one ad-type arm beside finalUrls: a second key is either a misspelling
-			// sent alongside the right one or a second oneof arm, and Google refuses both.
+			// Exactly one ad-type arm beside finalUrls (and the ad's name, which the Demand
+			// Gen video ad must carry): a second key is either a misspelling sent alongside
+			// the right one or a second oneof arm, and Google refuses both.
 			for k := range keys {
-				if k != tc.want && k != "finalUrls" {
+				if k != tc.want && k != "finalUrls" && k != "name" {
 					t.Errorf("ad payload %s carries unexpected key %q", raw, k)
 				}
 			}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -141,7 +142,7 @@ const (
 // PerformanceMaxCreative is the asset-group creative for a Performance Max campaign. It
 // is PERFORMANCE MAX ONLY — refused at preflight on every other channel, the mirror of
 // the way DemandGenCreative is refused off Demand Gen and the extension assets off
-// Search.
+// Search and, for three types, Performance Max.
 //
 // Images are given as URLs and downloaded by this service, for the reason stated in
 // demandgen_creative.go's header: Google's ImageAsset carries bytes and will not fetch a
@@ -521,9 +522,9 @@ type performanceMaxAssetCreate struct {
 	TextAsset         *textAssetCreate         `json:"textAsset,omitempty"`
 	ImageAsset        *imageAssetCreate        `json:"imageAsset,omitempty"`
 	YouTubeVideoAsset *youTubeVideoAssetCreate `json:"youtubeVideoAsset,omitempty"`
-	// Name is an optional human-visible asset label. This client NEVER sets it — see
-	// buildPerformanceMaxAssets for why an image's name would export the caller's URL
-	// into the shared account.
+	// Name is the asset's human-visible label. Google requires it on an image asset, so
+	// every image create sets imageAssetName, which carries no URL; text and video
+	// assets send none.
 	Name string `json:"name,omitempty"`
 }
 
@@ -655,19 +656,16 @@ func buildPerformanceMaxAssets(plan performanceMaxPlan, images []fetchedImage) [
 	}
 	for _, img := range images {
 		out = append(out, pendingAsset{
-			// NO Name. The obvious label — the slot plus the source URL — ships the
+			// Named by imageAssetName, from the bytes: Google refuses an image asset with no
+			// name (#491). The obvious label — the slot plus the source URL — would ship the
 			// caller's creative URL, query string and all, to Google as a permanent
-			// human-visible asset label in the shared Foundation account: the same
-			// value sanitizeSnapshotURL reduces to scheme+host before it may be
-			// written to this service's own database. Redacted going in, exported
-			// verbatim going out. It was also an unbounded caller-controlled string
+			// human-visible asset label in the shared Foundation account: the same value
+			// sanitizeSnapshotURL reduces to scheme+host before it may be written to this
+			// service's own database. It would also be an unbounded caller-controlled string
 			// in a payload sent AFTER the campaign exists, which is the orphan that
-			// maxAssetGroupNameRunes is positioned in preflight to prevent.
-			//
-			// Omitted rather than reduced to the bare slot label, which matches the
-			// Demand Gen sibling (demandGenAssetCreate sets no name either) and avoids
-			// handing Google twenty marketing images that share one name.
-			create:    performanceMaxAssetCreate{ImageAsset: &imageAssetCreate{Data: base64Image(img.data)}},
+			// maxAssetGroupNameRunes is positioned in preflight to prevent. The hash name is
+			// fixed-length and says nothing about where the image came from.
+			create:    performanceMaxAssetCreate{Name: imageAssetName(img.data), ImageAsset: &imageAssetCreate{Data: base64Image(img.data)}},
 			fieldType: performanceMaxImageSlots[img.slot].jsonKey,
 		})
 	}
@@ -689,7 +687,11 @@ func buildPerformanceMaxAssets(plan performanceMaxPlan, images []fetchedImage) [
 // Every mutate past the campaign returns its error ALONGSIDE whatever was created, for
 // the reason the whole package does: the campaign exists either way, and an operator
 // reconciling it needs the ids of what got as far as being created.
-func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignResource, campaignID, finalURL string, plan performanceMaxPlan, images []fetchedImage) (assetIDs []string, assetGroupID string, linkCount int, err error) {
+//
+// The group comes back as the RESOURCE NAME Google returned, already checked for kind,
+// account and numeric id, so the signals step (#461) names the group by what Google said
+// rather than by a name rebuilt from its id.
+func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignResource, campaignID, finalURL string, plan performanceMaxPlan, images []fetchedImage) (assetIDs []string, assetGroupResource string, linkCount int, err error) {
 	pending := buildPerformanceMaxAssets(plan, images)
 	if len(pending) == 0 {
 		return nil, "", 0, nil
@@ -718,21 +720,51 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 		// The body PARSED, so whatever ids it did carry are real — and they are the only
 		// handle an operator has on account-level assets that may already exist. They go
 		// back WITH the error rather than being dropped alongside it, the same way the
-		// malformed-resource-name arm below returns what it had got to.
+		// malformed-resource-name arm below returns every same-account id it carried.
 		return c.parsedAssetIDs(assetResults), "", 0, fmt.Errorf("google-ads Performance Max asset creation UNCONFIRMED (campaign %s created; 2xx returned %d result(s) for %d asset(s) — assets may exist — verify in Google Ads before retrying)", campaignID, len(assetResults.Results), len(assetOps))
 	}
 	assetResources := make([]string, 0, len(assetOps))
 	assetIDs = make([]string, 0, len(assetOps))
+	// An unusable entry does not stop the walk: every same-account id goes back with the
+	// error, which names the FIRST unusable index.
+	firstBad, badWhy := -1, ""
+	seen := newResultIDSet(len(assetResults.Results))
 	for i, r := range assetResults.Results {
 		// assetID checks the kind, the ACCOUNT and the numeric trailing id, and returns
 		// "" for anything else — so a wrong-account assets resource can neither be
 		// linked into this campaign's asset group nor persisted as one of its ids.
 		id := c.assetID(r.ResourceName)
 		if id == "" {
-			return assetIDs, "", 0, fmt.Errorf("google-ads Performance Max asset creation UNCONFIRMED (campaign %s created; malformed asset resource name %q at index %d — assets may exist — verify in Google Ads before retrying)", campaignID, r.ResourceName, i)
+			if firstBad < 0 {
+				firstBad = i
+				badWhy = fmt.Sprintf("malformed asset resource name %q at index %d",
+					r.ResourceName, i)
+			}
+			continue
 		}
-		assetIDs = append(assetIDs, id)
+		// A repeat of the SAME content is Google returning the existing asset (result_ids.go):
+		// it is linked at this position too, under this position's field type, and its id
+		// reported once. Any other repeat is unusable, its operation unaccounted for.
+		first, dup := seen.reuse(id, i, func(j int) bool {
+			return reflect.DeepEqual(pending[j].create, pending[i].create)
+		})
+		if dup != "" {
+			if firstBad < 0 {
+				firstBad, badWhy = i, dup
+			}
+			continue
+		}
+		if first {
+			assetIDs = append(assetIDs, id)
+		}
+		// Positional, repeats included: link i names the asset at index i.
 		assetResources = append(assetResources, r.ResourceName)
+	}
+	if firstBad >= 0 {
+		return uniqueIDs(assetIDs), "", 0, fmt.Errorf(
+			"google-ads Performance Max asset creation UNCONFIRMED (campaign %s "+
+				"created; %s — assets may exist — verify in Google Ads before retrying)",
+			campaignID, badWhy)
 	}
 
 	// Step B: the asset group AND its links, in ONE GoogleAdsService.Mutate (#437).
@@ -809,9 +841,9 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 		}
 	}
 	if len(results.MutateOperationResponses) != len(ops) || confirmed != wantLinks {
-		return assetIDs, groupID, 0, fmt.Errorf("google-ads Performance Max asset group link creation UNCONFIRMED (asset group %s created; 2xx described %d of %d link(s) — verify in Google Ads before retrying)", groupID, confirmed, wantLinks)
+		return assetIDs, first.ResourceName, 0, fmt.Errorf("google-ads Performance Max asset group link creation UNCONFIRMED (asset group %s created; 2xx described %d of %d link(s) — verify in Google Ads before retrying)", groupID, confirmed, wantLinks)
 	}
-	return assetIDs, groupID, wantLinks, nil
+	return assetIDs, first.ResourceName, wantLinks, nil
 }
 
 // isAssetGroupAssetLink reports whether name is exactly the assetGroupAssets resource, in
@@ -844,8 +876,11 @@ func (c *Client) isAssetGroupAssetLink(name, groupID, assetID, fieldType string)
 const performanceMaxTempAssetGroupID = "-1"
 
 // googleAdsMutateRequest is the body of GoogleAdsService.Mutate (googleAds:mutate): a list of
-// typed operations over different resources, applied together. Only the two operation kinds
-// the Performance Max asset group needs are modelled.
+// typed operations over different resources, applied together. Only the operation kinds this
+// client sends are modelled: the Performance Max asset group, its links and its signals
+// (pmax_signals.go, #461), the Demand Gen video ad with its assets
+// (demandgen_video_creative.go, #460), and the Search campaign's assets and their campaign
+// links (search_assets.go, #477).
 type googleAdsMutateRequest struct {
 	MutateOperations []googleAdsMutateOperation `json:"mutateOperations"`
 }
@@ -854,8 +889,14 @@ type googleAdsMutateRequest struct {
 // arm reuses mutateOperation, which is the same {create|update|remove} shape the resource
 // services take.
 type googleAdsMutateOperation struct {
-	AssetGroupOperation      *mutateOperation `json:"assetGroupOperation,omitempty"`
-	AssetGroupAssetOperation *mutateOperation `json:"assetGroupAssetOperation,omitempty"`
+	AssetGroupOperation       *mutateOperation `json:"assetGroupOperation,omitempty"`
+	AssetGroupAssetOperation  *mutateOperation `json:"assetGroupAssetOperation,omitempty"`
+	AssetGroupSignalOperation *mutateOperation `json:"assetGroupSignalOperation,omitempty"`
+	AssetOperation            *mutateOperation `json:"assetOperation,omitempty"`
+	AdGroupAdOperation        *mutateOperation `json:"adGroupAdOperation,omitempty"`
+	// CampaignAssetOperation is MutateOperation's campaign_asset_operation arm, sent with
+	// AssetOperation by the Search campaign assets (#477).
+	CampaignAssetOperation *mutateOperation `json:"campaignAssetOperation,omitempty"`
 }
 
 // googleAdsMutateResponse is the (subset of the) GoogleAdsService.Mutate response consumed
@@ -863,8 +904,12 @@ type googleAdsMutateOperation struct {
 // each carries the result arm matching its operation.
 type googleAdsMutateResponse struct {
 	MutateOperationResponses []struct {
-		AssetGroupResult      *resourceNameResult `json:"assetGroupResult"`
-		AssetGroupAssetResult *resourceNameResult `json:"assetGroupAssetResult"`
+		AssetGroupResult       *resourceNameResult `json:"assetGroupResult"`
+		AssetGroupAssetResult  *resourceNameResult `json:"assetGroupAssetResult"`
+		AssetGroupSignalResult *resourceNameResult `json:"assetGroupSignalResult"`
+		AssetResult            *resourceNameResult `json:"assetResult"`
+		AdGroupAdResult        *resourceNameResult `json:"adGroupAdResult"`
+		CampaignAssetResult    *resourceNameResult `json:"campaignAssetResult"`
 	} `json:"mutateOperationResponses"`
 }
 

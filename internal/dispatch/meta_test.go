@@ -2781,7 +2781,7 @@ func TestMeta_AssetIDAliasesResolveAsOneAsset(t *testing.T) {
 // size must therefore be refused. Releasing the first must then let the same request through,
 // which is what distinguishes a working budget from one that refuses everything.
 func TestAssetReserver_ConcurrentDispatchesShareOneBudget(t *testing.T) {
-	r := NewAssetReserver(MaxConcurrentVariantAssetBytes, 50*time.Millisecond)
+	r := NewAssetReserver(MaxConcurrentVariantAssetBytes, testAssetReserveWait)
 
 	// A full-size dispatch: the whole budget, which is exactly one maximum config.
 	release1, ok := r.reserve(context.Background(), MaxConcurrentVariantAssetBytes)
@@ -2793,8 +2793,11 @@ func TestAssetReserver_ConcurrentDispatchesShareOneBudget(t *testing.T) {
 
 	// While that one is held the budget is exhausted, so a second dispatch — even a small
 	// one — must be refused rather than admitted alongside it. Before this bound existed,
-	// five of these ran together.
-	if _, ok := r.reserve(context.Background(), 1); ok {
+	// five of these ran together. The reserver's wait is long so its grants cannot flake, so
+	// the short bound on this refusal comes from the caller's context instead.
+	refuseCtx, cancel := context.WithTimeout(context.Background(), testAssetContentionWait)
+	defer cancel()
+	if _, ok := r.reserve(refuseCtx, 1); ok {
 		t.Error("a second dispatch was admitted while the whole budget was held: " +
 			"concurrent dispatches are not sharing one bound, which is the 1.32 GiB defect")
 	}
@@ -2819,7 +2822,7 @@ func TestAssetReserver_ConcurrentDispatchesShareOneBudget(t *testing.T) {
 // common case must still run concurrently: the budget is priced for the worst legal input and
 // shared by everything smaller.
 func TestAssetReserver_AdmitsConcurrentSmallDispatchesTogether(t *testing.T) {
-	r := NewAssetReserver(MaxConcurrentVariantAssetBytes, 50*time.Millisecond)
+	r := NewAssetReserver(MaxConcurrentVariantAssetBytes, testAssetReserveWait)
 
 	// A realistic creative, not a maximum-size one.
 	const realistic int64 = 512 << 10 // 512 KiB
@@ -2851,14 +2854,10 @@ func TestResolveVariantAssets_RefusesWhenAggregateBudgetIsExhausted(t *testing.T
 		Bytes: []byte("IMAGE_BYTES"), MimeType: "image/png",
 	}}
 	d := &MetaDispatcher{creatives: assets}
-	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, 20*time.Millisecond))
+	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, testAssetContentionWait))
 
 	// Hold the ENTIRE budget, standing in for another dispatch already running.
-	release, ok := d.assets.reserve(context.Background(), MaxConcurrentVariantAssetBytes)
-	if !ok {
-		t.Fatal("could not take the initial reservation")
-	}
-	defer release()
+	holdWholeAssetBudget(t, d.assets)
 
 	in := []meta.AdVariant{{ImageAssetID: "11111111-1111-4111-8111-111111111111"}}
 	out, _, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
@@ -2933,14 +2932,10 @@ func TestResolveVariantAssets_ReservesBeforeMaterialising(t *testing.T) {
 	assets.assets[id] = &model.CreativeAsset{Bytes: make([]byte, 1<<20), MimeType: "image/png"}
 
 	d := &MetaDispatcher{creatives: assets}
-	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, 20*time.Millisecond))
+	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, testAssetContentionWait))
 
 	// Another dispatch holds the entire budget.
-	release, ok := d.assets.reserve(context.Background(), MaxConcurrentVariantAssetBytes)
-	if !ok {
-		t.Fatal("could not take the initial reservation")
-	}
-	defer release()
+	holdWholeAssetBudget(t, d.assets)
 
 	_, _, err := d.resolveVariantAssets(context.Background(), testBrief(),
 		[]meta.AdVariant{{ImageAssetID: id}})
@@ -2986,7 +2981,7 @@ func TestResolveVariantAssets_ReleasesReservationsOnMidLoopFailure(t *testing.T)
 	}}
 
 	d := &MetaDispatcher{creatives: assets}
-	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, 20*time.Millisecond))
+	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, testAssetReserveWait))
 
 	_, release, err := d.resolveVariantAssets(context.Background(), testBrief(), []meta.AdVariant{
 		{ImageAssetID: good},
@@ -3031,7 +3026,7 @@ func TestResolveVariantAssets_RepeatedFailuresDoNotExhaustTheBudget(t *testing.T
 	}}
 
 	d := &MetaDispatcher{creatives: assets}
-	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, 20*time.Millisecond))
+	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, testAssetReserveWait))
 
 	iterations := int(MaxConcurrentVariantAssetBytes/assetSize) + 2
 	for i := range iterations {
@@ -3076,7 +3071,7 @@ func TestResolveVariantAssets_ReleaseIsIdempotent(t *testing.T) {
 		id: {Bytes: make([]byte, 4<<20), MimeType: "image/png"},
 	}}
 	d := &MetaDispatcher{creatives: assets}
-	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, 20*time.Millisecond))
+	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, testAssetReserveWait))
 
 	// SUCCESS, so the returned releaser is the real accumulated one, not a no-op.
 	_, release, err := d.resolveVariantAssets(context.Background(), testBrief(),
@@ -3113,7 +3108,7 @@ func TestResolveVariantAssets_SuccessPathReleasesExactlyOnce(t *testing.T) {
 		id: {Bytes: make([]byte, size), MimeType: "image/png"},
 	}}
 	d := &MetaDispatcher{creatives: assets}
-	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, 20*time.Millisecond))
+	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, testAssetReserveWait))
 
 	out, release, err := d.resolveVariantAssets(context.Background(), testBrief(),
 		[]meta.AdVariant{{ImageAssetID: id}})
@@ -3125,8 +3120,12 @@ func TestResolveVariantAssets_SuccessPathReleasesExactlyOnce(t *testing.T) {
 	}
 
 	// STILL HELD at this point: the caller has the bytes, so the budget must reflect them.
-	// Asking for the whole budget must fail while this dispatch holds its share.
-	if _, ok := d.assets.reserve(context.Background(), MaxConcurrentVariantAssetBytes); ok {
+	// Asking for the whole budget must fail while this dispatch holds its share. The short
+	// bound on this refusal comes from the caller's context, as in
+	// TestAssetReserver_ConcurrentDispatchesShareOneBudget.
+	refuseCtx, cancel := context.WithTimeout(context.Background(), testAssetContentionWait)
+	defer cancel()
+	if _, ok := d.assets.reserve(refuseCtx, MaxConcurrentVariantAssetBytes); ok {
 		t.Error("the full budget was available while a successful resolve still held its assets: " +
 			"the reservation was released before the bytes stopped being resident")
 	}
@@ -3164,7 +3163,7 @@ func TestResolveVariantAssets_ReleasesReservationsOnPanic(t *testing.T) {
 		panicOn: boom,
 	}
 	d := &MetaDispatcher{creatives: assets}
-	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, 20*time.Millisecond))
+	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, testAssetReserveWait))
 
 	func() {
 		defer func() {

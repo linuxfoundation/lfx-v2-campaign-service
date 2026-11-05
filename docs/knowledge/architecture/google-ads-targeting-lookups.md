@@ -49,7 +49,8 @@ create form offer them in a picker instead of making an operator type them (self
   user_list ORDER BY user_list.id LIMIT 501` on the customer (bounded, deterministic), sorted by
   name locally, capped at 500 with `truncated`.
 - `resource_name` is `customers/{id}/userLists/{id}`, exactly what `validateAudienceSegments`
-  accepts. A row naming another customer, or a non-userLists resource, is dropped.
+  accepts (Search; on Display, `validateDisplayAudienceList`, which also requires the
+  campaign's account). A row naming another customer, or a non-userLists resource, is dropped.
 - `account_id` (digits only) picks the customer; omitted, the connection's stored account is
   read. No account either way is a 400 (`ErrConnectionNotUsable` + `ErrAccountNotSelected`).
 - **Refused with 409 on a shared-tenancy platform** (`domain.ErrUserListsSharedTenancy`), before

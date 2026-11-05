@@ -314,7 +314,10 @@ five individually for the reason the Demand Gen test gives.
 There is no portrait slot on a display ad, and `squareLogoImages` exists on neither
 sibling, so `googleAdsSnapshotConfig` sanitizes a third block of its own and
 `TestGoogleAdsSnapshotConfig_SanitizesEveryDisplayURLList` asserts all four individually,
-one more time for the same reason.
+one more time for the same reason. Every `displayAdGroups` entry's creative (#475) carries
+the same four lists and goes through the same `sanitizeSnapshotDisplayCreative`, on a copied
+group slice so the caller's groups keep the signed URLs the fetch needs;
+`TestGoogleAdsSnapshotConfig_SanitizesEveryDisplayAdGroup` pins both halves.
 
 **Promotion and price extensions carry destinations too.** A promotion has one
 `finalUrl`; a price extension has one per OFFERING, which is where its deep copy has to
@@ -337,15 +340,18 @@ the snapshot loses the signing query, and the caller's config keeps the full URL
 requires. A shallow slice copy suffices here; only the price extension's nested
 `Offerings` needs the deep one.
 
-The early return that skips the whole copy names SEVEN fields now — sitelinks,
-promotions, prices, lead forms, the Demand Gen creative, the asset group and the Display
-creative, and deliberately NOT `videoCreative`, which carries YouTube video ids and text
-and no URL of any kind, so a config holding only a video creative has nothing to
-sanitize — and `TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone`,
-`..._SanitizesTheDisplayCreativeAlone`, `..._SanitizesEachNewExtensionAlone` and
-`..._SanitizesTheLeadFormPrivacyPolicyURL` pin the last five, because a config carrying
-only one of them taking that return is precisely the bug each condition was added to
-prevent.
+The early return that skips the whole copy names TWELVE fields now — sitelinks,
+promotions, prices, lead forms, the Demand Gen creative, video creative, ad list and ad
+groups (#460, #474), the asset group, the Display creative, the Display ad groups
+(#475) and the Search campaign assets (#477), and deliberately NOT `videoCreative`, which carries YouTube video ids and text and
+no URL of any kind, so a config holding only a video creative has nothing to sanitize.
+`TestGoogleAdsSnapshotConfig_EachEarlyReturnFieldAlone` sets each of the twelve ALONE with
+a signed URL and asserts the snapshot loses the signature, because a config carrying only
+one of them taking that return is precisely the bug each condition was added to prevent;
+`TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone`,
+`..._SanitizesTheDisplayCreativeAlone`, `..._SanitizesEachNewExtensionAlone`,
+`..._SanitizesTheLeadFormPrivacyPolicyURL`, `..._SanitizesDemandGenAdsAlone` and
+`..._SanitizesEveryDisplayAdGroup` pin the same per channel with their full slot sets.
 
 This is not redundant with the X client's `rejectCredentialQueryParams`. That refuses a
 credential-SHAPED parameter because the text is about to be PUBLISHED, and it is a
@@ -801,8 +807,9 @@ again:** `googleAdsConfig.BiddingStrategy` now DOES record one, so the recorded 
 and the field is nonetheless left uncompared on purpose. Comparing it would require mapping
 this client's caller vocabulary onto Google's OUTPUT_ONLY `BiddingStrategyTypeEnum`, and
 that mapping is unverified exactly where it is ambiguous — `target-cpa` and
-`maximize-conversions` are both sent as `maximize_conversions`, and which enum Google
-reports back for the targeted one has not been observed — while on the adopt path the row
+`maximize-conversions` are both sent as `maximize_conversions` (except on Demand Gen, which
+sends the standalone `targetCpa`, #474), and which enum Google reports back for the
+targeted one has not been observed — while on the adopt path the row
 records a strategy that was never pushed upstream, so the two sides are expected to
 disagree. A guessed mapping would report a false divergence on campaigns set exactly as
 asked; `unknown` under-informs, a false divergence misinforms, and only the second costs the
@@ -1011,13 +1018,23 @@ top level and on each `adGroups[].ads[]` entry, `adGroups[].negativeKeywords` (m
 `excludedParentalStatuses`. Which channel takes each is the client preflight's decision, so
 an off-channel value is refused there for the create and the adoption path alike.
 
+The #477 fields follow the same rule. `sharedNegativeKeywordLists` is passed through
+verbatim. `searchAssets` is `googleAdsSearchAssetsConfig`: `adImages` and
+`businessLogoImages` are `googleAdsImageRefs`, so each entry is a URL or an
+`{"imageAssetId": …}` object. Both lists are enumerated by `googleAdsCreativeSlots` (as
+`search adImages` and `search businessLogoImages`), beside every other Google image slot, so
+stored assets resolve and are budgeted with the rest.
+`googleAdsSnapshotConfig` sanitizes both lists on a deep copy and names `SearchAssets` in its
+early return. `googleAdsSearchAssets` maps nil to the zero value.
+
 Two details of those mappers are load-bearing. Each returns **nil** for an empty input, as
 `googleAdsKeywords` does, so an omitted field stays nil end-to-end rather than becoming an
 empty-but-non-nil slice — and for the per-ad-group fields nil is specifically what the client
 reads as "inherit the campaign-level value", so the distinction is not cosmetic. And
 `adSchedules[].bidModifier` is a POINTER on the wire type as well as in the client, because an
-explicit `0` is Google's -100% opt-out: a value-typed hop would make an absent modifier
-indistinguishable from an instruction to stop serving in that interval.
+absent modifier ("no adjustment") must stay distinct from an explicit `0`, which the client
+refuses on an ad schedule (Google admits only `0.1`..`10.0` there; `0` is a device exclusion):
+a value-typed hop would make every unadjusted interval fail as a `0`.
 
 `demandGenCreative` follows the same pattern one level deeper: a `*googleAdsDemandGenCreativeConfig`
 POINTER on the config, so absent and present-but-empty stay distinguishable, mapped by
@@ -1028,6 +1045,30 @@ asserts each of the seven lists lands in its OWN slot rather than counting image
 that crossed `portraitImages` with `tallPortraitImages` would satisfy any count-based check
 — both lists non-empty, totals matching — and build the campaign with 4:5 images where
 Google wants 9:16.
+
+`demandGenVideoCreative` and `demandGenAdGroups` (#460) follow it: the video creative is a
+`*googleAdsDemandGenVideoCreativeConfig` pointer mapped by `googleAdsDemandGenVideoCreative`
+(nil to the zero value), and each `demandGenAdGroups` entry carries `name`, `audience` and
+`creative` / `videoCreative` pointers of those two config types, mapped by
+`googleAdsDemandGenAdGroups` with no checks of its own — the one-creative rule, the cap, the
+duplicate names and the audience's account are the client's preflight's. Their image lists
+are image slots like every other: `googleAdsCreativeSlots` enumerates the video logo and every
+group's five image lists and video logo (labelled `demand gen ad group N …`), so stored-asset
+entries resolve in them and `TestGoogleAdsConfigNamesItsAssetInEverySlot` counts them; and
+`googleAdsSnapshotConfig` deep-copies the video creative and the group slice, reducing every
+URL through `sanitizeSnapshotDemandGenImage` / `sanitizeSnapshotDemandGenVideo`.
+
+`demandGenAds` and each group's `ads` (#474) are lists of `googleAdsDemandGenAdConfig` —
+`name` plus `creative` / `videoCreative` pointers of the same two types — mapped by
+`googleAdsDemandGenAds` with no checks of its own; the cap, the one-creative rule and the
+unique names are the client's. `googleAdsCreativeSlots` enumerates every ad's slots through
+`appendDemandGenSlots` (labelled `demand gen ad N …` and `demand gen ad group N ad M …`),
+and `googleAdsSnapshotConfig` deep-copies both lists with `sanitizeSnapshotDemandGenAds`;
+the snapshot's early return names `demandGenAds` beside `demandGenAdGroups`. On the way
+back, `googleAdsToggleTargets` reads each `adGroups` entry's `plannedAds`: a Demand Gen group
+holding fewer `adIds` than it planned (ad 2 failed or came back UNCONFIRMED) is still
+toggled for the ads it has and is reported in `incomplete_ad_groups`, never read as
+complete. `plannedAds` absent (Search, older rows) keeps the old reading.
 
 `performanceMaxCreative` is the same shape again — a pointer on the config, a mapper that
 validates nothing, the zero value for nil — and its test asserts nine lists into nine
@@ -1042,6 +1083,17 @@ be opened for a test. It asserts instead that `channel: "performance-max"` reach
 campaign shell (`PERFORMANCE_MAX`, `maximizeConversions`, no ad group and no ad) and that
 a complete asset group gets past every bound and into the fetch, with each list omitted in
 turn producing that list's own refusal.
+
+`performanceMaxSearchThemes` and `performanceMaxAudienceSignal` (#461) are top-level config
+fields, not members of `performanceMaxCreative`, named for the channel like it and passed
+through verbatim; the client's preflight owns every rule, including the refusal off
+Performance Max and without a creative. Their dispatch test,
+`googleads_pmax_signals_wiring_test.go`, cannot reach the signals mutate for the image-fetch
+reason above, so it proves each field mapped by a refusal only the client can produce from
+it — signals without a creative, a foreign audience, an over-long theme, either field on
+another channel — each before the budget mutate. The same file proves sitelinks, callouts
+and structured snippets on `performance-max` reach `campaignAssets:mutate` on the created
+campaign, and that a call extension there is refused before anything is created.
 
 `videoCreative` is the same shape a fourth time — a pointer, a mapper that validates nothing,
 the zero `googleads.VideoCreative` for nil — but `googleads_video_wiring_test.go` is the one
@@ -1081,6 +1133,34 @@ requires each shape on its own (#437), so a mapper that dropped either array is 
 that array's own name. The logo arrays and the
 call-to-action text are omitted together too, to prove optional means optional.
 
+Display's audiences and placement exclusions (#462) are five more pass-through fields:
+`audienceSegments` now reaches the Display cascade too, and `customAudiences`,
+`customAffinities`, `userInterests` and `excludedPlacements` map one to one onto
+`CampaignInput`. Dispatch decides none of their rules — which channel takes them, the
+resource-name shape and the THIS-account check, the bare-domain rule — because the client's
+preflight does, on both the create and the `adoptExisting` paths. The one thing Dispatch adds
+is a deployment gate, `GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED`, described with the Demand Gen
+gate below.
+`TestGoogleAds_DisplayAudiencesAndPlacementExclusionsReachTheCriteria` proves each reaches its
+oneof arm in the ad group's criteria mutate and the placements the campaign's, and
+`TestGoogleAds_ExcludedPlacementsRefusedOnSearch` that the field reaches the preflight off
+Display, with no budget sent. None of them silences the "NO geo targeting" warning below: an
+audience narrows WHO and a placement exclusion WHERE ON THE WEB, and neither bounds the
+geography the campaign spends in.
+
+`displayAdGroups` and `excludedAudienceSegments` (#475) pass through the same way:
+`googleAdsDisplayAdGroups` maps each group's name, its creative through the same
+`googleAdsDisplayCreative` mapper, its four audience lists and its own
+`excludedAudienceSegments`, and the campaign-level `excludedAudienceSegments` maps one to one.
+`googleAdsCreativeSlots` enumerates each group's four image slots, labelled
+`display ad group <n> <slot>`, so a stored asset named in a group resolves under the same
+dispatch-wide budget. `googleads_display_adgroups_test.go` pins the mapping field by field,
+the campaign-level exclusion reaching the campaign criteria mutate, a second group's foreign
+exclusion refused by that group's name before any budget, both fields refused on Search, the
+snapshot and the slot labels. Like the campaign-level creative, a group's ad is out of reach
+from here; the cascade is pinned in `display_adgroups_test.go`. Neither field silences the
+"NO geo targeting" warning either.
+
 One thing this layer does decide for itself is the post-create "NO geo targeting" warning,
 which is the operator's only signal that a campaign will spend wherever the ad account
 allows. It counts every POSITIVE shape, so `proximityTargets` silences it exactly as
@@ -1092,17 +1172,73 @@ exclusions still serves wherever the account allows minus a few places, which is
 what the warning exists to say out loud. A warning an operator learns to distrust is worse
 than none.
 
-The channel rules — proximity, schedules, devices, demographics, extensions and ad groups
-are all refused on Demand Gen, which takes languages on its ad group instead (#459), and
-`demandGenAudience` is refused everywhere else — are deliberately **not** restated here;
+The channel rules — proximity, demographics, every extension but sitelinks and the Search
+ad-group list are refused on Demand Gen, which takes languages on its ad group (#459),
+ad schedules, device exclusions and sitelinks at the campaign level (#474) and its own
+`demandGenAdGroups` (#460) and `demandGenAds` (#474), and `demandGenAudience`,
+`demandGenVideoCreative`, `demandGenAds` and `demandGenAdGroups` are refused everywhere
+else — are deliberately **not** restated here;
 `demandGenAudience` is mapped verbatim onto `CampaignInput.DemandGenAudience`, as
 `audienceSegments` and `geoTargets` are, once one deployment gate has passed: unless
 `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`, `Dispatch` refuses any non-empty
 `demandGenAudience` as not-created, straight after decoding the config
-(`googleAdsDemandGenAudienceEnabled`). That gate is not a channel rule. It exists because the
-client's check is account-scoped and the LF account is shared by every foundation (#468), and a
-caller can reach `Dispatch` without lfx-self-serve's root-only form. It sits in the adapter so it
-also covers direct callers. The client refuses them inside its own preflight,
+(`googleAdsDemandGenAudienceEnabled`), and likewise any `demandGenAdGroups` entry with a
+non-empty `audience` (`googleAdsDemandGenAdGroupAudiencesSet`, #460), whose refusal names the
+entries by 1-based position — never the caller's group names or Audience. A group without an
+audience is not gated. That gate is not a channel rule. It is a per-deployment opt-in, off by
+default, that ops turns on by setting it to exactly `"true"` in lfx-v2-argocd (lfx-v2-argocd#2001
+enables this one). The client checks the Audience against the connected Google Ads account (same
+customer id), which is the boundary. Per-foundation ownership (#468) was closed as won't do:
+campaign managers are the LF marketing team, who manage every foundation. This relies on
+`campaign_manager` being held only by LF marketing; revisit if foundation-level campaign
+managers are introduced. The gate sits in the adapter so it also covers callers that reach
+`Dispatch` directly.
+
+`GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` is the same gate for #462's account-owned Display
+segments (`googleAdsDisplayAudiencesEnabled`, `googleAdsDisplayAudienceFieldsSet`): unless it is
+exactly `"true"`, `Dispatch` refuses a non-empty `customAudiences` or `customAffinities` on any
+channel, and a non-empty `audienceSegments` on `display`, right after the Demand Gen gate.
+Since #475 it also refuses a non-empty `excludedAudienceSegments` on any channel and, on any
+`displayAdGroups` entry, a non-empty `audienceSegments`, `customAudiences`,
+`customAffinities` or `excludedAudienceSegments`, named by 1-based position
+(`displayAdGroups entry 2 excludedAudienceSegments`): the group list replaces the single ad
+group, so without that a caller could move a gated list into a group, and a user list is
+account-owned whether it targets or excludes. `TestGoogleAds_DisplayAudienceExclusionsGate`
+pins each of the five fields against unset, `""`, `"false"`, `"TRUE"` and `" true"`;
+`..._GateOpensOnExactlyTrue` and `..._GateLeavesUngatedGroupInputsAlone` pin the two open
+paths.
+Search's `audienceSegments` are observation-only and predate it, so they are not gated.
+`userInterests` are not gated either, at the campaign level or on a group: they are Google's
+own affinity and in-market categories, the same ids on every account. `excludedPlacements` are not gated: they are public domains, not
+account resources, and they only narrow where the campaign appears. Both gates refuse through
+`googleAdsInputDisabled`: not-created, and a `domain.PreflightRefusal`, so the asynchronous
+create job reports the gate's sentence instead of the generic "platform campaign creation
+failed": `google-ads: <fields> is disabled on this deployment (<FLAG> is not "true"); omit
+<fields>; or ask an operator to set <FLAG> to "true"`. The two remedies are split by `;`
+because a Display refusal joins several fields with `, `.
+
+`GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the third gate of the kind, for #461's
+`performanceMaxAudienceSignal` (`googleAdsPMaxAudienceSignalEnabled`): unless it is exactly
+`"true"`, `Dispatch` refuses any non-empty value, whitespace included and on any channel, right
+after the Display gate, through the same `googleAdsInputDisabled`. Like the Demand Gen gate it is
+a per-deployment opt-in, and the client checks the Audience against the connected Google Ads
+account. The rest of #461 is
+not gated: `performanceMaxSearchThemes` are free text, and the sitelinks, callouts and
+structured snippets it admits on Performance Max are text and the caller's own destination
+URLs, created as new assets, so none names an existing account resource.
+`TestGoogleAds_PerformanceMaxAudienceSignalGate` and
+`TestGoogleAds_PerformanceMaxAudienceSignalGateLeavesThemesAlone` pin both halves.
+
+`GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED` is the fourth, for #477's
+`sharedNegativeKeywordLists` (`googleAdsSharedNegativeListsEnabled`): unless it is exactly
+`"true"`, `Dispatch` refuses any non-empty list, whatever its entries hold and on any channel,
+right after the Performance Max gate, through the same `googleAdsInputDisabled`. A list names an
+EXISTING shared set, which the client checks against the connected Google Ads account; like the
+other three, the gate is a per-deployment opt-in. `searchAssets` is not gated: its images, logo and business name
+are the caller's own content, created as new assets. `TestGoogleAds_SharedNegativeListsGate`
+and `TestGoogleAds_SharedNegativeListsGateLeavesSearchAssetsAlone` pin both halves.
+
+The client enforces the channel rules inside its own preflight,
 before its first mutate, and `Dispatch` validates unconditionally (including on the adoption
 path), so both paths already refuse in one place. A second copy in the adapter could only
 drift from it.
@@ -3628,9 +3764,10 @@ stops delivery. An adapter that returns an empty
 variant is refused by the service layer too, so a contract violation cannot fall back to `default`.
 
 **A Performance Max asset group id is not a serving campaign, and the gate stopped treating it as
-one.** `createPerformanceMaxAssetGroup` returns the group id whenever Google answered 2xx, even when not
-every link could be read back, deliberately — the group then exists, and clearing the id would hide
-it; rows written by the earlier three-call cascade can also hold a group whose link step failed
+one.** `createPerformanceMaxAssetGroup` returns the group's resource name (`pmax.go` records the
+id) whenever Google answered 2xx, even when not every link could be read back, deliberately —
+the group then exists, and clearing the id would hide it; rows written by the earlier
+three-call cascade can also hold a group whose link step failed
 outright (#437 made the group and its links one atomic request). But the activation gate used to key on that id alone, so
 exactly the campaign that cannot serve was the one it called provisioned: it un-paused a campaign
 whose asset group was empty and reported success. The gate now reads a second recorded fact,

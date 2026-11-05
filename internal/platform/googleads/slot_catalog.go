@@ -28,6 +28,10 @@ const platformGoogleAds = "google-ads"
 // The dependency runs googleads -> creative and never the reverse: the classifier knows
 // nothing about Google, so classifying one asset does not link every platform client into
 // the binary.
+//
+// Demand Gen's entries model the IMAGE creative's counts only. The Demand Gen video ad's
+// logo (#460) shares the image logo's geometry but takes exactly one, which no entry here
+// states.
 func ImageSlotCatalog() creative.Catalog {
 	pmax := performanceMaxCatalog()
 	demandGen := demandGenCatalog()

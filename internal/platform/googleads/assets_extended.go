@@ -17,15 +17,16 @@ import (
 //
 // Three more members of the asset oneof assets.go already creates and links.
 // Everything structural — the two mutates, the positional asset/fieldType
-// pairing, the resource-name verification, the SEARCH-ONLY fence — is that
-// file's and is not repeated here. What lives here is each type's own shape and
-// the validation that has to happen BEFORE the budget mutate.
+// pairing, the resource-name verification, the channel fence (these three
+// are Search only) — is that file's and is not repeated here. What lives here
+// is each type's own shape and the validation that has to happen BEFORE the
+// budget mutate.
 //
 // Why these three and not the other three Google publishes:
 //
 //   - IMAGE assets carry bytes. Creating one means fetching the image, which
-//     would give the Search cascade a network phase it does not have today; it
-//     is a separate change rather than another validator, and is a named gap.
+//     gave the Search cascade a network phase of its own; they arrived as a
+//     separate change, the #477 Search campaign assets (search_assets.go).
 //   - LOCATION assets are not created by this API at all. They come from a
 //     linked Business Profile account, and `locationAsset` references a
 //     Business Profile location id rather than an address this service could

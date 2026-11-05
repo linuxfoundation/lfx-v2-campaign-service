@@ -6,7 +6,9 @@ package googleads
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,7 +65,7 @@ import (
 //     URL shape. It runs inside preflightCampaignKind with every other validator, so
 //     ValidateCampaignInputKind refuses exactly what CreateDemandGenCampaign refuses —
 //     the adoption-parity property the whole preflight exists to keep.
-//   - fetchDemandGenImages does the network. It runs in the cascade BEFORE the budget
+//   - fetchDemandGenGroupImages does the network. It runs in the cascade BEFORE the budget
 //     mutate, so an unreachable image, a 404, an over-sized file or a wrong aspect
 //     ratio still costs nothing. The orphan guarantee holds; only the place it is
 //     enforced moves, because "does this URL serve a 600x314 JPEG" is not locally
@@ -121,7 +123,9 @@ const (
 	// spelled differently per platform is a cap a reader has to go looking for.
 	MaxImageBytes = 5 << 20 // 5 MiB
 
-	// maxCreativeTotalImageBytes caps the SUM of every image in one creative.
+	// maxCreativeTotalImageBytes caps the SUM of every image in one creative — and, on
+	// Demand Gen, in one create: fetchDemandGenGroupImages walks every ad group's
+	// creatives in one fetchSlotImages call, so the total spans them all (#460).
 	//
 	// The per-image cap bounds one file; nothing bounded the set. A Performance Max
 	// asset group takes up to 30 images across its slots and a Demand Gen ad up to 25,
@@ -137,9 +141,11 @@ const (
 	// Google would have accepted is the worse failure of the two.
 	maxCreativeTotalImageBytes = 64 << 20 // 64 MiB
 
-	// demandGenImageFetchTimeout bounds one image fetch. The cascade may fetch up
-	// to 25 images (20 marketing + 5 logos), so this is per-image and the caller's
-	// context still bounds the whole operation.
+	// demandGenImageFetchTimeout bounds one image fetch. A Demand Gen creative has up to
+	// 25 images (20 marketing + 5 logos), and one create's walk can cover up to
+	// maxDemandGenAdGroups × maxDemandGenAdsPerGroup (25) creatives (#460, #474), so this is
+	// per-image; the whole walk is ONE fetchSlotImages call, still under one
+	// maxCreativeImageFetchWall and one 64 MiB total, and the caller's context bounds it.
 	demandGenImageFetchTimeout = 20 * time.Second
 
 	// creativeImageFetchDeadlineShare is the divisor applied to the caller's REMAINING
@@ -152,8 +158,10 @@ const (
 	// because the share above is conditional on the caller having a deadline at all. With
 	// no deadline — a background reconcile, a test harness, any call site that passes
 	// context.Background() — the share does nothing and the bound reverts to the one the
-	// walk implies: 25 images times demandGenImageFetchTimeout, which is over eight
-	// minutes of wall time chosen by whoever supplied the URLs. A host that accepts the
+	// walk implies: 25 images per creative — and one create's walk can cover up to
+	// maxDemandGenAdGroups × maxDemandGenAdsPerGroup (25) creatives (#460, #474) — times
+	// demandGenImageFetchTimeout, which is hours of wall time chosen by whoever supplied
+	// the URLs. A host that accepts the
 	// connection and then trickles bytes just under the per-image timeout spends all of
 	// it. The share is still applied when there is a deadline and the SMALLER of the two
 	// wins, so this never widens the caller's budget — it only puts a floor under the
@@ -283,27 +291,33 @@ func (p demandGenCreativePlan) imageCount() int {
 // validator, so the adoption path refuses what the create path refuses.
 //
 // What it cannot check is whether a URL actually serves a decodable image of the
-// right shape. That is fetchDemandGenImages' job and it still runs before the
+// right shape. That is fetchDemandGenGroupImages' job and it still runs before the
 // budget mutate — see the file comment.
 func validateDemandGenCreative(kind string, in CampaignInput) (demandGenCreativePlan, error) {
 	d := in.DemandGenCreative
 	if d.empty() {
 		return demandGenCreativePlan{}, nil
 	}
-	// Refused as a channel capability, exactly as validateAssetPlan refuses
+	// Refused as a channel capability, exactly as validateAssetPlan refuses most
 	// extensions on Demand Gen: a Search campaign takes its creative as RSA copy
 	// and campaign-level extension assets, and DemandGenMultiAssetAdInfo is not a
 	// shape a Search ad group accepts.
 	if kind != campaignKindDemandGen {
 		return demandGenCreativePlan{}, fmt.Errorf("google-ads Demand Gen creative (marketing images, logos, business name) is supported on Demand Gen campaigns only, not on %s", kind)
 	}
+	return validateDemandGenCreativeSpec(d, in.ResolvedImages)
+}
 
-	plan := demandGenCreativePlan{present: true, urls: make([][]string, len(demandGenImageSlots)), resolved: in.ResolvedImages}
+// validateDemandGenCreativeSpec checks one image creative; the channel fence is the
+// caller's. Split out so each DemandGenAdGroups entry's creative (#460) is checked by
+// exactly the rules the campaign-level one is.
+func validateDemandGenCreativeSpec(d DemandGenCreative, resolved map[string][]byte) (demandGenCreativePlan, error) {
+	plan := demandGenCreativePlan{present: true, urls: make([][]string, len(demandGenImageSlots)), resolved: resolved}
 
 	raw := [][]string{d.MarketingImages, d.SquareMarketingImages, d.PortraitImages, d.TallPortraitImages, d.LogoImages}
 	marketing := 0
 	for i, slot := range demandGenImageSlots {
-		urls, err := validateImageEntries(slot, raw[i], in.ResolvedImages)
+		urls, err := validateImageEntries(slot, raw[i], resolved)
 		if err != nil {
 			return demandGenCreativePlan{}, err
 		}
@@ -552,25 +566,6 @@ type fetchedImage struct {
 	data []byte
 }
 
-// fetchDemandGenImages downloads every image in the plan and checks each one's
-// format and geometry locally.
-//
-// It runs in the cascade BEFORE the budget mutate. That placement is the whole
-// point: a 404, a redirect, an over-sized file or a 601x314 image that misses the
-// 1.91:1 ratio all fail while nothing has been created, which is the same
-// guarantee the pure validators give and the reason they exist.
-//
-// Images are fetched SEQUENTIALLY. A Demand Gen ad tops out at 25 images, the
-// per-image timeout bounds each one, and fetching them in parallel would turn one
-// caller's creative into a 25-way fan-out against a host this service does not
-// control.
-func (c *Client) fetchDemandGenImages(ctx context.Context, plan demandGenCreativePlan) ([]fetchedImage, error) {
-	if !plan.present {
-		return nil, nil
-	}
-	return c.fetchSlotImages(ctx, demandGenImageSlots, plan.urls, plan.resolved)
-}
-
 // fetchSlotImages is the channel-independent half of the fetch: given a slot table and a
 // positionally parallel set of URL lists, it downloads and shape-checks every image.
 //
@@ -639,7 +634,11 @@ func (c *Client) fetchSlotImages(ctx context.Context, slots []imageSlot, urls []
 	fetched := 0
 	for slotIdx, slotURLs := range urls {
 		slot := slots[slotIdx]
-		for _, u := range slotURLs {
+		// Keyed per slot, not across the walk: one image in two slots (a square marketing
+		// image that is also the square logo) is the cross-slot reuse resultIDSet.reuse
+		// accepts, and two groups or ads each carrying an image are two creatives.
+		firstAt := make(map[[sha256.Size]byte]int, len(slotURLs))
+		for pos, u := range slotURLs {
 			// An entry the caller already resolved is NOT fetched — there is nowhere
 			// to fetch it from — but it is validated identically, runs through the same
 			// running byte total, and is attached in the same slot position. Checked by
@@ -653,6 +652,9 @@ func (c *Client) fetchSlotImages(ctx context.Context, slots []imageSlot, urls []
 				fetched += len(data)
 				if fetched > maxCreativeTotalImageBytes {
 					return nil, fmt.Errorf("google-ads creative images total more than the %d byte limit across all slots", maxCreativeTotalImageBytes)
+				}
+				if err := refuseRepeatedSlotImage(slot, slotURLs, firstAt, pos, data); err != nil {
+					return nil, err
 				}
 				out = append(out, fetchedImage{slot: slotIdx, url: u, data: data})
 				continue
@@ -671,10 +673,38 @@ func (c *Client) fetchSlotImages(ctx context.Context, slots []imageSlot, urls []
 			if fetched > maxCreativeTotalImageBytes {
 				return nil, fmt.Errorf("google-ads creative images total more than the %d byte limit across all slots", maxCreativeTotalImageBytes)
 			}
+			if err := refuseRepeatedSlotImage(slot, slotURLs, firstAt, pos, data); err != nil {
+				return nil, err
+			}
 			out = append(out, fetchedImage{slot: slotIdx, url: u, data: data})
 		}
 	}
 	return out, nil
+}
+
+// refuseRepeatedSlotImage refuses the entry at pos when an earlier entry of the SAME slot
+// carried identical bytes, and otherwise records it in firstAt.
+//
+// validateImageEntries refuses an entry string listed twice, but two different strings can
+// carry the same bytes: two URLs serving one file, or a URL and a stored asset (two stored
+// assets cannot collide: the library is unique on (brief_id, checksum)). Google returns the
+// EXISTING asset for a duplicate asset create (result_ids.go), so both entries resolve to one
+// asset and the slot would carry it twice: a repeated (campaign, asset, field type) link on
+// Search, a repeated asset-group link on Performance Max, a repeated asset in one field of the
+// Display or Demand Gen ad. Google refuses each, and each request runs after the budget and
+// campaign exist, so the repeat is refused here, after the bounded fetch and before any
+// mutate. Compared by a SHA-256 of the bytes, so the walk holds no second copy of an image.
+func refuseRepeatedSlotImage(slot imageSlot, entries []string, firstAt map[[sha256.Size]byte]int,
+	pos int, data []byte) error {
+	sum := sha256.Sum256(data)
+	if j, dup := firstAt[sum]; dup {
+		return fmt.Errorf("google-ads %s %d (%q) and %d (%q) are the same image (identical "+
+			"bytes); Google stores identical content as one asset, so the slot would carry it "+
+			"twice and be refused after the budget and campaign exist — list the image once",
+			slot.label, j, imageRefForError(entries[j]), pos, imageRefForError(entries[pos]))
+	}
+	firstAt[sum] = pos
+	return nil
 }
 
 // fetchOneImage downloads a single image and validates it.
@@ -881,6 +911,29 @@ var checkPublicIP = eventurl.NewAddressGuard()
 // bytes field, which the REST surface carries as standard base64.
 func base64Image(data []byte) string { return base64.StdEncoding.EncodeToString(data) }
 
+// imageAssetNamePrefix starts every image asset name this client sends.
+const imageAssetNamePrefix = "LFX image "
+
+// imageAssetName is the Asset.name every image asset create sends: imageAssetNamePrefix and
+// the first 16 hex characters of the image bytes' SHA-256 (#491).
+//
+// Google REQUIRES a name on an image asset. Without one, assets:mutate (and an image create
+// inside googleAds:mutate) is refused with AssetError NAME_REQUIRED_FOR_ASSET_TYPE, which is
+// why no image-bearing creative reached Google before this (validateOnly probes on
+// 2026-11-05, account 8666746580). The same probes showed that a name need not be unique in
+// the account and that 128 characters is accepted and 129 refused (TOO_LONG); this name is
+// always 26.
+//
+// Derived from the BYTES, never from the source URL: the obvious label (slot plus URL) would
+// ship the caller's creative URL, query string and all, to Google as a permanent
+// human-visible label in the shared Foundation account. A hash names nothing about where the
+// image came from, and the same bytes always get the same name, which matches Google
+// returning the existing asset for a repeated image (result_ids.go).
+func imageAssetName(data []byte) string {
+	sum := sha256.Sum256(data)
+	return imageAssetNamePrefix + hex.EncodeToString(sum[:8])
+}
+
 // ---------------------------------------------------------------------------
 // Creating the assets and the ad
 // ---------------------------------------------------------------------------
@@ -900,6 +953,7 @@ type imageAssetCreate struct {
 // not mean here. One struct spanning both would make every reader check which half
 // applies.
 type demandGenAssetCreate struct {
+	// Name is required by Google on an image asset; every create sets imageAssetName.
 	Name       string           `json:"name,omitempty"`
 	ImageAsset imageAssetCreate `json:"imageAsset"`
 }
@@ -983,6 +1037,7 @@ func (c *Client) createDemandGenAd(ctx context.Context, adGroupResource, adGroup
 	assetOps := make([]mutateOperation, 0, len(images))
 	for _, img := range images {
 		assetOps = append(assetOps, mutateOperation{Create: demandGenAssetCreate{
+			Name:       imageAssetName(img.data),
 			ImageAsset: imageAssetCreate{Data: base64Image(img.data)},
 		}})
 	}
@@ -1011,13 +1066,17 @@ func (c *Client) createDemandGenAd(ctx context.Context, adGroupResource, adGroup
 		// The body PARSED, so whatever ids it did carry are real — and they are the only
 		// handle an operator has on account-level assets that may already exist. They go
 		// back WITH the error rather than being dropped alongside it, the same way the
-		// malformed-resource-name arm below returns what it had got to.
+		// malformed-resource-name arm below returns every same-account id it carried.
 		return c.parsedAssetIDs(assetResults), "", fmt.Errorf("google-ads demand gen image asset creation UNCONFIRMED (ad group %s created; 2xx returned %d result(s) for %d image(s) — assets may exist — verify in Google Ads before retrying)", adGroupID, len(assetResults.Results), len(assetOps))
 	}
 
 	// Positional: result i is the asset for images[i], which carries its slot.
 	perSlot := make([][]adImageAsset, len(demandGenImageSlots))
 	assetIDs = make([]string, 0, len(assetOps))
+	// An unusable entry does not stop the walk: every same-account id goes back with the
+	// error, which names the FIRST unusable index.
+	firstBad, badWhy := -1, ""
+	seen := newResultIDSet(len(assetResults.Results))
 	for i, r := range assetResults.Results {
 		resource := r.ResourceName
 		// assetID checks the kind, the account AND the numeric trailing id, and
@@ -1025,10 +1084,34 @@ func (c *Client) createDemandGenAd(ctx context.Context, adGroupResource, adGroup
 		// would be referenced by the ad and persisted as this campaign's.
 		id := c.assetID(resource)
 		if id == "" {
-			return assetIDs, "", fmt.Errorf("google-ads demand gen image asset creation UNCONFIRMED (ad group %s created; malformed asset resource name %q at index %d — assets may exist — verify in Google Ads before retrying)", adGroupID, resource, i)
+			if firstBad < 0 {
+				firstBad = i
+				badWhy = fmt.Sprintf("malformed asset resource name %q at index %d", resource, i)
+			}
+			continue
 		}
-		assetIDs = append(assetIDs, id)
+		// A repeat of the SAME image is Google returning the existing asset (result_ids.go):
+		// it is referenced in this slot too and its id reported once. Any other repeat is
+		// unusable, its operation unaccounted for.
+		first, dup := seen.reuse(id, i, func(j int) bool {
+			return bytes.Equal(images[j].data, images[i].data)
+		})
+		if dup != "" {
+			if firstBad < 0 {
+				firstBad, badWhy = i, dup
+			}
+			continue
+		}
+		if first {
+			assetIDs = append(assetIDs, id)
+		}
 		perSlot[images[i].slot] = append(perSlot[images[i].slot], adImageAsset{Asset: resource})
+	}
+	if firstBad >= 0 {
+		return uniqueIDs(assetIDs), "", fmt.Errorf(
+			"google-ads demand gen image asset creation UNCONFIRMED (ad group %s "+
+				"created; %s — assets may exist — verify in Google Ads before retrying)",
+			adGroupID, badWhy)
 	}
 
 	ad := &demandGenMultiAssetAdInfo{
