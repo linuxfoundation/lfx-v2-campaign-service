@@ -97,7 +97,7 @@ would reject a credential-less request *before* OpenFGA runs, and it is
 
 `:projectId` on every `project-api` route is usually a project **slug** —
 self-serve's `campaign-service.service.ts` sends slugs on this API, never
-UIDs — but OpenFGA tuples for `campaign_manager`/`marketing_ops` are keyed on
+UIDs — but OpenFGA tuples for `campaign_manager`/`global_marketing_ops` are keyed on
 project **UID**. A slug-keyed `openfga_check` object would never match a
 UID-keyed tuple.
 

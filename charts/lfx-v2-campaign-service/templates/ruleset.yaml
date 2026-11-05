@@ -70,15 +70,17 @@ spec:
     # Project-nested campaign API. Per the approved architecture (D2), the service
     # introduces no new FGA object types — every endpoint is nested under
     # /projects/{projectId}/… and gated on the `campaign_manager` relation of that
-    # project (reads AND writes; there is no read-only audience). The projectId is
+    # project (reads AND writes; there is no read-only audience), except the Google
+    # conversion-action list, gated on `global_marketing_ops` (marketing-ops-api below). The projectId is
     # captured from the URL and the authorizer checks it against `project:{id}`.
     #
     # When OpenFGA is disabled (local dev only) all requests are allowed, matching
     # the reference-service pattern.
 
     # Every project-nested campaign path routed through the heimdall middleware in
-    # httproute.yaml is gated on the project `campaign_manager` relation. This is a
-    # SINGLE rule covering every routed family — connections, briefs, campaigns
+    # httproute.yaml is gated on the project `campaign_manager` relation, except
+    # google-ads/conversion-actions (marketing-ops-api below). This is a
+    # SINGLE rule covering every other routed family — connections, briefs, campaigns
     # (under a brief), jobs, the google-ads reads and create-form lookups,
     # meta-ads, reddit-ads, twitter-ads and linkedin-ads audience, reddit-ads keywords, and hubspot UTM — because they share the exact same
     # authorization (D2:

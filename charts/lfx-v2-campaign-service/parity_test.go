@@ -181,7 +181,11 @@ func TestConversionActionsIsAMarketingOpsRead(t *testing.T) {
 		t.Errorf("%s appears %d times in the rendered RuleSet, want once (marketing-ops-api only)", conversionActionsPath, n)
 	}
 	block := ruleBlock(t, ruleset, marketingOpsRuleID)
-	methods := block[strings.Index(block, "methods:"):strings.Index(block, "routes:")]
+	m, r := strings.Index(block, "methods:"), strings.Index(block, "routes:")
+	if m < 0 || r < m {
+		t.Fatalf("%s rule must carry match.methods before match.routes:\n%s", marketingOpsRuleID, block)
+	}
+	methods := block[m:r]
 	if strings.Count(methods, "- ") != 1 || !strings.Contains(methods, "- GET") {
 		t.Errorf("%s rule must match GET only:\n%s", marketingOpsRuleID, methods)
 	}
