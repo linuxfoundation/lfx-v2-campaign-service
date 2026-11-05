@@ -2249,11 +2249,12 @@ fence is `!= campaignKindDemandGen`, so a new channel inherits it), refuses any 
 but `customers/<id>/audiences/<id>` with a positive canonical id, and refuses a
 resource under another customer — the `validateConversionActions` check, for the same
 reason. The connected Google Ads account (same customer id) is the boundary that check
-enforces; per-foundation ownership (#468) was closed as won't do, because campaign managers
-are the LF marketing team, who manage every foundation. The dispatch adapter refuses the
+enforces. That account is shared by every foundation and `campaign_manager` includes
+foundation executive directors, so create-campaigns also requires `global_marketing_ops` on
+the project for any Demand Gen audience. The dispatch adapter refuses the
 field — and, since #460, every `demandGenAdGroups[].audience` — unless
 `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`: a per-deployment opt-in the
-chart sets to `"false"`, turned on in lfx-v2-argocd (lfx-v2-argocd#2001).
+chart sets to `"false"`, turned on in lfx-v2-argocd (still off everywhere).
 This client never creates the Audience. `AudienceSegments` stays refused on
 Demand Gen, now with a message that says why (audience-grouped) and names
 `DemandGenAudience`; Performance Max and Video keep the generic reason (audience criteria

@@ -624,9 +624,11 @@ type googleAdsConfig struct {
 // It is a per-deployment opt-in, off by default; ops turns it on by setting it to exactly "true"
 // in lfx-v2-argocd. The gate is here, in Dispatch, so it holds for every caller, including one
 // that reaches this service directly. The client checks the Audience against the connected
-// Google Ads account (same customer id), which is the boundary. Per-foundation ownership (#468)
-// was closed as won't do: campaign managers are the LF marketing team, who manage every
-// foundation. Off, no caller can attach an Audience at all.
+// Google Ads account (same customer id). That account is shared by every foundation, and
+// campaign_manager, which the gateway checks, includes each foundation's executive directors, so
+// the create path (BriefService.CreateCampaigns) also requires global_marketing_ops on the
+// project for any audience — see service.GoogleAdsDemandGenAudienceRequested, which this gate
+// and that one agree on. Off, no caller can attach an Audience at all.
 func googleAdsDemandGenAudienceEnabled() bool {
 	return os.Getenv(constants.EnvGoogleAdsDemandGenAudienceEnabled) == "true"
 }
