@@ -1238,7 +1238,7 @@ other three, the gate is a per-deployment opt-in. `searchAssets` is not gated: i
 are the caller's own content, created as new assets. `TestGoogleAds_SharedNegativeListsGate`
 and `TestGoogleAds_SharedNegativeListsGateLeavesSearchAssetsAlone` pin both halves.
 
-The client refuses the channel rules inside its own preflight,
+The client enforces the channel rules inside its own preflight,
 before its first mutate, and `Dispatch` validates unconditionally (including on the adoption
 path), so both paths already refuse in one place. A second copy in the adapter could only
 drift from it.
