@@ -17,6 +17,16 @@
 //
 // Every answer other than an exact, well-formed grant or denial is an ERROR, never a denial
 // and never a grant, so the caller can tell "you may not" (403) from "we could not tell" (503).
+//
+// One gap the contract leaves open: fga-sync (CacheLayer.buildResponseAndWriteBack) answers
+// `false` for a check whose OpenFGA BatchCheck item came back with an error, and does not cache
+// that answer. An item-level OpenFGA failure is therefore indistinguishable from a denial on the
+// wire. Because the failure is not cached while a genuine denial is, a `false` is re-checked
+// once: a transient failure usually clears on the fresh request, and a real denial is answered
+// again from the cache, cheaply. Only a second `false` is reported as a denial. A failure that
+// persists across both requests still yields a denial (403), which fails closed. Closing the gap
+// fully needs fga-sync to emit a distinct verdict for an errored item; this package already
+// treats any verdict other than "true" or "false" as ErrUnavailable.
 package accesscheck
 
 import (
@@ -67,8 +77,8 @@ func New(r Requester) *Checker {
 }
 
 // IsGlobalMarketingOps reports whether username holds global_marketing_ops on the project
-// whose slug is projectSlug. A false result is a definite denial; every error wraps
-// ErrUnavailable.
+// whose slug is projectSlug. A false result is a denial answered twice in a row (see the
+// package comment for why a first false is re-checked); every error wraps ErrUnavailable.
 func (c *Checker) IsGlobalMarketingOps(ctx context.Context, projectSlug, username string) (bool, error) {
 	if c == nil || c.r == nil {
 		return false, fmt.Errorf("%w: no NATS connection", ErrUnavailable)
@@ -84,6 +94,16 @@ func (c *Checker) IsGlobalMarketingOps(ctx context.Context, projectSlug, usernam
 		return false, err
 	}
 	token := "project:" + uid + "#" + RelationGlobalMarketingOps + "@user:" + username
+	ok, err := c.check(ctx, token)
+	if err != nil || ok {
+		return ok, err
+	}
+	// A false may be an uncached item-level OpenFGA error (see the package comment); ask once
+	// more and take the second answer, whatever it is.
+	return c.check(ctx, token)
+}
+
+func (c *Checker) check(ctx context.Context, token string) (bool, error) {
 	reply, err := c.request(ctx, AccessCheckSubject, token)
 	if err != nil {
 		return false, err
@@ -144,7 +164,7 @@ func validUsername(s string) bool {
 		return false
 	}
 	for _, r := range s {
-		if unicode.IsSpace(r) || unicode.IsControl(r) || r == '#' || r == '@' || r == '\t' {
+		if unicode.IsSpace(r) || unicode.IsControl(r) || r == '#' || r == '@' {
 			return false
 		}
 	}

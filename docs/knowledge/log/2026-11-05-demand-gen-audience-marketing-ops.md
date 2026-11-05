@@ -17,6 +17,13 @@ for the UID, then `lfx.access_check.request` (fga-sync) with
 admits the request; `false` is `403`, and any other reply, a timeout, an empty `NATS_URL` or a
 missing username is `503`. Nothing is created in either case.
 
+A `false` is asked twice. fga-sync (`CacheLayer.buildResponseAndWriteBack`) answers `false`,
+uncached, for a check whose OpenFGA BatchCheck item errored, so on the wire an item-level
+OpenFGA failure looks like a denial. The second request reaches OpenFGA fresh for a transient
+failure and is answered from the cache for a genuine denial; only a second `false` is `403`. A
+failure that persists across both still answers `403` (fail closed): telling it apart needs
+fga-sync to emit a distinct verdict, and any verdict other than `true`/`false` is already `503`.
+
 `service.GoogleAdsDemandGenAudienceRequested` detects the inputs;
 `TestDemandGenAudienceDetectionAgreesWithTheCreateGate` (`internal/dispatch`) pins it to the
 dispatcher's own detection, so a config the dispatcher attaches an Audience for cannot pass the

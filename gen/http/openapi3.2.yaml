@@ -3728,7 +3728,7 @@ paths:
                                 $ref: '#/components/schemas/ForbiddenError'
                             example:
                                 code: "403"
-                                message: Demand Gen audiences require the global_marketing_ops role on this project
+                                message: Demand Gen audiences (googleAdsConfig.demandGenAudience and each demandGenAdGroups audience) require the global_marketing_ops role on this project
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -22474,10 +22474,10 @@ components:
                 message:
                     type: string
                     description: Error message
-                    example: Demand Gen audiences require the global_marketing_ops role on this project
+                    example: Demand Gen audiences (googleAdsConfig.demandGenAudience and each demandGenAdGroups audience) require the global_marketing_ops role on this project
             example:
                 code: "403"
-                message: Demand Gen audiences require the global_marketing_ops role on this project
+                message: Demand Gen audiences (googleAdsConfig.demandGenAudience and each demandGenAdGroups audience) require the global_marketing_ops role on this project
             required:
                 - code
                 - message

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -127,4 +128,52 @@ func TestBriefService_CreateCampaigns_DemandGenAudienceNeedsMarketingOps(t *test
 			}
 		})
 	}
+}
+
+// The published 403 example is the sentence the service actually returns. design cannot import
+// this package, so the example is a copy; every generated OpenAPI document must carry it.
+func TestForbiddenErrorExampleMatchesService(t *testing.T) {
+	for _, rel := range []string{
+		"../../gen/http/openapi.json",
+		"../../gen/http/openapi3.json",
+		"../../gen/http/openapi3.2.json",
+	} {
+		t.Run(rel, func(t *testing.T) {
+			raw, err := os.ReadFile(rel) //nolint:gosec // fixed repo-relative path in a test
+			if err != nil {
+				t.Fatalf("read %s: %v", rel, err)
+			}
+			var doc struct {
+				Definitions map[string]forbiddenSchema `json:"definitions"`
+				Components  struct {
+					Schemas map[string]forbiddenSchema `json:"schemas"`
+				} `json:"components"`
+			}
+			if err := json.Unmarshal(raw, &doc); err != nil {
+				t.Fatalf("parse %s: %v", rel, err)
+			}
+			var found []string
+			for _, schemas := range []map[string]forbiddenSchema{doc.Definitions, doc.Components.Schemas} {
+				for name, s := range schemas {
+					if strings.HasPrefix(name, "ForbiddenError") || strings.HasSuffix(name, "ForbiddenError") {
+						found = append(found, name)
+						if got := s.Properties.Message.Example; got != demandGenAudienceForbiddenMessage {
+							t.Errorf("%s message example = %q, want %q", name, got, demandGenAudienceForbiddenMessage)
+						}
+					}
+				}
+			}
+			if len(found) == 0 {
+				t.Fatalf("%s has no ForbiddenError schema", rel)
+			}
+		})
+	}
+}
+
+type forbiddenSchema struct {
+	Properties struct {
+		Message struct {
+			Example string `json:"example"`
+		} `json:"message"`
+	} `json:"properties"`
 }

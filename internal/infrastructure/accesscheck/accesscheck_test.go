@@ -13,18 +13,39 @@ import (
 
 const testUID = "7cad5a8d-19d0-41a4-81a6-043453daf9ee"
 
-// fakeRequester answers each subject from a table and records what was sent.
+// fakeRequester answers each subject from a table and records what was sent. A subject in
+// checkSeq is answered from that sequence instead, one entry per request, so a test can script
+// the second answer to a re-check.
 type fakeRequester struct {
-	replies map[string]string
-	errs    map[string]error
-	sent    map[string]string
+	replies  map[string]string
+	errs     map[string]error
+	checkSeq []fakeReply
+	sent     map[string]string
+	count    map[string]int
+}
+
+type fakeReply struct {
+	data string
+	err  error
 }
 
 func (f *fakeRequester) RequestWithContext(_ context.Context, subject string, data []byte) (*nats.Msg, error) {
 	if f.sent == nil {
 		f.sent = map[string]string{}
+		f.count = map[string]int{}
 	}
 	f.sent[subject] = string(data)
+	n := f.count[subject]
+	f.count[subject]++
+	if subject == AccessCheckSubject && f.checkSeq != nil {
+		if n >= len(f.checkSeq) {
+			return nil, errors.New("unexpected extra access check request")
+		}
+		if err := f.checkSeq[n].err; err != nil {
+			return nil, err
+		}
+		return &nats.Msg{Subject: subject, Data: []byte(f.checkSeq[n].data)}, nil
+	}
 	if err := f.errs[subject]; err != nil {
 		return nil, err
 	}
@@ -98,5 +119,44 @@ func TestIsGlobalMarketingOps(t *testing.T) {
 func TestIsGlobalMarketingOps_NilRequester(t *testing.T) {
 	if _, err := New(nil).IsGlobalMarketingOps(context.Background(), "cncf", "ada"); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v, want ErrUnavailable", err)
+	}
+}
+
+// fga-sync answers false, uncached, for an item whose OpenFGA check errored, so a first false is
+// re-checked once and only the second answer counts. A grant is never re-checked.
+func TestIsGlobalMarketingOps_RechecksAFalse(t *testing.T) {
+	grant := fakeReply{data: wantToken + "\ttrue"}
+	deny := fakeReply{data: wantToken + "\tfalse"}
+	for _, tc := range []struct {
+		name      string
+		seq       []fakeReply
+		want      bool
+		wantErr   bool
+		wantCheck int
+	}{
+		{name: "grant is not re-checked", seq: []fakeReply{grant}, want: true, wantCheck: 1},
+		{name: "false then true is a grant", seq: []fakeReply{deny, grant}, want: true, wantCheck: 2},
+		{name: "false then false is a denial", seq: []fakeReply{deny, deny}, wantCheck: 2},
+		{name: "false then transport error is unavailable", seq: []fakeReply{deny, {err: nats.ErrTimeout}}, wantErr: true, wantCheck: 2},
+		{name: "false then failure sentence is unavailable", seq: []fakeReply{deny, {data: "failed to check relationship"}}, wantErr: true, wantCheck: 2},
+		{name: "an error is not re-checked", seq: []fakeReply{{err: nats.ErrTimeout}}, wantErr: true, wantCheck: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &fakeRequester{replies: map[string]string{SlugToUIDSubject: testUID}, checkSeq: tc.seq}
+			got, err := New(r).IsGlobalMarketingOps(context.Background(), "cncf", "ada")
+			if tc.wantErr {
+				if !errors.Is(err, ErrUnavailable) || got {
+					t.Fatalf("IsGlobalMarketingOps = (%v, %v), want (false, ErrUnavailable)", got, err)
+				}
+			} else if err != nil || got != tc.want {
+				t.Fatalf("IsGlobalMarketingOps = (%v, %v), want (%v, nil)", got, err, tc.want)
+			}
+			if n := r.count[AccessCheckSubject]; n != tc.wantCheck {
+				t.Fatalf("access check requests = %d, want %d", n, tc.wantCheck)
+			}
+			if n := r.count[SlugToUIDSubject]; n != 1 {
+				t.Fatalf("slug lookups = %d, want 1 (the re-check reuses the UID)", n)
+			}
+		})
 	}
 }

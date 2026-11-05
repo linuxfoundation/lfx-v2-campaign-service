@@ -276,8 +276,13 @@ var UserListsConflictError = Type("user-lists-conflict-error", func() {
 // and campaign_manager includes foundation executive directors, so the service checks the
 // narrower global_marketing_ops relation itself for the inputs that name resources on a
 // Google Ads account shared across foundations.
+//
+// The message example is the exact sentence the service returns
+// (internal/service demandGenAudienceForbiddenMessage); design does not import internal, so it
+// is copied, and TestForbiddenErrorExampleMatchesService pins the two together.
 var ForbiddenError = Type("forbidden-error", func() {
-	errorAttrs("403", "Demand Gen audiences require the global_marketing_ops role on this project")
+	errorAttrs("403", "Demand Gen audiences (googleAdsConfig.demandGenAudience and each "+
+		"demandGenAdGroups audience) require the global_marketing_ops role on this project")
 })
 
 var PreconditionFailedError = Type("precondition-failed-error", func() {
