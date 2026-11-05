@@ -346,7 +346,10 @@ type CampaignInput struct {
 	AdSchedules []AdSchedule
 	// DeviceBidModifiers adjust the bid per device, or exclude a device outright
 	// with a modifier of 0. Optional. On Demand Gen (#474) they are campaign criteria
-	// that take only the 0 exclusion, and CONNECTED_TV joins the vocabulary there.
+	// that take only the 0 exclusion, and CONNECTED_TV joins the vocabulary there. On
+	// Performance Max (#500) they also take only the 0 exclusion, with CONNECTED_TV in
+	// the vocabulary, and are sent as updates of the device rows Google creates on the
+	// campaign; excluding all four devices is refused.
 	DeviceBidModifiers []DeviceBidModifier
 	// ExcludedAgeRanges and ExcludedGenders are campaign-level demographic
 	// EXCLUSIONS ("18-24", "MALE", …). Optional. Exclusion-only is Google's own
@@ -659,7 +662,9 @@ type CampaignResult struct {
 	// path only, since Demand Gen has no keyword criteria.
 	NegativeKeywordCriteriaIDs []string `json:"negativeKeywordCriteriaIds,omitempty"`
 	// TargetingCriterionIDs are the language, ad schedule, device and demographic
-	// criteria created for the corresponding CampaignInput fields, in that order.
+	// criteria created for the corresponding CampaignInput fields, in that order. On
+	// Performance Max the device entries are the ids of the rows Google created and this
+	// client updated (30000 desktop, 30001 mobile, 30002 tablet, 30004 connected TV; #500).
 	// Empty is ambiguous in exactly the three ways GeoCriterionIDs documents — none
 	// asked for, the mutate failed, or the mutate was unconfirmed — and the returned
 	// ERROR is what tells them apart.
