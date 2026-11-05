@@ -1186,13 +1186,13 @@ else — are deliberately **not** restated here;
 non-empty `audience` (`googleAdsDemandGenAdGroupAudiencesSet`, #460), whose refusal names the
 entries by 1-based position — never the caller's group names or Audience. A group without an
 audience is not gated. That gate is not a channel rule. It is a per-deployment opt-in, off by
-default, that ops turns on by setting it to exactly `"true"` in lfx-v2-argocd (lfx-v2-argocd#2001
-enables this one). The client checks the Audience against the connected Google Ads account (same
-customer id), which is the boundary. Per-foundation ownership (#468) was closed as won't do:
-campaign managers are the LF marketing team, who manage every foundation. This relies on
-`campaign_manager` being held only by LF marketing; revisit if foundation-level campaign
-managers are introduced. The gate sits in the adapter so it also covers callers that reach
-`Dispatch` directly.
+default, that ops turns on by setting it to exactly `"true"` in lfx-v2-argocd; it stays off until the
+role check below is deployed. The client checks the Audience against the connected Google Ads account (same
+customer id). That account is shared by every foundation, and `campaign_manager` includes
+foundation executive directors, so `BriefService.CreateCampaigns` also requires
+`global_marketing_ops` on the project for any audience (`service.GoogleAdsDemandGenAudienceRequested`;
+`TestDemandGenAudienceDetectionAgreesWithTheCreateGate` pins the two detections together). The
+flag sits in the adapter so it also covers callers that reach `Dispatch` directly.
 
 `GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` is the same gate for #462's account-owned Display
 segments (`googleAdsDisplayAudiencesEnabled`, `googleAdsDisplayAudienceFieldsSet`): unless it is

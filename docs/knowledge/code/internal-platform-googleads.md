@@ -2071,9 +2071,9 @@ Google refuses an image asset with no name: `assets:mutate` answers `AssetError`
 `NAME_REQUIRED_FOR_ASSET_TYPE` ("Name is required for this asset type."). Until #491 no image
 asset create here set one, so every image-bearing creative failed in prod after its budget,
 campaign and ad group existed — a Display create on 2026-11-05 left campaign 24431381015 with
-no ad. Every image asset create now sends `imageAssetName(data)`: `LFX image ` and the first
-16 hex characters of the bytes' SHA-256. That covers Display (`createDisplayAd`), the Demand
-Gen image ad (`createDemandGenAd`), the Demand Gen video ad's logo, Performance Max
+no ad. Every image asset create now sends `imageAssetName(data)` (`image_assets.go`, beside
+`base64Image`): `LFX image ` and the first 16 hex characters of the bytes' SHA-256. That
+covers Display (`createDisplayAd`), the Demand Gen image ad (`createDemandGenAd`), the Demand Gen video ad's logo, Performance Max
 (`buildPerformanceMaxAssets`) and the Search campaign assets (`buildSearchAssets`); text,
 video and call-to-action assets still send no name. The name comes from the bytes, never the
 source URL, so no creative URL is exported to Google as an asset label, and the same bytes
@@ -2251,11 +2251,12 @@ fence is `!= campaignKindDemandGen`, so a new channel inherits it), refuses any 
 but `customers/<id>/audiences/<id>` with a positive canonical id, and refuses a
 resource under another customer — the `validateConversionActions` check, for the same
 reason. The connected Google Ads account (same customer id) is the boundary that check
-enforces; per-foundation ownership (#468) was closed as won't do, because campaign managers
-are the LF marketing team, who manage every foundation. The dispatch adapter refuses the
+enforces. That account is shared by every foundation and `campaign_manager` includes
+foundation executive directors, so create-campaigns also requires `global_marketing_ops` on
+the project for any Demand Gen audience. The dispatch adapter refuses the
 field — and, since #460, every `demandGenAdGroups[].audience` — unless
 `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`: a per-deployment opt-in the
-chart sets to `"false"`, turned on in lfx-v2-argocd (lfx-v2-argocd#2001).
+chart sets to `"false"`, turned on in lfx-v2-argocd (still off everywhere).
 This client never creates the Audience. `AudienceSegments` stays refused on
 Demand Gen, now with a message that says why (audience-grouped) and names
 `DemandGenAudience`; Performance Max and Video keep the generic reason (audience criteria

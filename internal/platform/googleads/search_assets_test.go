@@ -574,11 +574,23 @@ func TestCreateCampaign_SearchAssetsAndSharedListsPayloadsAndOrder(t *testing.T)
 			t.Errorf("link %d = %+v, want %+v", i, l.Create, want)
 		}
 	}
-	// Every image asset carries the name built from its bytes (#491), and the business name
-	// text asset carries none.
+	// Every image asset carries the name built from its bytes (#491); the business name
+	// text asset and the four campaign links carry none.
 	assertImageAssetsNamed(t, googleAds[0])
-	if strings.Count(googleAds[0], `"name":`) != 3 {
-		t.Errorf("want a name on the 3 image assets only: %.400s", googleAds[0])
+	var raw struct {
+		MutateOperations []map[string]struct {
+			Create map[string]any `json:"create"`
+		} `json:"mutateOperations"`
+	}
+	if err := json.Unmarshal([]byte(googleAds[0]), &raw); err != nil {
+		t.Fatalf("decode googleAds:mutate body: %v", err)
+	}
+	for i := 3; i < 8; i++ {
+		for kind, op := range raw.MutateOperations[i] {
+			if name, ok := op.Create["name"]; ok {
+				t.Errorf("op %d (%s) sends name %v, want none", i, kind, name)
+			}
+		}
 	}
 
 	if got := res.SharedNegativeKeywordListIDs; !reflect.DeepEqual(got, []string{"501", "502"}) {

@@ -2462,6 +2462,16 @@ type CreateCampaignsServiceUnavailableResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// CreateCampaignsForbiddenResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
+// response body for the "Forbidden" error.
+type CreateCampaignsForbiddenResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // CreateCampaignsInternalServerErrorResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // response body for the "InternalServerError" error.
@@ -7150,6 +7160,17 @@ func NewCreateCampaignsConflict(body *CreateCampaignsConflictResponseBody) *lfxv
 // service create-campaigns endpoint ServiceUnavailable error.
 func NewCreateCampaignsServiceUnavailable(body *CreateCampaignsServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
 	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewCreateCampaignsForbidden builds a lfx-v2-campaign-service-briefs service
+// create-campaigns endpoint Forbidden error.
+func NewCreateCampaignsForbidden(body *CreateCampaignsForbiddenResponseBody) *lfxv2campaignservicebriefs.ForbiddenError {
+	v := &lfxv2campaignservicebriefs.ForbiddenError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -12793,6 +12814,18 @@ func ValidateCreateCampaignsConflictResponseBody(body *CreateCampaignsConflictRe
 // ValidateCreateCampaignsServiceUnavailableResponseBody runs the validations
 // defined on CreateCampaignsServiceUnavailableResponseBody
 func ValidateCreateCampaignsServiceUnavailableResponseBody(body *CreateCampaignsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateCreateCampaignsForbiddenResponseBody runs the validations defined on
+// CreateCampaignsForbiddenResponseBody
+func ValidateCreateCampaignsForbiddenResponseBody(body *CreateCampaignsForbiddenResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

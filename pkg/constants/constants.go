@@ -147,11 +147,11 @@ const (
 	//
 	// A per-deployment opt-in, off by default; ops turns it on by setting it to exactly "true"
 	// in lfx-v2-argocd. The Audience is checked against the connected Google Ads account (same
-	// customer id), which is the boundary. Per-foundation ownership (#468) was closed as won't
-	// do: campaign managers are the LF marketing team, who manage every foundation. This relies
-	// on campaign_manager being held only by LF marketing; revisit if foundation-level campaign
-	// managers are introduced. The Display, Performance Max and shared-list flags rest on the
-	// same reasoning.
+	// customer id). That account is shared by every foundation and campaign_manager includes
+	// foundation executive directors, so create-campaigns also requires global_marketing_ops on
+	// the project for any Demand Gen audience (service.GoogleAdsDemandGenAudienceRequested). The
+	// Display, Performance Max and shared-list flags have no such check yet and assumed
+	// campaign_manager was the LF marketing team; keep them off until they do.
 	EnvGoogleAdsDemandGenAudienceEnabled = "GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED"
 
 	// EnvGoogleAdsDisplayAudiencesEnabled opts a deployment IN to the Display audience lists
