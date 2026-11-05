@@ -5331,7 +5331,15 @@ same plan (`TestConfigSnapshot_BiddingRoundTripsThroughTheValidator`).
   `(detail withheld)` and never as its text, or with `WrapPreflightRefusal(err)`, where the
   caller vouches for the whole chain. `Error()` is unchanged and `Unwrap` keeps
   `errors.Is`/`As` working (for example `BudgetAmountReason`). It deliberately has **no**
-  `NoUpstreamCreate`, so marking a message never changes a claim verdict.
+  `NoUpstreamCreate`, so marking a message never changes a claim verdict. A third constructor,
+  `WrapQuotedPreflightRefusal(err)` (#494), is for a client whose input refusals are too many to
+  rewrite one by one and that quotes every caller value with `%q`: `Error()` stays `err`'s text,
+  and the OPERATOR message (`OperatorMessage`, which is what `AsPreflightRefusal` returns) is
+  that text with every double-quoted segment re-rendered through `CallerValue`, so a quoted URL,
+  path or free text is `(value withheld)` in the job result even where the call site did not
+  call `CallerValue` itself. What it cannot enforce stays the caller's promise: no caller value
+  formatted unquoted, no upstream text, nothing raised after the first request. The google-ads
+  client is its one user (see `code/internal-platform-googleads.md` § Pre-flight refusals).
 - `domain.UpstreamStatusCarrier`: `UpstreamStatus() int` on every client's HTTP error type
   (reddit, linkedin, meta `APIError`, twitter, microsoft, hubspot, and — since the
   dispatch-failure classification fix — google-ads `*apiError`). It exposes the status and

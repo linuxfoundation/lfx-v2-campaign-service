@@ -30,6 +30,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 )
 
@@ -601,6 +602,21 @@ func creativeFetchBudget(ctx context.Context) time.Duration {
 		}
 	}
 	return budget
+}
+
+// imageFetchRefusal marks a pre-budget image-fetch refusal operator-safe (#494). An image its
+// slot cannot take (its size, format, geometry, a repeat, the HTTP status the image host
+// answered, the fetch's share of the deadline) is the caller's input, judged before any Google
+// request, and every message for one quotes the image's reference with %q. Two failures are
+// returned as they are. A transport failure (the host could not be reached, or its response
+// read) carries a redactedCause, whose text is net/http's and can name the caller's host
+// unquoted. And a fetch the job's own context ended was not refused at all.
+func imageFetchRefusal(ctx context.Context, err error) error {
+	var transport redactedCause
+	if err == nil || ctx.Err() != nil || errors.As(err, &transport) {
+		return err
+	}
+	return domain.WrapQuotedPreflightRefusal(err)
 }
 
 func (c *Client) fetchSlotImages(ctx context.Context, slots []imageSlot, urls [][]string, resolved map[string][]byte) ([]fetchedImage, error) {

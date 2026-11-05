@@ -210,7 +210,7 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 	if pf.pmax.present {
 		images, err = c.fetchSlotImages(ctx, performanceMaxImageSlots, pf.pmax.urls, pf.pmax.resolved)
 		if err != nil {
-			return nil, err // pre-create: nothing was sent
+			return nil, imageFetchRefusal(ctx, err) // pre-create: nothing was sent
 		}
 	}
 

@@ -309,10 +309,10 @@ func validateExcludedPlacements(placements []string) ([]string, error) {
 			return nil, fmt.Errorf("google-ads: excluded placement must not be empty")
 		}
 		if strings.Contains(entry, "://") {
-			return nil, fmt.Errorf("google-ads: excluded placement %s carries a scheme; send the bare domain (example.com) — it is not stripped for you", redactURLForError(entry))
+			return nil, fmt.Errorf("google-ads: excluded placement %q carries a scheme; send the bare domain (example.com) — it is not stripped for you", redactURLForError(entry))
 		}
 		if strings.ContainsAny(entry, "/?#:@") {
-			return nil, fmt.Errorf("google-ads: excluded placement %s must be a bare domain such as example.com, with no path, query, fragment, port or credentials", redactURLForError(entry))
+			return nil, fmt.Errorf("google-ads: excluded placement %q must be a bare domain such as example.com, with no path, query, fragment, port or credentials", redactURLForError(entry))
 		}
 		// ASCII is checked on the entry as sent, before case is folded: strings.ToLower maps
 		// some non-ASCII runes to ASCII (KELVIN SIGN U+212A becomes "k"), which would turn the

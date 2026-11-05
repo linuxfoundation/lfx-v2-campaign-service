@@ -36,9 +36,15 @@ import (
 type PreflightRefusal struct {
 	msg   string
 	cause error
+	// operator, when set, is the text the job result carries in place of msg: msg with every
+	// quoted caller value re-rendered through CallerValue (WrapQuotedPreflightRefusal). Unset,
+	// msg is itself the operator text.
+	operator string
 }
 
-// Error returns the operator-safe message.
+// Error returns the refusal's message. For every constructor but WrapQuotedPreflightRefusal it
+// is the operator-safe message; for that one it is the wrapped error's own text, unchanged, so
+// no log line moves, and OperatorMessage is the safe rendering.
 func (e *PreflightRefusal) Error() string { return e.msg }
 
 // Unwrap returns the refusal's cause, if it wraps one.
@@ -46,7 +52,12 @@ func (e *PreflightRefusal) Unwrap() error { return e.cause }
 
 // OperatorMessage is the text that may be surfaced to an operator. It is Error() under a name
 // that says why a caller is reading it.
-func (e *PreflightRefusal) OperatorMessage() string { return e.msg }
+func (e *PreflightRefusal) OperatorMessage() string {
+	if e.operator != "" {
+		return e.operator
+	}
+	return e.msg
+}
 
 // Deliberately NO NoUpstreamCreate method. Whether a failed create released or retained its
 // claim is the dispatcher's call (its notCreated wrapper) and must not change because a
@@ -85,12 +96,58 @@ func WrapPreflightRefusal(err error) error {
 	return &PreflightRefusal{msg: err.Error(), cause: err}
 }
 
+// WrapQuotedPreflightRefusal marks err as a refusal raised before the first upstream request
+// whose text is service-authored except for caller values, and renders EVERY caller value with
+// %q (issue #494). It exists for a client whose pre-flight validators are too many to rewrite
+// one by one: the Google Ads client's hundreds of input refusals quote caller values (a headline,
+// an ad group name, a redacted image URL) with %q, and before #494 none of them reached the job
+// result at all.
+//
+// Error() stays err's text, so no log line and no test pin moves. The OPERATOR message is that
+// text with every double-quoted segment re-rendered through CallerValue (quotedCallerValues), so
+// a quoted caller value CallerValue would withhold — a URL, a path, free text with a space —
+// is withheld from the job result even where the call site did not pass it through CallerValue
+// itself. That is the rule this constructor enforces mechanically; the one it cannot is the
+// caller's to keep: err must format no caller value UNQUOTED (%s, %v), carry no upstream text,
+// and come from before the first upstream request. A nil err returns nil.
+func WrapQuotedPreflightRefusal(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &PreflightRefusal{msg: err.Error(), cause: err, operator: quotedCallerValues(err.Error())}
+}
+
+// quotedSegment matches one Go double-quoted string as %q renders it: a backslash escapes the
+// next character, and %q never emits a raw newline.
+var quotedSegment = regexp.MustCompile(`"(?:[^"\\\n]|\\.)*"`)
+
+// quotedCallerValues re-renders every double-quoted segment of msg through CallerValue. A
+// segment that does not unquote is withheld rather than shown. A value capForError-style
+// helpers cut with a trailing "…" keeps its ellipsis when the part before it is showable.
+func quotedCallerValues(msg string) string {
+	return quotedSegment.ReplaceAllStringFunc(msg, func(q string) string {
+		v, err := strconv.Unquote(q)
+		if err != nil {
+			return callerValueWithheld
+		}
+		body, cut := strings.CutSuffix(v, "…")
+		if !cut || body == "" {
+			return CallerValue(v)
+		}
+		shown := CallerValue(body)
+		if shown == callerValueWithheld || strings.HasSuffix(shown, " (truncated)") {
+			return shown
+		}
+		return strconv.Quote(body + "…")
+	})
+}
+
 // AsPreflightRefusal reports the operator-safe message of the first PreflightRefusal in err's
 // chain, and whether there was one.
 func AsPreflightRefusal(err error) (string, bool) {
 	var r *PreflightRefusal
 	if errors.As(err, &r) {
-		return r.msg, true
+		return r.OperatorMessage(), true
 	}
 	return "", false
 }
