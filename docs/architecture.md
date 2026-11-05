@@ -304,12 +304,12 @@ The service introduces **no new FGA object types** — only relations on the exi
 | `campaign_manager` | `executive_director or marketing_ops` | **Yes — gates every endpoint** (reads and writes). Does NOT cascade from parent; scoped to the project it is granted on. |
 | `marketing_auditor` | `[team#member] or executive_director or marketing_ops or marketing_auditor from parent` | **No.** Applies to the separate Marketing Insights analytics dashboard (Snowflake-backed), which this service does not serve. Not referenced in any ruleset here. |
 
-**Every endpoint in this service is gated on `campaign_manager`** — there is no read-only campaigns audience. That includes `GET /projects/{projectId}/google-ads/conversion-actions` (#458), which lists every foundation's conversion actions on the shared Google Ads customer: `campaign_manager` is held only by the internal LF marketing team, which manages every foundation (#468, closed as won't do). The Campaigns page is only ever accessed by campaign managers, who both read and write; the platform-metrics reads are live ad-platform data (also campaign-manager scoped), distinct from the Snowflake-backed Marketing Insights dashboard that `marketing_auditor` governs. RuleSets are evaluated against the `{projectId}` in the path; because these are project relations (not a new type), all API paths nest under `/projects/{projectId}/…` (see [api-catalog.md](api-catalog.md#api-design-rules)).
+**Every endpoint in this service is gated on `campaign_manager`** — there is no read-only campaigns audience — **except** `GET /projects/{projectId}/google-ads/conversion-actions` (#458). It lists every foundation's conversion actions on the shared Google Ads customer, and `campaign_manager` includes the project's `executive_director`, a foundation-scoped role, so that read is gated on `global_marketing_ops` of the project: the LF marketing team, granted on every project (#486). The Campaigns page is only ever accessed by campaign managers, who both read and write; the platform-metrics reads are live ad-platform data (also campaign-manager scoped), distinct from the Snowflake-backed Marketing Insights dashboard that `marketing_auditor` governs. RuleSets are evaluated against the `{projectId}` in the path; because these are project relations (not a new type), all API paths nest under `/projects/{projectId}/…` (see [api-catalog.md](api-catalog.md#api-design-rules)).
 
 **The gateway check is project-level; data on a shared ad account is scoped in the service** —
 with one exception: the conversion-action list (#458) is account-wide on the shared Google Ads
-customer and is NOT scoped in the service, by decision (above: campaign managers are the
-internal LF team, which manages every foundation). A
+customer and is NOT scoped in the service; the gateway admits only `global_marketing_ops`
+to it (above). A
 `campaign_manager` grant on one project passes the check for that project only, but on a platform
 whose single upstream account is shared by every foundation (see
 [Account Tenancy](#account-tenancy)) an account-wide read would still return other foundations'

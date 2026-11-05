@@ -128,10 +128,11 @@ no rule is REJECTED), so such drift makes the routed endpoint UNREACHABLE throug
 the gateway — not an unauthenticated bypass; the parity test catches it before it
 ships either way. (The test skips when `helm` is absent but fails on a render error.)
 
-Path extraction is SCOPED to the `project-api` rule block
-(not "any `/projects/` path in the RuleSet"), and `TestConversionActionsIsAProjectAPIRead`
-pins that `google-ads/conversion-actions` is ruled there once and that no rule gates on the
-ROOT project. A
+Path extraction is SCOPED to the two FGA-gated rule blocks, `project-api` and
+`marketing-ops-api` (not "any `/projects/` path in the RuleSet"), and
+`TestConversionActionsIsAMarketingOpsRead` pins that `google-ads/conversion-actions` is ruled
+by `marketing-ops-api` alone, on `global_marketing_ops`, and that no rule gates on the ROOT
+project. A
 separate `TestProjectAPIRuleEnforcesCampaignManager` asserts
 the `project-api` rule has two `openfga_check` authorizers on relation `campaign_manager`, each
 paired with the correct object: `project:{{- .Outputs.project_slug_resolver_contextualizer.uid -}}`

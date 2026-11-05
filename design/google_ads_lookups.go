@@ -191,10 +191,10 @@ func googleAdsLookupMethods() {
 			"project uses, live from GAQL on conversion_action, for picking googleAdsConfig.conversionActions. " +
 			"Credentials resolve as for a create: the project's own connection, or the shared LF system " +
 			"credential when it has none (or when the deployment forces the LF account). " +
-			"Gated on campaign_manager of {project_id}, like every other endpoint. The Google Ads customer " +
-			"is shared by every foundation, so the response lists EVERY foundation's conversion action " +
-			"names, not only this project's; campaign_manager is held only by the internal LF marketing " +
-			"team, which manages every foundation, so that is intended. {project_id} selects which " +
+			"The Google Ads customer is shared by every foundation, so the response lists EVERY " +
+			"foundation's conversion action names, not only this project's. So, unlike every other " +
+			"endpoint, it is gated on global_marketing_ops of {project_id} (the LF marketing team), not " +
+			"campaign_manager, which also admits a foundation's executive director. {project_id} selects which " +
 			"project's connection supplies the credential. More than 500 enabled actions on the customer fails the read with 503 " +
 			"rather than truncating it, and that 503 does not clear on retry: the account itself holds " +
 			"more actions than this endpoint publishes. " +

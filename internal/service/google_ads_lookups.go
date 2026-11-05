@@ -131,9 +131,8 @@ func (o *Orchestrator) ReadUserLists(ctx context.Context, projectID string, plat
 // the read exists for cross-foundation (LF admin) callers choosing the conversion actions a
 // Google create attaches, and on Google Ads those actions live on the one customer every
 // foundation shares, so the answer holds EVERY foundation's conversion action names. That is
-// intended: the gateway admits campaign_manager of the project, as for every route, and that
-// relation is held only by the internal LF marketing team, which manages every foundation
-// (#468, closed as won't do).
+// why the gateway admits only global_marketing_ops of the project (the LF marketing team) to
+// this route, not campaign_manager, which also admits a foundation's executive_director (#486).
 func (o *Orchestrator) ReadConversionActions(ctx context.Context, projectID string, platform model.Provider) (*model.ConversionActions, error) {
 	d, ok := o.dispatchers[platform]
 	if !ok {
@@ -358,7 +357,7 @@ func (s *ConnectionService) ListGoogleAdsUserLists(ctx context.Context, p *conn.
 // a create for this project uses, for the googleAdsConfig.conversionActions picker.
 //
 // The answer is account-wide on a customer every foundation shares and is not isolated per
-// project, which is intended for campaign managers; see Orchestrator.ReadConversionActions. The reserved LF scope stays unaddressable, as it is for
+// project, which is why only the LF marketing team may call it; see Orchestrator.ReadConversionActions. The reserved LF scope stays unaddressable, as it is for
 // every connection read.
 func (s *ConnectionService) ListGoogleAdsConversionActions(ctx context.Context, p *conn.ListGoogleAdsConversionActionsPayload) (*conn.GoogleAdsConversionActions, error) {
 	if err := rejectSystemScope(p.ProjectID); err != nil {

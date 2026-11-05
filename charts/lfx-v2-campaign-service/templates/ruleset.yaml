@@ -226,12 +226,8 @@ spec:
           # so this check is not the data boundary). campaign_manager reads; nothing persisted.
           - path: /projects/:projectId/google-ads/geo-targets
           - path: /projects/:projectId/google-ads/user-lists
-          # The ENABLED conversion actions on the connection's customer (#458), for the
-          # create form's goal picker. The LF customer is shared, so this lists every
-          # foundation's actions; campaign_manager is held only by the internal LF
-          # marketing team, which manages every foundation, so it is a campaign_manager
-          # read like its siblings (#468, closed as won't do).
-          - path: /projects/:projectId/google-ads/conversion-actions
+          # The google-ads conversion-actions read is NOT here: it is ruled
+          # by the marketing-ops-api rule below (global_marketing_ops, not campaign_manager).
           # Microsoft keyword read (LFXV2-2665): the Google read's row shape, served from a
           # saved asynchronous Microsoft report. A campaign_manager read like its Google sibling.
           - path: /projects/:projectId/microsoft-ads/keywords
@@ -329,6 +325,54 @@ spec:
           config:
             values:
               relation: campaign_manager
+              object: "project:{{ "{{- .Request.URL.Captures.projectId -}}" }}"
+        {{- else }}
+        - authorizer: allow_all
+        {{- end }}
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience }}
+
+    # The Google conversion-action list (#458), for the create form's goal picker. The LF
+    # Google Ads customer is shared by every foundation, so this lists every foundation's
+    # actions. campaign_manager is not enough here: it includes the project's
+    # executive_director (lfx-v2-helm model.fga), a foundation-scoped person. This read is
+    # gated on global_marketing_ops on the same project instead: the LF marketing team,
+    # granted on every project, so no ROOT project id is needed (#468, #486). Same slug/UUID
+    # branches as project-api; parity_test.go pins both rules.
+    - id: "rule:lfx:lfx-v2-campaign-service:marketing-ops-api"
+      allow_encoded_slashes: 'off'
+      match:
+        methods:
+          - GET
+        routes:
+          - path: /projects/:projectId/google-ads/conversion-actions
+      execute:
+        - authenticator: oidc
+        - authenticator: anonymous_authenticator
+        {{- if .Values.app.use_oidc_contextualizer }}
+        - contextualizer: oidc_contextualizer
+        {{- end }}
+        {{- if .Values.openfga.enabled }}
+        # The same slug/UUID branches as project-api; see the comment there.
+        {{- $uuidRe := "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" }}
+        - contextualizer: project_slug_resolver_contextualizer
+          if: '!Request.URL.Captures.projectId.matches("{{ $uuidRe }}")'
+          config:
+            values:
+              slug: "{{ "{{- .Request.URL.Captures.projectId -}}" }}"
+        - authorizer: openfga_check
+          if: '!Request.URL.Captures.projectId.matches("{{ $uuidRe }}")'
+          config:
+            values:
+              relation: global_marketing_ops
+              object: "project:{{ "{{- .Outputs.project_slug_resolver_contextualizer.uid -}}" }}"
+        - authorizer: openfga_check
+          if: 'Request.URL.Captures.projectId.matches("{{ $uuidRe }}")'
+          config:
+            values:
+              relation: global_marketing_ops
               object: "project:{{ "{{- .Request.URL.Captures.projectId -}}" }}"
         {{- else }}
         - authorizer: allow_all

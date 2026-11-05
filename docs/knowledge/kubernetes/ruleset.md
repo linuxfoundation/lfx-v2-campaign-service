@@ -13,7 +13,7 @@ See [charts/lfx-v2-campaign-service/templates/ruleset.yaml](../../../charts/lfx-
 
 ## Rules
 
-Rendered only when `heimdall.enabled`. Four rules (the chart↔route parity invariant — see
+Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity invariant — see
 [httproute.md](httproute.md)):
 
 1. **`openapi:get`** — `/_campaigns/openapi.*` docs are publicly readable
@@ -69,15 +69,18 @@ Rendered only when `heimdall.enabled`. Four rules (the chart↔route parity inva
    `campaign_manager` relation (D2 — reads AND writes; no read-only audience),
    scoped to `project:{uid}` where `{uid}` is resolved from the URL-captured
    `:projectId` slug (see "Slug-to-UID resolution" below). A single rule covers
-   all families because they share the identical authorization. That includes
-   `google-ads/conversion-actions` (#458), which lists every foundation's conversion actions
-   on the shared Google Ads customer: `campaign_manager` is held only by the internal LF
-   marketing team, which manages every foundation (#468, closed as won't do). It was first
-   ruled by a ROOT-only `root-campaign-admin:get` rule keyed on a chart value
-   (`openfga.rootProjectUid`) that no environment set, so it answered 403 to everyone; that
-   rule and the value are gone. `TestConversionActionsIsAProjectAPIRead` pins the path here
-   once and no ROOT check anywhere.
-4. **`campaigns-placeholder:deny`** — the reserved `/campaigns`, `/campaigns/*`,
+   all families because they share the identical authorization. The one exception is
+   `google-ads/conversion-actions`, ruled by `marketing-ops-api` below.
+4. **`marketing-ops-api`** — `GET /projects/:projectId/google-ads/conversion-actions` (#458)
+   only. It lists every foundation's conversion actions on the shared Google Ads customer, and
+   `campaign_manager` includes the project's `executive_director`, a foundation-scoped role
+   (lfx-v2-helm `model.fga`). So it runs the same slug/UUID branches as `project-api`, on
+   relation `global_marketing_ops`: the LF marketing team, granted on every project, so no ROOT
+   project id is needed (#486). It was first ruled by a ROOT-only `root-campaign-admin:get` rule
+   keyed on a chart value (`openfga.rootProjectUid`) that no environment set, so it answered 403
+   to everyone; that rule and the value are gone. `TestConversionActionsIsAMarketingOpsRead`
+   pins the path to this rule alone, GET only, with no ROOT check anywhere.
+5. **`campaigns-placeholder:deny`** — the reserved `/campaigns`, `/campaigns/*`,
    and every other `/_campaigns/*` path (not openapi, not the signed asset route) are routed through Heimdall but are not
    real endpoints yet, so they **fail closed** with `deny_all`.
 

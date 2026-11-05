@@ -85,20 +85,24 @@ create form offer them in a picker instead of making an operator type them (self
   account id is checked for digits only before any request: 400 on the project's own row, and
   500 on the LF system row it fell back to (`ErrSystemConnectionNotUsable`), which only an
   operator can fix.
-- **A `campaign_manager` read, like its siblings.** Unlike user lists, this read is NOT refused
-  on a shared-tenancy platform. Google Ads is one customer shared by every foundation, so the
-  answer holds every foundation's conversion action names, and `{project_id}` only selects whose
-  connection supplies the credential. That is intended: `campaign_manager` is held only by the
-  internal LF marketing team, which manages every foundation (#468, closed as won't do). It was
+- **A `global_marketing_ops` read, not a `campaign_manager` one.** Unlike user lists, this
+  read is NOT refused on a shared-tenancy platform. Google Ads is one customer shared by every
+  foundation, so the answer holds every foundation's conversion action names, and
+  `{project_id}` only selects whose connection supplies the credential. `campaign_manager`
+  includes the project's `executive_director`, a foundation-scoped role, so the gateway admits
+  only `global_marketing_ops` of the project: the LF marketing team, granted on every project
+  (#486). It was
   first ruled by a ROOT-only Heimdall rule (`root-campaign-admin:get`, keyed on a chart value
   `openfga.rootProjectUid` that no environment ever set, so it answered 403 to everyone); that
-  rule and the value were removed and the path moved into `project-api`. GET only. User lists
+  rule and the value were removed and the path moved into its own `marketing-ops-api` rule.
+  GET only. User lists
   are still refused on the shared account.
 
 ## Shared
 
-- Authorization: the gateway's `campaign_manager` check on `project:{projectId}`
-  (`ruleset.yaml`) for all three;
+- Authorization: the gateway's check on `project:{projectId}` (`ruleset.yaml`):
+  `campaign_manager` for the geo and user-list reads, `global_marketing_ops` for the
+  conversion-action read;
   JWT verified in the service, the reserved `system:linuxfoundation` scope
   refused with 404 (`rejectSystemScope`).
 - Errors: `classifyDiscoveryError` arms under each read's own operation noun, plus
