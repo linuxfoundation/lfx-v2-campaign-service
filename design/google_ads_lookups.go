@@ -8,9 +8,10 @@ import (
 	. "goa.design/goa/v3/dsl"
 )
 
-// Lookups for the Google Ads create form. googleAdsConfig.geoTargets, audienceSegments and
-// conversionActions take raw Google ids; these three reads let a picker offer them instead of
-// making an operator type them. None persists anything.
+// Lookups for the Google Ads create form. googleAdsConfig.geoTargets, audienceSegments,
+// conversionActions and the audience inputs (customAudiences, userInterests, demandGenAudience,
+// performanceMaxAudienceSignal) take raw Google ids; these four reads let a picker offer them
+// instead of making an operator type them. None persists anything.
 
 // googleAdsGeoSuggestMax caps the suggestions returned. Google's own suggest answer is short;
 // the cap keeps the response a picker's worth whatever it sends.
@@ -87,6 +88,36 @@ var GoogleAdsConversionActions = Type("google-ads-conversion-actions", func() {
 	Attribute("conversion_actions", ArrayOf(GoogleAdsConversionAction), "The customer's enabled conversion actions, sorted by name")
 	Attribute("conversion_action_count", Int, "How many actions are in `conversion_actions`", func() { Example(1) })
 	Required("account_id", "conversion_actions", "conversion_action_count")
+})
+
+// GoogleAdsAudienceResource is one entry of the audience read (#496).
+var GoogleAdsAudienceResource = Type("google-ads-audience-resource", func() {
+	Attribute("resource_name", String, "customers/{customerId}/{customAudiences|combinedAudiences|audiences|userInterests}/{id}, in exactly the form the create inputs accept: a custom_audience in googleAdsConfig.customAudiences (Display), an audience in demandGenAudience or performanceMaxAudienceSignal, a user_interest in userInterests (Display). No create input accepts a combined_audience today. The customer is the account a Google create for this project uses.", func() {
+		Example("customers/8666746580/customAudiences/123")
+	})
+	Attribute("id", String, "The entry's numeric id (user_interest_id for a user_interest)", func() { Example("123") })
+	Attribute("name", String, "The entry's display name. Not an identifier.", func() { Example("CNCF KubeCon NA") })
+	Attribute("type", String, "The kind that was read, echoing the type parameter", func() {
+		Enum("custom_audience", "combined_audience", "audience", "user_interest")
+		Example("custom_audience")
+	})
+	Attribute("subtype", String, "Google's own classification, verbatim: custom_audience.type (AUTO, INTEREST, PURCHASE_INTENT, SEARCH) or user_interest.taxonomy_type (AFFINITY, IN_MARKET). Absent for combined_audience and audience, which have none.", func() { Example("SEARCH") })
+	Attribute("status", String, "Always ENABLED for custom_audience, combined_audience and audience: only enabled entries are listed. Absent for user_interest, which has no status in Google Ads.", func() { Example("ENABLED") })
+	Attribute("description", String, "The entry's description. Absent when Google sent none, and always for user_interest.", func() { Example("People searching for KubeCon") })
+	Required("resource_name", "id", "name", "type")
+})
+
+// GoogleAdsAudienceResources is the audience read.
+var GoogleAdsAudienceResources = Type("google-ads-audience-resources", func() {
+	Attribute("account_id", String, "The Google Ads customer the entries were read from: the account a Google create for this project uses", func() { Example("8666746580") })
+	Attribute("type", String, "The kind that was read", func() {
+		Enum("custom_audience", "combined_audience", "audience", "user_interest")
+		Example("custom_audience")
+	})
+	Attribute("audiences", ArrayOf(GoogleAdsAudienceResource), "Matching entries sorted by name (ignoring case), capped at 500 (see `truncated`)")
+	Attribute("audience_count", Int, "How many entries are in `audiences`", func() { Example(1) })
+	Attribute("truncated", Boolean, "True when more entries matched than were returned; narrow the search with q", func() { Example(false) })
+	Required("account_id", "type", "audiences", "audience_count", "truncated")
 })
 
 // googleAdsLookupMethods declares the three reads inside the connections service. Called from
@@ -213,6 +244,55 @@ func googleAdsLookupMethods() {
 			GET("/projects/{project_id}/google-ads/conversion-actions")
 			Header("bearer_token:Authorization")
 			connectionAuthErrorResponses()
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("list-google-ads-audiences", func() {
+		Description("List the custom audiences, combined audiences, Audience resources or user interests (one type per " +
+			"call) on the Google Ads customer a Google create for this project uses, live from GAQL on custom_audience, " +
+			"combined_audience, audience or user_interest, for the audience pickers (#496). Only usable entries are " +
+			"listed: custom_audience, combined_audience and audience with status ENABLED; audience additionally with " +
+			"scope CUSTOMER (an ASSET_GROUP-scoped Audience belongs to one asset group); user_interest restricted to " +
+			"the AFFINITY and IN_MARKET taxonomies. q keeps entries whose " +
+			"name contains it, ignoring case. Sorted by name, capped at 500 after the q filter, with `truncated` set " +
+			"when more matched; the AFFINITY and IN_MARKET taxonomy is about a thousand entries, more than the cap, so a picker should search it " +
+			"with q. More than 10000 entries of one type on the customer fails the read with 503. " +
+			"Credentials resolve as for a create: the project's own connection, or the shared LF system " +
+			"credential when it has none (or when the deployment forces the LF account). The Google Ads customer " +
+			"is shared by every foundation, so the response lists EVERY foundation's audiences, not only this " +
+			"project's; like list-google-ads-conversion-actions it is therefore gated on global_marketing_ops " +
+			"of {project_id} (the LF marketing team), not campaign_manager, which also admits a foundation's " +
+			"executive director. A pure read: the only upstream call is googleAds:search, and nothing is persisted.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("type", String, "Which kind to list", func() {
+				Enum("custom_audience", "combined_audience", "audience", "user_interest")
+				Example("custom_audience")
+			})
+			Attribute("q", String, "Optional case-insensitive name substring to keep", func() {
+				MinLength(1)
+				MaxLength(100)
+				Pattern(`\S`)
+				Example("KubeCon")
+			})
+			Required("project_id", "type")
+		})
+		Result(GoogleAdsAudienceResources)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/google-ads/audiences")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("type")
+			Param("q")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)

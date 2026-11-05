@@ -1,14 +1,15 @@
 ---
 type: "Architecture Doc"
 title: "Google Ads Targeting Lookups"
-description: "Three read-only pickers for the Google Ads create form: a geo target constant search (SuggestGeoTargetConstants, by name or postal code, returning the numeric id geoTargets accepts, readable through the LF system credential because it is public reference data), a user-list read (GAQL on user_list, returning the resource name audienceSegments accepts, own connection only, and refused with 409 on a shared-tenancy platform such as Google Ads because the read is account-wide and no user list is recorded per project), and a conversion-action read (GAQL on conversion_action, ENABLED only, resolved as a create resolves; it lists every foundation's actions on the shared customer, so the gateway admits only global_marketing_ops, the LF marketing team, not campaign_manager, which also includes foundation executive directors)."
+description: "Four read-only pickers for the Google Ads create form: a geo target constant search (SuggestGeoTargetConstants, by name or postal code, returning the numeric id geoTargets accepts, readable through the LF system credential because it is public reference data), a user-list read (GAQL on user_list, returning the resource name audienceSegments accepts, own connection only, and refused with 409 on a shared-tenancy platform such as Google Ads because the read is account-wide and no user list is recorded per project), and a conversion-action read (GAQL on conversion_action, ENABLED only, resolved as a create resolves; it lists every foundation's actions on the shared customer, so the gateway admits only global_marketing_ops, the LF marketing team, not campaign_manager, which also includes foundation executive directors), and an audience read (GAQL on custom_audience, combined_audience, audience or user_interest, one type per call, usable entries only, optional name search, resolved and gated like the conversion-action read)."
 resource: "internal/service/google_ads_lookups.go"
 ---
 
 # Google Ads Targeting Lookups
 
-`googleAdsConfig.geoTargets`, `googleAdsConfig.audienceSegments` and
-`googleAdsConfig.conversionActions` take raw Google ids. These three reads let the self-serve
+`googleAdsConfig.geoTargets`, `googleAdsConfig.audienceSegments`,
+`googleAdsConfig.conversionActions` and the audience inputs (`customAudiences`, `userInterests`,
+`demandGenAudience`, `performanceMaxAudienceSignal`) take raw Google ids. These four reads let the self-serve
 create form offer them in a picker instead of making an operator type them (self-serve #4455,
 #4456; campaign-service #458). None persists anything.
 
@@ -98,20 +99,52 @@ create form offer them in a picker instead of making an operator type them (self
   GET only. User lists
   are still refused on the shared account.
 
+## Audiences
+
+`GET /projects/{project_id}/google-ads/audiences?type=&q=` (`list-google-ads-audiences`, #496).
+
+- `type` is required: `custom_audience`, `combined_audience`, `audience` or `user_interest`,
+  spelled exactly (no case folding). One GAQL search on the resource of the same name
+  (`googleads.ListAudiences`), bounded at `LIMIT 10001`; more than 10000 rows fails the read
+  (503) rather than name-searching a partial set.
+  - `custom_audience`: `status = 'ENABLED'`; `subtype` is `custom_audience.type` (AUTO, INTEREST,
+    PURCHASE_INTENT, SEARCH). Feeds `customAudiences` (Display).
+  - `combined_audience`: `status = 'ENABLED'`; no subtype. No create input takes one yet.
+  - `audience`: `status = 'ENABLED' AND scope = 'CUSTOMER'`. An ASSET_GROUP-scoped Audience
+    belongs to the one asset group it was made for. Feeds `demandGenAudience` and
+    `performanceMaxAudienceSignal`.
+  - `user_interest`: `taxonomy_type IN ('AFFINITY', 'IN_MARKET')`; `subtype` is the taxonomy
+    type. Google's `user_interest` has no status, so none is reported. `launched_to_all` is not
+    filtered on: a read-only search of the LF customer on 2026-11-05 returned it false for all
+    1008 AFFINITY and IN_MARKET rows. Feeds `userInterests` (Display).
+- Rows whose resource name is not `customers/{this customer}/{collection}/{canonical id}` are
+  dropped (the create would refuse them). Sorted by name ignoring case, then resource name.
+- `q` (optional, 1-100 characters, not blank) keeps names containing it, ignoring case and
+  surrounding space; the service applies it, then caps at 500 with `truncated`. With 1008 user
+  interests on the LF customer, a `user_interest` picker should search rather than browse.
+- **Resolution and tenancy: the conversion-action read's.** `createAccountClient` (shared with
+  `ListConversionActions`) resolves as a create does, so the resource names are on the account
+  the create uses. The answer is account-wide on the shared customer (every foundation's custom
+  audiences and Audiences), so the route is in the `marketing-ops-api` rule
+  (`global_marketing_ops`), not `project-api`. GET only.
+- The singular `google-ads/audience` is a different endpoint: the `campaign_manager` audience
+  performance read of the project's own campaigns.
+
 ## Shared
 
 - Authorization: the gateway's check on `project:{projectId}` (`ruleset.yaml`):
   `campaign_manager` for the geo and user-list reads, `global_marketing_ops` for the
-  conversion-action read;
+  conversion-action and audience reads;
   JWT verified in the service, the reserved `system:linuxfoundation` scope
   refused with 404 (`rejectSystemScope`).
 - Errors: `classifyDiscoveryError` arms under each read's own operation noun, plus
   `ErrTargetingLookupUnsupported` (400) for a dispatcher without the capability
-  (`GeoTargetSuggester` / `UserListReader` / `ConversionActionReader`). Upstream failures are
+  (`GeoTargetSuggester` / `UserListReader` / `ConversionActionReader` / `AudienceReader`). Upstream failures are
   503, including Google refusing a caller-supplied `country_code` or an `account_id` the
   credential cannot reach (the account monitor behaves the same). Input lengths are counted in
   characters, matching the Goa decoder.
-- Metrics: `suggest_geo_targets`, `list_user_lists` and `list_conversion_actions` upstream-call
-  operations. `suggest_geo_targets` and `list_conversion_actions` are recorded only when Google
+- Metrics: `suggest_geo_targets`, `list_user_lists`, `list_conversion_actions` and
+  `list_audiences` upstream-call operations. `suggest_geo_targets`, `list_conversion_actions`
+  and `list_audiences` are recorded only when Google
   was contacted (the dispatcher's `called`), never for a local refusal; `list_user_lists` is
   recorded for every call.

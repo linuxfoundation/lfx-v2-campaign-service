@@ -2753,6 +2753,15 @@ which is a fact about every row. **Creating** a conversion action is deliberatel
 not offered: it is half a measurement setup, and one created without its site tag
 reports as configured while recording nothing.
 
+`audiences.go` is the audience-picker read (#496), also strictly read-only:
+`ListAudiences(kind)` is one GAQL search on `custom_audience`, `combined_audience`,
+`audience` (CUSTOMER scope) or `user_interest` (AFFINITY and IN_MARKET), usable entries
+only, bounded at `MaxAudienceScanRows` (10000; more fails the read). It returns resource
+name, id, name, Google's subtype, status (none for `user_interest`) and description,
+sorted by name ignoring case; a row outside this customer's collection is dropped. Served
+as `GET /projects/{project_id}/google-ads/audiences` (see the Google Ads Targeting Lookups
+architecture concept).
+
 
 ## Performance Max campaign creation (LFXV2-2665)
 

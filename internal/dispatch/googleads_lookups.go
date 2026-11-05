@@ -146,24 +146,9 @@ func (d *GoogleAdsDispatcher) ListUserLists(ctx context.Context, projectID strin
 // called reports whether Google was contacted: false for every local refusal before the search
 // (no connection, an unusable one, a stored account id that is not digits only).
 func (d *GoogleAdsDispatcher) ListConversionActions(ctx context.Context, projectID string, platform model.Provider) (_ *model.ConversionActions, called bool, _ error) {
-	res, err := d.creds.resolve(ctx, projectID, platform)
+	client, accountID, err := d.createAccountClient(ctx, projectID, platform)
 	if err != nil {
 		return nil, false, err
-	}
-	// The cached client, as every other read on an account-bound client takes it; its
-	// CustomerID is the account validateGoogleAdsConnection returned, which it requires.
-	client, err := d.cachedGoogleAdsClient(projectID, platform, res)
-	if err != nil {
-		return nil, false, err
-	}
-	accountID := client.CustomerID()
-	// A stored id that is not digits only is a connection to edit, not an upstream failure:
-	// checked here, before gaqlSearch would refuse it with an error that maps to 503. On the
-	// project's own row that is a 400; systemScoped makes it the LF system row's defect (500)
-	// when the project fell back to that row.
-	if verr := googleads.ValidateCustomerID(accountID); verr != nil {
-		return nil, false, res.systemScoped(fmt.Errorf("%w: %w: stored google ads account id: %w",
-			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, verr))
 	}
 	rows, lerr := client.ListConversionActions(ctx)
 	if lerr != nil {
@@ -183,6 +168,78 @@ func (d *GoogleAdsDispatcher) ListConversionActions(ctx context.Context, project
 		})
 	}
 	return &model.ConversionActions{AccountID: accountID, Actions: actions}, true, nil
+}
+
+// createAccountClient resolves the client a campaign create for the project would use, and its
+// account: creds.resolve, the CREATE path's resolution (the project's own connection, the LF
+// system fallback when it has none, and the forced-system redirect). Nothing is sent to Google.
+func (d *GoogleAdsDispatcher) createAccountClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, string, error) {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, "", err
+	}
+	// The cached client, as every other read on an account-bound client takes it; its
+	// CustomerID is the account validateGoogleAdsConnection returned, which it requires.
+	client, err := d.cachedGoogleAdsClient(projectID, platform, res)
+	if err != nil {
+		return nil, "", err
+	}
+	accountID := client.CustomerID()
+	// A stored id that is not digits only is a connection to edit, not an upstream failure:
+	// checked here, before gaqlSearch would refuse it with an error that maps to 503. On the
+	// project's own row that is a 400; systemScoped makes it the LF system row's defect (500)
+	// when the project fell back to that row.
+	if verr := googleads.ValidateCustomerID(accountID); verr != nil {
+		return nil, "", res.systemScoped(fmt.Errorf("%w: %w: stored google ads account id: %w",
+			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, verr))
+	}
+	return client, accountID, nil
+}
+
+// ListAudiences implements service.AudienceReader for Google Ads (#496): every usable custom
+// audience, combined audience, Audience resource or user interest (one kind per call) on the
+// customer a campaign create for this project uses, read with one GAQL search
+// (googleads.ListAudiences). Nothing is written.
+//
+// It resolves exactly as ListConversionActions does (createAccountClient), for the same
+// reason: the resource names it returns are only useful if the create accepts them, and every
+// audience input refuses a resource name owned by another customer.
+//
+// TENANCY: like ListConversionActions, and unlike ListUserLists, it is not refused on the
+// shared customer, so it returns every foundation's custom audiences, combined audiences and
+// Audiences (user_interest is Google's own taxonomy and holds no foundation's data). The
+// gateway therefore admits only global_marketing_ops of the project to this route.
+//
+// An unknown kind is refused before any credential is resolved. called reports whether Google
+// was contacted, as ListConversionActions' does.
+func (d *GoogleAdsDispatcher) ListAudiences(ctx context.Context, projectID string, platform model.Provider, kind string) (_ *model.AudienceResources, called bool, _ error) {
+	k, ok := googleads.ParseAudienceKind(kind)
+	if !ok {
+		// The service refuses an unknown type with its own 400 first; this guards a caller
+		// that bypasses it, with the sentinel the service already answers 400.
+		return nil, false, fmt.Errorf("%w: unknown google ads audience type %q", domain.ErrTargetingLookupUnsupported, kind)
+	}
+	client, accountID, err := d.createAccountClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, false, err
+	}
+	rows, lerr := client.ListAudiences(ctx, k)
+	if lerr != nil {
+		return nil, true, lerr
+	}
+	// make, not var: an account with no entry of this kind is a real, empty answer.
+	out := make([]model.AudienceResource, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, model.AudienceResource{
+			ResourceName: r.ResourceName,
+			ID:           r.ID,
+			Name:         r.Name,
+			Subtype:      r.Subtype,
+			Status:       r.Status,
+			Description:  r.Description,
+		})
+	}
+	return &model.AudienceResources{AccountID: accountID, Kind: string(k), Audiences: out}, true, nil
 }
 
 // geoSuggestTTL and geoSuggestMaxEntries bound the geo suggestion cache. Google's geo target

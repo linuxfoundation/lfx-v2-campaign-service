@@ -478,3 +478,119 @@ func TestGoogleAdsListConversionActions_BadSystemRowAccountIsTheSystemRowsDefect
 		t.Error("Google was contacted for a locally refused read")
 	}
 }
+
+var _ service.AudienceReader = (*GoogleAdsDispatcher)(nil)
+
+// The audience read is one googleAds:search on the connection's account, for the kind asked,
+// and nothing else is sent; the kind and account are echoed on the result.
+func TestGoogleAdsListAudiences_OneSearchOnTheConnectionsAccount(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		requests []string
+		queries  []string
+	)
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var req struct {
+			Query string `json:"query"`
+		}
+		_ = json.Unmarshal(b, &req)
+		mu.Lock()
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		queries = append(queries, req.Query)
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"results":[{"customAudience":{"resourceName":"customers/1234567890/customAudiences/9","id":"9","name":"KubeCon","type":"SEARCH","status":"ENABLED"}}]}`)
+	})
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+
+	res, called, err := d.ListAudiences(context.Background(), "proj-1", model.ProviderGoogleAds, "custom_audience")
+	if err != nil || !called {
+		t.Fatalf("ListAudiences: err=%v called=%v, want success with Google contacted", err, called)
+	}
+	want := model.AudienceResource{ResourceName: "customers/1234567890/customAudiences/9", ID: "9", Name: "KubeCon", Subtype: "SEARCH", Status: "ENABLED"}
+	if res.AccountID != "1234567890" || res.Kind != "custom_audience" || len(res.Audiences) != 1 || res.Audiences[0] != want {
+		t.Fatalf("res = %+v", res)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(requests) != 1 || !strings.HasPrefix(requests[0], http.MethodPost+" ") || !strings.HasSuffix(requests[0], "/customers/1234567890/googleAds:search") {
+		t.Fatalf("requests = %v, want exactly one googleAds:search on customer 1234567890", requests)
+	}
+	if !strings.Contains(queries[0], "FROM custom_audience") {
+		t.Errorf("query = %q, want the custom_audience search", queries[0])
+	}
+}
+
+// Resolution is the create's: the LF system fallback for a project with no connection, and
+// the forced system account over the project's own row.
+func TestGoogleAdsListAudiences_ResolvesLikeACreate(t *testing.T) {
+	rec := &pathRecorder{}
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		rec.add(r.URL.Path)
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+	d := NewGoogleAdsDispatcher(splitConnReader{system: googleAdsConnFor("5555555555")}, identityEncryptor{}, opts...)
+	res, _, err := d.ListAudiences(context.Background(), "proj-1", model.ProviderGoogleAds, "audience")
+	if err != nil {
+		t.Fatalf("ListAudiences through the system fallback: %v", err)
+	}
+	if res.AccountID != "5555555555" || res.Audiences == nil || len(res.Audiences) != 0 {
+		t.Errorf("res = %#v, want the system account and a non-nil empty list", res)
+	}
+
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	d = NewGoogleAdsDispatcher(splitConnReader{own: googleAdsConnFor("1234567890"), system: googleAdsConnFor("5555555555")}, identityEncryptor{}, opts...)
+	res, _, err = d.ListAudiences(context.Background(), "proj-1", model.ProviderGoogleAds, "audience")
+	if err != nil || res.AccountID != "5555555555" {
+		t.Errorf("forced system: res=%+v err=%v, want the system account 5555555555", res, err)
+	}
+	for _, p := range rec.all() {
+		if !strings.Contains(p, "/customers/5555555555/googleAds:search") {
+			t.Errorf("path %s, want only the system account searched", p)
+		}
+	}
+}
+
+// Local refusals never reach Google and report called=false: an unknown kind (before any
+// credential), no connection anywhere, and a stored account id that is not digits only.
+func TestGoogleAdsListAudiences_LocalRefusals(t *testing.T) {
+	opts, reached := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{}`) })
+
+	_, called, err := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...).
+		ListAudiences(context.Background(), "proj-1", model.ProviderGoogleAds, "user_list")
+	if !errors.Is(err, domain.ErrTargetingLookupUnsupported) || called {
+		t.Errorf("unknown kind: err=%v called=%v, want ErrTargetingLookupUnsupported and called=false", err, called)
+	}
+
+	_, called, err = NewGoogleAdsDispatcher(splitConnReader{}, identityEncryptor{}, opts...).
+		ListAudiences(context.Background(), "proj-1", model.ProviderGoogleAds, "audience")
+	if !errors.Is(err, domain.ErrNotFound) || called {
+		t.Errorf("no connection: err=%v called=%v, want ErrNotFound and called=false", err, called)
+	}
+
+	_, called, err = NewGoogleAdsDispatcher(fakeConnReader{conn: googleAdsConnFor("123-456-7890")}, identityEncryptor{}, opts...).
+		ListAudiences(context.Background(), "proj-1", model.ProviderGoogleAds, "audience")
+	if !errors.Is(err, domain.ErrConnectionNotUsable) || !errors.Is(err, domain.ErrProviderConfigInvalid) || called {
+		t.Errorf("dashed account id: err=%v called=%v, want ErrConnectionNotUsable and ErrProviderConfigInvalid, called=false", err, called)
+	}
+
+	if reached.Load() {
+		t.Error("Google was contacted for a locally refused read")
+	}
+}
+
+// An upstream failure is returned as one, with called=true, never as a connection defect.
+func TestGoogleAdsListAudiences_UpstreamFailureIsNotAConnectionDefect(t *testing.T) {
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":400,"message":"bad","status":"INVALID_ARGUMENT"}}`)
+	})
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	_, called, err := d.ListAudiences(context.Background(), "proj-1", model.ProviderGoogleAds, "user_interest")
+	if err == nil || !called {
+		t.Fatalf("err=%v called=%v, want an error with Google contacted", err, called)
+	}
+	if errors.Is(err, domain.ErrConnectionNotUsable) || errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("err = %v, want an upstream error, not a local connection state", err)
+	}
+}
