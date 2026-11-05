@@ -2119,7 +2119,13 @@ its enum. The two excluded-placement refusals were the exception, a redacted URL
 `%s`; they now use `%q`. Keep both rules for any new pre-send refusal: quote caller values, and
 format nothing unquoted that a check has not already narrowed. A Display user-list exclusion
 naming another collection now names it only once it is a known one; before, it echoed the
-caller's path segment unquoted. `TestPreflightCampaignKind_NoCallerTextReachesTheOperatorMessage`
+caller's path segment unquoted. The five foreign-account refusals (conversion action,
+Performance Max audience signal, Demand Gen Audience, Display audience resource, shared negative
+keyword list) now quote the caller's customer id too: the `\d+` match narrowed its alphabet but
+not its length, and a 32-digit run is a value `CallerValue` withholds. `redactedCause` caps a
+net/url error at 100 bytes, and the error's own quote around the caller's text (an invalid port)
+can lose its closing mark to that cap; `quotedCallerValues` withholds a quote left open to the end
+of its line, so the cut fragment does not show. `TestPreflightCampaignKind_NoCallerTextReachesTheOperatorMessage`
 holds the class: it puts a sentinel into every caller string of each channel's input, one at a
 time, and fails if any refusal's operator message shows it. `Error()` is unchanged, so logs and
 tests that pin a message see exactly what they saw before.

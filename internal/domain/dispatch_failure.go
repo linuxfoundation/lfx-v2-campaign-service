@@ -123,7 +123,12 @@ func WrapQuotedPreflightRefusal(err error) error {
 // next character, and %q never emits a raw newline), or the rune literal '"' that %q renders for
 // a double-quote rune. The rune literal is matched first and left as it is: unmatched, its lone
 // quote would pair with the next one and shift every later caller value outside a match.
-var quotedSegment = regexp.MustCompile(`'"'|"(?:[^"\\\n]|\\.)*"`)
+//
+// The last alternative matches a quote that is never closed before the end of its line. A
+// capped component cuts one off: redactedCause caps a net/url error at 100 bytes, and the
+// error's own %q of the caller's text (`invalid port ":…"`) can lose its closing quote to the
+// cap. Unterminated, it does not unquote, so it is withheld like any segment that won't.
+var quotedSegment = regexp.MustCompile(`(?m)'"'|"(?:[^"\\\n]|\\.)*"|"(?:[^"\\\n]|\\.)*\\?$`)
 
 // quotedCallerValues re-renders every double-quoted segment of msg through CallerValue. A
 // segment that does not unquote is withheld rather than shown. A value capForError-style

@@ -677,7 +677,7 @@ func validateConversionActions(customerID string, actions []string) ([]string, e
 			}
 			owner := m[1]
 			if owner != customerID {
-				return nil, fmt.Errorf("google-ads: conversion action %q belongs to customer %s, not the campaign's account %s; a conversion action cannot be shared across accounts", capForError(action), owner, customerID)
+				return nil, fmt.Errorf("google-ads: conversion action %q belongs to customer %q, not the campaign's account %s; a conversion action cannot be shared across accounts", capForError(action), owner, customerID)
 			}
 			resource = action
 		default:

@@ -71,6 +71,13 @@ func TestQuotedCallerValues(t *testing.T) {
 		{`url "https://x.example/aaaa…"`, `url (value withheld)`},
 		{`empty ""`, `empty ""`},
 		{`two "A" then "B C"`, `two "A" then (value withheld)`},
+		// A capped component can lose its closing quote: net/url's `invalid port ":…"` cut at
+		// 100 bytes. The unterminated tail is withheld, up to the end of its line only.
+		{`unparseable URL (value withheld): parse: invalid port ":SECRET494-xxxx…`, `unparseable URL (value withheld): parse: invalid port (value withheld)`},
+		{`cut "SECRET494 x` + "\n" + `next "US"`, `cut (value withheld)` + "\n" + `next "US"`},
+		{`dangling backslash "SECRET494\`, `dangling backslash (value withheld)`},
+		// A quoted owner id that is an opaque 40-digit run is withheld (#494 review).
+		{`belongs to customer "1234567890123456789012345678901234567890", not "US"`, `belongs to customer (value withheld), not "US"`},
 	} {
 		if got := quotedCallerValues(tc.in); got != tc.want {
 			t.Errorf("quotedCallerValues(%q) = %q, want %q", tc.in, got, tc.want)

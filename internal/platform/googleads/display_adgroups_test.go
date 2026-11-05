@@ -232,17 +232,17 @@ func TestValidateDisplayAdGroups_Refusals(t *testing.T) {
 			g := group("A")
 			g.AudienceSegments = []string{"customers/9999999999/userLists/11"}
 			withGroups(g)(in)
-		}, "is on customer 9999999999, not this campaign's account 1234567890"},
+		}, "is on customer \"9999999999\", not this campaign's account 1234567890"},
 		"foreign group user interest": {campaignKindDisplay, func(in *CampaignInput) {
 			g := group("A")
 			g.UserInterests = []string{"customers/9999999999/userInterests/44"}
 			withGroups(g)(in)
-		}, "is on customer 9999999999"},
+		}, "is on customer \"9999999999\""},
 		"foreign group exclusion": {campaignKindDisplay, func(in *CampaignInput) {
 			g := group("A")
 			g.ExcludedAudienceSegments = []string{"customers/9999999999/userLists/11"}
 			withGroups(g)(in)
-		}, "is on customer 9999999999"},
+		}, "is on customer \"9999999999\""},
 		"group excludes a custom audience": {campaignKindDisplay, func(in *CampaignInput) {
 			g := group("A")
 			g.ExcludedAudienceSegments = []string{"customers/1234567890/customAudiences/22"}
@@ -317,7 +317,7 @@ func TestPreflight_CampaignAudienceExclusions(t *testing.T) {
 	}{
 		"foreign account": {func(in *CampaignInput) {
 			in.ExcludedAudienceSegments = []string{"customers/9999999999/userLists/70"}
-		}, "ExcludedAudienceSegments entry \"customers/9999999999/userLists/70\" is on customer 9999999999"},
+		}, "ExcludedAudienceSegments entry \"customers/9999999999/userLists/70\" is on customer \"9999999999\""},
 		"a user interest": {func(in *CampaignInput) {
 			in.ExcludedAudienceSegments = []string{"customers/1234567890/userInterests/44"}
 		}, "is not a user list (it names the userInterests collection); only user lists"},

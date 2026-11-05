@@ -5338,8 +5338,10 @@ same plan (`TestConfigSnapshot_BiddingRoundTripsThroughTheValidator`).
   and the OPERATOR message (`OperatorMessage`, which is what `AsPreflightRefusal` returns) is
   that text with every double-quoted segment re-rendered through `CallerValue`, so a quoted URL,
   path or free text is `(value withheld)` in the job result even where the call site did not
-  call `CallerValue` itself. What it cannot enforce stays the caller's promise: no caller value
-  formatted unquoted, no upstream text, nothing raised after the first request. The google-ads
+  call `CallerValue` itself. A quote left open to the end of its line, which a capped component
+  produces when the cap cuts its closing mark, is withheld the same way. What it cannot enforce
+  stays the caller's promise: no caller value formatted unquoted, no upstream text, nothing raised
+  after the first upstream write. The google-ads
   client is its one user (see `code/internal-platform-googleads.md` § Pre-flight refusals).
 - `domain.UpstreamStatusCarrier`: `UpstreamStatus() int` on every client's HTTP error type
   (reddit, linkedin, meta `APIError`, twitter, microsoft, hubspot, and — since the

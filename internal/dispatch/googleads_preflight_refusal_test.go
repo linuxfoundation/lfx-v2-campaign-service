@@ -210,6 +210,17 @@ func TestGoogleAds_PreflightRefusalsNeverEchoHostileCallerInput(t *testing.T) {
 				`"excludedPlacements":["https://example.com/SECRET-494-path"]}}`),
 			want: "excluded placement (value withheld) carries a scheme",
 		},
+		{
+			// net/url quotes the bad port, and the 100-byte cap on the redacted cause cuts that
+			// quote's closing mark, so only the unterminated-quote rule keeps the port text out.
+			name: "a display image URL whose malformed port is longer than the error cap",
+			config: json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"display","displayCreative":{` +
+				`"marketingImages":[{"url":"https://example.com:SECRET-494-` + strings.Repeat("x", 180) + `/image.png"}],` +
+				`"squareMarketingImages":[{"imageAssetId":"` + gaAssetID + `"}],` +
+				`"headlines":["Join us at KubeCon"],"longHeadline":"KubeCon + CloudNativeCon Europe 2026, Amsterdam",` +
+				`"descriptions":["Talks, workshops and hallway track."],"businessName":"Linux Foundation"}}}`),
+			want: "(value withheld)",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tr := &noSendTransport{}

@@ -65,7 +65,7 @@ func TestGoogleAds_PerformanceMaxSignalFieldsReachTheClient(t *testing.T) {
 				"performanceMaxCreative":       pmaxWireCreative(),
 				"performanceMaxAudienceSignal": "customers/9999999999/audiences/5",
 			},
-			want: "belongs to customer 9999999999",
+			want: "belongs to customer \"9999999999\"",
 		},
 		"over-long theme": {
 			channel: "performance-max",

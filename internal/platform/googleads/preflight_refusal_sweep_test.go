@@ -16,11 +16,25 @@ import (
 // check: plain free text, a resource name on the test account, and a URL.
 const sweepSentinel = "SENTINEL494"
 
+// sweepOwnerDigits is a caller-supplied customer id with no letters at all: an opaque 40-digit
+// run that CallerValue withholds once quoted, but that a free-text sentinel can't stand in for,
+// since the resource-name validators only reach their owner check with digits there (#494
+// review: the owner was echoed with %s).
+const sweepOwnerDigits = "4949494949494949494949494949494949494949"
+
 var sweepValues = []string{
 	sweepSentinel + " x?token=y",
 	"customers/1234567890/" + sweepSentinel + " x?token=y/1",
 	"customers/1234567890/userLists/" + sweepSentinel + "?token=y",
 	"https://example.com/" + sweepSentinel + "?token=y",
+	// A malformed URL long enough that a capped error loses its closing quote.
+	"https://example.com:" + sweepSentinel + "-" + strings.Repeat("x", 180) + "/image.png",
+	// Another account's resource, owner id digits only, in each collection a validator owns.
+	"customers/" + sweepOwnerDigits + "/conversionActions/1",
+	"customers/" + sweepOwnerDigits + "/audiences/1",
+	"customers/" + sweepOwnerDigits + "/userLists/1",
+	"customers/" + sweepOwnerDigits + "/customAudiences/1",
+	"customers/" + sweepOwnerDigits + "/sharedSets/1",
 }
 
 // sweepSetNth walks v and sets its n-th caller string slot to value, counting every slot it
@@ -130,7 +144,7 @@ func TestPreflightCampaignKind_NoCallerTextReachesTheOperatorMessage(t *testing.
 					continue
 				}
 				refusals++
-				if strings.Contains(msg, sweepSentinel) || strings.Contains(msg, "token=") {
+				if strings.Contains(msg, sweepSentinel) || strings.Contains(msg, "token=") || strings.Contains(msg, sweepOwnerDigits) {
 					t.Errorf("%s slot %d with %q: the operator message shows caller text: %s", b.kind, n, value, msg)
 				}
 			}
