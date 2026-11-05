@@ -23,6 +23,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/dispatch"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/accesscheck"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/auth"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
@@ -1510,10 +1511,22 @@ func (c *Container) newBriefService(briefs domain.BriefRepository, campaigns dom
 	s.SetIndexer(c.indexPublisher)
 	s.SetEventURL(c.eventFetcher(), eventurl.NewParser())
 	s.SetLLMClient(c.newLLMClient())
+	s.SetMarketingOpsChecker(c.marketingOpsChecker())
 	if c.indexingDisabled() {
 		s.DisableIndexing()
 	}
 	return s
+}
+
+// marketingOpsChecker returns the global_marketing_ops checker, which shares the index
+// publisher's NATS connection, or nil when there is none (NATS_URL empty, or a Noop publisher).
+// Nil is safe: BriefService then refuses the inputs that need the check, with 503.
+func (c *Container) marketingOpsChecker() service.MarketingOpsChecker {
+	np, ok := c.indexPublisher.(*indexer.NATSPublisher)
+	if !ok || np.Conn() == nil {
+		return nil
+	}
+	return accesscheck.New(np.Conn())
 }
 
 // eventFetcher constructs the SSRF-guarded event-page fetcher for this deployment.

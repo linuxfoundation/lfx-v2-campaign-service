@@ -120,6 +120,12 @@ func NewNATSPublisher(url string) (Publisher, error) {
 	return &NATSPublisher{conn: conn}, nil
 }
 
+// Conn returns the publisher's NATS connection, for the request/reply lookups other packages
+// make on the same broker (internal/infrastructure/accesscheck). Closing the publisher closes it.
+func (p *NATSPublisher) Conn() *nats.Conn {
+	return p.conn
+}
+
 // Publish sends one index document. It never returns an error by design — see Publisher.
 func (p *NATSPublisher) Publish(ctx context.Context, msg Transaction) {
 	subject := Subject(msg.ObjectType())

@@ -352,6 +352,7 @@ func (c *Client) DeleteCreativeAsset(ctx context.Context, p *DeleteCreativeAsset
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "Forbidden" (type *ForbiddenError): The caller lacks the role an input requires
 //   - error: internal error
 func (c *Client) CreateCampaigns(ctx context.Context, p *CreateCampaignsPayload) (res *JobCreateResponse, err error) {
 	var ires any

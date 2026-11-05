@@ -242,9 +242,11 @@ openssl rand -base64 32
   exact value `true` enables it; anything else fails closed, and a create
   naming one is refused before the budget. It is a per-deployment opt-in:
   the Audience is checked against the connected Google Ads account (same
-  customer id), which is the boundary. Per-foundation ownership (#468) was
-  closed as won't do, because campaign managers are the LF marketing team,
-  who manage every foundation. The same flag gates each
+  customer id). That account is shared by every foundation, and
+  `campaign_manager` includes foundation executive directors, so
+  create-campaigns also requires `global_marketing_ops` on the project for
+  any Demand Gen audience: 403 without it, 503 when the check cannot be made
+  (it asks project-service and fga-sync over NATS). The same flag gates each
   `demandGenAdGroups[].audience` (#460), the same input on a named ad
   group: off, a create naming any is refused before the budget. The rest of Demand Gen, including ad groups without
   an audience, is not gated. The chart sets it to `"false"`
