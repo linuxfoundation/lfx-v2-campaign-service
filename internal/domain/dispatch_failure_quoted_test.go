@@ -61,8 +61,13 @@ func TestQuotedCallerValues(t *testing.T) {
 		{`path "/reset/SECRET"`, `path (value withheld)`},
 		{`escaped "a\"b"`, `escaped (value withheld)`},
 		{`an opaque token "ghp_SECRET208abcdefghijklmnopqrstuvwxyz0123"`, `an opaque token (value withheld)`}, // secretlint-disable-line -- intentional fake token, asserting it is withheld
-		// capForError cuts with "…"; a showable prefix keeps it, so a cut value cannot pass for a whole one.
-		{`id "abcdef…"`, `id "abcdef…"`},
+		// A value that merely ends in "…" is not a capForError cut (that only happens past 100
+		// bytes), and "…" is outside CallerValue's alphabet, so it is withheld.
+		{`id "abcdef…"`, `id (value withheld)`},
+		// %q renders a double-quote rune as '"'. Its lone quote must not pair with the next
+		// one, or the caller value after it would be shown raw.
+		{`rune '"' then "B C"`, `rune '"' then (value withheld)`},
+		{`rune '"' then "US"`, `rune '"' then "US"`},
 		{`url "https://x.example/aaaa…"`, `url (value withheld)`},
 		{`empty ""`, `empty ""`},
 		{`two "A" then "B C"`, `two "A" then (value withheld)`},
@@ -70,5 +75,17 @@ func TestQuotedCallerValues(t *testing.T) {
 		if got := quotedCallerValues(tc.in); got != tc.want {
 			t.Errorf("quotedCallerValues(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+
+	// A showable value cut the way the Google client's capForError cuts (past 100 bytes, with a
+	// trailing "…") reads as CallerValue's truncated form, so a cut value cannot pass for a whole one.
+	long := strings.Repeat("a", 120)
+	cut := `id "` + long[:100] + `…"`
+	want := `id ` + CallerValue(long[:100])
+	if !strings.HasSuffix(want, " (truncated)") {
+		t.Fatalf("CallerValue no longer truncates a 100-byte value, so this case proves nothing: %q", want)
+	}
+	if got := quotedCallerValues(cut); got != want {
+		t.Errorf("quotedCallerValues(capForError cut) = %q, want %q", got, want)
 	}
 }

@@ -607,7 +607,8 @@ func creativeFetchBudget(ctx context.Context) time.Duration {
 // imageFetchRefusal marks a pre-budget image-fetch refusal operator-safe (#494). An image its
 // slot cannot take (its size, format, geometry, a repeat, the HTTP status the image host
 // answered, the fetch's share of the deadline) is the caller's input, judged before any Google
-// request, and every message for one quotes the image's reference with %q. Two failures are
+// mutate (an adoption lookup, a read, may already have run), and every message for one quotes
+// the image's reference with %q. Two failures are
 // returned as they are. A transport failure (the host could not be reached, or its response
 // read) carries a redactedCause, whose text is net/http's and can name the caller's host
 // unquoted. And a fetch the job's own context ended was not refused at all.

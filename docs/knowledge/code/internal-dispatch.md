@@ -5327,7 +5327,8 @@ same plan (`TestConfigSnapshot_BiddingRoundTripsThroughTheValidator`).
 `DispatchFailureMessage` (internal/service) reads:
 
 - `domain.PreflightRefusal`: a refusal THIS service wrote and raised before the first
-  upstream request. It is built with `PreflightRefusalf`, which renders an `error` argument as
+  upstream write (a read-only lookup, such as Google adoption's `FindCampaignByName`, may come
+  first). It is built with `PreflightRefusalf`, which renders an `error` argument as
   `(detail withheld)` and never as its text, or with `WrapPreflightRefusal(err)`, where the
   caller vouches for the whole chain. `Error()` is unchanged and `Unwrap` keeps
   `errors.Is`/`As` working (for example `BudgetAmountReason`). It deliberately has **no**
@@ -5352,7 +5353,8 @@ same plan (`TestConfigSnapshot_BiddingRoundTripsThroughTheValidator`).
   rendered as the same status-less sentence while `StatusCode` sat on the struct unread.
 - `domain.UpstreamCreateOutcomeCarrier`: `UpstreamCreateOutcome() string`, the POST-request
   counterpart of `PreflightRefusal` (a separate type on purpose — `PreflightRefusal` promises
-  the refusal came before the first upstream request). It answers one question, as a
+  the refusal came before the first upstream write; a read-only lookup may precede it). It
+  answers one question, as a
   service-authored token from a fixed six-word vocabulary: what did the failed create leave in
   the ad account? `internal/dispatch/create_outcome.go`'s `withCreateOutcome` attaches it —
   `Error()` is the wrapped text unchanged and `Unwrap` keeps the chain, so it ADDS a question

@@ -185,7 +185,13 @@ func validateDisplayExcludedUserLists(field, customerID string, names []string) 
 		name := strings.TrimSpace(raw)
 		parts := strings.Split(name, "/")
 		if len(parts) == 4 && parts[0] == "customers" && parts[2] != "userLists" {
-			return nil, fmt.Errorf("google-ads: %s entry %q is not a user list (it names the %s collection); only user lists (customers/{customerId}/userLists/{id}) can be excluded — a negative user list is the exclusion this client has verified", field, name, parts[2])
+			// The collection is named only once it is a known one: parts[2] is caller text, and
+			// an unquoted caller segment would reach the job result past the quoted-value
+			// withholding (#494).
+			if _, ok := displayAudienceCollections[parts[2]]; ok {
+				return nil, fmt.Errorf("google-ads: %s entry %q is not a user list (it names the %s collection); only user lists (customers/{customerId}/userLists/{id}) can be excluded — a negative user list is the exclusion this client has verified", field, name, parts[2])
+			}
+			return nil, fmt.Errorf("google-ads: %s entry %q is not a user list; only user lists (customers/{customerId}/userLists/{id}) can be excluded — a negative user list is the exclusion this client has verified", field, name)
 		}
 	}
 	return validateDisplayAudienceList(field, "userLists", customerID, names)

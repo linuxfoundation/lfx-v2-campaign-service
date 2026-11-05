@@ -2106,6 +2106,10 @@ error sites behind them:
 - `CreateVideoCampaign`'s `ErrVideoCreateUnsupported` is a fixed sentence, wrapped with plain
   `WrapPreflightRefusal`; it is still the sentinel underneath.
 
+All three are raised before any Google mutate. They are not always before any Google request:
+when the caller asks to adopt an existing campaign, the dispatcher's `FindCampaignByName` (a GAQL
+read) runs first. The `PreflightRefusal` contract allows that, because a read creates nothing.
+
 The validators quote every caller value with `%q` (a headline via `capForError`, an image URL
 via `redactURLForError`, an ad group name, a code), so `WrapQuotedPreflightRefusal`'s operator
 message withholds anything `CallerValue` would: a headline with a space, any URL or path. A
@@ -2113,8 +2117,12 @@ caller value is formatted unquoted only after a check has narrowed it to a safe 
 YYYY-MM-DD date, an ISO country code, a canonical geo target id, a schedule day or a device from
 its enum. The two excluded-placement refusals were the exception, a redacted URL formatted with
 `%s`; they now use `%q`. Keep both rules for any new pre-send refusal: quote caller values, and
-format nothing unquoted that a check has not already narrowed. `Error()` is unchanged, so logs and tests that pin a message see
-exactly what they saw before.
+format nothing unquoted that a check has not already narrowed. A Display user-list exclusion
+naming another collection now names it only once it is a known one; before, it echoed the
+caller's path segment unquoted. `TestPreflightCampaignKind_NoCallerTextReachesTheOperatorMessage`
+holds the class: it puts a sentinel into every caller string of each channel's input, one at a
+time, and fails if any refusal's operator message shows it. `Error()` is unchanged, so logs and
+tests that pin a message see exactly what they saw before.
 
 ## Demand Gen ad creation (LFXV2-2665)
 

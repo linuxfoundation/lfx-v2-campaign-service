@@ -22,9 +22,11 @@ import (
 // That makes the constructors below a trust boundary, and the rule for using them is the
 // whole of their contract:
 //
-//   - wrap ONLY a refusal raised before the first upstream request of the operation. A
-//     refusal raised after a request was sent describes something that may have happened, and
-//     is not this type's to report;
+//   - wrap ONLY a refusal raised before the first upstream WRITE of the operation. A refusal
+//     raised after a write was sent describes something that may have happened, and is not
+//     this type's to report. A read-only lookup may come first (the Google Ads dispatcher's
+//     adoption search, FindCampaignByName, runs before the create when the caller asks to
+//     adopt), because a read creates nothing upstream;
 //   - the message must be service-authored. Caller-supplied config scalars (a date, a count, a
 //     two-letter geo code) are fine; an upstream body, a URL (registration, image or post URLs
 //     can carry a caller's secret-bearing query parameters), a token or a credential field
@@ -96,8 +98,8 @@ func WrapPreflightRefusal(err error) error {
 	return &PreflightRefusal{msg: err.Error(), cause: err}
 }
 
-// WrapQuotedPreflightRefusal marks err as a refusal raised before the first upstream request
-// whose text is service-authored except for caller values, and renders EVERY caller value with
+// WrapQuotedPreflightRefusal marks err as a refusal raised before the first upstream write
+// (a read-only lookup may precede it, as the PreflightRefusal contract allows) whose text is service-authored except for caller values, and renders EVERY caller value with
 // %q (issue #494). It exists for a client whose pre-flight validators are too many to rewrite
 // one by one: the Google Ads client's hundreds of input refusals quote caller values (a headline,
 // an ad group name, a redacted image URL) with %q, and before #494 none of them reached the job
@@ -109,7 +111,7 @@ func WrapPreflightRefusal(err error) error {
 // is withheld from the job result even where the call site did not pass it through CallerValue
 // itself. That is the rule this constructor enforces mechanically; the one it cannot is the
 // caller's to keep: err must format no caller value UNQUOTED (%s, %v), carry no upstream text,
-// and come from before the first upstream request. A nil err returns nil.
+// and come from before the first upstream write. A nil err returns nil.
 func WrapQuotedPreflightRefusal(err error) error {
 	if err == nil {
 		return nil
@@ -117,28 +119,31 @@ func WrapQuotedPreflightRefusal(err error) error {
 	return &PreflightRefusal{msg: err.Error(), cause: err, operator: quotedCallerValues(err.Error())}
 }
 
-// quotedSegment matches one Go double-quoted string as %q renders it: a backslash escapes the
-// next character, and %q never emits a raw newline.
-var quotedSegment = regexp.MustCompile(`"(?:[^"\\\n]|\\.)*"`)
+// quotedSegment matches one Go double-quoted string as %q renders it (a backslash escapes the
+// next character, and %q never emits a raw newline), or the rune literal '"' that %q renders for
+// a double-quote rune. The rune literal is matched first and left as it is: unmatched, its lone
+// quote would pair with the next one and shift every later caller value outside a match.
+var quotedSegment = regexp.MustCompile(`'"'|"(?:[^"\\\n]|\\.)*"`)
 
 // quotedCallerValues re-renders every double-quoted segment of msg through CallerValue. A
 // segment that does not unquote is withheld rather than shown. A value capForError-style
-// helpers cut with a trailing "…" keeps its ellipsis when the part before it is showable.
+// helpers cut with a trailing "…" is judged without it, so a showable cut value reads as
+// CallerValue's truncated form rather than being withheld for the ellipsis.
 func quotedCallerValues(msg string) string {
 	return quotedSegment.ReplaceAllStringFunc(msg, func(q string) string {
+		if q == `'"'` {
+			return q
+		}
 		v, err := strconv.Unquote(q)
 		if err != nil {
 			return callerValueWithheld
 		}
-		body, cut := strings.CutSuffix(v, "…")
-		if !cut || body == "" {
-			return CallerValue(v)
+		if body, cut := strings.CutSuffix(v, "…"); cut && body != "" {
+			if shown := CallerValue(body); strings.HasSuffix(shown, " (truncated)") {
+				return shown
+			}
 		}
-		shown := CallerValue(body)
-		if shown == callerValueWithheld || strings.HasSuffix(shown, " (truncated)") {
-			return shown
-		}
-		return strconv.Quote(body + "…")
+		return CallerValue(v)
 	})
 }
 

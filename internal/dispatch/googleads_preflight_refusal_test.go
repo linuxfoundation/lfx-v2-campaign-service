@@ -44,6 +44,42 @@ func gaPMaxConfig(t *testing.T, mutate func(map[string]any)) json.RawMessage {
 	return b
 }
 
+// gaStoredImageConfig is a channel's create config whose image slots all name the stored asset
+// gaAssetID, so the image fetch is what judges them; the copy passes every local rule.
+func gaStoredImageConfig(t *testing.T, channel string) json.RawMessage {
+	t.Helper()
+	ref := []map[string]string{{"imageAssetId": gaAssetID}}
+	inner := map[string]any{"budget": 50, "channel": channel}
+	switch channel {
+	case "search":
+		inner["searchAssets"] = map[string]any{"adImages": ref}
+	case "demand-gen":
+		inner["demandGenCreative"] = map[string]any{
+			"marketingImages": ref,
+			"logoImages":      ref,
+			"headlines":       []string{"Join us at KubeCon"},
+			"descriptions":    []string{"Talks, workshops and hallway track."},
+			"businessName":    "Linux Foundation",
+		}
+	case "display":
+		inner["displayCreative"] = map[string]any{
+			"marketingImages":       ref,
+			"squareMarketingImages": ref,
+			"headlines":             []string{"Join us at KubeCon"},
+			"longHeadline":          "KubeCon + CloudNativeCon Europe 2026, Amsterdam",
+			"descriptions":          []string{"Talks, workshops and hallway track."},
+			"businessName":          "Linux Foundation",
+		}
+	default:
+		t.Fatalf("no stored-image config for channel %q", channel)
+	}
+	b, err := json.Marshal(map[string]any{"googleAdsConfig": inner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 // TestGoogleAds_PreflightRefusalsReachTheJobResult is #494's end-to-end pin, the Google sibling
 // of TestDispatch_PreflightRefusalsAreOperatorSafe: a REAL Google dispatch refused by the client
 // before anything is sent reaches service.DispatchFailureMessage as the client's own sentence,
@@ -80,6 +116,27 @@ func TestGoogleAds_PreflightRefusalsReachTheJobResult(t *testing.T) {
 		{
 			name:   "stored image below the slot minimum",
 			config: gaPMaxConfig(t, nil),
+			image:  small,
+			want:   "is 100x100 (png), below the 600x314 minimum",
+		},
+		// The same fetch refusal on each other channel that fetches images before its budget,
+		// so every Create*Campaign's call to the refusal marker is pinned, not only Performance
+		// Max's.
+		{
+			name:   "search ad image below the slot minimum",
+			config: gaStoredImageConfig(t, "search"),
+			image:  small,
+			want:   "is 100x100 (png), below the 300x300 minimum",
+		},
+		{
+			name:   "demand gen image below the slot minimum",
+			config: gaStoredImageConfig(t, "demand-gen"),
+			image:  small,
+			want:   "is 100x100 (png), below the 600x314 minimum",
+		},
+		{
+			name:   "display image below the slot minimum",
+			config: gaStoredImageConfig(t, "display"),
 			image:  small,
 			want:   "is 100x100 (png), below the 600x314 minimum",
 		},
@@ -144,6 +201,14 @@ func TestGoogleAds_PreflightRefusalsNeverEchoHostileCallerInput(t *testing.T) {
 				`{"text":"reset/SECRET-494","finalUrl":"https://events.example/kc"},` +
 				`{"text":"reset/SECRET-494","finalUrl":"https://events.example/kc"}]}}`),
 			want: "google-ads sitelink (value withheld) is listed more than once",
+		},
+		{
+			// The placement refusal formats a redacted URL; only its quotes keep the scheme,
+			// host and path out of the job result.
+			name: "a display excluded placement with a scheme",
+			config: json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"display",` +
+				`"excludedPlacements":["https://example.com/SECRET-494-path"]}}`),
+			want: "excluded placement (value withheld) carries a scheme",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
