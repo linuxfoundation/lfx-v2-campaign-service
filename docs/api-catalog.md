@@ -1501,7 +1501,9 @@ excludedGenders?: string[]        campaign criteria. Age ranges are 18-24, 25-34
                                   too); genders are MALE, FEMALE or UNDETERMINED. At most 20 entries
                                   each, bounded independently.
 
-                                  EXCLUSIONS only — there is no positive demographic field. Google
+                                  EXCLUSIONS only — there is no positive TARGETING demographic field
+                                  on Search (it can OBSERVE a dimension through
+                                  `observedDemographics`, below). Google
                                   targets demographics by excluding the buckets you do not want, and
                                   UNDETERMINED covers every user whose demographic Google has not
                                   inferred, which on Search is a large share of traffic: excluding it

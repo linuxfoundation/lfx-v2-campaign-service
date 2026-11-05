@@ -955,7 +955,9 @@ const geoTargetPresence = "PRESENCE"
 // for bid/reporting purposes would otherwise silently narrow delivery to that
 // segment alone, a serious, easy-to-miss behavior change. bidOnly=true keeps
 // AUDIENCE observation-only so keyword targeting (GA-4's other half) remains
-// the thing that actually controls reach.
+// the thing that actually controls reach. Since #497 a Search ad group may also
+// declare AGE_RANGE, GENDER and INCOME_RANGE bidOnly true, for its observed
+// demographics — see adGroupObservationPlan.restrictions.
 type targetingSetting struct {
 	TargetRestrictions []targetRestriction `json:"targetRestrictions"`
 }

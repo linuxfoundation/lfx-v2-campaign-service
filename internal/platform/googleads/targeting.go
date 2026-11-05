@@ -399,7 +399,8 @@ func validateAudienceSegments(segments []string) ([]string, error) {
 }
 
 // createAdGroupTargeting attaches one ad group's criteria — keywords, audience
-// segments, negative keywords and income/parental exclusions, whichever are set —
+// segments, negative keywords, income/parental exclusions, then the observed
+// demographics (#497), whichever are set —
 // to the just-created ad group as a SINGLE adGroupCriteria:mutate call carrying one
 // operation per criterion. Batched into one call (not one per criterion) so
 // the whole set shares one atomic outcome: partialFailure is left false (the
@@ -429,7 +430,10 @@ func validateAudienceSegments(segments []string) ([]string, error) {
 // AdGroupAd composite-resourceName flag from GA-3: verify against a live
 // account that a Search campaign's audience criteria actually honor
 // bidOnly=true as observation-only rather than still narrowing reach, before
-// relying on audience segments to expand rather than restrict delivery.
+// relying on audience segments to expand rather than restrict delivery. The same
+// is true of the observed demographics (#497): neither the demographic bidOnly
+// restrictions nor the positive ageRange/gender/incomeRange criteria on a Search ad
+// group have been checked with a validateOnly probe yet.
 //
 // Duplicate-criterion classification is unverified for this resource (unlike
 // the budget/campaign/ad-group DUPLICATE_NAME family): any 4xx here —

@@ -77,7 +77,8 @@ const (
 )
 
 // adGroupCreate is the create payload for adGroups:mutate. TargetingSetting is
-// set only when GA-4 attaches audience segments (see createAdGroupAndAd) — see
+// set only when the group carries audience segments (GA-4) or observed demographic
+// dimensions (#497) (see createAdGroupAndAd) — see
 // targetingSetting's doc comment in campaign.go for why this lives at the ad
 // group level rather than the campaign level.
 //
@@ -374,6 +375,11 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 	//
 	// The observed demographic dimensions (#497) are declared on the same setting, each
 	// bidOnly true, after AUDIENCE. With neither, no targetingSetting is sent, as before.
+	// This is a PARTIAL list, unlike Display's displayAudienceTargetingSetting, which
+	// restates all four demographic defaults: PARENTAL_STATUS is not a dimension a Search
+	// ad group takes a criterion in, so restating it is not obviously safe there, and
+	// whether Google merges or replaces a partial list on a Search ad group is one of the
+	// questions the #497 validateOnly probe still has to settle.
 	var restrictions []targetRestriction
 	if len(audienceSegments) > 0 {
 		restrictions = append(restrictions, targetRestriction{TargetingDimension: "AUDIENCE", BidOnly: true})
