@@ -15,7 +15,8 @@ See [charts/lfx-v2-campaign-service/templates/httproute.yaml](../../../charts/lf
 
 The service serves its API under `/projects/{projectId}/…` (the approved contract —
 every endpoint is nested under a project and gated on that project's
-`campaign_manager` relation).
+`campaign_manager` relation, except the Google conversion-action list, gated on
+`global_marketing_ops`).
 `project-service` owns `PathPrefix: /projects/`, and
 the token that distinguishes a campaign-service path (`connection-*`, `briefs`,
 `jobs`, `google-ads/keywords|audience|campaign-ref|geo-targets|user-lists|conversion-actions`, `microsoft-ads/keywords|audience|campaign-ref`, `(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience`, `reddit-ads/keywords`, `(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref`, `hubspot`,
@@ -108,7 +109,8 @@ When `heimdall.enabled`, both rules attach the `heimdall-forward-body` middlewar
 (forwardAuth → Heimdall). **Invariant:** every path routed through that middleware
 MUST have a matching rule in [ruleset.md](ruleset.md) — a routed request with no
 matching Heimdall rule is rejected. The RuleSet's `project-api` rule covers every
-routed project-nested family, and its
+routed project-nested family except `google-ads/conversion-actions`, which its
+`marketing-ops-api` rule covers; its
 `campaigns-placeholder` rule covers the reserved prefixes, so chart↔route parity holds.
 
 This parity is enforced by a Go test — `TestRouteRuleSetParity`
@@ -137,8 +139,9 @@ separate `TestProjectAPIRuleEnforcesCampaignManager` asserts
 the `project-api` rule has two `openfga_check` authorizers on relation `campaign_manager`, each
 paired with the correct object: `project:{{- .Outputs.project_slug_resolver_contextualizer.uid -}}`
 for the slug branch, `project:{{- .Request.URL.Captures.projectId -}}` for the UUID
-branch. This matters because the invariant is not merely "some rule matches" but "the
-campaign_manager rule matches, with each branch's
+branch; `TestConversionActionsIsAMarketingOpsRead` pins `marketing-ops-api` the same way
+on relation `global_marketing_ops`. This matters because the invariant is not merely "some
+rule matches" but "the expected FGA rule matches, with each branch's
 object correctly paired to its guard": a path moved into an `allow_all` / `deny_all` /
 differently-scoped rule, a downgrade of the rule's relation, or a swapped guard/object
 pairing, must FAIL the security regression test rather than silently satisfy path parity.
