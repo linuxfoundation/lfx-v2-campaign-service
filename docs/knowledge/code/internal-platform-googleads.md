@@ -2070,8 +2070,8 @@ Google refuses an image asset with no name: `assets:mutate` answers `AssetError`
 asset create here set one, so every image-bearing creative failed in prod after its budget,
 campaign and ad group existed — a Display create on 2026-11-05 left campaign 24431381015 with
 no ad. Every image asset create now sends `imageAssetName(data)` (`image_assets.go`, beside
-`base64Image`): `LFX image ` and the first 16 hex characters of the bytes' SHA-256. That covers Display (`createDisplayAd`), the Demand
-Gen image ad (`createDemandGenAd`), the Demand Gen video ad's logo, Performance Max
+`base64Image`): `LFX image ` and the first 16 hex characters of the bytes' SHA-256. That
+covers Display (`createDisplayAd`), the Demand Gen image ad (`createDemandGenAd`), the Demand Gen video ad's logo, Performance Max
 (`buildPerformanceMaxAssets`) and the Search campaign assets (`buildSearchAssets`); text,
 video and call-to-action assets still send no name. The name comes from the bytes, never the
 source URL, so no creative URL is exported to Google as an asset label, and the same bytes
