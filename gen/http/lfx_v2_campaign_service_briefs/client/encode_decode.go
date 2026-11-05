@@ -2780,6 +2780,7 @@ func EncodeCreateCampaignsRequest(encoder func(*http.Request) goahttp.Encoder) f
 //   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
 //   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "Forbidden" (type *lfxv2campaignservicebriefs.ForbiddenError): http.StatusForbidden
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
 //   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
@@ -2863,6 +2864,20 @@ func DecodeCreateCampaignsResponse(decoder func(*http.Response) goahttp.Decoder,
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "create-campaigns", err)
 			}
 			return nil, NewCreateCampaignsServiceUnavailable(&body)
+		case http.StatusForbidden:
+			var (
+				body CreateCampaignsForbiddenResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "create-campaigns", err)
+			}
+			err = ValidateCreateCampaignsForbiddenResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "create-campaigns", err)
+			}
+			return nil, NewCreateCampaignsForbidden(&body)
 		case http.StatusInternalServerError:
 			var (
 				body CreateCampaignsInternalServerErrorResponseBody
