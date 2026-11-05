@@ -52,10 +52,41 @@ read is not gated.
 
 `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is a plain feature gate, defaulting to `"false"`
 (#459): it opts a cluster in to `googleAdsConfig.demandGenAudience`, one existing Google Ads
-Audience on a Demand Gen ad group. The service checks that Audience against the Google Ads
-account only, and the LF account is shared by every foundation, so it stays off until the
-service can check it against the calling foundation (#468). Only exactly `"true"` enables it;
-off, a create naming one is refused before anything upstream exists.
+Audience on a Demand Gen ad group. It is a per-deployment opt-in, turned on by setting it to
+exactly `"true"` in that environment's lfx-v2-argocd overlay. The service checks the Audience
+against the connected Google Ads account (same customer id), which is the boundary.
+Per-foundation ownership (#468) was closed as won't do: campaign managers are the LF marketing
+team, who manage every foundation. It also gates each
+`googleAdsConfig.demandGenAdGroups[].audience` (#460), the same input on a named ad group. Only
+exactly `"true"` enables them; off, a create naming one is refused before anything upstream
+exists, and a Demand Gen ad group without an audience is unaffected.
+
+`GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` is the same kind of gate, defaulting to `"false"` (#462):
+it opts a cluster in to the Display audience lists that name an account-owned segment —
+`googleAdsConfig.audienceSegments` on `display`, `customAudiences` and `customAffinities`, and
+since #475 the user-list exclusions `excludedAudienceSegments` and each `displayAdGroups`
+entry's `audienceSegments`, `customAudiences`, `customAffinities` and
+`excludedAudienceSegments`. Like the Demand Gen gate it is a per-deployment opt-in, and each
+segment is checked against the connected Google Ads account. Only exactly `"true"`
+enables it; off, a create naming one is refused before anything upstream exists.
+`userInterests` (at either level), `excludedPlacements`, Search's `audienceSegments` and
+`displayAdGroups` entries without those lists are not gated. To enable it on a cluster, set
+`app.environment.GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED.value` to `"true"` in that environment's
+ArgoCD overlay.
+
+`GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the same kind of gate, defaulting to `"false"`
+(#461): it opts a cluster in to `googleAdsConfig.performanceMaxAudienceSignal`, one existing
+Google Ads Audience attached to a Performance Max asset group as a signal. Like the Demand Gen
+gate it is a per-deployment opt-in, and the Audience is checked against the connected Google Ads
+account. Only exactly `"true"` enables it; off, a create naming one is refused before
+anything upstream exists. Search themes and the Performance Max extensions are not gated.
+
+`GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED` is the same kind of gate, defaulting to `"false"`
+(#477): it opts a cluster in to `googleAdsConfig.sharedNegativeKeywordLists`, existing shared
+negative keyword lists attached to a Search campaign. Like the Demand Gen gate it is a
+per-deployment opt-in, and each shared list is checked against the connected Google Ads account.
+Only exactly `"true"` enables it; off, a create naming one, on any channel, is refused before
+anything upstream exists. `searchAssets` is not gated.
 
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
 default `1841232183`: the LF Research survey-promo workflow a survey send series

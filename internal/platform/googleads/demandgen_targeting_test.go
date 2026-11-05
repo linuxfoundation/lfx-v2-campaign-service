@@ -132,11 +132,22 @@ func TestPreflightRefusesUserListsOnDemandGenPointingAtTheAudience(t *testing.T)
 			t.Errorf("error = %q, want it to contain %q", err, want)
 		}
 	}
-	// The other channels keep their own reason: the audience-grouped sentence is about
-	// Demand Gen only.
-	_, err = c.preflightCampaignKind(campaignKindDisplay, in)
-	if err == nil || strings.Contains(err.Error(), "audience-grouped") {
-		t.Errorf("Display must refuse user lists with its own reason, got %v", err)
+	// The other refusing channels keep their own reason: the audience-grouped sentence is
+	// about Demand Gen only.
+	for _, kind := range []string{campaignKindVideo, campaignKindPerformanceMax} {
+		_, err = c.preflightCampaignKind(kind, in)
+		if err == nil || !strings.Contains(err.Error(), "audience segments are not supported on "+kind) || strings.Contains(err.Error(), "audience-grouped") {
+			t.Errorf("%s must refuse user lists with its own reason, got %v", kind, err)
+		}
+	}
+	// Display is the one non-Search channel that ACCEPTS them (#462): it attaches user
+	// lists as targeting criteria, so the Demand Gen refusal must not leak onto it.
+	pf, err := c.preflightCampaignKind(campaignKindDisplay, in)
+	if err != nil {
+		t.Fatalf("Display must accept user lists (#462), got %v", err)
+	}
+	if got := pf.displayTargeting.userLists; len(got) != 1 || got[0] != in.AudienceSegments[0] {
+		t.Errorf("pf.displayTargeting.userLists = %v, want %v", got, in.AudienceSegments)
 	}
 }
 

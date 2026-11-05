@@ -4,12 +4,17 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // The dispatch-layer half of the Display path, for the reason
@@ -221,4 +226,233 @@ func TestGoogleAdsRecordedChannelType_Display(t *testing.T) {
 	if *got != googleAdsChannelTypeDisplay {
 		t.Errorf("recorded channel type = %q, want %q", *got, googleAdsChannelTypeDisplay)
 	}
+}
+
+// The #462 fields: a Display config's four audience lists must reach the ad group's
+// criteria mutate, each in its own oneof arm, and its placement exclusions the campaign's
+// criteria mutate as negative placements. A mapper that dropped any of the five leaves the
+// client's own tests green and the field unreachable through the API. The deployment gate is
+// ON here; the gate itself is TestGoogleAds_DisplayAudiencesGate.
+func TestGoogleAds_DisplayAudiencesAndPlacementExclusionsReachTheCriteria(t *testing.T) {
+	t.Setenv(constants.EnvGoogleAdsDisplayAudiencesEnabled, "true")
+	opts, cap := targetingServers(t)
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"display",
+		"audienceSegments":["customers/1234567890/userLists/11"],
+		"customAudiences":["customers/1234567890/customAudiences/22"],
+		"customAffinities":["customers/1234567890/customInterests/33"],
+		"userInterests":["customers/1234567890/userInterests/44"],
+		"excludedPlacements":["example.com"]}}`)
+
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	cap.mu.Lock()
+	defer cap.mu.Unlock()
+	if len(cap.adGroupCriteria) != 1 {
+		t.Fatalf("got %d adGroupCriteria mutates, want 1", len(cap.adGroupCriteria))
+	}
+	audiences := string(cap.adGroupCriteria[0])
+	for _, want := range []string{
+		`"userList":{"userList":"customers/1234567890/userLists/11"}`,
+		`"customAudience":{"customAudience":"customers/1234567890/customAudiences/22"}`,
+		`"customAffinity":{"customAffinity":"customers/1234567890/customInterests/33"}`,
+		`"userInterest":{"userInterestCategory":"customers/1234567890/userInterests/44"}`,
+	} {
+		if !strings.Contains(audiences, want) {
+			t.Errorf("audience mutate lacks %s: %s", want, audiences)
+		}
+	}
+	if len(cap.campaignCriteria) != 1 {
+		t.Fatalf("got %d campaignCriteria mutates, want 1 (the placement exclusions)", len(cap.campaignCriteria))
+	}
+	if placements := string(cap.campaignCriteria[0]); !strings.Contains(placements, `"negative":true,"placement":{"url":"example.com"}`) {
+		t.Errorf("placement mutate = %s, want a negative placement for example.com", placements)
+	}
+}
+
+// Off Display the new fields are refused before anything is created — the dispatch half of
+// the client's refusal, proving the field reaches the preflight on the Search channel too.
+func TestGoogleAds_ExcludedPlacementsRefusedOnSearch(t *testing.T) {
+	opts, cap := targetingServers(t)
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"excludedPlacements":["example.com"]}}`)
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+	if err == nil || !strings.Contains(err.Error(), "placement exclusions are not supported on Search Campaign") {
+		t.Fatalf("err = %v, want the Search refusal", err)
+	}
+	if camp != nil {
+		t.Errorf("camp = %+v, want nil — nothing was created", camp)
+	}
+	cap.mu.Lock()
+	defer cap.mu.Unlock()
+	if cap.sawBudget {
+		t.Error("a budget mutate was sent for a config the preflight must refuse")
+	}
+}
+
+// With GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED anything but exactly "true", a create naming an
+// account-owned Display segment is refused in Dispatch before the budget, even one the client
+// would accept (the client checks the account only). The refusal is a
+// not-created PreflightRefusal, so the async job shows the gate's sentence verbatim rather than
+// the generic failure, and it names exactly the fields the request set.
+func TestGoogleAds_DisplayAudiencesGate(t *testing.T) {
+	const (
+		userList = `"audienceSegments":["customers/1234567890/userLists/11"]`
+		custom   = `"customAudiences":["customers/1234567890/customAudiences/22"]`
+		affinity = `"customAffinities":["customers/1234567890/customInterests/33"]`
+	)
+	cases := []struct {
+		name, env, cfg, wantFields string
+		wantFull                   string // when set, the whole sentence, exactly
+	}{
+		{"unset", unsetEnv, `"channel":"display",` + userList, "(audienceSegments)", ""},
+		{"empty", "", `"channel":"display",` + custom, "(customAudiences)", ""},
+		{"false", "false", `"channel":"display",` + affinity, "(customAffinities)", ""},
+		{"wrong case", "TRUE", `"channel":"display",` + userList, "(audienceSegments)", ""},
+		{"leading space", " true", `"channel":"display",` + userList, "(audienceSegments)", ""},
+		{"one", "1", `"channel":"display",` + custom, "(customAudiences)", ""},
+		{"channel spelled loosely", "", `"channel":" Display ",` + userList, "(audienceSegments)", ""},
+		{"all three", "", `"channel":"display",` + userList + `,` + custom + `,` + affinity,
+			"(audienceSegments, customAudiences, customAffinities)", ""},
+		{"blank entry", "", `"channel":"display","customAudiences":["  "]`, "(customAudiences)", ""},
+		{"custom list off display", "", custom, "(customAudiences)", ""},
+		// Two fields are joined by ", ", so the remedies are split by ";" and cannot read as
+		// one more field in the list.
+		{"two fields", "", `"channel":"display",` + userList + `,` + custom,
+			"(audienceSegments, customAudiences)",
+			`google-ads: Display audience targeting (audienceSegments, customAudiences) is disabled ` +
+				`on this deployment (GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED is not "true"); ` +
+				`omit audienceSegments, customAudiences; or ask an operator to set ` +
+				`GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED to "true"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setGateEnv(t, constants.EnvGoogleAdsDisplayAudiencesEnabled, tc.env)
+			opts, cap := targetingServers(t)
+			conn := fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}
+			d := NewGoogleAdsDispatcher(conn, identityEncryptor{}, opts...)
+			cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,` + tc.cfg + `}}`)
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+			if err == nil {
+				t.Fatal("expected the dispatch to be refused while the gate is off")
+			}
+			for _, want := range []string{
+				"Display audience targeting " + tc.wantFields + " is disabled on this deployment",
+				"omit " + strings.Trim(tc.wantFields, "()"),
+				"; or ask an operator to set " + constants.EnvGoogleAdsDisplayAudiencesEnabled + ` to "true"`,
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %v, want it to contain %q", err, want)
+				}
+			}
+			if tc.wantFull != "" && err.Error() != tc.wantFull {
+				t.Errorf("error = %q, want exactly %q", err.Error(), tc.wantFull)
+			}
+			var pce *preCreateError
+			if !errors.As(err, &pce) {
+				t.Errorf("error = %v, want a not-created error so the claim is released", err)
+			}
+			got := service.DispatchFailureMessage(model.ProviderGoogleAds, err, true)
+			if got != err.Error() {
+				t.Errorf("job message = %q, want the gate's own sentence %q", got, err.Error())
+			}
+			if camp != nil {
+				t.Errorf("nothing may be created for a refused input, got %+v", camp)
+			}
+			cap.mu.Lock()
+			defer cap.mu.Unlock()
+			if cap.sawBudget {
+				t.Error("the refusal must happen BEFORE the budget mutate")
+			}
+		})
+	}
+}
+
+// What the gate does NOT cover, with it off: Google's own userInterests categories and the
+// public-domain excludedPlacements on Display, and Search's observation-only audienceSegments.
+// Each still reaches its criteria mutate.
+func TestGoogleAds_DisplayAudiencesGateLeavesUngatedInputsAlone(t *testing.T) {
+	cases := []struct {
+		name, cfg, want string
+	}{
+		{"user interests", `"channel":"display",` +
+			`"userInterests":["customers/1234567890/userInterests/44"]`,
+			`"userInterestCategory":"customers/1234567890/userInterests/44"`},
+		{"placements", `"channel":"display","excludedPlacements":["example.com"]`,
+			`"placement":{"url":"example.com"}`},
+		{"search user list", `"audienceSegments":["customers/1234567890/userLists/11"],` +
+			`"keywords":[{"text":"kubecon","matchType":"PHRASE"}]`,
+			`"userList":{"userList":"customers/1234567890/userLists/11"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(constants.EnvGoogleAdsDisplayAudiencesEnabled, "")
+			opts, cap := targetingServers(t)
+			conn := fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}
+			d := NewGoogleAdsDispatcher(conn, identityEncryptor{}, opts...)
+			cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,` + tc.cfg + `}}`)
+			_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+			if err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			cap.mu.Lock()
+			defer cap.mu.Unlock()
+			var bodies [][]byte
+			bodies = append(bodies, cap.campaignCriteria...)
+			bodies = append(bodies, cap.adGroupCriteria...)
+			all := string(bytes.Join(bodies, nil))
+			if !strings.Contains(all, tc.want) {
+				t.Errorf("criteria mutates lack %s: campaign %q, ad group %q", tc.want,
+					cap.campaignCriteria, cap.adGroupCriteria)
+			}
+		})
+	}
+}
+
+// Exactly "true" opens the gate: the same three account-owned lists reach the ad group's
+// criteria mutate.
+func TestGoogleAds_DisplayAudiencesGateOpensOnExactlyTrue(t *testing.T) {
+	t.Setenv(constants.EnvGoogleAdsDisplayAudiencesEnabled, "true")
+	opts, cap := targetingServers(t)
+	conn := fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}
+	d := NewGoogleAdsDispatcher(conn, identityEncryptor{}, opts...)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"display",
+		"audienceSegments":["customers/1234567890/userLists/11"],
+		"customAudiences":["customers/1234567890/customAudiences/22"],
+		"customAffinities":["customers/1234567890/customInterests/33"]}}`)
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	cap.mu.Lock()
+	defer cap.mu.Unlock()
+	if len(cap.adGroupCriteria) != 1 {
+		t.Fatalf("got %d adGroupCriteria mutates, want 1", len(cap.adGroupCriteria))
+	}
+	for _, want := range []string{`"userList":`, `"customAudience":`, `"customAffinity":`} {
+		if !strings.Contains(string(cap.adGroupCriteria[0]), want) {
+			t.Errorf("audience mutate lacks %s: %s", want, cap.adGroupCriteria[0])
+		}
+	}
+}
+
+// unsetEnv tells setGateEnv to leave the variable UNSET rather than set to "", which
+// t.Setenv alone cannot express.
+const unsetEnv = "\x00unset"
+
+// setGateEnv sets key to value for the test, or unsets it for unsetEnv; either way t.Setenv's
+// cleanup restores the original.
+func setGateEnv(t *testing.T, key, value string) {
+	t.Helper()
+	t.Setenv(key, "")
+	if value == unsetEnv {
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("unset %s: %v", key, err)
+		}
+		return
+	}
+	t.Setenv(key, value)
 }

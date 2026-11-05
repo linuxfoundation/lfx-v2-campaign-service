@@ -266,6 +266,10 @@ func (c *Client) createVideoAd(ctx context.Context, adGroupResource, adGroupID, 
 
 	videos := make([]adVideoAsset, 0, len(assetOps))
 	assetIDs = make([]string, 0, len(assetOps))
+	// An unusable entry does not stop the walk: every same-account id goes back with the
+	// error, which names the FIRST unusable index.
+	firstBad, badWhy := -1, ""
+	seen := newResultIDSet(len(assetResults.Results))
 	for i, r := range assetResults.Results {
 		resource := r.ResourceName
 		// assetID checks the kind, the account AND the numeric trailing id, returning
@@ -273,10 +277,34 @@ func (c *Client) createVideoAd(ctx context.Context, adGroupResource, adGroupID, 
 		// referenced by the ad and persisted as this campaign's.
 		id := c.assetID(resource)
 		if id == "" {
-			return assetIDs, "", fmt.Errorf("google-ads video asset creation UNCONFIRMED (ad group %s created; malformed asset resource name %q at index %d — assets may exist — verify in Google Ads before retrying)", adGroupID, resource, i)
+			if firstBad < 0 {
+				firstBad = i
+				badWhy = fmt.Sprintf("malformed asset resource name %q at index %d", resource, i)
+			}
+			continue
 		}
-		assetIDs = append(assetIDs, id)
+		// A repeat of the SAME video is Google returning the existing asset (result_ids.go):
+		// it is referenced at this position too and its id reported once. Any other repeat
+		// is unusable, its operation unaccounted for.
+		first, dup := seen.reuse(id, i, func(j int) bool {
+			return plan.videos[j] == plan.videos[i]
+		})
+		if dup != "" {
+			if firstBad < 0 {
+				firstBad, badWhy = i, dup
+			}
+			continue
+		}
+		if first {
+			assetIDs = append(assetIDs, id)
+		}
 		videos = append(videos, adVideoAsset{Asset: resource})
+	}
+	if firstBad >= 0 {
+		return uniqueIDs(assetIDs), "", fmt.Errorf(
+			"google-ads video asset creation UNCONFIRMED (ad group %s created; "+
+				"%s — assets may exist — verify in Google Ads before retrying)",
+			adGroupID, badWhy)
 	}
 
 	ad := &videoResponsiveAdInfo{

@@ -10693,7 +10693,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: list-google-ads-user-lists lfx-v2-campaign-service-connections
-            description: 'List the Google Ads user lists (audiences) on a customer, live from GAQL on user_list, for picking googleAdsConfig.audienceSegments (Search only). account_id names the customer; omitted, the customer the project''s connection is bound to is read. Like the account monitor, this resolves the project''s OWN connection only and never falls back to the shared LF system credential: user lists are account data on a customer shared across foundations, so a project with no Google Ads connection of its own gets a 404, not the LF account''s audiences. On a platform whose ad account is shared across foundations — Google Ads today — the read is refused with 409 before Google is contacted: the read is account-wide, this service records no user list per project, and a project''s own connection points at the same shared customer, so answering would expose every foundation''s audiences. Only a per-foundation customer is listed. An account_id the credential cannot reach is refused by Google and answered 503, like the account monitor. A pure read: nothing is persisted.'
+            description: 'List the Google Ads user lists (audiences) on a customer, live from GAQL on user_list, for picking googleAdsConfig.audienceSegments (Search and Display). account_id names the customer; omitted, the customer the project''s connection is bound to is read. Like the account monitor, this resolves the project''s OWN connection only and never falls back to the shared LF system credential: user lists are account data on a customer shared across foundations, so a project with no Google Ads connection of its own gets a 404, not the LF account''s audiences. On a platform whose ad account is shared across foundations — Google Ads today — the read is refused with 409 before Google is contacted: the read is account-wide, this service records no user list per project, and a project''s own connection points at the same shared customer, so answering would expose every foundation''s audiences. Only a per-foundation customer is listed. An account_id the credential cannot reach is refused by Google and answered 503, like the account monitor. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#list-google-ads-user-lists
             parameters:
                 - name: account_id
@@ -16934,7 +16934,7 @@ definitions:
                 example: ENABLED
             eligible_for_search:
                 type: boolean
-                description: Whether Google reports the list usable on Search. audienceSegments applies to Search campaigns, so an ineligible list will not serve there.
+                description: Whether Google reports the list usable on Search. An ineligible list will not serve on a Search campaign; this read does not report Display eligibility.
                 example: true
             id:
                 type: string
@@ -16950,7 +16950,7 @@ definitions:
                 example: KubeCon NA 2025 registrants
             resource_name:
                 type: string
-                description: customers/{customerId}/userLists/{id}, in exactly the form googleAdsConfig.audienceSegments accepts (Search only). A list targets campaigns on its own customer.
+                description: customers/{customerId}/userLists/{id}, in exactly the form googleAdsConfig.audienceSegments accepts (Search and Display). A list targets campaigns on its own customer.
                 example: customers/8666746580/userLists/7012345678
                 pattern: ^customers/[0-9]+/userLists/[1-9][0-9]{0,18}$
             size_for_search:

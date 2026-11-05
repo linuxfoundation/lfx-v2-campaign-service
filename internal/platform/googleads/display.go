@@ -86,32 +86,52 @@ type displayCampaignCreate struct {
 // preflight refuses a manual bid on every non-Search channel. On THIS channel that
 // refusal is a client limitation rather than an upstream one — Google does accept manual
 // CPC on Display — and displayBiddingStrategies is where that is written down.
+//
+// TargetingSetting is sent ONLY when the ad group carries audience criteria (#462), and
+// then with AUDIENCE bidOnly false (after the four demographic defaults, restated
+// unchanged — see displayAudienceTargetingSetting), so those criteria target rather than
+// observe — the
+// opposite of Search's ad group, which sends bidOnly true. With no audience input the
+// field is omitted and the payload is byte-identical to the one sent before #462. See
+// createDisplayAudienceCriteria for why the setting is sent rather than left to
+// Google's default.
 type displayAdGroupCreate struct {
 	Name     string `json:"name"`
 	Campaign string `json:"campaign"`
 	Status   string `json:"status"`
 	Type     string `json:"type"`
+	// TargetingSetting: see the type's doc. A pointer with omitempty so its absence is
+	// the pre-#462 payload exactly.
+	TargetingSetting *targetingSetting `json:"targetingSetting,omitempty"`
 }
 
 // CreateDisplayCampaign creates a PAUSED Display campaign: images → budget → campaign →
-// campaign-level geo → campaign-level criteria → ad group → ad-group exclusions → image
-// assets → ad.
+// campaign-level geo → campaign-level criteria → ad group → ad-group exclusions →
+// ad-group audience criteria → campaign-level placement exclusions → campaign-level
+// audience exclusions (#475) → image assets → ad.
 //
-// Seven mutating steps (eight with ad-group exclusions) behind a fetch phase, which makes
-// this the union of the two hardest halves in the package: campaign-level criteria like
-// Search, Performance Max and Video, an ad group with an ad under it like Search, Demand
-// Gen and Video, AND a pre-budget network phase like Demand Gen and Performance Max. Video
-// had the first two and no fetch, because a YouTube video is referenced by id; a
-// responsive display ad is built from image BYTES, so this channel pays the fetch cost
-// those two do.
+// With DisplayAdGroups (#475) the ad group, its income/parental exclusions, its audience
+// criteria and its own user-list exclusions repeat per group before the campaign-level
+// exclusions, and the image assets and ad repeat per group after them. Every criteria
+// step runs before any ad, as it did with one group.
+//
+// Up to eleven mutating steps for one group (plus the conversion goal every channel may
+// apply) behind a fetch phase, which makes this the union of the two hardest halves in
+// the package: campaign-level criteria like Search, Performance Max and Video, an ad
+// group with an ad under it like Search, Demand Gen and Video, AND a pre-budget network
+// phase like Demand Gen and Performance Max. Video had the first two and no fetch,
+// because a YouTube video is referenced by id; a responsive display ad is built from
+// image BYTES, so this channel pays the fetch cost those two do.
 //
 // NOT LIVE-VERIFIED, on the same terms as Video: the only Google account reachable from
 // here is a production LF account and a validateOnly mutate is still a POST to it. What
 // that leaves open is named rather than hedged — the field shapes below are read off
 // Google's published v23 resources, and the one thing a code reading cannot settle is
 // the BIDDING SET, recorded at displayBiddingStrategies with the check that closes it.
-// #473's ad-group income-range and parental-status exclusion shapes were accepted by
-// validateOnly probes on 2026-11-03; the bidding set was not probed.
+// #473's ad-group income-range and parental-status exclusion shapes, and #462's audience
+// and placement criterion shapes and the ad group's targetingSetting, were since settled
+// by validateOnly probes on 2026-11-03 (see display_targeting.go); the bidding set was
+// not.
 //
 // The partial-result contract is the siblings', unchanged: past the campaign create
 // every failure returns the error ALONGSIDE a non-nil *CampaignResult carrying what
@@ -129,7 +149,8 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 	// validators give, extended over the one check that genuinely needs the network.
 	// Nothing has been created yet, so this returns (nil, err) like the preflight above
 	// and unlike every step after it.
-	images, err := c.fetchDisplayImages(ctx, pf.display)
+	// Every ad group's images in one walk (#475); see fetchDisplayGroupImages.
+	groupImages, err := c.fetchDisplayGroupImages(ctx, pf.displayGroups)
 	if err != nil {
 		return nil, err // pre-create: nothing was sent
 	}
@@ -275,7 +296,8 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 
 	// Step 4: the remaining campaign criteria — all five kinds, as on Search and Video.
 	// See validateCriteriaPlan for why this channel takes the un-narrowed set where
-	// Demand Gen takes only languages (on its ad group) and Performance Max takes half.
+	// Demand Gen splits it across two levels and refuses demographics, and Performance Max
+	// takes half.
 	if !pf.criteria.empty() {
 		critIDs, critErr := c.createCampaignTargetingCriteria(ctx, campaignResource, campaignID, pf.criteria)
 		res.TargetingCriterionIDs = critIDs
@@ -290,78 +312,217 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 		return res, fmt.Errorf("google-ads display creation aborted after campaign %s created (context done before ad group create): %w", campaignID, ctxErr)
 	}
 
-	// Step 5: the ad group, typed DISPLAY_STANDARD so the ad below is a shape it
-	// accepts. ENABLED, as on Demand Gen and Video — Search is the only channel here
-	// that pauses its ad group, and the campaign is PAUSED regardless, so nothing
-	// serves either way.
-	adGroupName := displayAdGroupName(in)
-	adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: displayAdGroupCreate{
-		Name:     adGroupName,
-		Campaign: campaignResource,
-		Status:   "ENABLED",
-		Type:     adGroupTypeDisplayStandard,
-	}}}}
+	// Once per ad group (#475): the ad group, its income/parental exclusions, its audience
+	// criteria and its user-list exclusions. pf.displayGroups holds ONE group when the
+	// caller named none, built from the campaign-level fields, and for that group every
+	// request, step line and result field is what this cascade produced before the list
+	// existed.
+	//
+	// With a list, each group gets an AdGroups entry appended BEFORE its mutate, as on the
+	// Search cascade, so a failure on group k returns groups 1..k-1 and what exists of k; the
+	// scalar ad group fields stay the FIRST group's. The ads come in a second pass below, so
+	// that every criteria step — the campaign-level exclusions included — still runs before
+	// the first ad, the only step that makes the campaign servable.
+	multi := len(in.DisplayAdGroups) > 0
+	adGroupResources := make([]string, len(pf.displayGroups))
+	adGroupIDs := make([]string, len(pf.displayGroups))
 	// The deterministic ad-group NAME goes on every failure arm below, as on the Demand
 	// Gen, Video and Search paths: a partial without it tells a reconciler an ad group
 	// may exist but not what to look for.
-	res.AdGroupName = adGroupName
-	adGroupResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), adGroupReq, false)
-	if err != nil {
-		// Classified exactly as every other mutate in this package: a duplicate name
-		// and an ambiguous transport failure both mean the ad group MAY exist, so
-		// neither may be reported as a clean failure — a flat "failed" invites a
-		// duplicate.
-		switch {
-		case isDuplicateAdGroupNameErr(err):
-			return res, fmt.Errorf("google-ads display ad group %q already exists (DUPLICATE_ADGROUP_NAME) — a prior attempt likely created it; verify in Google Ads before retrying (campaign %s created): %w", adGroupName, campaignID, err)
-		case createOutcomeAmbiguous(err):
-			return res, fmt.Errorf("google-ads display ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying; campaign %s created): %w", adGroupName, campaignID, err)
-		default:
-			return res, fmt.Errorf("google-ads display ad group creation failed (campaign %s created): %w", campaignID, err)
+	res.AdGroupName = pf.displayGroups[0].name
+	for k, g := range pf.displayGroups {
+		if k > 0 {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return res, fmt.Errorf("google-ads display creation aborted after %d of %d ad group(s) were created (campaign %s; context done before ad group %q): %w", k, len(pf.displayGroups), campaignID, g.name, ctxErr)
+			}
 		}
-	}
-	adGroupResource, adGroupID, err := firstResourceName(adGroupResp)
-	if err != nil {
-		return res, fmt.Errorf("google-ads display ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying; campaign %s created): %w", adGroupName, campaignID, err)
-	}
-	// firstResourceName only extracts a trailing id; it does not check resource kind or
-	// account. Without this, a malformed or wrong-account 2xx would be accepted as
-	// confirmed and its id persisted as AdGroupID.
-	if verr := c.validateResourceKind("adGroups", adGroupResource, true); verr != nil {
-		return res, fmt.Errorf("google-ads display ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying; campaign %s created): %w", adGroupName, campaignID, verr)
-	}
-	res.AdGroupID = adGroupID
-	steps = append(steps, fmt.Sprintf("Ad group created: %s (%s)", adGroupID, adGroupTypeDisplayStandard))
-	res.Steps = steps
+		tag := displayGroupStep(multi, g.name)
+		var entry *AdGroupResult
+		if multi {
+			res.AdGroups = append(res.AdGroups, AdGroupResult{Name: g.name})
+			entry = &res.AdGroups[len(res.AdGroups)-1]
+		}
 
-	// The income-range and parental-status exclusions (#473) go on the ad group, the level
-	// the validateOnly probes verified for Display, and before the images and the ad so a
-	// failure has as little built on it as possible. Same partial-result contract.
-	if !pf.adGroupDemographics.empty() {
-		ids, exErr := c.createAdGroupTargeting(ctx, adGroupResource, adGroupID, adGroupCriteriaSet{demographics: pf.adGroupDemographics})
-		if exErr != nil {
-			return res, exErr
+		// The ad group, typed DISPLAY_STANDARD so the ad below is a shape it
+		// accepts. ENABLED, as on Demand Gen and Video — Search is the only channel here
+		// that pauses its ad group, and the campaign is PAUSED regardless, so nothing
+		// serves either way.
+		adGroupName := g.name
+		adGroupCreateVal := displayAdGroupCreate{
+			Name:     adGroupName,
+			Campaign: campaignResource,
+			Status:   "ENABLED",
+			Type:     adGroupTypeDisplayStandard,
 		}
-		res.AdGroupDemographicCriteriaIDs = ids.demographics
-		steps = append(steps, fmt.Sprintf("Ad group exclusions applied: %d criteria (%s)", len(ids.demographics), adGroupDemographicStep(pf.adGroupDemographics)))
+		// Audience criteria are attached as TARGETING (#462), which this setting declares;
+		// without audience input it stays absent. Per group: each group with audiences
+		// carries it, as the 2026-11-03 validateOnly probe of two groups did. See
+		// displayAdGroupCreate.
+		if g.targeting.audienceCount() > 0 {
+			adGroupCreateVal.TargetingSetting = displayAudienceTargetingSetting()
+		}
+		adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: adGroupCreateVal}}}
+		adGroupResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), adGroupReq, false)
+		if err != nil {
+			// Classified exactly as every other mutate in this package: a duplicate name
+			// and an ambiguous transport failure both mean the ad group MAY exist, so
+			// neither may be reported as a clean failure — a flat "failed" invites a
+			// duplicate.
+			switch {
+			case isDuplicateAdGroupNameErr(err):
+				return res, fmt.Errorf("google-ads display ad group %q already exists (DUPLICATE_ADGROUP_NAME) — a prior attempt likely created it; verify in Google Ads before retrying (campaign %s created): %w", adGroupName, campaignID, err)
+			case createOutcomeAmbiguous(err):
+				return res, fmt.Errorf("google-ads display ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying; campaign %s created): %w", adGroupName, campaignID, err)
+			default:
+				return res, fmt.Errorf("google-ads display ad group creation failed (campaign %s created): %w", campaignID, err)
+			}
+		}
+		adGroupResource, adGroupID, err := firstResourceName(adGroupResp)
+		if err != nil {
+			return res, fmt.Errorf("google-ads display ad group creation UNCONFIRMED (%q may "+
+				"exist — verify in Google Ads before retrying; campaign %s created): %w",
+				adGroupName, campaignID, err)
+		}
+		// firstResourceName only extracts a trailing id; it does not check resource kind or
+		// account. Without this, a malformed or wrong-account 2xx would be accepted as
+		// confirmed and its id persisted as AdGroupID.
+		if verr := c.validateResourceKind("adGroups", adGroupResource, true); verr != nil {
+			return res, fmt.Errorf("google-ads display ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying; campaign %s created): %w", adGroupName, campaignID, verr)
+		}
+		adGroupResources[k], adGroupIDs[k] = adGroupResource, adGroupID
+		if k == 0 {
+			res.AdGroupID = adGroupID
+		}
+		if entry != nil {
+			entry.ID = adGroupID
+		}
+		steps = append(steps, fmt.Sprintf("Ad group created: %s (%s)", adGroupID, adGroupTypeDisplayStandard)+tag)
+		res.Steps = steps
+
+		// The income-range and parental-status exclusions (#473) go on every ad group, the
+		// level the validateOnly probes verified for Display, and before the audiences and
+		// the ad so a failure has as little built on it as possible. Same partial-result
+		// contract.
+		if !pf.adGroupDemographics.empty() {
+			ids, exErr := c.createAdGroupTargeting(ctx, adGroupResource, adGroupID,
+				adGroupCriteriaSet{demographics: pf.adGroupDemographics})
+			if k == 0 {
+				res.AdGroupDemographicCriteriaIDs = ids.demographics
+			}
+			if entry != nil {
+				entry.DemographicCriteriaIDs = ids.demographics
+			}
+			if exErr != nil {
+				return res, exErr
+			}
+			steps = append(steps, fmt.Sprintf("Ad group exclusions applied: %d criteria (%s)",
+				len(ids.demographics), adGroupDemographicStep(pf.adGroupDemographics))+tag)
+			res.Steps = steps
+		}
+
+		// The audience segments, on the ad group they need (#462) — user lists,
+		// custom audiences, custom affinities and user interests in one atomic mutate.
+		// TARGETING, not Search's observation: see createDisplayAudienceCriteria and
+		// displayAdGroupCreate.
+		if g.targeting.audienceCount() > 0 {
+			audienceIDs, audErr := c.createDisplayAudienceCriteria(ctx, adGroupResource, adGroupID, g.targeting)
+			if k == 0 {
+				res.AudienceCriteriaIDs = audienceIDs
+			}
+			if entry != nil {
+				entry.AudienceCriteriaIDs = audienceIDs
+			}
+			if audErr != nil {
+				return res, audErr
+			}
+			steps = append(steps, fmt.Sprintf("Audience targeting applied: %d ad group criteria (%s) — attached as targeting (AUDIENCE bidOnly false), not observation; optimized targeting is left at Google's default and may widen reach", len(audienceIDs), displayAudienceStep(g.targeting))+tag)
+			res.Steps = steps
+		}
+
+		// This group's own user-list exclusions (#475), only on a named group — the
+		// single group's exclusions are campaign-level, below.
+		if len(g.targeting.excludedUserLists) > 0 {
+			exclIDs, exclErr := c.createAdGroupAudienceExclusions(ctx, adGroupResource, adGroupID, g.targeting.excludedUserLists)
+			if entry != nil {
+				entry.ExcludedAudienceCriteriaIDs = exclIDs
+			}
+			if exclErr != nil {
+				return res, exclErr
+			}
+			steps = append(steps, fmt.Sprintf("Audience exclusions applied: %d ad group negative user list criteria", len(exclIDs))+tag)
+			res.Steps = steps
+		}
+	}
+
+	// The placement exclusions, at the CAMPAIGN level so they cover every ad group
+	// — one atomic campaignCriteria:mutate of negative placement criteria (#462).
+	if len(pf.displayTargeting.excludedPlacements) > 0 {
+		placementIDs, plErr := c.createCampaignPlacementExclusions(ctx, campaignResource, campaignID, pf.displayTargeting.excludedPlacements)
+		res.ExcludedPlacementCriteriaIDs = placementIDs
+		if plErr != nil {
+			return res, plErr
+		}
+		steps = append(steps, fmt.Sprintf("Placement exclusions applied: %d campaign negative placement criteria", len(placementIDs)))
 		res.Steps = steps
 	}
 
-	// The image assets, then the ad that references them — two mutates,
-	// because Google has no call that does both. The asset ids are carried on the
-	// result even when the ad half failed, so an operator can find assets created with
-	// nothing referencing them.
-	if pf.display.present {
-		assetIDs, adID, adErr := c.createDisplayAd(ctx, adGroupResource, adGroupID, pf.finalURL, pf.display, images)
-		res.CreativeAssetIDs = assetIDs
+	// The campaign-level user-list exclusions (#475), covering every ad group — one
+	// atomic campaignCriteria:mutate of negative user-list criteria.
+	if len(pf.displayTargeting.excludedUserLists) > 0 {
+		exclIDs, exclErr := c.createCampaignAudienceExclusions(ctx, campaignResource, campaignID, pf.displayTargeting.excludedUserLists)
+		res.ExcludedAudienceCriteriaIDs = exclIDs
+		if exclErr != nil {
+			return res, exclErr
+		}
+		steps = append(steps, fmt.Sprintf("Audience exclusions applied: %d campaign negative user list criteria", len(exclIDs)))
+		res.Steps = steps
+	}
+
+	// Once per ad group: the image assets, then the ad that references
+	// them — two mutates, because Google has no call that does both. The asset ids are
+	// carried on the result even when the ad half failed, so an operator can find assets
+	// created with nothing referencing them.
+	for k, g := range pf.displayGroups {
+		if !g.creative.present {
+			continue
+		}
+		if k > 0 {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return res, fmt.Errorf("google-ads display creation aborted after the ads of %d of %d ad group(s) were created (campaign %s; context done before the ad of ad group %q): %w", k, len(pf.displayGroups), campaignID, g.name, ctxErr)
+			}
+		}
+		assetIDs, adID, adErr := c.createDisplayAd(ctx, adGroupResources[k], adGroupIDs[k], pf.finalURL, g.creative, groupImages[k])
+		if k == 0 {
+			res.CreativeAssetIDs = assetIDs
+		}
+		if multi {
+			res.AdGroups[k].CreativeAssetIDs = assetIDs
+		}
 		if adErr != nil {
+			// Every ad group exists before this pass starts, so a stop on group k leaves
+			// groups k+1..n created with NO ad. adGroups lists them with their ids and no
+			// adIds; the error names them too, so the caller need not infer it.
+			if later := pf.displayGroups[k+1:]; multi && len(later) > 0 {
+				return res, fmt.Errorf("google-ads display ad pass stopped at ad group %q; "+
+					"the later ad group(s) %s were created and have NO ad: %w",
+					g.name, displayGroupNames(later), adErr)
+			}
 			return res, adErr
 		}
-		res.AdID = adID
-		steps = append(steps, fmt.Sprintf("Display ad created: %s (PAUSED, %s)", adID, displayCreativeStep(pf.display)))
+		if k == 0 {
+			res.AdID = adID
+		}
+		if multi {
+			res.AdGroups[k].AdIDs = []string{adID}
+		}
+		steps = append(steps, fmt.Sprintf("Display ad created: %s (PAUSED, %s)", adID, displayCreativeStep(g.creative))+displayGroupStep(multi, g.name))
 		res.Steps = steps
 	}
 
+	// The closing step reads the FIRST group's fields, and that is true for every group
+	// (#475): geo is campaign-level, every named group must carry a creative, and the pass
+	// above returns on the first failure — so reaching here with an ad means every group
+	// got its ad.
 	steps = append(steps, displayClosingStep(len(res.GeoCriterionIDs) > 0, res.AdID != ""))
 	res.Steps = steps
 	return res, nil
@@ -376,10 +537,10 @@ func displayClosingStep(hasGeo, hasAd bool) string {
 	case hasGeo && hasAd:
 		return "Display campaign created — review the ad and launch in the Google Ads UI"
 	case hasAd:
-		return "Display campaign created (no geo targeting set) — add targeting, then review the ad and launch in the Google Ads UI"
+		return "Display campaign created (no geo targeting set) — add geo targeting, then review the ad and launch in the Google Ads UI"
 	case hasGeo:
 		return "Display campaign created with NO AD — it cannot serve until one is added; add a responsive display ad in the Google Ads UI"
 	default:
-		return "Display campaign created with NO AD (no geo targeting set) — it cannot serve until one is added; add targeting and a responsive display ad in the Google Ads UI"
+		return "Display campaign created with NO AD (no geo targeting set) — it cannot serve until one is added; add geo targeting and a responsive display ad in the Google Ads UI"
 	}
 }

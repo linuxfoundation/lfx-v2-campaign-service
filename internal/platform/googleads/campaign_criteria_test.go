@@ -155,18 +155,33 @@ func TestValidateAdSchedules_RejectsMalformedIntervals(t *testing.T) {
 	}
 }
 
-// 0 is the -100% opt-out and is NOT the same as "no modifier": both must be
-// accepted, and they must stay distinguishable all the way to the wire.
-func TestValidateAdSchedules_ZeroBidModifierIsNotUnset(t *testing.T) {
-	_, mods, err := validateAdSchedules([]AdSchedule{
+// An ad schedule has no 0 opt-out: Google's CampaignCriterion contract admits only
+// 0.1..10.0 for a schedule bid modifier and reserves 0 for a device exclusion, so a 0
+// here would fail the criteria mutate after the budget exists. It is refused, naming
+// the interval and the escape; an UNSET modifier is still "no adjustment" and stays nil.
+func TestValidateAdSchedules_ZeroBidModifierIsRefusedNotUnset(t *testing.T) {
+	_, _, err := validateAdSchedules([]AdSchedule{
+		{DayOfWeek: "TUESDAY", StartHour: 9, EndHour: 17},
 		{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17, BidModifier: floatPtr(0)},
+	})
+	if err == nil {
+		t.Fatal("a 0 ad-schedule bid modifier must be refused")
+	}
+	for _, want := range []string{"ad schedule 1 bid modifier 0", "omit BidModifier to serve at the normal bid"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to contain %q", err, want)
+		}
+	}
+
+	_, mods, err := validateAdSchedules([]AdSchedule{
+		{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17, BidModifier: floatPtr(minBidModifier)},
 		{DayOfWeek: "TUESDAY", StartHour: 9, EndHour: 17},
 	})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("0.1 is the bottom of Google's schedule range and must be accepted, got %v", err)
 	}
-	if mods[0] == nil || *mods[0] != 0 {
-		t.Errorf("an explicit zero modifier must survive as 0, got %v", mods[0])
+	if mods[0] == nil || *mods[0] != minBidModifier {
+		t.Errorf("the 0.1 modifier must survive as 0.1, got %v", mods[0])
 	}
 	if mods[1] != nil {
 		t.Errorf("an unset modifier must stay nil, got %v", *mods[1])
@@ -190,11 +205,12 @@ func TestValidateAdSchedules_CapsTheList(t *testing.T) {
 // Device bid modifiers
 // ---------------------------------------------------------------------------
 
-// The accepted range is Google's own (0 to opt out, else 0.1..10.0), so both
+// The accepted range is Google's own for a DEVICE (0 to exclude it, else 0.1..10.0 —
+// unlike an ad schedule, which has no 0 opt-out), so both
 // boundaries must be INSIDE it — a guard that refuses its own boundary refuses a
 // create upstream would have taken.
 func TestValidateDeviceBidModifiers_AcceptsGooglesOwnRange(t *testing.T) {
-	devices, mods, err := validateDeviceBidModifiers([]DeviceBidModifier{
+	devices, mods, err := validateDeviceBidModifiers(campaignKindSearch, []DeviceBidModifier{
 		{Device: "mobile", BidModifier: minBidModifier},
 		{Device: "DESKTOP", BidModifier: maxBidModifier},
 		{Device: " tablet ", BidModifier: 0},
@@ -225,38 +241,27 @@ func TestValidateDeviceBidModifiers_RejectsBadInput(t *testing.T) {
 		// Two criteria for one device is a conflict Google rejects after the campaign
 		// exists, and the caller plainly meant one of the two values.
 		"duplicate device": {{Device: "MOBILE", BidModifier: 1.5}, {Device: "mobile", BidModifier: 2}},
-		// Google supports TV screens only on Display and Video campaigns. Search, Video
-		// and Display all reach this vocabulary (device criteria are refused on Demand
-		// Gen and Performance Max), and this client sends the device on none of them — a
-		// named gap on Video and Display, see deviceTypes. Accepting it would risk a
-		// rejected criteria mutate after the budget and campaign are committed.
+		// Google documents TV screens only on Display and Video campaigns. Search, Video
+		// and Display all reach this vocabulary, and this client sends the device on none
+		// of them — a named gap on Video and Display, see deviceTypes. Demand Gen is the
+		// one channel it is verified on (#474; see the Demand Gen test below).
 		"connected TV":            {{Device: "CONNECTED_TV", BidModifier: 1.5}},
 		"connected TV lowercased": {{Device: " connected_tv ", BidModifier: 1.5}},
 		// OTHER is a reporting bucket, not something a campaign bids on.
 		"other": {{Device: "OTHER", BidModifier: 1.5}},
 	}
 	for name, devices := range bad {
-		if _, _, err := validateDeviceBidModifiers(devices); err == nil {
+		if _, _, err := validateDeviceBidModifiers(campaignKindSearch, devices); err == nil {
 			t.Errorf("%s must be rejected", name)
 		}
 	}
 }
 
-// maxDeviceBidModifiers claims that a longer list "is necessarily a duplicate".
-// That claim holds only while the cap equals the size of the accepted vocabulary,
-// so it is asserted rather than left to whoever next edits either one — dropping a
-// device without dropping the cap would silently turn it back into a bare bound.
-func TestMaxDeviceBidModifiers_MatchesTheAcceptedVocabulary(t *testing.T) {
-	if maxDeviceBidModifiers != len(deviceTypes) {
-		t.Fatalf("maxDeviceBidModifiers = %d, but deviceTypes accepts %d devices — the cap must equal the vocabulary for the duplicate argument to hold", maxDeviceBidModifiers, len(deviceTypes))
-	}
-}
-
 // The over-refusal guard for the TV-screen removal: the three devices Google DOES
-// support on Search must all still be accepted in one list, and that list must be
-// exactly as long as the cap allows.
+// support on Search must all still be accepted in one list, and that list is exactly
+// as long as the cap (the vocabulary's size) allows.
 func TestValidateDeviceBidModifiers_EverySupportedDeviceFitsInOneList(t *testing.T) {
-	devices, _, err := validateDeviceBidModifiers([]DeviceBidModifier{
+	devices, _, err := validateDeviceBidModifiers(campaignKindSearch, []DeviceBidModifier{
 		{Device: "MOBILE", BidModifier: 1.2},
 		{Device: "DESKTOP", BidModifier: 0.9},
 		{Device: "TABLET", BidModifier: 1},
@@ -264,8 +269,39 @@ func TestValidateDeviceBidModifiers_EverySupportedDeviceFitsInOneList(t *testing
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(devices) != maxDeviceBidModifiers {
-		t.Fatalf("got %d devices, want %d — every supported device must fit in one list", len(devices), maxDeviceBidModifiers)
+	if len(devices) != len(deviceTypes) {
+		t.Fatalf("got %d devices, want %d — every supported device must fit in one list", len(devices), len(deviceTypes))
+	}
+}
+
+// Demand Gen's vocabulary adds CONNECTED_TV (#474): its exclusion was accepted by a
+// validateOnly probe on 2026-11-03. All four fit in one list there, and only there.
+func TestValidateDeviceBidModifiers_DemandGenTakesConnectedTV(t *testing.T) {
+	all := []DeviceBidModifier{
+		{Device: "MOBILE"}, {Device: "DESKTOP"}, {Device: "TABLET"}, {Device: " connected_tv "},
+	}
+	devices, _, err := validateDeviceBidModifiers(campaignKindDemandGen, all)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(devices) != 4 || devices[3].Type != "CONNECTED_TV" {
+		t.Fatalf("devices = %+v, want the four with CONNECTED_TV last", devices)
+	}
+	for _, kind := range []string{campaignKindSearch, campaignKindVideo, campaignKindDisplay} {
+		_, _, err := validateDeviceBidModifiers(kind, all[3:])
+		if err == nil || !strings.Contains(err.Error(), "CONNECTED_TV on Demand Gen only") {
+			t.Errorf("%s: CONNECTED_TV err = %v, want the Demand Gen-only refusal", kind, err)
+		}
+	}
+	// Out of Demand Gen's vocabulary, the refusal names the channel like every sibling's.
+	_, _, err = validateDeviceBidModifiers(campaignKindDemandGen, []DeviceBidModifier{{Device: "OTHER"}})
+	if err == nil || !strings.Contains(err.Error(), "TABLET, CONNECTED_TV on "+campaignKindDemandGen) {
+		t.Errorf("OTHER on Demand Gen err = %v, want the vocabulary named on the channel", err)
+	}
+	// A fifth entry is necessarily a duplicate, refused by the cap before the loop.
+	_, _, err = validateDeviceBidModifiers(campaignKindDemandGen, append(all, DeviceBidModifier{Device: "MOBILE"}))
+	if err == nil || !strings.Contains(err.Error(), "at most 4 device bid modifiers") {
+		t.Errorf("five devices err = %v, want the cap", err)
 	}
 }
 
@@ -319,31 +355,56 @@ func TestValidateExcludedGenders_NormalisesAndDedupes(t *testing.T) {
 // validateCriteriaPlan
 // ---------------------------------------------------------------------------
 
-// Demand Gen attaches its targeting at the ad group level, where this client has
-// verified only languages (#459). Each of the other four is refused on its own, so a
-// caller is told which one it was rather than being refused for a field it did not set.
-func TestValidateCriteriaPlan_RefusesAllButLanguagesOnDemandGen(t *testing.T) {
-	cases := map[string]func(in *CampaignInput){
-		"ad schedules": func(in *CampaignInput) {
-			in.AdSchedules = []AdSchedule{{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17}}
-		},
-		"device bid modifiers": func(in *CampaignInput) {
+// Demand Gen refuses what was not probed there (#474): demographics (Google refuses them on
+// the audience-grouped ad group), a schedule bid modifier and a non-zero device modifier.
+// Each on its own, so a caller is told which one it was, and each with the reason the
+// message must carry.
+func TestValidateCriteriaPlan_RefusesTheUnprobedShapesOnDemandGen(t *testing.T) {
+	modifier := 1.2
+	cases := map[string]struct {
+		mutate func(in *CampaignInput)
+		want   string
+	}{
+		"schedule bid modifier": {func(in *CampaignInput) {
+			in.AdSchedules = []AdSchedule{{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17, BidModifier: &modifier}}
+		}, "ad schedule 0 carries a bid modifier"},
+		"non-zero device modifier": {func(in *CampaignInput) {
 			in.DeviceBidModifiers = []DeviceBidModifier{{Device: "MOBILE", BidModifier: 1.2}}
-		},
-		"excluded age ranges": func(in *CampaignInput) { in.ExcludedAgeRanges = []string{"18-24"} },
-		"excluded genders":    func(in *CampaignInput) { in.ExcludedGenders = []string{"UNDETERMINED"} },
+		}, "verified only the device exclusion"},
+		"excluded age ranges": {func(in *CampaignInput) { in.ExcludedAgeRanges = []string{"18-24"} }, "inside the Audience that DemandGenAudience"},
+		"excluded genders":    {func(in *CampaignInput) { in.ExcludedGenders = []string{"UNDETERMINED"} }, "inside the Audience that DemandGenAudience"},
 	}
-	for name, mutate := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			in := sampleInput()
-			mutate(&in)
-			if _, err := validateCriteriaPlan(campaignKindDemandGen, in); err == nil {
-				t.Fatalf("%s must be refused on Demand Gen", name)
+			tc.mutate(&in)
+			_, err := validateCriteriaPlan(campaignKindDemandGen, in)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want a Demand Gen refusal containing %q", err, tc.want)
 			}
 			if _, err := validateCriteriaPlan(campaignKindSearch, in); err != nil {
 				t.Fatalf("the same input must be accepted on Search, got %v", err)
 			}
 		})
+	}
+}
+
+// What the probes accepted passes on Demand Gen (#474): an unmodified ad schedule and
+// device exclusions, CONNECTED_TV included. They resolve into the plan exactly as on
+// Search, for the cascade to send as campaign criteria.
+func TestValidateCriteriaPlan_AcceptsSchedulesAndDeviceExclusionsOnDemandGen(t *testing.T) {
+	in := sampleInput()
+	in.AdSchedules = []AdSchedule{{DayOfWeek: "monday", StartHour: 9, EndHour: 17}}
+	in.DeviceBidModifiers = []DeviceBidModifier{{Device: "CONNECTED_TV"}, {Device: "mobile"}}
+	plan, err := validateCriteriaPlan(campaignKindDemandGen, in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(plan.schedules) != 1 || plan.schedules[0].DayOfWeek != "MONDAY" || plan.scheduleMod[0] != nil {
+		t.Errorf("schedules = %+v mods = %v", plan.schedules, plan.scheduleMod)
+	}
+	if len(plan.devices) != 2 || plan.devices[0].Type != "CONNECTED_TV" || plan.devices[1].Type != "MOBILE" || plan.deviceMod[0] != 0 || plan.deviceMod[1] != 0 {
+		t.Errorf("devices = %+v mods = %v", plan.devices, plan.deviceMod)
 	}
 }
 

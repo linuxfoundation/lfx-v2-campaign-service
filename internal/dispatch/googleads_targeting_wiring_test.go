@@ -19,6 +19,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -43,6 +44,8 @@ type targetingCapture struct {
 	adGroupCriteria  [][]byte
 	assets           []byte
 	campaignAssets   []byte
+	googleAdsMutates [][]byte
+	sharedSets       [][]byte
 	sawBudget        bool
 }
 
@@ -146,6 +149,26 @@ func targetingServers(t *testing.T) ([]googleads.Option, *targetingCapture) {
 			out, err := campaignAssetResults(body)
 			if err != nil {
 				t.Errorf("decode campaignAssets request: %v", err)
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			_, _ = io.WriteString(w, out)
+		case strings.HasSuffix(r.URL.Path, "googleAds:mutate"):
+			// The Search campaign assets (#477): echo each temporary asset as a real one and
+			// each link under it, as Google does.
+			cap.add(&cap.googleAdsMutates, body)
+			out, err := searchAssetMutateResults(body)
+			if err != nil {
+				t.Errorf("decode googleAds:mutate request: %v", err)
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			_, _ = io.WriteString(w, out)
+		case strings.HasSuffix(r.URL.Path, "campaignSharedSets:mutate"):
+			cap.add(&cap.sharedSets, body)
+			out, err := campaignSharedSetResults(body)
+			if err != nil {
+				t.Errorf("decode campaignSharedSets request: %v", err)
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
@@ -609,20 +632,23 @@ func TestGoogleAds_WithoutTheNewFieldsTheCascadeIsUnchanged(t *testing.T) {
 	}
 }
 
-// The Search-only fields must be refused BEFORE the budget mutate on Demand Gen:
+// The fields Demand Gen cannot take must be refused BEFORE the budget mutate there:
 // discovering the channel cannot take them after the campaign exists leaves a paid
-// campaign behind. Each is listed separately because they are refused by three
+// campaign behind. Not all of them are Search-only any more (#474: Demand Gen takes an
+// unmodified ad schedule, device exclusions and sitelinks; Video and Display take
+// demographics), hence the name. Each is listed separately because they are refused by three
 // different validators, and a regression in one would be hidden by the others.
-func TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenBeforeAnyCreate(t *testing.T) {
+func TestGoogleAds_UnsupportedFieldsAreRefusedOnDemandGenBeforeAnyCreate(t *testing.T) {
 	cases := []struct {
 		name string
 		cfg  string
 	}{
 		{"proximity targets", `"proximityTargets":[{"latitude":37.7749,"longitude":-122.4194,"radius":25,"radiusUnit":"MILES"}]`},
-		{"ad schedules", `"adSchedules":[{"dayOfWeek":"MONDAY","startHour":9,"startMinute":0,"endHour":17,"endMinute":0}]`},
+		// Demand Gen takes ad schedules and sitelinks (#474), but only an unmodified
+		// schedule was verified there, so a schedule bid modifier is still refused.
+		{"ad schedule bid modifier", `"adSchedules":[{"dayOfWeek":"MONDAY","startHour":9,"startMinute":0,"endHour":17,"endMinute":0,"bidModifier":1.2}]`},
 		{"device bid modifiers", `"deviceBidModifiers":[{"device":"MOBILE","bidModifier":1.2}]`},
 		{"excluded age ranges", `"excludedAgeRanges":["18-24"]`},
-		{"sitelinks", `"sitelinks":[{"text":"Register","finalUrl":"https://events.example/kc/register"}]`},
 		{"callouts", `"callouts":["Free workshops"]`},
 		{"ad groups", `"adGroups":[{"name":"Training"}]`},
 		// Validated on BOTH channels but attached only by CreateCampaign's cascade:
@@ -699,8 +725,9 @@ func TestGoogleAdsMappers_EmptyInputStaysNil(t *testing.T) {
 }
 
 // The bid-modifier pointer must be carried, not copied through a value: an absent
-// modifier and an explicit 0 mean opposite things (no adjustment vs the -100%
-// opt-out), and a value-typed hop would collapse them.
+// modifier means "no adjustment" and an explicit 0 is a value the client REFUSES on
+// an ad schedule (Google has no 0 opt-out there), and a value-typed hop would collapse
+// them — either failing every unadjusted interval or hiding the caller's 0.
 func TestGoogleAdsAdSchedules_CarriesTheBidModifierPointer(t *testing.T) {
 	zero := 0.0
 	out := googleAdsAdSchedules([]googleAdsAdScheduleConfig{
@@ -718,7 +745,7 @@ func TestGoogleAdsAdSchedules_CarriesTheBidModifierPointer(t *testing.T) {
 	}
 }
 
-// The Search-only refusals must hold on the ADOPTION path too, which is the half the
+// The Demand Gen refusals must hold on the ADOPTION path too, which is the half the
 // per-field table above cannot reach: adoption returns before any create runs, so a
 // request that CreateDemandGenCampaign would refuse is never handed to it.
 //
@@ -731,16 +758,17 @@ func TestGoogleAdsAdSchedules_CarriesTheBidModifierPointer(t *testing.T) {
 //
 // The server fails on ANY request: the refusal must land before the adoption lookup,
 // not merely before a create, so there is nothing legitimate for it to serve.
-func TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenAdoptionToo(t *testing.T) {
+func TestGoogleAds_UnsupportedFieldsAreRefusedOnDemandGenAdoptionToo(t *testing.T) {
 	cases := []struct {
 		name string
 		cfg  string
 	}{
 		{"proximity targets", `"proximityTargets":[{"latitude":37.7749,"longitude":-122.4194,"radius":25,"radiusUnit":"MILES"}]`},
-		{"ad schedules", `"adSchedules":[{"dayOfWeek":"MONDAY","startHour":9,"startMinute":0,"endHour":17,"endMinute":0}]`},
+		// Demand Gen takes ad schedules and sitelinks (#474), but only an unmodified
+		// schedule was verified there, so a schedule bid modifier is still refused.
+		{"ad schedule bid modifier", `"adSchedules":[{"dayOfWeek":"MONDAY","startHour":9,"startMinute":0,"endHour":17,"endMinute":0,"bidModifier":1.2}]`},
 		{"device bid modifiers", `"deviceBidModifiers":[{"device":"MOBILE","bidModifier":1.2}]`},
 		{"excluded age ranges", `"excludedAgeRanges":["18-24"]`},
-		{"sitelinks", `"sitelinks":[{"text":"Register","finalUrl":"https://events.example/kc/register"}]`},
 		{"callouts", `"callouts":["Free workshops"]`},
 		{"ad groups", `"adGroups":[{"name":"Training"}]`},
 		{"negative keywords", `"negativeKeywords":[{"text":"free","matchType":"PHRASE"}]`},
@@ -830,7 +858,7 @@ func TestGoogleAdsClient_ValidateCampaignInputKindGatesOnTheKind(t *testing.T) {
 //
 // This is the SEARCH channel, where all of these fields are supported — so a
 // refusal here is about the value, not the channel, which is what separates this
-// table from TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenBeforeAnyCreate.
+// table from TestGoogleAds_UnsupportedFieldsAreRefusedOnDemandGenBeforeAnyCreate.
 // One case per validator: they fail independently, and a regression in one would
 // be invisible behind the others.
 func TestGoogleAds_BadTargetingConfigIsPreCreate(t *testing.T) {
@@ -1075,23 +1103,25 @@ func TestGoogleAds_DemandGenAudienceRefusalsArePreCreate(t *testing.T) {
 
 // With GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED anything but exactly "true", a create naming a
 // demandGenAudience is refused in Dispatch before the budget, even one the client would accept
-// (#468: the client's check is account-scoped only). The rest of Demand Gen is not gated:
+// (the client checks the account only). The rest of Demand Gen is not gated:
 // languages still reach the ad group with no Audience.
 func TestGoogleAds_DemandGenAudienceGate(t *testing.T) {
 	const valid = `"channel":"demand-gen","demandGenAudience":"customers/1234567890/audiences/4242"`
 	cases := []struct {
 		name, env, cfg string
 	}{
-		{"unset", "", valid},
+		{"unset", unsetEnv, valid},
+		{"empty", "", valid},
 		{"false", "false", valid},
 		{"wrong case", "TRUE", valid},
+		{"leading space", " true", valid},
 		{"one", "1", valid},
 		{"blank audience", "", `"channel":"demand-gen","demandGenAudience":"  "`},
 		{"off demand gen", "", `"demandGenAudience":"customers/1234567890/audiences/4242"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(constants.EnvGoogleAdsDemandGenAudienceEnabled, tc.env)
+			setGateEnv(t, constants.EnvGoogleAdsDemandGenAudienceEnabled, tc.env)
 			opts, cap := targetingServers(t)
 			d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 			cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,` + tc.cfg + `}}`)
@@ -1099,12 +1129,19 @@ func TestGoogleAds_DemandGenAudienceGate(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected the dispatch to be refused while the gate is off")
 			}
-			if !strings.Contains(err.Error(), constants.EnvGoogleAdsDemandGenAudienceEnabled) || !strings.Contains(err.Error(), "#468") {
-				t.Errorf("error = %v, want it to name the gate and #468", err)
+			if !strings.Contains(err.Error(), "demandGenAudience is disabled on this deployment") ||
+				!strings.Contains(err.Error(), "omit demandGenAudience; or ask an operator to set "+constants.EnvGoogleAdsDemandGenAudienceEnabled+` to "true"`) {
+				t.Errorf("error = %v, want it to name the gate and how to enable it", err)
 			}
 			var pce *preCreateError
 			if !errors.As(err, &pce) {
 				t.Errorf("error = %v, want a not-created error so the claim is released", err)
+			}
+			// The async job copies only a PreflightRefusal verbatim; anything else is the
+			// generic "platform campaign creation failed", which hides the fix.
+			got := service.DispatchFailureMessage(model.ProviderGoogleAds, err, true)
+			if got != err.Error() {
+				t.Errorf("job message = %q, want the gate's own sentence %q", got, err.Error())
 			}
 			if camp != nil {
 				t.Errorf("nothing may be created for a refused input, got %+v", camp)

@@ -22,6 +22,7 @@ package googleads
 // second one that Google would reject after the ad group exists.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -170,7 +171,7 @@ type displayCreativePlan struct {
 // adoption path refuses exactly what the create path refuses.
 //
 // What it cannot check is whether a URL actually serves a decodable image of the right
-// shape. That is fetchDisplayImages' job, and it still runs before the budget mutate.
+// shape. That is fetchDisplayGroupImages' job, and it still runs before the budget mutate.
 func validateDisplayCreative(kind string, in CampaignInput) (displayCreativePlan, error) {
 	d := in.DisplayCreative
 	if d.empty() {
@@ -265,19 +266,6 @@ func validateDisplayCreative(kind string, in CampaignInput) (displayCreativePlan
 	return plan, nil
 }
 
-// fetchDisplayImages downloads every image this creative references, in slot order.
-//
-// A one-line wrapper over the shared fetcher, exactly as fetchDemandGenImages is, and
-// kept for the same reason: the slot TABLE is the channel-specific part, and naming the
-// channel at the call site is what keeps the caller in display.go from having to know
-// which table belongs to it.
-func (c *Client) fetchDisplayImages(ctx context.Context, plan displayCreativePlan) ([]fetchedImage, error) {
-	if !plan.present {
-		return nil, nil
-	}
-	return c.fetchSlotImages(ctx, displayImageSlots, plan.urls, plan.resolved)
-}
-
 // ---------------------------------------------------------------------------
 // Creating the assets and the ad
 // ---------------------------------------------------------------------------
@@ -339,6 +327,7 @@ func (c *Client) createDisplayAd(ctx context.Context, adGroupResource, adGroupID
 	assetOps := make([]mutateOperation, 0, len(images))
 	for _, img := range images {
 		assetOps = append(assetOps, mutateOperation{Create: demandGenAssetCreate{
+			Name:       imageAssetName(img.data),
 			ImageAsset: imageAssetCreate{Data: base64Image(img.data)},
 		}})
 	}
@@ -369,6 +358,10 @@ func (c *Client) createDisplayAd(ctx context.Context, adGroupResource, adGroupID
 	// Positional: result i is the asset for images[i], which carries its slot.
 	perSlot := make([][]adImageAsset, len(displayImageSlots))
 	assetIDs = make([]string, 0, len(assetOps))
+	// An unusable entry does not stop the walk: every same-account id goes back with the
+	// error, which names the FIRST unusable index.
+	firstBad, badWhy := -1, ""
+	seen := newResultIDSet(len(assetResults.Results))
 	for i, r := range assetResults.Results {
 		resource := r.ResourceName
 		// assetID checks the kind, the account AND the numeric trailing id, returning ""
@@ -376,10 +369,34 @@ func (c *Client) createDisplayAd(ctx context.Context, adGroupResource, adGroupID
 		// referenced by the ad and persisted as this campaign's.
 		id := c.assetID(resource)
 		if id == "" {
-			return assetIDs, "", fmt.Errorf("google-ads display image asset creation UNCONFIRMED (ad group %s created; malformed asset resource name %q at index %d — assets may exist — verify in Google Ads before retrying)", adGroupID, resource, i)
+			if firstBad < 0 {
+				firstBad = i
+				badWhy = fmt.Sprintf("malformed asset resource name %q at index %d", resource, i)
+			}
+			continue
 		}
-		assetIDs = append(assetIDs, id)
+		// A repeat of the SAME image is Google returning the existing asset (result_ids.go):
+		// it is referenced in this slot too and its id reported once. Any other repeat is
+		// unusable, its operation unaccounted for.
+		first, dup := seen.reuse(id, i, func(j int) bool {
+			return bytes.Equal(images[j].data, images[i].data)
+		})
+		if dup != "" {
+			if firstBad < 0 {
+				firstBad, badWhy = i, dup
+			}
+			continue
+		}
+		if first {
+			assetIDs = append(assetIDs, id)
+		}
 		perSlot[images[i].slot] = append(perSlot[images[i].slot], adImageAsset{Asset: resource})
+	}
+	if firstBad >= 0 {
+		return uniqueIDs(assetIDs), "", fmt.Errorf(
+			"google-ads display image asset creation UNCONFIRMED (ad group %s "+
+				"created; %s — assets may exist — verify in Google Ads before retrying)",
+			adGroupID, badWhy)
 	}
 
 	ad := &responsiveDisplayAdInfo{
@@ -437,9 +454,10 @@ func displayCreativeStep(plan displayCreativePlan) string {
 		marketing, logos, len(plan.headlines), len(plan.descriptions))
 }
 
-// displayAdGroupName composes the single ad group this channel creates, mirroring
-// videoAdGroupName: one group per campaign, named off the event so an operator reading
-// the Google Ads UI sees which brief it came from.
+// displayAdGroupName composes this channel's ad group name, mirroring videoAdGroupName:
+// named off the event so an operator reading the Google Ads UI sees which brief it came
+// from. It is the single group's name, and the prefix every DisplayAdGroups entry's label
+// is appended to (#475).
 //
 // The suffix is " - Display Network", not " - Display": Demand Gen's ad group
 // (demandgen.go) has used the bare " - Display" since it was the Display channel, and

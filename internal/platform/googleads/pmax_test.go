@@ -975,9 +975,19 @@ func TestCreatePerformanceMaxCampaign_WrongAccountAssetIsUnconfirmed(t *testing.
 	if !strings.Contains(err.Error(), "UNCONFIRMED") {
 		t.Errorf("error = %q, want UNCONFIRMED", err)
 	}
-	// The ids parsed BEFORE the bad one are still reported: those assets exist.
-	if len(res.CreativeAssetIDs) != 2 {
-		t.Errorf("CreativeAssetIDs = %v, want the two ids parsed before the malformed one", res.CreativeAssetIDs)
+	// Every same-account id is reported, AFTER the bad one as well as before it (#481
+	// review): those assets exist. The error names the bad index.
+	var want []string
+	for i := 0; i < pmaxAssetCount; i++ {
+		if i != 2 {
+			want = append(want, "90"+string(rune('0'+i)))
+		}
+	}
+	if got := strings.Join(res.CreativeAssetIDs, ","); got != strings.Join(want, ",") {
+		t.Errorf("CreativeAssetIDs = %q, want every id but 902: %q", got, strings.Join(want, ","))
+	}
+	if !strings.Contains(err.Error(), "at index 2") {
+		t.Errorf("error = %q, want it to name index 2", err)
 	}
 }
 

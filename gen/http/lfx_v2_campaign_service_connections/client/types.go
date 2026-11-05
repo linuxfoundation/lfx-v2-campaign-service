@@ -6373,8 +6373,8 @@ type GoogleAdsGeoTargetSuggestionResponseBody struct {
 // types.
 type GoogleAdsUserListResponseBody struct {
 	// customers/{customerId}/userLists/{id}, in exactly the form
-	// googleAdsConfig.audienceSegments accepts (Search only). A list targets
-	// campaigns on its own customer.
+	// googleAdsConfig.audienceSegments accepts (Search and Display). A list
+	// targets campaigns on its own customer.
 	ResourceName *string `form:"resource_name,omitempty" json:"resource_name,omitempty" xml:"resource_name,omitempty"`
 	// The user list id
 	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
@@ -6394,8 +6394,9 @@ type GoogleAdsUserListResponseBody struct {
 	// Google's bucketed Search-network size, verbatim. Absent when Google sent
 	// none.
 	SizeRangeForSearch *string `form:"size_range_for_search,omitempty" json:"size_range_for_search,omitempty" xml:"size_range_for_search,omitempty"`
-	// Whether Google reports the list usable on Search. audienceSegments applies
-	// to Search campaigns, so an ineligible list will not serve there.
+	// Whether Google reports the list usable on Search. An ineligible list will
+	// not serve on a Search campaign; this read does not report Display
+	// eligibility.
 	EligibleForSearch *bool `form:"eligible_for_search,omitempty" json:"eligible_for_search,omitempty" xml:"eligible_for_search,omitempty"`
 }
 

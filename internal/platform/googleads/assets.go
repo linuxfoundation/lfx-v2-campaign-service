@@ -25,10 +25,21 @@ import (
 // to the campaign. So this is two mutates and they cannot be collapsed: the link
 // operation needs the asset resource names the first mutate returns.
 //
-// SEARCH ONLY, like the criteria in campaign_criteria.go. Demand Gen takes its
-// creative assets on the ad itself, not as campaign-level extensions, so the
-// whole set is refused on that channel at preflight. Lift it per asset type as
-// each is confirmed live.
+// Search takes every type here. Two other channels take a subset, each linked at the
+// campaign level exactly as on Search and each verified by a validateOnly probe on
+// 2026-11-03:
+//
+//   - Performance Max takes sitelinks, callouts and structured snippets (#461): a
+//     campaignAssets create carrying each of those three field types on a Performance
+//     Max campaign was accepted.
+//   - Demand Gen takes SITELINKS alone (#474): a sitelink asset plus a SITELINK
+//     campaignAsset was accepted.
+//
+// Both probes sent the assets and their links in one googleAds:mutate by temporary id;
+// this client sends the same create operations as the two mutates below, the Search
+// path's, unchanged. Every other type stays refused on those two channels at preflight,
+// and every other channel refuses the whole set. Lift each further pairing only as it is
+// confirmed live.
 // ---------------------------------------------------------------------------
 
 // Extension caps. Google permits up to 20 sitelinks and 20 callouts per
@@ -177,11 +188,29 @@ func validateAssetPlan(kind string, in CampaignInput) (assetPlan, error) {
 	if asked == 0 {
 		return assetPlan{}, nil
 	}
-	// Refused as a channel capability, not as a value judgement: Demand Gen does
-	// not take campaign-level extension assets, so sending them would fail
-	// upstream after the campaign exists.
-	if kind != campaignKindSearch {
-		return assetPlan{}, fmt.Errorf("google-ads ad extensions (sitelinks, callouts, structured snippets, call extensions, promotions, prices, lead forms) are supported on Search campaigns only, not on %s", kind)
+	// Refused as a channel capability, not as a value judgement: sending an extension a
+	// channel does not take would fail upstream after the campaign exists.
+	//
+	// Demand Gen takes sitelinks alone (#474). The probe sent the sitelink asset and its
+	// SITELINK campaignAsset in one googleAds:mutate by temporary id; this client sends
+	// the same two resources through createCampaignAssets' two mutates, as on Search.
+	// Callouts and snippets were not probed there, so they stay refused with the rest.
+	if kind == campaignKindDemandGen && asked > len(in.Sitelinks) {
+		return assetPlan{}, fmt.Errorf("google-ads ad extensions other than sitelinks (callouts, structured snippets, call extensions, promotions, prices, lead forms) are not supported on %s; omit them, or create a Search campaign for them", kind)
+	}
+	// Performance Max takes the three types verified on it (#461) and no others. The
+	// remaining four are refused rather than sent, because no probe has confirmed their
+	// campaign-level link on this channel and a refusal there would come after the
+	// campaign exists.
+	if kind == campaignKindPerformanceMax && len(in.CallExtensions)+len(in.Promotions)+len(in.Prices)+len(in.LeadForms) > 0 {
+		return assetPlan{}, fmt.Errorf("google-ads call extensions, promotions, prices and lead forms are supported on Search campaigns only, not on %s (it takes sitelinks, callouts and structured snippets); omit CallExtensions, Promotions, Prices and LeadForms, or create a Search campaign for them", kind)
+	}
+	if kind != campaignKindSearch && kind != campaignKindDemandGen &&
+		kind != campaignKindPerformanceMax {
+		return assetPlan{}, fmt.Errorf("google-ads ad extensions (sitelinks, callouts, "+
+			"structured snippets, call extensions, promotions, prices, lead forms) are "+
+			"supported on Search campaigns only (sitelinks, callouts and structured snippets "+
+			"also on Performance Max, and sitelinks on Demand Gen), not on %s", kind)
 	}
 
 	var plan assetPlan
@@ -471,10 +500,15 @@ func (c *Client) createCampaignAssets(ctx context.Context, campaignResource, cam
 
 	assetResources := make([]string, 0, len(assetOps))
 	ids := make([]string, 0, len(assetOps))
+	seen := newResultIDSet(len(assetResults.Results))
 	for i, r := range assetResults.Results {
 		id := c.assetID(r.ResourceName)
 		if id == "" {
 			return nil, nil, fmt.Errorf("google-ads ad extension assets UNCONFIRMED (campaign %s; malformed/wrong-kind/wrong-account asset resource name %q at index %d — verify in Google Ads before retrying)", campaignID, r.ResourceName, i)
+		}
+		if dup := seen.repeat(id, i); dup != "" {
+			return nil, nil, fmt.Errorf("google-ads ad extension assets UNCONFIRMED (campaign %s; "+
+				"%s — verify in Google Ads before retrying)", campaignID, dup)
 		}
 		// The resource name Google returned is what gets linked, never one
 		// rebuilt from the id: a rebuilt name would paper over exactly the
@@ -541,11 +575,26 @@ func (c *Client) createCampaignAssets(ctx context.Context, campaignResource, cam
 	return ids, linkIDs, nil
 }
 
-// parsedAssetIDs is every well-formed asset id in a mutate response, in order, skipping
-// any resource name assetID refuses. It exists for the arms that return an UNCONFIRMED
-// error over a response that nonetheless PARSED: the ids in it are the only handle an
-// operator has on account-level assets that may already exist, so the error carries them
-// rather than dropping them.
+// uniqueIDs returns ids in order with every repeat after the first dropped. The creative
+// paths' UNCONFIRMED arms record every asset id a parsed response carried, and a response
+// that names one asset twice must not record it twice.
+func uniqueIDs(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// parsedAssetIDs is every well-formed asset id in a mutate response, in order and once
+// each, skipping any resource name assetID refuses. It exists for the arms that return an
+// UNCONFIRMED error over a response that nonetheless PARSED: the ids in it are the only
+// handle an operator has on account-level assets that may already exist, so the error
+// carries them rather than dropping them.
 func (c *Client) parsedAssetIDs(resp mutateResponse) []string {
 	out := make([]string, 0, len(resp.Results))
 	for _, r := range resp.Results {
@@ -553,7 +602,24 @@ func (c *Client) parsedAssetIDs(resp mutateResponse) []string {
 			out = append(out, id)
 		}
 	}
-	return out
+	return uniqueIDs(out)
+}
+
+// parsedMutateAssetIDs is parsedAssetIDs for a googleAds:mutate response: every
+// assetResult whose resource name assetID accepts, in order. Any other result kind is
+// skipped, so an ad or link result is never recorded as an asset, and so is any asset
+// name in another account or of the wrong shape.
+func (c *Client) parsedMutateAssetIDs(resp googleAdsMutateResponse) []string {
+	out := make([]string, 0, len(resp.MutateOperationResponses))
+	for _, r := range resp.MutateOperationResponses {
+		if r.AssetResult == nil {
+			continue
+		}
+		if id := c.assetID(r.AssetResult.ResourceName); id != "" {
+			out = append(out, id)
+		}
+	}
+	return uniqueIDs(out)
 }
 
 // assetID applies to an Asset resource name the same four checks

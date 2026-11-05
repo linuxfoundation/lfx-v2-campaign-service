@@ -177,28 +177,29 @@ func TestFetchSlotImages_ResolvedImageStillFailsGeometry(t *testing.T) {
 // a large set slow, so a total that only counted fetches would let an all-asset creative hold
 // hundreds of megabytes resident — the allocation this cap exists to prevent.
 func TestFetchSlotImages_ResolvedBytesCountIntoTheCreativeTotal(t *testing.T) {
-	// ONE image, referenced under many keys. The bytes are incompressible noise so the
-	// encoded PNG is genuinely large, and sharing the slice keeps the test's own memory
-	// to a single image while the running total sees every reference.
+	// ONE image, under many keys. The bytes are incompressible noise so the encoded PNG is
+	// genuinely large. Each key gets its own tagged copy, because identical bytes twice in one
+	// slot are refused on their own (refuseRepeatedSlotImage); the copies share one length.
 	img := noisePNG(t, 1200, 628)
-	if len(img) > MaxImageBytes {
-		t.Fatalf("fixture is wrong: %d bytes exceeds the per-image cap of %d", len(img), MaxImageBytes)
+	size := len(taggedImage(img, 0))
+	if size > MaxImageBytes {
+		t.Fatalf("fixture is wrong: %d bytes exceeds the per-image cap of %d", size, MaxImageBytes)
 	}
-	over := maxCreativeTotalImageBytes/len(img) + 1
+	over := maxCreativeTotalImageBytes/size + 1
 
 	refs := make([]string, 0, over)
 	resolved := make(map[string][]byte, over)
 	for i := range over {
 		ref := resolvedRef(fmt.Sprintf("33333333-3333-4333-8333-%012d", i))
 		refs = append(refs, ref)
-		resolved[ref] = img
+		resolved[ref] = taggedImage(img, i)
 	}
 
 	c := imageFetchTestClient(t)
 	_, err := c.fetchSlotImages(context.Background(), demandGenImageSlots[:1], [][]string{refs}, resolved)
 	if err == nil {
 		t.Fatalf("%d resolved images of %d bytes total more than the %d byte cap and must be refused",
-			over, len(img), maxCreativeTotalImageBytes)
+			over, size, maxCreativeTotalImageBytes)
 	}
 	if !strings.Contains(err.Error(), "across all slots") {
 		t.Errorf("expected the creative-wide total refusal, got: %v", err)

@@ -240,11 +240,58 @@ openssl rand -base64 32
   opts a deployment IN to `googleAdsConfig.demandGenAudience`, one
   existing Google Ads Audience on a Demand Gen ad group (#459). Only the
   exact value `true` enables it; anything else fails closed, and a create
-  naming one is refused before the budget. Off by default because the
-  Audience is checked against the Google Ads account only, not the
-  calling foundation, and the LF account is shared by every foundation
-  (#468). The rest of Demand Gen is not gated. The chart sets it to
-  `"false"`.
+  naming one is refused before the budget. It is a per-deployment opt-in:
+  the Audience is checked against the connected Google Ads account (same
+  customer id), which is the boundary. Per-foundation ownership (#468) was
+  closed as won't do, because campaign managers are the LF marketing team,
+  who manage every foundation. The same flag gates each
+  `demandGenAdGroups[].audience` (#460), the same input on a named ad
+  group: off, a create naming any is refused before the budget. The rest of Demand Gen, including ad groups without
+  an audience, is not gated. The chart sets it to `"false"`
+  (`app.environment.GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED.value`); enable
+  both per-environment by setting it to `"true"` in the ArgoCD overlay.
+- `GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` (default unset, i.e. OFF) —
+  opts a deployment IN to the Display audience lists that name an
+  account-owned segment (#462): `googleAdsConfig.audienceSegments` on the
+  `display` channel, `customAudiences` and `customAffinities`, and since
+  #475 the user-list exclusions `excludedAudienceSegments` and, on each
+  `displayAdGroups` entry, its `audienceSegments`, `customAudiences`,
+  `customAffinities` and `excludedAudienceSegments`. Only the exact value
+  `true` enables them; anything else fails closed, and a create naming
+  one is refused before the budget, naming the fields to omit. Like
+  `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED`, it is a per-deployment opt-in
+  and each segment is checked against the connected Google Ads account.
+  `userInterests` (Google's own categories, at either level),
+  `excludedPlacements` (public domains), Search's observation-only
+  `audienceSegments` and `displayAdGroups` entries without those lists
+  are not gated. The chart sets it to `"false"`
+  (`app.environment.GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED.value`); enable
+  it per-environment by setting it to `"true"` in the ArgoCD overlay.
+- `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` (default unset, i.e. OFF) —
+  opts a deployment IN to `googleAdsConfig.performanceMaxAudienceSignal`,
+  one existing Google Ads Audience attached to a Performance Max asset
+  group as a signal (#461). Only the exact value `true` enables it;
+  anything else fails closed, and a create naming one is refused before
+  the budget. Like `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED`, it is a
+  per-deployment opt-in and the Audience is checked against the connected
+  Google Ads account. `performanceMaxSearchThemes` (free text) and the Performance Max
+  sitelinks, callouts and structured snippets are not gated. The chart
+  sets it to `"false"`
+  (`app.environment.GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED.value`); enable
+  it per-environment by setting it to `"true"` in the ArgoCD overlay.
+- `GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED` (default unset, i.e. OFF) —
+  opts a deployment IN to `googleAdsConfig.sharedNegativeKeywordLists`,
+  existing shared negative keyword lists attached to a Search campaign
+  (#477). Only the exact value `true` enables it; anything else fails
+  closed, and a create naming one, on any channel, is refused before the
+  budget. Like `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED`, it is a
+  per-deployment opt-in and each shared list is checked against the
+  connected Google Ads account. `searchAssets` (the
+  caller's own images, logo and business name) is not gated. The chart
+  sets it to `"false"`
+  (`app.environment.GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED.value`);
+  enable it per-environment by setting it to `"true"` in the ArgoCD
+  overlay.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code
