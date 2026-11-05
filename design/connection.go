@@ -31,9 +31,8 @@ import (
 // gateway checks the same token, so this is not the happy path working twice — the
 // gateway's guarantee stops at the cluster boundary, and these claims become the
 // created_by / updated_by of records that say who authorized paid ad spend. See
-// internal/infrastructure/auth. Authorization on the campaign_manager relation (or, for the
-// ROOT-only conversion-action list, #458, on the ROOT project) is still enforced at the
-// gateway, not here.
+// internal/infrastructure/auth. Authorization on the campaign_manager relation (global_marketing_ops
+// for the Google conversion-action list) is still enforced at the gateway, not here.
 var JWTAuth = JWTSecurity("jwt", func() {
 	Description("JWT issued by Heimdall; audience is this service.")
 })

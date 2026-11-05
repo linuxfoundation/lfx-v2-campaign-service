@@ -20,4 +20,4 @@ Endpoint summary (per provider `{provider}` ∈ `google-ads`, `linkedin-ads`,
 | POST   | `/projects/{projectId}/connection-{provider}/test` | Verify credential upstream |
 | POST   | `/projects/{projectId}/connection-{provider}/set-credential` | Replace stored credential |
 
-All routes require the Heimdall JWT and are gated on `campaign_manager` at the gateway.
+All routes require the Heimdall JWT and are gated on `campaign_manager` at the gateway, except the later Google conversion-action list, gated on `global_marketing_ops` (#486).

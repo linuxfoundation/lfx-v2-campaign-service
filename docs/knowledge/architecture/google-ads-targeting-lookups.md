@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Google Ads Targeting Lookups"
-description: "Three read-only pickers for the Google Ads create form: a geo target constant search (SuggestGeoTargetConstants, by name or postal code, returning the numeric id geoTargets accepts, readable through the LF system credential because it is public reference data), a user-list read (GAQL on user_list, returning the resource name audienceSegments accepts, own connection only, and refused with 409 on a shared-tenancy platform such as Google Ads because the read is account-wide and no user list is recorded per project), and a conversion-action read (GAQL on conversion_action, ENABLED only, resolved as a create resolves; it lists every foundation's actions on the shared customer, so the gateway admits only ROOT writer_guard or ROOT global_marketing_ops holders, not a project campaign_manager)."
+description: "Three read-only pickers for the Google Ads create form: a geo target constant search (SuggestGeoTargetConstants, by name or postal code, returning the numeric id geoTargets accepts, readable through the LF system credential because it is public reference data), a user-list read (GAQL on user_list, returning the resource name audienceSegments accepts, own connection only, and refused with 409 on a shared-tenancy platform such as Google Ads because the read is account-wide and no user list is recorded per project), and a conversion-action read (GAQL on conversion_action, ENABLED only, resolved as a create resolves; it lists every foundation's actions on the shared customer, so the gateway admits only global_marketing_ops, the LF marketing team, not campaign_manager, which also includes foundation executive directors)."
 resource: "internal/service/google_ads_lookups.go"
 ---
 
@@ -85,26 +85,24 @@ create form offer them in a picker instead of making an operator type them (self
   account id is checked for digits only before any request: 400 on the project's own row, and
   500 on the LF system row it fell back to (`ErrSystemConnectionNotUsable`), which only an
   operator can fix.
-- **ROOT principals only, enforced at the gateway.** Unlike user lists, this read is NOT refused
-  on a shared-tenancy platform. Google Ads is one customer shared by every foundation, so the
-  answer holds every foundation's conversion action names, and the read exists for
-  cross-foundation (LF admin) callers. It is therefore ruled by its own Heimdall rule,
-  `root-campaign-admin:get`, not `project-api`: one `openfga_or_check` admits `writer_guard` OR
-  `global_marketing_ops` on the ROOT project — the same two checks as lfx-self-serve's
-  `isRootCampaignPrincipal`. The ROOT project's UID is the chart value
-  `openfga.rootProjectUid`, set per environment in lfx-v2-argocd. It is not resolved at the
-  gateway because project-service's HTTP slug-to-uid lookup refuses the slug `ROOT`
-  (lfx-self-serve resolves it over NATS instead). Until an environment sets the value, the rule
-  is `deny_all` there, so the route answers 403 to everyone; a non-UUID value fails the render.
-  A `campaign_manager` of the path's project is not admitted, and `{project_id}` only selects
-  whose connection supplies the credential. GET only. With OpenFGA disabled (local dev) the rule
-  is `allow_all`, as `project-api` does. User lists have no such gate, which is why that read
-  refuses the shared account instead.
+- **A `global_marketing_ops` read, not a `campaign_manager` one.** Unlike user lists, this
+  read is NOT refused on a shared-tenancy platform. Google Ads is one customer shared by every
+  foundation, so the answer holds every foundation's conversion action names, and
+  `{project_id}` only selects whose connection supplies the credential. `campaign_manager`
+  includes the project's `executive_director`, a foundation-scoped role, so the gateway admits
+  only `global_marketing_ops` of the project: the LF marketing team, granted on every project
+  (#486). It was
+  first ruled by a ROOT-only Heimdall rule (`root-campaign-admin:get`, keyed on a chart value
+  `openfga.rootProjectUid` that no environment ever set, so it answered 403 to everyone); that
+  rule and the value were removed and the path moved into its own `marketing-ops-api` rule.
+  GET only. User lists
+  are still refused on the shared account.
 
 ## Shared
 
-- Authorization: the gateway's `campaign_manager` check on `project:{projectId}`
-  (`ruleset.yaml`) for geo targets and user lists, the ROOT check above for conversion actions;
+- Authorization: the gateway's check on `project:{projectId}` (`ruleset.yaml`):
+  `campaign_manager` for the geo and user-list reads, `global_marketing_ops` for the
+  conversion-action read;
   JWT verified in the service, the reserved `system:linuxfoundation` scope
   refused with 404 (`rejectSystemScope`).
 - Errors: `classifyDiscoveryError` arms under each read's own operation noun, plus

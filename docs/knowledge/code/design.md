@@ -32,9 +32,8 @@ with optimistic concurrency via ETag/If-Match (`428` when missing, `412` on
 mismatch). PATCH takes a dedicated `AudienceUpdateInput` (all fields optional, no
 immutable `platform`) rather than the create-time `AudienceInput` (where `platform`
 is required) — so a status-only or suppression-only patch is valid without resending
-the immutable platform. Every method is gated on `campaign_manager` at the gateway (except
-the ROOT-only conversion-action list, #458) via
-`JWTAuth`, which can reject any request with an `Unauthorized` (401, carrying a
+the immutable platform. Every method is gated on `campaign_manager` at the gateway (except the Google
+conversion-action list, gated on `global_marketing_ops`) via `JWTAuth`, which can reject any request with an `Unauthorized` (401, carrying a
 `WWW-Authenticate: Bearer` challenge) — so every brief, audience **and connection** method
 declares `Unauthorized`, and still declares `BadRequest` for payload/path validation,
 regardless of whether it accepts a body. The 401 arrived with LFXV2-3057; before it a

@@ -139,10 +139,9 @@ func (d *GoogleAdsDispatcher) ListUserLists(ctx context.Context, projectID strin
 //
 // TENANCY: this deliberately does NOT follow ListUserLists. Google Ads is ONE customer shared
 // by every foundation (docs/architecture.md, "Account Tenancy"), so this read returns every
-// foundation's conversion action names. That is acceptable only because the gateway admits
-// no one but a cross-foundation (ROOT) principal to the route: the root-campaign-admin rule in
-// ruleset.yaml, not the project campaign_manager check. Orchestrator.ReadConversionActions
-// says the same.
+// foundation's conversion action names. The gateway therefore admits only global_marketing_ops
+// of the project (the LF marketing team) to this route, not campaign_manager, which also admits
+// a foundation's executive_director (#486). Orchestrator.ReadConversionActions says the same.
 //
 // called reports whether Google was contacted: false for every local refusal before the search
 // (no connection, an unusable one, a stored account id that is not digits only).

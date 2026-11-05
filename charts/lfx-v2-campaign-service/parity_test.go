@@ -83,21 +83,20 @@ func extractRouteRegex(t *testing.T, httproute string) *regexp.Regexp {
 // projectAPIRuleID is the Heimdall rule id whose paths must be in parity with the
 // route regex. Scoping extraction to THIS rule (not "any /projects/ path anywhere")
 // is the security point: the invariant is specifically that each forwarded path is
-// gated on campaign_manager for project:{projectId} — except the one path the
-// root-campaign-admin rule gates on the ROOT project (rootAdminRuleID). A path moved into
-// an allow_all, deny_all, or differently-scoped rule must FAIL parity, not silently
-// satisfy it.
+// gated on campaign_manager for project:{projectId}. A path moved into an allow_all,
+// deny_all, or differently-scoped rule must FAIL parity, not silently satisfy it.
 const projectAPIRuleID = "rule:lfx:lfx-v2-campaign-service:project-api"
 
-// rootAdminRuleID is the one other rule whose paths count toward parity: it gates the
-// cross-foundation Google Ads conversion-action list (#458) on the ROOT project instead of
-// on campaign_manager of the path's project. assertRootAdminAuthz pins its authorizer, and
-// TestConversionActionsIsRuledOnlyByTheRootAdminRule pins that it holds exactly that path and
-// that project-api does not.
-const rootAdminRuleID = "rule:lfx:lfx-v2-campaign-service:root-campaign-admin:get"
+// marketingOpsRuleID is the second FGA-gated rule: the same project-scoped check as
+// project-api, on relation global_marketing_ops instead of campaign_manager. It holds the
+// reads that list data of every foundation on the shared LF Google Ads customer, which a
+// project's executive_director (part of campaign_manager) must not see (#486).
+const marketingOpsRuleID = "rule:lfx:lfx-v2-campaign-service:marketing-ops-api"
 
-// rootAdminPath is the single path the root-campaign-admin rule rules.
-const rootAdminPath = "/projects/:projectId/google-ads/conversion-actions"
+// conversionActionsPath is the Google conversion-action list (#458). It lists every
+// foundation's actions on the shared customer, so it is ruled by marketing-ops-api only, and
+// TestConversionActionsIsAMarketingOpsRead pins that.
+const conversionActionsPath = "/projects/:projectId/google-ads/conversion-actions"
 
 // ruleBlock isolates one rendered Heimdall rule (from its `- id: "<id>"` line up to
 // the next `- id:` or EOF) so path/authorizer extraction is scoped to a SINGLE rule.
@@ -125,15 +124,15 @@ func ruleBlock(t *testing.T, ruleset, ruleID string) string {
 	return strings.Join(lines[start:end], "\n")
 }
 
-// extractRulePatterns pulls the Traefik path patterns out of ONLY the project-api and
-// root-campaign-admin rule blocks. /campaigns, /_campaigns/, and the openapi passthrough
-// entries live in OTHER rules (a deny_all placeholder and an allow_all openapi rule) and the
-// route regex deliberately does not cover them, so scoping to these two rules both excludes
-// them and, crucially, ensures a path is counted as "authorized" only when it is under one of
-// the two FGA-gated rules — not any unrelated rule. Callers pin both rules' authorizers.
+// extractRulePatterns pulls the Traefik path patterns out of ONLY the two FGA-gated rule
+// blocks (project-api and marketing-ops-api). /campaigns, /_campaigns/, and the openapi passthrough entries live in OTHER rules (a
+// deny_all placeholder and an allow_all openapi rule) and the route regex deliberately does
+// not cover them, so scoping to this rule both excludes them and, crucially, ensures a path is
+// counted as "authorized" only when it is under the FGA-gated rule — not any unrelated rule.
+// Callers pin both rules' authorizers (assertFGARulesAuthz).
 func extractRulePatterns(t *testing.T, ruleset string) []string {
 	t.Helper()
-	return append(rulePatterns(t, ruleset, projectAPIRuleID), rulePatterns(t, ruleset, rootAdminRuleID)...)
+	return append(rulePatterns(t, ruleset, projectAPIRuleID), rulePatterns(t, ruleset, marketingOpsRuleID)...)
 }
 
 // rulePatterns pulls the /projects/ Traefik path patterns out of one rule block.
@@ -158,133 +157,41 @@ func rulePatterns(t *testing.T, ruleset, ruleID string) []string {
 	return pats
 }
 
-// testRootProjectUID is an obviously fake UUID for openfga.rootProjectUid.
-const testRootProjectUID = "11111111-2222-3333-4444-555555555555"
-
-// helmTemplateWith renders one template with --set overrides and returns the output and the
-// render error, so a test can assert that a value is refused.
-func helmTemplateWith(t *testing.T, showOnly string, sets ...string) (string, error) {
-	t.Helper()
-	if _, err := exec.LookPath("helm"); err != nil {
-		t.Skipf("helm not on PATH; skipping chart test: %v", err)
-	}
-	args := []string{"template", chartDir, "--show-only", showOnly}
-	for _, kv := range sets {
-		args = append(args, "--set", kv)
-	}
-	out, err := exec.Command("helm", args...).CombinedOutput()
-	return string(out), err
-}
-
-// assertRootAdminShape pins what the root-campaign-admin rule is whatever its authorizer: GET
-// only, exactly one authorizer, and nothing that would scope it to the path's project — no
-// campaign_manager, no :projectId capture, no slug resolver (project-service's HTTP lookup
-// refuses the slug "ROOT"), no campaign_manager-style openfga_check. Returns the rule block.
-func assertRootAdminShape(t *testing.T, ruleset string) string {
-	t.Helper()
-	block := ruleBlock(t, ruleset, rootAdminRuleID)
-	if got := strings.Count(block, "- authorizer:"); got != 1 {
-		t.Errorf("%s rule must have exactly one authorizer, got %d:\n%s", rootAdminRuleID, got, block)
-	}
-	for _, banned := range []string{"campaign_manager", "Captures.projectId", "project_slug_resolver_contextualizer", "authorizer: openfga_check"} {
-		if strings.Contains(block, banned) {
-			t.Errorf("%s rule must not contain %q:\n%s", rootAdminRuleID, banned, block)
-		}
-	}
-	m, r := strings.Index(block, "methods:"), strings.Index(block, "routes:")
-	if m < 0 || r < 0 || r < m {
-		t.Fatalf("%s rule must carry match.methods before match.routes:\n%s", rootAdminRuleID, block)
-	}
-	if methods := block[m:r]; strings.Count(methods, "- ") != 1 || !strings.Contains(methods, "- GET") {
-		t.Errorf("%s rule must match GET only:\n%s", rootAdminRuleID, methods)
-	}
-	return block
-}
-
-// assertRootAdminAuthz is the check the parity tests run on the default render, where
-// openfga.rootProjectUid is empty: the rule exists with its fixed shape and fails closed.
-func assertRootAdminAuthz(t *testing.T, ruleset string) {
-	t.Helper()
-	block := assertRootAdminShape(t, ruleset)
-	if !strings.Contains(block, "- authorizer: deny_all") {
-		t.Errorf("%s rule must be deny_all while openfga.rootProjectUid is empty:\n%s", rootAdminRuleID, block)
-	}
-}
-
-// TestRootAdminRuleEnforcesRootPrincipal: with openfga.rootProjectUid set, the rule admits only
-// `writer_guard` OR `global_marketing_ops` on that project (lfx-self-serve's
-// isRootCampaignPrincipal), in one openfga_or_check naming the uid in both objects. These are
-// assertions on the rendered values; what Heimdall does with them is lfx-v2-helm's
-// openfga_or_check definition, which this test cannot exercise.
-func TestRootAdminRuleEnforcesRootPrincipal(t *testing.T) {
-	ruleset, err := helmTemplateWith(t, "templates/ruleset.yaml", "openfga.rootProjectUid="+testRootProjectUID)
-	if err != nil {
-		t.Fatalf("render with a valid rootProjectUid failed: %v\n%s", err, ruleset)
-	}
-	block := assertRootAdminShape(t, ruleset)
-	const object = `"project:` + testRootProjectUID + `"`
-	for _, want := range []string{
-		"- authorizer: openfga_or_check",
-		"relation: writer_guard",
-		"object: " + object,
-		"or_relation: global_marketing_ops",
-		"or_object: " + object,
-	} {
-		if !strings.Contains(block, want) {
-			t.Errorf("%s rule is missing %q:\n%s", rootAdminRuleID, want, block)
-		}
-	}
-}
-
-// TestRootAdminRuleDeniesWhenRootUidUnset: an environment that has not set
-// openfga.rootProjectUid renders, and the conversion-action route alone is deny_all.
-func TestRootAdminRuleDeniesWhenRootUidUnset(t *testing.T) {
-	ruleset, err := helmTemplateWith(t, "templates/ruleset.yaml", "openfga.rootProjectUid=")
-	if err != nil {
-		t.Fatalf("an empty rootProjectUid must not fail the render: %v\n%s", err, ruleset)
-	}
-	assertRootAdminAuthz(t, ruleset)
-}
-
-// TestRootAdminRuleRefusesAMalformedRootUid: a non-empty value that is not a UUID fails the
-// render rather than writing an object no tuple can match.
-func TestRootAdminRuleRefusesAMalformedRootUid(t *testing.T) {
-	out, err := helmTemplateWith(t, "templates/ruleset.yaml", "openfga.rootProjectUid=ROOT")
-	if err == nil {
-		t.Fatalf("a non-UUID rootProjectUid rendered:\n%s", out)
-	}
-	if !strings.Contains(out, "openfga.rootProjectUid must be the ROOT project's UUID") {
-		t.Errorf("render failed for another reason: %s", out)
-	}
-}
-
-// TestRootAdminRuleIsAllowAllWithOpenFGADisabled: local dev without OpenFGA is allow_all, as
-// project-api is, even with a uid set.
-func TestRootAdminRuleIsAllowAllWithOpenFGADisabled(t *testing.T) {
-	ruleset, err := helmTemplateWith(t, "templates/ruleset.yaml", "openfga.enabled=false", "openfga.rootProjectUid="+testRootProjectUID)
-	if err != nil {
-		t.Fatalf("render failed: %v\n%s", err, ruleset)
-	}
-	if block := assertRootAdminShape(t, ruleset); !strings.Contains(block, "- authorizer: allow_all") {
-		t.Errorf("%s rule must be allow_all with OpenFGA disabled:\n%s", rootAdminRuleID, block)
-	}
-}
-
-// TestConversionActionsIsRuledOnlyByTheRootAdminRule pins WHERE the conversion-action list is
-// ruled (#458). It lists every foundation's conversion actions, so a project-api entry for it
-// would let any campaign_manager read it: project-api must not match it, the
-// root-campaign-admin rule must hold exactly that one path, and the route must forward it.
-func TestConversionActionsIsRuledOnlyByTheRootAdminRule(t *testing.T) {
+// TestConversionActionsIsAMarketingOpsRead pins WHERE the conversion-action list is ruled
+// (#458, #486): marketing-ops-api holds exactly the path, on GET only; project-api (the
+// campaign_manager rule) does not; no other rule matches it; and the route forwards it. The LF
+// customer is shared, so the list names every foundation's actions, and campaign_manager
+// includes each project's executive_director (lfx-v2-helm model.fga). global_marketing_ops is
+// the LF marketing team alone, granted on every project, so no rule needs the ROOT project.
+func TestConversionActionsIsAMarketingOpsRead(t *testing.T) {
 	ruleset := helmTemplate(t, "templates/ruleset.yaml")
 	routeRe := extractRouteRegex(t, helmTemplate(t, "templates/httproute.yaml"))
 	const path = "/projects/p1/google-ads/conversion-actions"
 
-	if got := rulePatterns(t, ruleset, rootAdminRuleID); len(got) != 1 || got[0] != rootAdminPath {
-		t.Errorf("%s rule patterns = %v, want exactly [%s]", rootAdminRuleID, got, rootAdminPath)
+	assertMarketingOpsAuthz(t, ruleset)
+	if got := rulePatterns(t, ruleset, marketingOpsRuleID); len(got) != 1 || got[0] != conversionActionsPath {
+		t.Errorf("%s rule must hold exactly %s, got %v", marketingOpsRuleID, conversionActionsPath, got)
 	}
 	for _, p := range rulePatterns(t, ruleset, projectAPIRuleID) {
 		if ruleMatcher(t, p).MatchString(path) {
-			t.Errorf("%s pattern %q matches %s; it must be ruled by %s only", projectAPIRuleID, p, path, rootAdminRuleID)
+			t.Errorf("%s rule pattern %s matches %s; a campaign_manager (executive_director included) must not reach it", projectAPIRuleID, p, path)
+		}
+	}
+	if n := strings.Count(ruleset, conversionActionsPath); n != 1 {
+		t.Errorf("%s appears %d times in the rendered RuleSet, want once (marketing-ops-api only)", conversionActionsPath, n)
+	}
+	block := ruleBlock(t, ruleset, marketingOpsRuleID)
+	m, r := strings.Index(block, "methods:"), strings.Index(block, "routes:")
+	if m < 0 || r < m {
+		t.Fatalf("%s rule must carry match.methods before match.routes:\n%s", marketingOpsRuleID, block)
+	}
+	methods := block[m:r]
+	if strings.Count(methods, "- ") != 1 || !strings.Contains(methods, "- GET") {
+		t.Errorf("%s rule must match GET only:\n%s", marketingOpsRuleID, methods)
+	}
+	for _, banned := range []string{"root-campaign-admin", "writer_guard", "rootProjectUid"} {
+		if strings.Contains(ruleset, banned) {
+			t.Errorf("the rendered RuleSet still contains %q; no route is ROOT-only", banned)
 		}
 	}
 	if !routeRe.MatchString(path) {
@@ -292,8 +199,8 @@ func TestConversionActionsIsRuledOnlyByTheRootAdminRule(t *testing.T) {
 	}
 }
 
-// assertProjectAPIAuthz verifies the project-api rule actually enforces the claimed
-// security invariant: an openfga_check authorizer with relation campaign_manager on
+// assertRuleAuthz verifies an FGA-gated rule actually enforces the claimed
+// security invariant: an openfga_check authorizer with the given relation on
 // object project:{projectId}. Without this, the path-parity checks could pass on a
 // rule that was silently downgraded to allow_all/deny_all or re-scoped to a different
 // relation/object — the exact regression the parity test exists to catch.
@@ -313,18 +220,21 @@ func TestConversionActionsIsRuledOnlyByTheRootAdminRule(t *testing.T) {
 // migration-000003 rows) would then fall through both slug-branch guards and reach no
 // openfga_check at all, an authz bypass that the slug-only assertions above would not
 // catch.
-func assertProjectAPIAuthz(t *testing.T, ruleset string) {
+func assertRuleAuthz(t *testing.T, ruleset, ruleID, relation string) {
 	t.Helper()
-	block := ruleBlock(t, ruleset, projectAPIRuleID)
+	block := ruleBlock(t, ruleset, ruleID)
 	if got := strings.Count(block, "authorizer: openfga_check"); got != 2 {
-		t.Errorf("%s rule must have exactly 2 openfga_check authorizers (one per UUID/slug branch), got %d:\n%s", projectAPIRuleID, got, block)
+		t.Errorf("%s rule must have exactly 2 openfga_check authorizers (one per UUID/slug branch), got %d:\n%s", ruleID, got, block)
 	}
-	if got := strings.Count(block, "relation: campaign_manager"); got != 2 {
-		t.Errorf("%s rule must gate both branches on relation campaign_manager, got %d occurrences:\n%s", projectAPIRuleID, got, block)
+	if got := strings.Count(block, "relation: "+relation+"\n"); got != 2 {
+		t.Errorf("%s rule must gate both branches on relation %s, got %d occurrences:\n%s", ruleID, relation, got, block)
+	}
+	if got := strings.Count(block, "relation: "); got != 2 {
+		t.Errorf("%s rule must name exactly 2 relations (both %s), got %d:\n%s", ruleID, relation, got, block)
 	}
 	// The contextualizer must be present to resolve the project slug to a UID.
 	if !strings.Contains(block, "contextualizer: project_slug_resolver_contextualizer") {
-		t.Errorf("%s rule must include project_slug_resolver_contextualizer to resolve project slug to UID:\n%s", projectAPIRuleID, block)
+		t.Errorf("%s rule must include project_slug_resolver_contextualizer to resolve project slug to UID:\n%s", ruleID, block)
 	}
 
 	// Pin PAIRING, not just presence: an inverted-branch edit (resolved-UID object
@@ -334,7 +244,7 @@ func assertProjectAPIAuthz(t *testing.T, ruleset string) {
 	// openfga_check ENTRY must carry its own matching guard+object pair.
 	entries := openfgaCheckEntries(t, block)
 	if len(entries) != 2 {
-		t.Fatalf("%s rule must have exactly 2 openfga_check entries to pin, got %d:\n%s", projectAPIRuleID, len(entries), block)
+		t.Fatalf("%s rule must have exactly 2 openfga_check entries to pin, got %d:\n%s", ruleID, len(entries), block)
 	}
 	var sawSlugBranch, sawUUIDBranch bool
 	for _, e := range entries {
@@ -346,28 +256,28 @@ func assertProjectAPIAuthz(t *testing.T, ruleset string) {
 		case negative:
 			sawSlugBranch = true
 			if !resolvedObject {
-				t.Errorf("%s rule's negative-guard (slug branch) openfga_check must scope object to the resolved .Outputs.project_slug_resolver_contextualizer.uid, not the raw capture:\n%s", projectAPIRuleID, e)
+				t.Errorf("%s rule's negative-guard (slug branch) openfga_check must scope object to the resolved .Outputs.project_slug_resolver_contextualizer.uid, not the raw capture:\n%s", ruleID, e)
 			}
 			if rawObject {
-				t.Errorf("%s rule's negative-guard (slug branch) openfga_check must NOT use the raw Captures.projectId object (that belongs to the UUID branch):\n%s", projectAPIRuleID, e)
+				t.Errorf("%s rule's negative-guard (slug branch) openfga_check must NOT use the raw Captures.projectId object (that belongs to the UUID branch):\n%s", ruleID, e)
 			}
 		case positive:
 			sawUUIDBranch = true
 			if !rawObject {
-				t.Errorf("%s rule's positive-guard (UUID branch) openfga_check must scope object to the raw project:{{- .Request.URL.Captures.projectId -}} capture, not the resolver's Outputs:\n%s", projectAPIRuleID, e)
+				t.Errorf("%s rule's positive-guard (UUID branch) openfga_check must scope object to the raw project:{{- .Request.URL.Captures.projectId -}} capture, not the resolver's Outputs:\n%s", ruleID, e)
 			}
 			if resolvedObject {
-				t.Errorf("%s rule's positive-guard (UUID branch) openfga_check must NOT reference the resolver's Outputs (undocumented/unsafe when the contextualizer is skipped):\n%s", projectAPIRuleID, e)
+				t.Errorf("%s rule's positive-guard (UUID branch) openfga_check must NOT reference the resolver's Outputs (undocumented/unsafe when the contextualizer is skipped):\n%s", ruleID, e)
 			}
 		default:
-			t.Errorf("%s rule's openfga_check entry must have an if: guard that is either the negative (slug) or positive (UUID) Captures.projectId match:\n%s", projectAPIRuleID, e)
+			t.Errorf("%s rule's openfga_check entry must have an if: guard that is either the negative (slug) or positive (UUID) Captures.projectId match:\n%s", ruleID, e)
 		}
 	}
 	if !sawSlugBranch {
-		t.Errorf("%s rule must have a negative if: guard (slug branch) on Captures.projectId:\n%s", projectAPIRuleID, block)
+		t.Errorf("%s rule must have a negative if: guard (slug branch) on Captures.projectId:\n%s", ruleID, block)
 	}
 	if !sawUUIDBranch {
-		t.Errorf("%s rule must have a positive if: guard (UUID branch) on Captures.projectId:\n%s", projectAPIRuleID, block)
+		t.Errorf("%s rule must have a positive if: guard (UUID branch) on Captures.projectId:\n%s", ruleID, block)
 	}
 
 	// The resolver contextualizer itself must carry the negative (slug) guard — a
@@ -376,8 +286,28 @@ func assertProjectAPIAuthz(t *testing.T, ruleset string) {
 	// resolution for an actual slug (empty Outputs feeding the slug-branch object).
 	if !strings.Contains(block, `contextualizer: project_slug_resolver_contextualizer`) ||
 		!strings.Contains(block, "contextualizer: project_slug_resolver_contextualizer\n          if: '!Request.URL.Captures.projectId.matches(") {
-		t.Errorf("%s rule's project_slug_resolver_contextualizer must carry the negative (slug) if: guard on Captures.projectId:\n%s", projectAPIRuleID, block)
+		t.Errorf("%s rule's project_slug_resolver_contextualizer must carry the negative (slug) if: guard on Captures.projectId:\n%s", ruleID, block)
 	}
+}
+
+// assertProjectAPIAuthz pins project-api: campaign_manager on project:{projectId}.
+func assertProjectAPIAuthz(t *testing.T, ruleset string) {
+	t.Helper()
+	assertRuleAuthz(t, ruleset, projectAPIRuleID, "campaign_manager")
+}
+
+// assertMarketingOpsAuthz pins marketing-ops-api: global_marketing_ops on
+// project:{projectId}, with the same slug/UUID branches as project-api.
+func assertMarketingOpsAuthz(t *testing.T, ruleset string) {
+	t.Helper()
+	assertRuleAuthz(t, ruleset, marketingOpsRuleID, "global_marketing_ops")
+}
+
+// assertFGARulesAuthz pins both FGA-gated rules, the ones extractRulePatterns reads.
+func assertFGARulesAuthz(t *testing.T, ruleset string) {
+	t.Helper()
+	assertProjectAPIAuthz(t, ruleset)
+	assertMarketingOpsAuthz(t, ruleset)
 }
 
 // openfgaCheckEntries splits a rule block into its individual `- authorizer:
@@ -481,8 +411,7 @@ func TestRouteRuleSetParity(t *testing.T) {
 	// The paths are only meaningfully "authorized" if the project-api rule still gates
 	// on campaign_manager for the correct object per branch (resolved UID for slug,
 	// raw capture for UUID); assert that before trusting parity.
-	assertProjectAPIAuthz(t, ruleset)
-	assertRootAdminAuthz(t, ruleset)
+	assertFGARulesAuthz(t, ruleset)
 	rulePats := extractRulePatterns(t, ruleset)
 	ruleMatchers := make([]*regexp.Regexp, 0, len(rulePats))
 	for _, p := range rulePats {
@@ -620,9 +549,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/google-ads/campaign-ref", true},
 		{"/projects/p1/google-ads/geo-targets", true},
 		{"/projects/p1/google-ads/user-lists", true},
-		// The conversion-action picker (#458) is ruled at the base path only (by the
-		// root-campaign-admin rule), and only for google-ads: no other provider serves it,
-		// and it is not a connection sub-path.
+		// The conversion-action picker (#458) is ruled at the base path only, and only for
+		// google-ads: no other provider serves it, and it is not a connection sub-path.
 		{"/projects/p1/google-ads/conversion-actions", true},
 		{"/projects/p1/google-ads/conversion-actions/x", false},
 		{"/projects/p1/microsoft-ads/conversion-actions", false},
@@ -853,8 +781,7 @@ func TestRouteRuleSetParityWitnesses(t *testing.T) {
 	routeValue := extractRouteRegexRaw(t, helmTemplate(t, "templates/httproute.yaml"))
 	routeRe := regexp.MustCompile(routeValue)
 	ruleset := helmTemplate(t, "templates/ruleset.yaml")
-	assertProjectAPIAuthz(t, ruleset)
-	assertRootAdminAuthz(t, ruleset)
+	assertFGARulesAuthz(t, ruleset)
 	rulePats := extractRulePatterns(t, ruleset)
 	ruleMatchers := make([]*regexp.Regexp, 0, len(rulePats))
 	for _, p := range rulePats {

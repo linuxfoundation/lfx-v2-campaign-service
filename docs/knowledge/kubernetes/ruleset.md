@@ -70,36 +70,25 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    scoped to `project:{uid}` where `{uid}` is resolved from the URL-captured
    `:projectId` slug (see "Slug-to-UID resolution" below). A single rule covers
    all families because they share the identical authorization. The one exception is
-   `google-ads/conversion-actions`, which is NOT here (next rule).
-4. **`root-campaign-admin:get`** (#458) — GET only, on exactly
-   `/projects/:projectId/google-ads/conversion-actions`. That read lists every foundation's
-   conversion actions on the shared Google Ads customer, so a project `campaign_manager` must
-   not reach it. One `openfga_or_check` admits `writer_guard` OR `global_marketing_ops` on the
-   ROOT project — the two checks of lfx-self-serve's `isRootCampaignPrincipal`. `writer_guard`
-   rather than `writer` because the platform model says endpoints guard on the `_guard`
-   relation. The ROOT project's UID is the chart value `openfga.rootProjectUid` (default `""`),
-   set per environment in lfx-v2-argocd: `project_slug_resolver_contextualizer` cannot supply
-   it, because project-service's HTTP slug-to-uid lookup refuses the slug `ROOT` (its slug
-   pattern is lower-case) and the resolver would fail every request. With the value EMPTY the
-   rule renders `deny_all` for this route only (fail closed, no render failure, so an
-   environment that has not set it still syncs); a non-empty non-UUID value fails the render.
-   The `:projectId` capture is not used for authorization (a ROOT principal is cross-foundation
-   by definition); it still selects the credential in the service. `oidc` +
-   `anonymous_authenticator` as in `project-api`; `allow_all` with OpenFGA disabled, as
-   `project-api` does. `TestRootAdminRuleEnforcesRootPrincipal`,
-   `TestRootAdminRuleDeniesWhenRootUidUnset`, `TestRootAdminRuleRefusesAMalformedRootUid` and
-   `TestRootAdminRuleIsAllowAllWithOpenFGADisabled` pin the rendered values, and
-   `TestConversionActionsIsRuledOnlyByTheRootAdminRule` pins that this rule holds exactly
-   that path and `project-api` matches it nowhere.
+   `google-ads/conversion-actions`, ruled by `marketing-ops-api` below.
+4. **`marketing-ops-api`** — `GET /projects/:projectId/google-ads/conversion-actions` (#458)
+   only. It lists every foundation's conversion actions on the shared Google Ads customer, and
+   `campaign_manager` includes the project's `executive_director`, a foundation-scoped role
+   (lfx-v2-helm `model.fga`). So it runs the same slug/UUID branches as `project-api`, on
+   relation `global_marketing_ops`: the LF marketing team, granted on every project, so no ROOT
+   project id is needed (#486). It was first ruled by a ROOT-only `root-campaign-admin:get` rule
+   keyed on a chart value (`openfga.rootProjectUid`) that no environment set, so it answered 403
+   to everyone; that rule and the value are gone. `TestConversionActionsIsAMarketingOpsRead`
+   pins the path to this rule alone, GET only, with no ROOT check anywhere.
 5. **`campaigns-placeholder:deny`** — the reserved `/campaigns`, `/campaigns/*`,
    and every other `/_campaigns/*` path (not openapi, not the signed asset route) are routed through Heimdall but are not
    real endpoints yet, so they **fail closed** with `deny_all`.
 
 ## Authenticator pairing
 
-The `project-api` and `root-campaign-admin:get` rules pair `oidc` with `anonymous_authenticator`: `oidc` alone
+The `project-api` rule pairs `oidc` with `anonymous_authenticator`: `oidc` alone
 would reject a credential-less request *before* OpenFGA runs, and it is
-`openfga_check` / `openfga_or_check` that actually rejects the anonymous subject
+`openfga_check` that actually rejects the anonymous subject
 (committee-service pattern). The pairing also lets the `openfga.enabled=false` branch fall back to
 `allow_all` for local dev. The `deny_all` placeholder rule intentionally omits
 `anonymous_authenticator` (a valid token is required, then everything is rejected).
@@ -108,7 +97,7 @@ would reject a credential-less request *before* OpenFGA runs, and it is
 
 `:projectId` on every `project-api` route is usually a project **slug** —
 self-serve's `campaign-service.service.ts` sends slugs on this API, never
-UIDs — but OpenFGA tuples for `campaign_manager`/`marketing_ops` are keyed on
+UIDs — but OpenFGA tuples for `campaign_manager`/`global_marketing_ops` are keyed on
 project **UID**. A slug-keyed `openfga_check` object would never match a
 UID-keyed tuple.
 
