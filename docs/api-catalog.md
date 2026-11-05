@@ -1507,11 +1507,13 @@ deviceBidModifiers?:            — OPTIONAL per-device bid adjustments (LFXV2-2
                                   `updateMask: bid_modifier`, sent after the campaign exists in the
                                   same `campaignCriteria:mutate` as the language and schedule
                                   creates; `targetingCriterionIds` reports the updated rows' ids.
-                                  REFUSED before any Google Ads request: a non-zero `bidModifier`
-                                  (Google refuses it with OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE),
-                                  and excluding all four devices (the campaign could not serve).
-                                  If that mutate fails, the campaign is left PAUSED with none of
-                                  these criteria and the error says so.
+                                  REFUSED before any Google Ads request: any `bidModifier` other
+                                  than 0 (a probe saw Google refuse 1.2 with
+                                  OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE; 1 adjusts nothing and
+                                  is refused with its own message), and excluding all four devices
+                                  (the campaign could not serve). If that mutate fails, the campaign
+                                  is left PAUSED with its device rows unexcluded and none of the
+                                  language or schedule criteria, and the error says so.
 
                                   Example: `"deviceBidModifiers": [{"device": "CONNECTED_TV",
                                   "bidModifier": 0}]` on `channel: "performance-max"`.

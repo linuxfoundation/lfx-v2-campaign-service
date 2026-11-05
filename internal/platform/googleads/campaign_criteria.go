@@ -203,7 +203,9 @@ var demandGenDeviceTypes = map[string]struct{}{
 // 30000, HighEndMobile 30001, Tablet 30002, ConnectedTv 30004. A read-only query of
 // account 8666746580 on 2026-11-05 found exactly those four rows, `negative: false`, on
 // every Performance Max campaign, LFX-created ones included, and found device exclusions
-// stored as `bidModifier: 0` on them.
+// stored as `bidModifier: 0` on them. That includes 24410310689, which this service
+// created through the API and which has no asset group, so the rows do not wait for one:
+// Step 4 runs before the asset group and still finds them.
 //
 // So on this channel a device entry does not CREATE a criterion: it UPDATES the row
 // `{campaignId}~{id}` with updateMask bid_modifier (createCampaignTargetingCriteria).
@@ -390,9 +392,11 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 	// DEVICES are taken in one shape only, the exclusion (#500). Google creates the four
 	// device rows on every Performance Max campaign itself, and the exclusion is a
 	// bidModifier of 0 on the existing row; see performanceMaxDeviceCriterionIDs for the
-	// ids and the probes. Any other modifier is refused here, because Google refuses it
-	// (OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE) at the criteria mutate, after the budget
-	// and campaign exist. Excluding all four is refused too: Google's validateOnly accepted
+	// ids and the probes. Any other modifier is refused here. A real adjustment is one
+	// Google refuses (a validateOnly probe refused 1.2 with
+	// OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE), and that refusal would land at the criteria
+	// mutate, after the budget and campaign exist. A 1, which Google accepted, adjusts
+	// nothing, so it is refused with its own reason rather than sent as a no-op. Excluding all four is refused too: Google's validateOnly accepted
 	// it, but a campaign excluded from every device cannot serve anywhere, and nobody
 	// building a paid campaign means that.
 	//
@@ -420,6 +424,9 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 	if kind == campaignKindPerformanceMax {
 		excluded := make(map[string]struct{}, len(in.DeviceBidModifiers))
 		for i, d := range in.DeviceBidModifiers {
+			if d.BidModifier == 1 {
+				return criteriaPlan{}, fmt.Errorf("google-ads: device bid modifier %d is 1, which adjusts nothing, and %s takes only the device exclusion; omit the entry to leave the device as it is, or set it to 0 to exclude the device", i, kind)
+			}
 			if d.BidModifier != 0 {
 				return criteriaPlan{}, fmt.Errorf("google-ads: device bid modifier %d adjusts the bid by %v, which Google refuses on %s (OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE: Performance Max takes only the device exclusion); set it to 0 to exclude the device, or omit it", i, d.BidModifier, kind)
 			}
@@ -981,7 +988,13 @@ func criteriaFailureKinds(plan criteriaPlan) (kinds, exposure string) {
 		k, e = append(k, "schedule"), append(e, "around the clock")
 	}
 	if len(plan.devices) > 0 {
-		k, e = append(k, "device"), append(e, "on every device")
+		// On Performance Max the device rows exist whatever happens here (Google creates
+		// them), so what is missing after a failure is the exclusion, not the criterion.
+		label := "device"
+		if plan.devicesUpdateExisting {
+			label = "device exclusion"
+		}
+		k, e = append(k, label), append(e, "on every device")
 	}
 	if len(plan.ageRanges)+len(plan.genders) > 0 {
 		k, e = append(k, "demographic"), append(e, "to the demographics it was told to exclude")

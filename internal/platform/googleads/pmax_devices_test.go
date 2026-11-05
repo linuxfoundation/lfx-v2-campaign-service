@@ -43,12 +43,15 @@ func TestPerformanceMaxDeviceCriterionIDs_AreGooglesPlatformIDs(t *testing.T) {
 func TestPreflightPerformanceMax_DeviceExclusionsAccepted(t *testing.T) {
 	c := &Client{account: AccountConfig{CustomerID: "1234567890"}}
 	cases := map[string][]DeviceBidModifier{
-		"connected tv":   {{Device: "CONNECTED_TV", BidModifier: 0}},
-		"desktop":        {{Device: "DESKTOP", BidModifier: 0}},
-		"lowercase":      {{Device: " tablet ", BidModifier: 0}},
-		"three of four":  {{Device: "MOBILE", BidModifier: 0}, {Device: "TABLET", BidModifier: 0}, {Device: "CONNECTED_TV", BidModifier: 0}},
-		"desktop kept":   {{Device: "MOBILE", BidModifier: 0}, {Device: "TABLET", BidModifier: 0}, {Device: "connected_tv", BidModifier: 0}},
-		"mobile is kept": {{Device: "DESKTOP", BidModifier: 0}, {Device: "TABLET", BidModifier: 0}, {Device: "CONNECTED_TV", BidModifier: 0}},
+		"connected tv": {{Device: "CONNECTED_TV", BidModifier: 0}},
+		"desktop":      {{Device: "DESKTOP", BidModifier: 0}},
+		"lowercase":    {{Device: " tablet ", BidModifier: 0}},
+		// Each "kept" case leaves exactly one device unexcluded, one per device, so the
+		// all-excluded refusal cannot be wrong about any one of the four.
+		"desktop kept":      {{Device: "MOBILE", BidModifier: 0}, {Device: "TABLET", BidModifier: 0}, {Device: "connected_tv", BidModifier: 0}},
+		"mobile kept":       {{Device: "DESKTOP", BidModifier: 0}, {Device: "TABLET", BidModifier: 0}, {Device: "CONNECTED_TV", BidModifier: 0}},
+		"tablet kept":       {{Device: "DESKTOP", BidModifier: 0}, {Device: "MOBILE", BidModifier: 0}, {Device: "CONNECTED_TV", BidModifier: 0}},
+		"connected tv kept": {{Device: "DESKTOP", BidModifier: 0}, {Device: "MOBILE", BidModifier: 0}, {Device: "TABLET", BidModifier: 0}},
 	}
 	for name, devices := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -100,8 +103,9 @@ func TestPreflightPerformanceMax_DeviceRefusals(t *testing.T) {
 	}{
 		"adjustment up": {[]DeviceBidModifier{{Device: "MOBILE", BidModifier: 1.2}},
 			"adjusts the bid by 1.2, which Google refuses on PerformanceMax Campaign (OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE"},
-		"adjustment of one": {[]DeviceBidModifier{{Device: "TABLET", BidModifier: 1}},
-			"device bid modifier 0 adjusts the bid by 1, which Google refuses"},
+		// Google ACCEPTED 1 in the probe, so its refusal must not claim Google refuses it.
+		"no-op one": {[]DeviceBidModifier{{Device: "TABLET", BidModifier: 1}},
+			"device bid modifier 0 is 1, which adjusts nothing, and PerformanceMax Campaign takes only the device exclusion"},
 		"second entry adjusts": {[]DeviceBidModifier{{Device: "TABLET", BidModifier: 0}, {Device: "DESKTOP", BidModifier: 0.5}},
 			"device bid modifier 1 adjusts the bid by 0.5"},
 		"every device excluded": {[]DeviceBidModifier{
@@ -255,7 +259,9 @@ func TestCreatePerformanceMaxCampaign_DeviceUpdateFailureKeepsTheCampaign(t *tes
 	if res == nil || res.CampaignID != "222" {
 		t.Fatalf("res = %+v, want the PAUSED campaign returned alongside the error", res)
 	}
-	for _, want := range []string{"campaign 222 created", "language or device", "on every device"} {
+	// "device exclusion", not "device": Google's device rows exist regardless; what the
+	// failure leaves out is the exclusion.
+	for _, want := range []string{"campaign 222 created", "NO language or device exclusion criteria", "on every device"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %v, want it to contain %q", err, want)
 		}

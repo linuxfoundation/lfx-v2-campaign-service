@@ -2830,14 +2830,17 @@ those four devices: `createCampaignTargetingCriteria` sends each as an UPDATE of
 (`criteriaPlan.devicesUpdateExisting`), in the same atomic Step 4 `campaignCriteria:mutate`
 as the language and schedule creates, after the campaign exists because the rows do not
 exist before it. The result check also insists each update's result names the row the
-request named. Refused before the budget: a non-zero modifier (Google refuses it with
-`OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE`) and excluding all four devices (Google's
-`validateOnly` accepts it, but the campaign could not serve). A Step 4 failure returns the
-PAUSED campaign with the error, under the usual partial-result contract. validateOnly
+request named. Refused before the budget: any modifier but 0 (a probe saw Google refuse 1.2
+with `OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE`; 1, which Google accepted, adjusts nothing
+and gets its own message) and excluding all four devices (Google's `validateOnly` accepts it,
+but the campaign could not serve). A Step 4 failure returns the PAUSED campaign with the
+error, under the usual partial-result contract, and names the missing kind "device
+exclusion" because Google's rows exist either way. validateOnly
 probes on 2026-11-05 against a paused LFX campaign accepted each single update, all four
 in one request, and a create plus an update in one request, and refused bidModifier 1.2.
-Not verified live: that the rows already exist the instant `campaigns:mutate` returns
-(they were present on every existing campaign queried).
+The rows do not wait for an asset group: 24410310689, created by this service and
+never given one, carries all four. Not verified live: that they exist the instant
+`campaigns:mutate` returns (`change_event` does not log Google's own rows).
 
 **`urlExpansionOptOut` is GONE; the control it carried moved.** This shell used to send
 `urlExpansionOptOut: true` so the campaign served the final URL it was given rather than
