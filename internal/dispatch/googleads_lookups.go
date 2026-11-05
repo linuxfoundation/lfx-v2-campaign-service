@@ -211,7 +211,14 @@ func (d *GoogleAdsDispatcher) createAccountClient(ctx context.Context, projectID
 // gateway therefore admits only global_marketing_ops of the project to this route.
 //
 // An unknown kind is refused before any credential is resolved. called reports whether Google
-// was contacted, as ListConversionActions' does.
+// was contacted, as ListConversionActions' does: false for a local refusal and for a cache hit.
+//
+// user_interest answers are cached per account (userInterestCache). That taxonomy is Google's
+// own, about a thousand rows that change rarely, and a picker searches it with q as the operator
+// types; the service filters the cached rows by q, so each keystroke would otherwise be a full
+// googleAds:search on the shared developer token. The cache is consulted after resolution, as
+// the geo cache is, so a project that can reach no credential still gets its refusal. The
+// account kinds are not cached: an audience created a minute ago must be offered.
 func (d *GoogleAdsDispatcher) ListAudiences(ctx context.Context, projectID string, platform model.Provider, kind string) (_ *model.AudienceResources, called bool, _ error) {
 	k, ok := googleads.ParseAudienceKind(kind)
 	if !ok {
@@ -222,6 +229,11 @@ func (d *GoogleAdsDispatcher) ListAudiences(ctx context.Context, projectID strin
 	client, accountID, err := d.createAccountClient(ctx, projectID, platform)
 	if err != nil {
 		return nil, false, err
+	}
+	if k == googleads.AudienceKindUserInterest {
+		if rows, hit := d.interests.get(accountID); hit {
+			return &model.AudienceResources{AccountID: accountID, Kind: string(k), Audiences: rows}, false, nil
+		}
 	}
 	rows, lerr := client.ListAudiences(ctx, k)
 	if lerr != nil {
@@ -239,7 +251,81 @@ func (d *GoogleAdsDispatcher) ListAudiences(ctx context.Context, projectID strin
 			Description:  r.Description,
 		})
 	}
+	if k == googleads.AudienceKindUserInterest {
+		d.interests.put(accountID, out)
+	}
 	return &model.AudienceResources{AccountID: accountID, Kind: string(k), Audiences: out}, true, nil
+}
+
+// userInterestTTL and userInterestMaxEntries bound the user_interest cache. One entry per
+// account; the LF deployment reads one or two, so the cap only bounds a pathological spread.
+const (
+	userInterestTTL        = 6 * time.Hour
+	userInterestMaxEntries = 64
+)
+
+type userInterestEntry struct {
+	rows    []model.AudienceResource
+	expires time.Time
+}
+
+// userInterestCache is a bounded TTL cache of user_interest reads keyed by account id. A nil
+// cache caches nothing.
+type userInterestCache struct {
+	mu      sync.Mutex
+	now     func() time.Time
+	entries map[string]userInterestEntry
+}
+
+func newUserInterestCache() *userInterestCache {
+	return &userInterestCache{now: time.Now, entries: map[string]userInterestEntry{}}
+}
+
+func (c *userInterestCache) get(accountID string) ([]model.AudienceResource, bool) {
+	if c == nil {
+		return nil, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[accountID]
+	if !ok {
+		return nil, false
+	}
+	if !c.now().Before(e.expires) {
+		delete(c.entries, accountID)
+		return nil, false
+	}
+	// A non-nil copy, so a caller cannot corrupt the cached answer and an empty one stays [].
+	return copyAudienceRows(e.rows), true
+}
+
+func (c *userInterestCache) put(accountID string, rows []model.AudienceResource) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.now()
+	if _, exists := c.entries[accountID]; !exists && len(c.entries) >= userInterestMaxEntries {
+		for k, e := range c.entries {
+			if !now.Before(e.expires) {
+				delete(c.entries, k)
+			}
+		}
+		for k := range c.entries {
+			if len(c.entries) < userInterestMaxEntries {
+				break
+			}
+			delete(c.entries, k)
+		}
+	}
+	c.entries[accountID] = userInterestEntry{rows: copyAudienceRows(rows), expires: now.Add(userInterestTTL)}
+}
+
+func copyAudienceRows(rows []model.AudienceResource) []model.AudienceResource {
+	out := make([]model.AudienceResource, len(rows))
+	copy(out, rows)
+	return out
 }
 
 // geoSuggestTTL and geoSuggestMaxEntries bound the geo suggestion cache. Google's geo target

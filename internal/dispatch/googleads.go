@@ -771,8 +771,11 @@ type GoogleAdsDispatcher struct {
 	clients *clientCache
 	// geo caches geo target suggestions (public reference data) so a typeahead does not spend
 	// the shared developer token's quota on repeated identical searches. Nil-safe.
-	geo  *geoSuggestCache
-	opts []googleads.Option
+	geo *geoSuggestCache
+	// interests caches the user_interest taxonomy per account (#496), for the same reason:
+	// a picker searches it as the operator types, and it is Google's own list. Nil-safe.
+	interests *userInterestCache
+	opts      []googleads.Option
 	// creatives and assets are the creative-asset library and the process-wide memory
 	// budget, bound late by registerDispatchers exactly as they are on the Meta, Microsoft,
 	// Twitter and LinkedIn dispatchers. Both may be nil — a nil repo means a config naming
@@ -784,7 +787,7 @@ type GoogleAdsDispatcher struct {
 
 // NewGoogleAdsDispatcher builds the adapter from the connection repo + encryptor.
 func NewGoogleAdsDispatcher(repo connReader, enc domain.Encryptor, opts ...googleads.Option) *GoogleAdsDispatcher {
-	return &GoogleAdsDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), geo: newGeoSuggestCache(), opts: opts}
+	return &GoogleAdsDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), geo: newGeoSuggestCache(), interests: newUserInterestCache(), opts: opts}
 }
 
 // Dispatch implements service.PlatformDispatcher for Google Ads.

@@ -579,6 +579,58 @@ func TestGoogleAdsListAudiences_LocalRefusals(t *testing.T) {
 	}
 }
 
+// user_interest is cached per account: a second read is served without Google (called=false)
+// and returns an independent copy; the account kinds are never cached; an expired entry is
+// re-read; and a local refusal still wins over a cached answer.
+func TestGoogleAdsListAudiences_CachesUserInterestsOnly(t *testing.T) {
+	rec := &pathRecorder{}
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		rec.add(r.URL.Path)
+		_, _ = io.WriteString(w, `{"results":[{"userInterest":{"resourceName":"customers/1234567890/userInterests/80276","name":"Software","taxonomyType":"IN_MARKET"}},`+
+			`{"audience":{"resourceName":"customers/1234567890/audiences/5","name":"A","status":"ENABLED"}}]}`)
+	})
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	d.interests.now = func() time.Time { return now }
+	ctx := context.Background()
+
+	first, called, err := d.ListAudiences(ctx, "proj-1", model.ProviderGoogleAds, "user_interest")
+	if err != nil || !called || len(first.Audiences) != 1 {
+		t.Fatalf("first read: res=%+v called=%v err=%v", first, called, err)
+	}
+	first.Audiences[0].Name = "mutated"
+	second, called, err := d.ListAudiences(ctx, "proj-1", model.ProviderGoogleAds, "user_interest")
+	if err != nil || called || len(second.Audiences) != 1 || second.Audiences[0].Name != "Software" || second.AccountID != "1234567890" {
+		t.Fatalf("cached read: res=%+v called=%v err=%v, want the cached copy without Google", second, called, err)
+	}
+	second.Audiences[0].Name = "mutated"
+	if third, _, _ := d.ListAudiences(ctx, "proj-1", model.ProviderGoogleAds, "user_interest"); third.Audiences[0].Name != "Software" {
+		t.Fatalf("a caller's edit reached the cache: %+v", third.Audiences)
+	}
+	if n := len(rec.all()); n != 1 {
+		t.Fatalf("%d searches after a cache hit, want 1", n)
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, called, err := d.ListAudiences(ctx, "proj-1", model.ProviderGoogleAds, "audience"); err != nil || !called {
+			t.Fatalf("audience read %d: called=%v err=%v, want every account-kind read to reach Google", i, called, err)
+		}
+	}
+	if n := len(rec.all()); n != 3 {
+		t.Fatalf("%d searches, want 3 (account kinds are not cached)", n)
+	}
+
+	now = now.Add(userInterestTTL)
+	if _, called, err := d.ListAudiences(ctx, "proj-1", model.ProviderGoogleAds, "user_interest"); err != nil || !called {
+		t.Errorf("after the TTL: called=%v err=%v, want a fresh read", called, err)
+	}
+
+	d.creds = newCredsSource(splitConnReader{}, identityEncryptor{})
+	if _, called, err := d.ListAudiences(ctx, "proj-1", model.ProviderGoogleAds, "user_interest"); !errors.Is(err, domain.ErrNotFound) || called {
+		t.Errorf("no connection with a warm cache: called=%v err=%v, want ErrNotFound", called, err)
+	}
+}
+
 // An upstream failure is returned as one, with called=true, never as a connection defect.
 func TestGoogleAdsListAudiences_UpstreamFailureIsNotAConnectionDefect(t *testing.T) {
 	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) {

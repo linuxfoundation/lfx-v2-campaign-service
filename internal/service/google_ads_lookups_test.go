@@ -559,6 +559,16 @@ func TestListGoogleAdsAudiences_SharedTenancyIsNotRefused(t *testing.T) {
 	}
 }
 
+// The platform's more-than-10000-rows refusal is an unclassified upstream error, published as
+// 503 in the design description; pinned so a new classifier arm cannot change it silently.
+func TestListGoogleAdsAudiences_ScanOverflowIs503(t *testing.T) {
+	d := &mockLookupDispatcher{err: errors.New("list user_interest: account 1 returned more than the 10000 rows this read scans")}
+	_, err := lookupService(d).ListGoogleAdsAudiences(context.Background(), &conn.ListGoogleAdsAudiencesPayload{ProjectID: "cncf", Type: "user_interest"})
+	if errCode(err) != "503" {
+		t.Errorf("err = %T %v, want 503", err, err)
+	}
+}
+
 func TestReadAudiences_NilResultIsAnError(t *testing.T) {
 	for name, res := range map[string]*model.AudienceResources{"nil result": nil, "nil audiences": {AccountID: "1"}} {
 		o := &Orchestrator{dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: &mockLookupDispatcher{audiences: res}}}

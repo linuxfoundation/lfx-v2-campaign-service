@@ -122,6 +122,10 @@ create form offer them in a picker instead of making an operator type them (self
 - `q` (optional, 1-100 characters, not blank) keeps names containing it, ignoring case and
   surrounding space; the service applies it, then caps at 500 with `truncated`. With 1008 user
   interests on the LF customer, a `user_interest` picker should search rather than browse.
+- **`user_interest` is cached** per account (`userInterestCache`: 6h TTL, 64 entries), so a
+  typeahead does not run a full search per keystroke. It is consulted after credential
+  resolution, a hit reports `called=false` (no `list_audiences` metric) and returns a copy. The
+  account kinds are not cached, so a just-created audience is offered at once.
 - **Resolution and tenancy: the conversion-action read's.** `createAccountClient` (shared with
   `ListConversionActions`) resolves as a create does, so the resource names are on the account
   the create uses. The answer is account-wide on the shared customer (every foundation's custom

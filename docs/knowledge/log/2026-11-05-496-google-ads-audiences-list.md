@@ -17,7 +17,9 @@ instead of making an operator paste resource names.
 - The service validates `type` and `q`, filters by name ignoring case, then caps at 500 with
   `truncated`. Rows carry `subtype` (Google's custom audience type or taxonomy type) and omit
   `status` for `user_interest`, which has none. `list_audiences` is recorded only when Google
-  was contacted.
+  was contacted. The `user_interest` answer is cached for 6 hours per account, after
+  resolution, so a picker's typeahead does not search Google per keystroke; the account kinds
+  are not cached.
 - Tenancy: the answer lists every foundation's audiences on the shared customer, so the path is
   in the `marketing-ops-api` Heimdall rule (`global_marketing_ops`), not `project-api`, and the
   HTTPRoute regex forwards it. `TestGoogleAudiencesIsAMarketingOpsRead` and
