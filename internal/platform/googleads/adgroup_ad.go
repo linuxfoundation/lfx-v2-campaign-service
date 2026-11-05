@@ -371,10 +371,16 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 	// See targetingSetting's doc comment (campaign.go): GA-4's audience criteria
 	// are AdGroupCriterions, so the observation-only setting must be declared
 	// here, on the ad group create, not on the campaign create.
+	//
+	// The observed demographic dimensions (#497) are declared on the same setting, each
+	// bidOnly true, after AUDIENCE. With neither, no targetingSetting is sent, as before.
+	var restrictions []targetRestriction
 	if len(audienceSegments) > 0 {
-		adGroupCreateVal.TargetingSetting = &targetingSetting{
-			TargetRestrictions: []targetRestriction{{TargetingDimension: "AUDIENCE", BidOnly: true}},
-		}
+		restrictions = append(restrictions, targetRestriction{TargetingDimension: "AUDIENCE", BidOnly: true})
+	}
+	restrictions = append(restrictions, plan.observed.restrictions()...)
+	if len(restrictions) > 0 {
+		adGroupCreateVal.TargetingSetting = &targetingSetting{TargetRestrictions: restrictions}
 	}
 	adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: adGroupCreateVal}}}
 	// Record the ad group name before sending the mutate, so that on failure
@@ -545,10 +551,12 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 	group.AudienceCriteriaIDs = ids.audiences
 	group.NegativeKeywordCriteriaIDs = ids.negativeKeywords
 	group.DemographicCriteriaIDs = ids.demographics
+	group.ObservedDemographicCriteriaIDs = ids.observed
 	if isFirstAdGroup {
 		res.KeywordCriteriaIDs = ids.keywords
 		res.AudienceCriteriaIDs = ids.audiences
 		res.AdGroupDemographicCriteriaIDs = ids.demographics
+		res.AdGroupObservedDemographicCriteriaIDs = ids.observed
 	}
 	res.Steps = append(res.Steps, adGroupCriteriaStep(ids))
 	return nil

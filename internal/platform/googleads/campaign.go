@@ -363,6 +363,13 @@ type CampaignInput struct {
 	// validateAdGroupDemographicExclusions.
 	ExcludedIncomeRanges     []string
 	ExcludedParentalStatuses []string
+	// ObservedDemographics puts whole demographic DIMENSIONS ("AGE_RANGE", "GENDER",
+	// "INCOME_RANGE") in observation mode on every Search ad group (#497): the ad group's
+	// targetingSetting declares each one bidOnly, and every value of it not excluded above
+	// becomes a positive criterion, for reporting and bid adjustments without narrowing
+	// reach. SEARCH ONLY; PARENTAL_STATUS is refused because Google refuses that criterion
+	// on a Search ad group. See validateObservedDemographics.
+	ObservedDemographics []string
 	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions.
 	// All optional, all created as account-level assets that are then linked to the
 	// campaign — see assets.go — and accepted on Search, on Performance Max (#461), and,
@@ -531,6 +538,9 @@ type AdGroupResult struct {
 	// exclusions, with the same three-way ambiguity on empty (#473).
 	NegativeKeywordCriteriaIDs []string `json:"negativeKeywordCriteriaIds,omitempty"`
 	DemographicCriteriaIDs     []string `json:"demographicCriteriaIds,omitempty"`
+	// ObservedDemographicCriteriaIDs are this group's positive observed demographic
+	// criteria (#497), with the same three-way ambiguity on empty.
+	ObservedDemographicCriteriaIDs []string `json:"observedDemographicCriteriaIds,omitempty"`
 	// GeoCriterionIDs and TargetingCriterionIDs are this group's own, set on a Demand Gen
 	// campaign built from DemandGenAdGroups (#460), with the meanings the CampaignResult
 	// fields of the same names document.
@@ -676,6 +686,10 @@ type CampaignResult struct {
 	// KeywordCriteriaIDs are, with each group's own in AdGroups. Empty is ambiguous in the
 	// three ways GeoCriterionIDs documents, and the returned ERROR tells them apart.
 	AdGroupDemographicCriteriaIDs []string `json:"adGroupDemographicCriteriaIds,omitempty"`
+	// AdGroupObservedDemographicCriteriaIDs are the FIRST Search group's observed
+	// demographic criteria (#497), adGroupCriterion ids like the field above; each group's
+	// own are in AdGroups.
+	AdGroupObservedDemographicCriteriaIDs []string `json:"adGroupObservedDemographicCriteriaIds,omitempty"`
 	// ExcludedPlacementCriteriaIDs are the campaign-level negative placement criteria
 	// created for CampaignInput.ExcludedPlacements (#462) — campaignCriterion ids, on the
 	// Display path only. Empty is ambiguous in exactly the three ways GeoCriterionIDs
@@ -1557,6 +1571,12 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	// After both exclusion plans, because an observed dimension covers every value of it
+	// that is NOT excluded.
+	observedDemographics, err := validateObservedDemographics(kind, in.ObservedDemographics, criteria, adGroupDemographics)
+	if err != nil {
+		return nil, err
+	}
 	assets, err := validateAssetPlan(kind, in)
 	if err != nil {
 		return nil, err
@@ -1751,6 +1771,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	// into its own criteria mutate.
 	for i := range adGroups {
 		adGroups[i].demographics = adGroupDemographics
+		adGroups[i].observed = observedDemographics
 	}
 	// The Demand Gen ad groups (#460): the single group the campaign-level fields above
 	// describe, or the caller's named list. After every validator it draws on.

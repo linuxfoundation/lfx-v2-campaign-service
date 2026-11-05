@@ -1995,12 +1995,24 @@ and were not probed separately.
   parental-status criterion on a Search ad group with `OPERATION_NOT_PERMITTED_FOR_CONTEXT`.
   Demand Gen, Video and Performance Max refuse both. An entry carrying any non-ASCII rune is
   refused before it is upper-cased, because Unicode case folding maps the dotless `ı` onto
-  `I`. Positive (targeting or observation) demographic criteria are not added; no probe
-  covered them.
+  `I`. Positive targeting demographic criteria are not added; observation on Search is
+  `ObservedDemographics` (#497), below.
+- `ObservedDemographics` (#497, SEARCH ONLY) names whole dimensions — `AGE_RANGE`, `GENDER`,
+  `INCOME_RANGE` — to observe on every Search ad group. `validateObservedDemographics`
+  (`campaign_criteria.go`) resolves it after both exclusion plans into an
+  `adGroupObservationPlan`: the dimensions, which `createAdGroupAndAd` declares bidOnly in the
+  ad group's `targetingSetting` after `AUDIENCE`, and one positive ENABLED `ageRange` /
+  `gender` / `incomeRange` criterion per value of each dimension that is NOT excluded (so an
+  exclusion keeps working and no value is sent both ways). A dimension whose every value is
+  excluded, `PARENTAL_STATUS` (refused on a Search ad group upstream), any other value, and
+  any non-Search channel are refused before the budget. Built from the v23 field names;
+  not yet probed.
 
 On Search all of a group's criteria share ONE atomic `adGroupCriteria:mutate`:
 `createAdGroupTargeting` now takes an `adGroupCriteriaSet` and sends keywords, audiences,
-negative keywords, then the exclusions, splitting the index-aligned results back by kind.
+negative keywords, the exclusions, then the observed demographics (#497), splitting the
+index-aligned results back by kind (`AdGroupResult.ObservedDemographicCriteriaIDs`,
+`CampaignResult.AdGroupObservedDemographicCriteriaIDs`).
 Positive criteria keep `status: ENABLED`; negative ones carry `negative: true` and no status.
 Display calls the same function with only the exclusions, right after its ad group is
 created and before the images. The ids land in `AdGroupResult.NegativeKeywordCriteriaIDs` and

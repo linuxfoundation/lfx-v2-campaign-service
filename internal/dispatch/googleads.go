@@ -496,6 +496,11 @@ type googleAdsConfig struct {
 	// other channel. See googleads.validateAdGroupDemographicExclusions.
 	ExcludedIncomeRanges     []string `json:"excludedIncomeRanges"`
 	ExcludedParentalStatuses []string `json:"excludedParentalStatuses"`
+	// ObservedDemographics puts demographic dimensions ("AGE_RANGE", "GENDER",
+	// "INCOME_RANGE") in observation mode on every Search ad group (#497): reporting and
+	// bid adjustments, no narrowing. "search" only; PARENTAL_STATUS is refused there.
+	// Values excluded above stay excluded. See googleads.validateObservedDemographics.
+	ObservedDemographics []string `json:"observedDemographics"`
 	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions,
 	// created as account-level assets then linked to the campaign. Accepted on Search,
 	// on Performance Max (#461), which links them at the campaign level too, and, for
@@ -935,6 +940,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		ExcludedGenders:          cfg.ExcludedGenders,
 		ExcludedIncomeRanges:     cfg.ExcludedIncomeRanges,
 		ExcludedParentalStatuses: cfg.ExcludedParentalStatuses,
+		ObservedDemographics:     cfg.ObservedDemographics,
 		Sitelinks:                googleAdsSitelinks(cfg.Sitelinks),
 		Callouts:                 cfg.Callouts,
 		StructuredSnippets:       googleAdsStructuredSnippets(cfg.StructuredSnippets),

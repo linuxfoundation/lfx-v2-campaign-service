@@ -1017,6 +1017,8 @@ top level and on each `adGroups[].ads[]` entry, `adGroups[].negativeKeywords` (m
 `googleAdsKeywords`, as the campaign-level list is), and `excludedIncomeRanges` and
 `excludedParentalStatuses`. Which channel takes each is the client preflight's decision, so
 an off-channel value is refused there for the create and the adoption path alike.
+`observedDemographics` (#497) is passed through the same way; the client refuses it off
+Search.
 
 The #477 fields follow the same rule. `sharedNegativeKeywordLists` is passed through
 verbatim. `searchAssets` is `googleAdsSearchAssetsConfig`: `adImages` and

@@ -1538,8 +1538,31 @@ excludedParentalStatuses?:        criteria like the two above, because the ad gr
                                   both channels; every group's own are in
                                   `adGroups[].demographicCriteriaIds`).
 
-                                  Positive (targeting or observation) demographic criteria are not
-                                  added; no probe covered them.
+                                  Positive TARGETING demographic criteria are not added; observation
+                                  on Search is `observedDemographics`, below.
+observedDemographics?:          — OPTIONAL, SEARCH ONLY (#497). Puts whole demographic dimensions in
+  string[]                        OBSERVATION mode on every Search ad group: `AGE_RANGE`, `GENDER`
+                                  and/or `INCOME_RANGE` (case-insensitive, deduped). Each named
+                                  dimension is declared `{targetingDimension, bidOnly: true}` in the
+                                  ad group's `targetingSetting.targetRestrictions` (after `AUDIENCE`
+                                  when `audienceSegments` are set), and every value of it — including
+                                  UNDETERMINED — gets a positive ENABLED ad-group criterion
+                                  (`ageRange` / `gender` / `incomeRange`) in the group's criteria
+                                  mutate, for reporting and bid adjustments without narrowing reach.
+
+                                  An exclusion in the same dimension keeps working: values in
+                                  `excludedAgeRanges` / `excludedGenders` / `excludedIncomeRanges` get
+                                  no observed criterion, so no value is both positive and negative. A
+                                  dimension whose every value is excluded is refused.
+                                  `PARENTAL_STATUS` is refused (Google refuses a parental-status
+                                  criterion on a Search ad group, `OPERATION_NOT_PERMITTED_FOR_CONTEXT`),
+                                  as is any other value. REFUSED before any request on every channel
+                                  but `search`. Ids: `adGroups[].observedDemographicCriteriaIds` and
+                                  `adGroupObservedDemographicCriteriaIds` (the first group's).
+
+                                  Built from the v23 field names; the positive criteria and the
+                                  demographic `bidOnly` restrictions have NOT yet been checked with a
+                                  validateOnly probe.
 sitelinks?:                     — OPTIONAL sitelink extensions (LFXV2-2665): extra links shown under the
   {text, description1?,           ad. `text` ≤25 runes, required and unique within the list.
    description2?, finalUrl}       `description1`/`description2` are ≤35 runes each and ALL-OR-NOTHING —
