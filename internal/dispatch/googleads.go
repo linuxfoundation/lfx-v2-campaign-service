@@ -596,6 +596,12 @@ type googleAdsConfig struct {
 	// lists — which must then be empty when this list is set. DISPLAY ONLY. Refusals are
 	// the client's preflight's.
 	DisplayAdGroups []googleAdsDisplayAdGroupConfig `json:"displayAdGroups"`
+	// DisplayDemographics is positive demographic TARGETING on every Display ad group (#499):
+	// each non-empty list restricts the ad to the values it names, in the exclusion fields'
+	// vocabulary. DISPLAY ONLY, and a value may not also be in its excluded* list. It names
+	// no account resource, so no deployment gate applies. Refusals are the client's
+	// preflight's; see googleads.validateDisplayDemographics.
+	DisplayDemographics *googleAdsDisplayDemographicsConfig `json:"displayDemographics"`
 	// SearchAssets are the Search campaign's image, business-logo and business-name assets
 	// (#477), linked to the campaign. SEARCH ONLY, refused on every other channel. Its two image
 	// lists take the same ImageRef entries as the creatives above, so they are resolved,
@@ -953,6 +959,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		VideoCreative:            googleAdsVideoCreative(cfg.VideoCreative),
 		DisplayCreative:          googleAdsDisplayCreative(cfg.DisplayCreative),
 		DisplayAdGroups:          googleAdsDisplayAdGroups(cfg.DisplayAdGroups),
+		DisplayDemographics:      googleAdsDisplayDemographics(cfg.DisplayDemographics),
 		// The asset group's signals (#461), verbatim like the creative they attach to.
 		PerformanceMaxSearchThemes:   cfg.PerformanceMaxSearchThemes,
 		PerformanceMaxAudienceSignal: cfg.PerformanceMaxAudienceSignal,
@@ -1741,6 +1748,28 @@ type googleAdsDisplayAdGroupConfig struct {
 }
 
 // googleAdsDisplayAdGroups maps the list verbatim; every refusal is the client's.
+// googleAdsDisplayDemographicsConfig is googleAdsConfig.displayDemographics on the wire (#499).
+type googleAdsDisplayDemographicsConfig struct {
+	AgeRanges        []string `json:"ageRanges"`
+	Genders          []string `json:"genders"`
+	IncomeRanges     []string `json:"incomeRanges"`
+	ParentalStatuses []string `json:"parentalStatuses"`
+}
+
+// googleAdsDisplayDemographics copies the wire lists onto the client input and validates
+// nothing; nil is the zero value, which the client reads as "no demographic targeting".
+func googleAdsDisplayDemographics(in *googleAdsDisplayDemographicsConfig) googleads.DisplayDemographics {
+	if in == nil {
+		return googleads.DisplayDemographics{}
+	}
+	return googleads.DisplayDemographics{
+		AgeRanges:        in.AgeRanges,
+		Genders:          in.Genders,
+		IncomeRanges:     in.IncomeRanges,
+		ParentalStatuses: in.ParentalStatuses,
+	}
+}
+
 func googleAdsDisplayAdGroups(in []googleAdsDisplayAdGroupConfig) []googleads.DisplayAdGroup {
 	if len(in) == 0 {
 		return nil

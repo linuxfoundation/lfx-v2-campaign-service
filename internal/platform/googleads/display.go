@@ -87,12 +87,12 @@ type displayCampaignCreate struct {
 // refusal is a client limitation rather than an upstream one — Google does accept manual
 // CPC on Display — and displayBiddingStrategies is where that is written down.
 //
-// TargetingSetting is sent ONLY when the ad group carries audience criteria (#462), and
-// then with AUDIENCE bidOnly false (after the four demographic defaults, restated
-// unchanged — see displayAudienceTargetingSetting), so those criteria target rather than
-// observe — the
-// opposite of Search's ad group, which sends bidOnly true. With no audience input the
-// field is omitted and the payload is byte-identical to the one sent before #462. See
+// TargetingSetting is sent ONLY when the ad group carries audience criteria (#462) or
+// demographic targeting (#499), built by displayAdGroupTargetingSetting: the four
+// demographic dimensions, each bidOnly true unless targeted (then false), followed by
+// AUDIENCE bidOnly false when there are audience criteria, so those criteria target rather
+// than observe — the opposite of Search's ad group, which sends bidOnly true. With neither
+// the field is omitted and the payload is byte-identical to the one sent before #462. See
 // createDisplayAudienceCriteria for why the setting is sent rather than left to
 // Google's default.
 type displayAdGroupCreate struct {
@@ -358,9 +358,9 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 		// without audience input it stays absent. Per group: each group with audiences
 		// carries it, as the 2026-11-03 validateOnly probe of two groups did. See
 		// displayAdGroupCreate.
-		if g.targeting.audienceCount() > 0 {
-			adGroupCreateVal.TargetingSetting = displayAudienceTargetingSetting()
-		}
+		// The demographic targeting (#499) is declared on the same setting, per group, since
+		// every group carries it.
+		adGroupCreateVal.TargetingSetting = displayAdGroupTargetingSetting(g.targeting.audienceCount() > 0, pf.displayDemographics)
 		adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: adGroupCreateVal}}}
 		adGroupResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), adGroupReq, false)
 		if err != nil {
@@ -403,20 +403,31 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 		// level the validateOnly probes verified for Display, and before the audiences and
 		// the ad so a failure has as little built on it as possible. Same partial-result
 		// contract.
-		if !pf.adGroupDemographics.empty() {
+		//
+		// The demographic targeting (#499) rides in the SAME mutate, so a group never ends up
+		// with its exclusions and not its targeting, or the reverse.
+		if !pf.adGroupDemographics.empty() || pf.displayDemographics.count() > 0 {
 			ids, exErr := c.createAdGroupTargeting(ctx, adGroupResource, adGroupID,
-				adGroupCriteriaSet{demographics: pf.adGroupDemographics})
+				adGroupCriteriaSet{demographics: pf.adGroupDemographics, targeted: pf.displayDemographics})
 			if k == 0 {
 				res.AdGroupDemographicCriteriaIDs = ids.demographics
+				res.AdGroupDemographicTargetingCriteriaIDs = ids.targeted
 			}
 			if entry != nil {
 				entry.DemographicCriteriaIDs = ids.demographics
+				entry.DemographicTargetingCriteriaIDs = ids.targeted
 			}
 			if exErr != nil {
 				return res, exErr
 			}
-			steps = append(steps, fmt.Sprintf("Ad group exclusions applied: %d criteria (%s)",
-				len(ids.demographics), adGroupDemographicStep(pf.adGroupDemographics))+tag)
+			if n := len(ids.demographics); n > 0 {
+				steps = append(steps, fmt.Sprintf("Ad group exclusions applied: %d criteria (%s)",
+					n, adGroupDemographicStep(pf.adGroupDemographics))+tag)
+			}
+			if n := len(ids.targeted); n > 0 {
+				steps = append(steps, fmt.Sprintf("Demographic targeting applied: %d ad group criteria (%s) — attached as targeting (bidOnly false), so the ad serves only to those values",
+					n, displayDemographicTargetingStep(pf.displayDemographics))+tag)
+			}
 			res.Steps = steps
 		}
 

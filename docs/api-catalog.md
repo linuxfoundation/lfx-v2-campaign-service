@@ -1504,7 +1504,8 @@ excludedGenders?: string[]        campaign criteria. Age ranges are 18-24, 25-34
                                   too); genders are MALE, FEMALE or UNDETERMINED. At most 20 entries
                                   each, bounded independently.
 
-                                  EXCLUSIONS only — there is no positive demographic field. Google
+                                  EXCLUSIONS only — positive demographic targeting exists on Display
+                                  alone, as `displayDemographics` (#499), below. Google
                                   targets demographics by excluding the buckets you do not want, and
                                   UNDETERMINED covers every user whose demographic Google has not
                                   inferred, which on Search is a large share of traffic: excluding it
@@ -1541,8 +1542,8 @@ excludedParentalStatuses?:        criteria like the two above, because the ad gr
                                   both channels; every group's own are in
                                   `adGroups[].demographicCriteriaIds`).
 
-                                  Positive (targeting or observation) demographic criteria are not
-                                  added; no probe covered them.
+                                  Positive demographic TARGETING on Display is `displayDemographics`,
+                                  below.
 sitelinks?:                     — OPTIONAL sitelink extensions (LFXV2-2665): extra links shown under the
   {text, description1?,           ad. `text` ≤25 runes, required and unique within the list.
    description2?, finalUrl}       `description1`/`description2` are ≤35 runes each and ALL-OR-NOTHING —
@@ -2144,6 +2145,29 @@ displayAdGroups?:               — OPTIONAL several named Display ad groups (#4
                                   group's ad. Omitted, the campaign gets the single ad group it
                                   always had, byte-for-byte. The same validation runs on the
                                   `adoptExisting` path.
+
+displayDemographics?:           — OPTIONAL, DISPLAY ONLY (#499). Positive demographic TARGETING on
+  {ageRanges?, genders?,          every Display ad group (the single one, or every `displayAdGroups`
+   incomeRanges?,                 entry): each non-empty list restricts the ad to the values it
+   parentalStatuses?}             names. Vocabulary is the exclusion fields' own (`excludedAgeRanges`,
+                                  `excludedGenders`, `excludedIncomeRanges`,
+                                  `excludedParentalStatuses`), case-insensitive, deduped, at most 20
+                                  per list.
+
+                                  Each targeted dimension is sent `bidOnly: false` in the ad group's
+                                  `targetingSetting` (the other demographic dimensions stay `true`,
+                                  `AUDIENCE` follows as before when audience lists are set), and each
+                                  value as a positive ENABLED ad-group criterion in the same atomic
+                                  mutate as the income/parental exclusions. A value both targeted and
+                                  in its `excluded*` list is REFUSED before any request; excluding a
+                                  different value of a targeted dimension is accepted. REFUSED on
+                                  every channel but `display`. It names no account resource, so no
+                                  deployment gate applies. Ids: `adGroups[].demographicTargetingCriteriaIds`
+                                  and `adGroupDemographicTargetingCriteriaIds` (the first group's).
+
+                                  Built from the v23 field names; the positive criteria and the
+                                  demographic `bidOnly: false` restrictions have NOT yet been checked
+                                  with a validateOnly probe.
 
 searchAssets?:                  — OPTIONAL Search campaign image, logo and name assets (#477), each
   {adImages?: ImageRef[],         linked to the CAMPAIGN. SEARCH ONLY, and REFUSED on every other

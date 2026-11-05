@@ -686,9 +686,9 @@ func validateBidModifier(noun string, modifier float64, allowZero bool) error {
 // EXCLUSION lists.
 //
 // Exclusion-only is Google's shape, not a narrowing: campaign-level demographic
-// criteria are negative. Positive demographic targeting lives on the ad group,
-// which this client does not expose, so a field named "ExcludedAgeRanges" cannot
-// be mistaken for one that targets.
+// criteria are negative. Positive demographic targeting lives on the ad group, where
+// this client sends it only on Display (DisplayDemographics, #499), so a field named
+// "ExcludedAgeRanges" cannot be mistaken for one that targets.
 func validateExcludedAgeRanges(ageRanges []string) ([]ageRangeInfo, error) {
 	if len(ageRanges) == 0 {
 		return nil, nil
@@ -865,6 +865,166 @@ func hasNonASCII(s string) bool {
 		}
 	}
 	return false
+}
+
+// DisplayDemographics is positive demographic TARGETING for a Display campaign (#499): each
+// non-empty list restricts every Display ad group to the values it names. The vocabulary is
+// the exclusion fields' own — ExcludedAgeRanges for ages, ExcludedGenders for genders,
+// ExcludedIncomeRanges for incomes, ExcludedParentalStatuses for parental status.
+type DisplayDemographics struct {
+	AgeRanges        []string
+	Genders          []string
+	IncomeRanges     []string
+	ParentalStatuses []string
+}
+
+func (d DisplayDemographics) empty() bool {
+	return len(d.AgeRanges)+len(d.Genders)+len(d.IncomeRanges)+len(d.ParentalStatuses) == 0
+}
+
+// genderTypeNames is genderTypes in the map[string]string form validateEnumExclusions takes.
+var genderTypeNames = map[string]string{"MALE": "MALE", "FEMALE": "FEMALE", "UNDETERMINED": "UNDETERMINED"}
+
+// Google's TargetingDimension names for the demographic dimensions.
+const (
+	targetingDimensionAgeRange       = "AGE_RANGE"
+	targetingDimensionGender         = "GENDER"
+	targetingDimensionIncomeRange    = "INCOME_RANGE"
+	targetingDimensionParentalStatus = "PARENTAL_STATUS"
+)
+
+// adGroupDemographicTargetingPlan is the resolved DisplayDemographics intent (#499): one
+// POSITIVE, ENABLED ad-group criterion per targeted value. A dimension with any value here is
+// declared bidOnly false in the ad group's targetingSetting, so its criteria restrict reach;
+// see displayAdGroupTargetingSetting.
+type adGroupDemographicTargetingPlan struct {
+	ageRanges        []ageRangeInfo
+	genders          []genderInfo
+	incomeRanges     []incomeRangeInfo
+	parentalStatuses []parentalStatusInfo
+}
+
+func (p adGroupDemographicTargetingPlan) count() int {
+	return len(p.ageRanges) + len(p.genders) + len(p.incomeRanges) + len(p.parentalStatuses)
+}
+
+// targets reports whether the plan restricts the given TargetingDimension.
+func (p adGroupDemographicTargetingPlan) targets(dimension string) bool {
+	switch dimension {
+	case targetingDimensionAgeRange:
+		return len(p.ageRanges) > 0
+	case targetingDimensionGender:
+		return len(p.genders) > 0
+	case targetingDimensionIncomeRange:
+		return len(p.incomeRanges) > 0
+	case targetingDimensionParentalStatus:
+		return len(p.parentalStatuses) > 0
+	}
+	return false
+}
+
+// validateDisplayDemographics resolves CampaignInput.DisplayDemographics for the given KIND,
+// against the exclusions already resolved, so a refusal costs nothing upstream.
+//
+// DISPLAY ONLY. Search observes demographics rather than targeting them, Demand Gen takes
+// them inside its Audience, and Video and Performance Max do not take ad-group demographic
+// criteria from this client.
+//
+// The same value both targeted and excluded is REFUSED, naming both fields: the intent is
+// contradictory, and Google refuses a positive and a negative criterion for one value.
+// Excluding a different value of a targeted dimension is accepted. It is redundant, since the
+// targeting already leaves that value out, but it does not contradict anything.
+func validateDisplayDemographics(kind string, in DisplayDemographics, campaign criteriaPlan, adGroup adGroupDemographicPlan) (adGroupDemographicTargetingPlan, error) {
+	if in.empty() {
+		return adGroupDemographicTargetingPlan{}, nil
+	}
+	if kind != campaignKindDisplay {
+		return adGroupDemographicTargetingPlan{}, fmt.Errorf("google-ads: display demographic targeting is not supported on %s (this client targets demographics on the Display ad group only); omit DisplayDemographics, or create a Display campaign to target demographics", kind)
+	}
+	ages, err := validateEnumExclusions("targeted age range", "targeted age ranges", in.AgeRanges, ageRangeTypes,
+		"18-24, 25-34, 35-44, 45-54, 55-64, 65+ or UNDETERMINED (Google's AGE_RANGE_* enum names are accepted too)")
+	if err != nil {
+		return adGroupDemographicTargetingPlan{}, err
+	}
+	genders, err := validateEnumExclusions("targeted gender", "targeted genders", in.Genders, genderTypeNames, "MALE, FEMALE or UNDETERMINED")
+	if err != nil {
+		return adGroupDemographicTargetingPlan{}, err
+	}
+	incomes, err := validateEnumExclusions("targeted income range", "targeted income ranges", in.IncomeRanges, incomeRangeTypes,
+		"INCOME_RANGE_0_50, INCOME_RANGE_50_60, INCOME_RANGE_60_70, INCOME_RANGE_70_80, INCOME_RANGE_80_90, INCOME_RANGE_90_UP or UNDETERMINED")
+	if err != nil {
+		return adGroupDemographicTargetingPlan{}, err
+	}
+	parents, err := validateEnumExclusions("targeted parental status", "targeted parental statuses", in.ParentalStatuses, parentalStatusTypes, "PARENT, NOT_A_PARENT or UNDETERMINED")
+	if err != nil {
+		return adGroupDemographicTargetingPlan{}, err
+	}
+
+	var plan adGroupDemographicTargetingPlan
+	excluded := make(map[string]struct{})
+	for _, a := range campaign.ageRanges {
+		excluded[a.Type] = struct{}{}
+	}
+	for _, t := range ages {
+		if _, both := excluded[t]; both {
+			return adGroupDemographicTargetingPlan{}, targetedAndExcluded(t, "DisplayDemographics.AgeRanges", "ExcludedAgeRanges")
+		}
+		plan.ageRanges = append(plan.ageRanges, ageRangeInfo{Type: t})
+	}
+	excluded = make(map[string]struct{})
+	for _, g := range campaign.genders {
+		excluded[g.Type] = struct{}{}
+	}
+	for _, t := range genders {
+		if _, both := excluded[t]; both {
+			return adGroupDemographicTargetingPlan{}, targetedAndExcluded(t, "DisplayDemographics.Genders", "ExcludedGenders")
+		}
+		plan.genders = append(plan.genders, genderInfo{Type: t})
+	}
+	excluded = make(map[string]struct{})
+	for _, r := range adGroup.incomeRanges {
+		excluded[r.Type] = struct{}{}
+	}
+	for _, t := range incomes {
+		if _, both := excluded[t]; both {
+			return adGroupDemographicTargetingPlan{}, targetedAndExcluded(t, "DisplayDemographics.IncomeRanges", "ExcludedIncomeRanges")
+		}
+		plan.incomeRanges = append(plan.incomeRanges, incomeRangeInfo{Type: t})
+	}
+	excluded = make(map[string]struct{})
+	for _, s := range adGroup.parentalStatuses {
+		excluded[s.Type] = struct{}{}
+	}
+	for _, t := range parents {
+		if _, both := excluded[t]; both {
+			return adGroupDemographicTargetingPlan{}, targetedAndExcluded(t, "DisplayDemographics.ParentalStatuses", "ExcludedParentalStatuses")
+		}
+		plan.parentalStatuses = append(plan.parentalStatuses, parentalStatusInfo{Type: t})
+	}
+	return plan, nil
+}
+
+// targetedAndExcluded refuses one value named in a target list and its exclusion list.
+func targetedAndExcluded(value, targetField, excludeField string) error {
+	return fmt.Errorf("google-ads: %s is both targeted (%s) and excluded (%s); a value cannot be both, so remove it from one of the two", value, targetField, excludeField)
+}
+
+// displayDemographicTargetingStep names the targeted parts of the plan for the step list.
+func displayDemographicTargetingStep(plan adGroupDemographicTargetingPlan) string {
+	parts := make([]string, 0, 4)
+	if n := len(plan.ageRanges); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d age range(s)", n))
+	}
+	if n := len(plan.genders); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d gender(s)", n))
+	}
+	if n := len(plan.incomeRanges); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d income range(s)", n))
+	}
+	if n := len(plan.parentalStatuses); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d parental status(es)", n))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // adGroupDemographicStep names the requested parts of the plan for the step list, as

@@ -473,6 +473,11 @@ type CampaignInput struct {
 	// built from DisplayCreative and the four campaign-level audience lists, which must then
 	// be empty when this list is set. DISPLAY ONLY. See display_adgroups.go.
 	DisplayAdGroups []DisplayAdGroup
+	// DisplayDemographics is positive demographic TARGETING on every Display ad group (#499):
+	// the dimensions it names restrict who sees the ad to the listed values. DISPLAY ONLY,
+	// and a value may not also be in its exclusion list above. See
+	// validateDisplayDemographics.
+	DisplayDemographics DisplayDemographics
 	// SearchAssets are the Search campaign's image, business-logo and business-name assets
 	// (#477), linked to the CAMPAIGN. SEARCH ONLY, refused at preflight on every other channel.
 	// Like the image-bearing creatives above, its images are fetched (or taken from
@@ -531,6 +536,9 @@ type AdGroupResult struct {
 	// exclusions, with the same three-way ambiguity on empty (#473).
 	NegativeKeywordCriteriaIDs []string `json:"negativeKeywordCriteriaIds,omitempty"`
 	DemographicCriteriaIDs     []string `json:"demographicCriteriaIds,omitempty"`
+	// DemographicTargetingCriteriaIDs are this Display group's positive demographic
+	// targeting criteria (#499), with the same three-way ambiguity on empty.
+	DemographicTargetingCriteriaIDs []string `json:"demographicTargetingCriteriaIds,omitempty"`
 	// GeoCriterionIDs and TargetingCriterionIDs are this group's own, set on a Demand Gen
 	// campaign built from DemandGenAdGroups (#460), with the meanings the CampaignResult
 	// fields of the same names document.
@@ -676,6 +684,10 @@ type CampaignResult struct {
 	// KeywordCriteriaIDs are, with each group's own in AdGroups. Empty is ambiguous in the
 	// three ways GeoCriterionIDs documents, and the returned ERROR tells them apart.
 	AdGroupDemographicCriteriaIDs []string `json:"adGroupDemographicCriteriaIds,omitempty"`
+	// AdGroupDemographicTargetingCriteriaIDs are the FIRST Display group's positive
+	// demographic targeting criteria (#499), adGroupCriterion ids; each group's own are in
+	// AdGroups.
+	AdGroupDemographicTargetingCriteriaIDs []string `json:"adGroupDemographicTargetingCriteriaIds,omitempty"`
 	// ExcludedPlacementCriteriaIDs are the campaign-level negative placement criteria
 	// created for CampaignInput.ExcludedPlacements (#462) — campaignCriterion ids, on the
 	// Display path only. Empty is ambiguous in exactly the three ways GeoCriterionIDs
@@ -1155,6 +1167,9 @@ type campaignPreflight struct {
 	// Search through each adGroups entry, on Display directly. See
 	// validateAdGroupDemographicExclusions.
 	adGroupDemographics adGroupDemographicPlan
+	// displayDemographics is the Display demographic targeting (#499), attached to every
+	// Display ad group beside the exclusions above. See validateDisplayDemographics.
+	displayDemographics adGroupDemographicTargetingPlan
 	// assets are the validated ad extensions — sitelinks, callouts and structured
 	// snippets — resolved here for the same reason the criteria are: an over-long
 	// callout or a sitelink with no destination must fail before anything is paid
@@ -1557,6 +1572,11 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	// After both exclusion plans, because a value may not be targeted and excluded at once.
+	displayDemographics, err := validateDisplayDemographics(kind, in.DisplayDemographics, criteria, adGroupDemographics)
+	if err != nil {
+		return nil, err
+	}
 	assets, err := validateAssetPlan(kind, in)
 	if err != nil {
 		return nil, err
@@ -1793,6 +1813,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		geo:                 geo,
 		criteria:            criteria,
 		adGroupDemographics: adGroupDemographics,
+		displayDemographics: displayDemographics,
 		assets:              assets,
 		creative:            creative,
 		pmax:                pmax,

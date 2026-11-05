@@ -1148,6 +1148,10 @@ Display, with no budget sent. None of them silences the "NO geo targeting" warni
 audience narrows WHO and a placement exclusion WHERE ON THE WEB, and neither bounds the
 geography the campaign spends in.
 
+`displayDemographics` (#499) is `googleAdsDisplayDemographicsConfig`, copied list by list by
+`googleAdsDisplayDemographics`; it names no account resource, so no deployment gate applies,
+and the client refuses it off Display.
+
 `displayAdGroups` and `excludedAudienceSegments` (#475) pass through the same way:
 `googleAdsDisplayAdGroups` maps each group's name, its creative through the same
 `googleAdsDisplayCreative` mapper, its four audience lists and its own
