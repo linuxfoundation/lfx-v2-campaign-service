@@ -147,13 +147,13 @@ renderer formats with a symbol when it is present and without one otherwise.
 | Reddit | `GET /ad_accounts/{id}` (`reddit.Client.readMonitorAccountCurrency`), beside the report fan-out, 3s budget, no 429 retry | One |
 | X | the `GET accounts/:account_id` the monitor already makes for the timezone, cached with it (`twitter.Client.AccountCurrency`) | No (within the cache's minute) |
 | Microsoft | Customer Management `Account/Query` (`microsoft.Client.AccountCurrency`), `CurrencyCode` (a three-letter code from Microsoft's v13 value set) published only if `microsoftPublishableCurrencies` lists it as a current ISO 4217 code; no 429 retry; a recognised code cached on the client 6h, an unrecognised answer 5m | One per account per 6h |
-| Google Ads | not set (Google Ads is owned separately) | — |
+| Google Ads | `customer.currency_code`, selected on the monitor's own campaign GAQL query (`googleads.AccountCampaignRow.CurrencyCode`); every row must carry the same well-formed code (`dispatch.googleAdsAccountCurrency`) (#454) | No |
 
 - **Plumbing.** The live reads go through a new optional capability, `AccountMonitorReader`
   (`ReadAccountMonitor` → `model.AccountMonitorRead{Rows, Currency}`), which
-  `Orchestrator.ReadAccountCampaignMetrics` prefers over `AccountMetricsReader`; LinkedIn, Meta
-  and Reddit implement it, and their `ListAccountCampaignMetrics` is now a wrapper returning its
-  rows. Google keeps only `AccountMetricsReader`, so its currency is absent. The report-backed
+  `Orchestrator.ReadAccountCampaignMetrics` prefers over `AccountMetricsReader`; Google Ads (since
+  #454), LinkedIn, Meta and Reddit implement it, and their `ListAccountCampaignMetrics` is now a
+  wrapper returning its rows. The report-backed
   read calls the optional `AccountCurrencyReader` (`ReadAccountCurrency`) LAST in
   `ReadReportedAccountCampaigns`, on what is left of the shared budget and capped at
   `accountCurrencyReadTimeout` (3s), instrumented as `read_account_currency`; the currency is
@@ -163,6 +163,15 @@ renderer formats with a symbol when it is present and without one otherwise.
   3s — Reddit's runs beside the report fan-out, so usually nothing — and never a row or the
   response. `RedditDispatcher.ListAccountCampaignMetrics` (the rows-only reader) makes no
   ad-account read at all; only `ReadAccountMonitor` pays for it.
+- **The money rules are sized in it (#454).** The placeholder-budget rule (Google, Microsoft, X:
+  daily budget at or below about 1 USD) and the high-CPC rule (Google, Microsoft: average CPC
+  above about 5 USD) take the read's currency and scale their USD values through
+  `rules.monitorUnitsPerUSD`, a table of rounded units-per-dollar magnitudes — no amount is
+  converted or shown with it. In a currency the table does not list, or when `currency` is absent,
+  neither rule fires on an amount (Google and Microsoft still call a zero daily budget a
+  placeholder) and the response carries one account-wide LOW item saying the checks were
+  skipped (`rules.moneyRulesSkippedItem`): an unsized threshold is not guessed at in dollars, which is the misfire this
+  removed (a ¥50 click read as expensive, a 1 KWD/day budget — about $3 — read as a placeholder).
 - **Validation.** `model.NormalizeCurrencyCode` keeps a value only if it is exactly three ASCII
   upper-case letters — no trimming, no case folding — and is applied in each client, in the
   orchestrator, and in `buildAccountMonitor`. A malformed code is dropped, not an error.

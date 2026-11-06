@@ -5106,8 +5106,10 @@ The account monitor's `currency` field reaches the service two ways
   `ListAccountCampaignMetrics` returns the same read's rows, so every guard is in one body;
   Reddit's skips the currency (`readAccountMonitor(..., withCurrency=false)` calls the client's
   plain `ListAccountCampaigns`), so the rows-only path pays no extra ad-account read. LinkedIn
-  also maps `AccountCampaignRow.PacingUnknown` (budgets disagreeing about the currency). `GoogleAdsDispatcher` is untouched and implements only
-  `AccountMetricsReader`, so Google's currency is absent.
+  also maps `AccountCampaignRow.PacingUnknown` (budgets disagreeing about the currency).
+  `GoogleAdsDispatcher` implements it too since #454: its currency is `customer.currency_code`
+  from the same GAQL rows, published only when every row carries the same well-formed code
+  (`googleAdsAccountCurrency`).
 - **Report-backed reads.** `MicrosoftDispatcher` and `TwitterDispatcher` implement
   `service.AccountCurrencyReader` (`ReadAccountCurrency`), each through its monitor's own
   resolver (`resolveMicrosoftMonitorClient` / `resolveTwitterMonitorClient`), so the gate,

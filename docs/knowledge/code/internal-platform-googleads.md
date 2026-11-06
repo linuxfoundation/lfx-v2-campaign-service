@@ -2127,10 +2127,16 @@ asset created by temporary id and linked in the same `googleAds:mutate`. A live 
 2026-11-06 (#520) persisted that request on paused campaign 24444541804, and GAQL read back two
 `AD_IMAGE`, one `BUSINESS_LOGO` and one `BUSINESS_NAME` `campaign_asset` row, all `ENABLED` and
 naming the asset ids the response returned. Google answered the `BUSINESS_NAME` text create with an
-existing text asset of the same text, the reuse case the result check accepts. NOT LIVE-VERIFIED: a
-multi-operation `campaignSharedSets:mutate`, a shared set of another type (for example
-`NEGATIVE_PLACEMENTS`) on a Search campaign, and the 300x300 / 128x128 minimums and the 20-image
-cap, which are Google's documented asset specifications.
+existing text asset of the same text, the reuse case the result check accepts. A live create on
+2026-11-06 (#536) sent the multi-operation `campaignSharedSets:mutate`. It attached two
+`NEGATIVE_KEYWORDS` sets to paused campaign 24433949469. Google answered with
+`<campaignId>~<sharedSetId>` results in operation order, and the positional check passed. GAQL read
+back both `campaign_shared_set` rows `ENABLED`, and the sets' BROAD, PHRASE and EXACT keyword
+criteria as created. Google does not refuse a shared set of another type on a Search campaign:
+validateOnly accepted a `NEGATIVE_PLACEMENTS` and a `BRANDS` set. This client does not check the
+type either, so it would attach one. Such an attach has not been made for real, and its effect is
+unobserved. NOT LIVE-VERIFIED: the 300x300 / 128x128 minimums and the 20-image cap, which are
+Google's documented asset specifications.
 
 ## Image asset names (#491)
 
@@ -4002,6 +4008,16 @@ were replaced by the shared `pacingLabelFor` in `monitor_shared.go`
 no longer drops a campaign whose name merely begins with those two letters. The
 low-CTR pair is now the named `googleLowCtrPct`/`googleMinImpressions` rather than
 inline literals — same values, same behaviour.
+
+The query also selects `customer.currency_code` (#454) — `customer` is an attributed resource
+of `campaign`, so the code rides on every campaign row of the same request — and each
+`AccountCampaignRow` carries it as `CurrencyCode`. The field is decoded on its own
+(`monitorCurrencyField`), so a non-string value costs only the currency, never the read; across
+repeated rows for one campaign the first row's code is kept only while every later row agrees,
+and any mismatch or missing code clears it for good. `GoogleAdsDispatcher.ReadAccountMonitor`
+(`service.AccountMonitorReader`) publishes it as the monitor's `currency` only when every row
+carries the same well-formed code (`googleAdsAccountCurrency`), and the rule engine sizes its
+money thresholds in it.
 
 See [internal/platform/googleads](../../../internal/platform/googleads).
 

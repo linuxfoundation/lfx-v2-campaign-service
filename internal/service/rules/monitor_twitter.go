@@ -31,10 +31,9 @@ const (
 	xStatusPaused = "PAUSED"
 )
 
+// The placeholder-budget rule is Google's and Microsoft's, shared through isPlaceholderBudget in
+// monitor_shared.go, which sizes it in the account's currency (#454).
 const (
-	// xPlaceholderBudgetMax is Google's and Microsoft's placeholder rule: a daily budget at or
-	// below 1 (INCLUSIVE) buys too little delivery to read anything from.
-	xPlaceholderBudgetMax = 1.0
 	// xLowCtrPct / xMinImpressions are the low-CTR pair Google (non-search), LinkedIn, Reddit
 	// and Microsoft (non-search) share: below 0.3% once impressions exceed 1000 (EXCLUSIVE).
 	// Meta's higher pair is specific to Meta's CTR baseline; X's promoted posts sit with the
@@ -67,7 +66,10 @@ const (
 //
 // A FetchFailed row (unreadable budget or flight, or no finished report yet) is returned via
 // fetchFailedRow with no action items, as on every sibling.
-func EvaluateTwitterMonitor(rows []model.AccountCampaignMetrics, windowStart, windowEnd *time.Time) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
+//
+// currency is the ad account's ISO 4217 code as the read reported it, or "". It sizes the
+// placeholder-budget rule in the account's own currency; see monitorUnitsPerUSD.
+func EvaluateTwitterMonitor(rows []model.AccountCampaignMetrics, windowStart, windowEnd *time.Time, currency string) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 	out := make([]model.AccountMonitorRow, 0, len(rows))
 	items := make([]model.AccountMonitorActionItem, 0)
 	win, hasWindow := twitterWindow(windowStart, windowEnd)
@@ -85,14 +87,17 @@ func EvaluateTwitterMonitor(rows []model.AccountCampaignMetrics, windowStart, wi
 		if !computable {
 			row := unknownPacingRow(m)
 			out = append(out, row)
-			items = append(items, twitterActionItems(m, 0, row.PacingLabel, win, hasWindow)...)
+			items = append(items, twitterActionItems(m, 0, row.PacingLabel, win, hasWindow, currency)...)
 			continue
 		}
 		label := pacingLabelFor(pacingPct)
 		out = append(out, model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label})
-		items = append(items, twitterActionItems(m, pacingPct, label, win, hasWindow)...)
+		items = append(items, twitterActionItems(m, pacingPct, label, win, hasWindow, currency)...)
 	}
 
+	if it, ok := moneyRulesSkippedItem(currency, "placeholder-budget check was skipped", out); ok {
+		items = append(items, it)
+	}
 	sortByPriority(items)
 	return out, items
 }
@@ -254,7 +259,7 @@ func twitterScheduledInWindow(m model.AccountCampaignMetrics, w xWindow) bool {
 // only on the paced path; on the unknown path the caller passes the placeholder normal label, so
 // the pacing rules cannot fire. hasWindow false skips the zero-delivery rule, which needs the
 // window to know whether the campaign was scheduled at all.
-func twitterActionItems(m model.AccountCampaignMetrics, pacingPct float64, label model.MonitorPacingLabel, w xWindow, hasWindow bool) []model.AccountMonitorActionItem {
+func twitterActionItems(m model.AccountCampaignMetrics, pacingPct float64, label model.MonitorPacingLabel, w xWindow, hasWindow bool, currency string) []model.AccountMonitorActionItem {
 	var items []model.AccountMonitorActionItem
 	add := func(priority model.MonitorPriority, issue, action string) {
 		items = append(items, model.AccountMonitorActionItem{
@@ -271,7 +276,7 @@ func twitterActionItems(m model.AccountCampaignMetrics, pacingPct float64, label
 			"Campaign is active but delivered nothing in the window — 0 impressions and 0 clicks",
 			"Check the line items are active and scheduled, the promoted posts are approved, and the funding instrument has budget in X Ads Manager")
 	}
-	if active && m.BudgetDay > 0 && m.BudgetDay <= xPlaceholderBudgetMax {
+	if active && m.BudgetDay > 0 && isPlaceholderBudget(m.BudgetDay, currency) {
 		add(model.MonitorPriorityHigh,
 			fmt.Sprintf("Daily budget is %s — this is a placeholder and won't generate meaningful traffic", accountMoney(m.BudgetDay)),
 			"Set a realistic daily budget for the campaign's goal and audience before expecting results")

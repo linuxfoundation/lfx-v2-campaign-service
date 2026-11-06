@@ -28,7 +28,7 @@ func msFind(items []model.AccountMonitorActionItem, substr string) *model.Accoun
 }
 
 func TestMicrosoftBaseRowFiresNothing(t *testing.T) {
-	out, items := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{msBaseRow()}, 1)
+	out, items := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{msBaseRow()}, 1, "USD")
 	if len(items) != 0 {
 		t.Fatalf("base row fired %+v, want nothing — every per-rule case relies on it", items)
 	}
@@ -42,7 +42,7 @@ func TestMicrosoftBaseRowFiresNothing(t *testing.T) {
 // No Microsoft action item prints a "$": the amounts are the account's own currency (#435),
 // and so is the advice beside them.
 func TestMicrosoftActionItems_NoDollarSign(t *testing.T) {
-	items := microsoftActionItems(model.AccountCampaignMetrics{Status: "Active", BudgetDay: 1}, 50, model.MonitorPacingNormal, 7)
+	items := microsoftActionItems(model.AccountCampaignMetrics{Status: "Active", BudgetDay: 1}, 50, model.MonitorPacingNormal, 7, "USD")
 	if len(items) == 0 {
 		t.Fatal("the placeholder-budget rule did not fire")
 	}
@@ -156,7 +156,7 @@ func TestMicrosoftActionItems(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			row := msBaseRow()
 			tc.mutate(&row)
-			_, items := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{row}, 1)
+			_, items := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{row}, 1, "USD")
 			got := msFind(items, tc.issue)
 			if !tc.fires {
 				if got != nil {
@@ -182,7 +182,7 @@ func TestMicrosoftActionItems(t *testing.T) {
 func TestEvaluateMicrosoftMonitor_FetchFailedRow(t *testing.T) {
 	out, items := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{
 		{PlatformCampaignID: "1", Name: "Failed", Status: "Suspended", Impressions: 10, FetchFailed: true},
-	}, 7)
+	}, 7, "USD")
 	if len(out) != 1 {
 		t.Fatalf("got %d rows, want 1 — a FetchFailed row is still returned", len(out))
 	}
@@ -204,7 +204,7 @@ func TestEvaluateMicrosoftMonitor_SharedBudget(t *testing.T) {
 			PlatformCampaignID: "1", Name: "Shared", Status: "Active", BudgetDay: budget,
 			PacingUnknown: true, Spend: 500, Impressions: 300,
 		}
-		out, items := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{row}, 7)
+		out, items := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{row}, 7, "USD")
 		if !out[0].Metrics.PacingUnknown || out[0].PacingPct != 0 || out[0].PacingLabel != model.MonitorPacingNormal {
 			t.Errorf("budget %v: row = %+v, want unknown pacing", budget, out[0])
 		}
@@ -225,7 +225,7 @@ func TestEvaluateMicrosoftMonitor_SharedBudget(t *testing.T) {
 func TestEvaluateMicrosoftMonitor_ZeroBudgetNotShared(t *testing.T) {
 	out, items := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{
 		{PlatformCampaignID: "1", Name: "No Budget", Status: "Active", Spend: 25},
-	}, 7)
+	}, 7, "USD")
 	if !out[0].Metrics.PacingUnknown || out[0].PacingPct != 0 {
 		t.Errorf("row = %+v, want unknown pacing", out[0])
 	}
@@ -240,7 +240,7 @@ func TestEvaluateMicrosoftMonitor_ZeroBudgetNotShared(t *testing.T) {
 
 // TestEvaluateMicrosoftMonitor_ZeroDaysIsUnknown: no window means no expected spend.
 func TestEvaluateMicrosoftMonitor_ZeroDaysIsUnknown(t *testing.T) {
-	out, _ := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{msBaseRow()}, 0)
+	out, _ := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{msBaseRow()}, 0, "USD")
 	if !out[0].Metrics.PacingUnknown {
 		t.Errorf("row = %+v, want unknown pacing for days=0", out[0])
 	}
@@ -268,7 +268,7 @@ func TestEvaluateMicrosoftMonitor_PacingRounding(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			out, _ := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{
 				{PlatformCampaignID: "1", Status: "Active", BudgetDay: tc.budget, Spend: tc.spend},
-			}, tc.days)
+			}, tc.days, "USD")
 			if out[0].PacingPct != tc.wantPct || out[0].PacingLabel != tc.wantLabel {
 				t.Errorf("got %v%% %q, want %v%% %q", out[0].PacingPct, out[0].PacingLabel, tc.wantPct, tc.wantLabel)
 			}
@@ -281,7 +281,7 @@ func TestEvaluateMicrosoftMonitor_PacingRounding(t *testing.T) {
 func TestEvaluateMicrosoftMonitor_UnderspendTextUsesDays(t *testing.T) {
 	_, items := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{
 		{PlatformCampaignID: "1", Status: "Active", BudgetDay: 10, Spend: 20},
-	}, 7)
+	}, 7, "USD")
 	if it := msFind(items, "Only spending 29%"); it == nil || !strings.Contains(it.Issue, "70.00 in account currency expected") {
 		t.Errorf("want an underspend item reading 29%% and 70.00 expected, got %+v", items)
 	}
@@ -295,7 +295,7 @@ func TestEvaluateMicrosoftMonitor_SortsHighBeforeMed(t *testing.T) {
 		{PlatformCampaignID: "noclicks", Status: "Active", BudgetDay: 50, Spend: 40, Impressions: 10},
 		{PlatformCampaignID: "suspended", Status: "Suspended", BudgetDay: 50},
 		{PlatformCampaignID: "budget", Status: "BudgetPaused", BudgetDay: 50},
-	}, 1)
+	}, 1, "USD")
 	want := []string{"suspended", "budget", "paused", "noclicks"}
 	got := itemIDs(items)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
@@ -308,12 +308,12 @@ func TestEvaluateMicrosoftMonitor_SortsHighBeforeMed(t *testing.T) {
 // zero. An individually budgeted campaign keeps its amount in the message.
 func TestMicrosoftBudgetPausedSharedBudgetDoesNotClaimZero(t *testing.T) {
 	shared := model.AccountCampaignMetrics{PlatformCampaignID: "1", Name: "s", Status: "BudgetPaused", PacingUnknown: true}
-	_, items := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{shared}, 7)
+	_, items := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{shared}, 7, "USD")
 	if len(items) == 0 || !strings.Contains(items[0].Issue, "shared budget") || strings.Contains(items[0].Issue, "0.00 in account currency") {
 		t.Errorf("shared-budget items = %+v, want the shared budget named and no zero amount", items)
 	}
 	own := model.AccountCampaignMetrics{PlatformCampaignID: "2", Name: "o", Status: "BudgetPaused", BudgetDay: 25}
-	_, items = EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{own}, 7)
+	_, items = EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{own}, 7, "USD")
 	if len(items) == 0 || !strings.Contains(items[0].Issue, "daily budget 25.00 in account currency") {
 		t.Errorf("own-budget items = %+v, want the daily amount named", items)
 	}

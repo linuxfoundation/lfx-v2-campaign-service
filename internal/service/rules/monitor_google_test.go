@@ -24,7 +24,7 @@ func TestEvaluateGoogleMonitor_FiltersScratchCampaigns(t *testing.T) {
 		{PlatformCampaignID: "6", Name: "zz 2026 planning", Status: "enabled", BudgetDay: 50, Spend: 50},
 		{PlatformCampaignID: "7", Name: "zz", Status: "enabled", BudgetDay: 50, Spend: 50},
 	}
-	out, _ := EvaluateGoogleMonitor(rows, 1)
+	out, _ := EvaluateGoogleMonitor(rows, 1, "USD")
 	if len(out) != 1 {
 		t.Fatalf("got %d rows, want 1 — every zz-prefixed scratch campaign must be dropped, "+
 			"in any case: %+v", len(out), out)
@@ -48,7 +48,7 @@ func TestEvaluateGoogleMonitor_KeepsCampaignsThatMerelyStartWithZZ(t *testing.T)
 		{PlatformCampaignID: "2", Name: "ZZTop Sponsorship", Status: "enabled", BudgetDay: 50, Spend: 50},
 		{PlatformCampaignID: "3", Name: "zz2026", Status: "enabled", BudgetDay: 50, Spend: 50},
 	}
-	out, _ := EvaluateGoogleMonitor(rows, 1)
+	out, _ := EvaluateGoogleMonitor(rows, 1, "USD")
 	if len(out) != len(rows) {
 		t.Fatalf("got %d rows, want %d — a name that merely starts with the letters zz is not "+
 			"the scratch convention, and dropping it makes a real campaign invisible: %+v",
@@ -81,7 +81,7 @@ func TestGooglePacingBoundaries(t *testing.T) {
 			rows := []model.AccountCampaignMetrics{
 				{PlatformCampaignID: "1", Name: "c", Status: "enabled", BudgetDay: 1, Spend: tc.spend},
 			}
-			out, _ := EvaluateGoogleMonitor(rows, 1)
+			out, _ := EvaluateGoogleMonitor(rows, 1, "USD")
 			if len(out) != 1 {
 				t.Fatalf("got %d rows, want 1", len(out))
 			}
@@ -171,7 +171,7 @@ func TestGoogleActionItems(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.row.PlatformCampaignID = "c1"
 			tc.row.Name = "Campaign"
-			items := googleActionItems(tc.row, 0, model.MonitorPacingNormal, 1)
+			items := googleActionItems(tc.row, 0, model.MonitorPacingNormal, 1, "USD")
 			found := false
 			for _, it := range items {
 				if strings.Contains(it.Issue, tc.wantIssue) {
@@ -194,7 +194,7 @@ func TestGoogleActionItems(t *testing.T) {
 // those two branches (unlike paused/draft, which are status-only).
 func TestGoogleActionItems_UnderspendingAndConstrainedRequireEnabled(t *testing.T) {
 	row := model.AccountCampaignMetrics{PlatformCampaignID: "c1", Name: "c", Status: "PAUSED", BudgetDay: 50, Spend: 10}
-	items := googleActionItems(row, 20, model.MonitorPacingUnderspending, 1)
+	items := googleActionItems(row, 20, model.MonitorPacingUnderspending, 1, "USD")
 	for _, it := range items {
 		if strings.Contains(it.Issue, "Only spending") {
 			t.Fatalf("underspending action item fired for a PAUSED campaign; the BFF gates this rule on status==enabled: %+v", it)
@@ -209,7 +209,7 @@ func TestGoogleActionItems_UnderspendingAndConstrainedRequireEnabled(t *testing.
 // `days`) was already correct.
 func TestGoogleActionItems_UnderspendingTextUsesRequestedDays(t *testing.T) {
 	row := model.AccountCampaignMetrics{PlatformCampaignID: "c1", Name: "c", Status: "ENABLED", BudgetDay: 10, Spend: 20}
-	items := googleActionItems(row, 20, model.MonitorPacingUnderspending, 7)
+	items := googleActionItems(row, 20, model.MonitorPacingUnderspending, 7, "USD")
 	found := false
 	for _, it := range items {
 		if strings.Contains(it.Issue, "Only spending") {
@@ -239,7 +239,7 @@ func TestEvaluateGoogleMonitor_SkipsFetchFailedRows(t *testing.T) {
 		{PlatformCampaignID: "1", Name: "Failed Fetch", Status: "enabled", BudgetDay: 50, FetchFailed: true},
 		{PlatformCampaignID: "2", Name: "Ok", Status: "enabled", BudgetDay: 50, Spend: 50},
 	}
-	out, items := EvaluateGoogleMonitor(rows, 1)
+	out, items := EvaluateGoogleMonitor(rows, 1, "USD")
 	if len(out) != 2 {
 		t.Fatalf("got %d rows, want 2 — a FetchFailed row must still be returned: %+v", len(out), out)
 	}
@@ -290,7 +290,7 @@ func TestGoogleActionItems_NoAmountIsCalledDollars(t *testing.T) {
 	}
 	issues := 0
 	for _, r := range rows {
-		for _, it := range googleActionItems(r.row, r.pacing, r.label, 7) {
+		for _, it := range googleActionItems(r.row, r.pacing, r.label, 7, "USD") {
 			issues++
 			if strings.Contains(it.Issue, "$") {
 				t.Errorf("issue %q calls an account-currency amount dollars", it.Issue)
