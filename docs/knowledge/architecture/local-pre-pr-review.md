@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Local pre-PR review"
-description: "How the short pre-PR review block in CLAUDE.md points at the central /lfx-skills:lfx-pre-pr-review skill and carries the two repo-owned values: the knowledge-base review skill the central skill reads, and the deterministic preflight the block's own second step runs."
+description: "How the short pre-PR review block in CLAUDE.md points at the central /lfx-skills:lfx-pre-pr-review skill and carries the two repo-owned values: the knowledge-base review skill the central skill reads, and the deterministic preflight the block's own second step runs. Also where the repo's two review brains live, and how /lfx-skills:lfx-local-review reaches them."
 resource: "CLAUDE.md"
 ---
 
@@ -30,25 +30,49 @@ range is pinned, what a failed reviewer means, when the fix commit happens — i
 the central skill's business, and a fix to it is one change there rather than
 one per repo.
 
-## The repo-owned brain
+## The repo-owned brains
 
-One physical skill, one copy: `.claude/skills/campaign-service-learnings-reviewer/SKILL.md`,
-also exposed at `.agents/skills/campaign-service-learnings-reviewer` as a symlink
-to that directory. The declared `name:` in its frontmatter is what the central
-skill launches. It matches the reviewed range against
+Two repo-owned review skills, one physical copy of each, each also exposed under
+`.agents/skills/<name>` as a symlink to its directory:
+
+| Skill (declared `name:`) | File | Role |
+|---|---|---|
+| `campaign-service-learnings-reviewer` | `.claude/skills/campaign-service-learnings-reviewer/SKILL.md` | the knowledge-base role: the `KB review skill` of the pre-PR round, and `repo_learnings` for `/lfx-skills:lfx-local-review` |
+| `campaign-service-code-reviewer` | `.claude/skills/campaign-service-code-reviewer/SKILL.md` | `repo_code` for `/lfx-skills:lfx-local-review`; not part of the pre-PR round |
+
+The learnings brain matches the reviewed range against
 `docs/reviews/knowledge-base/` — patterns extracted from verified past review
 comments on this repo, each with a mechanical detect condition — and cites the
 matched entry in every finding. A finding it cannot tie to an entry is dropped.
 
+The code brain carries **no rules of its own**. The line-level method is
+`.github/skills/campaign-service-code-review/SKILL.md`, which the PR-side
+Copilot reviewer also uses; the code brain tells its reviewer to read that file
+at the pinned `target_sha` and apply it, with the local scope, bar and report
+format in place of the PR-only parts. That keeps one source for the method.
+Copilot needs the file under `.github/`, and a Claude session registers skills
+only from `.claude/skills/`, which is why the brain is a pointer and not a copy.
+Do not paste the method into it: two copies drift.
+
+`/lfx-skills:lfx-local-review` (the launcher in the installed plugin) looks for
+the two brains at fixed paths, `.claude/skills/local-code-review/SKILL.md` and
+`.claude/skills/local-learnings-review/SKILL.md`, and then loads each one by the
+`name:` in its frontmatter. Both paths are tracked symlinks to the directories
+above, not copies. Without them its probe fails with "no repo_code reviewer
+skill … this repo does not own local review brains" before any reviewer starts
+(#266). The pre-PR round in `CLAUDE.md` does not use them.
+
 The repo's **written** conventions (`CLAUDE.md`, README, docs, Makefile,
-checklists) are the central general reviewer's surface; it reads them from the
-repo at review time and carries no rulebook of its own. There is no repo-owned
-conventions reviewer any more: the earlier `campaign-service-code-reviewer`
-skill, the `local-code-review` and `local-learnings-review` alias symlinks, and
-the `local-review-fallback` launch table were retired when the repo adopted the
-block. What that skill knew beyond a restatement of the repo's docs was
-salvaged into `docs/reviews/knowledge-base/known-false-positives.md` (entries
-9 and 10). Do not reintroduce a conventions reviewer.
+checklists) are also the central general reviewer's surface; it reads them
+from the repo at review time. When the repo adopted the pre-PR block it retired
+an earlier conventions reviewer of the same name, the alias symlinks and the
+`local-review-fallback` launch table (2026-09-25). That left
+`/lfx-skills:lfx-local-review` with no `repo_code` brain to load, so the name
+and the two aliases came back for #266 (2026-11-06), this time as a pointer to
+the shared method. What the retired skill knew beyond the repo's docs is still
+entries 9 and 10 of `docs/reviews/knowledge-base/known-false-positives.md`. The
+`local-review-fallback` table stays retired: the launcher falls back to its own
+table when a repo has none.
 
 ## The knowledge base and its floor
 
@@ -92,7 +116,8 @@ this repo generates most.
 The round stops at PR-open: it never writes a GitHub label, status, check,
 review or approval, and it does not touch `.github/**` or the PR-side pipeline
 (`.github/copilot-instructions.md` and `.github/skills/**` are a different
-reviewer with its own lifecycle). Reviewers never edit tracked files, commit,
+reviewer with its own lifecycle; the local code brain only reads one file there,
+at a pinned revision). Reviewers never edit tracked files, commit,
 push, or write GitHub state; the developer's own session acts on what they
 report, as the central skill directs. When a fix commit changes what the code
 does, the knowledge-bundle upkeep rules in `CLAUDE.md` apply to it.

@@ -2231,13 +2231,10 @@ videoCreative?:                 — OPTIONAL Video RESPONSIVE VIDEO AD (LFXV2-26
                                   list is never sent, because that would mean "no call to action".
                                   Over-long copy is REFUSED, not truncated.
 
-                                  The ad group is type `VIDEO_RESPONSIVE` and is created ENABLED,
-                                  exactly as Demand Gen's is; the AD is created PAUSED, as is the
-                                  campaign. Only Search creates its ad group paused. Nothing serves
-                                  either way — a paused campaign delivers nothing whatever its children
-                                  say — but a reconciler reading an ENABLED ad group under a PAUSED
-                                  campaign is looking at a correctly created Video campaign, not a
-                                  half-enabled one. It
+                                  The ad group is type `VIDEO_RESPONSIVE` and is created PAUSED, as
+                                  every channel's ad group is (#535); the AD is created PAUSED, as is
+                                  the campaign. Nothing serves until the status toggle's ACTIVATE
+                                  cascade enables the ad group and ad, then the campaign. It
                                   takes TWO mutates — the video assets, then the ad that references the
                                   resource names Google RETURNED, never rebuilt ones. The result carries
                                   `creativeAssetIds` and `adId`, so a failure after the assets are
@@ -2289,9 +2286,10 @@ displayCreative?:               — OPTIONAL Display RESPONSIVE DISPLAY AD (LFXV
                                   supplies its own button text. Over-long copy is REFUSED, not
                                   truncated.
 
-                                  The ad group is type `DISPLAY_STANDARD` and is created ENABLED,
-                                  exactly as Demand Gen's and Video's are; the AD is created PAUSED, as
-                                  is the campaign. Only Search creates its ad group paused. The campaign
+                                  The ad group (every `displayAdGroups[]` entry included) is type
+                                  `DISPLAY_STANDARD` and is created PAUSED, as every channel's ad group
+                                  is (#535); the AD is created PAUSED, as is the campaign, and the
+                                  status toggle's ACTIVATE cascade enables them children first. The campaign
                                   carries NO `advertisingChannelSubType` — the deliberate contrast with
                                   Video, which pins `VIDEO_ACTION`. It takes TWO mutates — the image
                                   assets, then the ad that references the resource names Google

@@ -172,7 +172,7 @@ func TestCreateDisplayCampaign_EachHalfAlone(t *testing.T) {
 		}
 		// No audience input: the ad group payload is byte-identical to the pre-#462 one.
 		want := `{"operations":[{"create":{"name":"` + displayAdGroupName(in) +
-			`","campaign":"customers/1234567890/campaigns/222","status":"ENABLED","type":"DISPLAY_STANDARD"}}]}`
+			`","campaign":"customers/1234567890/campaigns/222","status":"PAUSED","type":"DISPLAY_STANDARD"}}]}`
 		if got := readAdGroup(); got != want {
 			t.Errorf("ad group body = %s, want exactly %s", got, want)
 		}
