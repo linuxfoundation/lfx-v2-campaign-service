@@ -230,6 +230,26 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 				break
 			}
 			slog.Info("m", fields...)`, []string{"projectID"}},
+		{"a break skips the loop's post statement", `fields := []any{"kind", 1}
+			for ; c; fields = []any{"kind", 1} {
+				fields = []any{"projectID", id}
+				break
+			}
+			slog.Info("m", fields...)`, []string{"kind", "projectID"}},
+		{"a break before the call in the body ends that path", `fields := []any{"a", 1}
+			for c {
+				if c {
+					fields = []any{"project", id}
+					break
+				}
+				slog.Info("m", fields...)
+			}`, []string{"a"}},
+		{"a panic ends its path", `fields := []any{"project_id", id}
+			if c {
+				fields = []any{"project", id}
+				panic(fields)
+			}
+			slog.Info("m", fields...)`, []string{"project_id"}},
 		{"a multi-value assignment makes the slice unknown", `fields := []any{"projectID", id}
 			fields, e = mk()
 			slog.Info("m", fields...)`, nil},
@@ -472,20 +492,33 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 			}
 		}
 	}
-	var exec func(s ast.Stmt, ps []path) []path
-	execList := func(list []ast.Stmt, ps []path) []path {
+	// flow is where the paths leaving a statement go: on to the next statement, out of the
+	// enclosing loop or switch (break), or to the loop's next iteration (continue). A
+	// return or panic sends a path nowhere.
+	type flow struct{ next, brk, cont []path }
+	var execF func(s ast.Stmt, ps []path) flow
+	execListF := func(list []ast.Stmt, ps []path) flow {
+		var out flow
 		for _, s := range list {
-			ps = exec(s, ps)
+			f := execF(s, ps)
+			out.brk = union(out.brk, f.brk)
+			out.cont = union(out.cont, f.cont)
+			ps = f.next
 		}
-		return ps
-	}
-	// loopOnce runs one iteration of a for loop's body and post statement.
-	loopOnce := func(x *ast.ForStmt, ps []path) []path {
-		out := execList(x.Body.List, clonePaths(ps))
-		if x.Post != nil {
-			out = exec(x.Post, out)
-		}
+		out.next = ps
 		return out
+	}
+	exec := func(s ast.Stmt, ps []path) []path { return execF(s, ps).next }
+	// iterate runs one iteration of a loop body. It returns the body's flow and the paths
+	// that start another iteration: those that fall through or continue, after the post
+	// statement. A break skips the post statement.
+	iterate := func(body *ast.BlockStmt, post ast.Stmt, ps []path) (flow, []path) {
+		it := execListF(body.List, clonePaths(ps))
+		again := union(it.next, it.cont)
+		if post != nil {
+			again = exec(post, again)
+		}
+		return it, again
 	}
 	// clauses returns a switch or select statement's init and clause bodies, and whether
 	// one clause always runs (a default, or any select).
@@ -510,7 +543,7 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 		}
 		return init, bodies, nodes, always
 	}
-	exec = func(s ast.Stmt, ps []path) []path {
+	execF = func(s ast.Stmt, ps []path) flow {
 		switch x := s.(type) {
 		case *ast.AssignStmt:
 			assign(x.Lhs, x.Rhs, ps)
@@ -527,43 +560,67 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 				}
 			}
 		case *ast.ReturnStmt:
-			return nil // this path does not reach anything after it
+			return flow{} // this path does not reach anything after it
+		case *ast.ExprStmt:
+			if c, ok := x.X.(*ast.CallExpr); ok {
+				if id, ok := ast.Unparen(c.Fun).(*ast.Ident); ok {
+					if b, ok := info.Uses[id].(*types.Builtin); ok && b.Name() == "panic" {
+						return flow{}
+					}
+				}
+			}
+		case *ast.BranchStmt:
+			switch x.Tok {
+			case token.BREAK:
+				return flow{brk: ps}
+			case token.CONTINUE:
+				return flow{cont: ps}
+			}
+			// goto and fallthrough are taken to fall through: an over-approximation.
 		case *ast.BlockStmt:
-			return execList(x.List, ps)
+			return execListF(x.List, ps)
 		case *ast.LabeledStmt:
-			return exec(x.Stmt, ps)
+			return execF(x.Stmt, ps)
 		case *ast.IfStmt:
 			if x.Init != nil {
 				ps = exec(x.Init, ps)
 			}
-			thenPs := execList(x.Body.List, clonePaths(ps))
-			elsePs := clonePaths(ps)
+			thenF := execListF(x.Body.List, clonePaths(ps))
+			elseF := flow{next: clonePaths(ps)}
 			if x.Else != nil {
-				elsePs = exec(x.Else, elsePs)
+				elseF = execF(x.Else, elseF.next)
 			}
-			return union(thenPs, elsePs)
+			return flow{
+				next: union(thenF.next, elseF.next),
+				brk:  union(thenF.brk, elseF.brk),
+				cont: union(thenF.cont, elseF.cont),
+			}
 		case *ast.ForStmt:
 			if x.Init != nil {
 				ps = exec(x.Init, ps)
 			}
-			return union(ps, loopOnce(x, ps))
+			it, again := iterate(x.Body, x.Post, ps)
+			return flow{next: union(ps, it.brk, again)}
 		case *ast.RangeStmt:
-			return union(ps, execList(x.Body.List, clonePaths(ps)))
+			it, again := iterate(x.Body, nil, ps)
+			return flow{next: union(ps, it.brk, again)}
 		case *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt:
 			init, bodies, _, always := clauses(x)
 			if init != nil {
 				ps = exec(init, ps)
 			}
-			var exits [][]path
+			var out flow
 			for _, b := range bodies {
-				exits = append(exits, execList(b, clonePaths(ps)))
+				f := execListF(b, clonePaths(ps))
+				out.next = union(out.next, f.next, f.brk) // a break leaves the switch
+				out.cont = union(out.cont, f.cont)
 			}
 			if !always {
-				exits = append(exits, ps)
+				out.next = union(out.next, ps)
 			}
-			return union(exits...)
+			return out
 		}
-		return ps
+		return flow{next: ps}
 	}
 	contains := func(n, target ast.Node) bool {
 		return n != nil && !reflect.ValueOf(n).IsNil() && n.Pos() <= target.Pos() && target.End() <= n.End()
@@ -597,11 +654,13 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 					ps = exec(x.Init, ps)
 				}
 				if contains(x.Body, target) {
-					return pathsAt(x.Body.List, union(ps, loopOnce(x, ps)), target)
+					_, again := iterate(x.Body, x.Post, ps)
+					return pathsAt(x.Body.List, union(ps, again), target)
 				}
 			case *ast.RangeStmt:
 				if contains(x.Body, target) {
-					return pathsAt(x.Body.List, union(ps, execList(x.Body.List, clonePaths(ps))), target)
+					_, again := iterate(x.Body, nil, ps)
+					return pathsAt(x.Body.List, union(ps, again), target)
 				}
 			case *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt:
 				init, bodies, nodes, _ := clauses(x)

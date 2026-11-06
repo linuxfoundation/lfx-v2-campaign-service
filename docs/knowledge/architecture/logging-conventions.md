@@ -67,9 +67,11 @@ stay together, and an alias is followed.
 
 - Statements run in order.
 - An `if`, `switch` or `select` runs each branch in sequence from the paths on
-  entry, and keeps the union of the paths that fall through. A `return` ends its
-  path.
-- A loop body runs zero or one times, after a `for` loop's initializer.
+  entry, and keeps the union of the paths that fall through. A `return` or
+  `panic` ends its path.
+- A loop body runs zero or one times, after a `for` loop's initializer. A
+  `break` leaves the loop or switch without running the loop's post statement,
+  and a `continue` goes on to it.
 - A log call inside a closure sees the paths where the closure sits.
 
 Each resulting sequence is resolved in full before it is paired, so a pair split

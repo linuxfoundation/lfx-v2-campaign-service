@@ -23,7 +23,8 @@ clear, as `"project_id"`.
     read correctly. The slice is traced by interpreting the enclosing function's statements
     up to the call, tracking whole paths, so slices assigned together stay together.
     Branches run in sequence and the paths that fall through are joined (a `return` ends a
-    path), loops run zero or one times after a `for` initializer, and aliases are followed.
+    path, as does a `panic`), loops run zero or one times after a `for` initializer, a
+    `break` skips the post statement, and aliases are followed.
     Every resulting path is checked.
   - It looks through `any("k")` conversions, and reads elided `[]slog.Attr` elements,
     named-constant keys, and group names (`slog.Group`, `slog.GroupAttrs`,
@@ -39,6 +40,7 @@ clear, as `"project_id"`.
     were dropped, and appends were attached to a replaced slice. Then an alias was lost, and
     appends within one branch were treated as independent. Then a `for` initializer was
     skipped, per-variable joins mixed exclusive branches, and returned paths were merged.
+    Then a `break` still ran the loop's post statement.
 - Mutation-checked:
   - Renaming one key to `projectID` in `internal/service/connection.go`, or the spread-slice
     key in `internal/service/meta_ad_sets.go`, fails the guard.
@@ -49,7 +51,8 @@ clear, as `"project_id"`.
     its appends separately, dropping the conversion unwrap, running a branch's statements as
     independent choices, not tracking aliases, dropping the not-taken path, keeping only the
     first switch clause or the first alternative, not descending into a closure, skipping a
-    `for` initializer, treating `return` as a no-op, and mixing variables across paths.
+    `for` initializer, treating `return` or `panic` as a no-op, letting
+    `break` fall through or run the post statement, and mixing variables across paths.
 - The decision is written down in `docs/knowledge/architecture/logging-conventions.md` (new)
   and under "Settled by decision" in `docs/reviews/knowledge-base/known-false-positives.md`, so
   a reviewer does not raise it again.
