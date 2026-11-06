@@ -488,8 +488,9 @@ type googleAdsConfig struct {
 	DeviceBidModifiers []googleAdsDeviceBidModifierConfig `json:"deviceBidModifiers"`
 	// ExcludedAgeRanges and ExcludedGenders are demographic EXCLUSIONS ("18-24",
 	// "MALE", …). Exclusion-only is Google's own shape at campaign level, not a
-	// narrowing this adapter chose: there is no "target only these" form here. Left
-	// empty, no demographic is excluded.
+	// narrowing this adapter chose: there is no "target only these" form at campaign level;
+	// Display's positive form is displayDemographics (#499). Left empty, no demographic is
+	// excluded.
 	ExcludedAgeRanges []string `json:"excludedAgeRanges"`
 	ExcludedGenders   []string `json:"excludedGenders"`
 	// ExcludedIncomeRanges ("INCOME_RANGE_0_50", …) and ExcludedParentalStatuses
@@ -607,6 +608,14 @@ type googleAdsConfig struct {
 	// lists — which must then be empty when this list is set. DISPLAY ONLY. Refusals are
 	// the client's preflight's.
 	DisplayAdGroups []googleAdsDisplayAdGroupConfig `json:"displayAdGroups"`
+	// DisplayDemographics is positive demographic TARGETING on every Display ad group (#499):
+	// each non-empty list restricts the ad to the values it names, in the exclusion fields'
+	// vocabulary. DISPLAY ONLY, and a value may not also be in its excluded* list. It names
+	// no account resource, so no audience gate applies, but its request shape is unprobed, so
+	// it is refused outright unless GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED is "true" (see
+	// googleAdsDemographicTargetingEnabled). The other refusals are the client's preflight's;
+	// see googleads.validateDisplayDemographics.
+	DisplayDemographics *googleAdsDisplayDemographicsConfig `json:"displayDemographics"`
 	// SearchAssets are the Search campaign's image, business-logo and business-name assets
 	// (#477), linked to the campaign. SEARCH ONLY, refused on every other channel. Its two image
 	// lists take the same ImageRef entries as the creatives above, so they are resolved,
@@ -709,7 +718,8 @@ func googleAdsSharedNegativeListsEnabled() bool {
 }
 
 // googleAdsDemographicTargetingEnabled reports whether this deployment opted in to the
-// demographic inputs whose request shape is not yet probed live: observedDemographics (#497).
+// demographic inputs whose request shape is not yet probed live: observedDemographics (#497)
+// and displayDemographics (#499).
 // Read per call, like the gates above. Unlike them it names no account resource; it keeps an
 // unverified shape off the shared account until a validateOnly probe has passed. See
 // constants.EnvGoogleAdsDemographicTargetingEnabled.
@@ -892,6 +902,13 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return nil, googleAdsInputDisabled("observedDemographics is",
 			constants.EnvGoogleAdsDemographicTargetingEnabled, "observedDemographics")
 	}
+	// displayDemographics (#499) likewise: any list in it, whatever its entries hold.
+	if d := cfg.DisplayDemographics; d != nil &&
+		len(d.AgeRanges)+len(d.Genders)+len(d.IncomeRanges)+len(d.ParentalStatuses) > 0 &&
+		!googleAdsDemographicTargetingEnabled() {
+		return nil, googleAdsInputDisabled("displayDemographics is",
+			constants.EnvGoogleAdsDemographicTargetingEnabled, "displayDemographics")
+	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -983,6 +1000,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		VideoCreative:            googleAdsVideoCreative(cfg.VideoCreative),
 		DisplayCreative:          googleAdsDisplayCreative(cfg.DisplayCreative),
 		DisplayAdGroups:          googleAdsDisplayAdGroups(cfg.DisplayAdGroups),
+		DisplayDemographics:      googleAdsDisplayDemographics(cfg.DisplayDemographics),
 		// The asset group's signals (#461), verbatim like the creative they attach to.
 		PerformanceMaxSearchThemes:   cfg.PerformanceMaxSearchThemes,
 		PerformanceMaxAudienceSignal: cfg.PerformanceMaxAudienceSignal,
@@ -1768,6 +1786,28 @@ type googleAdsDisplayAdGroupConfig struct {
 	CustomAffinities         []string                        `json:"customAffinities"`
 	UserInterests            []string                        `json:"userInterests"`
 	ExcludedAudienceSegments []string                        `json:"excludedAudienceSegments"`
+}
+
+// googleAdsDisplayDemographicsConfig is googleAdsConfig.displayDemographics on the wire (#499).
+type googleAdsDisplayDemographicsConfig struct {
+	AgeRanges        []string `json:"ageRanges"`
+	Genders          []string `json:"genders"`
+	IncomeRanges     []string `json:"incomeRanges"`
+	ParentalStatuses []string `json:"parentalStatuses"`
+}
+
+// googleAdsDisplayDemographics copies the wire lists onto the client input and validates
+// nothing; nil is the zero value, which the client reads as "no demographic targeting".
+func googleAdsDisplayDemographics(in *googleAdsDisplayDemographicsConfig) googleads.DisplayDemographics {
+	if in == nil {
+		return googleads.DisplayDemographics{}
+	}
+	return googleads.DisplayDemographics{
+		AgeRanges:        in.AgeRanges,
+		Genders:          in.Genders,
+		IncomeRanges:     in.IncomeRanges,
+		ParentalStatuses: in.ParentalStatuses,
+	}
 }
 
 // googleAdsDisplayAdGroups maps the list verbatim; every refusal is the client's.

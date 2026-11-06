@@ -297,7 +297,8 @@ openssl rand -base64 32
 - `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to the Google Ads demographic inputs whose request
   shape has not yet been checked with a validateOnly probe:
-  `googleAdsConfig.observedDemographics` (#497). Only the exact value
+  `googleAdsConfig.observedDemographics` (#497) and
+  `googleAdsConfig.displayDemographics` (#499). Only the exact value
   `true` enables it; anything else fails closed, and a create naming one,
   on any channel, is refused before the budget. It names no account
   resource; it keeps an unverified shape off the shared account. The chart
