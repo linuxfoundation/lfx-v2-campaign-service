@@ -92,6 +92,25 @@ func TestGoogleAdsListUserLists_UsesTheSystemFallback(t *testing.T) {
 	}
 }
 
+// On the LF system credential an explicit account_id may only repeat the create's account: any
+// other customer is refused before a request, so the route cannot list user lists on every
+// customer the LF login reaches. Repeating the create's account is still read.
+func TestGoogleAdsListUserLists_SystemFallbackRefusesAnotherAccount(t *testing.T) {
+	opts, reached := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"results":[]}`) })
+	d := NewGoogleAdsDispatcher(splitConnReader{system: googleAdsConnFor("5555555555")}, identityEncryptor{}, opts...)
+	_, called, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "1234567890")
+	if !errors.Is(err, domain.ErrAccountIDMalformed) {
+		t.Fatalf("err = %v, want ErrAccountIDMalformed", err)
+	}
+	if called || reached.Load() {
+		t.Errorf("called = %v, reached = %v; another customer must be refused before any request", called, reached.Load())
+	}
+	res, called, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "5555555555")
+	if err != nil || !called || res.AccountID != "5555555555" {
+		t.Fatalf("same account: res = %+v, called = %v, err = %v; want it read", res, called, err)
+	}
+}
+
 // While the deployment forces the LF system account, a create ignores the project's own
 // connection, so this read must too.
 func TestGoogleAdsListUserLists_FollowsTheForcedSystemAccount(t *testing.T) {

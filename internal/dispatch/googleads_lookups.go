@@ -95,9 +95,19 @@ func (d *GoogleAdsDispatcher) ListUserLists(ctx context.Context, projectID strin
 	// that is not digits only, is refused here as a connection to fix (400, or 500 on the LF
 	// system row), whether or not accountID names another customer: the credential is the
 	// create's, and a create on that connection would fail the same way.
-	client, createAccount, err := d.createAccountClient(ctx, projectID, platform)
+	client, createAccount, fromSystem, err := d.createAccountClient(ctx, projectID, platform)
 	if err != nil {
 		return nil, false, err
+	}
+	// On the LF system credential, account_id may only name the account a create uses. The
+	// picker needs nothing else (the sibling conversion-action and audience reads take no
+	// account_id at all), and honouring any other id would let this route list user lists on
+	// every customer the LF login can reach, for example other customers under a manager
+	// account. A project's OWN credential may still name another customer it can reach, as
+	// before the fallback applied to this read.
+	if fromSystem && accountID != "" && accountID != createAccount {
+		return nil, false, fmt.Errorf("%w: account_id must be the account the LF system connection creates on, or omitted",
+			domain.ErrAccountIDMalformed)
 	}
 	if accountID == "" {
 		accountID = createAccount
@@ -141,7 +151,7 @@ func (d *GoogleAdsDispatcher) ListUserLists(ctx context.Context, projectID strin
 // called reports whether Google was contacted: false for every local refusal before the search
 // (no connection, an unusable one, a stored account id that is not digits only).
 func (d *GoogleAdsDispatcher) ListConversionActions(ctx context.Context, projectID string, platform model.Provider) (_ *model.ConversionActions, called bool, _ error) {
-	client, accountID, err := d.createAccountClient(ctx, projectID, platform)
+	client, accountID, _, err := d.createAccountClient(ctx, projectID, platform)
 	if err != nil {
 		return nil, false, err
 	}
@@ -168,16 +178,20 @@ func (d *GoogleAdsDispatcher) ListConversionActions(ctx context.Context, project
 // createAccountClient resolves the client a campaign create for the project would use, and its
 // account: creds.resolve, the CREATE path's resolution (the project's own connection, the LF
 // system fallback when it has none, and the forced-system redirect). Nothing is sent to Google.
-func (d *GoogleAdsDispatcher) createAccountClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, string, error) {
+//
+// fromSystem reports whether the credential is the LF system row's rather than one the project
+// owns (resolved.isFromSystem), so a caller can refuse to aim that credential at a customer
+// the create would not use.
+func (d *GoogleAdsDispatcher) createAccountClient(ctx context.Context, projectID string, platform model.Provider) (_ *googleads.Client, _ string, fromSystem bool, _ error) {
 	res, err := d.creds.resolve(ctx, projectID, platform)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	// The cached client, as every other read on an account-bound client takes it; its
 	// CustomerID is the account validateGoogleAdsConnection returned, which it requires.
 	client, err := d.cachedGoogleAdsClient(projectID, platform, res)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	accountID := client.CustomerID()
 	// A stored id that is not digits only is a connection to edit, not an upstream failure:
@@ -185,10 +199,10 @@ func (d *GoogleAdsDispatcher) createAccountClient(ctx context.Context, projectID
 	// project's own row that is a 400; systemScoped makes it the LF system row's defect (500)
 	// when the project fell back to that row.
 	if verr := googleads.ValidateCustomerID(accountID); verr != nil {
-		return nil, "", res.systemScoped(fmt.Errorf("%w: %w: stored google ads account id: %w",
+		return nil, "", false, res.systemScoped(fmt.Errorf("%w: %w: stored google ads account id: %w",
 			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, verr))
 	}
-	return client, accountID, nil
+	return client, accountID, res.isFromSystem(), nil
 }
 
 // ListAudiences implements service.AudienceReader for Google Ads (#496): every usable custom
@@ -221,7 +235,7 @@ func (d *GoogleAdsDispatcher) ListAudiences(ctx context.Context, projectID strin
 		// that bypasses it, with the sentinel the service already answers 400.
 		return nil, false, fmt.Errorf("%w: unknown google ads audience type %q", domain.ErrTargetingLookupUnsupported, kind)
 	}
-	client, accountID, err := d.createAccountClient(ctx, projectID, platform)
+	client, accountID, _, err := d.createAccountClient(ctx, projectID, platform)
 	if err != nil {
 		return nil, false, err
 	}
