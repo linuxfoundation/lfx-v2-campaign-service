@@ -5406,7 +5406,26 @@ type CampaignCreateInputRequestBody struct {
 	// character, a non-numeric instagramUserId, and any of the three with a
 	// non-string JSON type (null counts as absent) are refused here with a 400,
 	// before any job exists. An absent instagramUserId is not refused, but Meta
-	// will not publish an Instagram placement without it.
+	// will not publish an Instagram placement without it. LINKEDIN TARGETING
+	// (#552): linkedInConfig takes an optional `targeting` object, {"include":
+	// [{<facet>: [urn, ...], ...}, ...], "exclude": {<facet>: [urn, ...]}}, sent
+	// as the campaign's targetingCriteria: each include entry (1 to 10) is one
+	// ANDed clause whose facets are ORed, after the geoTargets clause, and exclude
+	// is ORed. Facets: skills, groups, industries, titles, seniorities,
+	// jobFunctions, employers, staffCountRanges, interfaceLocales,
+	// audienceMatchingSegments and dynamicSegments, with LinkedIn's URN values
+	// (urn:li:skill:<id>, urn:li:adSegment:<id>, ...); groups and interfaceLocales
+	// only under include. Set, it replaces targetingProfile and the fixed
+	// job-function and seniority targeting; the config's employerExclusions still
+	// join exclude.employers. Refused with a 400 before any job exists: an unknown
+	// facet, a malformed value, an empty clause or facet, more than 100 values in
+	// a facet (200 for employers), a value both included and excluded,
+	// staffCountRanges both included and excluded, titles included with
+	// seniorities or jobFunctions, employers included with industries or
+	// staffCountRanges, and any targeting while the deployment has not set
+	// LINKEDIN_ADS_TARGETING_ENABLED. audienceMatchingSegments and dynamicSegments
+	// name ad segments on the ad account, so they also require
+	// global_marketing_ops on the project (403; 503 when the check cannot be made).
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

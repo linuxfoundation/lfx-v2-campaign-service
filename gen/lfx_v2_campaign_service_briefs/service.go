@@ -130,16 +130,19 @@ type Service interface {
 	// they do not, 503 when the check cannot be made (project lookup or
 	// authorization service unavailable). The gateway admits every
 	// campaign_manager, which includes foundation executive directors, and those
-	// resources belong to the Google Ads account every foundation shares. An
-	// invalid per-platform `bidding` object (see the config attribute) is also
-	// refused synchronously, with 400 "invalid campaign config:
-	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
-	// Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc)
-	// and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are
-	// immediately eligible for the bid lever, and eligibility follows the
-	// platform's current strategy. Every other dispatch failure, including an
-	// imageAssetId that does not exist for this brief, still arrives later, as the
-	// job's own result.
+	// resources belong to the Google Ads account every foundation shares. The same
+	// check, made once with the Google one, covers linkedInConfig.targeting
+	// audienceMatchingSegments and dynamicSegments (#552), included or excluded:
+	// they name ad segments on the LinkedIn ad account, and the LF system account
+	// is the fallback connection of every project without its own. An invalid
+	// per-platform `bidding` object (see the config attribute) is also refused
+	// synchronously, with 400 "invalid campaign config: <configKey>.bidding: ...".
+	// Bidding defaults changed in LFXV2-2665: a Microsoft campaign created without
+	// bidding is MaxClicks (it was EnhancedCpc) and a LinkedIn one
+	// WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are immediately eligible
+	// for the bid lever, and eligibility follows the platform's current strategy.
+	// Every other dispatch failure, including an imageAssetId that does not exist
+	// for this brief, still arrives later, as the job's own result.
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Create ONE HubSpot workflow that sends an already-staged series of emails,
 	// and return it DISABLED. Each brief named in brief_ids must already have a
@@ -1139,7 +1142,26 @@ type CampaignCreateInput struct {
 	// character, a non-numeric instagramUserId, and any of the three with a
 	// non-string JSON type (null counts as absent) are refused here with a 400,
 	// before any job exists. An absent instagramUserId is not refused, but Meta
-	// will not publish an Instagram placement without it.
+	// will not publish an Instagram placement without it. LINKEDIN TARGETING
+	// (#552): linkedInConfig takes an optional `targeting` object, {"include":
+	// [{<facet>: [urn, ...], ...}, ...], "exclude": {<facet>: [urn, ...]}}, sent
+	// as the campaign's targetingCriteria: each include entry (1 to 10) is one
+	// ANDed clause whose facets are ORed, after the geoTargets clause, and exclude
+	// is ORed. Facets: skills, groups, industries, titles, seniorities,
+	// jobFunctions, employers, staffCountRanges, interfaceLocales,
+	// audienceMatchingSegments and dynamicSegments, with LinkedIn's URN values
+	// (urn:li:skill:<id>, urn:li:adSegment:<id>, ...); groups and interfaceLocales
+	// only under include. Set, it replaces targetingProfile and the fixed
+	// job-function and seniority targeting; the config's employerExclusions still
+	// join exclude.employers. Refused with a 400 before any job exists: an unknown
+	// facet, a malformed value, an empty clause or facet, more than 100 values in
+	// a facet (200 for employers), a value both included and excluded,
+	// staffCountRanges both included and excluded, titles included with
+	// seniorities or jobFunctions, employers included with industries or
+	// staffCountRanges, and any targeting while the deployment has not set
+	// LINKEDIN_ADS_TARGETING_ENABLED. audienceMatchingSegments and dynamicSegments
+	// name ad segments on the ad account, so they also require
+	// global_marketing_ops on the project (403; 503 when the check cannot be made).
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
