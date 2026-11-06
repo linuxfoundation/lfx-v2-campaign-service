@@ -1025,12 +1025,12 @@ Search. Dispatch refuses any non-empty list first, on any channel, unless
 the budget and campaign exist, so the gate stays off until lfx-v2-argocd turns it on.
 
 The #477 fields follow the same rule. `sharedNegativeKeywordLists` is passed through
-verbatim. `searchAssets` is `googleAdsSearchAssetsConfig`: `adImages` and
-`businessLogoImages` are `googleAdsImageRefs`, so each entry is a URL or an
-`{"imageAssetId": …}` object. Both lists are enumerated by `googleAdsCreativeSlots` (as
-`search adImages` and `search businessLogoImages`), beside every other Google image slot, so
-stored assets resolve and are budgeted with the rest.
-`googleAdsSnapshotConfig` sanitizes both lists on a deep copy and names `SearchAssets` in its
+verbatim. `searchAssets` is `googleAdsSearchAssetsConfig`: `adImages`, `landscapeAdImages`
+(#538) and `businessLogoImages` are `googleAdsImageRefs`, so each entry is a URL or an
+`{"imageAssetId": …}` object. All three lists are enumerated by `googleAdsCreativeSlots` (as
+`search adImages`, `search landscapeAdImages` and `search businessLogoImages`), beside every
+other Google image slot, so stored assets resolve and are budgeted with the rest.
+`googleAdsSnapshotConfig` sanitizes all three lists on a deep copy and names `SearchAssets` in its
 early return. `googleAdsSearchAssets` maps nil to the zero value.
 
 Two details of those mappers are load-bearing. Each returns **nil** for an empty input, as

@@ -842,9 +842,9 @@ func TestCreateCampaign_DuplicateBudgetNameReusesTheOrphan(t *testing.T) {
 		}
 	}))
 	t.Cleanup(apiSrv.Close)
-	c := NewClient(testCreds(), testAccount(),
+	c := noExistingCampaign(NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
-		withRetryBaseDelay(time.Millisecond))
+		withRetryBaseDelay(time.Millisecond)))
 
 	res, err := c.CreateCampaign(context.Background(), sampleInput())
 	if err != nil {

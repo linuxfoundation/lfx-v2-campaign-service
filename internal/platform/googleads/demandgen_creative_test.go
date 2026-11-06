@@ -85,7 +85,7 @@ func allowLoopbackGuard(net.IP) error { return nil }
 // fetchOneImage directly rather than going through validateDemandGenCreative.
 func imageFetchTestClient(t *testing.T) *Client {
 	t.Helper()
-	return NewClient(testCreds(), testAccount(), WithClock(fixedClock()), withImageDialGuard(allowLoopbackGuard))
+	return noExistingCampaign(NewClient(testCreds(), testAccount(), WithClock(fixedClock()), withImageDialGuard(allowLoopbackGuard)))
 }
 
 // fullCreative is a creative that passes every local rule, for tests that want to
@@ -663,11 +663,11 @@ func demandGenClient(t *testing.T, srv *httptest.Server) *Client {
 	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
 	t.Cleanup(tokenSrv.Close)
 	tlsCfg := srv.Client().Transport.(*http.Transport).TLSClientConfig
-	return NewClient(testCreds(), testAccount(),
+	return noExistingCampaign(NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(srv.URL), WithClock(fixedClock()),
 		WithHTTPClient(srv.Client()),
 		withRetryBaseDelay(time.Millisecond),
-		withImageDialGuard(allowLoopbackGuard), withImageTLSConfig(tlsCfg))
+		withImageDialGuard(allowLoopbackGuard), withImageTLSConfig(tlsCfg)))
 }
 
 // demandGenCascade routes the four pre-existing Demand Gen mutates to their happy

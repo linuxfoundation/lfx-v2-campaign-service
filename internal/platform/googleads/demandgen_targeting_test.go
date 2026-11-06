@@ -210,8 +210,8 @@ func newDGTargetingRig(t *testing.T, criteria func(call int, body []byte, w http
 	t.Cleanup(apiSrv.Close)
 	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
 	t.Cleanup(tokenSrv.Close)
-	return rig, NewClient(testCreds(), testAccount(),
-		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+	return rig, noExistingCampaign(NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond)))
 }
 
 // echoCriteria answers one adGroupCriterion per requested operation, ids 900, 901, …

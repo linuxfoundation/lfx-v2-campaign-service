@@ -315,7 +315,8 @@ const (
 	// (a 5xx, a 429, a mid-flight timeout).
 	CreateOutcomeBudgetCreatedCampaignUnconfirmed = "budget_created_campaign_unconfirmed"
 	// CreateOutcomeCampaignNameTaken: the budget for this brief exists (created or adopted,
-	// as above) and a campaign of the composed name already exists from an earlier attempt.
+	// as above, or the budget the existing campaign is attached to) and a campaign of the
+	// composed name already exists from an earlier attempt.
 	CreateOutcomeCampaignNameTaken = "campaign_name_taken"
 	// CreateOutcomeCampaignCreatedSetupIncomplete: the campaign itself exists; a later step of
 	// the cascade (ad group, ad, targeting, assets) did not report success, so whether its

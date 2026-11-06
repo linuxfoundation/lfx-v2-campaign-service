@@ -401,8 +401,16 @@ func TestGoogleAds_BudgetNameIsUniquePerSlot(t *testing.T) {
 			t.Errorf("slot 2 looked up slot 1's budget name: %s", q)
 		}
 	}
-	if len(wire.searches) == 0 || !gaqlNames(wire.searches[0], slot2Budget) {
-		t.Errorf("the budget reuse lookup = %q, want it to search slot 2's name %q", wire.searches, slot2Budget)
+	// The first BUDGET search is the reuse lookup; the client's pre-write campaign-name check
+	// (#540) reads FROM campaign before it.
+	var budgetSearches []string
+	for _, q := range wire.searches {
+		if strings.Contains(q, "FROM campaign_budget") {
+			budgetSearches = append(budgetSearches, q)
+		}
+	}
+	if len(budgetSearches) == 0 || !gaqlNames(budgetSearches[0], slot2Budget) {
+		t.Errorf("the budget reuse lookup = %q, want it to search slot 2's name %q", budgetSearches, slot2Budget)
 	}
 }
 
