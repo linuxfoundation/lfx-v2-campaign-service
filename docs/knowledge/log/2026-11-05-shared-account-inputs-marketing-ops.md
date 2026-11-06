@@ -27,16 +27,31 @@ The check applies to campaign-level `audienceSegments` on every channel and to e
 `global_marketing_ops` used to be able to attach Search user-list observations and now gets
 `403`. No flag controls this, and it takes effect when the release ships.
 
-The service cannot import `internal/dispatch`, so it decodes the field names itself.
-`TestSharedAccountInputDetectionAgreesWithTheCreateGate` (`internal/dispatch`) builds the
-expected list from the dispatcher's own gate helpers (`googleAdsDisplayAudienceFieldsSet`,
-`googleAdsDemandGenAdGroupAudiencesSet` and the single-field checks) plus Search's segments,
-and requires the two lists to be equal. The published 403 example is the message for
+The service cannot import `internal/dispatch`, so it decodes the field names itself. Two
+dispatch tests keep the two in step:
+
+- `TestSharedAccountInputDetectionAgreesWithTheCreateGate` compares the two field lists over a
+  fixed corpus. The expected list comes from `googleAdsDisplayAudienceFieldsSet` and the same
+  conditions `Dispatch` uses for the other gates, plus Search's segments.
+- `TestEveryGoogleAdsConfigFieldIsClassifiedForTheMarketingOpsGate` walks `googleAdsConfig` and
+  its three ad-group entry types by reflection. Every JSON field must be listed as gated or
+  deliberately ungated, so a new field fails CI until someone classifies it. Each gated field
+  sent alone must be named by both detections.
+
+`conversionActions` is outside the check. It names existing conversion actions on the shared
+account, but it is not an audience input, and the owner's decision kept audiences, not
+conversion goals, to marketing ops. Whether it should be gated is an open question.
+
+The 2026-11-04 #468 entry's premise, that `campaign_manager` is held only by LF marketing, does
+not hold: `campaign_manager` includes foundation executive directors. That is why #501 and this
+change exist. #468 (per-foundation scoping) stays closed. The check here is by role, not by
+foundation. The published 403 example is the message for
 `demandGenAudience` alone, and `TestForbiddenErrorExampleMatchesService` pins it.
 
 Each of these mutations fails the tests:
 
 - removing the gate call;
+- adding an unclassified `googleAdsConfig` field;
 - dropping the campaign-level lists, the `displayAdGroups` loop, the `adGroups` loop, the
   Performance Max signal, the shared lists or `excludedAudienceSegments`;
 - trimming whitespace before the signal check;

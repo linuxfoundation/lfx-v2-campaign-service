@@ -111,11 +111,12 @@ type Service interface {
 	// imageAssetId that is not a UUID, or imageAssetId while signed creative-asset
 	// URLs are not configured ('stored creative assets are not enabled for Reddit;
 	// supply imageUrl'): 400 with that message. GOOGLE ADS SHARED-ACCOUNT INPUTS:
-	// a googleAdsConfig that sets any input naming an existing resource on the
-	// Google Ads account (demandGenAudience or an audience on any
-	// demandGenAdGroups entry; audienceSegments, customAudiences, customAffinities
-	// or excludedAudienceSegments, on the campaign or on any displayAdGroups
-	// entry; audienceSegments on any adGroups entry; performanceMaxAudienceSignal;
+	// a googleAdsConfig that sets any input naming an existing audience, user
+	// list, custom segment or shared negative keyword list on the Google Ads
+	// account (demandGenAudience or an audience on any demandGenAdGroups entry;
+	// audienceSegments, customAudiences, customAffinities or
+	// excludedAudienceSegments, on the campaign or on any displayAdGroups entry;
+	// audienceSegments on any adGroups entry; performanceMaxAudienceSignal;
 	// sharedNegativeKeywordLists; any non-empty value, whitespace included, on any
 	// channel, Search audienceSegments included) requires the caller to hold
 	// global_marketing_ops on this project, checked once per request before any
@@ -123,15 +124,15 @@ type Service interface {
 	// cannot be made (project lookup or authorization service unavailable). The
 	// gateway admits every campaign_manager, which includes foundation executive
 	// directors, and those resources belong to the Google Ads account every
-	// foundation shares. An invalid per-platform `bidding` object (see the config
-	// attribute) is also refused synchronously, with 400 "invalid campaign config:
-	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
-	// Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc)
-	// and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are
-	// immediately eligible for the bid lever, and eligibility follows the
-	// platform's current strategy. Every other dispatch failure, including an
-	// imageAssetId that does not exist for this brief, still arrives later, as the
-	// job's own result.
+	// foundation shares. conversionActions is not part of this check. An invalid
+	// per-platform `bidding` object (see the config attribute) is also refused
+	// synchronously, with 400 "invalid campaign config: <configKey>.bidding: ...".
+	// Bidding defaults changed in LFXV2-2665: a Microsoft campaign created without
+	// bidding is MaxClicks (it was EnhancedCpc) and a LinkedIn one
+	// WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are immediately eligible
+	// for the bid lever, and eligibility follows the platform's current strategy.
+	// Every other dispatch failure, including an imageAssetId that does not exist
+	// for this brief, still arrives later, as the job's own result.
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Create ONE HubSpot workflow that sends an already-staged series of emails,
 	// and return it DISABLED. Each brief named in brief_ids must already have a

@@ -37,8 +37,9 @@ func (s *BriefService) marketingOpsChecker() MarketingOpsChecker {
 }
 
 // GoogleAdsMarketingOpsInputs names, in config order, the googleAdsConfig inputs this config
-// sets that name an EXISTING resource on the connected Google Ads account, which every
-// foundation shares, so that only global_marketing_ops may send them:
+// sets that name an EXISTING audience, user list, custom segment or shared negative keyword list
+// on the connected Google Ads account, which every foundation shares, so that only
+// global_marketing_ops may send them:
 //
 //   - demandGenAudience and each demandGenAdGroups entry's audience (#459, #460);
 //   - the Display audience lists (#462, #475): audienceSegments, customAudiences,
@@ -50,6 +51,10 @@ func (s *BriefService) marketingOpsChecker() MarketingOpsChecker {
 //     attaches them as observation-only user-list criteria and they predate every deployment
 //     flag, but they still name the shared account's user lists.
 //
+// conversionActions also names existing account resources but is not an audience input and is
+// outside this check. dispatch's TestEveryGoogleAdsConfigFieldIsClassifiedForTheMarketingOpsGate
+// requires every googleAdsConfig field to be classified as gated or not.
+//
 // Group entries are named by 1-based position ("displayAdGroups entry 2 customAudiences").
 // Every name is service-derived, so a message built from them carries no caller value.
 //
@@ -59,7 +64,7 @@ func (s *BriefService) marketingOpsChecker() MarketingOpsChecker {
 // campaign-level audienceSegments count on every channel, a superset of the Display gate. It
 // decodes the envelope the way the dispatcher's unmarshalPlatformConfig does (exact envelope key,
 // then encoding/json into the same field names and types), and dispatch's tests pin the
-// agreement with the dispatcher's own detection.
+// agreement with the dispatcher's gates.
 //
 // A config that fails to decode still reports any input the decoder populated: encoding/json
 // skips a mistyped field and decodes the rest. When a gated field itself is mistyped the

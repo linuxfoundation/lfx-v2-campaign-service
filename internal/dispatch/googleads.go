@@ -393,6 +393,9 @@ type googleAdsConfig struct {
 	// toward, as bare numeric ids or full `customers/<id>/conversionActions/<id>`
 	// resource names. Absent means the campaign inherits the ACCOUNT's conversion
 	// goals, which is what every Google campaign this service has created does.
+	// They name existing actions on the shared account, but they are not an audience input
+	// and are outside the create path's global_marketing_ops check
+	// (service.GoogleAdsMarketingOpsInputs).
 	//
 	// Every channel (#436). After the campaign is created they become a campaign-level
 	// conversion goal: one custom goal per action set, shared across campaigns, with the

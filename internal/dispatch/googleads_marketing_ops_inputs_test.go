@@ -5,6 +5,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -77,6 +78,11 @@ func TestSharedAccountInputDetectionAgreesWithTheCreateGate(t *testing.T) {
 		`{"googleAdsConfig":{"audienceSegments":["customers/1/userLists/2"]}}`,
 		`{"googleAdsConfig":{"channel":"search","adGroups":[{"name":"a"},{"name":"b","audienceSegments":["customers/1/userLists/2"]}]}}`,
 		`{"googleAdsConfig":{"sharedNegativeKeywordLists":["s"],"performanceMaxAudienceSignal":"1","demandGenAudience":"a","customAudiences":["c"],"displayAdGroups":[{"excludedAudienceSegments":["x"]}]}}`,
+		// A displayAdGroups entry on a non-Display channel, beside Demand Gen campaign segments.
+		`{"googleAdsConfig":{"channel":"demand-gen","audienceSegments":["a"],"displayAdGroups":[{"customAffinities":["f"]}]}}`,
+		`{"googleAdsConfig":{"channel":"video","audienceSegments":["a"]}}`,
+		// encoding/json matches nested keys case-insensitively too.
+		`{"googleAdsConfig":{"DisplayAdGroups":[{"CustomAudiences":["c"]}],"AdGroups":[{"AudienceSegments":["s"]}],"PerformanceMaxAudienceSignal":"1"}}`,
 		`{"microsoftConfig":{"budget":5}}`,
 		`{"GoogleAdsConfig":{"demandGenAudience":"customers/1/audiences/2"}}`,
 	} {
@@ -90,6 +96,132 @@ func TestSharedAccountInputDetectionAgreesWithTheCreateGate(t *testing.T) {
 		slices.Sort(gate)
 		if !slices.Equal(gate, dispatcher) {
 			t.Errorf("%s: create gate names %q, dispatcher detects %q", raw, gate, dispatcher)
+		}
+	}
+}
+
+// sharedAccountGatedFields are the googleAdsConfig JSON paths that name an existing audience,
+// user list, custom segment or shared negative list on the shared Google Ads account, and so
+// require global_marketing_ops at create. "group[]" marks a field of each entry of that list.
+var sharedAccountGatedFields = map[string]bool{
+	"demandGenAudience":                          true,
+	"demandGenAdGroups[].audience":               true,
+	"audienceSegments":                           true,
+	"customAudiences":                            true,
+	"customAffinities":                           true,
+	"excludedAudienceSegments":                   true,
+	"adGroups[].audienceSegments":                true,
+	"displayAdGroups[].audienceSegments":         true,
+	"displayAdGroups[].customAudiences":          true,
+	"displayAdGroups[].customAffinities":         true,
+	"displayAdGroups[].excludedAudienceSegments": true,
+	"performanceMaxAudienceSignal":               true,
+	"sharedNegativeKeywordLists":                 true,
+}
+
+// sharedAccountUngatedFields are every other googleAdsConfig JSON path, each deliberately
+// outside the check. Most name no existing account resource: the caller's own text, URLs,
+// images, bids and dates, Google's own reference data (geo targets, languages, userInterests),
+// or public domains (excludedPlacements). conversionActions does name existing conversion
+// actions on the shared account; it is not an audience input and stays outside this check
+// (see the 2026-11-05 shared-account-inputs log entry).
+var sharedAccountUngatedFields = map[string]bool{
+	"budget": true, "channel": true, "headlines": true, "descriptions": true, "path1": true,
+	"path2": true, "keywords": true, "userInterests": true, "excludedPlacements": true,
+	"negativeKeywords": true, "searchPartners": true, "cpcBid": true, "biddingStrategy": true,
+	"targetCpa": true, "targetRoas": true, "conversionActions": true, "startDate": true,
+	"endDate": true, "geoTargets": true, "excludedGeoTargets": true, "proximityTargets": true,
+	"languages": true, "adSchedules": true, "deviceBidModifiers": true, "excludedAgeRanges": true,
+	"excludedGenders": true, "excludedIncomeRanges": true, "excludedParentalStatuses": true,
+	"sitelinks": true, "callouts": true, "structuredSnippets": true, "callExtensions": true,
+	"promotions": true, "prices": true, "leadForms": true, "demandGenCreative": true,
+	"demandGenVideoCreative": true, "demandGenAds": true, "performanceMaxCreative": true,
+	"performanceMaxSearchThemes": true, "videoCreative": true, "displayCreative": true,
+	"searchAssets": true, "adoptExisting": true,
+	"adGroups[].name": true, "adGroups[].cpcBid": true, "adGroups[].keywords": true,
+	"adGroups[].ads": true, "adGroups[].negativeKeywords": true,
+	"displayAdGroups[].name": true, "displayAdGroups[].creative": true,
+	"displayAdGroups[].userInterests": true,
+	"demandGenAdGroups[].name":        true, "demandGenAdGroups[].creative": true,
+	"demandGenAdGroups[].videoCreative": true, "demandGenAdGroups[].ads": true,
+}
+
+// googleAdsConfigFieldPaths lists every JSON path of googleAdsConfig, descending into the three
+// ad-group lists, with each field's type.
+func googleAdsConfigFieldPaths() map[string]reflect.Type {
+	paths := map[string]reflect.Type{}
+	groups := map[string]bool{"adGroups": true, "displayAdGroups": true, "demandGenAdGroups": true}
+	var walk func(prefix string, t reflect.Type)
+	walk = func(prefix string, t reflect.Type) {
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			if name == "" || name == "-" {
+				continue
+			}
+			if prefix == "" && groups[name] {
+				walk(name+"[].", f.Type.Elem())
+				continue
+			}
+			paths[prefix+name] = f.Type
+		}
+	}
+	walk("", reflect.TypeOf(googleAdsConfig{}))
+	return paths
+}
+
+// TestEveryGoogleAdsConfigFieldIsClassifiedForTheMarketingOpsGate fails on any googleAdsConfig
+// field (including a new one, or one on an ad-group entry) that is neither gated nor
+// deliberately ungated, so a new shared-account input cannot slip past the create gate
+// unclassified. Every gated field is then sent on its own, and both the create gate and the
+// dispatcher's detection must name it.
+func TestEveryGoogleAdsConfigFieldIsClassifiedForTheMarketingOpsGate(t *testing.T) {
+	paths := googleAdsConfigFieldPaths()
+	for p := range paths {
+		if sharedAccountGatedFields[p] == sharedAccountUngatedFields[p] {
+			t.Errorf("googleAdsConfig field %q must be in exactly one of sharedAccountGatedFields "+
+				"and sharedAccountUngatedFields", p)
+		}
+	}
+	for p := range sharedAccountGatedFields {
+		if _, ok := paths[p]; !ok {
+			t.Errorf("sharedAccountGatedFields names %q, which googleAdsConfig no longer has", p)
+		}
+	}
+	for p := range sharedAccountUngatedFields {
+		if _, ok := paths[p]; !ok {
+			t.Errorf("sharedAccountUngatedFields names %q, which googleAdsConfig no longer has", p)
+		}
+	}
+	for p := range sharedAccountGatedFields {
+		typ, ok := paths[p]
+		if !ok {
+			continue
+		}
+		var value any = " "
+		if typ.Kind() == reflect.Slice {
+			value = []string{"x"}
+		}
+		field := p
+		cfg := map[string]any{"channel": "display"}
+		if group, sub, ok := strings.Cut(p, "[]."); ok {
+			field = group
+			value = []any{map[string]any{sub: value}}
+		}
+		cfg[field] = value
+		raw, err := json.Marshal(map[string]any{"googleAdsConfig": cfg})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded googleAdsConfig
+		if err := unmarshalPlatformConfig(raw, "googleAdsConfig", &decoded); err != nil {
+			t.Fatalf("%s: decode: %v", raw, err)
+		}
+		if got := dispatcherSharedAccountInputs(decoded); len(got) != 1 {
+			t.Errorf("%s: dispatcher detects %q, want exactly one field", raw, got)
+		}
+		if got := service.GoogleAdsMarketingOpsInputs(raw); len(got) != 1 {
+			t.Errorf("%s: create gate names %q, want exactly one field", raw, got)
 		}
 	}
 }

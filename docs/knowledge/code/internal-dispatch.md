@@ -1247,9 +1247,14 @@ authorization boundary. `BriefService.CreateCampaigns` requires `global_marketin
 path project for every field the four gates detect, plus Search's `audienceSegments`
 (`service.GoogleAdsMarketingOpsInputs`, one check per request, 403 naming the fields, 503 when
 the check cannot be made). The service cannot import this package, so it decodes the same field
-names itself, and `TestSharedAccountInputDetectionAgreesWithTheCreateGate` compares its field
-list with one built from this file's gate helpers (`googleAdsDisplayAudienceFieldsSet`,
-`googleAdsDemandGenAdGroupAudiencesSet` and the single-field checks), so the two cannot drift.
+names itself. `TestSharedAccountInputDetectionAgreesWithTheCreateGate` compares its field list,
+over a fixed corpus, with one built from `googleAdsDisplayAudienceFieldsSet` and the same
+conditions `Dispatch` uses for the other gates. `TestEveryGoogleAdsConfigFieldIsClassifiedForTheMarketingOpsGate`
+walks `googleAdsConfig` and its three ad-group entry types by reflection: every JSON field must be
+listed as gated or deliberately ungated, so a new field fails CI until it is classified, and each
+gated field sent alone must be named by both detections. `conversionActions` names existing
+conversion actions on the shared account but is not an audience input; it is classified
+ungated and is outside this check.
 
 The client enforces the channel rules inside its own preflight,
 before its first mutate, and `Dispatch` validates unconditionally (including on the adoption
