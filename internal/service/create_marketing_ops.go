@@ -49,7 +49,8 @@ func (s *BriefService) marketingOpsChecker() MarketingOpsChecker {
 //   - sharedNegativeKeywordLists (#477);
 //   - demandGenDemographics.audienceSegments (#498) and demandGenDemographics.customAudiences
 //     (#516), existing user lists and custom audiences put in the demographic Audience
-//     (demographics without them are not gated);
+//     (demographics without them are not gated), and the same two lists in each
+//     demandGenAdGroups entry's own demographics (#518);
 //   - conversionActions (#436), on every channel: existing conversion actions, and the
 //     account-level custom conversion goal the client creates or reuses for them;
 //   - audienceSegments on Search, at the campaign level and on each adGroups entry. Search
@@ -93,24 +94,26 @@ func GoogleAdsMarketingOpsInputs(config json.RawMessage) []string {
 		CustomAffinities         []string `json:"customAffinities"`
 		ExcludedAudienceSegments []string `json:"excludedAudienceSegments"`
 	}
+	type demographicSegments struct {
+		AudienceSegments []string `json:"audienceSegments"`
+		CustomAudiences  []string `json:"customAudiences"`
+	}
 	var cfg struct {
 		audienceLists
 		DemandGenAudience string `json:"demandGenAudience"`
 		DemandGenAdGroups []struct {
-			Audience string `json:"audience"`
+			Audience     string               `json:"audience"`
+			Demographics *demographicSegments `json:"demographics"`
 		} `json:"demandGenAdGroups"`
 		AdGroups []struct {
 			AudienceSegments []string `json:"audienceSegments"`
 		} `json:"adGroups"`
-		CampaignAudienceSegments     []string        `json:"campaignAudienceSegments"`
-		DisplayAdGroups              []audienceLists `json:"displayAdGroups"`
-		PerformanceMaxAudienceSignal string          `json:"performanceMaxAudienceSignal"`
-		SharedNegativeKeywordLists   []string        `json:"sharedNegativeKeywordLists"`
-		ConversionActions            []string        `json:"conversionActions"`
-		DemandGenDemographics        *struct {
-			AudienceSegments []string `json:"audienceSegments"`
-			CustomAudiences  []string `json:"customAudiences"`
-		} `json:"demandGenDemographics"`
+		CampaignAudienceSegments     []string             `json:"campaignAudienceSegments"`
+		DisplayAdGroups              []audienceLists      `json:"displayAdGroups"`
+		PerformanceMaxAudienceSignal string               `json:"performanceMaxAudienceSignal"`
+		SharedNegativeKeywordLists   []string             `json:"sharedNegativeKeywordLists"`
+		ConversionActions            []string             `json:"conversionActions"`
+		DemandGenDemographics        *demographicSegments `json:"demandGenDemographics"`
 	}
 	_ = json.Unmarshal(raw, &cfg) // see above: a partial decode is still inspected
 
@@ -168,6 +171,18 @@ func GoogleAdsMarketingOpsInputs(config json.RawMessage) []string {
 		}
 		if len(d.CustomAudiences) > 0 {
 			set = append(set, "demandGenDemographics.customAudiences")
+		}
+	}
+	// #518: the same lists in each demandGenAdGroups entry's own demographic Audience.
+	for i, g := range cfg.DemandGenAdGroups {
+		if d := g.Demographics; d != nil {
+			prefix := "demandGenAdGroups entry " + strconv.Itoa(i+1) + " demographics."
+			if len(d.AudienceSegments) > 0 {
+				set = append(set, prefix+"audienceSegments")
+			}
+			if len(d.CustomAudiences) > 0 {
+				set = append(set, prefix+"customAudiences")
+			}
 		}
 	}
 	return set
