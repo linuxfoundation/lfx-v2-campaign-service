@@ -92,6 +92,22 @@ func googleSlotFillers() []slotFiller {
 				return err
 			},
 		},
+		{
+			channel: advertisingChannelSearch,
+			build: func(filled map[string]bool) CampaignInput {
+				in := sampleInput()
+				in.SearchAssets = SearchCampaignAssets{
+					AdImages:           oneImage(filled[searchImageSlots[searchAdImageSlotIndex].jsonKey]),
+					LandscapeAdImages:  oneImage(filled[searchImageSlots[searchLandscapeAdImageSlotIndex].jsonKey]),
+					BusinessLogoImages: oneImage(filled[searchImageSlots[searchBusinessLogoSlotIndex].jsonKey]),
+				}
+				return in
+			},
+			validate: func(in CampaignInput) error {
+				_, err := validateSearchAssets(campaignKindSearch, in)
+				return err
+			},
+		},
 	}
 }
 
@@ -245,6 +261,7 @@ func TestImageSlotCatalog_GeometryComesFromTheChannelTables(t *testing.T) {
 		advertisingChannelPerformanceMax: performanceMaxImageSlots,
 		advertisingChannelDemandGen:      demandGenImageSlots,
 		advertisingChannelDisplay:        displayImageSlots,
+		advertisingChannelSearch:         searchImageSlots,
 	}
 
 	for _, spec := range ImageSlotCatalog().Slots {
@@ -303,6 +320,8 @@ func TestImageSlotCatalog_SharedCeilingsMatchTheCreatePath(t *testing.T) {
 		// Display's two logo arrays share five between them (#437); no other channel
 		// caps its logos together.
 		{advertisingChannelDisplay, logoImageGroup}: maxDisplayLogos,
+		// Search's square and landscape AD_IMAGE share one twenty (#538).
+		{advertisingChannelSearch, marketingImageGroup}: maxSearchAdImages,
 	}
 	// The slots each channel counts toward that ceiling, as its validator counts them:
 	// Performance Max sums its three marketing shapes, Demand Gen all four, Display its
@@ -312,6 +331,7 @@ func TestImageSlotCatalog_SharedCeilingsMatchTheCreatePath(t *testing.T) {
 		{advertisingChannelDemandGen, marketingImageGroup}:      4,
 		{advertisingChannelDisplay, marketingImageGroup}:        2,
 		{advertisingChannelDisplay, logoImageGroup}:             2,
+		{advertisingChannelSearch, marketingImageGroup}:         2,
 	}
 
 	members := map[ceiling]int{}
@@ -343,9 +363,10 @@ func TestImageSlotCatalog_SharedCeilingsMatchTheCreatePath(t *testing.T) {
 // ceiling must publish none rather than borrow its group's.
 func TestImageSlotCatalog_PerSlotCeilingsMatchTheCreatePath(t *testing.T) {
 	want := map[string]int{
-		advertisingChannelPerformanceMax + "/" + assetFieldLogo:                        maxPerformanceMaxLogos,
-		advertisingChannelPerformanceMax + "/" + assetFieldLandscapeLogo:               maxPerformanceMaxLandscapeLogos,
-		advertisingChannelDemandGen + "/" + demandGenImageSlots[logoSlotIndex].jsonKey: maxDemandGenLogos,
+		advertisingChannelPerformanceMax + "/" + assetFieldLogo:                                maxPerformanceMaxLogos,
+		advertisingChannelPerformanceMax + "/" + assetFieldLandscapeLogo:                       maxPerformanceMaxLandscapeLogos,
+		advertisingChannelDemandGen + "/" + demandGenImageSlots[logoSlotIndex].jsonKey:         maxDemandGenLogos,
+		advertisingChannelSearch + "/" + searchImageSlots[searchBusinessLogoSlotIndex].jsonKey: maxSearchBusinessLogos,
 		// Display's logos publish NO per-slot ceiling: Google states only the combined one,
 		// which the logo group above carries (#437).
 	}

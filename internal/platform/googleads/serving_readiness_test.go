@@ -414,9 +414,9 @@ func TestCreateCampaign_ServingReadinessCascade(t *testing.T) {
 		}
 	}))
 	t.Cleanup(apiSrv.Close)
-	c := NewClient(testCreds(), testAccount(),
+	c := noExistingCampaign(NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
-		withRetryBaseDelay(time.Millisecond))
+		withRetryBaseDelay(time.Millisecond)))
 
 	in := sampleInput()
 	in.Keywords = []Keyword{{Text: "kubecon", MatchType: MatchTypeBroad}}

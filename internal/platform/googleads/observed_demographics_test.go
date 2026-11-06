@@ -63,9 +63,9 @@ func (s *observedServer) client(t *testing.T) *Client {
 		}
 	}))
 	t.Cleanup(api.Close)
-	return NewClient(testCreds(), testAccount(),
+	return noExistingCampaign(NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(api.URL), WithClock(fixedClock()),
-		withRetryBaseDelay(time.Millisecond))
+		withRetryBaseDelay(time.Millisecond)))
 }
 
 // The exact ad group targetingSetting and criteria operations for an observed age range and

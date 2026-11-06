@@ -484,12 +484,13 @@ func TestFetchSlotImages_RefusesSameBytesInOneSlotOnly(t *testing.T) {
 	c := NewClient(testCreds(), testAccount())
 
 	_, err := c.fetchSlotImages(context.Background(), searchImageSlots,
-		[][]string{{searchImageRef1, searchImageRef2}, nil}, resolved)
+		[][]string{{searchImageRef1, searchImageRef2}, nil, nil}, resolved)
 	wantSameSlotRefusal(t, err, "Search ad image", nil)
 
 	got, err := c.fetchSlotImages(context.Background(), searchImageSlots,
-		[][]string{{searchImageRef1}, {searchLogoRef}}, resolved)
-	if err != nil || len(got) != 2 || got[0].slot != 0 || got[1].slot != 1 {
+		[][]string{{searchImageRef1}, nil, {searchLogoRef}}, resolved)
+	if err != nil || len(got) != 2 || got[0].slot != searchAdImageSlotIndex ||
+		got[1].slot != searchBusinessLogoSlotIndex {
 		t.Fatalf("got %+v, err = %v; want the one image accepted in both slots", got, err)
 	}
 

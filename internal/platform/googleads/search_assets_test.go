@@ -27,9 +27,11 @@ const (
 	searchImageRef1 = ResolvedImageRefPrefix + "11111111-1111-4111-8111-111111111111"
 	searchImageRef2 = ResolvedImageRefPrefix + "22222222-2222-4222-8222-222222222222"
 	searchLogoRef   = ResolvedImageRefPrefix + "33333333-3333-4333-8333-333333333333"
-	sharedSetA      = "customers/1234567890/sharedSets/501"
-	sharedSetB      = "customers/1234567890/sharedSets/502"
-	testCampaign    = "customers/1234567890/campaigns/222"
+	// searchLandscapeRef is a landscapeAdImages entry (#538).
+	searchLandscapeRef = ResolvedImageRefPrefix + "44444444-4444-4444-8444-444444444444"
+	sharedSetA         = "customers/1234567890/sharedSets/501"
+	sharedSetB         = "customers/1234567890/sharedSets/502"
+	testCampaign       = "customers/1234567890/campaigns/222"
 )
 
 // searchAssetServer serves the Search cascade, records every mutate path in order and the
@@ -119,9 +121,9 @@ func newSearchAssetClient(t *testing.T, s *searchAssetServer) *Client {
 	t.Cleanup(tokenSrv.Close)
 	apiSrv := httptest.NewServer(s.handler(t))
 	t.Cleanup(apiSrv.Close)
-	return NewClient(testCreds(), testAccount(),
+	return noExistingCampaign(NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
-		withRetryBaseDelay(time.Millisecond))
+		withRetryBaseDelay(time.Millisecond)))
 }
 
 // extensionAssetEcho answers an extension assets:mutate with asset 700, 701, ….
@@ -318,7 +320,18 @@ func TestValidateSearchAssets_Bounds(t *testing.T) {
 		want string
 	}{
 		{"20 images accepted", assets{AdImages: many(20)}, ""},
-		{"21 images refused", assets{AdImages: many(21)}, "at most 20 ad images, got 21"},
+		{"21 images refused", assets{AdImages: many(21)},
+			"at most 20 ad images (square and landscape together), got 21"},
+		// One cap over both shapes, as Google counts them (#538): 10 + 10 accepted,
+		// 19 + 2 and 0 + 21 refused, and 20 landscape alone accepted.
+		{"10 square + 10 landscape accepted",
+			assets{AdImages: many(10), LandscapeAdImages: many(20)[10:]}, ""},
+		{"20 landscape accepted", assets{LandscapeAdImages: many(20)}, ""},
+		{"19 square + 2 landscape refused",
+			assets{AdImages: many(19), LandscapeAdImages: many(21)[19:]},
+			"at most 20 ad images (square and landscape together), got 21"},
+		{"21 landscape refused", assets{LandscapeAdImages: many(21)},
+			"at most 20 ad images (square and landscape together), got 21"},
 		{"two logos refused", assets{BusinessLogoImages: many(2)},
 			"at most 1 business logo, got 2"},
 		{"name of 25 accepted", assets{BusinessName: strings.Repeat("a", 25)}, ""},
@@ -353,21 +366,34 @@ func TestValidateSearchAssets_Bounds(t *testing.T) {
 	}
 }
 
-// The slot table is square on both slots at the documented minimums: a 1.91:1 image is not
-// admitted as an AD_IMAGE, and a logo under 128x128 is refused — both at the fetch phase,
-// before the budget mutate, so no request at all is sent.
+// The slot table holds Google's boundaries as probed on #538 (see searchImageSlots): each
+// image one step past a boundary is refused at the fetch phase, before the budget mutate, so
+// no request at all is sent. A 1.91:1 image is refused in adImages, the square slot, and has
+// its own landscapeAdImages slot. The logo's 128x128 is the documented specification, kept
+// above the API's 16x16 floor on purpose.
 func TestCreateCampaign_RefusesAMisShapedSearchImageBeforeAnyRequest(t *testing.T) {
 	for _, tc := range []struct {
 		name, ref, want string
+		landscape       bool
 		w, h            int
 	}{
-		{"landscape ad image", searchImageRef1, "Search ad image", 600, 314},
-		{"small ad image", searchImageRef1, "below the 300x300 minimum", 299, 299},
-		{"small logo", searchLogoRef, "below the 128x128 minimum", 127, 127},
+		{"landscape in the square slot", searchImageRef1, "Search ad image", false, 600, 314},
+		{"small ad image", searchImageRef1, "below the 300x300 minimum", false, 299, 299},
+		{"short ad image", searchImageRef1, "below the 300x300 minimum", false, 300, 299},
+		{"square ad image past 1%", searchImageRef1, "an aspect ratio of 1.0133", false, 304, 300},
+		{"square in the landscape slot", searchLandscapeRef, "Search landscape ad image", true, 600, 600},
+		{"narrow landscape", searchLandscapeRef, "below the 600x314 minimum", true, 599, 314},
+		{"short landscape", searchLandscapeRef, "below the 600x314 minimum", true, 600, 313},
+		{"landscape past 1%", searchLandscapeRef, "an aspect ratio of 1.9395", true, 1218, 628},
+		{"small logo", searchLogoRef, "below the 128x128 minimum", false, 127, 127},
+		{"logo past 1%", searchLogoRef, "an aspect ratio of 1.0156", false, 130, 128},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &searchAssetServer{}
 			in := searchAssetInput(t)
+			if tc.landscape {
+				in.SearchAssets.LandscapeAdImages = []string{tc.ref}
+			}
 			in.ResolvedImages[tc.ref] = pngOf(t, tc.w, tc.h)
 			res, err := newSearchAssetClient(t, s).CreateCampaign(context.Background(), in)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -380,6 +406,58 @@ func TestCreateCampaign_RefusesAMisShapedSearchImageBeforeAnyRequest(t *testing.
 				t.Errorf("requests sent = %v, want none before the refusal", paths)
 			}
 		})
+	}
+}
+
+// Every image Google accepted at a boundary on #538 is accepted here too and sent: a square
+// exactly 1% off (303x300, which the float comparison used to refuse), landscape ad images at
+// 600x314 and at -0.96% (1188x628), and a logo at +0.78% (129x128). Both ad image shapes link
+// under AD_IMAGE, square entries first, in one request.
+func TestCreateCampaign_SendsSearchImagesAtGooglesAcceptedBoundaries(t *testing.T) {
+	s := &searchAssetServer{}
+	in := searchAssetInput(t)
+	landscape2 := ResolvedImageRefPrefix + "45454545-4545-4545-8545-454545454545"
+	in.SearchAssets.LandscapeAdImages = []string{searchLandscapeRef, landscape2}
+	in.ResolvedImages[searchImageRef1] = pngOf(t, 303, 300)
+	in.ResolvedImages[searchLandscapeRef] = pngOf(t, 600, 314)
+	in.ResolvedImages[landscape2] = pngOf(t, 1188, 628)
+	in.ResolvedImages[searchLogoRef] = pngOf(t, 129, 128)
+	res, err := newSearchAssetClient(t, s).CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	_, googleAds, _ := s.snapshot()
+	if len(googleAds) != 1 {
+		t.Fatalf("got %d googleAds:mutate calls, want 1", len(googleAds))
+	}
+	ops := decodeSearchAssetOps(t, googleAds[0])
+	const assets = 6 // two square, two landscape, the logo, the name
+	if len(ops) != 2*assets {
+		t.Fatalf("got %d operations, want %d assets + %d links", len(ops), assets, assets)
+	}
+	wantData := []string{
+		base64.StdEncoding.EncodeToString(in.ResolvedImages[searchImageRef1]),
+		base64.StdEncoding.EncodeToString(in.ResolvedImages[searchImageRef2]),
+		base64.StdEncoding.EncodeToString(in.ResolvedImages[searchLandscapeRef]),
+		base64.StdEncoding.EncodeToString(in.ResolvedImages[landscape2]),
+		base64.StdEncoding.EncodeToString(in.ResolvedImages[searchLogoRef]),
+	}
+	wantFields := []string{"AD_IMAGE", "AD_IMAGE", "AD_IMAGE", "AD_IMAGE", "BUSINESS_LOGO", "BUSINESS_NAME"}
+	for i := 0; i < assets; i++ {
+		a := ops[i].AssetOperation
+		if a == nil {
+			t.Fatalf("op %d = %+v, want an asset operation", i, ops[i])
+		}
+		if i < len(wantData) && (a.Create.ImageAsset == nil || a.Create.ImageAsset.Data != wantData[i]) {
+			t.Errorf("asset %d is not the expected image, in slot order", i)
+		}
+		l := ops[assets+i].CampaignAssetOperation
+		if l == nil || l.Create.FieldType != wantFields[i] || l.Create.Asset != a.Create.ResourceName {
+			t.Errorf("link %d = %+v, want a %s link of %s", i, l, wantFields[i], a.Create.ResourceName)
+		}
+	}
+	if !containsStep(res.Steps, "Search campaign assets linked: 6 (4 ad image(s), a business logo, a business name)") {
+		t.Errorf("steps = %v, want the four ad images counted together", res.Steps)
 	}
 }
 

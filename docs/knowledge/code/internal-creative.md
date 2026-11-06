@@ -39,8 +39,13 @@ any one of them is eligible. Each `ShapeRule` holds the ratio as two integers (`
 cannot drift the way a hand-rounded `1.91` can, plus a `RatioTolerance` and optional
 `MinWidth`/`MinHeight`/`MaxWidth`/`MaxHeight` bounds. Every bound is optional and **zero means
 ABSENT, not zero** — no real image has a zero dimension, so the zero value carries "unbounded"
-without colliding with anything a platform could state. The tolerance is **two-sided**, and the
-drift from nominal is also what ranks candidates.
+without colliding with anything a platform could state. The tolerance is **two-sided** and its
+boundary is **included**, decided by `AspectWithin` by cross-multiplication
+(`|w*RatioH - h*RatioW| <= tol*h*RatioW`, an exact integer on the left) rather than by dividing:
+the division drifted 303x300 against 1:1 to 0.010000000000000009 and refused an image exactly
+1% off, which Google accepts (#538). The googleads preflight's `checkImageGeometry` calls the
+same function, so the catalog and the create path agree on every boundary. The drift from
+nominal (`ratioDrift`) only RANKS candidates the gate already admitted.
 
 A `ShapeRule` carries a `Label` of its own only where a slot accepts several geometries and a
 gap has to say which one was missing. With a single shape the slot's label is already the
