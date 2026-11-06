@@ -1223,7 +1223,12 @@ custom audiences, also needs `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED`. The creat
 same lists as an audience for the `global_marketing_ops` check
 (`service.GoogleAdsMarketingOpsInputs`, pinned by the same agreement test);
 demographics without user lists or custom audiences are not part of it, since the Audience is new and holds only
-Google's demographic brackets.
+Google's demographic brackets. Each `demandGenAdGroups` entry's own `demographics` (#518, the
+same config type) is mapped onto `DemandGenAdGroup.Demographics` and sits behind the same two
+gates. `googleAdsDemandGenGroupDemographicsSet` names the entries for the demographic-targeting
+refusal, and `googleAdsDemandGenDemographicSegmentsSet` also names each entry's lists
+(`demandGenAdGroups entry 2 demographics.audienceSegments`), the names the create path's
+`global_marketing_ops` check uses too.
 
 `GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` is the same gate for #462's account-owned Display
 segments (`googleAdsDisplayAudiencesEnabled`, `googleAdsDisplayAudienceFieldsSet`): unless it is

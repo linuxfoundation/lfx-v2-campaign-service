@@ -44,9 +44,9 @@ func CreateOutcome(result *CampaignResult, err error) (string, bool) {
 	}
 
 	switch {
-	case result.CampaignBudgetID == "" && result.DemandGenDemographicAudience == "" &&
+	case result.CampaignBudgetID == "" && !demographicAudiencesInPlace(result) &&
 		isDuplicateBudgetNameErr(err) && !carriesUnconfirmedWrite(err):
-		// A Demand Gen demographic Audience in the partial (#498) was created or reused by this
+		// A Demand Gen demographic Audience in the partial (#498, or an ad group's own, #518) was created or reused by this
 		// attempt BEFORE the budget, so "nothing new was created" may be false: such a
 		// partial falls through to the generic unconfirmed outcome, which says something may
 		// exist and asks for verification.

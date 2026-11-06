@@ -269,8 +269,9 @@ type CampaignInput struct {
 	// gender, household income and parental status, and optionally existing user lists,
 	// built into ONE new Audience before the budget and attached to every Demand Gen ad
 	// group, as DemandGenAudience is attached. Refused beside DemandGenAudience or any
-	// DemandGenAdGroups[].Audience, since an ad group takes one Audience. DEMAND GEN ONLY.
-	// See validateDemandGenDemographics.
+	// DemandGenAdGroups[].Audience, since an ad group takes one Audience. A group's own
+	// DemandGenAdGroups[].Demographics (#518) override it for that group, so it is refused
+	// when every group sets its own. DEMAND GEN ONLY. See validateDemandGenDemographics.
 	DemandGenDemographics *DemandGenDemographics
 	// CustomAudiences, CustomAffinities and UserInterests are the three other segment
 	// kinds a Display ad group takes, each a list of EXISTING resource names on this
@@ -672,6 +673,11 @@ type CampaignResult struct {
 	// every result once the Audience step has run, including the UNCONFIRMED partial whose
 	// Audience may exist without a resource name. It is the key to find that Audience by.
 	DemandGenDemographicAudienceName string `json:"demandGenDemographicAudienceName,omitempty"`
+	// DemandGenAdGroupAudiences are the Audiences created, or reused, for each
+	// DemandGenAdGroups entry that sets Demographics (#518), in entry order, before the budget.
+	// Set on every partial past that step. An entry whose create is UNCONFIRMED carries its
+	// planned name and no resource name.
+	DemandGenAdGroupAudiences []DemandGenAdGroupAudience `json:"demandGenAdGroupAudiences,omitempty"`
 	// GeoCriterionIDs are the location criteria created for CampaignInput.GeoTargets
 	// (LFXV2-3283).
 	//
@@ -1887,6 +1893,11 @@ func (c *Client) preflightCampaignInput(kind string, in CampaignInput) (*campaig
 	// group's own Audience come after that group's own checks.
 	demandGenDemographics, err := validateDemandGenDemographics(kind, c.account.CustomerID, campaignName, in)
 	if err != nil {
+		return nil, err
+	}
+	// Each Demand Gen ad group's own demographic Audience (#518), after the campaign-level one
+	// so a refusal of the two together is the campaign-level field's.
+	if err := validateDemandGenGroupDemographics(c.account.CustomerID, campaignName, in, demandGenGroups); err != nil {
 		return nil, err
 	}
 	// The Display ad groups (#475): the single group the campaign-level creative and

@@ -248,9 +248,12 @@ openssl rand -base64 32
   any Demand Gen audience: 403 without it, 503 when the check cannot be made
   (it asks project-service and fga-sync over NATS). The same flag gates each
   `demandGenAdGroups[].audience` (#460), the same input on a named ad
-  group, and `demandGenDemographics.audienceSegments` (#498), existing user
-  lists put in the demographic Audience: off, a create naming any is refused
-  before the budget. The rest of Demand Gen, including ad groups without
+  group, `demandGenDemographics.audienceSegments` (#498) and
+  `demandGenDemographics.customAudiences` (#516), existing user lists and
+  custom audiences put in the demographic Audience, and the same two lists
+  in any `demandGenAdGroups[].demographics` (#518): off, a create naming any
+  is refused before the budget, and each needs `global_marketing_ops` like
+  the audiences above. The rest of Demand Gen, including ad groups without
   an audience, is not gated. The chart sets it to `"false"`
   (`app.environment.GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED.value`); enable
   both per-environment by setting it to `"true"` in the ArgoCD overlay.
@@ -306,10 +309,12 @@ openssl rand -base64 32
   opts a deployment IN to the Google Ads demographic inputs not yet
   exercised by a live (persisted) create:
   `googleAdsConfig.observedDemographics` (#497),
-  `googleAdsConfig.displayDemographics` (#499) and
+  `googleAdsConfig.displayDemographics` (#499),
   `googleAdsConfig.demandGenDemographics` (#498; its create body was
   accepted by a validateOnly probe on 2026-11-05, but a persisted create
-  and the read-back its reuse relies on are not yet verified). Only the exact value
+  and the read-back its reuse relies on are not yet verified) and each
+  `demandGenAdGroups[].demographics` (#518, the same object building that
+  ad group its own Audience). Only the exact value
   `true` enables it; anything else fails closed, and a create naming one,
   on any channel, is refused before the budget. It names no account
   resource; it keeps an unverified shape off the shared account. The chart

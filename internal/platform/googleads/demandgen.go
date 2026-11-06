@@ -93,7 +93,8 @@ type demandGenAdGroupCreate struct {
 }
 
 // CreateDemandGenCampaign creates a PAUSED Demand Gen campaign: the demographic Audience
-// when DemandGenDemographics is set (#498) → budget → campaign →
+// when DemandGenDemographics is set (#498), and one for each DemandGenAdGroups entry that sets
+// Demographics (#518) → budget → campaign →
 // conversion goal → campaign-level ad schedule and device criteria → sitelinks (#474) →
 // ad group → ad-group-level geo → ad-group-level audience and languages (#459) → ad, the
 // last four repeated per ad group when DemandGenAdGroups names several (#460). It is a port of the
@@ -151,32 +152,18 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	amountMicros := pf.amountMicros
 	steps := []string{}
 
-	// The demographic Audience (#498), the last step before the budget, after the image
-	// fetch so a bad image costs no Audience either. No budget or campaign exists yet. A
-	// definite failure returns (nil, err): nothing was created. A create that may have landed
-	// (5xx, timeout, an unusable 2xx) returns a partial naming the planned Audience
-	// (DemandGenDemographicAudienceName), so the claim is kept and a retry reuses it by name
+	// The demographic Audiences (#498, #518), the last step before the budget, after the image
+	// fetch so a bad image costs no Audience either: the campaign-level one first, then each ad
+	// group's own, in entry order. No budget or campaign exists yet. A definite failure of the
+	// first returns (nil, err): nothing was created. A create that may have landed (5xx,
+	// timeout, an unusable 2xx), or any failure once an earlier Audience is in place, returns a
+	// partial naming every Audience so far and the planned name of the failed one when it may
+	// exist, so the claim is kept and a retry reuses each by name
 	// (ensureDemandGenDemographicAudience).
 	var demographicAudience, demographicAudienceName string
-	if pf.demandGenDemographics != nil {
-		demographicAudienceName = pf.demandGenDemographics.create.Name
-		resource, how, unconfirmed, audErr := c.ensureDemandGenDemographicAudience(ctx, pf.demandGenDemographics)
-		if audErr != nil {
-			if !unconfirmed {
-				return nil, audErr // definitely nothing new was created
-			}
-			// The Audience may exist: a partial naming the planned Audience keeps the claim,
-			// as an ambiguous budget create does, so the account is reconciled before a retry.
-			return &CampaignResult{
-				Platform: platformGoogleAds, AccountLabel: c.account.Label, CustomerID: c.account.CustomerID,
-				CampaignName: campaignName, CampaignBudgetName: budgetName,
-				DemandGenDemographicAudienceName: demographicAudienceName,
-				Steps:                            append(steps, fmt.Sprintf("Demographic Audience UNCONFIRMED: %q may exist; nothing else was created", pf.demandGenDemographics.create.Name)),
-			}, audErr
-		}
-		demographicAudience = resource
-		steps = append(steps, demographicAudienceStep(how, resource, pf.demandGenDemographics))
-	}
+	var groupAudiences []DemandGenAdGroupAudience
+	// groupAudience is each group's own Audience resource, by group index, "" for none.
+	groupAudience := make([]string, len(pf.demandGenGroups))
 
 	// namePartial carries the names an operator needs to reconcile by, for a failure
 	// that may have created something we never got an id for.
@@ -191,10 +178,46 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 			CampaignName:       campaignName,
 			CampaignBudgetName: budgetName,
 			Steps:              steps,
-			// The Audience exists before the budget, so every partial names it.
+			// The Audiences exist before the budget, so every partial names them.
 			DemandGenDemographicAudience:     demographicAudience,
 			DemandGenDemographicAudienceName: demographicAudienceName,
+			DemandGenAdGroupAudiences:        groupAudiences,
 		}
+	}
+	// audienceFailed is the result of a failed Audience create: (nil, err) when nothing at all
+	// may exist, otherwise a partial naming what does.
+	audienceFailed := func(unconfirmed bool, name, tag string, err error) (*CampaignResult, error) {
+		if !unconfirmed && !demographicAudiencesInPlace(namePartial()) {
+			return nil, err // definitely nothing new was created
+		}
+		if unconfirmed {
+			steps = append(steps, fmt.Sprintf("Demographic Audience UNCONFIRMED: %q may exist; no budget or campaign was created", name)+tag)
+		}
+		return namePartial(), err
+	}
+	if pf.demandGenDemographics != nil {
+		demographicAudienceName = pf.demandGenDemographics.create.Name
+		resource, how, unconfirmed, audErr := c.ensureDemandGenDemographicAudience(ctx, pf.demandGenDemographics)
+		if audErr != nil {
+			return audienceFailed(unconfirmed, demographicAudienceName, "", audErr)
+		}
+		demographicAudience = resource
+		steps = append(steps, demographicAudienceStep(how, resource, pf.demandGenDemographics))
+	}
+	for k, g := range pf.demandGenGroups {
+		if g.demographics == nil {
+			continue
+		}
+		resource, how, unconfirmed, audErr := c.ensureDemandGenDemographicAudience(ctx, g.demographics)
+		if audErr != nil {
+			if unconfirmed {
+				groupAudiences = append(groupAudiences, DemandGenAdGroupAudience{AdGroupName: g.name, DemographicAudienceName: g.demographics.create.Name})
+			}
+			return audienceFailed(unconfirmed, g.demographics.create.Name, demandGenGroupStep(true, g.name), audErr)
+		}
+		groupAudience[k] = resource
+		groupAudiences = append(groupAudiences, DemandGenAdGroupAudience{AdGroupName: g.name, DemographicAudience: resource, DemographicAudienceName: g.demographics.create.Name})
+		steps = append(steps, demographicAudienceStep(how, resource, g.demographics))
 	}
 
 	// Step 1: budget. Same shape as the Search path — budgets are channel-agnostic.
@@ -240,9 +263,9 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		// ambiguousBudgetCreateOutcome; every channel takes this arm identically.
 		return c.ambiguousBudgetCreateOutcome(ctx, "demand gen", budgetName, namePartial, err)
 	default:
-		if demographicAudience != "" {
-			// The Audience was created or reused before the budget, so the result must name it.
-			return namePartial(), fmt.Errorf("google-ads demand gen budget creation failed (demographic Audience %s in place): %w", demographicAudience, err)
+		if r := namePartial(); demographicAudiencesInPlace(r) {
+			// The Audiences were created or reused before the budget, so the result must name them.
+			return r, fmt.Errorf("google-ads demand gen budget creation failed (demographic Audience %s in place): %w", strings.Join(demographicAudienceResources(r), ", "), err)
 		}
 		return nil, fmt.Errorf("google-ads demand gen budget creation failed: %w", err)
 	}
@@ -483,10 +506,14 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		// the only level Demand Gen takes either at (see demandgen_targeting.go for the probe
 		// facts). Its own mutate after geo rather than inside geo's;
 		// createDemandGenAdGroupTargeting says why.
-		// The demographic Audience (#498) goes on every group; the preflight refused it
-		// beside any group's own Audience, so it never replaces one.
+		// The group's own demographic Audience (#518) first; otherwise the campaign-level one
+		// (#498), which goes on every other group. The preflight refused either beside the
+		// group's own Audience, so neither ever replaces one.
 		audience := g.audience
-		if demographicAudience != "" {
+		switch {
+		case groupAudience[k] != "":
+			audience = groupAudience[k]
+		case demographicAudience != "":
 			audience = demographicAudience
 		}
 		if audience != "" || len(pf.criteria.languages) > 0 {
