@@ -195,6 +195,13 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		}
 		return namePartial(), err
 	}
+	// Before the first write: a campaign of this name already in the account means a retry
+	// of a create that got past the campaign step, and the budget create below would succeed
+	// and orphan a second budget (#540). See refuseIfCampaignExists.
+	if r, err := c.refuseIfCampaignExists(ctx, "demand gen", campaignName, namePartial); err != nil {
+		return r, err
+	}
+
 	if pf.demandGenDemographics != nil {
 		demographicAudienceName = pf.demandGenDemographics.create.Name
 		resource, how, unconfirmed, audErr := c.ensureDemandGenDemographicAudience(ctx, pf.demandGenDemographics)

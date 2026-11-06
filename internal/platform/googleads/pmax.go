@@ -229,6 +229,13 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 		}
 	}
 
+	// Before the first write: a campaign of this name already in the account means a retry
+	// of a create that got past the campaign step, and the budget create below would succeed
+	// and orphan a second budget (#540). See refuseIfCampaignExists.
+	if r, err := c.refuseIfCampaignExists(ctx, "performance max", campaignName, namePartial); err != nil {
+		return r, err
+	}
+
 	// Step 1: the budget. Channel-agnostic, and non-shared so its name stays this
 	// client's idempotency key — see budgetKindFor for why the Performance Max budget
 	// takes a channel-specific name segment and Search's does not.

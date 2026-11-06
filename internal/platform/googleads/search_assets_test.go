@@ -119,9 +119,9 @@ func newSearchAssetClient(t *testing.T, s *searchAssetServer) *Client {
 	t.Cleanup(tokenSrv.Close)
 	apiSrv := httptest.NewServer(s.handler(t))
 	t.Cleanup(apiSrv.Close)
-	return NewClient(testCreds(), testAccount(),
+	return noExistingCampaign(NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
-		withRetryBaseDelay(time.Millisecond))
+		withRetryBaseDelay(time.Millisecond)))
 }
 
 // extensionAssetEcho answers an extension assets:mutate with asset 700, 701, ….

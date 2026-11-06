@@ -71,9 +71,9 @@ func (s *campaignAudienceServer) client(t *testing.T) *Client {
 		}
 	}))
 	t.Cleanup(api.Close)
-	return NewClient(testCreds(), testAccount(),
+	return noExistingCampaign(NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(api.URL), WithClock(fixedClock()),
-		withRetryBaseDelay(time.Millisecond))
+		withRetryBaseDelay(time.Millisecond)))
 }
 
 const (

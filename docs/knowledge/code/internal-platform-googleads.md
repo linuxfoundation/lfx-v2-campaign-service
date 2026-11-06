@@ -248,9 +248,9 @@ while `getCampaignByPlatformQuery` excludes deleted rows. So after a documented 
 orchestrator reads the pair as "never dispatched" and re-enters `Dispatch`; an unconditional
 lookup would there re-attach to the still-live upstream campaign the delete walked away from
 and persist the new request's budget/config against it while pushing nothing upstream. With
-the flag off, that dispatch goes down the create path, where Google's `DUPLICATE_NAME` is
-surfaced as a retained partial requiring reconciliation — visible, which the silent rebind
-is not. An adopted row is persisted `created_degraded`, never `created`: nothing was wired
+the flag off, that dispatch goes down the create path. There the client's pre-write campaign
+check (#540, below) finds the live campaign and returns a retained `campaign_name_taken`
+partial without writing anything. That is visible, which the silent rebind is not. An adopted row is persisted `created_degraded`, never `created`: nothing was wired
 upstream (no budget, no ad group, no ad, and not this request's config), the same reason
 `twitter.go` degrades its `Reused` case.
 
@@ -475,6 +475,40 @@ budget's name syncs to the campaign name once attached; Google does NOT document
 that the original budget name is then freed for reuse, so for at-most-once retries
 callers should pass a stable-per-logical-campaign `NameSuffix` (which makes the
 retry collide on `DUPLICATE_NAME`) rather than relying on name reuse.
+
+### Campaign existence check before the first write (`campaign_precheck.go`, #540)
+
+The budget-name key holds only until a campaign attaches. After that, Google renames the
+non-shared budget to the campaign's name, so after a create that SUCCEEDED nothing carries
+the composed budget name. A retry's `campaignBudgets:mutate` is accepted, a second budget is
+created, and the duplicate surfaces one step later as `DUPLICATE_CAMPAIGN_NAME`. The
+2026-11-06 #518 probe left budget `16011237348` (5.00/day, `reference_count 0`) exactly this
+way, reported as `campaign_name_taken` carrying the new budget's id. A budget-name lookup
+can't close this: the budget of interest no longer has the name, and the new create is never
+refused.
+
+So every creating channel (`campaign.go`, `demandgen.go`, `display.go`, `pmax.go`, `video.go`)
+calls the shared `refuseIfCampaignExists` immediately before its first write. That is after
+the preflight and the image fetch, and before Demand Gen's demographic Audiences and the
+budget. It runs the same read-only `FindCampaignByName` the dispatcher's adoption uses:
+
+- **No live campaign of the composed name.** The create proceeds exactly as before. The
+  DUPLICATE_NAME reuse, the ambiguous-create resolution and Audience reuse by name are
+  unchanged.
+- **A live campaign.** `GetCampaignSettings` reads its attached `campaign_budget.id`, and the
+  create returns the channel's name partial with `CampaignBudgetID` set to that budget and
+  `CampaignID` left empty. The error is `campaignExistsBeforeCreateError`, which
+  `CreateOutcome` classifies as `campaign_name_taken`, the same token as Google's own
+  `DUPLICATE_CAMPAIGN_NAME`. **No mutate of any kind is sent.** The client never adopts. Binding
+  the brief to that campaign stays the dispatcher's decision, behind `adoptExisting`.
+- **Anything unverifiable.** This covers a failed or untrustworthy lookup, a campaign whose
+  budget can't be read, or one removed between the two reads. The result is `(nil, err)`: a
+  pre-create failure, so the claim is released and a retry asks again. Going ahead would
+  rebuild the orphan the check exists to prevent.
+
+The cost on the ordinary path is one GAQL search per create. Tests that aren't about the
+check answer it through `noExistingCampaignTransport` (`campaign_precheck_test.go`), so fakes
+that count or order their searches see the same requests as before.
 
 ### Budget-name adoption on DUPLICATE_NAME (`budget_lookup.go`)
 

@@ -44,9 +44,9 @@ func newGeoClient(t *testing.T, campaignCriteriaH, adGroupCriteriaH http.Handler
 		}
 	}))
 	t.Cleanup(apiSrv.Close)
-	return NewClient(testCreds(), testAccount(),
+	return noExistingCampaign(NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
-		withRetryBaseDelay(time.Millisecond))
+		withRetryBaseDelay(time.Millisecond)))
 }
 
 // capturedMutate is a criteria handler that records the request body and replies with
@@ -298,9 +298,9 @@ func TestCreateCampaign_UnmappedGeoFailsBeforeAnyMutate(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(apiSrv.Close)
-	c := NewClient(testCreds(), testAccount(),
+	c := noExistingCampaign(NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
-		withRetryBaseDelay(time.Millisecond))
+		withRetryBaseDelay(time.Millisecond)))
 
 	in := sampleInput()
 	in.GeoTargets = []string{"USA"}
