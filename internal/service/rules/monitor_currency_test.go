@@ -6,6 +6,7 @@ package rules
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
@@ -264,5 +265,105 @@ func TestMoneyRulesSkipped_NamesTheZeroBudgetException(t *testing.T) {
 		if strings.Contains(it.Issue, "still flagged") {
 			t.Errorf("X flags no zero budget, but its skipped item says so: %q", it.Issue)
 		}
+	}
+}
+
+// LinkedIn's paused-with-real-budget rule is sized in the account's currency too (#454 follow-up,
+// #547): 10 lifetime or 1 a day in USD terms, each EXCLUSIVE, compared at the currency's minor
+// unit, and never fired on an amount in a currency that cannot be sized.
+func TestLinkedInPausedRealBudget_SizedInAccountCurrency(t *testing.T) {
+	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name        string
+		currency    string
+		total, day  float64
+		wantPaused  bool
+		wantSkipped bool
+	}{
+		// USD keeps today's thresholds: > 10 lifetime, > 1 a day.
+		{"USD total above 10", "USD", 10.01, 0, true, false},
+		{"USD total at 10", "USD", 10, 0, false, false},
+		{"USD daily above 1", "USD", 0, 1.01, true, false},
+		{"USD daily at 1", "USD", 0, 1, false, false},
+		// JPY: ¥200/day (about $1.4) is real, ¥100/day (about $0.7) is not — in dollars both were
+		// real. ¥1,000 lifetime (about $6.8) is not; ¥1,471 (just above $10) is.
+		{"JPY 100/day is not real", "JPY", 0, 100, false, false},
+		{"JPY 200/day is real", "JPY", 0, 200, true, false},
+		{"JPY 1000 lifetime is not real", "JPY", 1000, 0, false, false},
+		{"JPY 1471 lifetime is real", "JPY", 1471, 0, true, false},
+		{"JPY 1470 lifetime is at the line", "JPY", 1470, 0, false, false},
+		// KWD: 1/day is about $3, a real budget the dollar comparison (> 1) missed.
+		{"KWD 1/day is real", "KWD", 0, 1, true, false},
+		{"KWD 0.307/day is at the line", "KWD", 0, 0.307, false, false},
+		// CAD 13.80 lifetime is 10 × 1.38 at cents, the threshold itself, not above it.
+		{"CAD at 10 USD lifetime", "CAD", 13.80, 0, false, false},
+		{"CAD just above 10 USD lifetime", "CAD", 13.81, 0, true, false},
+		// The compared amount is rounded too: a float remainder far below a cent is not above it.
+		{"CAD a float remainder above 10 USD lifetime", "CAD", 13.80 + 1e-9, 0, false, false},
+		// Unsizable currencies: no USD guess, and the account-wide LOW skipped item instead.
+		{"absent currency", "", 500, 50, false, true},
+		{"unlisted currency", "ARS", 500, 50, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := model.AccountCampaignMetrics{PlatformCampaignID: "1", Name: "c", Status: "PAUSED",
+				TotalBudget: tc.total, BudgetDay: tc.day}
+			_, items := EvaluateLinkedInMonitor([]model.AccountCampaignMetrics{row}, 30, now, tc.currency)
+			if got := hasItem(items, model.MonitorPriorityLow, "PAUSED with real budget"); got != tc.wantPaused {
+				t.Errorf("paused item = %v, want %v; items = %+v", got, tc.wantPaused, items)
+			}
+			var skipped []model.AccountMonitorActionItem
+			for _, it := range items {
+				if strings.Contains(it.Issue, "paused-with-real-budget check was skipped") {
+					skipped = append(skipped, it)
+				}
+			}
+			if tc.wantSkipped != (len(skipped) == 1) || len(skipped) > 1 {
+				t.Errorf("skipped items = %+v, want one: %v", skipped, tc.wantSkipped)
+			}
+			if len(skipped) == 1 && (skipped[0].Priority != model.MonitorPriorityLow || skipped[0].CampaignID != "") {
+				t.Errorf("skipped item = %+v, want account-wide LOW", skipped[0])
+			}
+		})
+	}
+}
+
+// LinkedIn reads its currency off the campaign budgets, so an account whose campaigns carry none
+// reports no currency for a reason that skipped nothing: no skipped item there, nor for active or
+// fetch-failed paused rows — only a measured, budgeted, PAUSED campaign is one the rule examines.
+func TestLinkedInMoneyRuleSkipped_OnlyWhenAPausedBudgetWasThere(t *testing.T) {
+	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	active := model.AccountCampaignMetrics{PlatformCampaignID: "1", Name: "a", Status: "ACTIVE", BudgetDay: 50, Spend: 10}
+	pausedNoBudget := model.AccountCampaignMetrics{PlatformCampaignID: "2", Name: "b", Status: "PAUSED"}
+	pausedFailed := model.AccountCampaignMetrics{PlatformCampaignID: "3", Name: "c", Status: "PAUSED", TotalBudget: 500, FetchFailed: true}
+	_, items := EvaluateLinkedInMonitor([]model.AccountCampaignMetrics{active, pausedNoBudget, pausedFailed}, 30, now, "")
+	for _, it := range items {
+		if strings.Contains(it.Issue, " skipped") {
+			t.Errorf("unexpected skipped item %+v; items = %+v", it, items)
+		}
+	}
+}
+
+// A paused row whose own budget currency the read could not trust (PacingUnknown from the
+// dispatcher) is not sized in the account's currency: its budget may not be in it.
+func TestLinkedInPausedRealBudget_UntrustedBudgetCurrencyNotSized(t *testing.T) {
+	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	row := model.AccountCampaignMetrics{PlatformCampaignID: "1", Name: "c", Status: "PAUSED", BudgetDay: 500, PacingUnknown: true}
+	_, items := EvaluateLinkedInMonitor([]model.AccountCampaignMetrics{row}, 30, now, "EUR")
+	if hasItem(items, model.MonitorPriorityLow, "PAUSED with real budget") {
+		t.Errorf("paused item fired on a budget of untrusted currency; items = %+v", items)
+	}
+}
+
+// linkedinPausedBudgeted returns exactly the measured, budgeted, PAUSED rows, on its own — not
+// only once moneyRulesSkippedItem's measured filter has also run.
+func TestLinkedInPausedBudgeted_ExactSet(t *testing.T) {
+	row := func(status string, total float64, failed bool) model.AccountMonitorRow {
+		return model.AccountMonitorRow{Metrics: model.AccountCampaignMetrics{Status: status, TotalBudget: total, FetchFailed: failed}}
+	}
+	got := linkedinPausedBudgeted([]model.AccountMonitorRow{
+		row("PAUSED", 500, false), row("PAUSED", 500, true), row("PAUSED", 0, false), row("ACTIVE", 500, false),
+	})
+	if len(got) != 1 || got[0].Metrics.FetchFailed || got[0].Metrics.Status != "PAUSED" {
+		t.Errorf("linkedinPausedBudgeted = %+v, want only the measured, budgeted, PAUSED row", got)
 	}
 }

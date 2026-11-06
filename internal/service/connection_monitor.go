@@ -462,7 +462,7 @@ func (s *ConnectionService) MonitorLinkedinAdsAccount(ctx context.Context, p *co
 	now := time.Now()
 	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderLinkedInAds, linkedInAdsMonitorDiscovery,
 		func(read *model.AccountMonitorRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
-			return rules.EvaluateLinkedInMonitor(read.Rows, p.Days, now)
+			return rules.EvaluateLinkedInMonitor(read.Rows, p.Days, now, read.Currency)
 		})
 }
 

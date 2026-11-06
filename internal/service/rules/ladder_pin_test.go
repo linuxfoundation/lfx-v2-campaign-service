@@ -117,7 +117,7 @@ func monitorCallers(t *testing.T) []monitorCaller {
 		// LinkedIn's daily branch counts ceil(days-1) whole days back from now, so days=11 is a
 		// 10-day expectation.
 		{"linkedin", unroundedMonitorWant, func(m model.AccountCampaignMetrics) model.AccountMonitorRow {
-			rows, _ := EvaluateLinkedInMonitor([]model.AccountCampaignMetrics{m}, 11, pinNow)
+			rows, _ := EvaluateLinkedInMonitor([]model.AccountCampaignMetrics{m}, 11, pinNow, "USD")
 			return pinOneRow(t, rows)
 		}},
 	}
