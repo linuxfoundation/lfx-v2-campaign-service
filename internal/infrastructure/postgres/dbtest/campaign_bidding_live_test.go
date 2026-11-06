@@ -24,8 +24,8 @@ func TestLiveCampaignBiddingStrategyRoundTrips(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
 	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
-	briefID := insertBrief(ctx, t, pool)
 	projectID := dbtest.UniqueID(t, "project")
+	briefID := insertBrief(ctx, t, pool, projectID)
 	jobID := uuid.NewString()
 
 	// Every upsert finalises this job's claim, as Orchestrator.dispatchPlatform does: an
