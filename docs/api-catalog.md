@@ -1319,9 +1319,14 @@ sharedNegativeKeywordLists?:    — OPTIONAL EXISTING shared negative keyword li
                                   SEARCH ONLY, and REFUSED on every other `channel` before any
                                   request. The 2026-11-03 validateOnly probe accepted a
                                   campaignSharedSet naming an existing NEGATIVE_KEYWORDS set and
-                                  refused another customer's set. NOT LIVE-VERIFIED: a
-                                  multi-operation `campaignSharedSets:mutate`, and attaching a set
-                                  of another type (the resource name does not say its type).
+                                  refused another customer's set. A live create on 2026-11-06
+                                  (#536) attached two NEGATIVE_KEYWORDS sets to paused campaign
+                                  24433949469 in one multi-operation `campaignSharedSets:mutate`,
+                                  and GAQL read both links back ENABLED. The set's TYPE is not
+                                  checked (the resource name does not say it), and Google does
+                                  not refuse another type either: validateOnly accepted a
+                                  NEGATIVE_PLACEMENTS and a BRANDS set on a Search campaign. Name
+                                  only NEGATIVE_KEYWORDS sets.
 cpcBid?: number                 — OPTIONAL manual CPC bid for the ad group, in whole units of the ad
                                   ACCOUNT's currency (the same no-FX-conversion caveat `budget`
                                   carries). Accepted range 0.01..100000.0 inclusive; NaN/Inf or a
