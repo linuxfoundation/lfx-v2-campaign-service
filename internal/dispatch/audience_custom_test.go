@@ -1369,6 +1369,25 @@ func TestRunQA_AnUnreadableListNameIsNotVerifiedRatherThanAbsent(t *testing.T) {
 		assert.True(t, says(out, absent), "read, Hard Bounces is no GDPR list, so the CRITICAL stands")
 	})
 
+	t.Run("a send-time list read later only as an inclusion stays unverified", func(t *testing.T) {
+		portal := seoulPortal()
+		portal.lists["26Q4 - KubeCon - Master"] = "500"
+		portal.lists["26Q4 - Seoul - Prospects"] = "611"
+		portal.lists["LF Europe GDPR Suppression"] = "601"
+		// The name lookup and the send-time read fail; the inclusion walk's read answers,
+		// but that never judges 601 as a suppression.
+		portal.flaky = map[string]int{"601": 3}
+		portal.branches = map[string]string{"500": or(and(f("IN_LIST", "611")), and(f("IN_LIST", "601")))}
+		srv := portal.serve(t)
+		defer srv.Close()
+
+		out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", true, false, []string{"601"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"601"}, out.Checks.Suppression.UnverifiedListIDs)
+		assert.False(t, says(out, absent), "never judged as a suppression, so not reported absent")
+		assert.NotEqual(t, audience.VerdictFail, out.Checks.ExclusionCompleteness.Verdict, "nor zero exclusions")
+	})
+
 	t.Run("a name read that recovers later is evidence again", func(t *testing.T) {
 		portal := seoulPortal()
 		portal.lists["26Q4 - Seoul - Master"] = "500"
