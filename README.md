@@ -358,7 +358,9 @@ openssl rand -base64 32
   Postgres advisory lease runs X stats jobs — any other pod answers the
   audience read 503 and skips monitor report submissions. The chart
   renders the flag at any replica count and only warns in its
-  `NOTES.txt` above one (#381). The chart sets
+  `NOTES.txt` above one (#381) — ArgoCD never shows that warning, and
+  at three replicas most X audience reads land on a non-owner pod and
+  503, so run one replica while the flag is on. The chart sets
   it to `"false"` (`charts/lfx-v2-campaign-service/values.yaml`); flip
   it only after the contract is verified against a live X ad account.
 

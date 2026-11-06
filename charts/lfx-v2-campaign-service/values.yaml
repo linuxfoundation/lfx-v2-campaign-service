@@ -415,6 +415,8 @@ app:
     # per-account Postgres advisory lease creates X stats jobs (others answer
     # 503). With replicaCount > 1 (or autoscaling past one) the chart renders
     # and templates/NOTES.txt prints a warning; it does not refuse (#381).
+    # ArgoCD never shows that warning, and at three replicas most X audience
+    # reads land on a non-owner pod and 503: run one replica with the flag on.
     TWITTER_METRICS_ENABLED:
       value: "false"
 

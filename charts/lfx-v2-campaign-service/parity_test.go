@@ -1337,7 +1337,11 @@ func helmNotes(t *testing.T, sets ...string) string {
 	for _, s := range sets {
 		args = append(args, "--set", s)
 	}
-	out, err := exec.Command("helm", args...).CombinedOutput()
+	cmd := exec.Command("helm", args...)
+	// --dry-run=client never contacts a cluster, but point KUBECONFIG at nothing anyway so a
+	// future flag change cannot reach whatever context the developer has selected.
+	cmd.Env = append(os.Environ(), "KUBECONFIG="+filepath.Join(t.TempDir(), "none"))
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("helm %v failed: %v\n%s", args, err, out)
 	}
@@ -1431,7 +1435,9 @@ func TestDeploymentWarnsOnXStatsJobsWithMultipleReplicas(t *testing.T) {
 // the case sets an explicit replicaCount — that the render actually CARRIES it. Asserting only
 // that helm exits 0 would not keep the guard retired: a reinstated guard keyed above this
 // table's replica counts, or one that quietly clamps spec.replicas to 1 instead of failing,
-// would both pass. (The X stats-job check is a NOTES.txt warning for the same reason, see
+// would both pass. (The X stats-job check is a NOTES.txt warning for a different reason: not
+// because multi-replica is correct for X, but because a render refusal blocks ArgoCD outright.
+// While its flag is on, X accepts the non-owner 503s described below; see
 // TestDeploymentWarnsOnXStatsJobsWithMultipleReplicas.) The real fix was a shared ledger keyed by ad account in Postgres (#380, now in
 // place), not a refusal to deploy. Note the two shortcuts
 // that look like fixes and are not — a lease as the X stats jobs use makes non-owner pods refuse,

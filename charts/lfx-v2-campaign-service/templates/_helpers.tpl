@@ -20,8 +20,10 @@ SPDX-License-Identifier: MIT
   no ticker, cron or subscriber in internal/ or cmd/ reaches ConnectionService.MonitorTwitterAdsAccount
   or the audience read, and the lfx-self-serve Monitoring tab reads the X panel only on a user
   action (platform, date range, the panel's Refresh button) with no interval refresh. So more
-  replicas than one mean a non-owner pod answers some X reads 503 or serves the saved report,
-  not that the account's job limit is multiplied.
+  replicas than one do not multiply the account's job limit; the cost is availability — behind a
+  load balancer most X audience reads land on a pod that does not own the account's lease and
+  answer 503, and monitor reads there serve the saved report. That is why NOTES.txt still says to
+  run one replica, and why it is a warning: ArgoCD never shows it, but a `fail` blocks the deploy.
 
   An earlier revision `fail`ed the render here instead. Deployments set three replicas
   (lfx-v2-argocd values/global/lfx-v2-campaign-service.yaml), so turning the flag on in a deployed

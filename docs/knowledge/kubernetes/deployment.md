@@ -160,7 +160,10 @@ Kubernetes keeps a repeated name's LAST occurrence: the last `app.extraEnv` entr
 and a `valueFrom` on the effective entry (unreadable at render time) counts as on
 (`TestDeploymentWarnsOnXStatsJobsWithMultipleReplicas`, which also pins that every such render
 succeeds and carries the requested `spec.replicas`). ArgoCD does not show `NOTES.txt`; the warning
-reaches a `helm install`/`upgrade` or a dry run, and the lease is what actually holds.
+reaches a `helm install`/`upgrade` or a dry run, and the lease is what actually holds. The cost of
+running the flag above one replica is availability, not the account's job limit: behind a load
+balancer most X audience reads land on a pod that does not own the account's lease and answer 503,
+so run one replica while the flag is on.
 
 It used to be a render-time `fail`, and was downgraded for the reason the Reddit guard below was
 retired: deployments run three replicas, so turning the flag on would have stopped ArgoCD
