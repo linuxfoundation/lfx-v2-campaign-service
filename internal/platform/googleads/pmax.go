@@ -432,8 +432,10 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 	// Google created with the campaign above, which is why they can only come after it;
 	// they ride in the same atomic campaignCriteria:mutate as the language and schedule
 	// creates. A failure here returns the PAUSED campaign alongside the error, like every
-	// step past the campaign create, and the error says which kinds did not apply and
-	// that the campaign would serve on every device if enabled.
+	// step past the campaign create. On a definite rejection the error says which kinds did
+	// not apply and that the campaign would serve on every device if enabled; on an
+	// UNCONFIRMED outcome (transport failure, malformed 2xx, a result naming another row) the
+	// batch may have applied, so the error says to verify in Google Ads before retrying.
 	if !pf.criteria.empty() {
 		critIDs, critErr := c.createCampaignTargetingCriteria(ctx, campaignResource, campaignID, pf.criteria)
 		res.TargetingCriterionIDs = critIDs
