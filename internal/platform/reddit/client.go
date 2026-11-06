@@ -654,12 +654,16 @@ func ResolveConversionEvent(objective, event string) (string, error) {
 	if objective == "" {
 		objective = defaultRedditObjective
 	}
-	if objective != "conversions" {
-		return "", fmt.Errorf("conversionEvent is the event a conversions campaign optimizes toward; objective %s takes its own goal, so omit conversionEvent or use objective \"conversions\"", domain.CallerValue(objective))
-	}
 	canonical := strings.ToUpper(event)
 	if !slices.Contains(conversionEvents, canonical) {
 		return "", fmt.Errorf("conversionEvent %s is not one of %s", domain.CallerValue(event), strings.Join(conversionEvents, ", "))
+	}
+	// Objectives are matched exactly (redditObjectiveParams is keyed in lower case and nothing
+	// normalizes them), so an objective that is not one of them is the objective check's refusal
+	// ("unsupported Reddit objective"), not this one: saying "Conversions takes its own goal" would
+	// misname the problem.
+	if _, known := redditObjectiveParams[objective]; known && objective != "conversions" {
+		return "", fmt.Errorf("conversionEvent is the event a conversions campaign optimizes toward; objective %s takes its own goal, so omit conversionEvent or use objective \"conversions\"", domain.CallerValue(objective))
 	}
 	return canonical, nil
 }

@@ -31,6 +31,10 @@ func TestResolveConversionEvent(t *testing.T) {
 		{"conversions", "VIDEO_VIEW_6S", "", "is not one of"},
 		{"conversions", "MOBILE_CONVERSION_PURCHASE", "", "is not one of"},
 		{"conversions", "LANDING_PAGE_VISIT", "", "is not one of"},
+		// An objective that is not one of Reddit's (objectives are matched exactly, so
+		// "Conversions" is not one) is left to the objective check, which names it as unsupported.
+		{"Conversions", "SIGN_UP", "SIGN_UP", ""},
+		{"bogus", "LEAD", "LEAD", ""},
 	} {
 		got, err := ResolveConversionEvent(tc.objective, tc.event)
 		if tc.errHas == "" {
@@ -65,10 +69,16 @@ func TestCreateCampaign_ConversionEventRefusedBeforeAnyRequest(t *testing.T) {
 	c := NewClient(Credentials{ClientID: "c", ClientSecret: "s", RefreshToken: "r"},
 		AccountConfig{AccountID: "t2_acct", ConversionPixelID: "t2_pixel"},
 		WithBaseURL(srv.URL), WithTokenURL(srv.URL))
-	for _, in := range []CampaignInput{
-		{Objective: "traffic", ConversionEvent: "SIGN_UP"},
-		{Objective: "conversions", ConversionEvent: "REGISTER"},
+	for _, tc := range []struct {
+		in   CampaignInput
+		want string
+	}{
+		{CampaignInput{Objective: "traffic", ConversionEvent: "SIGN_UP"}, "conversionEvent"},
+		{CampaignInput{Objective: "conversions", ConversionEvent: "REGISTER"}, "conversionEvent"},
+		// A mis-cased objective is named as the problem, not the conversion event.
+		{CampaignInput{Objective: "Conversions", ConversionEvent: "SIGN_UP"}, "unsupported Reddit objective"},
 	} {
+		in := tc.in
 		in.EventName, in.Project, in.BudgetUSD = "KubeCon", "cncf", 50
 		in.StartDate, in.EndDate, in.RegistrationURL = "2099-08-01", "2099-08-31", "https://events.example.org/kubecon"
 		res, err := c.CreateCampaign(context.Background(), in)
@@ -76,8 +86,8 @@ func TestCreateCampaign_ConversionEventRefusedBeforeAnyRequest(t *testing.T) {
 			t.Fatalf("%+v: want (nil, refusal), got %+v, %v", in, res, err)
 		}
 		var pr *domain.PreflightRefusal
-		if !errors.As(err, &pr) || !strings.Contains(err.Error(), "conversionEvent") {
-			t.Fatalf("want a PreflightRefusal naming conversionEvent, got %T: %v", err, err)
+		if !errors.As(err, &pr) || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("want a PreflightRefusal naming %q, got %T: %v", tc.want, err, err)
 		}
 	}
 	if n := requests.Load(); n != 0 {
