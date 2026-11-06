@@ -105,13 +105,18 @@ FROM t, w`
 // TRY, NEVER BLOCK — the keyword-targeting lock's rule. A blocked pg_advisory_xact_lock would pin
 // a pooled connection for as long as the holder takes (a stalled holder: up to the 5 s bound, on
 // every replica), and refused readers that wake together would fill the pool queued on one lock.
-// A Take that finds the lock held rolls back at once — the connection goes back to the pool — and
+// A Take that finds the lock held commits its empty transaction at once — the connection goes
+// back to the pool — and
 // answers Taken false with redditReportLedgerLockBusyWait; reddit.ReportBudgets' wait loop (with
 // jitter) asks again.
 //
 // THE DATABASE'S CLOCK. Slots are stamped and the window measured with clock_timestamp(), read
 // after the lock is granted — never a pod's clock, which can skew between replicas, and never
 // now(), which is the transaction's START and would back-date a Take that waited for the lock.
+//
+// REDACTED ERRORS. Every error is returned through newSafeDSNError against the pool's own DSN:
+// a checkout that reconnects during an outage fails with pgconn text naming the configured user,
+// host and database, and reddit.ReportBudgets logs these errors. Identity (errors.Is/As) is kept.
 //
 // FAILS CLOSED. Every error — no pool, a failed checkout, the lock or statement failing, the
 // redditReportLedgerTimeout running out — is returned, and reddit.ReportBudgets refuses the
@@ -145,6 +150,11 @@ func RedditReportLedgerLockKeys(accountID string) (int32, int32) {
 	return redditReportLedgerClass, redditReportLedgerKey(accountID)
 }
 
+// safeErr renders err safe to log against the pool's configured DSN (see REDACTED ERRORS).
+func (l *RedditReportLedger) safeErr(err error) error {
+	return newSafeDSNError(l.pool.Config().ConnString(), err)
+}
+
 var errNoReportLedgerPool = errors.New("reddit report ledger: no database pool")
 
 // Take implements domain.RedditReportLedger. See the type comment.
@@ -176,7 +186,7 @@ func (l *RedditReportLedger) Take(ctx context.Context, accountID string, insight
 		return nil
 	})
 	if err != nil {
-		return domain.RedditReportTake{}, fmt.Errorf("reddit report ledger: %w", err)
+		return domain.RedditReportTake{}, fmt.Errorf("reddit report ledger: %w", l.safeErr(err))
 	}
 	if !locked {
 		return domain.RedditReportTake{Wait: redditReportLedgerLockBusyWait}, nil
@@ -196,7 +206,7 @@ func (l *RedditReportLedger) Release(ctx context.Context, slotID int64) error {
 	ctx, cancel := context.WithTimeout(ctx, l.timeout)
 	defer cancel()
 	if _, err := l.pool.Exec(ctx, redditReportLedgerReleaseSQL, slotID); err != nil {
-		return fmt.Errorf("reddit report ledger: release: %w", err)
+		return fmt.Errorf("reddit report ledger: release: %w", l.safeErr(err))
 	}
 	return nil
 }

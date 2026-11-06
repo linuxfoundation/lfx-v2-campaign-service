@@ -24,6 +24,7 @@ now live in Postgres: `postgres.RedditReportLedger` on the new `reddit_report_sl
 - `cmd/verify-metrics` (read-only database session) keeps a process-local ledger at the production
   sizing (`reddit.NewLocalReportBudgets`). It is unshared and NOT inside the 15-request headroom,
   so it is for off-peak use.
+- Ledger errors are redacted against the pool's DSN (`newSafeDSNError`) before they reach a log.
 - The Reddit account monitor classes an exhausted budget as `throttle`; a ledger failure is logged
   at warn where it is raised.
 

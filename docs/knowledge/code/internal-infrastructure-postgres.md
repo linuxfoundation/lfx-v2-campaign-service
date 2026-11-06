@@ -2873,6 +2873,9 @@ spend N × 45.
 - **Fails closed.** No pool, a failed checkout, a failed lock or statement, or the 5 s bound
   (`redditReportLedgerTimeout`) is an error, and `ReportBudgets` refuses the attempt
   (`reddit.ErrReportBudgetUnavailable`) — nothing sent unbudgeted.
+- **Redacted errors.** Take and Release errors go through `newSafeDSNError` against the pool's
+  own DSN, because a reconnecting checkout fails with pgconn text naming the configured user,
+  host and database, and `ReportBudgets` logs it (`TestRedditReportLedger_ErrorsDoNotCarryTheDSN`).
 - **Pool cost:** one pooled connection per Take for two short statements; never held across a
   Reddit call.
 
