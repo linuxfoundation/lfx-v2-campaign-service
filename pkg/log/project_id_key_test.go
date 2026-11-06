@@ -225,9 +225,28 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 				slog.Info("m", fields...)
 				break
 			}`, []string{"projectID"}},
+		{"a for initializer assigning an outer slice reaches a later call", `fields := []any{"a", 1}
+			for fields = []any{"projectID", id}; c; {
+				break
+			}
+			slog.Info("m", fields...)`, []string{"projectID"}},
 		{"a multi-value assignment makes the slice unknown", `fields := []any{"projectID", id}
 			fields, e = mk()
 			slog.Info("m", fields...)`, nil},
+		{"slices assigned together stay together", `fields := []any{"project_id"}
+			tail := []any{"project"}
+			if c {
+				fields = []any{"event", "x"}
+				tail = []any{"kind", 1}
+			}
+			slog.Info("m", append(fields, tail...)...)`, []string{"project_id", "event", "kind"}},
+		{"a path that returned does not reach the call", `fields := []any{"project_id", id}
+			if c {
+				fields = []any{"project", id}
+				_, _ = db.Query(q, fields...)
+				return
+			}
+			slog.Info("m", fields...)`, []string{"project_id"}},
 		{"interface conversion is looked through", `slog.Info("m", any("project_id"), "project")`, []string{"project_id"}},
 		{"elided slog.Attr in a slice", `slog.LogAttrs(ctx, lvl, "m", []slog.Attr{{Key: "projectID", Value: slog.AnyValue(v)}}...)`, []string{"projectID"}},
 		{"explicit slog.Attr", `_ = slog.Attr{Key: "project", Value: slog.AnyValue(v)}`, []string{"project"}},
@@ -363,126 +382,138 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 	}
 
 	// Spread slices are resolved by interpreting the statements of the enclosing function
-	// up to the log call: every []any variable maps to the sequences it may hold there.
-	// Statements run in order; an if, switch or select runs each branch from the state on
-	// entry and joins the branch exits (plus the entry state when no branch need run); a
-	// loop body runs zero or one times. Assignments through other variables (aliases) are
-	// followed because every []any variable is tracked.
-	const maxAlternatives = 1024
-	type seqs = [][]ast.Expr
-	type state = map[types.Object]seqs
-	cartesian := func(as, bs seqs) seqs {
-		var out seqs
-		for _, x := range as {
-			for _, y := range bs {
-				if len(out) == maxAlternatives {
-					return out
-				}
-				out = append(out, append(append([]ast.Expr{}, x...), y...))
-			}
-		}
-		return out
-	}
-	clone := func(st state) state {
-		out := make(state, len(st))
-		for k, v := range st {
+	// up to the log call. The interpreter tracks whole PATHS: each path holds one concrete
+	// sequence per []any variable, so slices assigned together on one branch stay
+	// together, and an alias is followed. Statements run in order; an if, switch or select
+	// runs each branch from the paths on entry and keeps the union of the paths that fall
+	// through (a return ends a path); a loop body runs zero or one times, after a for
+	// loop's initializer.
+	const maxPaths = 1024
+	type path = map[types.Object][]ast.Expr
+	clonePath := func(p path) path {
+		out := make(path, len(p))
+		for k, v := range p {
 			out[k] = v
 		}
 		return out
 	}
-	join := func(sts ...state) state {
-		out := state{}
-		seen := map[types.Object]map[string]bool{}
-		for _, st := range sts {
-			for o, alts := range st {
-				if seen[o] == nil {
-					seen[o] = map[string]bool{}
-				}
-				for _, alt := range alts {
-					var key strings.Builder
-					for _, e := range alt {
-						key.WriteString(strconv.Itoa(int(e.Pos())) + ",")
-					}
-					if !seen[o][key.String()] && len(out[o]) < maxAlternatives {
-						seen[o][key.String()] = true
-						out[o] = append(out[o], alt)
-					}
-				}
-			}
+	clonePaths := func(ps []path) []path {
+		out := make([]path, len(ps))
+		for i, p := range ps {
+			out[i] = clonePath(p)
 		}
-		// A variable assigned on only some paths may still hold its earlier value (or
-		// nothing) on the others.
-		for o := range out {
-			for _, st := range sts {
-				if _, ok := st[o]; !ok {
-					out[o] = append(out[o], nil)
-					break
+		return out
+	}
+	// union keeps distinct paths, bounded by maxPaths.
+	union := func(groups ...[]path) []path {
+		seen := map[string]bool{}
+		var out []path
+		for _, g := range groups {
+			for _, p := range g {
+				keys := make([]string, 0, len(p))
+				for o, seq := range p {
+					var k strings.Builder
+					k.WriteString(strconv.Itoa(int(o.Pos())) + ":")
+					for _, e := range seq {
+						k.WriteString(strconv.Itoa(int(e.Pos())) + ",")
+					}
+					keys = append(keys, k.String())
+				}
+				sort.Strings(keys)
+				key := strings.Join(keys, ";")
+				if !seen[key] && len(out) < maxPaths {
+					seen[key] = true
+					out = append(out, p)
 				}
 			}
 		}
 		return out
 	}
 
-	var evalSlice func(e ast.Expr, st state) seqs
-	evalArgs := func(args []ast.Expr, spreadLast bool, st state) seqs {
+	var evalSlice func(e ast.Expr, p path) []ast.Expr
+	evalArgs := func(args []ast.Expr, spreadLast bool, p path) []ast.Expr {
 		if !spreadLast || len(args) == 0 {
-			return seqs{args}
+			return args
 		}
-		return cartesian(seqs{args[:len(args)-1]}, evalSlice(args[len(args)-1], st))
+		head := append([]ast.Expr{}, args[:len(args)-1]...)
+		return append(head, evalSlice(args[len(args)-1], p)...)
 	}
-	evalSlice = func(e ast.Expr, st state) seqs {
+	evalSlice = func(e ast.Expr, p path) []ast.Expr {
 		switch x := ast.Unparen(e).(type) {
 		case *ast.Ident:
-			if alts, ok := st[objOf(x)]; ok {
-				return alts
-			}
+			return p[objOf(x)]
 		case *ast.CompositeLit:
 			if isAnySlice(info.TypeOf(x)) {
-				return seqs{x.Elts}
+				return x.Elts
 			}
 		case *ast.CallExpr:
 			if isAppend(x, info) && len(x.Args) > 0 {
-				return cartesian(evalSlice(x.Args[0], st), evalArgs(x.Args[1:], x.Ellipsis.IsValid(), st))
+				base := append([]ast.Expr{}, evalSlice(x.Args[0], p)...)
+				return append(base, evalArgs(x.Args[1:], x.Ellipsis.IsValid(), p)...)
 			}
 		}
-		return seqs{nil} // a parameter, a call result, or anything else not traced
+		return nil // a parameter, a call result, or anything else not traced
 	}
 
-	assign := func(lhs []ast.Expr, rhs []ast.Expr, st state) {
-		vals := make([]seqs, len(lhs))
-		for i := range lhs {
-			vals[i] = seqs{nil} // a multi-value call's results are not traced
-			if len(lhs) == len(rhs) {
-				vals[i] = evalSlice(rhs[i], st)
+	assign := func(lhs []ast.Expr, rhs []ast.Expr, ps []path) {
+		for _, p := range ps {
+			vals := make([][]ast.Expr, len(lhs))
+			if len(lhs) == len(rhs) { // otherwise a multi-value call: results not traced
+				for i := range lhs {
+					vals[i] = evalSlice(rhs[i], p)
+				}
 			}
-		}
-		for i, l := range lhs {
-			if id, ok := l.(*ast.Ident); ok {
-				if o := objOf(id); o != nil && isAnySlice(o.Type()) {
-					st[o] = vals[i]
+			for i, l := range lhs {
+				if id, ok := l.(*ast.Ident); ok {
+					if o := objOf(id); o != nil && isAnySlice(o.Type()) {
+						p[o] = vals[i]
+					}
 				}
 			}
 		}
 	}
-	var exec func(s ast.Stmt, st state) state
-	execList := func(list []ast.Stmt, st state) state {
+	var exec func(s ast.Stmt, ps []path) []path
+	execList := func(list []ast.Stmt, ps []path) []path {
 		for _, s := range list {
-			st = exec(s, st)
+			ps = exec(s, ps)
 		}
-		return st
+		return ps
 	}
 	// loopOnce runs one iteration of a for loop's body and post statement.
-	loopOnce := func(x *ast.ForStmt, st state) state {
-		out := execList(x.Body.List, clone(st))
+	loopOnce := func(x *ast.ForStmt, ps []path) []path {
+		out := execList(x.Body.List, clonePaths(ps))
 		if x.Post != nil {
 			out = exec(x.Post, out)
 		}
 		return out
 	}
-	exec = func(s ast.Stmt, st state) state {
+	// clauses returns a switch or select statement's init and clause bodies, and whether
+	// one clause always runs (a default, or any select).
+	clauses := func(s ast.Stmt) (init ast.Stmt, bodies [][]ast.Stmt, nodes []ast.Node, always bool) {
+		var body *ast.BlockStmt
+		switch y := s.(type) {
+		case *ast.SwitchStmt:
+			init, body = y.Init, y.Body
+		case *ast.TypeSwitchStmt:
+			init, body = y.Init, y.Body
+		case *ast.SelectStmt:
+			body, always = y.Body, true
+		}
+		for _, c := range body.List {
+			switch cc := c.(type) {
+			case *ast.CaseClause:
+				always = always || cc.List == nil
+				bodies, nodes = append(bodies, cc.Body), append(nodes, cc)
+			case *ast.CommClause:
+				bodies, nodes = append(bodies, cc.Body), append(nodes, cc)
+			}
+		}
+		return init, bodies, nodes, always
+	}
+	exec = func(s ast.Stmt, ps []path) []path {
 		switch x := s.(type) {
 		case *ast.AssignStmt:
-			assign(x.Lhs, x.Rhs, st)
+			assign(x.Lhs, x.Rhs, ps)
 		case *ast.DeclStmt:
 			if gd, ok := x.Decl.(*ast.GenDecl); ok {
 				for _, sp := range gd.Specs {
@@ -491,133 +522,100 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 						for i, n := range vs.Names {
 							lhs[i] = n
 						}
-						assign(lhs, vs.Values, st)
+						assign(lhs, vs.Values, ps)
 					}
 				}
 			}
+		case *ast.ReturnStmt:
+			return nil // this path does not reach anything after it
 		case *ast.BlockStmt:
-			return execList(x.List, st)
+			return execList(x.List, ps)
 		case *ast.LabeledStmt:
-			return exec(x.Stmt, st)
+			return exec(x.Stmt, ps)
 		case *ast.IfStmt:
 			if x.Init != nil {
-				st = exec(x.Init, st)
+				ps = exec(x.Init, ps)
 			}
-			thenSt := execList(x.Body.List, clone(st))
-			elseSt := clone(st)
+			thenPs := execList(x.Body.List, clonePaths(ps))
+			elsePs := clonePaths(ps)
 			if x.Else != nil {
-				elseSt = exec(x.Else, elseSt)
+				elsePs = exec(x.Else, elsePs)
 			}
-			return join(thenSt, elseSt)
+			return union(thenPs, elsePs)
 		case *ast.ForStmt:
 			if x.Init != nil {
-				st = exec(x.Init, st)
+				ps = exec(x.Init, ps)
 			}
-			return join(st, loopOnce(x, st))
+			return union(ps, loopOnce(x, ps))
 		case *ast.RangeStmt:
-			return join(st, execList(x.Body.List, clone(st)))
+			return union(ps, execList(x.Body.List, clonePaths(ps)))
 		case *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt:
-			var body *ast.BlockStmt
-			switch y := x.(type) {
-			case *ast.SwitchStmt:
-				if y.Init != nil {
-					st = exec(y.Init, st)
-				}
-				body = y.Body
-			case *ast.TypeSwitchStmt:
-				if y.Init != nil {
-					st = exec(y.Init, st)
-				}
-				body = y.Body
-			case *ast.SelectStmt:
-				body = y.Body
+			init, bodies, _, always := clauses(x)
+			if init != nil {
+				ps = exec(init, ps)
 			}
-			exits := []state{}
-			hasDefault := false
-			for _, c := range body.List {
-				switch cc := c.(type) {
-				case *ast.CaseClause:
-					hasDefault = hasDefault || cc.List == nil
-					exits = append(exits, execList(cc.Body, clone(st)))
-				case *ast.CommClause:
-					hasDefault = true // a select always runs one clause
-					exits = append(exits, execList(cc.Body, clone(st)))
-				}
+			var exits [][]path
+			for _, b := range bodies {
+				exits = append(exits, execList(b, clonePaths(ps)))
 			}
-			if !hasDefault {
-				exits = append(exits, st)
+			if !always {
+				exits = append(exits, ps)
 			}
-			return join(exits...)
+			return union(exits...)
 		}
-		return st
+		return ps
 	}
 	contains := func(n, target ast.Node) bool {
-		return n != nil && n.Pos() <= target.Pos() && target.End() <= n.End()
+		return n != nil && !reflect.ValueOf(n).IsNil() && n.Pos() <= target.Pos() && target.End() <= n.End()
 	}
-	// stateAt returns the state on entry to target, descending only into the statements
-	// on the path to it.
-	var stateAt func(list []ast.Stmt, st state, target ast.Node) state
-	stateAt = func(list []ast.Stmt, st state, target ast.Node) state {
+	// pathsAt returns the paths on entry to target, descending only into the statements
+	// on the way to it.
+	var pathsAt func(list []ast.Stmt, ps []path, target ast.Node) []path
+	pathsAt = func(list []ast.Stmt, ps []path, target ast.Node) []path {
 		for _, s := range list {
 			if !contains(s, target) {
-				st = exec(s, st)
+				ps = exec(s, ps)
 				continue
 			}
 			switch x := s.(type) {
 			case *ast.BlockStmt:
-				return stateAt(x.List, st, target)
+				return pathsAt(x.List, ps, target)
 			case *ast.LabeledStmt:
-				return stateAt([]ast.Stmt{x.Stmt}, st, target)
+				return pathsAt([]ast.Stmt{x.Stmt}, ps, target)
 			case *ast.IfStmt:
 				if x.Init != nil && !contains(x.Init, target) {
-					st = exec(x.Init, st)
+					ps = exec(x.Init, ps)
 				}
 				if contains(x.Body, target) {
-					return stateAt(x.Body.List, st, target)
+					return pathsAt(x.Body.List, ps, target)
 				}
 				if contains(x.Else, target) {
-					return stateAt([]ast.Stmt{x.Else}, st, target)
+					return pathsAt([]ast.Stmt{x.Else}, ps, target)
 				}
 			case *ast.ForStmt:
 				if x.Init != nil && !contains(x.Init, target) {
-					st = exec(x.Init, st)
+					ps = exec(x.Init, ps)
 				}
 				if contains(x.Body, target) {
-					return stateAt(x.Body.List, join(st, loopOnce(x, st)), target)
+					return pathsAt(x.Body.List, union(ps, loopOnce(x, ps)), target)
 				}
 			case *ast.RangeStmt:
 				if contains(x.Body, target) {
-					return stateAt(x.Body.List, join(st, execList(x.Body.List, clone(st))), target)
+					return pathsAt(x.Body.List, union(ps, execList(x.Body.List, clonePaths(ps))), target)
 				}
 			case *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt:
-				var init ast.Stmt
-				var body *ast.BlockStmt
-				switch y := x.(type) {
-				case *ast.SwitchStmt:
-					init, body = y.Init, y.Body
-				case *ast.TypeSwitchStmt:
-					init, body = y.Init, y.Body
-				case *ast.SelectStmt:
-					body = y.Body
-				}
+				init, bodies, nodes, _ := clauses(x)
 				if init != nil && !contains(init, target) {
-					st = exec(init, st)
+					ps = exec(init, ps)
 				}
-				for _, c := range body.List {
-					switch cc := c.(type) {
-					case *ast.CaseClause:
-						if contains(cc, target) {
-							return stateAt(cc.Body, st, target)
-						}
-					case *ast.CommClause:
-						if contains(cc, target) {
-							return stateAt(cc.Body, st, target)
-						}
+				for i, n := range nodes {
+					if contains(n, target) {
+						return pathsAt(bodies[i], ps, target)
 					}
 				}
 			}
 			// The target is in this statement itself, or in a closure inside it, which
-			// sees the state as it is here.
+			// sees the paths as they are here.
 			var lit *ast.FuncLit
 			ast.Inspect(s, func(n ast.Node) bool {
 				if fl, ok := n.(*ast.FuncLit); ok && contains(fl, target) {
@@ -626,11 +624,11 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 				return lit == nil
 			})
 			if lit != nil {
-				return stateAt(lit.Body.List, st, target)
+				return pathsAt(lit.Body.List, ps, target)
 			}
-			return st
+			return ps
 		}
-		return st
+		return ps
 	}
 	// enclosing returns the statement list of the top-level function containing n.
 	enclosing := func(n ast.Node) []ast.Stmt {
@@ -658,12 +656,12 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 		}
 	}
 	kvWalk := func(call *ast.CallExpr, args []ast.Expr) {
-		st := state{}
+		ps := []path{{}}
 		if call.Ellipsis.IsValid() {
-			st = stateAt(enclosing(call), st, call)
+			ps = pathsAt(enclosing(call), ps, call)
 		}
-		for _, seq := range evalArgs(args, call.Ellipsis.IsValid(), st) {
-			classify(seq)
+		for _, p := range ps {
+			classify(evalArgs(args, call.Ellipsis.IsValid(), p))
 		}
 	}
 

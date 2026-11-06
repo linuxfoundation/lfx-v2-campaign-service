@@ -61,13 +61,16 @@ type:
   a different variable.
 
 A spread is resolved by interpreting the enclosing function's statements up to
-the log call. Every `[]any` variable is tracked, so an alias is followed.
+the log call. The interpreter tracks whole paths: each path holds one concrete
+value for every `[]any` variable, so slices assigned together on one branch
+stay together, and an alias is followed.
 
 - Statements run in order.
-- An `if`, `switch` or `select` runs each branch in sequence from its entry
-  state and joins the exits.
+- An `if`, `switch` or `select` runs each branch in sequence from the paths on
+  entry, and keeps the union of the paths that fall through. A `return` ends its
+  path.
 - A loop body runs zero or one times, after a `for` loop's initializer.
-- A log call inside a closure sees the state where the closure sits.
+- A log call inside a closure sees the paths where the closure sits.
 
 Each resulting sequence is resolved in full before it is paired, so a pair split
 across a slice and its `append` is paired as slog pairs it, and every
