@@ -297,11 +297,12 @@ openssl rand -base64 32
   enable it per-environment by setting it to `"true"` in the ArgoCD
   overlay.
 - `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` (default unset, i.e. OFF) —
-  opts a deployment IN to the Google Ads demographic inputs whose request
-  shape has not yet been checked with a validateOnly probe:
-  `googleAdsConfig.observedDemographics` (#497) and
-  `googleAdsConfig.demandGenDemographics` (#498; its Audience shape was
-  accepted by a validateOnly probe on 2026-11-05). Only the exact value
+  opts a deployment IN to the Google Ads demographic inputs not yet
+  exercised by a live (persisted) create:
+  `googleAdsConfig.observedDemographics` (#497, not yet probed) and
+  `googleAdsConfig.demandGenDemographics` (#498; its create body was
+  accepted by a validateOnly probe on 2026-11-05, but a persisted create
+  and the read-back its reuse relies on are not yet verified). Only the exact value
   `true` enables it; anything else fails closed, and a create naming one,
   on any channel, is refused before the budget. It names no account
   resource; it keeps an unverified shape off the shared account. The chart

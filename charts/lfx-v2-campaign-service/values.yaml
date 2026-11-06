@@ -384,10 +384,11 @@ app:
     GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED:
       value: "false"
 
-    # Opts this deployment IN to the Google Ads demographic inputs whose request
-    # shape has NOT yet been checked with a validateOnly probe:
-    # googleAdsConfig.observedDemographics (#497) and demandGenDemographics (#498,
-    # whose shape a validateOnly probe accepted on 2026-11-05). Unlike the gates above it names
+    # Opts this deployment IN to the Google Ads demographic inputs not yet
+    # exercised by a live (persisted) create: googleAdsConfig.observedDemographics
+    # (#497, not yet probed) and demandGenDemographics (#498: its create body was
+    # accepted by a validateOnly probe on 2026-11-05; a persisted create and the
+    # read-back its reuse relies on are not yet verified). Unlike the gates above it names
     # no account resource; it keeps an unverified shape off the shared account,
     # because a wrong guess fails after the budget and campaign exist. Set it to
     # exactly "true" in lfx-v2-argocd once the probe passes. While off, a create

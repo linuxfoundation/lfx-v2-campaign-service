@@ -15,12 +15,14 @@ includeUndetermined}` beside its segments, read-only GAQL).
   `maxAge`.
 - The name is `<campaign name> | Demographics <hash of campaign name and dimensions>`, shortened
   to Google's 255-character limit. On a retry, Google answers `NAME_ALREADY_IN_USE`, and the
-  Audience is read by its exact name and reused if it is ENABLED and still holds exactly these
-  dimensions. It is never edited. Any failure of this step happens before the budget, so the
-  step returns no result.
+  Audience is read by its exact name and reused if it is ENABLED, CUSTOMER-scoped, has no
+  exclusions and holds these dimensions in any order. It is never edited. A definite failure of
+  this step returns no result. A create that may have landed returns a partial naming the
+  planned Audience, and a budget failure after it returns a partial naming the Audience.
 - Pre-flight refusals: the field off Demand Gen; an empty object; the field beside
   `demandGenAudience` or any group `audience`; unknown values; and user lists that are not
   `customers/<this account>/userLists/<id>`. The `excluded*` fields stay refused on Demand Gen.
+  The off-channel refusal names only demographic fields that channel accepts.
 - Gates: `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` covers the whole field. `audienceSegments`
   also need `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED`, and `global_marketing_ops` on create, as
   existing account segments do. Demographics without user lists do not need the role.
@@ -34,3 +36,6 @@ Probes run on 2026-11-05 against account 8666746580 at v23, validateOnly, with n
 - **Refused:** `UNDETERMINED` as a value (`INVALID_ENUM_VALUE`); a dimension with only
   `includeUndetermined` (`DIMENSION_INVALID`); an age segment of 30-50 (`DIMENSION_INVALID`); a
   256-character name (`TOO_LONG`); and an existing name (`NAME_ALREADY_IN_USE`).
+
+Not verified: a persisted (non-validateOnly) create and its GAQL read-back, which the reuse
+comparison relies on. That is why the field stays behind `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED`.

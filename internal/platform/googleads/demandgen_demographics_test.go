@@ -353,29 +353,29 @@ func TestCreateDemandGenCampaign_DemographicAudienceFailuresCreateNothingElse(t 
 	edited := strings.Replace(wantFullDimensions, `"NOT_A_PARENT"`, `"PARENT"`, 1)
 	extraArm := strings.Replace(wantFullDimensions, `{"userList":{"userList":"customers/1234567890/userLists/123"}}`,
 		`{"userList":{"userList":"customers/1234567890/userLists/123"}},{"customAudience":{"customAudience":"customers/1234567890/customAudiences/9"}}`, 1)
+	withExclusion := strings.Replace(audienceRow("ENABLED", wantFullDimensions), `"dimensions":`, `"exclusionDimension":{"exclusions":[{"userList":{"userList":"customers/1234567890/userLists/5"}}]},"dimensions":`, 1)
+	otherScope := strings.Replace(audienceRow("ENABLED", wantFullDimensions), `"status":"ENABLED"`, `"status":"ENABLED","scope":"ASSET_GROUP"`, 1)
 	for name, tc := range map[string]struct {
 		overrides map[string]func(int, []byte, http.ResponseWriter)
 		wantSub   string
 	}{
-		"ambiguous create": {map[string]func(int, []byte, http.ResponseWriter){
-			"audiences:mutate": func(_ int, _ []byte, w http.ResponseWriter) { http.Error(w, "boom", http.StatusInternalServerError) },
-		}, "creation UNCONFIRMED"},
 		"definite refusal": {map[string]func(int, []byte, http.ResponseWriter){
 			"audiences:mutate": func(_ int, _ []byte, w http.ResponseWriter) {
 				gaqlError(http.StatusBadRequest, "audienceError", "DIMENSION_INVALID")(w, nil)
 			},
 		}, "creation failed (no budget or campaign was created)"},
-		"wrong-kind 2xx": {map[string]func(int, []byte, http.ResponseWriter){
-			"audiences:mutate": func(_ int, _ []byte, w http.ResponseWriter) {
-				_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/userLists/777"}]}`)
-			},
-		}, "creation UNCONFIRMED"},
+		"name in use, exclusion added since": {map[string]func(int, []byte, http.ResponseWriter){
+			"audiences:mutate": nameInUse, "googleAds:search": rows(withExclusion),
+		}, "carries exclusions this client never set"},
+		"name in use, another scope": {map[string]func(int, []byte, http.ResponseWriter){
+			"audiences:mutate": nameInUse, "googleAds:search": rows(otherScope),
+		}, "has scope ASSET_GROUP, not CUSTOMER"},
 		"name in use, edited since": {map[string]func(int, []byte, http.ResponseWriter){
 			"audiences:mutate": nameInUse, "googleAds:search": rows(audienceRow("ENABLED", edited)),
-		}, "no longer holds the requested demographics"},
+		}, "differ from the planned ones"},
 		"name in use, an arm this client never sends": {map[string]func(int, []byte, http.ResponseWriter){
 			"audiences:mutate": nameInUse, "googleAds:search": rows(audienceRow("ENABLED", extraArm)),
-		}, "no longer holds the requested demographics"},
+		}, "differ from the planned ones"},
 		"name in use, removed": {map[string]func(int, []byte, http.ResponseWriter){
 			"audiences:mutate": nameInUse, "googleAds:search": rows(audienceRow("REMOVED", wantFullDimensions)),
 		}, "is REMOVED, not ENABLED"},
@@ -413,5 +413,116 @@ func TestCreateDemandGenCampaign_PartialsNameTheDemographicAudience(t *testing.T
 	}
 	if res.DemandGenDemographicAudience != testDemographicAudience || res.CampaignBudgetID != "111" {
 		t.Errorf("partial = %+v, want the budget and the Audience named", res)
+	}
+}
+
+// An Audience create that may have landed is not a pre-create failure: the result is a partial
+// naming the planned Audience, so the claim is kept and the account reconciled, and nothing
+// past the Audience is sent.
+func TestCreateDemandGenCampaign_UnconfirmedDemographicAudienceIsAPartial(t *testing.T) {
+	for name, create := range map[string]func(int, []byte, http.ResponseWriter){
+		"ambiguous create": func(_ int, _ []byte, w http.ResponseWriter) { http.Error(w, "boom", http.StatusInternalServerError) },
+		"wrong-kind 2xx": func(_ int, _ []byte, w http.ResponseWriter) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/userLists/777"}]}`)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rig, c, _ := newDGRig(t, nil, map[string]func(int, []byte, http.ResponseWriter){"audiences:mutate": create})
+			res, err := c.CreateDemandGenCampaign(context.Background(), demographicsInput())
+			if err == nil || !strings.Contains(err.Error(), "creation UNCONFIRMED") {
+				t.Fatalf("err = %v, want UNCONFIRMED", err)
+			}
+			if res == nil || res.CampaignBudgetID != "" || len(res.Steps) != 1 || !strings.Contains(res.Steps[0], demandGenDemographicsName) {
+				t.Fatalf("result = %+v, want a partial naming the planned Audience", res)
+			}
+			if outcome, ok := CreateOutcome(res, err); !ok || outcome == "" {
+				t.Errorf("CreateOutcome = %q, %v; want a partial-result outcome", outcome, ok)
+			}
+			if got := strings.Join(rig.mutatePaths(), ","); got != "audiences:mutate" {
+				t.Errorf("mutates = %s, want only the Audience create", got)
+			}
+		})
+	}
+}
+
+// A definite budget refusal after the Audience exists returns a partial naming the Audience.
+func TestCreateDemandGenCampaign_BudgetRefusalAfterTheAudienceIsAPartial(t *testing.T) {
+	_, c, _ := newDGRig(t, nil, map[string]func(int, []byte, http.ResponseWriter){
+		"audiences:mutate": audienceCreated,
+		"campaignBudgets:mutate": func(_ int, _ []byte, w http.ResponseWriter) {
+			gaqlError(http.StatusBadRequest, "campaignBudgetError", "INVALID_AMOUNT")(w, nil)
+		},
+	})
+	res, err := c.CreateDemandGenCampaign(context.Background(), demographicsInput())
+	if err == nil || !strings.Contains(err.Error(), "demographic Audience "+testDemographicAudience+" in place") {
+		t.Fatalf("err = %v, want the budget failure naming the Audience", err)
+	}
+	if res == nil || res.DemandGenDemographicAudience != testDemographicAudience {
+		t.Fatalf("result = %+v, want a partial naming the Audience", res)
+	}
+}
+
+// Google's read-back order is not verified live, so the reuse comparison ignores order.
+func TestSameAudienceDimensions_IgnoresOrder(t *testing.T) {
+	in := demandGenInput()
+	in.DemandGenDemographics = &DemandGenDemographics{
+		AgeRanges: []string{"18-24", "45-54"}, Genders: []string{"MALE", "FEMALE"},
+		AudienceSegments: []string{"customers/1234567890/userLists/2", "customers/1234567890/userLists/1"},
+	}
+	p, err := validateDemandGenDemographics(campaignKindDemandGen, "1234567890", "C", in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []json.RawMessage{
+		json.RawMessage(`{"audienceSegments":{"segments":[{"userList":{"userList":"customers/1234567890/userLists/2"}},{"userList":{"userList":"customers/1234567890/userLists/1"}}]}}`),
+		json.RawMessage(`{"gender":{"genders":["FEMALE","MALE"]}}`),
+		json.RawMessage(`{"age":{"ageRanges":[{"minAge":45,"maxAge":54},{"minAge":18,"maxAge":24}]}}`),
+	}
+	if !sameAudienceDimensions(got, p.create.Dimensions) {
+		t.Error("the same content in another order must compare equal")
+	}
+	got[1] = json.RawMessage(`{"gender":{"genders":["FEMALE"]}}`)
+	if sameAudienceDimensions(got, p.create.Dimensions) {
+		t.Error("different content must not compare equal")
+	}
+	// The same lists in another order are the same Audience.
+	in.DemandGenDemographics.AudienceSegments = []string{"customers/1234567890/userLists/1", "customers/1234567890/userLists/2"}
+	q, _ := validateDemandGenDemographics(campaignKindDemandGen, "1234567890", "C", in)
+	if q.create.Name != p.create.Name {
+		t.Errorf("reordered user lists got another name: %q vs %q", q.create.Name, p.create.Name)
+	}
+}
+
+// The off-channel refusal names only fields that channel accepts: every field the hint names
+// is set at once, and the preflight must pass.
+func TestDemandGenDemographicsRefusalHintIsAccepted(t *testing.T) {
+	c := &Client{account: AccountConfig{CustomerID: "1234567890"}}
+	setters := map[string]func(*CampaignInput){
+		"ExcludedAgeRanges":        func(in *CampaignInput) { in.ExcludedAgeRanges = []string{"18-24"} },
+		"ExcludedGenders":          func(in *CampaignInput) { in.ExcludedGenders = []string{"MALE"} },
+		"ExcludedIncomeRanges":     func(in *CampaignInput) { in.ExcludedIncomeRanges = []string{"INCOME_RANGE_0_50"} },
+		"ExcludedParentalStatuses": func(in *CampaignInput) { in.ExcludedParentalStatuses = []string{"PARENT"} },
+		"ObservedDemographics":     func(in *CampaignInput) { in.ObservedDemographics = []string{"GENDER"} },
+	}
+	for _, kind := range []string{campaignKindSearch, campaignKindDisplay, campaignKindVideo, campaignKindPerformanceMax} {
+		t.Run(kind, func(t *testing.T) {
+			in := demandGenInput()
+			if kind == campaignKindPerformanceMax {
+				in.PerformanceMaxCreative = fullPMaxCreative()
+			}
+			hint := demographicFieldsHint(kind)
+			for field, set := range setters {
+				if strings.Contains(hint, field) {
+					set(&in)
+				}
+			}
+			if _, err := c.preflightCampaignKind(kind, in); err != nil {
+				t.Fatalf("the fields hint %q names must be accepted on %s: %v", hint, kind, err)
+			}
+			in.DemandGenDemographics = &DemandGenDemographics{AgeRanges: []string{"25-34"}}
+			if _, err := c.preflightCampaignKind(kind, in); err == nil || !strings.Contains(err.Error(), hint) {
+				t.Errorf("err = %v, want the hint %q", err, hint)
+			}
+		})
 	}
 }

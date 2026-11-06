@@ -969,9 +969,12 @@ demandGenDemographics?:         — OPTIONAL, DEMAND GEN ONLY (#498). Demographi
                                   live KubeCon NA 2026 Audience stores it); 65+ has no `maxAge`. The
                                   name hashes the campaign name and the dimensions, so a retry gets
                                   Google's `NAME_ALREADY_IN_USE` and REUSES that Audience, read-only,
-                                  when it is ENABLED and still holds exactly these dimensions (an
-                                  edited or removed one is refused and left as it is). Every failure
-                                  of this step is before the budget, so nothing billable exists.
+                                  when it is ENABLED, CUSTOMER-scoped, has no exclusions and holds
+                                  these dimensions in any order (any other is refused and left as it
+                                  is). The step runs before the budget, so nothing billable exists
+                                  if it fails; a create that may have landed (5xx, timeout, unusable
+                                  2xx) returns a partial result naming the planned Audience, and a
+                                  budget failure after it names the Audience too.
                                   Result: `demandGenDemographicAudience` (the resource name), a step
                                   saying created or reused, and each ad group's
                                   `audienceCriteriaIds`.
@@ -980,8 +983,9 @@ demandGenDemographics?:         — OPTIONAL, DEMAND GEN ONLY (#498). Demographi
                                   `demandGenAdGroups[].audience` (an ad group takes one Audience, and
                                   this service does not edit an existing one), and on every channel
                                   but `demand-gen`. The `excluded*` demographic fields stay refused
-                                  on Demand Gen. Every shape was accepted by a validateOnly probe on
-                                  2026-11-05. Gates: the whole field is refused unless
+                                  on Demand Gen. Every create body shape was accepted by a
+                                  validateOnly probe on 2026-11-05; a persisted create and its
+                                  read-back (what reuse compares) are not yet verified. Gates: the whole field is refused unless
                                   GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED is exactly "true";
                                   `audienceSegments` name account resources, so they also need
                                   GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED and, on create-campaigns,

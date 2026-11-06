@@ -157,9 +157,18 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	// reused on the retry (ensureDemandGenDemographicAudience).
 	var demographicAudience string
 	if pf.demandGenDemographics != nil {
-		resource, how, audErr := c.ensureDemandGenDemographicAudience(ctx, pf.demandGenDemographics)
+		resource, how, unconfirmed, audErr := c.ensureDemandGenDemographicAudience(ctx, pf.demandGenDemographics)
 		if audErr != nil {
-			return nil, audErr
+			if !unconfirmed {
+				return nil, audErr // definitely nothing new was created
+			}
+			// The Audience may exist: a partial naming the planned Audience keeps the claim,
+			// as an ambiguous budget create does, so the account is reconciled before a retry.
+			return &CampaignResult{
+				Platform: platformGoogleAds, AccountLabel: c.account.Label, CustomerID: c.account.CustomerID,
+				CampaignName: campaignName, CampaignBudgetName: budgetName,
+				Steps: append(steps, fmt.Sprintf("Demographic Audience UNCONFIRMED: %q may exist; nothing else was created", pf.demandGenDemographics.create.Name)),
+			}, audErr
 		}
 		demographicAudience = resource
 		steps = append(steps, demographicAudienceStep(how, resource, pf.demandGenDemographics))
@@ -226,6 +235,10 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		// ambiguousBudgetCreateOutcome; every channel takes this arm identically.
 		return c.ambiguousBudgetCreateOutcome(ctx, "demand gen", budgetName, namePartial, err)
 	default:
+		if demographicAudience != "" {
+			// The Audience was created or reused before the budget, so the result must name it.
+			return namePartial(), fmt.Errorf("google-ads demand gen budget creation failed (demographic Audience %s in place): %w", demographicAudience, err)
+		}
 		return nil, fmt.Errorf("google-ads demand gen budget creation failed: %w", err)
 	}
 

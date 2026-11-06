@@ -196,9 +196,10 @@ const (
 	EnvGoogleAdsSharedNegativeListsEnabled = "GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED"
 
 	// EnvGoogleAdsDemographicTargetingEnabled opts a deployment IN to the Google Ads demographic
-	// inputs whose upstream contract has NOT yet been checked with a validateOnly probe:
-	// googleAdsConfig.observedDemographics (#497) and googleAdsConfig.demandGenDemographics
-	// (#498, whose Audience shape a validateOnly probe accepted on 2026-11-05). Only the exact value "true" enables
+	// inputs not yet exercised by a live (persisted) create: googleAdsConfig.observedDemographics
+	// (#497, not yet probed at all) and googleAdsConfig.demandGenDemographics (#498, whose create
+	// body a validateOnly probe accepted on 2026-11-05, while a persisted create and the read-back
+	// its reuse-by-name relies on are not yet verified). Only the exact value "true" enables
 	// it; unset or any other value fails closed, and a create naming one is refused before
 	// anything upstream exists.
 	//

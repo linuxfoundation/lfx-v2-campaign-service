@@ -748,8 +748,9 @@ func googleAdsSharedNegativeListsEnabled() bool {
 }
 
 // googleAdsDemographicTargetingEnabled reports whether this deployment opted in to the
-// demographic inputs whose request shape is not yet probed live: observedDemographics (#497)
-// and demandGenDemographics (#498).
+// demographic inputs not yet exercised by a live create: observedDemographics (#497, not
+// probed) and demandGenDemographics (#498, create body probed validateOnly; a persisted create
+// and its read-back not yet verified).
 // Read per call, like the gates above. Unlike them it names no account resource; it keeps an
 // unverified shape off the shared account until a validateOnly probe has passed. See
 // constants.EnvGoogleAdsDemographicTargetingEnabled.

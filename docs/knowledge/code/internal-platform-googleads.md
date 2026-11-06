@@ -2451,13 +2451,17 @@ campaign part shortened to fit Google's 255-character limit (TOO_LONG at 256).
 `CreateDemandGenCampaign` calls `ensureDemandGenDemographicAudience` after the image fetch and
 before the budget: `audiences:mutate`; on a definite `NAME_ALREADY_IN_USE` it reads the
 Audience by exact name (`demographicAudienceNamed`) and reuses it only when it is this
-account's, ENABLED, and holds exactly the planned dimensions. Every failure returns
-`(nil, err)`, since no budget or campaign exists; an ambiguous create is reported
-UNCONFIRMED and the retry reuses by name. The cascade then attaches the resource name to
+account's, ENABLED, CUSTOMER-scoped, without exclusions, and holds the planned dimensions
+(compared order-insensitively, since Google's read-back order is not verified live). A
+definite failure returns `(nil, err)`, since nothing was created; a create that may have
+landed returns a partial naming the planned Audience (UNCONFIRMED), and a budget refusal
+after the Audience returns `namePartial()`, which names it. The cascade then attaches the resource name to
 every group through `createDemandGenAdGroupTargeting`, exactly as a `DemandGenAudience`.
 Result: `CampaignResult.DemandGenDemographicAudience` (on every partial too) and a
-`Demographic Audience created|reused: …` step. Every shape was accepted by a validateOnly
-probe on 2026-11-05, including a temporary Audience attached to a Demand Gen ad group.
+`Demographic Audience created|reused: …` step. Every create body shape was accepted by a
+validateOnly probe on 2026-11-05, including a temporary Audience attached to a Demand Gen ad
+group; a persisted create and its read-back are not yet verified, which is why
+`GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` still gates it.
 
 **Sitelinks.** `validateAssetPlan` admits `Sitelinks` on Demand Gen and refuses every other
 extension type there (callouts and snippets were not probed). The cascade calls the Search
