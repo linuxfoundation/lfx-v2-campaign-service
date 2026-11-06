@@ -29,7 +29,11 @@ var RedditAdsCustomAudience = Type("reddit-ads-custom-audience", func() {
 // RedditAdsCustomAudiences is the custom-audience read.
 var RedditAdsCustomAudiences = Type("reddit-ads-custom-audiences", func() {
 	Attribute("account_id", String, "The Reddit ad account the audiences were read from: the account a Reddit create for this project uses", func() { Example("t2_gv9wtbfa") })
-	Attribute("audiences", ArrayOf(RedditAdsCustomAudience), "The account's custom audiences, sorted by name (ignoring case), then id")
+	Attribute("audiences", ArrayOf(RedditAdsCustomAudience), "The account's custom audiences, sorted by name (ignoring case), then id", func() {
+		// Explicit, so the published example has one audience matching audience_count: 1 (Goa's
+		// generated one repeated the same id four times).
+		Example([]map[string]any{{"id": "67547345732543", "name": "KubeCon NA site visitors 30d", "type": "PIXEL_RETARGETING", "status": "VALID", "size_lower": 1000, "size_upper": 5000}})
+	})
 	Attribute("audience_count", Int, "How many audiences are in `audiences`", func() { Example(1) })
 	Attribute("truncated", Boolean, "True when Reddit still had more pages after the 10 this read follows; the list is then incomplete", func() { Example(false) })
 	Required("account_id", "audiences", "audience_count", "truncated")

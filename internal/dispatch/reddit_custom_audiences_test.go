@@ -106,8 +106,12 @@ func TestReddit_PreflightCreate_CustomAudiences(t *testing.T) {
 	}{
 		{"none set, flag off", false, ``, ""},
 		{"empty lists, flag off", false, `,"customAudienceIds":[],"excludedCustomAudienceIds":null`, ""},
-		{"set while off", false, `,"customAudienceIds":["123"]`, constants.EnvRedditCustomAudiencesEnabled},
-		{"excluded set while off", false, `,"excludedCustomAudienceIds":["123"]`, constants.EnvRedditCustomAudiencesEnabled},
+		{"set while off", false, `,"customAudienceIds":["123"]`, "redditConfig.customAudienceIds: Reddit custom audiences are disabled"},
+		{"excluded set while off", false, `,"excludedCustomAudienceIds":["123"]`, "redditConfig.excludedCustomAudienceIds: Reddit custom audiences are disabled"},
+		{"both set while off", false, `,"customAudienceIds":["1"],"excludedCustomAudienceIds":["2"]`, constants.EnvRedditCustomAudiencesEnabled},
+		// An unrelated mistyped field must not turn a gated or invalid list into an accepted job.
+		{"off despite unrelated decode error", false, `,"startDate":7,"customAudienceIds":["123"]`, constants.EnvRedditCustomAudiencesEnabled},
+		{"invalid despite unrelated decode error", true, `,"startDate":7,"customAudienceIds":[""]`, "customAudienceIds entry 1 is not"},
 		{"valid while on", true, `,"customAudienceIds":["123","t2_x"],"excludedCustomAudienceIds":["456"]`, ""},
 		{"not an array", true, `,"customAudienceIds":"123"`, "customAudienceIds must be an array of strings"},
 		{"numbers, not strings", true, `,"excludedCustomAudienceIds":[123]`, "excludedCustomAudienceIds must be an array of strings"},
@@ -278,6 +282,8 @@ func TestReddit_Dispatch_CustomAudiencesRefusedBeforeAnyRedditCall(t *testing.T)
 		{"flag off", "", `,"customAudienceIds":["1"]`, constants.EnvRedditCustomAudiencesEnabled},
 		{"flag typo", "TRUE", `,"excludedCustomAudienceIds":["1"]`, constants.EnvRedditCustomAudiencesEnabled},
 		{"overlap", "true", `,"customAudienceIds":["1"],"excludedCustomAudienceIds":["1"]`, "also in customAudienceIds"},
+		// Mistyped: the raw type check runs before the decode, so the job gets the field sentence.
+		{"mistyped list", "true", `,"customAudienceIds":7`, "customAudienceIds must be an array of strings"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(constants.EnvRedditCustomAudiencesEnabled, tc.flag)

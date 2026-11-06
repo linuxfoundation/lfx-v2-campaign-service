@@ -109,13 +109,16 @@ func (d *RedditDispatcher) PreflightCreate(_ context.Context, _ string, _ model.
 	if _, err := redditBidPlan(cfg); err != nil {
 		return err
 	}
+	// The custom audiences' gate and id rules run on the best-effort decode too, like the bid
+	// plan: an unrelated mistyped field must not turn a gated or invalid list into an accepted
+	// job. checkRedditCustomAudienceShape above already refused a mistyped list, so both decoded.
+	if err := checkRedditCustomAudiences(cfg); err != nil {
+		return err
+	}
 	if decodeErr != nil {
 		return domain.ErrPreflightNotApplicable // Dispatch reports a malformed config as the job failure
 	}
 	if _, err := d.checkRedditAssetChoice(cfg); err != nil {
-		return err
-	}
-	if err := checkRedditCustomAudiences(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable

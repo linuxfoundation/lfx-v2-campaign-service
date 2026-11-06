@@ -87,10 +87,16 @@ func checkRedditCustomAudiences(cfg redditConfig) error {
 		return nil
 	}
 	if !redditCustomAudiencesEnabled() {
+		// Name the list the request actually set (the first, when both are), so a client mapping
+		// redditConfig.<field> onto a form control highlights the right input.
+		field := "customAudienceIds"
+		if len(cfg.CustomAudienceIDs) == 0 {
+			field = "excludedCustomAudienceIds"
+		}
 		return redditCustomAudienceInvalid(
-			"customAudienceIds: Reddit custom audiences are disabled on this deployment (%s is not \"true\"); "+
+			"%s: Reddit custom audiences are disabled on this deployment (%s is not \"true\"); "+
 				"omit customAudienceIds and excludedCustomAudienceIds, or ask an operator to set %s to \"true\"",
-			constants.EnvRedditCustomAudiencesEnabled, constants.EnvRedditCustomAudiencesEnabled)
+			field, constants.EnvRedditCustomAudiencesEnabled, constants.EnvRedditCustomAudiencesEnabled)
 	}
 	if msg := reddit.ValidateCustomAudienceIDs(cfg.CustomAudienceIDs, cfg.ExcludedCustomAudienceIDs); msg != "" {
 		return redditCustomAudienceInvalid("%s", msg)

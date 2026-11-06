@@ -22656,24 +22656,6 @@ definitions:
                       size_upper: 5000
                       status: VALID
                       type: PIXEL_RETARGETING
-                    - id: "67547345732543"
-                      name: KubeCon NA site visitors 30d
-                      size_lower: 1000
-                      size_upper: 5000
-                      status: VALID
-                      type: PIXEL_RETARGETING
-                    - id: "67547345732543"
-                      name: KubeCon NA site visitors 30d
-                      size_lower: 1000
-                      size_upper: 5000
-                      status: VALID
-                      type: PIXEL_RETARGETING
-                    - id: "67547345732543"
-                      name: KubeCon NA site visitors 30d
-                      size_lower: 1000
-                      size_upper: 5000
-                      status: VALID
-                      type: PIXEL_RETARGETING
             truncated:
                 type: boolean
                 description: True when Reddit still had more pages after the 10 this read follows; the list is then incomplete
@@ -22682,24 +22664,6 @@ definitions:
             account_id: t2_gv9wtbfa
             audience_count: 1
             audiences:
-                - id: "67547345732543"
-                  name: KubeCon NA site visitors 30d
-                  size_lower: 1000
-                  size_upper: 5000
-                  status: VALID
-                  type: PIXEL_RETARGETING
-                - id: "67547345732543"
-                  name: KubeCon NA site visitors 30d
-                  size_lower: 1000
-                  size_upper: 5000
-                  status: VALID
-                  type: PIXEL_RETARGETING
-                - id: "67547345732543"
-                  name: KubeCon NA site visitors 30d
-                  size_lower: 1000
-                  size_upper: 5000
-                  status: VALID
-                  type: PIXEL_RETARGETING
                 - id: "67547345732543"
                   name: KubeCon NA site visitors 30d
                   size_lower: 1000

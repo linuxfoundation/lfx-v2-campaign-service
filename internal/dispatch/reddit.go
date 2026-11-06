@@ -227,6 +227,12 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		return nil, notCreated(err)
 	}
 
+	// A mistyped custom audience list fails the decode below as a plain decoding error; check
+	// its type on the raw config first so a path that skipped PreflightCreate still reports the
+	// field-specific refusal (#549).
+	if err := checkRedditCustomAudienceShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg redditConfig
 	if err := unmarshalPlatformConfig(config, "redditConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -241,8 +247,8 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		return nil, notCreated(err)
 	}
 	// Custom audiences (#549): the deployment gate and the id rules, before any Reddit call
-	// (PreflightCreate normally refused a bad list already, as a 400). The type check needs the
-	// raw config: a mistyped list already failed the decode above.
+	// (PreflightCreate normally refused a bad list already, as a 400). Their type was checked on
+	// the raw config above, before the decode.
 	if err := checkRedditCustomAudiences(cfg); err != nil {
 		return nil, notCreated(err)
 	}
