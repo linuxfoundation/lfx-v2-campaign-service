@@ -89,7 +89,7 @@ func TestEligible_RatioToleranceIsTwoSided(t *testing.T) {
 // The tolerance boundary is INCLUDED and decided exactly. 303x300 is exactly 1% off 1:1 and
 // Google accepts it as an AD_IMAGE (validateOnly, 2026-11-06, #538), while 304x300 is refused
 // by both; the earlier float division drifted 303x300 to 0.010000000000000009 and refused it.
-// On 1.91:1, 1188x628 (-0.95%) is in and 1218x628 (+1.5%) is out, again as Google answered.
+// On 1.91:1, 1188x628 (-0.96%) is in and 1218x628 (+1.5%) is out, again as Google answered.
 func TestAspectWithin_BoundaryIsExactAndIncluded(t *testing.T) {
 	cases := []struct {
 		name                 string
@@ -102,7 +102,7 @@ func TestAspectWithin_BoundaryIsExactAndIncluded(t *testing.T) {
 		{"1:1 +1.33%", 304, 300, 1, 1, false},
 		{"1:1 exactly +1% at 100", 101, 100, 1, 1, true},
 		{"1:1 +1.56%", 130, 128, 1, 1, false},
-		{"1.91:1 -0.95%", 1188, 628, 191, 100, true},
+		{"1.91:1 -0.96%", 1188, 628, 191, 100, true},
 		{"1.91:1 +1.5%", 1218, 628, 191, 100, false},
 		{"zero height", 300, 0, 1, 1, false},
 		{"no ratio", 300, 300, 0, 1, false},

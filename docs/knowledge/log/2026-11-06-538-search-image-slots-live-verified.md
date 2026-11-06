@@ -12,7 +12,7 @@ those probes settle.
   first link over the cap. Square `AD_IMAGE`: 300x300 accepted, 299x299 / 300x299 / 299x300
   refused `DIMENSIONS_NOT_ALLOWED`. Landscape `AD_IMAGE`: 600x314 and 1200x628 accepted, 599x314
   and 600x313 refused `IMAGE_CONSTRAINTS_VIOLATED`. ±1% with the boundary included: 303x300 and
-  1188x628 accepted, 304x300 and 1218x628 refused `ASPECT_RATIO_NOT_ALLOWED`. Twenty `AD_IMAGE`
+  1188x628 (-0.96%) accepted, 304x300 and 1218x628 refused `ASPECT_RATIO_NOT_ALLOWED`. Twenty `AD_IMAGE`
   links accepted and the 21st refused whether square, landscape or mixed (19 + 2). One
   `BUSINESS_LOGO` accepted, a second refused; logos from 16x16 up accepted, 15x15 refused.
 - **Landscape ad images.** `searchAssets.landscapeAdImages` (new, optional, ImageRef[]): 1.91:1,
@@ -26,5 +26,6 @@ those probes settle.
   128x128, the size Google's business-logo specification documents. `searchImageSlots` now says
   that this floor is above the API's on purpose.
 - **Docs.** `search_assets.go`, the `searchAssets` row in `docs/api-catalog.md`, the googleads,
-  dispatch and creative code pages and the creative-assets architecture page. The shared negative
-  keyword list items stay NOT LIVE-VERIFIED. No resource was created.
+  dispatch and creative code pages, the creative-assets architecture page, and
+  `docs/knowledge/code/index.md`. The Search slots are also published through `ImageSlotCatalog` (both ad image shapes under one twenty-image group, the logo at most one, every slot optional), so the asset plan can place a library into them.
+  No resource was created.

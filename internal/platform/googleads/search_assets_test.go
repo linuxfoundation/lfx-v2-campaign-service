@@ -411,7 +411,7 @@ func TestCreateCampaign_RefusesAMisShapedSearchImageBeforeAnyRequest(t *testing.
 
 // Every image Google accepted at a boundary on #538 is accepted here too and sent: a square
 // exactly 1% off (303x300, which the float comparison used to refuse), landscape ad images at
-// 600x314 and at -1% (1188x628), and a logo at +0.78% (129x128). Both ad image shapes link
+// 600x314 and at -0.96% (1188x628), and a logo at +0.78% (129x128). Both ad image shapes link
 // under AD_IMAGE, square entries first, in one request.
 func TestCreateCampaign_SendsSearchImagesAtGooglesAcceptedBoundaries(t *testing.T) {
 	s := &searchAssetServer{}
