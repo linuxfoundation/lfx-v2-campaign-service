@@ -29,9 +29,10 @@ var ErrStatsJobLeaseUnavailable = errors.New("coordination of X stats jobs is un
 // The X stats-job features' limits — the audience read's per-account outstanding-job budget,
 // singleflight and slot, and the account write pacer — are process-local, so two pods each
 // running them would each spend X's 100 concurrent jobs per account (shared with every
-// foundation on the LF account) at full budget. The chart refuses to render more than one replica
-// while TWITTER_METRICS_ENABLED is on, but it cannot see an out-of-band scale or an external HPA;
-// this lease is the runtime guarantee.
+// foundation on the LF account) at full budget. This lease is the ONLY guarantee: the chart
+// renders any replica count and only warns (templates/NOTES.txt, #381) when TWITTER_METRICS_ENABLED
+// is on with more than one, since a render-time refusal would block every deploy of a service that
+// runs three replicas.
 type StatsJobLease interface {
 	// Own returns nil when this process holds the lease for accountID — re-verifying a held lease
 	// is still alive, and trying to acquire it otherwise (never waiting). A lease held elsewhere

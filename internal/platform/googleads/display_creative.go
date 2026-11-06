@@ -312,9 +312,9 @@ type displayAdGroupAdCreate struct {
 // no single call that creates an asset and attaches it. The second mutate uses THE
 // RESOURCE NAMES GOOGLE RETURNED, never names rebuilt from the parsed ids.
 //
-// The ad is created PAUSED, matching every other channel's ad. The AD GROUP above it is
-// created ENABLED, as Demand Gen's and Video's are — Search is the only channel here
-// that pauses its ad group. The campaign is PAUSED either way, so nothing serves.
+// The ad is created PAUSED, matching every other channel's ad, under an AD GROUP and a
+// campaign that are PAUSED too (#535), so nothing serves until ToggleStatus enables all
+// three, children first.
 //
 // Returns the created asset ids and the ad id. Both are reported even when the later
 // stage fails, because assets created with no ad referencing them are account-level

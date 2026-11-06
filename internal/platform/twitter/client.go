@@ -1529,8 +1529,8 @@ func (c *Client) resetHeaderDelay(v string) time.Duration {
 // without a registry paces privately (tests, and nothing else).
 //
 // Separate REPLICAS still pace independently. For the stats-job features, only the pod
-// holding the per-account stats-job lease (domain.StatsJobLease) creates jobs, and the
-// chart refuses more than one replica while TWITTER_METRICS_ENABLED is on; for ordinary
+// holding the per-account stats-job lease (domain.StatsJobLease) creates jobs (the
+// chart only warns, in NOTES.txt, at more than one replica with TWITTER_METRICS_ENABLED on); for ordinary
 // writes the residue is left to the 429 exponential-backoff retry in doRequestAbs,
 // which remains the backstop. Cross-replica coordination is tracked by LFXV2-2665
 // (durable dispatch).

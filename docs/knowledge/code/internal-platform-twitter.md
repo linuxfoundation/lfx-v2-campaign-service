@@ -1433,7 +1433,7 @@ connections to the shared LF account — or a cache replacement — cannot inter
 split a batch. A client without a registry, or without an account id (discovery), paces
 privately. The dispatcher owns the registry, so the scope is the PROCESS; replicas do not share
 it, which is why only the pod holding the per-account stats-job lease (`postgres.StatsJobLease`)
-creates stats jobs, with the chart's replica refusal as a first line of defence.
+creates stats jobs; the chart only warns (`NOTES.txt`, #381) above one replica with the flag on.
 `createAudienceJob` reports `maybeCreated` for a failed create that may have committed
 (`createOutcomeAmbiguous`, or any unusable 2xx), and `GetAudienceInsights` counts those as
 `AudienceJobsAbandonedError.Unknown` — also when no job was created before — so the dispatcher

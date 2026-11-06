@@ -150,18 +150,39 @@ published documentation and has NOT been exercised against a live X Ads account.
 features' limits (the audience read's per-account job budget, the account-keyed write pacer)
 are per PROCESS, the binding guarantee is at RUNTIME: only the pod holding the per-account
 Postgres advisory lease (`postgres.StatsJobLease`) creates X stats jobs; any other answers the
-audience read 503 and skips monitor submissions. As a first line of defence (it cannot see an
-out-of-band scale or an external HPA — ArgoCD ignores `/spec/replicas`),
-`templates/deployment.yaml` FAILS to render when the EFFECTIVE flag is on together with
-`replicaCount` > 1 or `autoscaling.enabled` with `maxReplicas` > 1. "Effective" because the env
-list renders `app.environment` first and `app.extraEnv` after it and Kubernetes keeps a repeated
-name's LAST occurrence: the last `app.extraEnv` entry wins, an `app.environment` entry counts its
-`value` when the key is present and its `valueFrom` otherwise, and a `valueFrom` on the effective
-entry (unreadable at render time) counts as on (`TestDeploymentRefusesXStatsJobsOnMultipleReplicas`).
+audience read 503 and skips monitor submissions. The chart does NOT refuse a multi-replica render
+with the flag on (#381): `templates/NOTES.txt` prints a warning instead, computed by
+`lfx-v2-campaign-service.xStatsMultiReplica` in `templates/_helpers.tpl` when the EFFECTIVE flag
+is on together with `replicaCount` > 1 or `autoscaling.enabled` with `maxReplicas` > 1.
+"Effective" because the env list renders `app.environment` first and `app.extraEnv` after it and
+Kubernetes keeps a repeated name's LAST occurrence: the last `app.extraEnv` entry wins, an
+`app.environment` entry counts its `value` when the key is present and its `valueFrom` otherwise,
+and a `valueFrom` on the effective entry (unreadable at render time) counts as on
+(`TestDeploymentWarnsOnXStatsJobsWithMultipleReplicas`, which also pins that every such render
+succeeds and carries the requested `spec.replicas`). ArgoCD does not show `NOTES.txt`; the warning
+reaches a `helm install`/`upgrade` or a dry run, and the lease is what actually holds. The cost of
+running the flag above one replica is availability, not the account's job limit: behind a load
+balancer most X audience reads land on a pod that does not own the account's lease and answer 503,
+so run one replica while the flag is on.
 
-That X guard is the chart's ONLY replica guard. A second one, refusing more than one replica
-unconditionally over the Reddit reporting budget, was added and then retired; the chart now pins
-the opposite (`TestDeploymentAllowsMultipleReplicasForReddit`), because a render-time `fail`
+It used to be a render-time `fail`, and was downgraded for the reason the Reddit guard below was
+retired: deployments run three replicas, so turning the flag on would have stopped ArgoCD
+generating the manifest at all. The poller audit that justified it (#381): the lease covers BOTH
+stats-job paths — the audience read and the account monitor's report submission
+(`TwitterDispatcher.SubmitAccountReport` calls `ownStatsJobs` before contacting X) — and nothing
+polls either. No ticker, cron or subscriber in `internal/` or `cmd/` reaches
+`ConnectionService.MonitorTwitterAdsAccount` or the audience read (the service's tickers are the
+dispatch recovery, stuck-claim, job-retention, archived-asset and indexer-relay sweeps, the
+shutdown in-flight wait and the wizard progress stream); the
+`lfx-self-serve` Monitoring tab reads the X panel only on a user action (platform switch, date
+range, its Refresh button) and, when a report is still building, tells the user to refresh rather
+than re-reading on a timer; and `lfx-v2-argocd` defines no CronJob for this service. The one
+loop is `cmd/verify-metrics -poll-interval`, an operator CLI that runs its own in-process
+orchestrator against a live account for a bounded `-timeout`, not a deployed poller.
+
+The chart therefore has NO replica guard. A second one, refusing more than one replica
+unconditionally over the Reddit reporting budget, was added and then retired; the chart pins the
+opposite (`TestDeploymentAllowsMultipleReplicasForReddit`), because a render-time `fail`
 stopped ArgoCD generating the manifest at all for a production deployment that runs three
 replicas, holding up every unrelated change to this service.
 
