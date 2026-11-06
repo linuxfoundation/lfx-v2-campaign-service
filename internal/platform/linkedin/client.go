@@ -2641,13 +2641,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// the org and the configured employer exclusions still are, since both still reach the wire.
 	var targeting *Targeting
 	if in.Targeting != nil {
-		if targeting, err = ValidateTargeting(in.Targeting); err != nil {
+		if targeting, err = ValidateTargeting(in.Targeting, c.cfg.EmployerExclusions); err != nil {
 			return nil, domain.WrapPreflightRefusal(err)
 		}
 		if _, err := c.orgURN(accountID); err != nil {
-			return nil, domain.WrapPreflightRefusal(err)
-		}
-		if _, err := validFacets("employer-exclusions", c.cfg.EmployerExclusions); err != nil {
 			return nil, domain.WrapPreflightRefusal(err)
 		}
 	} else if err := c.validatePrerequisites(accountID, in.TargetingProfile); err != nil {

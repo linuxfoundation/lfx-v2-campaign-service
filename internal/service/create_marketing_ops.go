@@ -257,7 +257,8 @@ func marketingOpsForbiddenMessage(fields []string) string {
 }
 
 // requireMarketingOpsForSharedAccountInputs refuses a google-ads create that sets any
-// GoogleAdsMarketingOpsInputs field unless the caller holds global_marketing_ops on the path
+// GoogleAdsMarketingOpsInputs field, or a linkedin-ads create that sets any
+// LinkedInMarketingOpsInputs field, unless the caller holds global_marketing_ops on the path
 // project. One check per request, however many fields are set.
 //
 // The gateway admits every campaign_manager to create-campaigns, and campaign_manager is
