@@ -80,16 +80,14 @@ func assertZeroScheduleRefusal(t *testing.T, res *CampaignResult, err error, wan
 // inside Google's range and passes, and a DEVICE 0 is still the exclusion Google
 // honours — under the default automated bidding as well as manual CPC, because
 // validateBiddingPlan refuses only a NON-ZERO device adjustment there. Video and
-// Performance Max take a schedule modifier too, so they are covered for the 0.1 case;
-// Performance Max takes no device criteria at all, so it gets no device entry.
+// Performance Max take a schedule modifier too, so they are covered for the 0.1 case,
+// and Performance Max takes the device exclusion as well (#500).
 func TestCriteriaPlan_ScheduleFloorAndDeviceExclusionStillAccepted(t *testing.T) {
 	for _, kind := range []string{campaignKindSearch, campaignKindDisplay, campaignKindVideo, campaignKindPerformanceMax} {
 		t.Run(kind, func(t *testing.T) {
 			in := demandGenInput()
 			in.AdSchedules = []AdSchedule{{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17, BidModifier: floatPtr(minBidModifier)}}
-			if kind != campaignKindPerformanceMax {
-				in.DeviceBidModifiers = []DeviceBidModifier{{Device: "TABLET", BidModifier: 0}}
-			}
+			in.DeviceBidModifiers = []DeviceBidModifier{{Device: "TABLET", BidModifier: 0}}
 			plan, err := validateCriteriaPlan(kind, in)
 			if err != nil {
 				t.Fatalf("validateCriteriaPlan(%s): %v", kind, err)
@@ -97,7 +95,7 @@ func TestCriteriaPlan_ScheduleFloorAndDeviceExclusionStillAccepted(t *testing.T)
 			if len(plan.scheduleMod) != 1 || plan.scheduleMod[0] == nil || *plan.scheduleMod[0] != minBidModifier {
 				t.Errorf("schedule modifier = %v, want 0.1 carried through", plan.scheduleMod)
 			}
-			if kind != campaignKindPerformanceMax && (len(plan.deviceMod) != 1 || plan.deviceMod[0] != 0) {
+			if len(plan.deviceMod) != 1 || plan.deviceMod[0] != 0 {
 				t.Errorf("device modifier = %v, want the 0 exclusion carried through", plan.deviceMod)
 			}
 		})
