@@ -13,7 +13,8 @@ LinkedIn `targetingCriteria`, the first two gaps of the LinkedIn Ads gap review 
   changes.
 - `linkedin.ValidateTargeting` refuses, before any job or request, unknown facets, malformed
   values, empty clauses, LinkedIn's per-facet caps, include-only facets under exclude, a value
-  both included and excluded, and the facet combinations LinkedIn documents as invalid (titles
+  both included and excluded, an included employer the config's `employerExclusions` excludes,
+  more than 200 employers once those exclusions are merged, and the facet combinations LinkedIn documents as invalid (titles
   with seniorities or job functions, employers with industries or company sizes).
   `PreflightCreate` answers these with a synchronous 400.
 - Behind `LINKEDIN_ADS_TARGETING_ENABLED`, off by default, because no shape has been exercised

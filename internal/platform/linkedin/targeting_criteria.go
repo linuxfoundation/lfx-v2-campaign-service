@@ -156,6 +156,12 @@ func cleanFacet(key string, values []string, where string, exclude bool) ([]stri
 // ValidateTargeting checks t and returns its normalised copy (duplicates within a list
 // dropped). It makes no request, so the dispatcher's pre-flight and CreateCampaign share it.
 //
+// employerExclusions is the config's employerExclusions list, which buildCustomTargetingCriteria
+// merges into exclude.employers. It is checked HERE, merged, so nothing the build adds can break
+// a rule after the campaign group exists: its values must be well formed, the merged employers
+// list must fit LinkedIn's cap, and no included employer may be in it. Employers are compared by
+// id, so urn:li:company:<n> and urn:li:organization:<n> are the same employer.
+//
 // Besides the per-value shapes it refuses the facet combinations LinkedIn documents as invalid:
 // titles with seniorities or jobFunctions, and employers with industries or staffCountRanges,
 // when both are INCLUDED — wherever they sit. The docs forbid only ANDing them (separate
@@ -163,7 +169,7 @@ func cleanFacet(key string, values []string, where string, exclude bool) ([]stri
 // shows that form is accepted. It also refuses staffCountRanges both included and excluded
 // ("targeted either inclusively or exclusively, but not both"), and any value both included
 // and excluded under the same facet.
-func ValidateTargeting(t *Targeting) (*Targeting, error) {
+func ValidateTargeting(t *Targeting, employerExclusions []string) (*Targeting, error) {
 	if t == nil {
 		return nil, nil
 	}
@@ -213,12 +219,52 @@ func ValidateTargeting(t *Targeting) (*Targeting, error) {
 	}
 	for _, key := range sortedKeys(out.Exclude) {
 		for _, v := range out.Exclude[key] {
-			if slices.Contains(included[key], v) {
+			if facetContains(key, included[key], v) {
 				return nil, targetingInvalid("%s value %s is both included and excluded", key, quoteValue(v))
 			}
 		}
 	}
+	configured, err := validFacets("employer-exclusions", employerExclusions)
+	if err != nil {
+		return nil, targetingInvalid("employerExclusions: %v", err)
+	}
+	for _, v := range configured {
+		if facetContains("employers", included["employers"], v) {
+			return nil, targetingInvalid("employers value %s is included but is in employerExclusions", quoteValue(v))
+		}
+	}
+	if n := len(mergeEmployers(out.Exclude["employers"], configured)); n > maxEmployerFacetValues {
+		return nil, targetingInvalid("exclude.employers with employerExclusions holds %d employers; LinkedIn allows at most %d", n, maxEmployerFacetValues)
+	}
 	return out, nil
+}
+
+// employerKey is the id an employer URN names; company and organization URNs of one id are the
+// same employer.
+func employerKey(v string) string { return trailingID(v) }
+
+// facetContains reports whether list holds v, comparing employers by id.
+func facetContains(key string, list []string, v string) bool {
+	if key != "employers" {
+		return slices.Contains(list, v)
+	}
+	for _, x := range list {
+		if employerKey(x) == employerKey(v) {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeEmployers appends extra to base, skipping an employer already present by id.
+func mergeEmployers(base, extra []string) []string {
+	out := append([]string(nil), base...)
+	for _, e := range extra {
+		if !facetContains("employers", out, e) {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // SegmentFacetsSet reports whether t names an ad segment anywhere (include or exclude). The
@@ -249,7 +295,7 @@ func facetURN(key string) string { return "urn:li:adTargetingFacet:" + key }
 // buildCustomTargetingCriteria renders a validated Targeting as the campaign's
 // targetingCriteria: the geo clause first, then one include.and clause per Include entry, and
 // exclude.or from Exclude plus the runtime config's employer exclusions. The caller has already
-// run ValidateTargeting.
+// run ValidateTargeting with the same employer exclusions.
 func (c *Client) buildCustomTargetingCriteria(t *Targeting, geoURNs []string) (map[string]any, error) {
 	employerExclusions, err := validFacets("employer-exclusions", c.cfg.EmployerExclusions)
 	if err != nil {
@@ -270,10 +316,8 @@ func (c *Client) buildCustomTargetingCriteria(t *Targeting, geoURNs []string) (m
 	for k, v := range t.Exclude {
 		excl[k] = append([]string(nil), v...)
 	}
-	for _, e := range employerExclusions {
-		if !slices.Contains(excl["employers"], e) {
-			excl["employers"] = append(excl["employers"], e)
-		}
+	if merged := mergeEmployers(excl["employers"], employerExclusions); len(merged) > 0 {
+		excl["employers"] = merged
 	}
 	criteria := map[string]any{"include": map[string]any{"and": and}}
 	if len(excl) > 0 {

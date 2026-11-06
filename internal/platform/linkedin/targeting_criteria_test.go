@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -83,7 +84,9 @@ func TestCreateCampaign_CustomTargetingReachesTheWire(t *testing.T) {
 	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
+	mu.Lock()
 	got, _ := json.Marshal(campaignBody["targetingCriteria"])
+	mu.Unlock()
 	want := `{"exclude":{"or":{` +
 		`"urn:li:adTargetingFacet:audienceMatchingSegments":["urn:li:adSegment:11462646"],` +
 		`"urn:li:adTargetingFacet:employers":["urn:li:organization:42","urn:li:company:1111"],` +
@@ -118,8 +121,8 @@ func TestCreateCampaign_NoTargetingKeepsTheProfileCriteria(t *testing.T) {
 // TestCreateCampaign_InvalidTargetingRefusedBeforeAnyRequest pins that a refused targeting is a
 // pre-flight refusal raised before LinkedIn is called.
 func TestCreateCampaign_InvalidTargetingRefusedBeforeAnyRequest(t *testing.T) {
-	calls := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls++ }))
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls.Add(1) }))
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	in := CampaignInput{
@@ -134,8 +137,8 @@ func TestCreateCampaign_InvalidTargetingRefusedBeforeAnyRequest(t *testing.T) {
 	if _, pre := domain.AsPreflightRefusal(err); !errors.Is(err, ErrTargetingInvalid) || !pre {
 		t.Fatalf("want a pre-flight ErrTargetingInvalid, got %v", err)
 	}
-	if calls != 0 {
-		t.Errorf("%d LinkedIn requests before the refusal", calls)
+	if n := calls.Load(); n != 0 {
+		t.Errorf("%d LinkedIn requests before the refusal", n)
 	}
 }
 
@@ -156,38 +159,44 @@ func TestValidateTargeting(t *testing.T) {
 		name string
 		in   *Targeting
 		want string // "" = accepted
+		excl []string
 	}{
-		{"event shape", eventTargeting(), ""},
-		{"no clauses", &Targeting{}, "at least one clause"},
-		{"too many clauses", &Targeting{Include: elevenClauses}, "at most 10"},
-		{"empty clause", inc(map[string][]string{}), "include[0] is empty"},
-		{"empty facet", inc(map[string][]string{"skills": {}}), "is empty"},
-		{"unknown facet", inc(map[string][]string{"memberBehaviors": {"urn:li:memberBehavior:2"}}), "unknown facet"},
-		{"wrong namespace", inc(map[string][]string{"skills": {"urn:li:title:1"}}), "not urn:li:skill:<id>"},
-		{"non-numeric id", inc(map[string][]string{"industries": {"urn:li:industry:abc"}}), "not urn:li:industry:<id>"},
-		{"leading zero id", inc(map[string][]string{"industries": {"urn:li:industry:04"}}), "not urn:li:industry:<id>"},
-		{"blank value", inc(map[string][]string{"skills": {" "}}), "blank value"},
-		{"padded value", inc(map[string][]string{"skills": {" urn:li:skill:1"}}), "surrounding whitespace"},
-		{"bad staff range", inc(map[string][]string{"staffCountRanges": {"urn:li:staffCountRange:(1,2)"}}), "staffCountRange"},
-		{"good staff range", inc(map[string][]string{"staffCountRanges": {"urn:li:staffCountRange:(201,500)"}}), ""},
-		{"bad locale", inc(map[string][]string{"interfaceLocales": {"urn:li:locale:EN_us"}}), "urn:li:locale"},
-		{"company employer", inc(map[string][]string{"employers": {"urn:li:company:1"}}), ""},
-		{"segment shape", inc(map[string][]string{FacetAudienceMatchingSegments: {"urn:li:adSegment:x"}}), "urn:li:adSegment:<id>"},
-		{"over facet cap", inc(map[string][]string{"skills": many("urn:li:skill:", 101)}), "at most 100"},
-		{"employers up to 200", inc(map[string][]string{"employers": many("urn:li:organization:", 150)}), ""},
-		{"exclude groups", &Targeting{Include: eventTargeting().Include, Exclude: map[string][]string{"groups": {"urn:li:group:1"}}}, "only under include"},
-		{"exclude locale", &Targeting{Include: eventTargeting().Include, Exclude: map[string][]string{"interfaceLocales": {"urn:li:locale:en_US"}}}, "only under include"},
-		{"titles with seniorities", inc(map[string][]string{"titles": {"urn:li:title:1"}}, map[string][]string{"seniorities": {"urn:li:seniority:5"}}), "titles together"},
-		{"titles with functions same clause", inc(map[string][]string{"titles": {"urn:li:title:1"}, "jobFunctions": {"urn:li:function:8"}}), "titles together"},
-		{"titles with excluded seniorities", &Targeting{Include: []map[string][]string{{"titles": {"urn:li:title:1"}}}, Exclude: map[string][]string{"seniorities": {"urn:li:seniority:1"}}}, ""},
-		{"employers with industries", inc(map[string][]string{"employers": {"urn:li:organization:1"}}, map[string][]string{"industries": {"urn:li:industry:4"}}), "employers together"},
-		{"employers with staff ranges", inc(map[string][]string{"employers": {"urn:li:organization:1"}, "staffCountRanges": {"urn:li:staffCountRange:(1,1)"}}), "employers together"},
-		{"staff ranges both ways", &Targeting{Include: []map[string][]string{{"staffCountRanges": {"urn:li:staffCountRange:(1,1)"}}}, Exclude: map[string][]string{"staffCountRanges": {"urn:li:staffCountRange:(2,10)"}}}, "not both"},
-		{"value included and excluded", &Targeting{Include: []map[string][]string{{"skills": {"urn:li:skill:1"}}}, Exclude: map[string][]string{"skills": {"urn:li:skill:1"}}}, "both included and excluded"},
+		{"event shape", eventTargeting(), "", nil},
+		{"no clauses", &Targeting{}, "at least one clause", nil},
+		{"too many clauses", &Targeting{Include: elevenClauses}, "at most 10", nil},
+		{"empty clause", inc(map[string][]string{}), "include[0] is empty", nil},
+		{"empty facet", inc(map[string][]string{"skills": {}}), "is empty", nil},
+		{"unknown facet", inc(map[string][]string{"memberBehaviors": {"urn:li:memberBehavior:2"}}), "unknown facet", nil},
+		{"wrong namespace", inc(map[string][]string{"skills": {"urn:li:title:1"}}), "not urn:li:skill:<id>", nil},
+		{"non-numeric id", inc(map[string][]string{"industries": {"urn:li:industry:abc"}}), "not urn:li:industry:<id>", nil},
+		{"leading zero id", inc(map[string][]string{"industries": {"urn:li:industry:04"}}), "not urn:li:industry:<id>", nil},
+		{"blank value", inc(map[string][]string{"skills": {" "}}), "blank value", nil},
+		{"padded value", inc(map[string][]string{"skills": {" urn:li:skill:1"}}), "surrounding whitespace", nil},
+		{"bad staff range", inc(map[string][]string{"staffCountRanges": {"urn:li:staffCountRange:(1,2)"}}), "staffCountRange", nil},
+		{"good staff range", inc(map[string][]string{"staffCountRanges": {"urn:li:staffCountRange:(201,500)"}}), "", nil},
+		{"bad locale", inc(map[string][]string{"interfaceLocales": {"urn:li:locale:EN_us"}}), "urn:li:locale", nil},
+		{"company employer", inc(map[string][]string{"employers": {"urn:li:company:1"}}), "", nil},
+		{"segment shape", inc(map[string][]string{FacetAudienceMatchingSegments: {"urn:li:adSegment:x"}}), "urn:li:adSegment:<id>", nil},
+		{"over facet cap", inc(map[string][]string{"skills": many("urn:li:skill:", 101)}), "at most 100", nil},
+		{"employers up to 200", inc(map[string][]string{"employers": many("urn:li:organization:", 150)}), "", nil},
+		{"exclude groups", &Targeting{Include: eventTargeting().Include, Exclude: map[string][]string{"groups": {"urn:li:group:1"}}}, "only under include", nil},
+		{"exclude locale", &Targeting{Include: eventTargeting().Include, Exclude: map[string][]string{"interfaceLocales": {"urn:li:locale:en_US"}}}, "only under include", nil},
+		{"titles with seniorities", inc(map[string][]string{"titles": {"urn:li:title:1"}}, map[string][]string{"seniorities": {"urn:li:seniority:5"}}), "titles together", nil},
+		{"titles with functions same clause", inc(map[string][]string{"titles": {"urn:li:title:1"}, "jobFunctions": {"urn:li:function:8"}}), "titles together", nil},
+		{"titles with excluded seniorities", &Targeting{Include: []map[string][]string{{"titles": {"urn:li:title:1"}}}, Exclude: map[string][]string{"seniorities": {"urn:li:seniority:1"}}}, "", nil},
+		{"employers with industries", inc(map[string][]string{"employers": {"urn:li:organization:1"}}, map[string][]string{"industries": {"urn:li:industry:4"}}), "employers together", nil},
+		{"employers with staff ranges", inc(map[string][]string{"employers": {"urn:li:organization:1"}, "staffCountRanges": {"urn:li:staffCountRange:(1,1)"}}), "employers together", nil},
+		{"staff ranges both ways", &Targeting{Include: []map[string][]string{{"staffCountRanges": {"urn:li:staffCountRange:(1,1)"}}}, Exclude: map[string][]string{"staffCountRanges": {"urn:li:staffCountRange:(2,10)"}}}, "not both", nil},
+		{"included employer in employerExclusions", inc(map[string][]string{"employers": {"urn:li:organization:1111"}}), "is in employerExclusions", []string{"urn:li:company:1111"}},
+		{"excluded employer also in employerExclusions", &Targeting{Include: []map[string][]string{{"skills": {"urn:li:skill:1"}}}, Exclude: map[string][]string{"employers": {"urn:li:company:1111"}}}, "", []string{"urn:li:company:1111"}},
+		{"merged employers over the cap", &Targeting{Include: []map[string][]string{{"skills": {"urn:li:skill:1"}}}, Exclude: map[string][]string{"employers": many("urn:li:organization:", 200)}}, "at most 200", []string{"urn:li:company:999999"}},
+		{"merged employers at the cap by id", &Targeting{Include: []map[string][]string{{"skills": {"urn:li:skill:1"}}}, Exclude: map[string][]string{"employers": many("urn:li:organization:", 200)}}, "", []string{"urn:li:company:7"}},
+		{"malformed employerExclusions", inc(map[string][]string{"skills": {"urn:li:skill:1"}}), "employerExclusions", []string{"urn:li:skill:1"}},
+		{"value included and excluded", &Targeting{Include: []map[string][]string{{"skills": {"urn:li:skill:1"}}}, Exclude: map[string][]string{"skills": {"urn:li:skill:1"}}}, "both included and excluded", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := ValidateTargeting(tc.in)
+			_, err := ValidateTargeting(tc.in, tc.excl)
 			if tc.want == "" {
 				if err != nil {
 					t.Fatalf("refused: %v", err)
@@ -203,7 +212,7 @@ func TestValidateTargeting(t *testing.T) {
 
 func TestValidateTargeting_DropsDuplicatesAndKeepsInput(t *testing.T) {
 	in := eventTargeting()
-	out, err := ValidateTargeting(in)
+	out, err := ValidateTargeting(in, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

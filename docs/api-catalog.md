@@ -824,7 +824,10 @@ Refused with a synchronous `400 invalid campaign config: linkedInConfig.targetin
 job exists: an unknown facet; a malformed or wrong-namespace value (ids are numeric, no leading
 zero); a blank or padded value; an empty clause, empty facet, no clause or more than 10; more than
 100 values in a facet (200 for `employers`, LinkedIn's caps); `groups` or `interfaceLocales` under
-`exclude`; a value both included and excluded; `staffCountRanges` both included and excluded;
+`exclude`; a value both included and excluded; an included employer that is in
+`employerExclusions`, a malformed `employerExclusions` value, or more than 200 employers in
+`exclude.employers` once `employerExclusions` is merged (employers compare by id, so
+`urn:li:company:<n>` and `urn:li:organization:<n>` are one employer); `staffCountRanges` both included and excluded;
 `titles` included with included `seniorities` or `jobFunctions`, and `employers` included with
 included `industries` or `staffCountRanges` (LinkedIn forbids ANDing them; refused even inside
 one clause until a live probe shows that is accepted).

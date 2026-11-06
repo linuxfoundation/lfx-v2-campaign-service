@@ -1022,6 +1022,12 @@ industries or company sizes — are refused whenever both are INCLUDED, not only
 separate (ANDed) clauses. The docs forbid only ANDing them; refusing the ORed form too is
 deliberately stricter until a live probe shows LinkedIn accepts it.
 
+`ValidateTargeting` also takes the config's `EmployerExclusions` and checks them MERGED with
+`exclude.employers` — well formed, within the 200-employer cap, and not naming an included
+employer — because the build merges them after the campaign group exists, and a rule the merge
+could break must be refused before it. Employers compare by id (`trailingID`), so a company and
+an organization URN of one id are one employer.
+
 `buildCustomTargetingCriteria` renders the geo clause first, then one `include.and` clause per
 entry with facet keys sorted (so the body is deterministic), and `exclude.or` from the caller's
 excludes plus the runtime config's `EmployerExclusions`. With `Targeting` set, the profile is not
