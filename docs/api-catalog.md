@@ -1529,9 +1529,13 @@ deviceBidModifiers?:            — OPTIONAL per-device bid adjustments (LFXV2-2
                                   than 0 (a probe saw Google refuse 1.2 with
                                   OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE; 1 adjusts nothing and
                                   is refused with its own message), and excluding all four devices
-                                  (the campaign could not serve). If that mutate fails, the campaign
-                                  is left PAUSED with its device rows unexcluded and none of the
-                                  language or schedule criteria, and the error says so.
+                                  (the campaign could not serve). If Google definitely REJECTS that
+                                  mutate, the campaign is left PAUSED with its device rows
+                                  unexcluded and none of the language or schedule criteria, and the
+                                  error says so. If the outcome is UNCONFIRMED (a transport failure,
+                                  a malformed 2xx response, or a result naming a different row), the
+                                  batch may already have applied: the error says UNCONFIRMED, and
+                                  the operator must check the campaign in Google Ads before retrying.
 
                                   Example: `"deviceBidModifiers": [{"device": "CONNECTED_TV",
                                   "bidModifier": 0}]` on `channel: "performance-max"`.
