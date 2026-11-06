@@ -812,8 +812,9 @@ service created before they existed. Additive does NOT mean channel-independent 
 entries below marked SEARCH ONLY are REFUSED, not ignored, on any other `channel`. Each
 entry states which channels accept it, because the channels do not refuse the same set:
 `performance-max` takes proximity that `demand-gen` refuses, takes the sitelink, callout and
-structured-snippet extensions at the campaign level (#461), and refuses device bid modifiers
-and demographic exclusions; `demand-gen` takes languages on its ad group, ad schedules,
+structured-snippet extensions at the campaign level (#461), takes device exclusions
+(`bidModifier` 0) but refuses any other device modifier (#500), and refuses demographic
+exclusions; `demand-gen` takes languages on its ad group, ad schedules,
 device exclusions and sitelinks at the campaign level (#474), refuses demographic
 exclusions, and is the only channel that takes `demandGenAudience`. Each is validated
 BEFORE the first budget mutate, so a refused value cannot strand a paid campaign — and the
@@ -1413,9 +1414,10 @@ languages?: string[]            — OPTIONAL languages the campaign targets (LFX
 
                                   ACCEPTED on `performance-max`, which Google documents as taking
                                   LANGUAGE, LOCATION and AD_SCHEDULE campaign criteria. Only
-                                  `deviceBidModifiers`, `excludedAgeRanges` and `excludedGenders` are
-                                  refused there; refusing languages too would be an over-refusal of
-                                  something Google accepts.
+                                  `excludedAgeRanges` and `excludedGenders` are refused there, plus
+                                  any `deviceBidModifiers` entry whose `bidModifier` is not 0 (#500);
+                                  refusing languages too would be an over-refusal of something
+                                  Google accepts.
 
                                   ACCEPTED on `video` AND on `display`, along with `adSchedules`,
                                   `deviceBidModifiers`, `excludedAgeRanges` and `excludedGenders` — the
@@ -1469,15 +1471,16 @@ adSchedules?:                   — OPTIONAL dayparting (LFXV2-2665): the interv
                                   `display`; see `languages` for the levels.
 deviceBidModifiers?:            — OPTIONAL per-device bid adjustments (LFXV2-2665). `device` is one of
   {device, bidModifier}[]         MOBILE, DESKTOP, TABLET (case-insensitive), plus CONNECTED_TV on
-                                  `demand-gen`; at most one entry per device the channel takes (3,
-                                  or 4 on `demand-gen`) and a device may appear only ONCE — two
+                                  `demand-gen` and `performance-max`; at most one entry per device
+                                  the channel takes (3, or 4 on `demand-gen` and `performance-max`)
+                                  and a device may appear only ONCE — two
                                   criteria for the same device are a conflict Google rejects after
                                   the campaign exists, and the caller plainly meant one of the two
                                   values.
 
-                                  CONNECTED_TV is accepted on `demand-gen` ONLY (#474): a
-                                  `validateOnly` probe (2026-11-03) accepted a Demand Gen campaign
-                                  criterion `{device: CONNECTED_TV, bidModifier: 0}`. Google
+                                  CONNECTED_TV is accepted on `demand-gen` (#474) and
+                                  `performance-max` (#500) ONLY: `validateOnly` probes (2026-11-03,
+                                  2026-11-05) accepted its exclusion on each. Google
                                   documents TV screens for Display and Video campaigns, so on those
                                   two the omission is this client's limitation rather than Google's,
                                   and is named as one: the documentation does not settle whether a
@@ -1496,9 +1499,28 @@ deviceBidModifiers?:            — OPTIONAL per-device bid adjustments (LFXV2-2
 
                                   ACCEPTED on `demand-gen` (#474) at the campaign level with
                                   `bidModifier` 0 ONLY — the device exclusion is what the probe
-                                  verified, so any other modifier is refused. REFUSED on
-                                  `performance-max`; ACCEPTED on `video` and `display`; see
-                                  `languages` for the levels.
+                                  verified, so any other modifier is refused. ACCEPTED on `video`
+                                  and `display`; see `languages` for the levels.
+
+                                  ACCEPTED on `performance-max` (#500) with `bidModifier` 0 ONLY,
+                                  for DESKTOP, MOBILE, TABLET and CONNECTED_TV. Google creates
+                                  those four device rows on every Performance Max campaign itself
+                                  (criterion ids 30000, 30001, 30002, 30004: Google's fixed platform
+                                  ids), so the exclusion is an UPDATE of
+                                  `customers/{customerId}/campaignCriteria/{campaignId}~{id}` with
+                                  `updateMask: bid_modifier`, sent after the campaign exists in the
+                                  same `campaignCriteria:mutate` as the language and schedule
+                                  creates; `targetingCriterionIds` reports the updated rows' ids.
+                                  REFUSED before any Google Ads request: any `bidModifier` other
+                                  than 0 (a probe saw Google refuse 1.2 with
+                                  OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE; 1 adjusts nothing and
+                                  is refused with its own message), and excluding all four devices
+                                  (the campaign could not serve). If that mutate fails, the campaign
+                                  is left PAUSED with its device rows unexcluded and none of the
+                                  language or schedule criteria, and the error says so.
+
+                                  Example: `"deviceBidModifiers": [{"device": "CONNECTED_TV",
+                                  "bidModifier": 0}]` on `channel: "performance-max"`.
 excludedAgeRanges?: string[]    — OPTIONAL demographic EXCLUSIONS (LFXV2-2665), attached as negative
 excludedGenders?: string[]        campaign criteria. Age ranges are 18-24, 25-34, 35-44, 45-54, 55-64,
                                   65+ or UNDETERMINED (Google's own AGE_RANGE_* enum names are accepted

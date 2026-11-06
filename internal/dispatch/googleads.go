@@ -455,9 +455,9 @@ type googleAdsConfig struct {
 	// DeviceBidModifiers at the campaign level (#474) — a schedule without a bidModifier,
 	// a device only with bidModifier 0 — and refuses the two demographic exclusions,
 	// which belong inside the Audience demandGenAudience references; "performance-max"
-	// takes languages and ad schedules (Google documents them as PMax campaign criteria)
-	// and refuses only DeviceBidModifiers and the two demographic exclusions. Refused,
-	// never silently dropped.
+	// takes languages, ad schedules (Google documents them as PMax campaign criteria) and
+	// DeviceBidModifiers with bidModifier 0 only (#500), and refuses the two demographic
+	// exclusions. Refused, never silently dropped.
 	//
 	// Left empty the campaign serves in EVERY language, which is Google's default and
 	// rarely what an event campaign wants.
@@ -470,12 +470,15 @@ type googleAdsConfig struct {
 	// exclude a device outright with a modifier of 0. Left empty, every device bids the
 	// campaign's own bid.
 	//
-	// "CONNECTED_TV" is accepted on "demand-gen" only (#474), where a validateOnly probe
-	// verified its exclusion. Google documents TV screens for Display and Video
-	// campaigns, and `deviceTypes` in the googleads package does not list it for them —
-	// a known gap, not a deliberate exclusion; Search does not support it. Search, Video,
-	// Display and Demand Gen reach these criteria; Performance Max refuses them outright.
-	// See deviceTypes and demandGenDeviceTypes in the googleads package.
+	// "CONNECTED_TV" is accepted on "demand-gen" (#474) and "performance-max" (#500) only,
+	// where validateOnly probes verified its exclusion. Google documents TV screens for
+	// Display and Video campaigns, and `deviceTypes` in the googleads package does not
+	// list it for them — a known gap, not a deliberate exclusion; Search does not support
+	// it. On "performance-max" every entry must carry bidModifier 0 (Google refuses any
+	// other modifier there), excluding all four devices is refused, and the exclusion is
+	// sent as an update of the device row Google creates on every Performance Max
+	// campaign. See deviceTypes, demandGenDeviceTypes and performanceMaxDeviceCriterionIDs
+	// in the googleads package.
 	//
 	// bidModifier is REQUIRED on every entry — it is a *float64 so that an OMITTED one
 	// is refused rather than decoded as 0, which is the -100% opt-out and would switch

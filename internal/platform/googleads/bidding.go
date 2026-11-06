@@ -537,10 +537,11 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 	// reason, and keyed on the STRATEGY rather than the channel because that is where
 	// the constraint actually lives.
 	//
-	// campaign_criteria.go refuses device bid modifiers on Performance Max, and that
-	// arm is right for a different reason — Performance Max takes no device criteria at
-	// all, not even the exclusion. But reading it as "automated bidding is a Performance
-	// Max property" is how this got missed: Video and Display BOTH default to
+	// campaign_criteria.go refuses a non-zero device bid modifier on Performance Max, and
+	// that arm is right for a different reason — Google refuses the operation on that
+	// channel (OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE) and takes only the 0 exclusion
+	// (#500). But reading it as "automated bidding is a Performance Max property" is how
+	// this got missed: Video and Display BOTH default to
 	// maximizeConversions, and a Search campaign can be switched to one. On every one of
 	// those, Google stores the adjustment and never bids it, so the operator who asked
 	// for "-30% on tablet" reads "campaign created" and gets no adjustment and no signal.

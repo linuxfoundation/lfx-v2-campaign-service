@@ -1013,7 +1013,7 @@ func TestCreatePerformanceMaxCampaign_NoAssetGroupSaysSoLoudly(t *testing.T) {
 // TestPreflightPerformanceMaxSplitsTheCriteria pins the channel split that is the
 // easiest thing in this path to get wrong by copying Demand Gen's fence: Demand
 // Gen refuses four of the five criteria kinds (its languages go on its ad group, #459),
-// Performance Max refuses only two.
+// Performance Max refuses only the demographics and a non-zero device modifier.
 func TestPreflightPerformanceMaxSplitsTheCriteria(t *testing.T) {
 	c := &Client{account: AccountConfig{CustomerID: "1234567890"}}
 
@@ -1021,6 +1021,10 @@ func TestPreflightPerformanceMaxSplitsTheCriteria(t *testing.T) {
 		"languages": func(in *CampaignInput) { in.Languages = []string{"en"} },
 		"ad schedules": func(in *CampaignInput) {
 			in.AdSchedules = []AdSchedule{{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17}}
+		},
+		// #500: the device EXCLUSION is accepted; only a non-zero modifier is refused.
+		"device exclusion": func(in *CampaignInput) {
+			in.DeviceBidModifiers = []DeviceBidModifier{{Device: "CONNECTED_TV", BidModifier: 0}}
 		},
 	}
 	for name, mutate := range accepted {
@@ -1046,9 +1050,9 @@ func TestPreflightPerformanceMaxSplitsTheCriteria(t *testing.T) {
 		mutate  func(*CampaignInput)
 		wantSub string
 	}{
-		"device bid modifiers": {func(in *CampaignInput) {
+		"non-zero device bid modifier": {func(in *CampaignInput) {
 			in.DeviceBidModifiers = []DeviceBidModifier{{Device: "MOBILE", BidModifier: 1.2}}
-		}, "device bid modifiers are not supported on PerformanceMax Campaign"},
+		}, "which Google refuses on PerformanceMax Campaign (OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE"},
 		"excluded age ranges": {func(in *CampaignInput) { in.ExcludedAgeRanges = []string{"AGE_RANGE_18_24"} },
 			"campaign-level demographic exclusions are not supported on PerformanceMax Campaign"},
 		"excluded genders": {func(in *CampaignInput) { in.ExcludedGenders = []string{"MALE"} },
