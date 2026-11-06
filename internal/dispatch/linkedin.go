@@ -199,6 +199,10 @@ type linkedinConfig struct {
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic:
 	// a WEBSITE_VISIT campaign bidding MAX_CLICK. Manual is WEBSITE_CONVERSION + a manual CPC.
 	Bidding *biddingConfig `json:"bidding,omitempty"`
+	// Targeting is the caller's own targetingCriteria (#552), behind
+	// LINKEDIN_ADS_TARGETING_ENABLED. Set, it replaces TargetingProfile and the hard-coded
+	// job functions and seniority exclusions. See linkedin.Targeting.
+	Targeting *linkedin.Targeting `json:"targeting,omitempty"`
 	// Conversions are conversion rule ids associated with the campaign once it exists (#552),
 	// behind LINKEDIN_ADS_CONVERSIONS_ENABLED. See linkedin.ValidateConversions.
 	Conversions []string `json:"conversions,omitempty"`
@@ -263,6 +267,33 @@ func linkedinConversions(cfg linkedinConfig) ([]string, error) {
 	return ids, nil
 }
 
+// linkedinTargetingEnabled reports whether this deployment opted in to linkedInConfig.targeting
+// (#552). Read per call so it flips without a rebuild. Off by default: no targeting shape has
+// been exercised against a live LinkedIn account, and a wrong guess fails after the campaign
+// group exists.
+func linkedinTargetingEnabled() bool {
+	return os.Getenv(constants.EnvLinkedInAdsTargetingEnabled) == "true"
+}
+
+// linkedinTargeting checks linkedInConfig.targeting before any job or request: refused while
+// the deployment gate is off, and refused when linkedin.ValidateTargeting refuses it. Both are
+// ErrCreateConfigInvalid pre-flight refusals, so PreflightCreate answers them with a synchronous
+// 400 and Dispatch fails the job with the same sentence. Returns the normalised copy.
+func linkedinTargeting(cfg linkedinConfig) (*linkedin.Targeting, error) {
+	if cfg.Targeting == nil {
+		return nil, nil
+	}
+	if !linkedinTargetingEnabled() {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.targeting is disabled on this deployment (%s is not \"true\"); omit it, or ask an operator to set %s to \"true\"",
+			domain.ErrCreateConfigInvalid, constants.EnvLinkedInAdsTargetingEnabled, constants.EnvLinkedInAdsTargetingEnabled))
+	}
+	t, err := linkedin.ValidateTargeting(cfg.Targeting)
+	if err != nil {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.targeting: %w", domain.ErrCreateConfigInvalid, err))
+	}
+	return t, nil
+}
+
 // linkedinBidPlan resolves linkedInConfig's bidding choice. The OBJECTIVE follows it (decision
 // 2026-10-13, Misha): automatic — the default — creates a WEBSITE_VISIT campaign optimising for
 // clicks (MAX_CLICK), because MAX_CONVERSION, the only automated target WEBSITE_CONVERSION allows,
@@ -315,6 +346,11 @@ func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ mode
 		return err
 	}
 	if _, err := linkedinConversions(cfg); err != nil {
+		return err
+	}
+	// linkedInConfig.targeting (#552) is promised as a synchronous 400 too. A targeting that did
+	// not decode is left nil here, and Dispatch's own decode fails the job on the same type.
+	if _, err := linkedinTargeting(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -418,6 +454,11 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if cfg.Conversions, err = linkedinConversions(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// Caller targeting (#552), gated and validated before any upstream call. The normalised copy
+	// replaces the request's, so the client and the stored snapshot both see it.
+	if cfg.Targeting, err = linkedinTargeting(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
 	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
@@ -501,6 +542,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		Images:           images,
 		ManualCPCBid:     plan.amount,
 		Conversions:      cfg.Conversions,
+		Targeting:        cfg.Targeting,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-4): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. Slot 2 on gets

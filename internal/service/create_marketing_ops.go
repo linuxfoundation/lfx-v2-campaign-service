@@ -382,14 +382,19 @@ func metaMarketingOpsForbiddenMessage(fields []string) string {
 
 // LinkedInMarketingOpsInputs names the linkedInConfig inputs this config sets that name a
 // resource on the connected LinkedIn ad account, so that only global_marketing_ops may send them
-// (#552): conversions, the conversion rules associated with the campaign. Conversion rules belong
-// to the ad account, and the LF system account is the fallback connection of every project
-// without its own, so one foundation's executive director could otherwise attach another's —
-// the same decision as googleAdsConfig.conversionActions (#505).
+// (#552): audienceMatchingSegments and dynamicSegments (matched and retargeting audiences) in any
+// targeting.include clause ("linkedInConfig.targeting.include[1].dynamicSegments") or in
+// targeting.exclude, and conversions, the conversion rules associated with the campaign. Ad
+// segments and conversion rules belong to the ad account, and the LF system account is the
+// fallback connection of every project without its own, so one foundation's executive director
+// could otherwise target, exclude or attach resources built for another — the same decision as
+// googleAdsConfig.conversionActions (#505). The other targeting facets name LinkedIn's own
+// taxonomies (skills, titles, industries…), not account resources, and are not gated.
 //
 // Any non-empty list counts, whatever its entries hold, so this agrees with the dispatcher
-// whatever its own validation later says. Every name is service-derived. A config that fails to
-// decode reports what the decoder populated, as GoogleAdsMarketingOpsInputs does.
+// whatever its own validation later says. Clause positions are 0-based like the dispatcher's
+// refusals, and every name is service-derived. A config that fails to decode reports what the
+// decoder populated, as GoogleAdsMarketingOpsInputs does.
 func LinkedInMarketingOpsInputs(config json.RawMessage) []string {
 	if len(config) == 0 {
 		return nil
@@ -403,12 +408,32 @@ func LinkedInMarketingOpsInputs(config json.RawMessage) []string {
 		return nil
 	}
 	var cfg struct {
+		Targeting *struct {
+			Include []map[string][]string `json:"include"`
+			Exclude map[string][]string   `json:"exclude"`
+		} `json:"targeting"`
 		Conversions []string `json:"conversions"`
 	}
 	_ = json.Unmarshal(raw, &cfg) // see above: a partial decode is still inspected
 	var set []string
 	if len(cfg.Conversions) > 0 {
 		set = append(set, "linkedInConfig.conversions")
+	}
+	if cfg.Targeting == nil {
+		return set
+	}
+	segmentKeys := []string{"audienceMatchingSegments", "dynamicSegments"}
+	for i, clause := range cfg.Targeting.Include {
+		for _, k := range segmentKeys {
+			if len(clause[k]) > 0 {
+				set = append(set, "linkedInConfig.targeting.include["+strconv.Itoa(i)+"]."+k)
+			}
+		}
+	}
+	for _, k := range segmentKeys {
+		if len(cfg.Targeting.Exclude[k]) > 0 {
+			set = append(set, "linkedInConfig.targeting.exclude."+k)
+		}
 	}
 	return set
 }
