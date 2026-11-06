@@ -144,3 +144,68 @@ func TestMonitorUnitsPerUSD_Integrity(t *testing.T) {
 		}
 	}
 }
+
+// A currency the money rules cannot be sized in is said so in the response: one account-wide LOW
+// item, never a silent gap and never a USD guess (#454 review).
+func TestMoneyRulesSkipped_IsVisible(t *testing.T) {
+	type platform struct {
+		name     string
+		active   string
+		evaluate func(rows []model.AccountCampaignMetrics, currency string) []model.AccountMonitorActionItem
+	}
+	platforms := []platform{
+		{"google", "ENABLED", func(rows []model.AccountCampaignMetrics, c string) []model.AccountMonitorActionItem {
+			_, items := EvaluateGoogleMonitor(rows, 7, c)
+			return items
+		}},
+		{"microsoft", "Active", func(rows []model.AccountCampaignMetrics, c string) []model.AccountMonitorActionItem {
+			_, items := EvaluateMicrosoftMonitor(rows, 7, c)
+			return items
+		}},
+		{"twitter", "ACTIVE", func(rows []model.AccountCampaignMetrics, c string) []model.AccountMonitorActionItem {
+			_, items := EvaluateTwitterMonitor(rows, &xFirstDay, &xLastDay, c)
+			return items
+		}},
+	}
+	skipped := func(items []model.AccountMonitorActionItem) []model.AccountMonitorActionItem {
+		var out []model.AccountMonitorActionItem
+		for _, it := range items {
+			if strings.Contains(it.Issue, "checks were skipped") {
+				out = append(out, it)
+			}
+		}
+		return out
+	}
+	for _, p := range platforms {
+		measured := model.AccountCampaignMetrics{PlatformCampaignID: "1", Name: "c", Status: p.active,
+			BudgetDay: 1, Spend: 7, Impressions: 400, Clicks: 20, Ctr: 5}
+		failed := measured
+		failed.FetchFailed = true
+		for _, tc := range []struct {
+			name     string
+			rows     []model.AccountCampaignMetrics
+			currency string
+			want     string // substring of the one skipped item, "" for none
+		}{
+			{"absent currency", []model.AccountCampaignMetrics{measured, measured}, "", "could not be read"},
+			{"unlisted currency", []model.AccountCampaignMetrics{measured}, "ARS", "(ARS)"},
+			{"sized currency", []model.AccountCampaignMetrics{measured}, "USD", ""},
+			{"no measured row", []model.AccountCampaignMetrics{failed}, "", ""},
+			{"no rows", nil, "", ""},
+		} {
+			t.Run(p.name+"/"+tc.name, func(t *testing.T) {
+				got := skipped(p.evaluate(tc.rows, tc.currency))
+				if tc.want == "" {
+					if len(got) != 0 {
+						t.Errorf("skipped items = %+v, want none", got)
+					}
+					return
+				}
+				if len(got) != 1 || !strings.Contains(got[0].Issue, tc.want) ||
+					got[0].Priority != model.MonitorPriorityLow || got[0].CampaignID != "" {
+					t.Errorf("skipped items = %+v, want one account-wide LOW item naming %q", got, tc.want)
+				}
+			})
+		}
+	}
+}

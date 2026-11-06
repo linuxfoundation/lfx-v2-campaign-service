@@ -169,7 +169,8 @@ renderer formats with a symbol when it is present and without one otherwise.
   `rules.monitorUnitsPerUSD`, a table of rounded units-per-dollar magnitudes — no amount is
   converted or shown with it. In a currency the table does not list, or when `currency` is absent,
   neither rule fires on an amount (Google and Microsoft still call a zero daily budget a
-  placeholder): an unsized threshold is not guessed at in dollars, which is the misfire this
+  placeholder) and the response carries one account-wide LOW item saying the checks were
+  skipped (`rules.moneyRulesSkippedItem`): an unsized threshold is not guessed at in dollars, which is the misfire this
   removed (a ¥50 click read as expensive, a 1 KWD/day budget — about $3 — read as a placeholder).
 - **Validation.** `model.NormalizeCurrencyCode` keeps a value only if it is exactly three ASCII
   upper-case letters — no trimming, no case folding — and is applied in each client, in the

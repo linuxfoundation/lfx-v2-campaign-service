@@ -288,3 +288,79 @@ func TestListAccountCampaigns_ReadsCustomerCurrency(t *testing.T) {
 		t.Errorf("rows = %+v, want one row with CurrencyCode KWD", rows)
 	}
 }
+
+// A customer.currency_code that is not a JSON string costs only the currency, never the account's
+// metrics read (#454 review).
+func TestListAccountCampaigns_NonStringCurrencyKeepsTheRead(t *testing.T) {
+	for _, raw := range []string{`840`, `{"code":"USD"}`, `["USD"]`, `true`, `null`} {
+		t.Run(raw, func(t *testing.T) {
+			tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+			t.Cleanup(tokenSrv.Close)
+			apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"results":[{
+					"customer":{"currencyCode":`+raw+`},
+					"campaign":{"id":"111","name":"Campaign One","status":"ENABLED","advertisingChannelType":"SEARCH"},
+					"campaignBudget":{"amountMicros":"1000000"},
+					"metrics":{"impressions":"100","clicks":"5","costMicros":"2000000"}
+				}]}`)
+			}))
+			t.Cleanup(apiSrv.Close)
+			c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL))
+			rows, err := c.ListAccountCampaigns(context.Background(), "1234567890", 7)
+			if err != nil {
+				t.Fatalf("ListAccountCampaigns: %v — an unreadable currency must not fail the read", err)
+			}
+			if len(rows) != 1 || rows[0].CurrencyCode != "" || rows[0].Impressions != 100 || rows[0].FetchFailed {
+				t.Errorf("rows = %+v, want the measured row with no currency", rows)
+			}
+		})
+	}
+}
+
+// Repeated rows for one campaign keep the first row's code only while every later row agrees; a
+// disagreement or a missing code clears it for good (#454 review).
+func TestListAccountCampaigns_RepeatedRowsCurrency(t *testing.T) {
+	row := func(currency string) string {
+		cust := `"customer":{},`
+		if currency != "" {
+			cust = `"customer":{"currencyCode":"` + currency + `"},`
+		}
+		return `{` + cust + `"campaign":{"id":"111","name":"c","status":"ENABLED","advertisingChannelType":"SEARCH"},
+			"campaignBudget":{"amountMicros":"1000000"},"metrics":{"impressions":"10","clicks":"1","costMicros":"1000000"}}`
+	}
+	for _, tc := range []struct {
+		name  string
+		codes []string
+		want  string
+	}{
+		{"all agree", []string{"USD", "USD", "USD"}, "USD"},
+		{"disagree", []string{"USD", "JPY"}, ""},
+		{"missing then present", []string{"", "USD"}, ""},
+		{"present then missing", []string{"USD", ""}, ""},
+		{"cleared stays cleared", []string{"USD", "JPY", "USD"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parts := make([]string, len(tc.codes))
+			for i, c := range tc.codes {
+				parts[i] = row(c)
+			}
+			body := `{"results":[` + strings.Join(parts, ",") + `]}`
+			tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+			t.Cleanup(tokenSrv.Close)
+			apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, body)
+			}))
+			t.Cleanup(apiSrv.Close)
+			c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL))
+			rows, err := c.ListAccountCampaigns(context.Background(), "1234567890", 7)
+			if err != nil {
+				t.Fatalf("ListAccountCampaigns: %v", err)
+			}
+			if len(rows) != 1 || rows[0].CurrencyCode != tc.want {
+				t.Errorf("rows = %+v, want one campaign with CurrencyCode %q", rows, tc.want)
+			}
+		})
+	}
+}

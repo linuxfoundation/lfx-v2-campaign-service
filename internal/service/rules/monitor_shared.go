@@ -222,3 +222,36 @@ func isHighAvgCpc(avgCpc float64, currency string) bool {
 	limit, ok := accountThreshold(highAvgCpcUSD, currency)
 	return ok && avgCpc > limit
 }
+
+// moneyRulesSkippedItem is the account-wide LOW item that says the money-sized rules were not
+// run, so a caller can tell "no placeholder budget or expensive click" apart from "these could
+// not be checked" (#454 review). It is due when currency cannot be sized (absent, or not in
+// monitorUnitsPerUSD) and at least one returned row was measured — a row the rules would have
+// looked at. checks names the rules the platform runs, for the issue text. It never assumes USD
+// in their place: that guess is the misfire the sizing removed.
+//
+// It goes on an absent currency as well as an unlisted one: on Microsoft and X the currency comes
+// from a best-effort side read that can time out, and on Google from every row carrying the same
+// customer.currency_code, so a USD account can reach here on one request and not the next.
+func moneyRulesSkippedItem(currency, checks string, rows []model.AccountMonitorRow) (model.AccountMonitorActionItem, bool) {
+	if _, ok := accountThreshold(1, currency); ok {
+		return model.AccountMonitorActionItem{}, false
+	}
+	measured := false
+	for _, r := range rows {
+		if !r.Metrics.FetchFailed {
+			measured = true
+			break
+		}
+	}
+	if !measured {
+		return model.AccountMonitorActionItem{}, false
+	}
+	issue := fmt.Sprintf("The %s checks were skipped — the ad account's currency could not be read, so their thresholds cannot be sized", checks)
+	action := "Reload the monitor to retry the currency read, or review those figures in the ad platform directly"
+	if currency != "" {
+		issue = fmt.Sprintf("The %s checks were skipped — the ad account's currency (%s) is not one this service sizes their thresholds in", checks, currency)
+		action = "Review those figures in the ad platform directly"
+	}
+	return model.AccountMonitorActionItem{Priority: model.MonitorPriorityLow, Issue: issue, Action: action}, true
+}

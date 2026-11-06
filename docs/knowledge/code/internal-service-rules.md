@@ -206,7 +206,9 @@ once in `monitor_shared.go` (`placeholderBudgetMaxUSD`, `highAvgCpcUSD`, `isPlac
 a table of rounded units-per-dollar magnitudes for the currencies whose rate is stable enough
 for a fixed figure; high-inflation currencies are left out. A currency missing from it, or an
 absent one, fires neither rule on an amount — Google's and Microsoft's zero daily budget is still
-a placeholder in any currency. Before this, a JPY account tripped the high-CPC rule on a ¥50
+a placeholder in any currency — and the evaluator adds one account-wide LOW item
+(`moneyRulesSkippedItem`) saying those checks were skipped, whenever at least one returned row
+was measured, so a skipped check is never mistaken for a clean one. Before this, a JPY account tripped the high-CPC rule on a ¥50
 click and a KWD account's 1/day budget (about $3) was flagged HIGH as a placeholder.
 
 Pacing is meaningful **per campaign only**. This service performs no FX conversion and platform

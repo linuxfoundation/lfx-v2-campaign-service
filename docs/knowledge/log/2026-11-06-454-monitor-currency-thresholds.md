@@ -15,7 +15,11 @@ HIGH as a placeholder.
   value), so it moved too; Microsoft's `msPlaceholderBudgetMax` / `msHighAvgCpc` are gone.
 - A currency the table does not list (high-inflation ones are left out on purpose) or an absent
   one fires neither rule on an amount; Google's and Microsoft's zero daily budget is still a
-  placeholder.
+  placeholder. The response then carries one account-wide LOW item saying the checks were
+  skipped (`moneyRulesSkippedItem`, review round), so a failed currency read is visible rather
+  than silent.
+- `customer.currency_code` is decoded on its own: a non-string value costs only the currency.
+  Repeated rows for one campaign keep the first row's code only while every later row agrees.
 - Google Ads now reads its currency: the monitor's GAQL query selects `customer.currency_code`
   (an attributed resource of `campaign`, so no extra request), and `GoogleAdsDispatcher` implements
   `ReadAccountMonitor`. The monitor's `currency` field, previously never set on Google Ads, is now
