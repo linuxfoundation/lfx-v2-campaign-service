@@ -1154,8 +1154,10 @@ audience narrows WHO and a placement exclusion WHERE ON THE WEB, and neither bou
 geography the campaign spends in.
 
 `displayDemographics` (#499) is `googleAdsDisplayDemographicsConfig`, copied list by list by
-`googleAdsDisplayDemographics`; it names no account resource, so no deployment gate applies,
-and the client refuses it off Display.
+`googleAdsDisplayDemographics`; it names no account resource, so no audience gate applies,
+and the client refuses it off Display. Its request shape is unprobed, so dispatch refuses any
+non-empty list first, on any channel, unless `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` is
+exactly `"true"`, the same gate as `observedDemographics`.
 
 `displayAdGroups` and `excludedAudienceSegments` (#475) pass through the same way:
 `googleAdsDisplayAdGroups` maps each group's name, its creative through the same

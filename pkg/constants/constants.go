@@ -196,7 +196,8 @@ const (
 
 	// EnvGoogleAdsDemographicTargetingEnabled opts a deployment IN to the Google Ads demographic
 	// inputs whose upstream contract has NOT yet been checked with a validateOnly probe:
-	// googleAdsConfig.observedDemographics (#497) today. Only the exact value "true" enables
+	// googleAdsConfig.observedDemographics (#497) and displayDemographics (#499). Only the exact
+	// value "true" enables
 	// it; unset or any other value fails closed, and a create naming one is refused before
 	// anything upstream exists.
 	//

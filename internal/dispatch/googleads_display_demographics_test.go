@@ -10,11 +10,13 @@ import (
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // #499: googleAdsConfig.displayDemographics must reach the Display ad group create (its
 // targetingSetting) and the group's criteria mutate, with every one of the four lists mapped.
 func TestGoogleAds_DisplayDemographicsReachTheDisplayAdGroup(t *testing.T) {
+	setGateEnv(t, constants.EnvGoogleAdsDemographicTargetingEnabled, "true")
 	opts, cap := targetingServers(t)
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"display","displayDemographics":{
@@ -58,6 +60,7 @@ func TestGoogleAds_DisplayDemographicsRefusedBeforeAnyCreate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			setGateEnv(t, constants.EnvGoogleAdsDemographicTargetingEnabled, "true")
 			opts, cap := targetingServers(t)
 			d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 			cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"` + tc.channel + `","displayDemographics":{"ageRanges":["25-34"]}` + tc.extra + `}}`)
@@ -75,4 +78,42 @@ func TestGoogleAds_DisplayDemographicsRefusedBeforeAnyCreate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// displayDemographics shares GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED with observedDemographics:
+// anything but exactly "true" refuses any non-empty list, on any channel, before the budget.
+// An object with every list empty is not a request for targeting and is not refused.
+func TestGoogleAds_DisplayDemographicsGateRefusesBeforeAnyCreate(t *testing.T) {
+	for _, env := range []string{unsetEnv, "", "false", "TRUE"} {
+		for _, list := range []string{"ageRanges", "genders", "incomeRanges", "parentalStatuses"} {
+			t.Run(list+"/"+env, func(t *testing.T) {
+				setGateEnv(t, constants.EnvGoogleAdsDemographicTargetingEnabled, env)
+				opts, cap := targetingServers(t)
+				d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+				cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"display","displayDemographics":{"` + list + `":["x"]}}}`)
+				camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+				want := "displayDemographics is disabled on this deployment (" + constants.EnvGoogleAdsDemographicTargetingEnabled
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("err = %v, want the gate refusal containing %q", err, want)
+				}
+				if camp != nil {
+					t.Errorf("nothing may be created for a refused input, got %+v", camp)
+				}
+				cap.mu.Lock()
+				defer cap.mu.Unlock()
+				if cap.sawBudget {
+					t.Error("the refusal must happen BEFORE the budget mutate")
+				}
+			})
+		}
+	}
+	t.Run("empty object", func(t *testing.T) {
+		setGateEnv(t, constants.EnvGoogleAdsDemographicTargetingEnabled, unsetEnv)
+		opts, _ := targetingServers(t)
+		d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+		cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"display","displayDemographics":{}}}`)
+		if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg); err != nil {
+			t.Fatalf("an empty displayDemographics must not be refused: %v", err)
+		}
+	})
 }

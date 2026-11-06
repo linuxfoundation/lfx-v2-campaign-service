@@ -608,8 +608,10 @@ type googleAdsConfig struct {
 	// DisplayDemographics is positive demographic TARGETING on every Display ad group (#499):
 	// each non-empty list restricts the ad to the values it names, in the exclusion fields'
 	// vocabulary. DISPLAY ONLY, and a value may not also be in its excluded* list. It names
-	// no account resource, so no deployment gate applies. Refusals are the client's
-	// preflight's; see googleads.validateDisplayDemographics.
+	// no account resource, so no audience gate applies, but its request shape is unprobed, so
+	// it is refused outright unless GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED is "true" (see
+	// googleAdsDemographicTargetingEnabled). The other refusals are the client's preflight's;
+	// see googleads.validateDisplayDemographics.
 	DisplayDemographics *googleAdsDisplayDemographicsConfig `json:"displayDemographics"`
 	// SearchAssets are the Search campaign's image, business-logo and business-name assets
 	// (#477), linked to the campaign. SEARCH ONLY, refused on every other channel. Its two image
@@ -713,7 +715,8 @@ func googleAdsSharedNegativeListsEnabled() bool {
 }
 
 // googleAdsDemographicTargetingEnabled reports whether this deployment opted in to the
-// demographic inputs whose request shape is not yet probed live: observedDemographics (#497).
+// demographic inputs whose request shape is not yet probed live: observedDemographics (#497)
+// and displayDemographics (#499).
 // Read per call, like the gates above. Unlike them it names no account resource; it keeps an
 // unverified shape off the shared account until a validateOnly probe has passed. See
 // constants.EnvGoogleAdsDemographicTargetingEnabled.
@@ -895,6 +898,13 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if len(cfg.ObservedDemographics) > 0 && !googleAdsDemographicTargetingEnabled() {
 		return nil, googleAdsInputDisabled("observedDemographics is",
 			constants.EnvGoogleAdsDemographicTargetingEnabled, "observedDemographics")
+	}
+	// displayDemographics (#499) likewise: any list in it, whatever its entries hold.
+	if d := cfg.DisplayDemographics; d != nil &&
+		len(d.AgeRanges)+len(d.Genders)+len(d.IncomeRanges)+len(d.ParentalStatuses) > 0 &&
+		!googleAdsDemographicTargetingEnabled() {
+		return nil, googleAdsInputDisabled("displayDemographics is",
+			constants.EnvGoogleAdsDemographicTargetingEnabled, "displayDemographics")
 	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {

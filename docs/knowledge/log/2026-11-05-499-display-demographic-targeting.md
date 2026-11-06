@@ -12,7 +12,8 @@ matching the KubeCon NA 2025 Display reference, which targets as well as exclude
   income and parental exclusions.
 - A value both targeted and in its `excluded*` list is refused before any request, naming both
   fields. Every channel but Display refuses the field. It names no account resource, so no
-  deployment gate applies.
+  audience gate applies; its unprobed shape sits behind `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED`
+  (#497's gate), which dispatch checks before anything upstream exists.
 - New result fields: `adGroups[].demographicTargetingCriteriaIds` and
   `adGroupDemographicTargetingCriteriaIds`.
 
