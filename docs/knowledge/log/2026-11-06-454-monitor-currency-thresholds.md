@@ -18,6 +18,9 @@ HIGH as a placeholder.
   placeholder. The response then carries one account-wide LOW item saying the checks were
   skipped (`moneyRulesSkippedItem`, review round), so a failed currency read is visible rather
   than silent.
+- Both the sized threshold and the compared amount are rounded to the currency's minor unit
+  (`moneyAt`), so float error at the boundary (5 × 1.38 = 6.8999…) cannot fire the high-CPC rule
+  at exactly CAD 6.90 (review round).
 - `customer.currency_code` is decoded on its own: a non-string value costs only the currency.
   Repeated rows for one campaign keep the first row's code only while every later row agrees.
 - Google Ads now reads its currency: the monitor's GAQL query selects `customer.currency_code`

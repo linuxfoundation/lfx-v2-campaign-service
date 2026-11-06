@@ -204,7 +204,11 @@ once in `monitor_shared.go` (`placeholderBudgetMaxUSD`, `highAvgCpcUSD`, `isPlac
 `isHighAvgCpc`) and are sized in the ad account's currency, which `EvaluateGoogleMonitor`,
 `EvaluateMicrosoftMonitor` and `EvaluateTwitterMonitor` now take (#454). `monitorUnitsPerUSD` is
 a table of rounded units-per-dollar magnitudes for the currencies whose rate is stable enough
-for a fixed figure; high-inflation currencies are left out. A currency missing from it, or an
+for a fixed figure; high-inflation currencies are left out. The sized threshold and the amount it
+is compared with are both rounded to the currency's ISO 4217 minor unit (`moneyAt`,
+`monitorMinorUnitDigits`: two decimals by default, 0 for JPY/KRW/CLP/VND, 3 for
+KWD/BHD/OMR/JOD), so a float product such as 5 × 1.38 = 6.8999… cannot call a CAD 6.90 click
+above a CAD 6.90 threshold. A currency missing from it, or an
 absent one, fires neither rule on an amount — Google's and Microsoft's zero daily budget is still
 a placeholder in any currency — and the evaluator adds one account-wide LOW item
 (`moneyRulesSkippedItem`) saying those checks were skipped, whenever at least one returned row

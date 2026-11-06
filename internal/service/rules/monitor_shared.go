@@ -195,32 +195,55 @@ var monitorUnitsPerUSD = map[string]float64{
 	"AED": 3.6725, "SAR": 3.75, "QAR": 3.64, "KWD": 0.307, "BHD": 0.376, "OMR": 0.3845, "JOD": 0.709,
 }
 
-// accountThreshold sizes a USD-denominated threshold in currency, the ad account's ISO 4217 code.
-// ok is false when the currency has no entry in monitorUnitsPerUSD, "" included.
+// monitorMinorUnitDigits is the ISO 4217 minor unit of each monitorUnitsPerUSD currency that does
+// not use two decimals. The money rules compare at this precision (moneyAt), so a threshold sized
+// in floating point cannot sit a hair off the amount it means: 5 × 1.38 is 6.8999… in float64,
+// which without rounding called a CAD 6.90 click above a CAD 6.90 threshold.
+var monitorMinorUnitDigits = map[string]int{
+	"JPY": 0, "KRW": 0, "CLP": 0, "VND": 0,
+	"KWD": 3, "BHD": 3, "OMR": 3, "JOD": 3,
+}
+
+// moneyAt rounds v to currency's minor unit: two decimals unless monitorMinorUnitDigits says
+// otherwise.
+func moneyAt(v float64, currency string) float64 {
+	digits, ok := monitorMinorUnitDigits[currency]
+	if !ok {
+		digits = 2
+	}
+	scale := math.Pow10(digits)
+	return math.Round(v*scale) / scale
+}
+
+// accountThreshold sizes a USD-denominated threshold in currency, the ad account's ISO 4217 code,
+// rounded to that currency's minor unit (moneyAt). ok is false when the currency has no entry in
+// monitorUnitsPerUSD, "" included.
 func accountThreshold(usd float64, currency string) (threshold float64, ok bool) {
 	units, ok := monitorUnitsPerUSD[currency]
 	if !ok {
 		return 0, false
 	}
-	return usd * units, true
+	return moneyAt(usd*units, currency), true
 }
 
 // isPlaceholderBudget reports whether a daily budget in currency is a placeholder: at or below
-// placeholderBudgetMaxUSD sized in that currency. A budget of zero or less is a placeholder in
-// every currency, so it is one even when the currency cannot be sized.
+// placeholderBudgetMaxUSD sized in that currency, both compared at the currency's minor unit. A
+// budget of zero or less is a placeholder in every currency, so it is one even when the currency
+// cannot be sized.
 func isPlaceholderBudget(budgetDay float64, currency string) bool {
 	if budgetDay <= 0 {
 		return true
 	}
 	limit, ok := accountThreshold(placeholderBudgetMaxUSD, currency)
-	return ok && budgetDay <= limit
+	return ok && moneyAt(budgetDay, currency) <= limit
 }
 
 // isHighAvgCpc reports whether an average CPC in currency is above highAvgCpcUSD sized in that
-// currency. It is never high in a currency that cannot be sized.
+// currency, both compared at the currency's minor unit — the precision the item prints it at. It
+// is never high in a currency that cannot be sized.
 func isHighAvgCpc(avgCpc float64, currency string) bool {
 	limit, ok := accountThreshold(highAvgCpcUSD, currency)
-	return ok && avgCpc > limit
+	return ok && moneyAt(avgCpc, currency) > limit
 }
 
 // moneyRulesSkippedItem is the account-wide LOW item that says the money-sized rules were not

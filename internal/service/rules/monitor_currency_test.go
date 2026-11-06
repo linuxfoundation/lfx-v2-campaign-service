@@ -120,9 +120,33 @@ func TestMonitorMoneyHelpers_BoundaryInAccountCurrency(t *testing.T) {
 		{"placeholder just above 1 USD in JPY", isPlaceholderBudget(148, "JPY"), false},
 		{"CPC at 5 USD in JPY", isHighAvgCpc(735, "JPY"), false},
 		{"CPC just above 5 USD in JPY", isHighAvgCpc(736, "JPY"), true},
+		// 5 × 1.38 is 6.8999… in float64: CAD 6.90 is the threshold itself, not above it.
+		{"CPC at 5 USD in CAD", isHighAvgCpc(6.90, "CAD"), false},
+		{"CPC just above 5 USD in CAD", isHighAvgCpc(6.91, "CAD"), true},
+		{"CPC at 5 USD in CAD, from a division", isHighAvgCpc(138.0/20, "CAD"), false},
+		// The compared amount is rounded too: a float remainder far below a cent is not above it.
+		{"CPC a float remainder above 5 USD in CAD", isHighAvgCpc(6.90+1e-9, "CAD"), false},
+		{"placeholder a float remainder above 1 USD in EUR", isPlaceholderBudget(0.87+1e-9, "EUR"), true},
+		// 1 × 0.87 at EUR's cents; KWD at its three decimals.
+		{"placeholder at 1 USD in EUR", isPlaceholderBudget(0.87, "EUR"), true},
+		{"placeholder just above 1 USD in EUR", isPlaceholderBudget(0.88, "EUR"), false},
+		{"placeholder at 1 USD in KWD", isPlaceholderBudget(0.307, "KWD"), true},
+		{"placeholder just above 1 USD in KWD", isPlaceholderBudget(0.308, "KWD"), false},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("%s = %v, want %v", tc.name, tc.got, tc.want)
+		}
+	}
+}
+
+// Every minor-unit override names a currency the table sizes, with an ISO 4217 digit count.
+func TestMonitorMinorUnitDigits_Integrity(t *testing.T) {
+	for code, digits := range monitorMinorUnitDigits {
+		if _, ok := monitorUnitsPerUSD[code]; !ok {
+			t.Errorf("%s has a minor unit but no units-per-USD entry", code)
+		}
+		if digits != 0 && digits != 3 {
+			t.Errorf("%s minor unit = %d, want 0 or 3 (2 is the default and needs no entry)", code, digits)
 		}
 	}
 }
