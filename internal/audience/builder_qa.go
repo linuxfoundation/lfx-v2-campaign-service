@@ -1223,10 +1223,24 @@ type ExclusionCheck struct {
 // sendTime counts suppression lists that are applied when the email is sent rather
 // than baked into the list — the builder's design for custom lists and for lists
 // attached without a composed master. They exclude the same contacts, so they count.
-func CheckExclusionCompleteness(filters []ListFilter, sendTime int) ExclusionCheck {
+//
+// unverifiedSendTime are send-time suppression ids whose read failed with anything but a
+// 404 (#399). They are never counted, but while any exist "zero exclusions" is not
+// established, so the FAIL becomes a NEEDS VERIFY naming them.
+func CheckExclusionCompleteness(filters []ListFilter, sendTime int, unverifiedSendTime []string) ExclusionCheck {
 	count := len(ReferencedListIDs(filters, "NOT_IN_LIST")) + sendTime
 	if count > 0 {
 		return ExclusionCheck{Check: Check{Verdict: VerdictPass, Findings: []Finding{}}, ExclusionCount: count, SendTimeCount: sendTime}
+	}
+	if unverified := UniqueIDs(unverifiedSendTime); len(unverified) > 0 {
+		return ExclusionCheck{
+			Check: Check{Verdict: VerdictNeedsVerify, Findings: []Finding{{
+				Severity: SeverityHigh,
+				Message:  fmt.Sprintf("Could not read send-time suppression list(s) %s from HubSpot, so whether this send applies any exclusion could not be verified.", strings.Join(unverified, ", ")),
+				Fix:      "Re-run the QA once HubSpot answers for these lists, or confirm in HubSpot that they are contact suppression lists before sending.",
+			}}},
+			ExclusionCount: 0,
+		}
 	}
 	return ExclusionCheck{
 		Check: Check{Verdict: VerdictFail, Findings: []Finding{{

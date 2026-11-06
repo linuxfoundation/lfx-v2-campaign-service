@@ -20,20 +20,24 @@ set and an EU audience got the CRITICAL "No GDPR suppression list found", with
 - Response shape, additive: optional `checks.suppression.unverified_list_ids`. Absent when every
   exclusion was read, so `applied_gdpr` / `applied_opt_out` keep their meaning for existing
   clients; present, a false flag means "not verified", not "absent".
-- `CheckSignalMapping(filters, names, unreadable)`: when no engagement signal is found and an
-  inclusion references an unread list, a MEDIUM NEEDS VERIFY names it instead of the generic
-  "could not classify". The issue's check-4 FAIL path does not occur on main (an `IN_LIST`
+- `CheckSignalMapping(filters, names, unreadable)` (check 1): when no engagement signal is found
+  and an inclusion references an unread list, a MEDIUM NEEDS VERIFY names it instead of the generic
+  "could not classify". The issue's signal-mapping FAIL path does not occur on main (an `IN_LIST`
   signature always carries "in_list", which is not a firmographic hint), so this only makes the
   existing NEEDS VERIFY say which read failed.
-
-Not changed: a send-time suppression id whose read fails is still skipped uncredited, so check 2
-(exclusion completeness) can still FAIL on a list whose only exclusion is such an id.
+- Send-time suppression ids: one whose read fails with anything but a 404 is still never
+  credited, but it joins check 3's unverified set, and
+  `CheckExclusionCompleteness(filters, sendTime, unverifiedSendTime)` (check 2) reports NEEDS
+  VERIFY naming it instead of the zero-exclusions FAIL.
+- Check 4 (`current_registrants`): a PASS is replaced by a HIGH NEEDS VERIFY while an included
+  list the send still reaches has an unread name, since it may be this edition's registrants.
+  A verdict reached on names that were read is left alone.
 
 Tests: `TestRunQA_AnUnreadableListNameIsNotVerifiedRatherThanAbsent` (a fake portal answering
 403 from v3 and legacy for one id: direct exclusion, wrapper child, wrapper whose filters fail,
-the 404 control, and the signal-mapping inclusion),
-`TestCheckSuppression_AnUnreadableExclusionIsNotVerifiedRatherThanAbsent` and
-`TestCheckSignalMapping_AnUnreadableNameIsNotVerifiedRatherThanFailed`. Each fails with its part
-of the fix reverted (six mutations: `listName` never unreadable, child id dropped, wrapper-filter
-failure dropped, `CheckSuppression` ignoring the ids, `CheckSignalMapping` ignoring them,
-`NOT_IN_LIST` counted as an inclusion).
+send-time GDPR list, unreadable send-time wrapper, the 404 control, check 1 naming an unread
+inclusion, check 4 not passing on one, and check 4 ignoring one the send suppresses),
+`TestCheckSuppression_AnUnreadableExclusionIsNotVerifiedRatherThanAbsent`,
+`TestCheckSignalMapping_AnUnreadableNameIsNotVerifiedRatherThanFailed` and
+`TestCheckExclusionCompleteness_AnUnreadableSendTimeListIsNotVerified`. Each part of the fix was
+reverted on its own and a test failed every time (ten mutations).

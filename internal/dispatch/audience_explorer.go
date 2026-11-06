@@ -1934,6 +1934,7 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	// verified suppression, plus every list its own filter tree fully covers (one hop:
 	// ComposeMaster's combined suppression is "R OR OptOut").
 	sendTimeIDs := make([]string, 0, len(sendSuppressionIDs))
+	unverifiedSendTime := make([]string, 0)
 	sentAway := map[string]bool{}
 	// editionsAway are registration editions a verified suppression's own tree excludes
 	// whole (an inline "registered for KubeCon 2026" predicate), for check 4.
@@ -1944,6 +1945,12 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		}
 		l, _, rerr := x.listWithFilters(ctx, client, cache, id)
 		if rerr != nil {
+			// Never credited: an unread list is no verified suppression. But only a 404
+			// says it is not there; any other failure leaves it possibly the GDPR or
+			// opt-out list, so check 3 reports it unverified rather than absent (#399).
+			if !errors.Is(rerr, audience.ErrListNotFound) {
+				unverifiedSendTime = append(unverifiedSendTime, id)
+			}
 			continue
 		}
 		// A company or deal list cannot exclude a contact, so it is no suppression
@@ -2099,11 +2106,27 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	}
 
 	signalMapping := audience.CheckSignalMapping(filters, nameByID, unreadable)
-	suppression := audience.CheckSuppression(exclusionNames, unverifiedExclusions, targetsEU, targetsCA)
-	completeness := audience.CheckExclusionCompleteness(filters, len(sendTimeIDs))
+	suppression := audience.CheckSuppression(exclusionNames, append(unverifiedExclusions, unverifiedSendTime...), targetsEU, targetsCA)
+	completeness := audience.CheckExclusionCompleteness(filters, len(sendTimeIDs), unverifiedSendTime)
 	// stage gates check 4: a Post-Event send is FOR this edition's attendees, so it reports
 	// NOT APPLICABLE there instead of a false CRITICAL (#244). Absent runs it as before.
 	currentRegistrants := audience.CheckCurrentRegistrantsForStage(eventName, stage, inclusionNames)
+	// A PASS says no included list is this edition's registrants, and an included list
+	// whose name could not be read is evidence that PASS never saw: it may be exactly that
+	// list (#399). Only a PASS is replaced; a verdict reached on names that WERE read
+	// stands on its own.
+	if currentRegistrants.Verdict == audience.VerdictPass {
+		if ids := unreadableIncluded(filters, sentAway, unreadable); len(ids) > 0 {
+			currentRegistrants = audience.Check{
+				Verdict: audience.VerdictNeedsVerify,
+				Findings: []audience.Finding{{
+					Severity: audience.SeverityHigh,
+					Message:  fmt.Sprintf("Could not read included list(s) %s from HubSpot, so whether this list includes this edition's own registrants could not be verified.", strings.Join(ids, ", ")),
+					Fix:      "Re-run the QA once HubSpot answers for these lists, or confirm in HubSpot that none of them is this edition's registration list before sending.",
+				}},
+			}
+		}
+	}
 	// When the list's own exclusions (and the send's) leave nobody, removing this
 	// edition's registrants is not a pass: the send would reach no one. Reported so the
 	// operator sees it before sending, as the send-time credit guard does for check 3.
@@ -2146,6 +2169,18 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		Findings: findings,
 		Overall:  audience.CombineVerdicts(signalMapping.Verdict, suppression.Verdict, completeness.Verdict, currentRegistrants.Verdict),
 	}, nil
+}
+
+// unreadableIncluded are the lists the audited list includes (IN_LIST, less those the send
+// provably does not reach) whose names could not be read, in first-seen order.
+func unreadableIncluded(filters []audience.ListFilter, sentAway, unreadable map[string]bool) []string {
+	ids := make([]string, 0)
+	for _, id := range audience.ReferencedListIDs(filters, "IN_LIST") {
+		if unreadable[id] && !sentAway[id] {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // exclusionNames collects the names of everything the list excludes, following ONE

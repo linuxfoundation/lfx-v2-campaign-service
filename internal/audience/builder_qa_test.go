@@ -256,13 +256,14 @@ func TestCheckSuppression_AnUnreadableExclusionIsNotVerifiedRatherThanAbsent(t *
 	covered := CheckSuppression([]string{"LF Events GDPR Suppression", "LF Global Opt-Outs"}, []string{"601"}, true, false)
 	assert.Equal(t, VerdictPass, covered.Verdict, "nothing left to verify once both were read")
 	assert.Empty(t, covered.Findings)
+	assert.Equal(t, []string{"601"}, covered.UnverifiedListIDs, "the unread id is still reported")
 }
 
 // TestCheckExclusionCompleteness_ZeroExclusionsFails pins the coarse check. Zero
 // exclusions means no unsubscribe, no opt-out and no non-marketable filter, which
 // is a send that should not go out whichever specific list is missing.
 func TestCheckExclusionCompleteness_ZeroExclusionsFails(t *testing.T) {
-	none := CheckExclusionCompleteness([]ListFilter{inList("111", "IN_LIST")}, 0)
+	none := CheckExclusionCompleteness([]ListFilter{inList("111", "IN_LIST")}, 0, nil)
 	assert.Equal(t, VerdictFail, none.Verdict)
 	assert.Zero(t, none.ExclusionCount)
 	require.Len(t, none.Findings, 1)
@@ -272,10 +273,23 @@ func TestCheckExclusionCompleteness_ZeroExclusionsFails(t *testing.T) {
 		inList("111", "IN_LIST"),
 		inList("999", "NOT_IN_LIST"),
 		inList("998", "NOT_IN_LIST"),
-	}, 0)
+	}, 0, nil)
 	assert.Equal(t, VerdictPass, some.Verdict)
 	assert.Equal(t, 2, some.ExclusionCount)
 	assert.Empty(t, some.Findings)
+}
+
+// A send-time suppression that could not be read is never counted, but it means "zero
+// exclusions" is not established either: NEEDS VERIFY naming it, not the FAIL (#399).
+func TestCheckExclusionCompleteness_AnUnreadableSendTimeListIsNotVerified(t *testing.T) {
+	got := CheckExclusionCompleteness([]ListFilter{inList("111", "IN_LIST")}, 0, []string{"601"})
+	assert.Equal(t, VerdictNeedsVerify, got.Verdict)
+	assert.Zero(t, got.ExclusionCount, "an unread list is not counted")
+	require.Len(t, got.Findings, 1)
+	assert.Contains(t, got.Findings[0].Message, "601")
+
+	counted := CheckExclusionCompleteness([]ListFilter{inList("999", "NOT_IN_LIST")}, 0, []string{"601"})
+	assert.Equal(t, VerdictPass, counted.Verdict, "a list with a real exclusion still passes")
 }
 
 // TestVerdictFromFindings_OnlyCriticalFails pins the mapping. A HIGH that failed
@@ -862,12 +876,12 @@ func TestCombineVerdicts_AnEmptyVerdictIsInertAndAnUnknownOneIsNot(t *testing.T)
 // TestCheckExclusionCompleteness_CountsSendTimeSuppression covers the builder's
 // custom lists: no exclusion on the list, suppression applied at send time.
 func TestCheckExclusionCompleteness_CountsSendTimeSuppression(t *testing.T) {
-	got := CheckExclusionCompleteness(nil, 3)
+	got := CheckExclusionCompleteness(nil, 3, nil)
 	assert.Equal(t, VerdictPass, got.Verdict)
 	assert.Equal(t, 3, got.ExclusionCount)
 	assert.Equal(t, 3, got.SendTimeCount)
 
-	none := CheckExclusionCompleteness(nil, 0)
+	none := CheckExclusionCompleteness(nil, 0, nil)
 	assert.Equal(t, VerdictFail, none.Verdict, "nothing on the list and nothing at send time is still a FAIL")
 }
 

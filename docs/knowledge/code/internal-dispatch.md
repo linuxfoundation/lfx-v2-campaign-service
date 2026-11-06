@@ -5075,9 +5075,12 @@ not verify; a suppression that WAS read is still credited. The ids are published
 `unverified_list_ids` on the suppression check, where a false `applied_gdpr` / `applied_opt_out`
 means not verified rather than absent. `CheckSignalMapping` takes the same set and, when no
 engagement signal is found and an inclusion references an unread list, names it in a MEDIUM NEEDS
-VERIFY instead of the generic "could not classify". A list both APIs 404 is still a genuine "" and
-still absent. Send-time suppression ids whose read fails are still skipped uncredited (check 2 counts
-only verified ones); that path is unchanged here. A single request-scoped `map[string]*hubspot.List` cache
+VERIFY instead of the generic "could not classify". A send-time suppression id whose read fails
+with anything but a 404 is still never credited, but it joins check 3's unverified set, and
+`CheckExclusionCompleteness` takes those ids so "zero exclusions" becomes a NEEDS VERIFY naming them
+rather than the FAIL. Check 4 (`current_registrants`) is never left a PASS while an included list
+the send still reaches has an unread name: that list may be this edition's registrants, so the PASS
+becomes a HIGH NEEDS VERIFY naming it. A list both APIs 404 is still a genuine "" and still absent. A single request-scoped `map[string]*hubspot.List` cache
 (seeded from the `SearchLists` hits already in hand, then filled in as `listWithFilters` and
 `listName` resolve ids) is threaded through the whole call so a list referenced from more than one
 place — the searched-for candidate itself, or a list excluded by more than one other list — is
