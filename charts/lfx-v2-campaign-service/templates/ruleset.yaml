@@ -71,7 +71,7 @@ spec:
     # introduces no new FGA object types — every endpoint is nested under
     # /projects/{projectId}/… and gated on the `campaign_manager` relation of that
     # project (reads AND writes; there is no read-only audience), except the Google
-    # conversion-action and audience lists, gated on `global_marketing_ops` (marketing-ops-api below). The projectId is
+    # conversion-action, audience and user lists, gated on `global_marketing_ops` (marketing-ops-api below). The projectId is
     # captured from the URL and the authorizer checks it against `project:{id}`.
     #
     # When OpenFGA is disabled (local dev only) all requests are allowed, matching
@@ -79,7 +79,8 @@ spec:
 
     # Every project-nested campaign path routed through the heimdall middleware in
     # httproute.yaml is gated on the project `campaign_manager` relation, except
-    # google-ads/conversion-actions and google-ads/audiences (marketing-ops-api below). This is a
+    # google-ads/conversion-actions, google-ads/audiences and google-ads/user-lists (marketing-ops-api
+    # below). This is a
     # SINGLE rule covering every other routed family — connections, briefs, campaigns
     # (under a brief), jobs, the google-ads reads and create-form lookups,
     # meta-ads, reddit-ads, twitter-ads and linkedin-ads audience, reddit-ads keywords, and hubspot UTM — because they share the exact same
@@ -221,14 +222,11 @@ spec:
           # Maps a Google Ads campaign id to this service's campaign + brief, so a caller
           # holding keyword rows can address the brief-scoped mutation routes.
           - path: /projects/:projectId/google-ads/campaign-ref
-          # Targeting lookups for the create form's pickers: geo target constants
+          # Targeting lookup for the create form's geo picker: geo target constants
           # (Google's public location table, read with the system fallback like
-          # /accounts) and the user lists on the connection's customer (own connection
-          # only; the service answers 409 on a shared-tenancy platform such as Google Ads,
-          # so this check is not the data boundary). campaign_manager reads; nothing persisted.
+          # /accounts). A campaign_manager read; nothing persisted.
           - path: /projects/:projectId/google-ads/geo-targets
-          - path: /projects/:projectId/google-ads/user-lists
-          # The google-ads conversion-actions and audiences reads are NOT here: they are ruled
+          # The google-ads conversion-actions, audiences and user-lists reads are NOT here: they are ruled
           # by the marketing-ops-api rule below (global_marketing_ops, not campaign_manager).
           # google-ads/audience above (singular) is the audience PERFORMANCE read of the
           # project's own campaigns, a different endpoint.
@@ -338,10 +336,12 @@ spec:
             values:
               aud: {{ .Values.app.audience }}
 
-    # The Google conversion-action list (#458), for the create form's goal picker, and the
+    # The Google conversion-action list (#458), for the create form's goal picker, the
     # Google audience list (#496: custom audiences, combined audiences, Audience resources,
-    # user interests), for the audience pickers. The LF Google Ads customer is shared by
-    # every foundation, so these list every foundation's actions and audiences. campaign_manager is not enough here: it includes the project's
+    # user interests), and the Google user-list read (HubSpot CRM and website visitor lists,
+    # for the Search observed-lists picker), for the audience pickers. The LF Google Ads
+    # customer is shared by every foundation, so these list every foundation's actions,
+    # audiences and user lists. campaign_manager is not enough here: it includes the project's
     # executive_director (lfx-v2-helm model.fga), a foundation-scoped person. These reads are
     # gated on global_marketing_ops on the same project instead: the LF marketing team,
     # granted on every project, so no ROOT project id is needed (#468, #486). Same slug/UUID
@@ -354,6 +354,7 @@ spec:
         routes:
           - path: /projects/:projectId/google-ads/conversion-actions
           - path: /projects/:projectId/google-ads/audiences
+          - path: /projects/:projectId/google-ads/user-lists
       execute:
         - authenticator: oidc
         - authenticator: anonymous_authenticator

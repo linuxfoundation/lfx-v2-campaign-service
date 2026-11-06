@@ -9647,7 +9647,6 @@ func EncodeListGoogleAdsUserListsRequest(encoder func(*http.Request) goahttp.Enc
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
 //   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
 //   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
-//   - "Conflict" (type *lfxv2campaignserviceconnections.UserListsConflictError): http.StatusConflict
 //   - error: internal error
 func DecodeListGoogleAdsUserListsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
 	return func(resp *http.Response) (result any, decodeErr error) {
@@ -9780,20 +9779,6 @@ func DecodeListGoogleAdsUserListsResponse(decoder func(*http.Response) goahttp.D
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
 			}
 			return nil, NewListGoogleAdsUserListsUnauthorized(&body, wwwAuthenticate)
-		case http.StatusConflict:
-			var (
-				body ListGoogleAdsUserListsConflictResponseBody
-				err  error
-			)
-			err = decoder(resp).Decode(&body)
-			if err != nil {
-				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
-			}
-			err = ValidateListGoogleAdsUserListsConflictResponseBody(&body)
-			if err != nil {
-				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-user-lists", err)
-			}
-			return nil, NewListGoogleAdsUserListsConflict(&body)
 		default:
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {

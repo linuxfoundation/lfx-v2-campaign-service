@@ -1016,7 +1016,6 @@ func (c *Client) SuggestGoogleAdsGeoTargets(ctx context.Context, p *SuggestGoogl
 // the "lfx-v2-campaign-service-connections" service.
 // ListGoogleAdsUserLists may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
-//   - "Conflict" (type *UserListsConflictError): User lists cannot be listed per project on an ad account shared across foundations
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
