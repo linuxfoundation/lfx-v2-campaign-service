@@ -165,20 +165,25 @@ the opposite (`TestDeploymentAllowsMultipleReplicasForReddit`), because a render
 stopped ArgoCD generating the manifest at all for a production deployment that runs three
 replicas, holding up every unrelated change to this service.
 
-The constraint it was protecting is still real. The Reddit reporting budget
-(`internal/platform/reddit/report_budget.go`, 45 of an ad account's 60 report requests a minute)
-is a per-process ledger, so N replicas each carry a separate 45. `REDDIT_METRICS_ENABLED` does not
+The constraint it was protecting was real, and is now met at runtime instead (#380). The Reddit
+reporting budget (`internal/platform/reddit/report_budget.go`, 45 of an ad account's 60 report
+requests a minute) WAS a per-process ledger, so N replicas each carried a separate 45. It is now a
+SHARED ledger in Postgres (`postgres.RedditReportLedger`, table `reddit_report_slots`, migration
+000055): slot rows counted and inserted under a per-account transaction advisory lock on the
+database's clock, so the 45 holds account-wide at any replica count. It fails closed — when
+Postgres cannot be asked, a Reddit report attempt is refused (503) rather than sent unbudgeted. `REDDIT_METRICS_ENABLED` does not
 bound it: that flag gates only the Reddit metrics and audience reads, while the Reddit account
 monitor (`connection-reddit-ads/account-monitor` → `ConnectionService.MonitorRedditAdsAccount` →
 `RedditDispatcher.readAccountMonitor`) is ungated and always routed. (Gating the monitor behind
 the flag was rejected: it is a shipped, flag-free feature with its own alert rules,
 `internal/service/rules/monitor_reddit.go`, and gating it would turn its working answer into a
 400.) But always *routed* is not always *polling* — no ticker, cron or subscriber in `internal/`
-or `cmd/` invokes the monitor or the insight reads, so N × 45 is a ceiling concurrent user traffic
-could reach, not a sustained rate, and reaching it costs a 429 on a Monitoring-tab read.
+or `cmd/` invokes the monitor or the insight reads, so the old per-process N-fold ceiling was
+reachable only by concurrent user traffic, never a sustained rate.
 
-The fix that lifts the ceiling is a SHARED ledger — a token bucket keyed by ad account in
-Postgres. Two shortcuts do not work and should not be proposed: a lease like the X stats jobs'
+The shared ledger is a sliding window of slot rows, not a refilling token bucket: a bucket of 45
+refilled at 45 a minute admits up to 90 inside one 60 s window, past Reddit's 60. Two shortcuts
+that were considered before it do not work and should not be proposed: a lease like the X stats jobs'
 makes non-owner pods REFUSE (`domain.ErrStatsJobLeaseNotHeld`), tolerable for flag-gated
 background jobs but not for a user-facing monitor endpoint; and dividing the 45 by the replica
 count leaves 15 at three replicas, below the 24 a single audience read

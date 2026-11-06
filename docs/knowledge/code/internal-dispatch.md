@@ -5229,6 +5229,19 @@ failure is returned unclassified (503). Tests: `reddit_audience_test.go` (mappin
 account, every refusal with zero upstream calls including the LF-system-only case, flag values,
 partial mismatch, matching/unknown provenance, 403 unclassified without the account id).
 
+## Reddit reporting budget — the shared ledger (#380)
+
+`NewRedditDispatcher` gives every dispatcher its own `reddit.NewSharedReportBudgets()`
+(`newRedditReportBudgets`), and `clientOptions` puts `reddit.WithReportBudgets(d.reportBudgets)`
+FIRST in every client it builds — the cached client, the probe's and `ListAccounts`' — so a
+`WithReportBudgets` in `d.opts` (tests, `cmd/verify-metrics`' `NewLocalReportBudgets`) overrides it.
+`SetRedditReportLedger` binds the Postgres ledger into that budget (the container's
+`bindRedditReportLedger`); clients already cached see the binding because they hold the same
+budget. Until it is bound every Reddit report attempt is refused with
+`reddit.ErrReportBudgetUnavailable` (503) and nothing is sent. This package's test binary makes
+`newRedditReportBudgets` unlimited and process-local (`reddit_report_budget_main_test.go`);
+`TestReddit_ReportBudgetIsTheSharedLedger` builds the production budget and pins both halves.
+
 ## Reddit keyword performance read (LFXV2-2665)
 
 `RedditDispatcher` also implements `service.RedditKeywordReader` (`KeywordsEnabled`,

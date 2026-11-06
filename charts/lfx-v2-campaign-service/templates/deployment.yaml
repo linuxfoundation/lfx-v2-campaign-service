@@ -123,16 +123,19 @@
   (POST /ad_accounts/{id}/reports) spends from one quota, the `ads-reporting` policy: 60 requests
   per 60 s per ad account. The ledger that keeps this service under it
   (internal/platform/reddit/report_budget.go: 45 of the 60, 24 of those reserved for the audience
-  and keyword performance reads) is PROCESS-LOCAL, so N replicas each carry a separate 45 against
-  one shared account quota.
+  and keyword performance reads) was PROCESS-LOCAL when that guard existed, so N replicas each
+  carried a separate 45 against one shared account quota. Since #380 it is SHARED: slots are
+  recorded in Postgres (postgres.RedditReportLedger, table reddit_report_slots) under a per-account
+  lock, so the account-wide total is 45 at any replica count, and the ledger fails closed (a 503,
+  nothing sent) when Postgres cannot be asked. Replica count is no longer part of this constraint.
 
-  Why that is a ceiling and not a deploy blocker: every path that spends the ledger is reached
+  Why even the old per-process ceiling was not a deploy blocker: every path that spends the ledger is reached
   only by an inbound request. The Reddit account monitor
   (connection-reddit-ads/account-monitor → ConnectionService.MonitorRedditAdsAccount →
   RedditDispatcher.readAccountMonitor) is ungated by REDDIT_METRICS_ENABLED and therefore always
   ROUTED — but nothing polls it: no ticker, cron or subscriber in internal/ or cmd/ invokes it or
-  the audience and keyword reads. N × 45 a minute is what concurrent user traffic could reach at
-  worst, not a rate the service sustains, and the failure mode when it is reached is a 429 on a
+  the audience and keyword reads. The old per-process N-fold ceiling was what concurrent user
+  traffic could reach at worst, not a rate the service sustains, and the failure mode when it is reached is a 429 on a
   Monitoring-tab read, not lost or corrupted data. A render-time `fail` traded that for blocking
   every unrelated deploy of this service, which is the larger harm.
 
@@ -144,9 +147,9 @@
       MaxReportCampaigns (8) × 3 breakdowns = 24 reports, which is already the whole insight
       sub-budget, so a divided 45 ÷ 3 = 15 could never serve it.
 
-  The fix that does work is a SHARED ledger — a token bucket keyed by ad account in Postgres,
-  replacing the process-local one in report_budget.go. Until that lands the ceiling stands as a
-  documented limit, not a render failure. (The X guard above stays: it is flag-scoped,
+  The fix that does work — a SHARED ledger keyed by ad account in Postgres, replacing the
+  process-local one — landed in #380 (a sliding window of slot rows rather than a refilling token
+  bucket, which could admit up to 90 in one window). (The X guard above stays: it is flag-scoped,
   TWITTER_METRICS_ENABLED gates the X monitor too, and the runtime lease already confines those
   jobs to one pod.)
 */}}

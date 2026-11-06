@@ -377,6 +377,11 @@ func monitorFailureClass(err error) model.MonitorFailureClass {
 		return model.MonitorFailureAuth
 	case errors.Is(err, errTokenEndpointUnavailable):
 		return model.MonitorFailureUpstream5xx
+	case errors.Is(err, ErrReportBudgetExhausted):
+		// This service's own reporting budget refused the attempt before it was sent: a
+		// rate limit, ours rather than Reddit's. (ErrReportBudgetUnavailable — the shared
+		// ledger down — stays other; it is logged where it is raised.)
+		return model.MonitorFailureThrottle
 	case errors.As(err, &ae):
 		switch {
 		case ae.StatusCode == http.StatusUnauthorized, ae.StatusCode == http.StatusForbidden:

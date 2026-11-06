@@ -28,7 +28,8 @@ import (
 //     every window is anchored to it (dateRangeForWindow): "today" is never served across midnight.
 //     Failures are never cached.
 //
-// One guard per dispatcher, so per process, like the budget it protects.
+// One guard per dispatcher, so per process. The budget it protects is shared across replicas
+// (#380); the guard only saves this process's duplicate reads from spending it.
 type redditReportGuard[T any] struct {
 	now func() time.Time
 

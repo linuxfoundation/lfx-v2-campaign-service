@@ -38,6 +38,9 @@ func TestMonitorFailureClass_Mapping(t *testing.T) {
 		{"transport", &transportError{Err: errors.New("connection reset")}, model.MonitorFailureOther},
 		{"deadline", context.DeadlineExceeded, model.MonitorFailureOther},
 		{"plain", errors.New("something"), model.MonitorFailureOther},
+		{"own budget exhausted", fmt.Errorf("reddit API POST /reports: %w", ErrReportBudgetExhausted), model.MonitorFailureThrottle},
+		{"own budget exhausted at the deadline", fmt.Errorf("%w: %w", ErrReportBudgetExhausted, context.DeadlineExceeded), model.MonitorFailureThrottle},
+		{"shared ledger down", fmt.Errorf("%w: connection refused", ErrReportBudgetUnavailable), model.MonitorFailureOther},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
