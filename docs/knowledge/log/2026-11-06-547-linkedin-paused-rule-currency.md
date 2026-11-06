@@ -16,12 +16,16 @@ BudgetDay > 1`), so a JPY campaign at ¥2/day counted as real budget and a KWD a
   skipped item (`moneyRulesSkippedItem`) — but only over the measured, budgeted, PAUSED rows
   (`linkedinPausedBudgeted`): LinkedIn's currency comes from the budgets, so an account whose
   campaigns carry none reports no currency for a reason that skipped nothing.
+- A row the dispatcher marked PacingUnknown (its budget's own currency unreadable or disagreeing
+  with the account's other budgets) is not sized in the account's currency: its budget may not
+  be in it.
 - Sweep: no other monitor (Google, Microsoft, X, Meta, Reddit, HubSpot) has a remaining
   USD-sized money literal; the rest of their thresholds are percentages and counts.
 - Response shape unchanged; the `currency` field's description now names the LinkedIn rule.
 
 Tests: `TestLinkedInPausedRealBudget_SizedInAccountCurrency`,
-`TestLinkedInMoneyRuleSkipped_OnlyWhenAPausedBudgetWasThere` and
+`TestLinkedInMoneyRuleSkipped_OnlyWhenAPausedBudgetWasThere`,
+`TestLinkedInPausedRealBudget_UntrustedBudgetCurrencyNotSized`, `TestLinkedInPausedBudgeted_ExactSet` and
 `TestMonitorLinkedinAdsAccount_RulesSizedInReadCurrency` each fail without the change they pin
 (old literals restored, skipped item removed or unfiltered, currency not passed by the service,
 amount not rounded to the minor unit).

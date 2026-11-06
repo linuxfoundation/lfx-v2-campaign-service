@@ -150,11 +150,14 @@ func linkedinPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) 
 	return 0
 }
 
-// linkedinPausedBudgeted is the subset of rows the paused-with-real-budget rule examines.
+// linkedinPausedBudgeted is the subset of rows the paused-with-real-budget rule would examine
+// had the currency been sizable: measured (not FetchFailed), PAUSED, with a budget. It applies
+// the measured filter itself rather than leaning on moneyRulesSkippedItem's, so it returns
+// exactly the set its callers' comments describe.
 func linkedinPausedBudgeted(rows []model.AccountMonitorRow) []model.AccountMonitorRow {
 	var out []model.AccountMonitorRow
 	for _, r := range rows {
-		if r.Metrics.Status == "PAUSED" && (r.Metrics.TotalBudget > 0 || r.Metrics.BudgetDay > 0) {
+		if !r.Metrics.FetchFailed && r.Metrics.Status == "PAUSED" && (r.Metrics.TotalBudget > 0 || r.Metrics.BudgetDay > 0) {
 			out = append(out, r)
 		}
 	}
@@ -202,7 +205,10 @@ func linkedinActionItems(m model.AccountCampaignMetrics, pacingPct float64, labe
 	// Sized in the account's currency (isRealBudget, #454): 10 lifetime or 1 a day in USD terms.
 	// Before, those were compared as dollars, so a ¥2/day JPY campaign counted as real budget
 	// and a KWD account's 1/day (about $3) did not.
-	if m.Status == "PAUSED" && isRealBudget(m.TotalBudget, m.BudgetDay, currency) {
+	// A row the dispatcher marked PacingUnknown has a budget whose own currency could not be
+	// trusted (unreadable, or disagreeing with the account's other budgets), so the account's
+	// currency does not size it either.
+	if m.Status == "PAUSED" && !m.PacingUnknown && isRealBudget(m.TotalBudget, m.BudgetDay, currency) {
 		add(model.MonitorPriorityLow,
 			"Campaign is PAUSED with real budget",
 			"Confirm intentional pause or activate")

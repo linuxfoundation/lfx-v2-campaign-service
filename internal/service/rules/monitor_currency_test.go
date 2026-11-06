@@ -342,3 +342,28 @@ func TestLinkedInMoneyRuleSkipped_OnlyWhenAPausedBudgetWasThere(t *testing.T) {
 		}
 	}
 }
+
+// A paused row whose own budget currency the read could not trust (PacingUnknown from the
+// dispatcher) is not sized in the account's currency: its budget may not be in it.
+func TestLinkedInPausedRealBudget_UntrustedBudgetCurrencyNotSized(t *testing.T) {
+	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	row := model.AccountCampaignMetrics{PlatformCampaignID: "1", Name: "c", Status: "PAUSED", BudgetDay: 500, PacingUnknown: true}
+	_, items := EvaluateLinkedInMonitor([]model.AccountCampaignMetrics{row}, 30, now, "EUR")
+	if hasItem(items, model.MonitorPriorityLow, "PAUSED with real budget") {
+		t.Errorf("paused item fired on a budget of untrusted currency; items = %+v", items)
+	}
+}
+
+// linkedinPausedBudgeted returns exactly the measured, budgeted, PAUSED rows, on its own — not
+// only once moneyRulesSkippedItem's measured filter has also run.
+func TestLinkedInPausedBudgeted_ExactSet(t *testing.T) {
+	row := func(status string, total float64, failed bool) model.AccountMonitorRow {
+		return model.AccountMonitorRow{Metrics: model.AccountCampaignMetrics{Status: status, TotalBudget: total, FetchFailed: failed}}
+	}
+	got := linkedinPausedBudgeted([]model.AccountMonitorRow{
+		row("PAUSED", 500, false), row("PAUSED", 500, true), row("PAUSED", 0, false), row("ACTIVE", 500, false),
+	})
+	if len(got) != 1 || got[0].Metrics.FetchFailed || got[0].Metrics.Status != "PAUSED" {
+		t.Errorf("linkedinPausedBudgeted = %+v, want only the measured, budgeted, PAUSED row", got)
+	}
+}
