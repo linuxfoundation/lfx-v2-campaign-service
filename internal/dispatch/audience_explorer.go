@@ -6,6 +6,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
@@ -1888,13 +1889,26 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	// Names of every list referenced in EITHER direction. The names are what the
 	// checks classify on — "IN_LIST 12345" carries no signal, while "LF Events GDPR
 	// Suppression" carries all of it.
+	//
+	// unreadable holds the ids whose name could not be READ (a non-404 failure), as
+	// opposed to a list that genuinely has no name to read. Both leave "" in nameByID;
+	// only the first is missing evidence, which the checks must report as unverified
+	// rather than classify as absent (#399).
 	nameByID := map[string]string{}
+	unreadable := map[string]bool{}
+	resolveName := func(id string) {
+		name, unread := x.listName(ctx, client, cache, id)
+		nameByID[id] = name
+		if unread {
+			unreadable[id] = true
+		}
+	}
 	for _, operator := range []string{"IN_LIST", "NOT_IN_LIST"} {
 		for _, id := range audience.ReferencedListIDs(filters, operator) {
 			if _, done := nameByID[id]; done {
 				continue
 			}
-			nameByID[id] = x.listName(ctx, client, cache, id)
+			resolveName(id)
 		}
 	}
 
@@ -1964,7 +1978,7 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 			continue
 		}
 		if _, done := nameByID[id]; !done {
-			nameByID[id] = x.listName(ctx, client, cache, id)
+			resolveName(id)
 		}
 		sendTimeIDs = append(sendTimeIDs, id)
 	}
@@ -1991,7 +2005,7 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 			editionsAway = map[string]bool{}
 		}
 	}
-	exclusionNames := x.exclusionNames(ctx, client, cache, append(excludedIDs, sendTimeIDs...), nameByID)
+	exclusionNames, unverifiedExclusions := x.exclusionNames(ctx, client, cache, append(excludedIDs, sendTimeIDs...), nameByID, unreadable)
 
 	// The names this list INCLUDES, for check 4. One hop is not needed here, unlike the
 	// exclusions: ComposeMaster wraps exclusions in a single Combined-Suppression list whose
@@ -2084,8 +2098,8 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		}
 	}
 
-	signalMapping := audience.CheckSignalMapping(filters, nameByID)
-	suppression := audience.CheckSuppression(exclusionNames, targetsEU, targetsCA)
+	signalMapping := audience.CheckSignalMapping(filters, nameByID, unreadable)
+	suppression := audience.CheckSuppression(exclusionNames, unverifiedExclusions, targetsEU, targetsCA)
 	completeness := audience.CheckExclusionCompleteness(filters, len(sendTimeIDs))
 	// stage gates check 4: a Post-Event send is FOR this edition's attendees, so it reports
 	// NOT APPLICABLE there instead of a false CRITICAL (#244). Absent runs it as before.
@@ -2145,36 +2159,51 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 // Exactly one hop. Suppression lists reference each other, and an unbounded walk
 // across a portal's exclusion graph would spend the request's deadline reading lists
 // whose bearing on this audience is already indirect.
-func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.Client, cache map[string]*hubspot.List, excludedIDs []string, nameByID map[string]string) []string {
+//
+// The second result is the exclusions that could not be READ (#399): an id whose name
+// is in unreadable, a wrapper whose own filters failed for any reason but a 404, and a
+// covered child whose name could not be read. Each may be the GDPR or opt-out
+// suppression, so check 3 reports them as unverified instead of as absent. unreadable
+// is updated in place for the children resolved here.
+func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.Client, cache map[string]*hubspot.List, excludedIDs []string, nameByID map[string]string, unreadable map[string]bool) ([]string, []string) {
 	out := make([]string, 0, 8)
+	unverified := make([]string, 0)
 	for _, id := range excludedIDs {
 		if name := nameByID[id]; name != "" {
 			out = append(out, name)
+		} else if unreadable[id] {
+			unverified = append(unverified, id)
 		}
 		wrapper, _, err := x.listWithFilters(ctx, client, cache, id)
 		if err != nil || wrapper == nil {
 			// An unreadable exclusion is reported by its own name only. Failing the
-			// whole audit would withhold the two checks that did complete.
+			// whole audit would withhold the two checks that did complete. A 404 is
+			// an answer (no such list, so nothing behind it to credit); any other
+			// failure leaves what the wrapper covers unknown.
+			if err != nil && !errors.Is(err, audience.ErrListNotFound) && !unreadable[id] {
+				unverified = append(unverified, id)
+			}
 			continue
 		}
 		// Only the children the wrapper FULLY covers are credited: an "A OR B" wrapper
 		// excludes everyone in A and in B, but "GDPR AND Opt-Outs" excludes only the
 		// contacts in both, so neither protection is applied by it.
 		for _, childID := range audience.CoveredListIDs(wrapper.FilterBranch) {
-			if name, done := nameByID[childID]; done {
-				if name != "" {
-					out = append(out, name)
+			if _, done := nameByID[childID]; !done {
+				name, unread := x.listName(ctx, client, cache, childID)
+				nameByID[childID] = name
+				if unread {
+					unreadable[childID] = true
 				}
-				continue
 			}
-			name := x.listName(ctx, client, cache, childID)
-			nameByID[childID] = name
-			if name != "" {
+			if name := nameByID[childID]; name != "" {
 				out = append(out, name)
+			} else if unreadable[childID] {
+				unverified = append(unverified, childID)
 			}
 		}
 	}
-	return out
+	return out, audience.UniqueIDs(unverified)
 }
 
 // listName resolves a list id to a name via the cache, falling back to the legacy
@@ -2182,20 +2211,30 @@ func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.C
 //
 // A referenced list can predate the v3 Lists API while still being referenced by a
 // current list's filters — and for QA a name that cannot be read is a suppression
-// that cannot be credited. "" means genuinely unresolvable.
-func (x *AudienceExplorer) listName(ctx context.Context, client *hubspot.Client, cache map[string]*hubspot.List, listID string) string {
+// that cannot be credited.
+//
+// unreadable reports that the name could not be READ: neither API produced one and at
+// least one of them failed with something other than a 404 (a throttle, a 401/403, a
+// 5xx). That is missing evidence, and the QA checks must say "could not verify" for
+// it rather than classify the list as absent (#399). A 404 from both, or a list that
+// answers with no name, is a genuine "" and unreadable is false: that list is
+// provably not a suppression this audience applies. Classified on hubspot.IsNotFound
+// exactly as listWithFilters and listBriefs are.
+func (x *AudienceExplorer) listName(ctx context.Context, client *hubspot.Client, cache map[string]*hubspot.List, listID string) (name string, unreadable bool) {
 	if list, ok := cache[listID]; ok && list != nil {
-		return list.Name
+		return list.Name, false
 	}
-	if list, err := client.GetList(ctx, listID); err == nil && list != nil {
+	list, err := client.GetList(ctx, listID)
+	if err == nil && list != nil {
 		cache[listID] = list
-		return list.Name
+		return list.Name, false
 	}
-	// The error is discarded on purpose: this resolver's contract is "" for genuinely
-	// unresolvable, and a name that could not be read and a list that has no legacy name
-	// are the same answer to a caller that only wants to print one.
-	name, _ := client.LegacyListName(ctx, listID)
-	return name
+	legacy, lerr := client.LegacyListName(ctx, listID)
+	if legacy != "" {
+		return legacy, false
+	}
+	failed := func(e error) bool { return e != nil && !hubspot.IsNotFound(e) }
+	return "", failed(err) || failed(lerr)
 }
 
 // listWithFilters fetches a list with its filters and flattens them, consulting

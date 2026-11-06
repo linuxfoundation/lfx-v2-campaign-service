@@ -47,6 +47,12 @@ type fakePortal struct {
 	eventPropTypes map[string]string
 	// regProps are the registration event's properties, name -> type.
 	regProps map[string]string
+	// forbidden are list ids the portal refuses to read with a 403, from both the v3
+	// and the legacy API: a list that exists but whose name cannot be read.
+	forbidden map[string]bool
+	// legacyNames are names the legacy API returns by id, ahead of forbidden: a list
+	// whose name is readable there while its v3 read (and so its filters) is refused.
+	legacyNames map[string]string
 }
 
 func (p *fakePortal) serve(t *testing.T) *httptest.Server {
@@ -67,8 +73,24 @@ func (p *fakePortal) serve(t *testing.T) *httptest.Server {
 				}
 			}
 			_, _ = io.WriteString(w, `{"lists":[`+strings.Join(hits, ",")+`],"hasMore":false}`)
+		case strings.HasPrefix(r.URL.Path, "/contacts/v1/lists/") && r.Method == http.MethodGet:
+			// The legacy API knows only legacyNames: every other list here is a v3 one.
+			legacyID := strings.TrimPrefix(r.URL.Path, "/contacts/v1/lists/")
+			if name, ok := p.legacyNames[legacyID]; ok {
+				_, _ = io.WriteString(w, `{"listId":`+legacyID+`,"name":"`+name+`"}`)
+				return
+			}
+			if p.forbidden[legacyID] {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
 		case strings.HasPrefix(r.URL.Path, "/crm/v3/lists/") && r.Method == http.MethodGet:
 			id := strings.TrimPrefix(r.URL.Path, "/crm/v3/lists/")
+			if p.forbidden[id] {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
 			for name, lid := range p.lists {
 				if lid == id {
 					size, _ := json.Marshal(p.sizes[id])
@@ -1155,6 +1177,86 @@ func TestRunQA_ASuppressionWrapperCreditsOnlyWhatItFullyCovers(t *testing.T) {
 			assert.Equal(t, tc.applied, out.Checks.Suppression.AppliedOptOut, "opt-out credited")
 		})
 	}
+}
+
+// A list name the portal refused to return (403 from the v3 and legacy APIs) is missing
+// evidence, not an absent list (#399): check 3 must not raise the CRITICAL "no GDPR
+// suppression" or publish the opt-out as absent on it, and check 4 must name the list it
+// could not read. The 404 case is the control: a list that is not there is still absent.
+func TestRunQA_AnUnreadableListNameIsNotVerifiedRatherThanAbsent(t *testing.T) {
+	f := func(op, id string) string {
+		return `{"filterType":"IN_LIST","operator":"` + op + `","listId":` + id + `}`
+	}
+	and := func(fs ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(fs, ",") + `]}`
+	}
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	country := `{"filterType":"PROPERTY","property":"country","operation":{"operationType":"MULTISTRING","operator":"IS_EQUAL_TO","values":["Germany"]}}`
+	critical := func(out *audience.QaOutcome) bool {
+		for _, finding := range out.Checks.Suppression.Findings {
+			if finding.Severity == audience.SeverityCritical {
+				return true
+			}
+		}
+		return false
+	}
+	for name, tc := range map[string]struct {
+		master    string
+		send      []string
+		forbidden map[string]bool
+		legacy    map[string]string
+		// unread is the id the run could not read; "" is the 404 control.
+		unread string
+	}{
+		// The wrapper's own name reads (from the legacy API) but its filters do not, so
+		// what it covers -- the GDPR list -- is unknown.
+		"a wrapper whose filters cannot be read": {master: or(and(f("IN_LIST", "610"), f("NOT_IN_LIST", "700"))), forbidden: map[string]bool{"700": true}, legacy: map[string]string{"700": "26Q4 - Combined Suppression"}, unread: "700"},
+		"a directly excluded GDPR list":          {master: or(and(f("IN_LIST", "610"), f("NOT_IN_LIST", "601"))), forbidden: map[string]bool{"601": true}, unread: "601"},
+		"a GDPR list inside a wrapper":           {master: or(and(f("IN_LIST", "610"))), send: []string{"700"}, forbidden: map[string]bool{"601": true}, unread: "601"},
+		"a GDPR list that is not there (404)":    {master: or(and(f("IN_LIST", "610"), f("NOT_IN_LIST", "404404"))), unread: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			portal := seoulPortal()
+			portal.lists["26Q4 - KubeCon - Master"] = "500"
+			portal.lists["LF Europe GDPR Suppression"] = "601"
+			portal.lists["26Q4 - KubeCon 2026 Registrants"] = "610"
+			portal.lists["26Q4 - Combined Suppression"] = "700"
+			portal.forbidden, portal.legacyNames = tc.forbidden, tc.legacy
+			portal.branches = map[string]string{"500": tc.master, "700": or(and(f("IN_LIST", "601")))}
+			srv := portal.serve(t)
+			defer srv.Close()
+
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", true, false, tc.send)
+			require.NoError(t, err)
+			if tc.unread == "" {
+				assert.True(t, critical(out), "a GDPR list that does not exist is still absent")
+				assert.Empty(t, out.Checks.Suppression.UnverifiedListIDs)
+				return
+			}
+			assert.False(t, critical(out), "an unreadable name is no evidence the GDPR suppression is missing")
+			assert.Equal(t, audience.VerdictNeedsVerify, out.Checks.Suppression.Verdict)
+			assert.Equal(t, []string{tc.unread}, out.Checks.Suppression.UnverifiedListIDs)
+			assert.NotEqual(t, audience.VerdictFail, out.Overall)
+		})
+	}
+
+	t.Run("an unreadable included list is named by check 4's signal mapping", func(t *testing.T) {
+		portal := seoulPortal()
+		portal.lists["26Q4 - KubeCon - Master"] = "500"
+		portal.lists["26Q4 - KubeCon 2026 Registrants"] = "610"
+		portal.forbidden = map[string]bool{"610": true}
+		portal.branches = map[string]string{"500": or(and(country, f("IN_LIST", "610")))}
+		srv := portal.serve(t)
+		defer srv.Close()
+
+		out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", false, false, nil)
+		require.NoError(t, err)
+		assert.Equal(t, audience.VerdictNeedsVerify, out.Checks.SignalMapping.Verdict)
+		require.Len(t, out.Checks.SignalMapping.Findings, 1)
+		assert.Contains(t, out.Checks.SignalMapping.Findings[0].Message, "610")
+	})
 }
 
 // A send-time wrapper that fully covers the audience itself excludes every contact,

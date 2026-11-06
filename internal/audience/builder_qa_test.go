@@ -106,7 +106,7 @@ func TestCheckSignalMapping_DropsExclusionsBeforeJudging(t *testing.T) {
 		inList("999", "NOT_IN_LIST"),
 	}
 
-	got := CheckSignalMapping(filters, names)
+	got := CheckSignalMapping(filters, names, nil)
 	assert.Equal(t, VerdictFail, got.Verdict)
 	require.Len(t, got.Findings, 1)
 	assert.Equal(t, SeverityHigh, got.Findings[0].Severity)
@@ -124,7 +124,7 @@ func TestCheckSignalMapping_Outcomes(t *testing.T) {
 		t.Run("engagement via the referenced list name "+name, func(t *testing.T) {
 			got := CheckSignalMapping(
 				[]ListFilter{inList("111", "IN_LIST")},
-				map[string]string{"111": name},
+				map[string]string{"111": name}, nil,
 			)
 			assert.Equal(t, VerdictPass, got.Verdict)
 			assert.Empty(t, got.Findings)
@@ -132,7 +132,7 @@ func TestCheckSignalMapping_Outcomes(t *testing.T) {
 	}
 
 	t.Run("a manual list has nothing to inspect", func(t *testing.T) {
-		got := CheckSignalMapping(nil, nil)
+		got := CheckSignalMapping(nil, nil, nil)
 		assert.Equal(t, VerdictNeedsVerify, got.Verdict)
 		require.Len(t, got.Findings, 1)
 		assert.Equal(t, SeverityMedium, got.Findings[0].Severity)
@@ -140,13 +140,13 @@ func TestCheckSignalMapping_Outcomes(t *testing.T) {
 	})
 
 	t.Run("an unreadable filter is neither a pass nor a fail", func(t *testing.T) {
-		got := CheckSignalMapping([]ListFilter{{FilterType: "SOMETHING_NEW"}, {FilterType: "PROPERTY", Property: "hs_lead_score"}}, nil)
+		got := CheckSignalMapping([]ListFilter{{FilterType: "SOMETHING_NEW"}, {FilterType: "PROPERTY", Property: "hs_lead_score"}}, nil, nil)
 		assert.Equal(t, VerdictNeedsVerify, got.Verdict,
 			"an unrecognised shape must not FAIL a good list, and must not PASS a bad one")
 	})
 
 	t.Run("an all-empty signature set does not pass", func(t *testing.T) {
-		got := CheckSignalMapping([]ListFilter{{}, {}}, nil)
+		got := CheckSignalMapping([]ListFilter{{}, {}}, nil, nil)
 		assert.Equal(t, VerdictFail, got.Verdict,
 			"filters carrying none of the fields we read count as firmographic-or-unknown, never as engagement")
 	})
@@ -156,7 +156,7 @@ func TestCheckSignalMapping_Outcomes(t *testing.T) {
 // service. It is the single condition that blocks rather than warns, so a
 // severity downgrade here converts a compliance stop into a line of advice.
 func TestCheckSuppression_EUWithoutGDPRIsTheOnlyFail(t *testing.T) {
-	got := CheckSuppression([]string{"LF Global Opt-Outs"}, true, false)
+	got := CheckSuppression([]string{"LF Global Opt-Outs"}, nil, true, false)
 	assert.Equal(t, VerdictFail, got.Verdict)
 	assert.False(t, got.AppliedGDPR)
 	assert.True(t, got.AppliedOptOut)
@@ -164,7 +164,7 @@ func TestCheckSuppression_EUWithoutGDPRIsTheOnlyFail(t *testing.T) {
 	assert.Equal(t, SeverityCritical, got.Findings[0].Severity)
 	assert.Contains(t, got.Findings[0].Message, "GDPR")
 
-	clean := CheckSuppression([]string{"LF Events GDPR Suppression", "LF Global Opt-Outs"}, true, false)
+	clean := CheckSuppression([]string{"LF Events GDPR Suppression", "LF Global Opt-Outs"}, nil, true, false)
 	assert.Equal(t, VerdictPass, clean.Verdict)
 	assert.True(t, clean.AppliedGDPR)
 	assert.True(t, clean.AppliedOptOut)
@@ -176,12 +176,12 @@ func TestCheckSuppression_EUWithoutGDPRIsTheOnlyFail(t *testing.T) {
 // gets ONE finding (the opt-out one); putting three findings on one cause buries
 // the one that matters.
 func TestCheckSuppression_DoesNotDoublePenaliseOneCause(t *testing.T) {
-	withOther := CheckSuppression([]string{"Hard Bounces"}, false, false)
+	withOther := CheckSuppression([]string{"Hard Bounces"}, nil, false, false)
 	require.Len(t, withOther.Findings, 1)
 	assert.Equal(t, SeverityHigh, withOther.Findings[0].Severity)
 	assert.Contains(t, withOther.Findings[0].Message, "Opt-Out")
 
-	withNothing := CheckSuppression(nil, false, false)
+	withNothing := CheckSuppression(nil, nil, false, false)
 	require.Len(t, withNothing.Findings, 2,
 		"a list that excludes NOTHING is told about both the missing GDPR list and the missing opt-out list")
 	assert.Equal(t, VerdictNeedsVerify, withNothing.Verdict,
@@ -193,7 +193,7 @@ func TestCheckSuppression_DoesNotDoublePenaliseOneCause(t *testing.T) {
 // cannot ask for one to be applied. A remediation the operator cannot perform is
 // worse than none.
 func TestCheckSuppression_CanadaAsksForConfirmationNotForAList(t *testing.T) {
-	got := CheckSuppression(nil, false, true)
+	got := CheckSuppression(nil, nil, false, true)
 	var casl *Finding
 	for i := range got.Findings {
 		if assert.NotEmpty(t, got.Findings[i].Fix) && strings.Contains(got.Findings[i].Message, "Canada") {
@@ -204,11 +204,58 @@ func TestCheckSuppression_CanadaAsksForConfirmationNotForAList(t *testing.T) {
 	assert.Equal(t, SeverityMedium, casl.Severity)
 	assert.Contains(t, casl.Fix, "confirm")
 
-	quiet := CheckSuppression([]string{"LF Master Exclusion", "LF Global Opt-Outs"}, false, true)
+	quiet := CheckSuppression([]string{"LF Master Exclusion", "LF Global Opt-Outs"}, nil, false, true)
 	for _, f := range quiet.Findings {
 		assert.NotContains(t, f.Message, "Canada",
 			"a generic suppression exclusion satisfies the Canada check; repeating it would be noise")
 	}
+}
+
+// An unreadable referenced name is missing evidence, not firmographic evidence: the
+// check says which list it could not read rather than judging the list on what is
+// left (#399). A 404'd list (genuinely "", not unreadable) keeps the generic answer.
+func TestCheckSignalMapping_AnUnreadableNameIsNotVerifiedRatherThanFailed(t *testing.T) {
+	filters := []ListFilter{{FilterType: "PROPERTY", Property: "country"}, inList("111", "IN_LIST")}
+	names := map[string]string{"111": ""}
+
+	got := CheckSignalMapping(filters, names, map[string]bool{"111": true})
+	assert.Equal(t, VerdictNeedsVerify, got.Verdict, "an unread name must not produce the FAIL")
+	require.Len(t, got.Findings, 1)
+	assert.Contains(t, got.Findings[0].Message, "Could not read")
+	assert.Contains(t, got.Findings[0].Message, "111", "the finding names the list it could not read")
+
+	gone := CheckSignalMapping(filters, names, nil)
+	assert.Equal(t, VerdictNeedsVerify, gone.Verdict)
+	require.Len(t, gone.Findings, 1)
+	assert.NotContains(t, gone.Findings[0].Message, "Could not read", "a list with no name is not an unread one")
+
+	excluded := CheckSignalMapping([]ListFilter{{FilterType: "PROPERTY", Property: "country"}, inList("111", "NOT_IN_LIST")}, names, map[string]bool{"111": true})
+	assert.Equal(t, VerdictFail, excluded.Verdict, "an unreadable EXCLUSION carries no inclusion signal either way")
+}
+
+// An unreadable exclusion name withholds every absence finding, including the one
+// CRITICAL, and says what it could not verify instead (#399). What WAS read is still
+// credited.
+func TestCheckSuppression_AnUnreadableExclusionIsNotVerifiedRatherThanAbsent(t *testing.T) {
+	got := CheckSuppression([]string{"LF Global Opt-Outs"}, []string{"601"}, true, true)
+	assert.Equal(t, VerdictNeedsVerify, got.Verdict, "no CRITICAL on evidence that could not be read")
+	assert.False(t, got.AppliedGDPR)
+	assert.True(t, got.AppliedOptOut, "a suppression that was read is still credited")
+	assert.Equal(t, []string{"601"}, got.UnverifiedListIDs)
+	require.Len(t, got.Findings, 1)
+	assert.Equal(t, SeverityHigh, got.Findings[0].Severity)
+	assert.Contains(t, got.Findings[0].Message, "601")
+	assert.Contains(t, got.Findings[0].Message, "GDPR")
+	assert.NotContains(t, got.Findings[0].Message, "Opt-Out", "the opt-out was read and found")
+
+	nothingRead := CheckSuppression(nil, []string{"601", "601"}, false, false)
+	assert.Equal(t, VerdictNeedsVerify, nothingRead.Verdict)
+	require.Len(t, nothingRead.Findings, 1, "one finding for one cause, not the excludes-NOTHING pair")
+	assert.Equal(t, []string{"601"}, nothingRead.UnverifiedListIDs)
+
+	covered := CheckSuppression([]string{"LF Events GDPR Suppression", "LF Global Opt-Outs"}, []string{"601"}, true, false)
+	assert.Equal(t, VerdictPass, covered.Verdict, "nothing left to verify once both were read")
+	assert.Empty(t, covered.Findings)
 }
 
 // TestCheckExclusionCompleteness_ZeroExclusionsFails pins the coarse check. Zero

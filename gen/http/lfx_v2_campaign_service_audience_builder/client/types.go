@@ -1545,6 +1545,11 @@ type AudienceQaSuppressionCheckResponseBody struct {
 	AppliedGdpr *bool `form:"applied_gdpr,omitempty" json:"applied_gdpr,omitempty" xml:"applied_gdpr,omitempty"`
 	// An opt-out/unsubscribe suppression list was applied
 	AppliedOptOut *bool `form:"applied_opt_out,omitempty" json:"applied_opt_out,omitempty" xml:"applied_opt_out,omitempty"`
+	// Excluded list ids whose names (or, for a suppression wrapper, whose covered
+	// lists) could not be read from HubSpot (a non-404 failure). When present,
+	// applied_gdpr / applied_opt_out false means the suppression could not be
+	// verified, not that it is absent.
+	UnverifiedListIds []string `form:"unverified_list_ids,omitempty" json:"unverified_list_ids,omitempty" xml:"unverified_list_ids,omitempty"`
 }
 
 // AudienceQaExclusionCheckResponseBody is used to define fields on response

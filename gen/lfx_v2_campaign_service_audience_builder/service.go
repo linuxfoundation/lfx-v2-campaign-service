@@ -607,6 +607,11 @@ type AudienceQaSuppressionCheck struct {
 	AppliedGdpr bool
 	// An opt-out/unsubscribe suppression list was applied
 	AppliedOptOut bool
+	// Excluded list ids whose names (or, for a suppression wrapper, whose covered
+	// lists) could not be read from HubSpot (a non-404 failure). When present,
+	// applied_gdpr / applied_opt_out false means the suppression could not be
+	// verified, not that it is absent.
+	UnverifiedListIds []string
 }
 
 type AudienceSuppressionList struct {

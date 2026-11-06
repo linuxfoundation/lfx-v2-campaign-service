@@ -501,6 +501,10 @@ var AudienceQaSuppressionCheck = Type("audience-qa-suppression-check", func() {
 	Attribute("findings")
 	Attribute("applied_gdpr", Boolean, "A GDPR/EU suppression list was applied")
 	Attribute("applied_opt_out", Boolean, "An opt-out/unsubscribe suppression list was applied")
+	// OPTIONAL and additive (#399): absent when every exclusion was read, so the pair above
+	// keeps its meaning for every existing client. Present, a false applied_* is NOT VERIFIED
+	// rather than absent, and the check is NEEDS VERIFY instead of the CRITICAL.
+	Attribute("unverified_list_ids", ArrayOf(String), "Excluded list ids whose names (or, for a suppression wrapper, whose covered lists) could not be read from HubSpot (a non-404 failure). When present, applied_gdpr / applied_opt_out false means the suppression could not be verified, not that it is absent.")
 	Required("verdict", "findings", "applied_gdpr", "applied_opt_out")
 })
 

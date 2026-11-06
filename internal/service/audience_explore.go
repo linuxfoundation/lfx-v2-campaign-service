@@ -730,6 +730,8 @@ func (s *AudienceExploreService) RunAudienceQa(ctx context.Context, p *explore.R
 				Findings:      findingResults(outcome.Checks.Suppression.Findings),
 				AppliedGdpr:   outcome.Checks.Suppression.AppliedGDPR,
 				AppliedOptOut: outcome.Checks.Suppression.AppliedOptOut,
+				// Omitted on the wire (omitempty) when every exclusion was read.
+				UnverifiedListIds: outcome.Checks.Suppression.UnverifiedListIDs,
 			},
 			ExclusionCompleteness: &explore.AudienceQaExclusionCheck{
 				Verdict:        string(outcome.Checks.ExclusionCompleteness.Verdict),
