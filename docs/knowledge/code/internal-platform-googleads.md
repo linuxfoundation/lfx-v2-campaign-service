@@ -2164,6 +2164,20 @@ before the budget mutate, and refused on every channel but Search.
   channel and before the budget, unless `GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED` is exactly
   `"true"`: a per-deployment opt-in the chart sets to `"false"`, turned on in lfx-v2-argocd.
   `searchAssets` names no account resource and is not gated.
+- **Type check (#548).** A resource name says nothing about its set's type, and Google attaches a
+  `NEGATIVE_PLACEMENTS` or `BRANDS` set without complaint (#536). So `CreateCampaign`, right
+  after the preflight and before the image fetch and the budget mutate, calls
+  `checkSharedNegativeKeywordListTypes`. It sends ONE `googleAds:search` on the connection's
+  account (`SELECT shared_set.resource_name, shared_set.type, shared_set.status FROM shared_set
+  WHERE shared_set.resource_name IN (...)`, the validated names as literals). A list whose row is
+  not `NEGATIVE_KEYWORDS`, is not `ENABLED`, or is missing is refused as a
+  `WrapQuotedPreflightRefusal`. The refusal names the list by its full name and its set id, each
+  quoted, and the stored account id, quoted as #528 does. Only the set id
+  survives into the job result. The type is named only from a fixed vocabulary
+  (`sharedSetTypesNamed`), never echoed from the response. A read that fails, or rows that do not
+  decode, name a set not asked for, or repeat one, fail the create as a plain error before any
+  write. The status stays on the chain for the dispatch layer's "answered HTTP n" mapping, and the
+  claim is released. No list means no read.
 - `googleAdsMutateOperation` gained the `assetOperation` and `campaignAssetOperation` arms
   and `googleAdsMutateResponse` the `assetResult` and `campaignAssetResult` arms.
 
@@ -2183,9 +2197,10 @@ existing text asset of the same text, the reuse case the result check accepts. A
 `<campaignId>~<sharedSetId>` results in operation order, and the positional check passed. GAQL read
 back both `campaign_shared_set` rows `ENABLED`, and the sets' BROAD, PHRASE and EXACT keyword
 criteria as created. Google does not refuse a shared set of another type on a Search campaign:
-validateOnly accepted a `NEGATIVE_PLACEMENTS` and a `BRANDS` set. This client does not check the
-type either, so it would attach one. Such an attach has not been made for real, and its effect is
-unobserved.
+validateOnly accepted a `NEGATIVE_PLACEMENTS` and a `BRANDS` set. Since #548 this client refuses
+one itself through the type read above. Such an attach has not been made for real, and its effect is
+unobserved. NOT LIVE-VERIFIED: the type read's GAQL against the live account (unit-tested against
+the documented v23 `shared_set` fields only).
 
 The image geometry and the counts were probed at their boundaries on 2026-11-06 (#538):
 validateOnly `googleAds:mutate` requests on account 8666746580 carrying `buildSearchAssets`' own
