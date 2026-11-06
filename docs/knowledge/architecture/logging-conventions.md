@@ -60,9 +60,25 @@ type:
   `append(fields, ...)...`) through every assignment to that same variable. A
   shadowing variable counts as a different variable.
 
-Calls are matched by the function they resolve to, so `http.Error` is not a log
-call. A message or value that reads "project" is not a key and passes. A key
-held in a named constant is checked. Only a key built at runtime is not.
+A spread sequence is resolved in full before it is paired, so a pair split
+across a slice and its `append` is paired as slog pairs it. An explicit
+`any("k")` conversion is looked through, because slog classifies the dynamic
+value. Calls are matched by the function they resolve to, so `http.Error` is
+not a log call. A message or value that reads "project" is not a key and
+passes. A key held in a named constant is checked.
+
+**What it does not see:**
+
+- A key built at runtime.
+- A key that reaches slog across a function boundary. For example, a wrapper
+  `func warn(msg string, args ...any)` that spreads `args...` into slog, or a
+  `[]any` passed in as a parameter. The guard traces a spread only through
+  assignments in the same file, and a parameter has none.
+
+The repo has no such logging wrapper today. The one slice that is handed to a
+helper (`logFields` in `internal/service/meta_ad_sets.go`) is checked where it
+is built, because it is also spread into slog there. Add a wrapper only with a
+matching extension to the guard.
 `TestLogKeys_ReadsKeyPositionsOnly` pins each rule. A floor on the number of
 `project_id` keys seen keeps the walk from passing vacuously.
 

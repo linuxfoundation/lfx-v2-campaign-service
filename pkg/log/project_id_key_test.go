@@ -165,6 +165,12 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 				args := []any{"project_id", id}
 				slog.Info("m", args...)
 			}`, []string{"project_id"}},
+		{"pair split across a slice and its append", `fields := []any{"kind"}
+			slog.Info("m", append(fields, "ok", "projectID", id)...)`, []string{"kind", "projectID"}},
+		{"pair split across a slice and a later append", `fields := []any{"a", 1, "b"}
+			fields = append(fields, "ok", "projectID", id)
+			slog.Info("m", fields...)`, []string{"a", "b", "projectID"}},
+		{"interface conversion is looked through", `slog.Info("m", any("project_id"), "project")`, []string{"project_id"}},
 		{"elided slog.Attr in a slice", `slog.LogAttrs(ctx, lvl, "m", []slog.Attr{{Key: "projectID", Value: slog.AnyValue(v)}}...)`, []string{"projectID"}},
 		{"explicit slog.Attr", `_ = slog.Attr{Key: "project", Value: slog.AnyValue(v)}`, []string{"project"}},
 		{"another package's Error is not a log call", `http.Error(w, "project", 400)`, nil},
@@ -323,46 +329,95 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 		return true
 	})
 
-	var kvWalk func(args []ast.Expr, spreadLast bool, visiting map[types.Object]bool)
-	var spread func(e ast.Expr, visiting map[types.Object]bool)
-	spread = func(e ast.Expr, visiting map[types.Object]bool) {
+	// flatten resolves an argument list whose last element may be a spread into the
+	// sequences slog would see, one per alternative way the spread slice was built. The
+	// whole sequence is resolved before anything is classified, so a key/value pair that
+	// straddles a slice and its append (fields := []any{"kind"}; append(fields, "ok",
+	// "projectID", id)...) is paired exactly as slog pairs it.
+	var flatten func(args []ast.Expr, spreadLast bool, visiting map[types.Object]bool) [][]ast.Expr
+	var flattenSlice func(e ast.Expr, visiting map[types.Object]bool) [][]ast.Expr
+	flatten = func(args []ast.Expr, spreadLast bool, visiting map[types.Object]bool) [][]ast.Expr {
+		if !spreadLast || len(args) == 0 {
+			return [][]ast.Expr{args}
+		}
+		head := args[:len(args)-1]
+		var out [][]ast.Expr
+		for _, tail := range flattenSlice(args[len(args)-1], visiting) {
+			out = append(out, append(append([]ast.Expr{}, head...), tail...))
+		}
+		return out
+	}
+	// selfAppend reports whether e is append(o, ...) and returns the appended arguments.
+	selfAppend := func(e ast.Expr, o types.Object) (*ast.CallExpr, bool) {
+		c, ok := ast.Unparen(e).(*ast.CallExpr)
+		if !ok || len(c.Args) == 0 || !isAppend(c, info) {
+			return nil, false
+		}
+		id, ok := ast.Unparen(c.Args[0]).(*ast.Ident)
+		return c, ok && objOf(id) == o
+	}
+	flattenSlice = func(e ast.Expr, visiting map[types.Object]bool) [][]ast.Expr {
 		switch x := ast.Unparen(e).(type) {
 		case *ast.Ident:
 			o := objOf(x)
 			if o == nil || visiting[o] {
-				return
+				return [][]ast.Expr{nil}
 			}
 			visiting[o] = true
+			defer delete(visiting, o)
+			// Each non-append assignment is one way the slice starts; every
+			// x = append(x, ...) then extends it, in source order.
+			var bases [][]ast.Expr
+			var extra []ast.Expr
 			for _, src := range sources[o] {
-				spread(src, visiting)
+				if c, ok := selfAppend(src, o); ok {
+					extra = append(extra, flatten(c.Args[1:], c.Ellipsis.IsValid(), visiting)[0]...)
+					continue
+				}
+				bases = append(bases, flattenSlice(src, visiting)...)
 			}
-			delete(visiting, o)
+			if len(bases) == 0 {
+				bases = [][]ast.Expr{nil} // a parameter, or declared without a value
+			}
+			var out [][]ast.Expr
+			for _, b := range bases {
+				out = append(out, append(append([]ast.Expr{}, b...), extra...))
+			}
+			return out
 		case *ast.CompositeLit:
 			if isAnySlice(info.TypeOf(x)) {
-				kvWalk(x.Elts, false, visiting)
+				return [][]ast.Expr{x.Elts}
 			}
 		case *ast.CallExpr:
-			if fn, ok := ast.Unparen(x.Fun).(*ast.Ident); ok && len(x.Args) > 0 {
-				if b, ok := info.Uses[fn].(*types.Builtin); ok && b.Name() == "append" {
-					spread(x.Args[0], visiting)
-					kvWalk(x.Args[1:], x.Ellipsis.IsValid(), visiting)
+			if isAppend(x, info) && len(x.Args) > 0 {
+				var out [][]ast.Expr
+				rest := flatten(x.Args[1:], x.Ellipsis.IsValid(), visiting)[0]
+				for _, b := range flattenSlice(x.Args[0], visiting) {
+					out = append(out, append(append([]ast.Expr{}, b...), rest...))
 				}
+				return out
 			}
 		}
+		return [][]ast.Expr{nil}
 	}
-	kvWalk = func(args []ast.Expr, spreadLast bool, visiting map[types.Object]bool) {
-		for i := 0; i < len(args); {
-			a := args[i]
-			if spreadLast && i == len(args)-1 {
-				spread(a, visiting)
-				return
-			}
+	// classify pairs one flattened sequence as slog does: a string is a key and takes two
+	// slots; a slog.Attr, or any other value (logged under !BADKEY), takes one. An explicit
+	// conversion to an interface (any("k")) is looked through, because slog classifies
+	// the dynamic value, not the static type.
+	classify := func(seq []ast.Expr) {
+		for i := 0; i < len(seq); {
+			a := unwrapIfaceConv(seq[i], info)
 			if b, ok := info.TypeOf(a).Underlying().(*types.Basic); ok && b.Info()&types.IsString != 0 {
 				addKey(a)
 				i += 2
 				continue
 			}
-			i++ // a slog.Attr, or a !BADKEY value: one slot either way
+			i++
+		}
+	}
+	kvWalk := func(args []ast.Expr, spreadLast bool) {
+		for _, seq := range flatten(args, spreadLast, map[types.Object]bool{}) {
+			classify(seq)
 		}
 	}
 
@@ -380,10 +435,10 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 					addKey(x.Args[0])
 				}
 				if name == "Group" && len(x.Args) > 1 {
-					kvWalk(x.Args[1:], x.Ellipsis.IsValid(), map[types.Object]bool{})
+					kvWalk(x.Args[1:], x.Ellipsis.IsValid())
 				}
 			} else if start, ok := kvStart[name]; ok && len(x.Args) > start {
-				kvWalk(x.Args[start:], x.Ellipsis.IsValid(), map[types.Object]bool{})
+				kvWalk(x.Args[start:], x.Ellipsis.IsValid())
 			}
 		case *ast.CompositeLit:
 			if isSlogAttr(info.TypeOf(x)) {
@@ -394,6 +449,32 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].pos < out[j].pos })
 	return out
+}
+
+// isAppend reports whether call is the append builtin.
+func isAppend(call *ast.CallExpr, info *types.Info) bool {
+	fn, ok := ast.Unparen(call.Fun).(*ast.Ident)
+	if !ok {
+		return false
+	}
+	b, ok := info.Uses[fn].(*types.Builtin)
+	return ok && b.Name() == "append"
+}
+
+// unwrapIfaceConv looks through explicit conversions to an interface type, such as
+// any("project_id"), returning the converted operand.
+func unwrapIfaceConv(e ast.Expr, info *types.Info) ast.Expr {
+	for {
+		c, ok := ast.Unparen(e).(*ast.CallExpr)
+		if !ok || len(c.Args) != 1 {
+			return e
+		}
+		tv, ok := info.Types[c.Fun]
+		if !ok || !tv.IsType() || !types.IsInterface(tv.Type) {
+			return e
+		}
+		e = c.Args[0]
+	}
 }
 
 // slogFunc returns the log/slog function or method call resolves to, or nil.
