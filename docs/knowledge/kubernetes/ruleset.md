@@ -72,7 +72,7 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    all families because they share the identical authorization. The exceptions are
    `google-ads/conversion-actions`, `google-ads/audiences` and `google-ads/user-lists`, ruled by
    `marketing-ops-api` below.
-4. **`marketing-ops-api`** — `GET /projects/:projectId/google-ads/conversion-actions` (#458)
+4. **`marketing-ops-api`** — `GET /projects/:projectId/google-ads/conversion-actions` (#458),
    `GET /projects/:projectId/google-ads/audiences` (#496) and
    `GET /projects/:projectId/google-ads/user-lists` only. They list every foundation's
    conversion actions, audiences and user lists on the shared Google Ads customer, and
