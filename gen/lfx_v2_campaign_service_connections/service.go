@@ -180,9 +180,11 @@ type Service interface {
 	// project's; like list-google-ads-conversion-actions and
 	// list-google-ads-audiences it is therefore gated on global_marketing_ops of
 	// {project_id} (the LF marketing team), not campaign_manager, which also
-	// admits a foundation's executive director. An account_id the credential
-	// cannot reach is refused by Google and answered 503, like the account
-	// monitor. A pure read: nothing is persisted.
+	// admits a foundation's executive director. On the LF system credential
+	// account_id may only repeat the account a create uses; any other customer is
+	// refused with 400 before Google is called. An account_id the project's own
+	// credential cannot reach is refused by Google and answered 503, like the
+	// account monitor. A pure read: nothing is persisted.
 	ListGoogleAdsUserLists(context.Context, *ListGoogleAdsUserListsPayload) (res *GoogleAdsUserLists, err error)
 	// List the ENABLED conversion actions on the Google Ads customer a Google
 	// create for this project uses, live from GAQL on conversion_action, for
