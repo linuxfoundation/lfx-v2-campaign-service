@@ -54,6 +54,11 @@ create form offer them in a picker instead of making an operator type them (self
   campaign's account). A row naming another customer, or a non-userLists resource, is dropped.
 - `account_id` (digits only) picks the customer; omitted, the account a create for this project
   uses is read. A malformed `account_id` is a 400 before any credential is resolved.
+- On the LF system credential (the fallback, or the deployment forcing the LF account),
+  `account_id` may only repeat the account a create uses. Any other customer is refused with a 400
+  (`domain.ErrAccountIDNotAllowed`, "omit account_id") before Google is called, so the route cannot
+  list user lists on every customer the LF login reaches. A project's own credential may still name
+  another customer it can reach.
 - **Resolution: as a create resolves** (`createAccountClient`, shared with the conversion-action
   and audience reads): the project's own connection, else the LF system fallback, and the LF
   account whenever the deployment forces it, so the lists are on the account the create uses. A

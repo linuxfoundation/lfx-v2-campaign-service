@@ -246,6 +246,13 @@ type CampaignInput struct {
 	// Refused on every other channel; on Demand Gen, whose ad group is audience-grouped,
 	// the segments go inside the Audience named by DemandGenAudience instead.
 	AudienceSegments []string
+	// CampaignAudienceSegments are EXISTING user lists on this campaign's own account
+	// (customers/<id>/userLists/<id>) observed at the CAMPAIGN level (#513): the Search
+	// campaign is created with targetingSetting AUDIENCE bidOnly and each list becomes a
+	// positive campaign criterion, so it covers every ad group, one added later included.
+	// SEARCH ONLY, and refused beside AudienceSegments or any AdGroups entry's
+	// AudienceSegments: a list is observed at one level. See search_campaign_audiences.go.
+	CampaignAudienceSegments []string
 	// DemandGenAudience is ONE existing Google Ads Audience resource
 	// (`customers/<this account>/audiences/<id>`) attached to the Demand Gen ad group as
 	// an `audience` criterion (#459). This client never creates this Audience: it,
@@ -741,6 +748,12 @@ type CampaignResult struct {
 	// Display path only, with the same three-way ambiguity on empty. A named ad group's own
 	// exclusions are in its AdGroups entry.
 	ExcludedAudienceCriteriaIDs []string `json:"excludedAudienceCriteriaIds,omitempty"`
+	// CampaignAudienceCriteriaIDs are the Search campaign's positive campaign-level
+	// user-list criteria, created for CampaignInput.CampaignAudienceSegments (#513) and
+	// observation-only — campaignCriterion ids, in input order after dedupe. Empty is
+	// ambiguous in the three ways GeoCriterionIDs documents, and the returned ERROR is what
+	// tells them apart.
+	CampaignAudienceCriteriaIDs []string `json:"campaignAudienceCriteriaIds,omitempty"`
 	// ExtensionAssetIDs are the sitelink/callout/structured-snippet ASSETS created
 	// for this campaign, in that order; ExtensionLinkIDs are the asset ids Google
 	// confirmed LINKED to the campaign.
@@ -954,6 +967,10 @@ type campaignCreate struct {
 	// preflight leaves it nil and the key is not sent. Every channel's payload carries the
 	// same field from the same preflight — see utmCampaignCustomParameters.
 	URLCustomParameters []urlCustomParameter `json:"urlCustomParameters,omitempty"`
+	// TargetingSetting is set only when the campaign observes campaign-level user lists
+	// (CampaignAudienceSegments, #513): AUDIENCE bidOnly. omitempty, so every other Search
+	// create sends exactly the payload it sent before.
+	TargetingSetting *targetingSetting `json:"targetingSetting,omitempty"`
 }
 
 // geoTargetTypeSetting decides what a location criterion actually MEANS, and Google's default
@@ -977,14 +994,17 @@ const geoTargetPresence = "PRESENCE"
 
 // targetingSetting / targetRestriction declare, per targeting dimension, whether
 // a criterion of that dimension RESTRICTS delivery or only observes it (bids/
-// reports without narrowing reach). Google requires targetingSetting be set at
-// the SAME level the criterion is attached to — an AdGroup's targetingSetting
-// cannot even be set while the parent Campaign has one, and a campaign-level
-// setting has no effect on ad-group-level criteria (see Google's
-// UpdateAudienceTargetRestriction sample, which reads/writes ad_group, not
-// campaign, targeting_setting). GA-4's audience criteria are created as
-// AdGroupCriterions (createAdGroupAndAd), so this is set on the AD GROUP
-// create, not the campaign create — see adGroupCreate in adgroup_ad.go. With
+// reports without narrowing reach). Google reads targetingSetting at the SAME
+// level the criterion is attached to: a campaign-level setting has no effect on
+// ad-group-level criteria (see Google's UpdateAudienceTargetRestriction sample,
+// which reads/writes ad_group, not campaign, targeting_setting). Both levels may
+// carry one at once: validateOnly probes on 2026-11-06 (#513) accepted a Search
+// campaign created with AUDIENCE bidOnly beside an ad group declaring its own
+// restrictions, and the live KubeCon NA 2026 Search campaign has both. GA-4's
+// audience criteria are created as AdGroupCriterions (createAdGroupAndAd), so
+// their setting is on the AD GROUP create — see adGroupCreate in adgroup_ad.go;
+// campaign-level lists (CampaignAudienceSegments) set it on the campaign create
+// (campaignCreate.TargetingSetting). With
 // no targetingSetting at all, Google's default for a Search ad group's
 // AUDIENCE dimension is TARGETING (restrictive) — an audience segment added
 // for bid/reporting purposes would otherwise silently narrow delivery to that
@@ -1184,6 +1204,9 @@ type campaignPreflight struct {
 	descriptions     []string
 	keywords         []Keyword
 	audienceSegments []string
+	// campaignAudienceSegments are the validated Search campaign-level observed user lists
+	// (#513); empty when none were asked for.
+	campaignAudienceSegments []string
 	// demandGenAudience is the validated Audience resource name for the Demand Gen ad
 	// group's single `audience` criterion, empty when none was asked for. Checked here
 	// for shape and for THIS account, because Google refuses a foreign customer id only
@@ -1811,6 +1834,12 @@ func (c *Client) preflightCampaignInput(kind string, in CampaignInput) (*campaig
 	if err != nil {
 		return nil, err
 	}
+	// Search's campaign-level observed user lists (#513), checked against THIS account like
+	// the Demand Gen Audience above, before any request.
+	campaignAudienceSegments, err := validateCampaignAudienceSegments(kind, c.account.CustomerID, in)
+	if err != nil {
+		return nil, err
+	}
 	// AFTER validateCPCBid, because the bidding plan refuses a CPC bid under an
 	// automated strategy and the caller is better served by hearing that their bid is
 	// out of range than that it is incompatible with a strategy they would then fix
@@ -1877,37 +1906,38 @@ func (c *Client) preflightCampaignInput(kind string, in CampaignInput) (*campaig
 		return nil, err
 	}
 	return &campaignPreflight{
-		amountMicros:        amountMicros,
-		budgetName:          budgetName,
-		campaignName:        campaignName,
-		finalURL:            finalURL,
-		adGroupName:         adGroupName,
-		headlines:           ad.headlines,
-		descriptions:        ad.descriptions,
-		keywords:            keywords,
-		audienceSegments:    audienceSegments,
-		demandGenAudience:   demandGenAudience,
-		demandGenGroups:     demandGenGroups,
-		geo:                 geo,
-		criteria:            criteria,
-		adGroupDemographics: adGroupDemographics,
-		displayDemographics: displayDemographics,
-		assets:              assets,
-		creative:            creative,
-		pmax:                pmax,
-		pmaxSignals:         pmaxSignals,
-		video:               video,
-		display:             display,
-		displayTargeting:    displayTargeting,
-		displayGroups:       displayGroups,
-		searchAssets:        searchAssets,
-		sharedNegativeLists: sharedNegativeLists,
-		adGroups:            adGroups,
-		negativeKeywords:    negativeKeywords,
-		cpcBidMicros:        cpcBidMicros,
-		bidding:             bidding,
-		startDateTime:       startDateTime,
-		endDateTime:         endDateTime,
+		amountMicros:             amountMicros,
+		budgetName:               budgetName,
+		campaignName:             campaignName,
+		finalURL:                 finalURL,
+		adGroupName:              adGroupName,
+		headlines:                ad.headlines,
+		descriptions:             ad.descriptions,
+		keywords:                 keywords,
+		audienceSegments:         audienceSegments,
+		demandGenAudience:        demandGenAudience,
+		campaignAudienceSegments: campaignAudienceSegments,
+		demandGenGroups:          demandGenGroups,
+		geo:                      geo,
+		criteria:                 criteria,
+		adGroupDemographics:      adGroupDemographics,
+		displayDemographics:      displayDemographics,
+		assets:                   assets,
+		creative:                 creative,
+		pmax:                     pmax,
+		pmaxSignals:              pmaxSignals,
+		video:                    video,
+		display:                  display,
+		displayTargeting:         displayTargeting,
+		displayGroups:            displayGroups,
+		searchAssets:             searchAssets,
+		sharedNegativeLists:      sharedNegativeLists,
+		adGroups:                 adGroups,
+		negativeKeywords:         negativeKeywords,
+		cpcBidMicros:             cpcBidMicros,
+		bidding:                  bidding,
+		startDateTime:            startDateTime,
+		endDateTime:              endDateTime,
 
 		urlCustomParameters: urlCustomParameters,
 		utmCampaignStep:     utmCampaignStep,
@@ -2099,6 +2129,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// over Google's limit.
 		URLCustomParameters: pf.urlCustomParameters,
 	}
+	// Campaign-level observed user lists (#513) need the campaign's own AUDIENCE bidOnly, or
+	// Google's restrictive default would narrow delivery to the lists alone.
+	if len(pf.campaignAudienceSegments) > 0 {
+		campaignCreateVal.TargetingSetting = campaignAudienceTargetingSetting()
+	}
 	campaignReq := mutateRequest{Operations: []mutateOperation{{Create: campaignCreateVal}}}
 	campaignPath := c.customerPath("campaigns:mutate")
 	campaignResp, err := c.doRequest(ctx, http.MethodPost, campaignPath, campaignReq, false)
@@ -2201,6 +2236,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		res.TargetingCriterionIDs = critIDs
 		steps = append(steps, fmt.Sprintf("Campaign targeting applied: %d criteria (%s)", len(critIDs), criteriaStep(pf.criteria)))
+		res.Steps = steps
+	}
+
+	// The campaign-level observed user lists (#513), last of the criteria steps and in their
+	// own mutate, so a failure names only the lists. Same partial-result contract.
+	if len(pf.campaignAudienceSegments) > 0 {
+		audIDs, audErr := c.createCampaignAudienceObservation(ctx, campaignResource, campaignID, pf.campaignAudienceSegments)
+		if audErr != nil {
+			return res, audErr
+		}
+		res.CampaignAudienceCriteriaIDs = audIDs
+		steps = append(steps, fmt.Sprintf("Campaign audiences observed: %d user list(s), observation only (AUDIENCE bidOnly on the campaign)", len(audIDs)))
 		res.Steps = steps
 	}
 

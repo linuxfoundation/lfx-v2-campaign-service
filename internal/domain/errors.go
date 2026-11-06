@@ -1395,6 +1395,14 @@ var (
 	// being unusable; this one is about the id the CALLER passed on this one request.
 	ErrAccountIDMalformed = errors.New("the account id is not valid for this platform")
 
+	// ErrAccountIDNotAllowed indicates a caller-supplied account id that is well formed but may
+	// not be used on this request's credential: the Google Ads user-list read on the LF system
+	// credential accepts only the account a create uses, so the route cannot list user lists
+	// on every customer the LF login reaches. Kept apart from ErrAccountIDMalformed so a policy
+	// refusal is not counted, or worded, as malformed input. Maps to 400 with its own remedy
+	// (omit account_id).
+	ErrAccountIDNotAllowed = errors.New("the account id is not allowed on this connection")
+
 	// ErrMonitorDaysInvalid indicates a caller-supplied days window for an account-monitor
 	// read is outside MonitorDaysMin..MonitorDaysMax. Maps to 400, alongside
 	// ErrAccountIDMalformed.

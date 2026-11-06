@@ -53,7 +53,8 @@ func (s *BriefService) marketingOpsChecker() MarketingOpsChecker {
 //     account-level custom conversion goal the client creates or reuses for them;
 //   - audienceSegments on Search, at the campaign level and on each adGroups entry. Search
 //     attaches them as observation-only user-list criteria and they predate every deployment
-//     flag, but they still name the shared account's user lists.
+//     flag, but they still name the shared account's user lists;
+//   - campaignAudienceSegments (#513), the same user lists observed at the Search campaign level.
 //
 // dispatch's TestEveryGoogleAdsConfigFieldIsClassifiedForTheMarketingOpsGate requires every
 // googleAdsConfig field to be classified as gated or not.
@@ -100,6 +101,7 @@ func GoogleAdsMarketingOpsInputs(config json.RawMessage) []string {
 		AdGroups []struct {
 			AudienceSegments []string `json:"audienceSegments"`
 		} `json:"adGroups"`
+		CampaignAudienceSegments     []string        `json:"campaignAudienceSegments"`
 		DisplayAdGroups              []audienceLists `json:"displayAdGroups"`
 		PerformanceMaxAudienceSignal string          `json:"performanceMaxAudienceSignal"`
 		SharedNegativeKeywordLists   []string        `json:"sharedNegativeKeywordLists"`
@@ -139,6 +141,9 @@ func GoogleAdsMarketingOpsInputs(config json.RawMessage) []string {
 		if len(g.AudienceSegments) > 0 {
 			set = append(set, "adGroups entry "+strconv.Itoa(i+1)+" audienceSegments")
 		}
+	}
+	if len(cfg.CampaignAudienceSegments) > 0 {
+		set = append(set, "campaignAudienceSegments")
 	}
 	for i, g := range cfg.DisplayAdGroups {
 		lists("displayAdGroups entry "+strconv.Itoa(i+1)+" ", g)

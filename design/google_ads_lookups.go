@@ -186,7 +186,9 @@ func googleAdsLookupMethods() {
 			"user lists (HubSpot CRM lists, website visitor lists and the rest), not only this project's; like " +
 			"list-google-ads-conversion-actions and list-google-ads-audiences it is therefore gated on " +
 			"global_marketing_ops of {project_id} (the LF marketing team), not campaign_manager, which also admits " +
-			"a foundation's executive director. An account_id the credential cannot reach is refused by Google and " +
+			"a foundation's executive director. On the LF system credential account_id may only repeat the account a " +
+			"create uses; any other customer is refused with 400 before Google is called. An account_id the " +
+			"project's own credential cannot reach is refused by Google and " +
 			"answered 503, like the account monitor. A pure read: nothing is persisted.")
 		Payload(func() {
 			bearerToken()

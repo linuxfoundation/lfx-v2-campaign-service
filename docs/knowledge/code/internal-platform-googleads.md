@@ -1121,6 +1121,30 @@ per-platform dispatcher config (`internal/dispatch/googleads.go`,
 `googleAdsConfig.Keywords`/`.AudienceSegments`) maps the wire JSON shape 1:1
 into `CampaignInput.Keywords`/`.AudienceSegments`.
 
+### Campaign-level observed user lists (#513)
+
+`CampaignInput.CampaignAudienceSegments` (`search_campaign_audiences.go`) observes user lists
+at the Search CAMPAIGN level, as the live KubeCon NA 2026 Search campaign (24188338792) does,
+instead of on each ad group. The campaign create carries `targetingSetting.targetRestrictions
+[{AUDIENCE, bidOnly: true}]` (`campaignCreate.TargetingSetting`, sent only with the field), and
+each list is a positive ENABLED `campaignCriterion.userList` in ONE `campaignCriteria:mutate`
+after the language, schedule, device and demographic criteria, before the extensions and any ad
+group (`createCampaignAudienceObservation`). The ids are `CampaignAudienceCriteriaIDs`; a
+definite refusal is a partial result with the campaign recorded, an ambiguous one or a result
+naming another campaign is UNCONFIRMED.
+
+`validateCampaignAudienceSegments` refuses before any request: the field off Search; beside
+`AudienceSegments` or any `AdGroups` entry's `AudienceSegments` (a list is observed at one
+level); an entry that is not `customers/<this account>/userLists/<id>` with canonical ids
+(Google refuses a custom audience as a Search campaign criterion); more than 20 distinct lists
+(duplicates are dropped first, so 21 entries that collapse to 20 are accepted; a raw list over 80
+entries is refused before parsing). The lists name the shared account's resources, so the create path requires
+`global_marketing_ops` (`service.GoogleAdsMarketingOpsInputs`). No deployment flag: the exact
+create, criteria and ad group bodies passed a validateOnly probe on 2026-11-06, which also
+showed a campaign `targetingSetting` and an ad group's own (`observedDemographics`) coexist.
+Bid modifiers on the lists are not sent: the live campaign's 0.8 / 1.3 have no effect under its
+Maximize conversion value strategy.
+
 ## Campaign settings readback (LFXV2-3067)
 
 `GetCampaignSettings` (in `campaign_settings.go`) reads a campaign's CURRENT
@@ -1720,6 +1744,15 @@ far more than 30 places. The 2026-08-13 incident is the standing precedent: a ca
 the product's own callers exceed by default refuses creates Google would have
 accepted.
 
+`maxGeoTargets` rose again, from 60 to 500 (#515). The live KubeCon NA 2026 Demand
+Gen YouTube campaign targets 63 locations (50 US state-level ids and 13 Canadian
+provinces and territories), and a DMA-level US campaign needs about 210. The
+one-mutate rule holds at the cap: 500 inclusions, 500 exclusions and 20 radius
+targets in one `campaignCriteria:mutate` (Search), and 500 + 500 in one
+`adGroupCriteria:mutate` (Demand Gen ad group), passed validateOnly probes on
+2026-11-06. `TestResolveGeoList_CapIsFiveHundredPerList` and the two
+`FullGeoListsStayInOneMutate` tests pin both.
+
 **Language, schedule, device and demographic criteria
 (`campaign_criteria.go`).** Four more campaign-level criterion kinds, all built by
 `validateCriteriaPlan` and posted in ONE `campaignCriteria:mutate` separate from
@@ -2088,8 +2121,10 @@ Evidence, from the 2026-11-03 validateOnly probes recorded on #477 (v23): accept
 `campaignAsset` with `AD_IMAGE` and one with `BUSINESS_LOGO`, each naming an EXISTING square
 image asset; a `BUSINESS_NAME` link naming a text asset created by temporary id in the same
 `googleAds:mutate`; and a `campaignSharedSet` naming an existing `NEGATIVE_KEYWORDS` set.
-Another customer's set was refused. NOT LIVE-VERIFIED: an IMAGE asset created by temporary id
-and linked in the same `googleAds:mutate` (the exact request sent), a multi-operation
+Another customer's set was refused. A 2026-11-06 validateOnly probe (#514) accepted the exact
+image request sent: named IMAGE assets (AD_IMAGE and BUSINESS_LOGO) and a BUSINESS_NAME text
+asset created by temporary id and linked in the same `googleAds:mutate`. NOT LIVE-VERIFIED: a
+persisted create of that request, a multi-operation
 `campaignSharedSets:mutate`, a shared set of another type (for example
 `NEGATIVE_PLACEMENTS`) on a Search campaign, and the 300x300 / 128x128 minimums and the
 20-image cap, which are Google's documented asset specifications.

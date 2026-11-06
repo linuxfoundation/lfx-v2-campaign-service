@@ -214,6 +214,20 @@ func TestGoogleAdsLookups_UnsupportedDispatcherIs400(t *testing.T) {
 	}
 }
 
+// A well-formed account_id the LF system credential may not read is a 400 whose message keeps
+// the remedy (omit account_id), not the generic "not valid" text a malformed id gets.
+func TestListGoogleAdsUserLists_NotAllowedAccountKeepsItsRemedy(t *testing.T) {
+	d := &mockLookupDispatcher{err: fmt.Errorf("%w: x", domain.ErrAccountIDNotAllowed), notCalled: true}
+	_, err := lookupService(d).ListGoogleAdsUserLists(context.Background(), &conn.ListGoogleAdsUserListsPayload{ProjectID: "cncf", AccountID: strp("1234567890")})
+	var br *conn.BadRequestError
+	if !errors.As(err, &br) || br.Code != "400" {
+		t.Fatalf("err = %T %v, want a 400 BadRequestError", err, err)
+	}
+	if !strings.Contains(br.Message, "omit account_id") || strings.Contains(br.Message, "not valid") {
+		t.Errorf("message = %q, want the omit-account_id remedy, not the malformed-id text", br.Message)
+	}
+}
+
 func TestListGoogleAdsUserLists_MapsAndPassesTheAccount(t *testing.T) {
 	size := int64(12000)
 	d := &mockLookupDispatcher{lists: &model.AudienceUserLists{AccountID: "8666746580", Lists: []model.AudienceUserList{{
