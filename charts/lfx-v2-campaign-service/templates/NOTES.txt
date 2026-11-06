@@ -1,0 +1,12 @@
+{{- /*
+Copyright The Linux Foundation and each contributor to LFX.
+SPDX-License-Identifier: MIT
+*/}}
+{{- if include "lfx-v2-campaign-service.xStatsMultiReplica" . }}
+WARNING: TWITTER_METRICS_ENABLED is on with more than one replica (replicaCount > 1, or
+autoscaling with maxReplicas > 1). The X stats-job features' per-account limits (job budget,
+write pacer) are per process; only the pod holding the per-account stats-job lease creates X
+stats jobs, so the other replicas answer the X audience read 503 and skip X monitor report
+submissions. This is a warning, not a refusal (#381): run one replica while the flag is on if
+those 503s matter.
+{{- end }}

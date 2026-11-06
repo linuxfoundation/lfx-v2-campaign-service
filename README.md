@@ -356,9 +356,9 @@ openssl rand -base64 32
   (a synchronous endpoint) is unaffected. Their per-account limits are
   per process, so at runtime only the pod holding a per-account
   Postgres advisory lease runs X stats jobs — any other pod answers the
-  audience read 503 and skips monitor report submissions — and, as a
-  first line of defence, the chart refuses to render the flag with more
-  than one replica. The chart sets
+  audience read 503 and skips monitor report submissions. The chart
+  renders the flag at any replica count and only warns in its
+  `NOTES.txt` above one (#381). The chart sets
   it to `"false"` (`charts/lfx-v2-campaign-service/values.yaml`); flip
   it only after the contract is verified against a live X ad account.
 

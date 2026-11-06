@@ -1326,37 +1326,72 @@ func TestScrapePortCannotDriftFromServicePort(t *testing.T) {
 	})
 }
 
-// TestDeploymentRefusesXStatsJobsOnMultipleReplicas pins the single-replica guard: the X
-// stats-job features' limits (audience job budget, account pacer) are per process, so the chart
-// refuses TWITTER_METRICS_ENABLED with more than one replica — set through either env input, or
-// sourced where the template cannot see it. This is the chart's ONLY replica guard: a
-// multi-replica render with the X flag effectively off must render, which is also what pins that
-// the retired Reddit guard has not come back (see TestDeploymentAllowsMultipleReplicasForReddit).
-func TestDeploymentRefusesXStatsJobsOnMultipleReplicas(t *testing.T) {
+// xStatsWarning is a phrase only the X multi-replica warning in templates/NOTES.txt carries.
+const xStatsWarning = "TWITTER_METRICS_ENABLED is on with more than one replica"
+
+// helmNotes renders the chart's NOTES.txt for the given --set arguments. `helm template` never
+// renders NOTES, so this goes through a client-side dry-run install, which needs no cluster.
+func helmNotes(t *testing.T, sets ...string) string {
+	t.Helper()
+	args := []string{"install", "notes-test", chartDir, "--dry-run=client"}
+	for _, s := range sets {
+		args = append(args, "--set", s)
+	}
+	out, err := exec.Command("helm", args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm %v failed: %v\n%s", args, err, out)
+	}
+	_, notes, ok := strings.Cut(string(out), "\nNOTES:\n")
+	if !ok {
+		// A chart whose NOTES render empty prints no NOTES section at all.
+		return ""
+	}
+	return notes
+}
+
+// TestDeploymentWarnsOnXStatsJobsWithMultipleReplicas pins that the X stats-job replica check is
+// a WARNING, not a render refusal (#381). The X stats-job features' limits (audience job budget,
+// account pacer) are per process, but a per-account Postgres lease already confines stats-job
+// creation to one pod and nothing polls those paths, while deployments run three replicas: a
+// render-time `fail` would have blocked every ArgoCD sync of this service the moment the flag was
+// turned on, the outage #378 fixed for Reddit.
+//
+// So every case must render the Deployment — carrying the requested spec.replicas, since a guard
+// that clamped the count instead of failing would still be a guard — and NOTES.txt must carry the
+// warning exactly when the EFFECTIVE flag is on (set through either env input, or sourced where the
+// template cannot see it) with more than one replica.
+func TestDeploymentWarnsOnXStatsJobsWithMultipleReplicas(t *testing.T) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
 	}
 	const on = "app.environment.TWITTER_METRICS_ENABLED.value=true"
 	for _, tc := range []struct {
-		name   string
-		set    []string
-		refuse bool
+		name string
+		set  []string
+		warn bool
+		// wantReplicas is the spec.replicas the render must carry, or 0 for the autoscaling
+		// cases, where replicaCount is left at its default.
+		wantReplicas int
 	}{
-		{"default (flag off, one replica)", nil, false},
-		{"flag on, one replica", []string{on}, false},
-		{"flag off, three replicas", []string{"replicaCount=3"}, false},
-		{"flag on, two replicas", []string{on, "replicaCount=2"}, true},
-		{"flag on via extraEnv, two replicas", []string{"app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].value=true", "replicaCount=2"}, true},
-		{"flag from a secret, two replicas", []string{"app.environment.TWITTER_METRICS_ENABLED.value=null", "app.environment.TWITTER_METRICS_ENABLED.valueFrom.secretKeyRef.name=s", "app.environment.TWITTER_METRICS_ENABLED.valueFrom.secretKeyRef.key=k", "replicaCount=2"}, true},
-		{"flag on, autoscaling to four", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=4"}, true},
-		{"flag on, autoscaling capped at one", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=1"}, false},
+		{"default (flag off, one replica)", nil, false, 1},
+		{"flag on, one replica", []string{on}, false, 1},
+		{"flag off, three replicas", []string{"replicaCount=3"}, false, 3},
+		// The production shape (lfx-v2-argocd sets replicaCount: 3) with the flag turned on: the
+		// render the old guard refused.
+		{"flag on, three replicas", []string{on, "replicaCount=3"}, true, 3},
+		{"flag on, two replicas", []string{on, "replicaCount=2"}, true, 2},
+		{"flag on via extraEnv, two replicas", []string{"app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].value=true", "replicaCount=2"}, true, 2},
+		{"flag from a secret, two replicas", []string{"app.environment.TWITTER_METRICS_ENABLED.value=null", "app.environment.TWITTER_METRICS_ENABLED.valueFrom.secretKeyRef.name=s", "app.environment.TWITTER_METRICS_ENABLED.valueFrom.secretKeyRef.key=k", "replicaCount=2"}, true, 2},
+		{"flag on, autoscaling to four", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=4"}, true, 0},
+		{"flag on, autoscaling with the default max", []string{on, "autoscaling.enabled=true"}, true, 0},
+		{"flag on, autoscaling capped at one", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=1"}, false, 0},
 		// The EFFECTIVE value: extraEnv renders after app.environment and Kubernetes keeps the
 		// last occurrence of a name, so a later "false" switches the flag off and a later "true"
 		// switches it on, whatever app.environment says.
-		{"environment on, extraEnv off, two replicas", []string{on, "app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].value=false", "replicaCount=2"}, false},
-		{"environment off, extraEnv on, two replicas", []string{"app.environment.TWITTER_METRICS_ENABLED.value=false", "app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].value=true", "replicaCount=2"}, true},
-		{"extraEnv on then off, two replicas", []string{"app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].value=true,app.extraEnv[1].name=TWITTER_METRICS_ENABLED,app.extraEnv[1].value=false", "replicaCount=2"}, false},
-		{"environment on, extraEnv from a secret last, two replicas", []string{"app.environment.TWITTER_METRICS_ENABLED.value=false", "app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].valueFrom.secretKeyRef.name=s,app.extraEnv[0].valueFrom.secretKeyRef.key=k", "replicaCount=2"}, true},
+		{"environment on, extraEnv off, two replicas", []string{on, "app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].value=false", "replicaCount=2"}, false, 2},
+		{"environment off, extraEnv on, two replicas", []string{"app.environment.TWITTER_METRICS_ENABLED.value=false", "app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].value=true", "replicaCount=2"}, true, 2},
+		{"extraEnv on then off, two replicas", []string{"app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].value=true,app.extraEnv[1].name=TWITTER_METRICS_ENABLED,app.extraEnv[1].value=false", "replicaCount=2"}, false, 2},
+		{"environment on, extraEnv from a secret last, two replicas", []string{"app.environment.TWITTER_METRICS_ENABLED.value=false", "app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].valueFrom.secretKeyRef.name=s,app.extraEnv[0].valueFrom.secretKeyRef.key=k", "replicaCount=2"}, true, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := []string{"template", chartDir, "--show-only", "templates/deployment.yaml"}
@@ -1364,16 +1399,17 @@ func TestDeploymentRefusesXStatsJobsOnMultipleReplicas(t *testing.T) {
 				args = append(args, "--set", s)
 			}
 			out, err := exec.Command("helm", args...).CombinedOutput()
-			xRefused := strings.Contains(string(out), "Run one replica while the flag is on")
-			switch {
-			case tc.refuse && err == nil:
-				t.Fatalf("rendered with %v; want the single-replica refusal", tc.set)
-			case tc.refuse && !xRefused:
-				t.Errorf("failed, but not on the X guard:\n%s", out)
-			case !tc.refuse && xRefused:
-				t.Fatalf("the X guard refused %v:\n%s", tc.set, out)
-			case !tc.refuse && err != nil:
-				t.Fatalf("refused %v: %v\n%s", tc.set, err, out)
+			if err != nil {
+				t.Fatalf("refused %v, but the X replica check must only warn: %v\n%s", tc.set, err, out)
+			}
+			if tc.wantReplicas != 0 {
+				if want := fmt.Sprintf("replicas: %d", tc.wantReplicas); !strings.Contains(string(out), want) {
+					t.Errorf("rendered %v without %q -- a guard that clamps replicas is still a guard:\n%s", tc.set, want, out)
+				}
+			}
+			notes := helmNotes(t, tc.set...)
+			if got := strings.Contains(notes, xStatsWarning); got != tc.warn {
+				t.Errorf("X multi-replica warning in NOTES for %v = %v, want %v; NOTES:\n%s", tc.set, got, tc.warn, notes)
 			}
 		})
 	}
@@ -1395,7 +1431,8 @@ func TestDeploymentRefusesXStatsJobsOnMultipleReplicas(t *testing.T) {
 // the case sets an explicit replicaCount — that the render actually CARRIES it. Asserting only
 // that helm exits 0 would not keep the guard retired: a reinstated guard keyed above this
 // table's replica counts, or one that quietly clamps spec.replicas to 1 instead of failing,
-// would both pass. The real fix was a shared ledger keyed by ad account in Postgres (#380, now in
+// would both pass. (The X stats-job check is a NOTES.txt warning for the same reason, see
+// TestDeploymentWarnsOnXStatsJobsWithMultipleReplicas.) The real fix was a shared ledger keyed by ad account in Postgres (#380, now in
 // place), not a refusal to deploy. Note the two shortcuts
 // that look like fixes and are not — a lease as the X stats jobs use makes non-owner pods refuse,
 // which is intolerable on a user-facing monitor endpoint, and dividing the 45 by the replica
