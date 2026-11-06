@@ -272,6 +272,26 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 			default:
 				slog.Info("m", append(fields, "projectID", id)...)
 			}`, []string{"kind", "projectID"}},
+		{"a labelled break leaves the outer loop", `fields := []any{"a", 1}
+		Outer:
+			for c {
+				for c {
+					fields = []any{"projectID", id}
+					break Outer
+				}
+				fields = []any{"kind", 1}
+			}
+			slog.Info("m", fields...)`, []string{"a", "projectID", "kind"}},
+		{"a labelled continue skips the rest of the outer body", `fields := []any{"a", 1}
+		Outer:
+			for c {
+				for c {
+					fields = []any{"projectID", id}
+					continue Outer
+				}
+				fields = []any{"kind", 1}
+			}
+			slog.Info("m", fields...)`, []string{"a", "projectID", "kind"}},
 		{"a multi-value assignment makes the slice unknown", `fields := []any{"projectID", id}
 			fields, e = mk()
 			slog.Info("m", fields...)`, nil},
@@ -525,33 +545,58 @@ func logKeys(f *ast.File, info *types.Info) ([]keyHit, bool) {
 			}
 		}
 	}
-	// flow is where the paths leaving a statement go: on to the next statement, out of the
-	// enclosing loop or switch (break), or to the loop's next iteration (continue). A
-	// return or panic sends a path nowhere.
-	type flow struct{ next, brk, cont []path }
-	var execF func(s ast.Stmt, ps []path) flow
+	// flow is where the paths leaving a statement go: on to the next statement, out of a
+	// loop or switch (break), or to a loop's next iteration (continue). brk and cont are
+	// keyed by label, "" for an unlabeled break or continue, which targets the innermost
+	// loop (or, for break, switch). A return or panic sends a path nowhere.
+	type flow struct {
+		next      []path
+		brk, cont map[string][]path
+	}
+	mergeInto := func(dst *map[string][]path, src map[string][]path) {
+		for k, v := range src {
+			if *dst == nil {
+				*dst = map[string][]path{}
+			}
+			(*dst)[k] = union((*dst)[k], v)
+		}
+	}
+	// take removes and returns the paths aimed at "" and at label.
+	take := func(m map[string][]path, label string) []path {
+		out := m[""]
+		delete(m, "")
+		if label != "" {
+			out = union(out, m[label])
+			delete(m, label)
+		}
+		return out
+	}
+	var execL func(s ast.Stmt, ps []path, label string) flow
+	execF := func(s ast.Stmt, ps []path) flow { return execL(s, ps, "") }
 	execListF := func(list []ast.Stmt, ps []path) flow {
 		var out flow
 		for _, s := range list {
 			f := execF(s, ps)
-			out.brk = union(out.brk, f.brk)
-			out.cont = union(out.cont, f.cont)
+			mergeInto(&out.brk, f.brk)
+			mergeInto(&out.cont, f.cont)
 			ps = f.next
 		}
 		out.next = ps
 		return out
 	}
 	exec := func(s ast.Stmt, ps []path) []path { return execF(s, ps).next }
-	// iterate runs one iteration of a loop body. It returns the body's flow and the paths
-	// that start another iteration: those that fall through or continue, after the post
-	// statement. A break skips the post statement.
-	iterate := func(body *ast.BlockStmt, post ast.Stmt, ps []path) (flow, []path) {
+	// iterate runs one iteration of a loop (labelled label, or "") from ps. It returns the
+	// paths that break out of this loop, the paths that start another iteration (those
+	// that fall through or continue this loop, after the post statement; a break skips
+	// it), and the breaks and continues aimed at an outer loop, which pass through.
+	iterate := func(body *ast.BlockStmt, post ast.Stmt, ps []path, label string) (brk, again []path, outer flow) {
 		it := execListF(body.List, clonePaths(ps))
-		again := union(it.next, it.cont)
+		brk = take(it.brk, label)
+		again = union(it.next, take(it.cont, label))
 		if post != nil {
 			again = exec(post, again)
 		}
-		return it, again
+		return brk, again, flow{brk: it.brk, cont: it.cont}
 	}
 	// clauses returns a switch or select statement's init and clause bodies, and whether
 	// one clause always runs (a default, or any select).
@@ -576,7 +621,7 @@ func logKeys(f *ast.File, info *types.Info) ([]keyHit, bool) {
 		}
 		return init, bodies, nodes, always
 	}
-	execF = func(s ast.Stmt, ps []path) flow {
+	execL = func(s ast.Stmt, ps []path, label string) flow {
 		switch x := s.(type) {
 		case *ast.AssignStmt:
 			assign(x.Lhs, x.Rhs, ps)
@@ -603,17 +648,21 @@ func logKeys(f *ast.File, info *types.Info) ([]keyHit, bool) {
 				}
 			}
 		case *ast.BranchStmt:
+			target := ""
+			if x.Label != nil {
+				target = x.Label.Name
+			}
 			switch x.Tok {
 			case token.BREAK:
-				return flow{brk: ps}
+				return flow{brk: map[string][]path{target: ps}}
 			case token.CONTINUE:
-				return flow{cont: ps}
+				return flow{cont: map[string][]path{target: ps}}
 			}
 			// goto and fallthrough are taken to fall through: an over-approximation.
 		case *ast.BlockStmt:
 			return execListF(x.List, ps)
 		case *ast.LabeledStmt:
-			return execF(x.Stmt, ps)
+			return execL(x.Stmt, ps, x.Label.Name)
 		case *ast.IfStmt:
 			if x.Init != nil {
 				ps = exec(x.Init, ps)
@@ -623,20 +672,23 @@ func logKeys(f *ast.File, info *types.Info) ([]keyHit, bool) {
 			if x.Else != nil {
 				elseF = execF(x.Else, elseF.next)
 			}
-			return flow{
-				next: union(thenF.next, elseF.next),
-				brk:  union(thenF.brk, elseF.brk),
-				cont: union(thenF.cont, elseF.cont),
+			out := flow{next: union(thenF.next, elseF.next)}
+			for _, f := range []flow{thenF, elseF} {
+				mergeInto(&out.brk, f.brk)
+				mergeInto(&out.cont, f.cont)
 			}
+			return out
 		case *ast.ForStmt:
 			if x.Init != nil {
 				ps = exec(x.Init, ps)
 			}
-			it, again := iterate(x.Body, x.Post, ps)
-			return flow{next: union(ps, it.brk, again)}
+			brk, again, outer := iterate(x.Body, x.Post, ps, label)
+			outer.next = union(ps, brk, again)
+			return outer
 		case *ast.RangeStmt:
-			it, again := iterate(x.Body, nil, ps)
-			return flow{next: union(ps, it.brk, again)}
+			brk, again, outer := iterate(x.Body, nil, ps, label)
+			outer.next = union(ps, brk, again)
+			return outer
 		case *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt:
 			init, bodies, _, always := clauses(x)
 			if init != nil {
@@ -652,8 +704,9 @@ func logKeys(f *ast.File, info *types.Info) ([]keyHit, bool) {
 				} else {
 					out.next = union(out.next, f.next)
 				}
-				out.next = union(out.next, f.brk) // a break leaves the switch
-				out.cont = union(out.cont, f.cont)
+				out.next = union(out.next, take(f.brk, label)) // a break leaves the switch
+				mergeInto(&out.brk, f.brk)
+				mergeInto(&out.cont, f.cont)
 			}
 			if !always {
 				out.next = union(out.next, ps)
@@ -674,11 +727,13 @@ func logKeys(f *ast.File, info *types.Info) ([]keyHit, bool) {
 				ps = exec(s, ps)
 				continue
 			}
+			loopLabel := ""
+			if ls, ok := s.(*ast.LabeledStmt); ok {
+				loopLabel, s = ls.Label.Name, ls.Stmt
+			}
 			switch x := s.(type) {
 			case *ast.BlockStmt:
 				return pathsAt(x.List, ps, target)
-			case *ast.LabeledStmt:
-				return pathsAt([]ast.Stmt{x.Stmt}, ps, target)
 			case *ast.IfStmt:
 				if x.Init != nil && !contains(x.Init, target) {
 					ps = exec(x.Init, ps)
@@ -694,12 +749,12 @@ func logKeys(f *ast.File, info *types.Info) ([]keyHit, bool) {
 					ps = exec(x.Init, ps)
 				}
 				if contains(x.Body, target) {
-					_, again := iterate(x.Body, x.Post, ps)
+					_, again, _ := iterate(x.Body, x.Post, ps, loopLabel)
 					return pathsAt(x.Body.List, union(ps, again), target)
 				}
 			case *ast.RangeStmt:
 				if contains(x.Body, target) {
-					_, again := iterate(x.Body, nil, ps)
+					_, again, _ := iterate(x.Body, nil, ps, loopLabel)
 					return pathsAt(x.Body.List, union(ps, again), target)
 				}
 			case *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt:

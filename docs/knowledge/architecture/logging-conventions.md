@@ -72,6 +72,7 @@ stay together, and an alias is followed.
 - A loop body runs zero or one times, after a `for` loop's initializer. A
   `break` leaves the loop or switch without running the loop's post statement,
   and a `continue` goes on to it.
+- A labelled `break` or `continue` targets the loop or switch it names.
 - A `fallthrough` carries a clause's paths into the next clause.
 - Paths are bounded at 1024. A spread with more fails the guard rather than
   checking a subset.
