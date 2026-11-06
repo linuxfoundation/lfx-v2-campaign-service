@@ -9,15 +9,20 @@ clear, as `"project_id"`.
   URL path of 99 routes (`/projects/{project_id}/...`) and so in every access log already; and
   it is the only field naming whose connection, brief or campaign a warning is about. Hashing
   keeps grouping but loses grep, and dropping or gating it makes alerts tenantless.
-- No call site changed: all 204 non-test string-literal log keys naming the project (as counted by
-  the test below) already read `project_id`. The only other `"project"` literal outside tests is a `flag` name in
+- No call site changed: all 212 distinct non-test string-literal log keys naming the project (as
+  counted by the test below) already read `project_id`. The only other `"project"` literal outside tests is a `flag` name in
   `cmd/verify-metrics`, not a log key.
 - `TestProjectIDLogKeyIsUniform` (`pkg/log/project_id_key_test.go`) pins it: it parses every
-  non-test file under `internal/`, `cmd/` and `pkg/` and fails on any slog call or `slog.Attr`
-  key that names the project under another spelling (`project`, `projectID`,
-  `project_id_hash`, ...). Mutation-checked: renaming one key in
-  `internal/service/connection.go` to `projectID` fails it, and so does dropping `internal/`
-  from the walk (the positive-control floor).
+  non-test file under `internal/`, `cmd/` and `pkg/` and fails on any log attribute key that
+  names the project under another spelling (`project`, `projectID`, `project_id_hash`, ...).
+  It reads key positions only, so a message or value reading "project" passes, and it follows
+  `[]any` slices spread into a log call and elided `[]slog.Attr` elements, so a key in either
+  is checked (PR #539 review). `TestLogKeys_ReadsKeyPositionsOnly` pins those rules.
+- Mutation-checked: renaming one key in `internal/service/connection.go` to `projectID` fails
+  the guard, as does renaming the spread-slice key in `internal/service/meta_ad_sets.go`, and
+  dropping `internal/` from the walk trips the positive-control floor. Treating every argument
+  as a key, dropping spread resolution, or ignoring elided `slog.Attr` elements each fails
+  `TestLogKeys_ReadsKeyPositionsOnly`.
 - The decision is written down in `docs/knowledge/architecture/logging-conventions.md` (new)
   and under "Settled by decision" in `docs/reviews/knowledge-base/known-false-positives.md`, so
   a reviewer does not raise it again.
