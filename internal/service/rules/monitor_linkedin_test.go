@@ -37,39 +37,39 @@ func TestLinkedinActionItems_UnderspendingAndConstrained(t *testing.T) {
 	base := model.AccountCampaignMetrics{PlatformCampaignID: "c1", Name: "c"}
 
 	t.Run("underspending label is HIGH", func(t *testing.T) {
-		items := linkedinActionItems(base, 10, model.MonitorPacingUnderspending)
+		items := linkedinActionItems(base, 10, model.MonitorPacingUnderspending, "USD")
 		mustContainIssue(t, items, "Underspending", model.MonitorPriorityHigh)
 	})
 	t.Run("constrained label is MED", func(t *testing.T) {
-		items := linkedinActionItems(base, 95, model.MonitorPacingConstrained)
+		items := linkedinActionItems(base, 95, model.MonitorPacingConstrained, "USD")
 		mustContainIssue(t, items, "Budget constrained", model.MonitorPriorityMed)
 	})
 	t.Run("overspending label also fires the constrained MED rule", func(t *testing.T) {
 		// linkedinActionItems' constrained rule is `label == constrained || label ==
 		// overspending` — both share the same MED item, matching the ported "the 130
 		// overspending member is dead" oddity: overspending never gets its own message here.
-		items := linkedinActionItems(base, 150, model.MonitorPacingOverspending)
+		items := linkedinActionItems(base, 150, model.MonitorPacingOverspending, "USD")
 		mustContainIssue(t, items, "Budget constrained", model.MonitorPriorityMed)
 	})
 	t.Run("low CTR is MED", func(t *testing.T) {
 		row := base
 		row.Ctr = 0.1
 		row.Impressions = 5000
-		items := linkedinActionItems(row, 0, model.MonitorPacingNormal)
+		items := linkedinActionItems(row, 0, model.MonitorPacingNormal, "USD")
 		mustContainIssue(t, items, "Low CTR", model.MonitorPriorityMed)
 	})
 	t.Run("clicks without conversions is MED", func(t *testing.T) {
 		row := base
 		row.Clicks = 51
 		row.Conversions = floatPtr(0)
-		items := linkedinActionItems(row, 0, model.MonitorPacingNormal)
+		items := linkedinActionItems(row, 0, model.MonitorPacingNormal, "USD")
 		mustContainIssue(t, items, "Clicks without conversions", model.MonitorPriorityMed)
 	})
 	t.Run("paused with real budget is LOW", func(t *testing.T) {
 		row := base
 		row.Status = "PAUSED"
 		row.TotalBudget = 20
-		items := linkedinActionItems(row, 0, model.MonitorPacingNormal)
+		items := linkedinActionItems(row, 0, model.MonitorPacingNormal, "USD")
 		mustContainIssue(t, items, "PAUSED with real budget", model.MonitorPriorityLow)
 	})
 }
@@ -95,7 +95,7 @@ func TestEvaluateLinkedInMonitor_SkipsFetchFailedRows(t *testing.T) {
 	rows := []model.AccountCampaignMetrics{
 		{PlatformCampaignID: "1", Name: "Failed Fetch", Status: "ACTIVE", BudgetDay: 50, FetchFailed: true},
 	}
-	out, items := EvaluateLinkedInMonitor(rows, 30, now)
+	out, items := EvaluateLinkedInMonitor(rows, 30, now, "USD")
 	if len(out) != 1 {
 		t.Fatalf("got %d rows, want 1 — a FetchFailed row must still be returned: %+v", len(out), out)
 	}
@@ -124,7 +124,7 @@ func TestLinkedinLowCtr_ZeroCtrIsTheWorstCaseNotAnExemption(t *testing.T) {
 	served := model.AccountCampaignMetrics{
 		PlatformCampaignID: "c1", Name: "c", Impressions: 500000, Clicks: 0, Ctr: 0,
 	}
-	items := linkedinActionItems(served, 0, model.MonitorPacingNormal)
+	items := linkedinActionItems(served, 0, model.MonitorPacingNormal, "USD")
 	mustContainIssue(t, items, "Low CTR", model.MonitorPriorityMed)
 }
 
@@ -137,7 +137,7 @@ func TestLinkedinLowCtr_NeedsVolumeBeforeItMeansAnything(t *testing.T) {
 		row := model.AccountCampaignMetrics{
 			PlatformCampaignID: "c1", Name: "c", Impressions: impressions, Ctr: 0,
 		}
-		for _, it := range linkedinActionItems(row, 0, model.MonitorPacingNormal) {
+		for _, it := range linkedinActionItems(row, 0, model.MonitorPacingNormal, "USD") {
 			if strings.Contains(it.Issue, "Low CTR") {
 				t.Errorf("impressions = %d: emitted %q; the floor is exclusive (> %d), and a "+
 					"campaign with no delivery has no CTR to judge",
@@ -153,7 +153,7 @@ func TestEvaluateLinkedInMonitor_CurrencyMismatchIsUnknownPacing(t *testing.T) {
 	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	m := model.AccountCampaignMetrics{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE",
 		BudgetDay: 100, Spend: 1, Impressions: 10, Clicks: 1, PacingUnknown: true}
-	rows, items := EvaluateLinkedInMonitor([]model.AccountCampaignMetrics{m}, 30, now)
+	rows, items := EvaluateLinkedInMonitor([]model.AccountCampaignMetrics{m}, 30, now, "USD")
 	if len(rows) != 1 || !rows[0].Metrics.PacingUnknown || rows[0].PacingPct != 0 {
 		t.Fatalf("row = %+v, want unknown pacing", rows)
 	}
@@ -163,7 +163,7 @@ func TestEvaluateLinkedInMonitor_CurrencyMismatchIsUnknownPacing(t *testing.T) {
 		}
 	}
 	m.PacingUnknown = false
-	rows, _ = EvaluateLinkedInMonitor([]model.AccountCampaignMetrics{m}, 30, now)
+	rows, _ = EvaluateLinkedInMonitor([]model.AccountCampaignMetrics{m}, 30, now, "USD")
 	if rows[0].Metrics.PacingUnknown || rows[0].PacingPct == 0 {
 		t.Errorf("row = %+v, want it paced once the mismatch flag is clear", rows[0])
 	}

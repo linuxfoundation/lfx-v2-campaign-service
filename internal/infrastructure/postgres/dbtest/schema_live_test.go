@@ -26,21 +26,24 @@ const sqlstateNoArbiterIndex = "42P10"
 // test is status <> 'deleted', so the specific live value never matters.
 const testCampaignStatus = "draft"
 
-// insertBrief creates the parent row a campaign's FK requires and returns its id.
+// insertBrief creates the parent row a campaign's FK requires, owned by projectID, and returns
+// its id.
 //
-// project_id is TEXT, not UUID — migration 000003 retyped it, because a project is
-// identified here by its SLUG. It is derived from the test name so two tests (and two
-// runs of one test against the same database) cannot collide on the brief table's
-// partial-unique (project_id, event_slug).
-func insertBrief(ctx context.Context, t *testing.T, pool *pgxpool.Pool) string {
+// The brief is owned by the SAME project the caller's campaign rows name: since 000056 campaigns
+// carries the composite tenant FK (brief_id, project_id) -> campaign_briefs(id, project_id), so a
+// campaign under a brief another project owns is refused with 23503. project_id is TEXT, not
+// UUID — migration 000003 retyped it, because a project is identified here by its SLUG. The
+// event slug is derived from the test name so two tests (and two runs of one test against the
+// same database) cannot collide on the brief table's partial-unique (project_id, event_slug).
+func insertBrief(ctx context.Context, t *testing.T, pool *pgxpool.Pool, projectID string) string {
 	t.Helper()
 
-	id := dbtest.UniqueID(t, "brief")
+	slug := dbtest.UniqueID(t, "brief")
 	var briefID string
 	err := pool.QueryRow(ctx, `
 		INSERT INTO campaign_briefs (project_id, program_type, event_slug)
 		VALUES ($1, 'events', $2)
-		RETURNING id`, id, id).Scan(&briefID)
+		RETURNING id`, projectID, slug).Scan(&briefID)
 	if err != nil {
 		t.Fatalf("insert parent brief: %v", err)
 	}
@@ -93,7 +96,7 @@ func TestLiveOnConflictNeedsThePartialIndexPredicate(t *testing.T) {
 	ctx := context.Background()
 
 	project := dbtest.UniqueID(t, "project")
-	briefID := insertBrief(ctx, t, pool)
+	briefID := insertBrief(ctx, t, pool, project)
 
 	t.Run("bare ON CONFLICT has no arbiter index", func(t *testing.T) {
 		_, err := pool.Exec(ctx, insertCampaignSQL(""),
@@ -146,7 +149,7 @@ func TestLiveSoftDeletedRowFreesThePlatformSlot(t *testing.T) {
 	ctx := context.Background()
 
 	project := dbtest.UniqueID(t, "project")
-	briefID := insertBrief(ctx, t, pool)
+	briefID := insertBrief(ctx, t, pool, project)
 	stmt := insertCampaignSQL("WHERE status <> 'deleted'")
 
 	if _, err := pool.Exec(ctx, stmt, project, briefID, dbtest.UniqueID(t, "first"), testCampaignStatus); err != nil {

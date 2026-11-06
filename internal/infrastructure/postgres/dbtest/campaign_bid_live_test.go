@@ -22,8 +22,8 @@ func TestLiveReplaceCampaignRoundTripsMaxCPCBid(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
 	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
-	briefID := insertBrief(ctx, t, pool)
 	projectID := dbtest.UniqueID(t, "project")
+	briefID := insertBrief(ctx, t, pool, projectID)
 	name := dbtest.UniqueID(t, "campaign")
 
 	var (

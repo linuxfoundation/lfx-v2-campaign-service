@@ -164,8 +164,11 @@ renderer formats with a symbol when it is present and without one otherwise.
   response. `RedditDispatcher.ListAccountCampaignMetrics` (the rows-only reader) makes no
   ad-account read at all; only `ReadAccountMonitor` pays for it.
 - **The money rules are sized in it (#454).** The placeholder-budget rule (Google, Microsoft, X:
-  daily budget at or below about 1 USD) and the high-CPC rule (Google, Microsoft: average CPC
-  above about 5 USD) take the read's currency and scale their USD values through
+  daily budget at or below about 1 USD), the high-CPC rule (Google, Microsoft: average CPC
+  above about 5 USD) and LinkedIn's paused-with-real-budget rule (lifetime budget above about
+  10 USD or daily above about 1 USD; #547 — its currency is the budgets' own `currencyCode`, no
+  extra read, and its skipped item is due only when a measured, budgeted, paused campaign was
+  there to check) take the read's currency and scale their USD values through
   `rules.monitorUnitsPerUSD`, a table of rounded units-per-dollar magnitudes — no amount is
   converted or shown with it. In a currency the table does not list, or when `currency` is absent,
   neither rule fires on an amount (Google and Microsoft still call a zero daily budget a
