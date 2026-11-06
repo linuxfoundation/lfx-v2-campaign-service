@@ -48,6 +48,9 @@ func TestMeta_PreflightCreate_TargetingFlagOn(t *testing.T) {
 	t.Setenv(constants.EnvMetaAudienceTargetingEnabled, "true")
 	runBiddingPreflight(t, &MetaDispatcher{}, model.ProviderMetaAds, []biddingPreflightCase{
 		{name: "full block", config: `{"metaConfig":{"targeting":{"ageMin":25,"ageMax":54,"genders":["female"],"customAudiences":["111"],"excludedCustomAudiences":["222"],"advantageAudience":false}}}`},
+		{name: "explicit ageMin 0", config: `{"metaConfig":{"targeting":{"ageMin":0}}}`, want: "ageMin 0 is out of range"},
+		{name: "explicit ageMax 0", config: `{"metaConfig":{"targeting":{"ageMax":0}}}`, want: "ageMax 0 is out of range"},
+		{name: "null ages are absent", config: `{"metaConfig":{"targeting":{"ageMin":null,"ageMax":null,"genders":["male"]}}}`},
 		{name: "out of range age", config: `{"metaConfig":{"targeting":{"ageMax":70}}}`,
 			want: "invalid campaign config: metaConfig.targeting: ageMax 70 is out of range"},
 		{name: "advantage with a narrow age", config: `{"metaConfig":{"targeting":{"ageMin":35,"advantageAudience":true}}}`,
@@ -101,10 +104,10 @@ func TestMeta_DispatchCarriesTargetingToTheAdSet(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
-		case r.Method == http.MethodGet && r.URL.Query().Get("fields") == "id,account_id":
+		case r.Method == http.MethodGet && r.URL.Query().Get("fields") == "id,account_id,subtype":
 			id := strings.TrimPrefix(r.URL.Path, "/")
 			audiences = append(audiences, id)
-			_, _ = io.WriteString(w, `{"id":"`+id+`","account_id":"777"}`)
+			_, _ = io.WriteString(w, `{"id":"`+id+`","account_id":"777","subtype":"CUSTOM"}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):

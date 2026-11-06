@@ -22,10 +22,11 @@ import (
 //
 // The zero value targets exactly as before: nothing is added to the ad set's targeting.
 type AudienceTargeting struct {
-	// AgeMin and AgeMax are whole years, MinTargetAge..MaxTargetAge, AgeMin <= AgeMax. Zero means
-	// absent (Meta's default, 18 and 65).
-	AgeMin int `json:"ageMin"`
-	AgeMax int `json:"ageMax"`
+	// AgeMin and AgeMax are whole years, MinTargetAge..MaxTargetAge, AgeMin <= AgeMax. Nil (absent
+	// or null) means Meta's default, 18 and 65; a supplied value, 0 included, must be in range —
+	// pointers keep an explicit 0 from reading as "omitted".
+	AgeMin *int `json:"ageMin"`
+	AgeMax *int `json:"ageMax"`
 	// Genders is a subset of "male" and "female". Both, or none, is everyone and sends nothing.
 	Genders []string `json:"genders"`
 	// CustomAudiences and ExcludedCustomAudiences are numeric Meta custom-audience ids of the
@@ -56,7 +57,7 @@ var metaGenderCodes = map[string]int{"male": 1, "female": 2}
 
 // IsZero reports whether t asks for nothing, in which case the ad set's targeting is unchanged.
 func (t *AudienceTargeting) IsZero() bool {
-	return t == nil || (t.AgeMin == 0 && t.AgeMax == 0 && len(t.Genders) == 0 &&
+	return t == nil || (t.AgeMin == nil && t.AgeMax == nil && len(t.Genders) == 0 &&
 		len(t.CustomAudiences) == 0 && len(t.ExcludedCustomAudiences) == 0 && t.AdvantageAudience == nil)
 }
 
@@ -68,17 +69,17 @@ func NormalizeAudienceTargeting(t *AudienceTargeting) (*AudienceTargeting, error
 	if t == nil {
 		return nil, nil
 	}
-	out := &AudienceTargeting{AgeMin: t.AgeMin, AgeMax: t.AgeMax, AdvantageAudience: t.AdvantageAudience}
+	out := &AudienceTargeting{AgeMin: copyInt(t.AgeMin), AgeMax: copyInt(t.AgeMax), AdvantageAudience: t.AdvantageAudience}
 	for _, a := range []struct {
 		name string
-		v    int
+		v    *int
 	}{{"ageMin", t.AgeMin}, {"ageMax", t.AgeMax}} {
-		if a.v != 0 && (a.v < MinTargetAge || a.v > MaxTargetAge) {
-			return nil, targetingInvalid("%s %d is out of range; Meta targets ages %d to %d", a.name, a.v, MinTargetAge, MaxTargetAge)
+		if a.v != nil && (*a.v < MinTargetAge || *a.v > MaxTargetAge) {
+			return nil, targetingInvalid("%s %d is out of range; Meta targets ages %d to %d", a.name, *a.v, MinTargetAge, MaxTargetAge)
 		}
 	}
-	if t.AgeMin != 0 && t.AgeMax != 0 && t.AgeMin > t.AgeMax {
-		return nil, targetingInvalid("ageMin %d is above ageMax %d", t.AgeMin, t.AgeMax)
+	if t.AgeMin != nil && t.AgeMax != nil && *t.AgeMin > *t.AgeMax {
+		return nil, targetingInvalid("ageMin %d is above ageMax %d", *t.AgeMin, *t.AgeMax)
 	}
 	seenGender := map[string]bool{}
 	for _, g := range t.Genders {
@@ -108,11 +109,11 @@ func NormalizeAudienceTargeting(t *AudienceTargeting) (*AudienceTargeting, error
 		}
 	}
 	if out.AdvantageAudience != nil && *out.AdvantageAudience {
-		if out.AgeMin > maxAdvantageAgeMin {
-			return nil, targetingInvalid("with advantageAudience true, Meta accepts an ageMin of at most %d (ageMin is %d); lower it or set advantageAudience false", maxAdvantageAgeMin, out.AgeMin)
+		if out.AgeMin != nil && *out.AgeMin > maxAdvantageAgeMin {
+			return nil, targetingInvalid("with advantageAudience true, Meta accepts an ageMin of at most %d (ageMin is %d); lower it or set advantageAudience false", maxAdvantageAgeMin, *out.AgeMin)
 		}
-		if out.AgeMax != 0 && out.AgeMax < MaxTargetAge {
-			return nil, targetingInvalid("with advantageAudience true, Meta fixes ageMax at %d (ageMax is %d); omit it or set advantageAudience false", MaxTargetAge, out.AgeMax)
+		if out.AgeMax != nil && *out.AgeMax < MaxTargetAge {
+			return nil, targetingInvalid("with advantageAudience true, Meta fixes ageMax at %d (ageMax is %d); omit it or set advantageAudience false", MaxTargetAge, *out.AgeMax)
 		}
 	}
 	return out, nil
@@ -153,8 +154,8 @@ func normalizeAudienceIDs(field string, ids []string) ([]string, error) {
 // explicit targeting_automation.advantage_audience is an error on ad-set create. Exclusions are
 // not inclusions: they are a hard constraint either way.
 func (t *AudienceTargeting) inclusion() bool {
-	return (t.AgeMin != 0 && t.AgeMin != MinTargetAge) ||
-		(t.AgeMax != 0 && t.AgeMax != MaxTargetAge) ||
+	return (t.AgeMin != nil && *t.AgeMin != MinTargetAge) ||
+		(t.AgeMax != nil && *t.AgeMax != MaxTargetAge) ||
 		len(t.Genders) == 1 ||
 		len(t.CustomAudiences) > 0
 }
@@ -167,11 +168,11 @@ func (t *AudienceTargeting) apply(targeting map[string]any) {
 	if t.IsZero() {
 		return
 	}
-	if t.AgeMin != 0 {
-		targeting["age_min"] = t.AgeMin
+	if t.AgeMin != nil {
+		targeting["age_min"] = *t.AgeMin
 	}
-	if t.AgeMax != 0 {
-		targeting["age_max"] = t.AgeMax
+	if t.AgeMax != nil {
+		targeting["age_max"] = *t.AgeMax
 	}
 	if len(t.Genders) == 1 {
 		targeting["genders"] = []int{metaGenderCodes[t.Genders[0]]}
@@ -191,6 +192,14 @@ func (t *AudienceTargeting) apply(targeting map[string]any) {
 	}
 }
 
+func copyInt(p *int) *int {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
 func audienceRefs(ids []string) []map[string]string {
 	out := make([]map[string]string, len(ids))
 	for i, id := range ids {
@@ -199,13 +208,20 @@ func audienceRefs(ids []string) []map[string]string {
 	return out
 }
 
-// customAudienceOwner is the ownership read's answer: GET /{audience_id}?fields=id,account_id.
+// customAudienceOwner is the ownership read's answer: GET /{audience_id}?fields=id,account_id,subtype.
+// subtype (CUSTOM, WEBSITE, LOOKALIKE, ENGAGEMENT, …) is a Custom Audience field and is what proves
+// the node IS an audience: a campaign, ad set or ad of the same account also has an id and an
+// account_id, and Graph refuses a field the node type does not have, so such an id fails the read.
 // account_id is the ad account id, documented WITHOUT the act_ prefix (Custom Audience reference);
 // it is compared through sameMetaAccount, which ignores the prefix on either side.
 type customAudienceOwner struct {
 	ID        string `json:"id"`
 	AccountID string `json:"account_id"`
+	Subtype   string `json:"subtype"`
 }
+
+// customAudienceFields is the ownership read's field list (see customAudienceOwner).
+const customAudienceFields = "id,account_id,subtype"
 
 // checkCustomAudiences proves, before the first mutating call, that every audience t names is a
 // custom audience of accountID (act_<digits>). A foreign or mistyped id would otherwise be refused
@@ -221,13 +237,16 @@ func (c *Client) checkCustomAudiences(ctx context.Context, accountID string, t *
 		ids   []string
 	}{{"customAudiences", t.CustomAudiences}, {"excludedCustomAudiences", t.ExcludedCustomAudiences}} {
 		for _, id := range list.ids {
-			raw, err := c.getChecked(ctx, "/"+id+"?fields=id,account_id")
+			raw, err := c.getChecked(ctx, "/"+id+"?fields="+customAudienceFields)
 			if err != nil {
 				return fmt.Errorf("meta targeting: %s audience %s could not be read, so nothing was created: %w", list.field, id, err)
 			}
 			var owner customAudienceOwner
 			if err := json.Unmarshal(raw, &owner); err != nil {
 				return fmt.Errorf("meta targeting: %s audience %s read was not a custom audience, so nothing was created: %w", list.field, id, err)
+			}
+			if !statusTokenRE.MatchString(owner.Subtype) {
+				return domain.PreflightRefusalf("meta targeting: %s id %s is not a custom audience (the read reported no audience subtype); nothing was created", list.field, id)
 			}
 			if owner.ID != id || !sameMetaAccount(owner.AccountID, accountID) {
 				return domain.PreflightRefusalf("meta targeting: %s audience %s is not a custom audience of the connected ad account %s; nothing was created", list.field, id, accountID)

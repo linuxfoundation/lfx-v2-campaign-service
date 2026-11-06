@@ -28,3 +28,7 @@ and the gate) each fail a test.
 Review fixes before the PR: the audience owner is compared with `sameMetaAccount` (the `act_`
 prefix ignored on either side), and a `metaConfig` carrying two case-variant `targeting` keys is a
 400, since the pre-check and Dispatch's decoder could otherwise judge different blocks.
+
+PR #558 review: the ownership read also asks for `subtype`, so a same-account campaign, ad set or ad
+id (which has an `account_id` too) is refused before anything is created; and `ageMin`/`ageMax` are
+pointers, so an explicit `0` is a 400 instead of reading as omitted.

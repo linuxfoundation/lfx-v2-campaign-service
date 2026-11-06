@@ -1034,7 +1034,7 @@ bound no encoded bid reaches it, so it is a backstop against a later change to t
 
 `CampaignInput.Targeting` (`metaConfig.targeting`) adds an age range, a gender, custom audiences to
 include and exclude, and the Advantage+ audience flag to the ad set's `targeting` spec:
-`age_min`/`age_max` (18–65), `genders` (`[1]` male, `[2]` female; both or none sends nothing),
+`age_min`/`age_max` (18–65; pointers, so an explicit 0 is refused rather than read as omitted), `genders` (`[1]` male, `[2]` female; both or none sends nothing),
 `custom_audiences` and `excluded_custom_audiences` (`[{"id": …}]`, numeric ids, at most 25
 distinct each, never one id in both), and `targeting_automation.advantage_audience`. Lookalikes are
 custom audiences, so they go in the same lists. Nil or empty targeting leaves the ad set exactly as
@@ -1054,8 +1054,10 @@ language and custom-audience exclusions stay hard constraints either way.
 request; each refusal wraps `domain.ErrCreateConfigInvalid` and is a `domain.PreflightRefusal`, so
 the synchronous create answers 400 and the job reports it verbatim. After the account preflight
 and BEFORE the campaign create, `checkCustomAudiences` reads every listed audience
-(`GET /{id}?fields=id,account_id` through `getChecked`, so the raw body passes `identityjson`): an
-audience reported under another ad account is a refusal and a read that fails (Graph 100/33
+(`GET /{id}?fields=id,account_id,subtype` through `getChecked`, so the raw body passes `identityjson`):
+`subtype` is what proves the node is an audience — a same-account campaign, ad set or ad also has an
+id and an `account_id` — so a node without one is a refusal, as is an audience reported under
+another ad account and a read that fails (Graph 100/33
 included, which cannot tell absent from not-visible) is an error. Either way nothing is created —
 an id Meta would refuse at the ad set no longer orphans a campaign.
 

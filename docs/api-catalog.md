@@ -2628,7 +2628,8 @@ targeting?: object              — OPTIONAL audience targeting on the ad set (#
                                   with a 400 before any job exists unless the deployment sets
                                   META_AUDIENCE_TARGETING_ENABLED to exactly "true" (not yet
                                   live-verified). null/absent → targeting unchanged. Keys:
-  ageMin?, ageMax?: integer      — 18–65 each, ageMin ≤ ageMax → `age_min` / `age_max`.
+  ageMin?, ageMax?: integer      — 18–65 each, ageMin ≤ ageMax → `age_min` / `age_max`. null or
+                                  absent is Meta's default; an explicit 0 is out of range (400).
   genders?: string[]             — subset of male, female (case-insensitive, de-duplicated);
                                   one gender → `genders: [1|2]`; both or none sends nothing.
   customAudiences?: string[]     — numeric Meta custom-audience ids (lookalikes included), at
@@ -2644,9 +2645,10 @@ targeting?: object              — OPTIONAL audience targeting on the ad set (#
                                   (Meta's Advantage+ limits).
                                   Every invalid value is a synchronous 400 ("invalid campaign
                                   config: metaConfig.targeting: …"). Before anything is created
-                                  each audience is read (`GET /{id}?fields=id,account_id`); one
-                                  outside the connected ad account fails the job with nothing
-                                  created. customAudiences / excludedCustomAudiences name
+                                  each audience is read (`GET /{id}?fields=id,account_id,subtype`);
+                                  one outside the connected ad account, or a node with no audience
+                                  `subtype` (a same-account campaign, ad set or ad id), fails the
+                                  job with nothing created. customAudiences / excludedCustomAudiences name
                                   resources of the shared Meta ad account and need
                                   global_marketing_ops on the project (403/503).
 variants: AdVariant[]           — One ad per variant; at least one is required.

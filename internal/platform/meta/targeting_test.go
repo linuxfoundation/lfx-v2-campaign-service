@@ -18,8 +18,9 @@ import (
 )
 
 // targetingServer is metaFieldServer plus the custom-audience ownership read: a GET of
-// /<audience id>?fields=id,account_id answers owners[id] (an account id without act_), or a Graph
-// 100/33 error when the id is not in owners. It records every audience read and every POST path.
+// /<audience id>?fields=id,account_id,subtype answers owners[id] — "<account id>" for a custom
+// audience, or "<account id>|campaign" for a same-account node that is NOT an audience (no subtype)
+// — or a Graph 100/33 error when the id is not in owners. It records every audience read and every POST path.
 type targetingServer struct {
 	*httptest.Server
 	mu        sync.Mutex
@@ -41,7 +42,7 @@ func newTargetingServer(t *testing.T, owners map[string]string) *targetingServer
 		switch {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
-		case r.Method == http.MethodGet && r.URL.Query().Get("fields") == "id,account_id":
+		case r.Method == http.MethodGet && r.URL.Query().Get("fields") == "id,account_id,subtype":
 			id := strings.TrimPrefix(r.URL.Path, "/")
 			ts.reads = append(ts.reads, id)
 			owner, ok := owners[id]
@@ -50,7 +51,11 @@ func newTargetingServer(t *testing.T, owners map[string]string) *targetingServer
 				_, _ = io.WriteString(w, `{"error":{"message":"Unsupported get request","type":"GraphMethodException","code":100,"error_subcode":33}}`)
 				return
 			}
-			_, _ = io.WriteString(w, `{"id":"`+id+`","account_id":"`+owner+`"}`)
+			if acct, ok := strings.CutSuffix(owner, "|campaign"); ok {
+				_, _ = io.WriteString(w, `{"id":"`+id+`","account_id":"`+acct+`"}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"id":"`+id+`","account_id":"`+owner+`","subtype":"WEBSITE"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
 			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
@@ -95,6 +100,8 @@ func (ts *targetingServer) postsSent() []string {
 
 func boolp(b bool) *bool { return &b }
 
+func intp(v int) *int { return &v }
+
 // TestCreateCampaign_NoTargetingLeavesTheAdSetTargetingUnchanged: without a targeting block the
 // ad set carries only geo and placements, no Advantage+ flag is sent, and no audience is read.
 func TestCreateCampaign_NoTargetingLeavesTheAdSetTargetingUnchanged(t *testing.T) {
@@ -133,7 +140,7 @@ func TestCreateCampaign_TargetingReachesTheAdSet(t *testing.T) {
 		reads []string
 	}{
 		{"full inclusion, advantage defaults off",
-			&AudienceTargeting{AgeMin: 25, AgeMax: 54, Genders: []string{"Female", " female "},
+			&AudienceTargeting{AgeMin: intp(25), AgeMax: intp(54), Genders: []string{"Female", " female "},
 				CustomAudiences: []string{"111", " 111 ", "222"}, ExcludedCustomAudiences: []string{"333"}},
 			want{"age_min": float64(25), "age_max": float64(54), "genders": []any{float64(2)},
 				"custom_audiences":          []any{map[string]any{"id": "111"}, map[string]any{"id": "222"}},
@@ -146,12 +153,12 @@ func TestCreateCampaign_TargetingReachesTheAdSet(t *testing.T) {
 		{"both genders send nothing",
 			&AudienceTargeting{Genders: []string{"male", "female"}}, want{}, nil},
 		{"default ages are not an inclusion",
-			&AudienceTargeting{AgeMin: 18, AgeMax: 65}, want{"age_min": float64(18), "age_max": float64(65)}, nil},
+			&AudienceTargeting{AgeMin: intp(18), AgeMax: intp(65)}, want{"age_min": float64(18), "age_max": float64(65)}, nil},
 		{"exclusions only send no flag",
 			&AudienceTargeting{ExcludedCustomAudiences: []string{"333"}},
 			want{"excluded_custom_audiences": []any{map[string]any{"id": "333"}}}, []string{"333"}},
 		{"advantage on, said explicitly",
-			&AudienceTargeting{AgeMin: 21, CustomAudiences: []string{"111"}, AdvantageAudience: boolp(true)},
+			&AudienceTargeting{AgeMin: intp(21), CustomAudiences: []string{"111"}, AdvantageAudience: boolp(true)},
 			want{"age_min": float64(21), "custom_audiences": []any{map[string]any{"id": "111"}},
 				"targeting_automation": map[string]any{"advantage_audience": float64(1)}}, []string{"111"}},
 		{"advantage off, said with no inclusion",
@@ -199,16 +206,18 @@ func TestCreateCampaign_TargetingRefusalsSendNothing(t *testing.T) {
 		tgt  AudienceTargeting
 		want string
 	}{
-		{"ageMin under 18", AudienceTargeting{AgeMin: 17}, "ageMin 17 is out of range"},
-		{"ageMax over 65", AudienceTargeting{AgeMax: 66}, "ageMax 66 is out of range"},
-		{"inverted ages", AudienceTargeting{AgeMin: 40, AgeMax: 30}, "ageMin 40 is above ageMax 30"},
+		{"ageMin under 18", AudienceTargeting{AgeMin: intp(17)}, "ageMin 17 is out of range"},
+		{"explicit ageMin 0", AudienceTargeting{AgeMin: intp(0)}, "ageMin 0 is out of range"},
+		{"explicit ageMax 0", AudienceTargeting{AgeMax: intp(0)}, "ageMax 0 is out of range"},
+		{"ageMax over 65", AudienceTargeting{AgeMax: intp(66)}, "ageMax 66 is out of range"},
+		{"inverted ages", AudienceTargeting{AgeMin: intp(40), AgeMax: intp(30)}, "ageMin 40 is above ageMax 30"},
 		{"unknown gender", AudienceTargeting{Genders: []string{"other"}}, "is not one of male, female"},
 		{"non-numeric audience", AudienceTargeting{CustomAudiences: []string{"abc"}}, "customAudiences entry"},
 		{"non-numeric exclusion", AudienceTargeting{ExcludedCustomAudiences: []string{"1/2"}}, "excludedCustomAudiences entry"},
 		{"audience in both lists", AudienceTargeting{CustomAudiences: []string{"111"}, ExcludedCustomAudiences: []string{" 111"}}, "is in both"},
 		{"too many audiences", AudienceTargeting{CustomAudiences: ids(MaxCustomAudiences + 1)}, "at most 25"},
-		{"advantage with ageMin 30", AudienceTargeting{AgeMin: 30, AdvantageAudience: boolp(true)}, "ageMin of at most 25"},
-		{"advantage with ageMax 54", AudienceTargeting{AgeMax: 54, AdvantageAudience: boolp(true)}, "fixes ageMax at 65"},
+		{"advantage with ageMin 30", AudienceTargeting{AgeMin: intp(30), AdvantageAudience: boolp(true)}, "ageMin of at most 25"},
+		{"advantage with ageMax 54", AudienceTargeting{AgeMax: intp(54), AdvantageAudience: boolp(true)}, "fixes ageMax at 65"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -249,6 +258,10 @@ func TestCreateCampaign_ForeignOrUnreadableAudienceCreatesNothing(t *testing.T) 
 			AudienceTargeting{CustomAudiences: []string{"111"}}, true, "customAudiences audience 111 is not a custom audience of the connected ad account act_777"},
 		{"excluded audience of another account", map[string]string{"111": "777", "333": "888"},
 			AudienceTargeting{CustomAudiences: []string{"111"}, ExcludedCustomAudiences: []string{"333"}}, true, "excludedCustomAudiences audience 333"},
+		{"included id is a same-account campaign", map[string]string{"111": "777|campaign"},
+			AudienceTargeting{CustomAudiences: []string{"111"}}, true, "customAudiences id 111 is not a custom audience"},
+		{"excluded id is a same-account campaign", map[string]string{"333": "777|campaign"},
+			AudienceTargeting{ExcludedCustomAudiences: []string{"333"}}, true, "excludedCustomAudiences id 333 is not a custom audience"},
 		{"unreadable audience", map[string]string{},
 			AudienceTargeting{ExcludedCustomAudiences: []string{"444"}}, false, "excludedCustomAudiences audience 444 could not be read"},
 	} {
