@@ -86,6 +86,40 @@ func TestEligible_RatioToleranceIsTwoSided(t *testing.T) {
 	}
 }
 
+// The tolerance boundary is INCLUDED and decided exactly. 303x300 is exactly 1% off 1:1 and
+// Google accepts it as an AD_IMAGE (validateOnly, 2026-11-06, #538), while 304x300 is refused
+// by both; the earlier float division drifted 303x300 to 0.010000000000000009 and refused it.
+// On 1.91:1, 1188x628 (-0.95%) is in and 1218x628 (+1.5%) is out, again as Google answered.
+func TestAspectWithin_BoundaryIsExactAndIncluded(t *testing.T) {
+	cases := []struct {
+		name                 string
+		w, h, ratioW, ratioH int
+		want                 bool
+	}{
+		{"1:1 exact", 300, 300, 1, 1, true},
+		{"1:1 exactly +1%", 303, 300, 1, 1, true},
+		{"1:1 exactly -1%", 297, 300, 1, 1, true},
+		{"1:1 +1.33%", 304, 300, 1, 1, false},
+		{"1:1 exactly +1% at 100", 101, 100, 1, 1, true},
+		{"1:1 +1.56%", 130, 128, 1, 1, false},
+		{"1.91:1 -0.95%", 1188, 628, 191, 100, true},
+		{"1.91:1 +1.5%", 1218, 628, 191, 100, false},
+		{"zero height", 300, 0, 1, 1, false},
+		{"no ratio", 300, 300, 0, 1, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := AspectWithin(c.w, c.h, c.ratioW, c.ratioH, 0.01); got != c.want {
+				t.Errorf("AspectWithin(%d, %d, %d:%d) = %v, want %v", c.w, c.h, c.ratioW, c.ratioH, got, c.want)
+			}
+		})
+	}
+	// The slot gate uses it, so the catalog places what the create path accepts.
+	if ok, _ := squareSlot().Eligible(asset("a", 303, 300, 0)); !ok {
+		t.Error("a 303x300 image is not eligible for a 1:1 slot; Google accepts it")
+	}
+}
+
 // An asset whose dimensions were never recorded must be UNCLASSIFIED, never "wrong
 // shape". Reading an unrecorded 0x0 as a real size fails every minimum in the catalog,
 // which would tell an operator their entire pre-existing library is the wrong size — a

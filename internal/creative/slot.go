@@ -201,13 +201,34 @@ func (r ShapeRule) fits(a Asset) bool {
 	if r.RatioW <= 0 || r.RatioH <= 0 {
 		return true
 	}
-	return r.ratioDrift(a) <= r.RatioTolerance
+	return AspectWithin(a.Width, a.Height, r.RatioW, r.RatioH, r.RatioTolerance)
+}
+
+// AspectWithin reports whether a w x h image is within tol (a fraction, 0.01 for Google's
+// documented +-1%) of the ratioW:ratioH target, boundary INCLUDED.
+//
+// It cross-multiplies rather than dividing: the drift (w/h)/(ratioW/ratioH) - 1 is
+// (w*ratioH - h*ratioW) / (h*ratioW), so the test is |w*ratioH - h*ratioW| <= tol*h*ratioW,
+// whose left side is an exact integer. Dividing first put float rounding on the boundary:
+// 303x300 against 1:1 drifts 0.010000000000000009 in float64 and was refused, although it is
+// exactly 1% off and Google accepts it (validateOnly, 2026-11-06, #538), while 304x300 is
+// refused by both. The googleads preflight (checkImageGeometry) calls this same function, so
+// the catalog's eligibility and the create path's refusal cannot disagree on a boundary.
+func AspectWithin(w, h, ratioW, ratioH int, tol float64) bool {
+	if w <= 0 || h <= 0 || ratioW <= 0 || ratioH <= 0 {
+		return false
+	}
+	d := int64(w)*int64(ratioH) - int64(h)*int64(ratioW)
+	if d < 0 {
+		d = -d
+	}
+	return float64(d) <= tol*float64(int64(h)*int64(ratioW))
 }
 
 // ratioDrift is how far the asset's aspect ratio sits from this rule's target, as a
-// fraction of the target. It is the eligibility test AND the ranking key, which is why it
-// is one function: a ranking computed differently from the gate could prefer an asset the
-// gate would have refused.
+// fraction of the target. It is the RANKING key among assets the gate (AspectWithin) already
+// admitted; it never decides eligibility, because its division puts float rounding on the
+// boundary the gate must decide exactly.
 //
 // Returns 0 for a rule that states no ratio — every eligible asset ranks equally on shape
 // there, and the area tie-break below decides.

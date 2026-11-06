@@ -2386,14 +2386,16 @@ displayDemographics?:           — OPTIONAL, DISPLAY ONLY (#499). Positive demo
 
 searchAssets?:                  — OPTIONAL Search campaign image, logo and name assets (#477), each
   {adImages?: ImageRef[],         linked to the CAMPAIGN. SEARCH ONLY, and REFUSED on every other
-   businessLogoImages?:           `channel` before any request (the other channels carry their own
+   landscapeAdImages?:            `channel` before any request (the other channels carry their own
      ImageRef[],                  business name and logo on their own creative). Every field is
-   businessName?: string}         optional and independent:
-                                    adImages             AD_IMAGE,      1:1, min 300x300, at most 20
-                                    businessLogoImages   BUSINESS_LOGO, 1:1, min 128x128, at most 1
+   businessLogoImages?:           optional and independent:
+     ImageRef[],                    adImages             AD_IMAGE,      1:1,    min 300x300
+   businessName?: string}           landscapeAdImages    AD_IMAGE,      1.91:1, min 600x314 (#538)
+                                    businessLogoImages   BUSINESS_LOGO, 1:1,    min 128x128, at most 1
                                     businessName         BUSINESS_NAME, ≤25 weighted chars
-                                  Only the SQUARE shape is taken for `adImages`: the probe covered a
-                                  square image, and no slot documents 1.91:1 for this field type.
+                                  `adImages` and `landscapeAdImages` are at most 20 TOGETHER: both
+                                  link under the one AD_IMAGE field type and Google counts them as
+                                  one. Every ratio is ±1%, the boundary included.
                                   Image entries take both ImageRef shapes `demandGenCreative`
                                   defines — an https URL this service fetches, or {"imageAssetId":
                                   "<uuid>"} naming a stored creative asset — under that field's
@@ -2405,7 +2407,7 @@ searchAssets?:                  — OPTIONAL Search campaign image, logo and nam
                                   `googleAds:mutate` (each asset under a temporary id the link
                                   names), after the extensions and before the ad group, so a refusal
                                   leaves no unlinked asset. The asset ids are in `searchAssetIds`
-                                  (ad images, then the logo, then the name). A failure keeps the
+                                  (square ad images, landscape ad images, then the logo, then the name). A failure keeps the
                                   campaign (partial result); an ambiguous outcome, or a 2xx that
                                   does not describe every asset and link, is UNCONFIRMED and keeps
                                   the asset ids the response did describe.
@@ -2419,9 +2421,15 @@ searchAssets?:                  — OPTIONAL Search campaign image, logo and nam
                                   temporary id, and their four links, in one `googleAds:mutate`.
                                   A live create on 2026-11-06 (#520, paused campaign 24444541804)
                                   persisted it, and GAQL read back the four campaign_asset rows
-                                  (2 AD_IMAGE, BUSINESS_LOGO, BUSINESS_NAME), all ENABLED. The
-                                  minimums and the 20-image cap are Google's documented
-                                  specifications.
+                                  (2 AD_IMAGE, BUSINESS_LOGO, BUSINESS_NAME), all ENABLED.
+                                  Every geometry and count above was probed at its boundary by
+                                  validateOnly on 2026-11-06 (#538): Google refuses one pixel under
+                                  a minimum (mediaUploadError DIMENSIONS_NOT_ALLOWED or
+                                  IMAGE_CONSTRAINTS_VIOLATED), past ±1% (ASPECT_RATIO_NOT_ALLOWED),
+                                  the 21st AD_IMAGE whatever its shape and a 2nd BUSINESS_LOGO
+                                  (RESOURCE_LIMIT). One exception, on purpose: Google's API takes a
+                                  BUSINESS_LOGO down to 16x16, and this service keeps 128x128, the
+                                  size Google's business-logo specification documents.
 adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When true, the dispatcher first
                                   looks the composed campaign name up on the account and, if a single
                                   live campaign already carries it, ADOPTS that campaign instead of
