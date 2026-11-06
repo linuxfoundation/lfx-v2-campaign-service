@@ -388,6 +388,17 @@ app:
     GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to the Google Ads demographic inputs whose request
+    # shape has NOT yet been checked with a validateOnly probe:
+    # googleAdsConfig.observedDemographics (#497). Unlike the gates above it names
+    # no account resource; it keeps an unverified shape off the shared account,
+    # because a wrong guess fails after the budget and campaign exist. Set it to
+    # exactly "true" in lfx-v2-argocd once the probe passes. While off, a create
+    # naming one is refused before anything upstream exists. Any value other than
+    # "true" is treated as off, so a typo fails closed.
+    GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR
     # (/projects/{project_id}/connection-twitter-ads/account-monitor). Default
     # off for the same reason as MICROSOFT_METRICS_ENABLED above: the X account

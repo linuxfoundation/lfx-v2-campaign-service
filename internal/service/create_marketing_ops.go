@@ -37,9 +37,9 @@ func (s *BriefService) marketingOpsChecker() MarketingOpsChecker {
 }
 
 // GoogleAdsMarketingOpsInputs names, in config order, the googleAdsConfig inputs this config
-// sets that name an EXISTING audience, user list, custom segment or shared negative keyword list
-// on the connected Google Ads account, which every foundation shares, so that only
-// global_marketing_ops may send them:
+// sets that name an EXISTING audience, user list, custom segment, shared negative keyword list or
+// conversion action on the connected Google Ads account, which every foundation shares, so that
+// only global_marketing_ops may send them:
 //
 //   - demandGenAudience and each demandGenAdGroups entry's audience (#459, #460);
 //   - the Display audience lists (#462, #475): audienceSegments, customAudiences,
@@ -47,13 +47,14 @@ func (s *BriefService) marketingOpsChecker() MarketingOpsChecker {
 //     entry;
 //   - performanceMaxAudienceSignal (#461);
 //   - sharedNegativeKeywordLists (#477);
+//   - conversionActions (#436), on every channel: existing conversion actions, and the
+//     account-level custom conversion goal the client creates or reuses for them;
 //   - audienceSegments on Search, at the campaign level and on each adGroups entry. Search
 //     attaches them as observation-only user-list criteria and they predate every deployment
 //     flag, but they still name the shared account's user lists.
 //
-// conversionActions also names existing account resources but is not an audience input and is
-// outside this check. dispatch's TestEveryGoogleAdsConfigFieldIsClassifiedForTheMarketingOpsGate
-// requires every googleAdsConfig field to be classified as gated or not.
+// dispatch's TestEveryGoogleAdsConfigFieldIsClassifiedForTheMarketingOpsGate requires every
+// googleAdsConfig field to be classified as gated or not.
 //
 // Group entries are named by 1-based position ("displayAdGroups entry 2 customAudiences").
 // Every name is service-derived, so a message built from them carries no caller value.
@@ -100,6 +101,7 @@ func GoogleAdsMarketingOpsInputs(config json.RawMessage) []string {
 		DisplayAdGroups              []audienceLists `json:"displayAdGroups"`
 		PerformanceMaxAudienceSignal string          `json:"performanceMaxAudienceSignal"`
 		SharedNegativeKeywordLists   []string        `json:"sharedNegativeKeywordLists"`
+		ConversionActions            []string        `json:"conversionActions"`
 	}
 	_ = json.Unmarshal(raw, &cfg) // see above: a partial decode is still inspected
 
@@ -142,6 +144,9 @@ func GoogleAdsMarketingOpsInputs(config json.RawMessage) []string {
 	if len(cfg.SharedNegativeKeywordLists) > 0 {
 		set = append(set, "sharedNegativeKeywordLists")
 	}
+	if len(cfg.ConversionActions) > 0 {
+		set = append(set, "conversionActions")
+	}
 	return set
 }
 
@@ -159,8 +164,8 @@ func marketingOpsForbiddenMessage(fields []string) string {
 //
 // The gateway admits every campaign_manager to create-campaigns, and campaign_manager is
 // `executive_director or global_marketing_ops` (lfx-v2-helm model.fga): it includes each
-// foundation's executive directors. Audiences, user lists, custom segments and shared sets are
-// resources of the Google Ads account every foundation shares, so a campaign_manager check alone
+// foundation's executive directors. Audiences, user lists, custom segments, shared sets and conversion
+// actions are resources of the Google Ads account every foundation shares, so a campaign_manager check alone
 // would let one foundation's ED target or reuse resources built for another. The gateway cannot
 // narrow this itself because the inputs are in the body, not the route, so the check is made
 // here, on the same relation the marketing-ops-api gateway rule uses for the conversion-actions

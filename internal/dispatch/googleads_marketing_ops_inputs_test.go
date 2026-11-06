@@ -48,6 +48,9 @@ func dispatcherSharedAccountInputs(cfg googleAdsConfig) []string {
 	if len(cfg.SharedNegativeKeywordLists) > 0 {
 		set = append(set, "sharedNegativeKeywordLists")
 	}
+	if len(cfg.ConversionActions) > 0 {
+		set = append(set, "conversionActions")
+	}
 	return set
 }
 
@@ -83,6 +86,10 @@ func TestSharedAccountInputDetectionAgreesWithTheCreateGate(t *testing.T) {
 		`{"googleAdsConfig":{"channel":"video","audienceSegments":["a"]}}`,
 		// encoding/json matches nested keys case-insensitively too.
 		`{"googleAdsConfig":{"DisplayAdGroups":[{"CustomAudiences":["c"]}],"AdGroups":[{"AudienceSegments":["s"]}],"PerformanceMaxAudienceSignal":"1"}}`,
+		`{"googleAdsConfig":{"channel":"search","conversionActions":["customers/1/conversionActions/2"]}}`,
+		`{"googleAdsConfig":{"channel":"demand-gen","conversionActions":["123"],"demandGenAudience":"a"}}`,
+		`{"googleAdsConfig":{"conversionActions":[]}}`,
+		`{"googleAdsConfig":{"observedDemographics":["AGE_RANGE"]}}`,
 		`{"microsoftConfig":{"budget":5}}`,
 		`{"GoogleAdsConfig":{"demandGenAudience":"customers/1/audiences/2"}}`,
 	} {
@@ -101,7 +108,8 @@ func TestSharedAccountInputDetectionAgreesWithTheCreateGate(t *testing.T) {
 }
 
 // sharedAccountGatedFields are the googleAdsConfig JSON paths that name an existing audience,
-// user list, custom segment or shared negative list on the shared Google Ads account, and so
+// user list, custom segment, shared negative list or conversion action on the shared Google Ads
+// account, and so
 // require global_marketing_ops at create. "group[]" marks a field of each entry of that list.
 var sharedAccountGatedFields = map[string]bool{
 	"demandGenAudience":                          true,
@@ -117,19 +125,19 @@ var sharedAccountGatedFields = map[string]bool{
 	"displayAdGroups[].excludedAudienceSegments": true,
 	"performanceMaxAudienceSignal":               true,
 	"sharedNegativeKeywordLists":                 true,
+	"conversionActions":                          true,
 }
 
 // sharedAccountUngatedFields are every other googleAdsConfig JSON path, each deliberately
 // outside the check. Most name no existing account resource: the caller's own text, URLs,
-// images, bids and dates, Google's own reference data (geo targets, languages, userInterests),
-// or public domains (excludedPlacements). conversionActions does name existing conversion
-// actions on the shared account; it is not an audience input and stays outside this check
-// (see the 2026-11-05 shared-account-inputs log entry).
+// images, bids and dates, Google's own reference data (geo targets, languages, userInterests,
+// the fixed demographic dimensions of observedDemographics), or public domains
+// (excludedPlacements).
 var sharedAccountUngatedFields = map[string]bool{
 	"budget": true, "channel": true, "headlines": true, "descriptions": true, "path1": true,
 	"path2": true, "keywords": true, "userInterests": true, "excludedPlacements": true,
 	"negativeKeywords": true, "searchPartners": true, "cpcBid": true, "biddingStrategy": true,
-	"targetCpa": true, "targetRoas": true, "conversionActions": true, "startDate": true,
+	"targetCpa": true, "targetRoas": true, "startDate": true,
 	"endDate": true, "geoTargets": true, "excludedGeoTargets": true, "proximityTargets": true,
 	"languages": true, "adSchedules": true, "deviceBidModifiers": true, "excludedAgeRanges": true,
 	"excludedGenders": true, "excludedIncomeRanges": true, "excludedParentalStatuses": true,
@@ -137,7 +145,7 @@ var sharedAccountUngatedFields = map[string]bool{
 	"promotions": true, "prices": true, "leadForms": true, "demandGenCreative": true,
 	"demandGenVideoCreative": true, "demandGenAds": true, "performanceMaxCreative": true,
 	"performanceMaxSearchThemes": true, "videoCreative": true, "displayCreative": true,
-	"searchAssets": true, "adoptExisting": true,
+	"searchAssets": true, "adoptExisting": true, "observedDemographics": true,
 	"adGroups[].name": true, "adGroups[].cpcBid": true, "adGroups[].keywords": true,
 	"adGroups[].ads": true, "adGroups[].negativeKeywords": true,
 	"displayAdGroups[].name": true, "displayAdGroups[].creative": true,

@@ -393,8 +393,8 @@ type googleAdsConfig struct {
 	// toward, as bare numeric ids or full `customers/<id>/conversionActions/<id>`
 	// resource names. Absent means the campaign inherits the ACCOUNT's conversion
 	// goals, which is what every Google campaign this service has created does.
-	// They name existing actions on the shared account, but they are not an audience input
-	// and are outside the create path's global_marketing_ops check
+	// They name existing actions on the shared account, so on every channel the create path
+	// requires global_marketing_ops on the project for any non-empty list
 	// (service.GoogleAdsMarketingOpsInputs).
 	//
 	// Every channel (#436). After the campaign is created they become a campaign-level
@@ -461,9 +461,9 @@ type googleAdsConfig struct {
 	// DeviceBidModifiers at the campaign level (#474) — a schedule without a bidModifier,
 	// a device only with bidModifier 0 — and refuses the two demographic exclusions,
 	// which belong inside the Audience demandGenAudience references; "performance-max"
-	// takes languages and ad schedules (Google documents them as PMax campaign criteria)
-	// and refuses only DeviceBidModifiers and the two demographic exclusions. Refused,
-	// never silently dropped.
+	// takes languages, ad schedules (Google documents them as PMax campaign criteria) and
+	// DeviceBidModifiers with bidModifier 0 only (#500), and refuses the two demographic
+	// exclusions. Refused, never silently dropped.
 	//
 	// Left empty the campaign serves in EVERY language, which is Google's default and
 	// rarely what an event campaign wants.
@@ -476,12 +476,15 @@ type googleAdsConfig struct {
 	// exclude a device outright with a modifier of 0. Left empty, every device bids the
 	// campaign's own bid.
 	//
-	// "CONNECTED_TV" is accepted on "demand-gen" only (#474), where a validateOnly probe
-	// verified its exclusion. Google documents TV screens for Display and Video
-	// campaigns, and `deviceTypes` in the googleads package does not list it for them —
-	// a known gap, not a deliberate exclusion; Search does not support it. Search, Video,
-	// Display and Demand Gen reach these criteria; Performance Max refuses them outright.
-	// See deviceTypes and demandGenDeviceTypes in the googleads package.
+	// "CONNECTED_TV" is accepted on "demand-gen" (#474) and "performance-max" (#500) only,
+	// where validateOnly probes verified its exclusion. Google documents TV screens for
+	// Display and Video campaigns, and `deviceTypes` in the googleads package does not
+	// list it for them — a known gap, not a deliberate exclusion; Search does not support
+	// it. On "performance-max" every entry must carry bidModifier 0 (Google refuses any
+	// other modifier there), excluding all four devices is refused, and the exclusion is
+	// sent as an update of the device row Google creates on every Performance Max
+	// campaign. See deviceTypes, demandGenDeviceTypes and performanceMaxDeviceCriterionIDs
+	// in the googleads package.
 	//
 	// bidModifier is REQUIRED on every entry — it is a *float64 so that an OMITTED one
 	// is refused rather than decoded as 0, which is the -100% opt-out and would switch
@@ -502,6 +505,14 @@ type googleAdsConfig struct {
 	// other channel. See googleads.validateAdGroupDemographicExclusions.
 	ExcludedIncomeRanges     []string `json:"excludedIncomeRanges"`
 	ExcludedParentalStatuses []string `json:"excludedParentalStatuses"`
+	// ObservedDemographics puts demographic dimensions ("AGE_RANGE", "GENDER",
+	// "INCOME_RANGE") in observation mode on every Search ad group (#497): reporting and
+	// bid adjustments, no narrowing. "search" only; PARENTAL_STATUS is refused there.
+	// Values excluded above stay excluded. Refused outright unless
+	// GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED is "true", because its request shape is not yet
+	// probed live (see googleAdsDemographicTargetingEnabled). See
+	// googleads.validateObservedDemographics.
+	ObservedDemographics []string `json:"observedDemographics"`
 	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions,
 	// created as account-level assets then linked to the campaign. Accepted on Search,
 	// on Performance Max (#461), which links them at the campaign level too, and, for
@@ -710,6 +721,15 @@ func googleAdsSharedNegativeListsEnabled() bool {
 	return os.Getenv(constants.EnvGoogleAdsSharedNegativeListsEnabled) == "true"
 }
 
+// googleAdsDemographicTargetingEnabled reports whether this deployment opted in to the
+// demographic inputs whose request shape is not yet probed live: observedDemographics (#497).
+// Read per call, like the gates above. Unlike them it names no account resource; it keeps an
+// unverified shape off the shared account until a validateOnly probe has passed. See
+// constants.EnvGoogleAdsDemographicTargetingEnabled.
+func googleAdsDemographicTargetingEnabled() bool {
+	return os.Getenv(constants.EnvGoogleAdsDemographicTargetingEnabled) == "true"
+}
+
 // googleAdsInputDisabled is the refusal for an input a deployment gate keeps off: not-created,
 // so the claim is released, and a domain.PreflightRefusal, so the asynchronous create job
 // copies the sentence verbatim instead of reporting a generic failure. The sentence is
@@ -784,8 +804,11 @@ type GoogleAdsDispatcher struct {
 	clients *clientCache
 	// geo caches geo target suggestions (public reference data) so a typeahead does not spend
 	// the shared developer token's quota on repeated identical searches. Nil-safe.
-	geo  *geoSuggestCache
-	opts []googleads.Option
+	geo *geoSuggestCache
+	// interests caches the user_interest taxonomy per account (#496), for the same reason:
+	// a picker searches it as the operator types, and it is Google's own list. Nil-safe.
+	interests *userInterestCache
+	opts      []googleads.Option
 	// creatives and assets are the creative-asset library and the process-wide memory
 	// budget, bound late by registerDispatchers exactly as they are on the Meta, Microsoft,
 	// Twitter and LinkedIn dispatchers. Both may be nil — a nil repo means a config naming
@@ -797,7 +820,7 @@ type GoogleAdsDispatcher struct {
 
 // NewGoogleAdsDispatcher builds the adapter from the connection repo + encryptor.
 func NewGoogleAdsDispatcher(repo connReader, enc domain.Encryptor, opts ...googleads.Option) *GoogleAdsDispatcher {
-	return &GoogleAdsDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), geo: newGeoSuggestCache(), opts: opts}
+	return &GoogleAdsDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), geo: newGeoSuggestCache(), interests: newUserInterestCache(), opts: opts}
 }
 
 // Dispatch implements service.PlatformDispatcher for Google Ads.
@@ -876,6 +899,12 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 			constants.EnvGoogleAdsSharedNegativeListsEnabled,
 			"sharedNegativeKeywordLists")
 	}
+	// The unprobed demographic inputs (#497), on the same terms: any non-empty list, on any
+	// channel, so the refusal never depends on the client's own validation of the values.
+	if len(cfg.ObservedDemographics) > 0 && !googleAdsDemographicTargetingEnabled() {
+		return nil, googleAdsInputDisabled("observedDemographics is",
+			constants.EnvGoogleAdsDemographicTargetingEnabled, "observedDemographics")
+	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -950,6 +979,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		ExcludedGenders:          cfg.ExcludedGenders,
 		ExcludedIncomeRanges:     cfg.ExcludedIncomeRanges,
 		ExcludedParentalStatuses: cfg.ExcludedParentalStatuses,
+		ObservedDemographics:     cfg.ObservedDemographics,
 		Sitelinks:                googleAdsSitelinks(cfg.Sitelinks),
 		Callouts:                 cfg.Callouts,
 		StructuredSnippets:       googleAdsStructuredSnippets(cfg.StructuredSnippets),

@@ -92,6 +92,12 @@ per-deployment opt-in, each shared list is checked against the connected Google 
 and create-campaigns requires `global_marketing_ops` on the project for any. Only exactly `"true"` enables it; off, a create naming one, on any channel, is refused before
 anything upstream exists. `searchAssets` is not gated.
 
+`GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` defaults to `"false"` too (#497), but gates something
+different: not an account resource, but a request shape nobody has probed live yet —
+`googleAdsConfig.observedDemographics`. Only exactly `"true"` enables it; off, a create naming it,
+on any channel, is refused before anything upstream exists. Turn it on once the validateOnly probe
+in the field's docs passes.
+
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
 default `1841232183`: the LF Research survey-promo workflow a survey send series
 (`send-workflows`) is copied from when a request names none. That id exists only in the LF

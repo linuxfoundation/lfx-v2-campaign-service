@@ -2259,7 +2259,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: create-campaigns lfx-v2-campaign-service-briefs
-            description: 'Create campaigns across the selected platforms (async -> job). Besides the request-shape 400s (an unknown or duplicate platform, new_version on a platform that does not support it, and the like), two dispatch-time rules are refused synchronously, before any job exists. (1) An email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients'' time zones, which HubSpot does not allow together: 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. (2) A Reddit config that names a stored creative asset it cannot use, decided from the config alone: redditConfig.imageAssetId together with imageUrl or postUrl, an imageAssetId that is not a UUID, or imageAssetId while signed creative-asset URLs are not configured (''stored creative assets are not enabled for Reddit; supply imageUrl''): 400 with that message. GOOGLE ADS SHARED-ACCOUNT INPUTS: a googleAdsConfig that sets any input naming an existing audience, user list, custom segment or shared negative keyword list on the Google Ads account (demandGenAudience or an audience on any demandGenAdGroups entry; audienceSegments, customAudiences, customAffinities or excludedAudienceSegments, on the campaign or on any displayAdGroups entry; audienceSegments on any adGroups entry; performanceMaxAudienceSignal; sharedNegativeKeywordLists; any non-empty value, whitespace included, on any channel, Search audienceSegments included) requires the caller to hold global_marketing_ops on this project, checked once per request before any job exists: 403 naming the gated fields when they do not, 503 when the check cannot be made (project lookup or authorization service unavailable). The gateway admits every campaign_manager, which includes foundation executive directors, and those resources belong to the Google Ads account every foundation shares. conversionActions is not part of this check. An invalid per-platform `bidding` object (see the config attribute) is also refused synchronously, with 400 "invalid campaign config: <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc) and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are immediately eligible for the bid lever, and eligibility follows the platform''s current strategy. Every other dispatch failure, including an imageAssetId that does not exist for this brief, still arrives later, as the job''s own result.'
+            description: 'Create campaigns across the selected platforms (async -> job). Besides the request-shape 400s (an unknown or duplicate platform, new_version on a platform that does not support it, and the like), two dispatch-time rules are refused synchronously, before any job exists. (1) An email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients'' time zones, which HubSpot does not allow together: 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. (2) A Reddit config that names a stored creative asset it cannot use, decided from the config alone: redditConfig.imageAssetId together with imageUrl or postUrl, an imageAssetId that is not a UUID, or imageAssetId while signed creative-asset URLs are not configured (''stored creative assets are not enabled for Reddit; supply imageUrl''): 400 with that message. GOOGLE ADS SHARED-ACCOUNT INPUTS: a googleAdsConfig that sets any input naming an existing audience, user list, custom segment, shared negative keyword list or conversion action on the Google Ads account (demandGenAudience or an audience on any demandGenAdGroups entry; audienceSegments, customAudiences, customAffinities or excludedAudienceSegments, on the campaign or on any displayAdGroups entry; audienceSegments on any adGroups entry; performanceMaxAudienceSignal; sharedNegativeKeywordLists; conversionActions; any non-empty value, whitespace included, on any channel, Search audienceSegments included) requires the caller to hold global_marketing_ops on this project, checked once per request before any job exists: 403 naming the gated fields when they do not, 503 when the check cannot be made (project lookup or authorization service unavailable). The gateway admits every campaign_manager, which includes foundation executive directors, and those resources belong to the Google Ads account every foundation shares. An invalid per-platform `bidding` object (see the config attribute) is also refused synchronously, with 400 "invalid campaign config: <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc) and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are immediately eligible for the bid lever, and eligibility follows the platform''s current strategy. Every other dispatch failure, including an imageAssetId that does not exist for this brief, still arrives later, as the job''s own result.'
             operationId: lfx-v2-campaign-service-briefs#create-campaigns
             parameters:
                 - name: project_id
@@ -10346,6 +10346,98 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/google-ads/audiences:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-google-ads-audiences lfx-v2-campaign-service-connections
+            description: 'List the custom audiences, combined audiences, Audience resources or user interests (one type per call) on the Google Ads customer a Google create for this project uses, live from GAQL on custom_audience, combined_audience, audience or user_interest, for the audience pickers (#496). Only usable entries are listed: custom_audience, combined_audience and audience with status ENABLED; audience additionally with scope CUSTOMER (an ASSET_GROUP-scoped Audience belongs to one asset group); user_interest restricted to the AFFINITY and IN_MARKET taxonomies. q keeps entries whose name contains it, ignoring case. Sorted by name, capped at 500 after the q filter, with `truncated` set when more matched; the AFFINITY and IN_MARKET taxonomy is about a thousand entries, more than the cap, so a picker should search it with q; the user_interest list is cached for 6 hours per account, so repeated searches do not reach Google. More than 10000 entries of one type on the customer fails the read with 503. Credentials resolve as for a create: the project''s own connection, or the shared LF system credential when it has none (or when the deployment forces the LF account). The Google Ads customer is shared by every foundation, so the response lists EVERY foundation''s audiences, not only this project''s; like list-google-ads-conversion-actions it is therefore gated on global_marketing_ops of {project_id} (the LF marketing team), not campaign_manager, which also admits a foundation''s executive director. A pure read: the only upstream call is googleAds:search, and nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#list-google-ads-audiences
+            parameters:
+                - name: type
+                  in: query
+                  description: Which kind to list
+                  required: true
+                  type: string
+                  enum:
+                    - custom_audience
+                    - combined_audience
+                    - audience
+                    - user_interest
+                - name: q
+                  in: query
+                  description: Optional case-insensitive name substring to keep
+                  required: false
+                  type: string
+                  maxLength: 100
+                  minLength: 1
+                  pattern: \S
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/GoogleAdsAudienceResources'
+                        required:
+                            - account_id
+                            - type
+                            - audiences
+                            - audience_count
+                            - truncated
+                "400":
+                    description: 'BadRequest: Bad request'
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: 'NotFound: Resource not found'
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/google-ads/campaign-ref:
         get:
             tags:
@@ -16397,6 +16489,142 @@ definitions:
             - cost_micros
             - ctr
             - conversions
+    GoogleAdsAudienceResource:
+        title: GoogleAdsAudienceResource
+        type: object
+        properties:
+            description:
+                type: string
+                description: The entry's description. Absent when Google sent none, and always for user_interest.
+                example: People searching for KubeCon
+            id:
+                type: string
+                description: The entry's numeric id (user_interest_id for a user_interest)
+                example: "123"
+            name:
+                type: string
+                description: The entry's display name. Not an identifier.
+                example: CNCF KubeCon NA
+            resource_name:
+                type: string
+                description: 'customers/{customerId}/{customAudiences|combinedAudiences|audiences|userInterests}/{id}, in exactly the form the create inputs accept: a custom_audience in googleAdsConfig.customAudiences (Display), an audience in demandGenAudience or performanceMaxAudienceSignal, a user_interest in userInterests (Display). No create input accepts a combined_audience today. The customer is the account a Google create for this project uses.'
+                example: customers/8666746580/customAudiences/123
+            status:
+                type: string
+                description: 'Always ENABLED for custom_audience, combined_audience and audience: only enabled entries are listed. Absent for user_interest, which has no status in Google Ads.'
+                example: ENABLED
+            subtype:
+                type: string
+                description: 'Google''s own classification, verbatim: custom_audience.type (AUTO, INTEREST, PURCHASE_INTENT, SEARCH) or user_interest.taxonomy_type (AFFINITY, IN_MARKET). Absent for combined_audience and audience, which have none.'
+                example: SEARCH
+            type:
+                type: string
+                description: The kind that was read, echoing the type parameter
+                example: custom_audience
+                enum:
+                    - custom_audience
+                    - combined_audience
+                    - audience
+                    - user_interest
+        example:
+            description: People searching for KubeCon
+            id: "123"
+            name: CNCF KubeCon NA
+            resource_name: customers/8666746580/customAudiences/123
+            status: ENABLED
+            subtype: SEARCH
+            type: custom_audience
+        required:
+            - resource_name
+            - id
+            - name
+            - type
+    GoogleAdsAudienceResources:
+        title: GoogleAdsAudienceResources
+        type: object
+        properties:
+            account_id:
+                type: string
+                description: 'The Google Ads customer the entries were read from: the account a Google create for this project uses'
+                example: "8666746580"
+            audience_count:
+                type: integer
+                description: How many entries are in `audiences`
+                example: 1
+                format: int64
+            audiences:
+                type: array
+                items:
+                    $ref: '#/definitions/GoogleAdsAudienceResource'
+                description: Matching entries sorted by name (ignoring case), capped at 500 (see `truncated`)
+                example:
+                    - description: People searching for KubeCon
+                      id: "123"
+                      name: CNCF KubeCon NA
+                      resource_name: customers/8666746580/customAudiences/123
+                      status: ENABLED
+                      subtype: SEARCH
+                      type: custom_audience
+                    - description: People searching for KubeCon
+                      id: "123"
+                      name: CNCF KubeCon NA
+                      resource_name: customers/8666746580/customAudiences/123
+                      status: ENABLED
+                      subtype: SEARCH
+                      type: custom_audience
+                    - description: People searching for KubeCon
+                      id: "123"
+                      name: CNCF KubeCon NA
+                      resource_name: customers/8666746580/customAudiences/123
+                      status: ENABLED
+                      subtype: SEARCH
+                      type: custom_audience
+            truncated:
+                type: boolean
+                description: True when more entries matched than were returned; narrow the search with q
+                example: false
+            type:
+                type: string
+                description: The kind that was read
+                example: custom_audience
+                enum:
+                    - custom_audience
+                    - combined_audience
+                    - audience
+                    - user_interest
+        example:
+            account_id: "8666746580"
+            audience_count: 1
+            audiences:
+                - description: People searching for KubeCon
+                  id: "123"
+                  name: CNCF KubeCon NA
+                  resource_name: customers/8666746580/customAudiences/123
+                  status: ENABLED
+                  subtype: SEARCH
+                  type: custom_audience
+                - description: People searching for KubeCon
+                  id: "123"
+                  name: CNCF KubeCon NA
+                  resource_name: customers/8666746580/customAudiences/123
+                  status: ENABLED
+                  subtype: SEARCH
+                  type: custom_audience
+                - description: People searching for KubeCon
+                  id: "123"
+                  name: CNCF KubeCon NA
+                  resource_name: customers/8666746580/customAudiences/123
+                  status: ENABLED
+                  subtype: SEARCH
+                  type: custom_audience
+            truncated: false
+            type: custom_audience
+        required:
+            - account_id
+            - type
+            - audiences
+            - audience_count
+            - truncated
     GoogleAdsConnection:
         title: GoogleAdsConnection
         type: object

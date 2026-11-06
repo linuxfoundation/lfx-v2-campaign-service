@@ -38,9 +38,14 @@ dispatch tests keep the two in step:
   deliberately ungated, so a new field fails CI until someone classifies it. Each gated field
   sent alone must be named by both detections.
 
-`conversionActions` is outside the check. It names existing conversion actions on the shared
-account, but it is not an audience input, and the owner's decision kept audiences, not
-conversion goals, to marketing ops. Whether it should be gated is an open question.
+**`conversionActions` is gated too**, by the owner's decision of 2026-11-05. It names existing
+conversion actions on the shared account, and the client creates or reuses an account-level
+`CustomConversionGoal` for them. It is accepted on every channel at the campaign level, with no
+ad-group form and no flag, so any non-empty list now requires `global_marketing_ops`.
+**Behaviour change:** an executive director who is not `global_marketing_ops` used to be able to
+send conversion action ids, and now gets `403` naming `conversionActions`.
+`observedDemographics` (#502) is classified as ungated: it names Google's fixed demographic
+dimensions, not an account resource.
 
 The 2026-11-04 #468 entry's premise, that `campaign_manager` is held only by LF marketing, does
 not hold: `campaign_manager` includes foundation executive directors. That is why #501 and this
@@ -53,7 +58,7 @@ Each of these mutations fails the tests:
 - removing the gate call;
 - adding an unclassified `googleAdsConfig` field;
 - dropping the campaign-level lists, the `displayAdGroups` loop, the `adGroups` loop, the
-  Performance Max signal, the shared lists or `excludedAudienceSegments`;
+  Performance Max signal, the shared lists, `conversionActions` or `excludedAudienceSegments`;
 - trimming whitespace before the signal check;
 - checking twice;
 - admitting on a check error;

@@ -54,6 +54,11 @@ func TestGoogleAdsMarketingOpsInputs(t *testing.T) {
 		// Search observation: not behind the Display flag, but it names the shared account's user lists.
 		{"search audience segments", `{"googleAdsConfig":{"channel":"search","audienceSegments":["customers/1/userLists/2"]}}`, []string{"audienceSegments"}},
 		{"search ad group audience segments", `{"googleAdsConfig":{"channel":"search","adGroups":[{"name":"a"},{"name":"b","audienceSegments":["customers/1/userLists/2"]}]}}`, []string{"adGroups entry 2 audienceSegments"}},
+		{"conversion actions", `{"googleAdsConfig":{"channel":"search","conversionActions":["customers/1/conversionActions/2"]}}`, []string{"conversionActions"}},
+		{"conversion actions on any channel", `{"googleAdsConfig":{"channel":"performance-max","conversionActions":["123"]}}`, []string{"conversionActions"}},
+		{"a blank conversion action counts", `{"googleAdsConfig":{"conversionActions":[""]}}`, []string{"conversionActions"}},
+		{"no conversion actions", `{"googleAdsConfig":{"conversionActions":[]}}`, nil},
+		{"observed demographics are not gated", `{"googleAdsConfig":{"observedDemographics":["AGE_RANGE"]}}`, nil},
 		{"several, in config order", `{"googleAdsConfig":{"sharedNegativeKeywordLists":["s"],"performanceMaxAudienceSignal":"1","demandGenAudience":"a","customAudiences":["c"]}}`,
 			[]string{"demandGenAudience", "customAudiences", "performanceMaxAudienceSignal", "sharedNegativeKeywordLists"}},
 		// encoding/json matches field names case-insensitively, and so does the dispatcher's decode.
@@ -87,6 +92,8 @@ func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *tes
 		"channel": "search", "sharedNegativeKeywordLists": []any{"customers/1/sharedSets/2"}}}
 	searchObservation := map[string]any{"googleAdsConfig": map[string]any{
 		"channel": "search", "audienceSegments": []any{"customers/1/userLists/2"}}}
+	conversions := map[string]any{"googleAdsConfig": map[string]any{
+		"channel": "search", "conversionActions": []any{"customers/1/conversionActions/2"}}}
 	several := map[string]any{"googleAdsConfig": map[string]any{
 		"channel": "search", "audienceSegments": []any{"customers/1/userLists/2"},
 		"sharedNegativeKeywordLists": []any{"customers/1/sharedSets/2"}}}
@@ -108,6 +115,8 @@ func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *tes
 		{"a pmax audience signal is checked", []string{"google-ads"}, pmax, &fakeMarketingOps{}, testActor, "403", 1, "performanceMaxAudienceSignal"},
 		{"shared negative lists are checked", []string{"google-ads"}, sharedLists, &fakeMarketingOps{}, testActor, "403", 1, "sharedNegativeKeywordLists"},
 		{"search observation segments are checked", []string{"google-ads"}, searchObservation, &fakeMarketingOps{}, testActor, "403", 1, "audienceSegments"},
+		{"conversion actions are checked", []string{"google-ads"}, conversions, &fakeMarketingOps{}, testActor, "403", 1, "conversionActions"},
+		{"marketing ops may send conversion actions", []string{"google-ads"}, conversions, &fakeMarketingOps{allow: true}, testActor, "", 1, ""},
 		{"several inputs, one check, all named", []string{"google-ads"}, several, &fakeMarketingOps{}, testActor, "403", 1, "audienceSegments, sharedNegativeKeywordLists"},
 		{"marketing ops may send several", []string{"google-ads", "microsoft-ads"}, several, &fakeMarketingOps{allow: true}, testActor, "", 1, ""},
 		{"a failed check on a pmax signal is unavailable", []string{"google-ads"}, pmax,

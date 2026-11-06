@@ -1017,6 +1017,11 @@ top level and on each `adGroups[].ads[]` entry, `adGroups[].negativeKeywords` (m
 `googleAdsKeywords`, as the campaign-level list is), and `excludedIncomeRanges` and
 `excludedParentalStatuses`. Which channel takes each is the client preflight's decision, so
 an off-channel value is refused there for the create and the adoption path alike.
+`observedDemographics` (#497) is passed through the same way; the client refuses it off
+Search. Dispatch refuses any non-empty list first, on any channel, unless
+`GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` is exactly `"true"`
+(`googleAdsDemographicTargetingEnabled`): its request shape is not yet probed, and a wrong
+guess would fail after the budget and campaign exist.
 
 The #477 fields follow the same rule. `sharedNegativeKeywordLists` is passed through
 verbatim. `searchAssets` is `googleAdsSearchAssetsConfig`: `adImages` and
@@ -1244,7 +1249,7 @@ and `TestGoogleAds_SharedNegativeListsGateLeavesSearchAssetsAlone` pin both halv
 The account each of these four flags' inputs is checked against is shared by every foundation,
 and `campaign_manager` includes foundation executive directors, so the flags alone are not an
 authorization boundary. `BriefService.CreateCampaigns` requires `global_marketing_ops` on the
-path project for every field the four gates detect, plus Search's `audienceSegments`
+path project for every field the four gates detect, plus Search's `audienceSegments` and `conversionActions`
 (`service.GoogleAdsMarketingOpsInputs`, one check per request, 403 naming the fields, 503 when
 the check cannot be made). The service cannot import this package, so it decodes the same field
 names itself. `TestSharedAccountInputDetectionAgreesWithTheCreateGate` compares its field list,
@@ -1252,9 +1257,9 @@ over a fixed corpus, with one built from `googleAdsDisplayAudienceFieldsSet` and
 conditions `Dispatch` uses for the other gates. `TestEveryGoogleAdsConfigFieldIsClassifiedForTheMarketingOpsGate`
 walks `googleAdsConfig` and its three ad-group entry types by reflection: every JSON field must be
 listed as gated or deliberately ungated, so a new field fails CI until it is classified, and each
-gated field sent alone must be named by both detections. `conversionActions` names existing
-conversion actions on the shared account but is not an audience input; it is classified
-ungated and is outside this check.
+gated field sent alone must be named by both detections. `conversionActions` is gated as well (owner's
+decision, 2026-11-05): it names existing conversion actions on the shared account and no flag
+guards it, so on any channel it needs `global_marketing_ops` at create.
 
 The client enforces the channel rules inside its own preflight,
 before its first mutate, and `Dispatch` validates unconditionally (including on the adoption

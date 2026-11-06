@@ -275,7 +275,8 @@ func TestValidateDeviceBidModifiers_EverySupportedDeviceFitsInOneList(t *testing
 }
 
 // Demand Gen's vocabulary adds CONNECTED_TV (#474): its exclusion was accepted by a
-// validateOnly probe on 2026-11-03. All four fit in one list there, and only there.
+// validateOnly probe on 2026-11-03. All four fit in one list there, and on Performance
+// Max (#500, see pmax_devices_test.go), and nowhere else.
 func TestValidateDeviceBidModifiers_DemandGenTakesConnectedTV(t *testing.T) {
 	all := []DeviceBidModifier{
 		{Device: "MOBILE"}, {Device: "DESKTOP"}, {Device: "TABLET"}, {Device: " connected_tv "},
@@ -289,8 +290,8 @@ func TestValidateDeviceBidModifiers_DemandGenTakesConnectedTV(t *testing.T) {
 	}
 	for _, kind := range []string{campaignKindSearch, campaignKindVideo, campaignKindDisplay} {
 		_, _, err := validateDeviceBidModifiers(kind, all[3:])
-		if err == nil || !strings.Contains(err.Error(), "CONNECTED_TV on Demand Gen only") {
-			t.Errorf("%s: CONNECTED_TV err = %v, want the Demand Gen-only refusal", kind, err)
+		if err == nil || !strings.Contains(err.Error(), "CONNECTED_TV on Demand Gen and Performance Max only") {
+			t.Errorf("%s: CONNECTED_TV err = %v, want the Demand Gen and Performance Max-only refusal", kind, err)
 		}
 	}
 	// Out of Demand Gen's vocabulary, the refusal names the channel like every sibling's.

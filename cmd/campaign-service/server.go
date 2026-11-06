@@ -153,6 +153,8 @@ func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints,
 		return nil, fmt.Errorf("buildMux: connEndpoints is nil (connection routes would be unmounted)")
 	}
 	connServer := connsvcsvr.New(connEndpoints, mux, goahttp.RequestDecoder, nonEchoingResponseEncoder, eh, nil)
+	// `?q=` must be refused like any other blank q, not decoded as an omitted one (#496).
+	connServer.ListGoogleAdsAudiences = refuseEmptyQueryParam("q", connServer.ListGoogleAdsAudiences)
 	connsvcsvr.Mount(mux, connServer)
 
 	if briefEndpoints == nil {

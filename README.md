@@ -300,6 +300,16 @@ openssl rand -base64 32
   (`app.environment.GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED.value`);
   enable it per-environment by setting it to `"true"` in the ArgoCD
   overlay.
+- `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` (default unset, i.e. OFF) —
+  opts a deployment IN to the Google Ads demographic inputs whose request
+  shape has not yet been checked with a validateOnly probe:
+  `googleAdsConfig.observedDemographics` (#497). Only the exact value
+  `true` enables it; anything else fails closed, and a create naming one,
+  on any channel, is refused before the budget. It names no account
+  resource; it keeps an unverified shape off the shared account. The chart
+  sets it to `"false"`
+  (`app.environment.GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED.value`);
+  enable it per-environment in the ArgoCD overlay once the probe passes.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code

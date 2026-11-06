@@ -197,6 +197,18 @@ const (
 	// images and text, created as new assets) names no account resource and is not gated.
 	EnvGoogleAdsSharedNegativeListsEnabled = "GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED"
 
+	// EnvGoogleAdsDemographicTargetingEnabled opts a deployment IN to the Google Ads demographic
+	// inputs whose upstream contract has NOT yet been checked with a validateOnly probe:
+	// googleAdsConfig.observedDemographics (#497) today. Only the exact value "true" enables
+	// it; unset or any other value fails closed, and a create naming one is refused before
+	// anything upstream exists.
+	//
+	// It is a different kind of gate from the four above. Those keep an account-owned resource
+	// out of a create; this one keeps an UNVERIFIED request shape off the shared account until
+	// someone has probed it, because a wrong guess fails after the budget and campaign exist.
+	// Turn it on per environment, in lfx-v2-argocd, once the probe in the field's docs passes.
+	EnvGoogleAdsDemographicTargetingEnabled = "GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any
