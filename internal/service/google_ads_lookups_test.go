@@ -40,10 +40,10 @@ func (m *mockLookupDispatcher) SuggestGeoTargets(_ context.Context, _ string, _ 
 	return m.geo, !m.notCalled, m.err
 }
 
-func (m *mockLookupDispatcher) ListUserLists(_ context.Context, _ string, _ model.Provider, accountID string) (*model.AudienceUserLists, error) {
+func (m *mockLookupDispatcher) ListUserLists(_ context.Context, _ string, _ model.Provider, accountID string) (*model.AudienceUserLists, bool, error) {
 	m.calls++
 	m.gotAccount = accountID
-	return m.lists, m.err
+	return m.lists, !m.notCalled, m.err
 }
 
 func (m *mockLookupDispatcher) ListConversionActions(context.Context, string, model.Provider) (*model.ConversionActions, bool, error) {
@@ -303,18 +303,17 @@ func (*sharedTenancyLookupDispatcher) MonitorScopeForAccount([]model.ProjectCamp
 	return nil, nil
 }
 
-// On a shared-tenancy platform the account-wide user-list read is refused with 409 before the
-// dispatcher is reached, whatever account the caller names.
-func TestListGoogleAdsUserLists_SharedTenancyIsRefusedWith409(t *testing.T) {
+// On a shared-tenancy platform the account-wide user-list read is NOT refused any more: the
+// route is global_marketing_ops only (charts parity_test.go), so it reaches the dispatcher and
+// answers, whatever account the caller names.
+func TestListGoogleAdsUserLists_SharedTenancyIsNotRefused(t *testing.T) {
 	for _, acct := range []*string{nil, strp("8666746580")} {
-		d := &sharedTenancyLookupDispatcher{mockLookupDispatcher{lists: &model.AudienceUserLists{Lists: []model.AudienceUserList{}}}}
-		_, err := lookupService(d).ListGoogleAdsUserLists(context.Background(), &conn.ListGoogleAdsUserListsPayload{ProjectID: "cncf", AccountID: acct})
-		var c *conn.UserListsConflictError
-		if !errors.As(err, &c) || c.Code != "409" {
-			t.Fatalf("err = %T %v, want 409", err, err)
-		}
-		if d.calls != 0 {
-			t.Error("the dispatcher was reached on a shared-tenancy platform")
+		d := &sharedTenancyLookupDispatcher{mockLookupDispatcher{lists: &model.AudienceUserLists{AccountID: "8666746580", Lists: []model.AudienceUserList{
+			{ResourceName: "customers/8666746580/userLists/1", ID: "1", Name: "HubSpot CRM", Type: "CRM_BASED", MembershipStatus: "OPEN"},
+		}}}}
+		res, err := lookupService(d).ListGoogleAdsUserLists(context.Background(), &conn.ListGoogleAdsUserListsPayload{ProjectID: "cncf", AccountID: acct})
+		if err != nil || d.calls != 1 || res.UserListCount != 1 {
+			t.Fatalf("account %v: err=%v calls=%d res=%+v, want the shared account's list", acct, err, d.calls, res)
 		}
 	}
 }
@@ -339,6 +338,34 @@ func TestReadGeoTargetSuggestions_RecordsOnlyCallsThatReachedGoogle(t *testing.T
 			o := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: tc.d})
 			o.SetMetrics(rec)
 			_, _ = o.ReadGeoTargetSuggestions(context.Background(), "cncf", model.ProviderGoogleAds, model.GeoTargetQuery{Query: "a"})
+			if got := len(rec.upstreamCalls()); got != tc.want {
+				t.Errorf("%d upstream calls recorded, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// The user-list read records only searches that reached Google: since #508 the shared-account
+// refusal is gone, so local connection failures reach the dispatcher and must not be counted as
+// platform calls.
+func TestReadUserLists_RecordsOnlyCallsThatReachedGoogle(t *testing.T) {
+	cases := []struct {
+		name string
+		d    *mockLookupDispatcher
+		want int
+	}{
+		{"no connection", &mockLookupDispatcher{err: domain.ErrNotFound, notCalled: true}, 0},
+		{"unusable connection", &mockLookupDispatcher{err: fmt.Errorf("%w: x", domain.ErrConnectionNotUsable), notCalled: true}, 0},
+		{"malformed account", &mockLookupDispatcher{err: domain.ErrAccountIDMalformed, notCalled: true}, 0},
+		{"success", &mockLookupDispatcher{lists: &model.AudienceUserLists{Lists: []model.AudienceUserList{}}}, 1},
+		{"upstream failure", &mockLookupDispatcher{err: errors.New("google 500")}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingMetrics{}
+			o := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: tc.d})
+			o.SetMetrics(rec)
+			_, _ = o.ReadUserLists(context.Background(), "cncf", model.ProviderGoogleAds, "")
 			if got := len(rec.upstreamCalls()); got != tc.want {
 				t.Errorf("%d upstream calls recorded, want %d", got, tc.want)
 			}

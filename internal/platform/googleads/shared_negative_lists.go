@@ -87,7 +87,7 @@ func validateSharedNegativeKeywordLists(kind, customerID string, lists []string)
 		// attach (INVALID_CUSTOMER_ID), after the budget and campaign exist.
 		if m[1] != customerID {
 			return nil, fmt.Errorf("google-ads: shared negative keyword list %q belongs to "+
-				"customer %s, not the campaign's account %s; a shared set cannot be attached "+
+				"customer %q, not the campaign's account %s; a shared set cannot be attached "+
 				"across accounts", capForError(name), m[1], customerID)
 		}
 		// De-duplicated rather than refused, as conversion actions are: naming a list twice is

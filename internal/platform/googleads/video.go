@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 const (
@@ -146,7 +148,10 @@ func (c *Client) CreateVideoCampaign(ctx context.Context, in CampaignInput) (*Ca
 	// rebuilding the channel.
 	_ = ctx
 	_ = in
-	return nil, ErrVideoCreateUnsupported
+	// Marked operator-safe (#494): the sentence is this client's own constant, raised before
+	// any request, and it is the one thing an operator who picked Video needs to read. It
+	// stays the sentinel underneath, so errors.Is still tells it apart from a malformed request.
+	return nil, domain.WrapPreflightRefusal(ErrVideoCreateUnsupported)
 }
 
 // ErrVideoCreateUnsupported is returned by CreateVideoCampaign, always.

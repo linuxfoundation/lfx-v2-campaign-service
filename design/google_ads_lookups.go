@@ -42,7 +42,7 @@ var GoogleAdsGeoTargetSuggestions = Type("google-ads-geo-target-suggestions", fu
 
 // GoogleAdsUserList is one Google Ads user list.
 var GoogleAdsUserList = Type("google-ads-user-list", func() {
-	Attribute("resource_name", String, "customers/{customerId}/userLists/{id}, in exactly the form googleAdsConfig.audienceSegments accepts (Search and Display). A list targets campaigns on its own customer.", func() {
+	Attribute("resource_name", String, "customers/{customerId}/userLists/{id}, in exactly the form googleAdsConfig.audienceSegments accepts (Search and Display). A list targets campaigns on its own customer, which by default is the account a Google create for this project uses.", func() {
 		Pattern(`^customers/[0-9]+/userLists/[1-9][0-9]{0,18}$`)
 		Example("customers/8666746580/userLists/7012345678")
 	})
@@ -59,7 +59,7 @@ var GoogleAdsUserList = Type("google-ads-user-list", func() {
 
 // GoogleAdsUserLists is the user-list read.
 var GoogleAdsUserLists = Type("google-ads-user-lists", func() {
-	Attribute("account_id", String, "The Google Ads customer the lists were read from", func() { Example("8666746580") })
+	Attribute("account_id", String, "The Google Ads customer the lists were read from: account_id when given, else the account a Google create for this project uses", func() { Example("8666746580") })
 	Attribute("user_lists", ArrayOf(GoogleAdsUserList), "User lists on the customer, sorted by name, capped at 500 (see `truncated`)")
 	Attribute("user_list_count", Int, "How many lists are in `user_lists`", func() { Example(1) })
 	Attribute("truncated", Boolean, "True when the customer holds more lists than were returned", func() { Example(false) })
@@ -178,20 +178,20 @@ func googleAdsLookupMethods() {
 
 	Method("list-google-ads-user-lists", func() {
 		Description("List the Google Ads user lists (audiences) on a customer, live from GAQL on user_list, for " +
-			"picking googleAdsConfig.audienceSegments (Search and Display). account_id names the customer; omitted, " +
-			"the customer the project's connection is bound to is read. Like the account monitor, this resolves " +
-			"the project's OWN connection only and never falls back to the shared LF system credential: user " +
-			"lists are account data on a customer shared across foundations, so a project with no Google Ads " +
-			"connection of its own gets a 404, not the LF account's audiences. On a platform whose ad account is " +
-			"shared across foundations — Google Ads today — the read is refused with 409 before Google is contacted: " +
-			"the read is account-wide, this service records no user list per project, and a project's own " +
-			"connection points at the same shared customer, so answering would expose every foundation's audiences. " +
-			"Only a per-foundation customer is listed. An account_id the credential cannot reach is refused by " +
-			"Google and answered 503, like the account monitor. A pure read: nothing is persisted.")
+			"picking googleAdsConfig.audienceSegments (Search observed lists, and Display). account_id names the " +
+			"customer; omitted, the customer a Google create for this project uses is read. Credentials resolve as " +
+			"for a create: the project's own connection, or the shared LF system credential when it has none (or " +
+			"when the deployment forces the LF account), so the resource names are on the account the create " +
+			"uses. The Google Ads customer is shared by every foundation, so the response lists EVERY foundation's " +
+			"user lists (HubSpot CRM lists, website visitor lists and the rest), not only this project's; like " +
+			"list-google-ads-conversion-actions and list-google-ads-audiences it is therefore gated on " +
+			"global_marketing_ops of {project_id} (the LF marketing team), not campaign_manager, which also admits " +
+			"a foundation's executive director. An account_id the credential cannot reach is refused by Google and " +
+			"answered 503, like the account monitor. A pure read: nothing is persisted.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
-			Attribute("account_id", String, "Optional Google Ads customer to read (digits only). Defaults to the connection's account.", func() {
+			Attribute("account_id", String, "Optional Google Ads customer to read (digits only). Defaults to the account a Google create for this project uses.", func() {
 				Pattern(`^[0-9]+$`)
 				MaxLength(64)
 				Example("8666746580")
@@ -200,7 +200,6 @@ func googleAdsLookupMethods() {
 		})
 		Result(GoogleAdsUserLists)
 		Error("NotFound", NotFoundError, "Resource not found")
-		Error("Conflict", UserListsConflictError, "User lists cannot be listed per project on an ad account shared across foundations")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -211,7 +210,6 @@ func googleAdsLookupMethods() {
 			Param("account_id")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
-			Response("Conflict", StatusConflict)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})

@@ -153,7 +153,7 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 	// Every ad group's images in one walk (#475); see fetchDisplayGroupImages.
 	groupImages, err := c.fetchDisplayGroupImages(ctx, pf.displayGroups)
 	if err != nil {
-		return nil, err // pre-create: nothing was sent
+		return nil, imageFetchRefusal(ctx, err) // pre-create: nothing was sent
 	}
 
 	campaignName := pf.campaignName

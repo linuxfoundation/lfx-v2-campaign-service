@@ -2111,6 +2111,59 @@ the facts it relies on: a named image asset is accepted, names need not be uniqu
 account (a name already used, and one name twice in one request, were both accepted), and 128
 characters is accepted while 129 is refused `TOO_LONG`; the name is always 26.
 
+## Pre-flight refusals reach the job result (#494)
+
+Until #494 no refusal this client raised before its first request was a `domain.PreflightRefusal`,
+so the async create job reported every one of them as "platform campaign creation failed": the
+dispatcher wraps a no-result error `notCreated` and releases the claim, but
+`DispatchFailureMessage` copies only a `PreflightRefusal`'s text. In prod on 2026-11-05 two
+Performance Max creates were refused for having no description of 60 display units or less, and
+the operator saw only the generic sentence.
+
+The fix marks them at the two boundaries every channel's create passes, not at each of the ~370
+error sites behind them:
+
+- `preflightCampaignKind` checks the connection's account ids first and returns that failure
+  as it is (the connection's fault, not the operator's input). Everything after it moved into
+  `preflightCampaignInput`, whose errors are wrapped with `domain.WrapQuotedPreflightRefusal`.
+  `ValidateCampaignInputKind`, which the dispatcher runs before every create, goes through the
+  same function.
+- Each channel's pre-budget image fetch (`fetchSearchAssetImages`, `fetchDemandGenGroupImages`,
+  `fetchSlotImages` on Performance Max, `fetchDisplayGroupImages`) returns through
+  `imageFetchRefusal`, which marks what the slot refused (size, format, geometry, a repeat, the
+  HTTP status, the fetch's share of the deadline) and leaves two failures as they are: a
+  transport failure, whose `redactedCause` text is net/http's and can name the caller's host
+  unquoted, and a fetch the job's own context ended.
+- `CreateVideoCampaign`'s `ErrVideoCreateUnsupported` is a fixed sentence, wrapped with plain
+  `WrapPreflightRefusal`; it is still the sentinel underneath.
+
+All three are raised before any Google mutate. They are not always before any Google request:
+when the caller asks to adopt an existing campaign, the dispatcher's `FindCampaignByName` (a GAQL
+read) runs first. The `PreflightRefusal` contract allows that, because a read creates nothing.
+
+The validators quote every caller value with `%q` (a headline via `capForError`, an image URL
+via `redactURLForError`, an ad group name, a code), so `WrapQuotedPreflightRefusal`'s operator
+message withholds anything `CallerValue` would: a headline with a space, any URL or path. A
+caller value is formatted unquoted only after a check has narrowed it to a safe alphabet: a
+YYYY-MM-DD date, an ISO country code, a canonical geo target id, a schedule day or a device from
+its enum. The two excluded-placement refusals were the exception, a redacted URL formatted with
+`%s`; they now use `%q`. Keep both rules for any new pre-send refusal: quote caller values, and
+format nothing unquoted that a check has not already narrowed. A Display user-list exclusion
+naming another collection now names it only once it is a known one; before, it echoed the
+caller's path segment unquoted. The five foreign-account refusals (conversion action,
+Performance Max audience signal, Demand Gen Audience, Display audience resource, shared negative
+keyword list) now quote the caller's customer id too: the `\d+` match narrowed its alphabet but
+not its length, and a 32-digit run is a value `CallerValue` withholds. `redactedCause` caps a
+net/url error at 100 bytes, and the error's own quote around the caller's text (an invalid port)
+can lose its closing mark to that cap; `quotedCallerValues` withholds a quote left open to the end
+of its line, so the cut fragment does not show. `TestPreflightCampaignKind_NoCallerTextReachesTheOperatorMessage`
+holds the class: it puts a sentinel into every caller string of each channel's input, one at a
+time, and fails if any refusal's operator message shows it. `Error()` is unchanged, so logs and
+tests that pin a message see exactly what they saw before. A headline longer than
+`capForError`'s 100 bytes is quoted with a trailing `…`, and the operator message withholds any
+cut value outright, since the cut may have removed the digit that made it an opaque token (#495
+review).
+
 ## Demand Gen ad creation (LFXV2-2665)
 
 `demandgen_creative.go`. Before this, a Demand Gen campaign was a shell: budget,

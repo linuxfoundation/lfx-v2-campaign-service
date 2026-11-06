@@ -7264,19 +7264,6 @@ func EncodeListGoogleAdsUserListsError(encoder func(context.Context, http.Respon
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusUnauthorized)
 			return enc.Encode(body)
-		case "Conflict":
-			var res *lfxv2campaignserviceconnections.UserListsConflictError
-			errors.As(v, &res)
-			enc := encoder(ctx, w)
-			var body any
-			if formatter != nil {
-				body = formatter(ctx, res)
-			} else {
-				body = NewListGoogleAdsUserListsConflictResponseBody(res)
-			}
-			w.Header().Set("goa-error", res.GoaErrorName())
-			w.WriteHeader(http.StatusConflict)
-			return enc.Encode(body)
 		default:
 			return encodeError(ctx, w, v)
 		}

@@ -193,7 +193,7 @@ func TestGoogleAds_SearchAssetFieldsAreRefusedBeforeAnyCreate(t *testing.T) {
 		{"shared lists on demand gen", "demand-gen", ownList, listsRefused},
 		{"shared lists on display", "display", ownList, listsRefused},
 		{"shared lists on performance max", "performance-max", ownList, listsRefused},
-		{"another account's shared list", "search", foreignList, "belongs to customer 9999999999"},
+		{"another account's shared list", "search", foreignList, "belongs to customer \"9999999999\""},
 		{"over-long business name", "search", longName, "display width of 26"},
 	}
 	for _, tc := range cases {

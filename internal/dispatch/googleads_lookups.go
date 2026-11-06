@@ -65,51 +65,46 @@ func (d *GoogleAdsDispatcher) SuggestGeoTargets(ctx context.Context, projectID s
 // ListUserLists implements service.UserListReader for Google Ads: every user list on one
 // customer, read with GAQL on user_list.
 //
-// accountID names the customer to read; empty means the customer the project's connection is
-// bound to. Like the account monitor (ListAccountCampaignMetrics), it resolves the project's
-// OWN connection only (resolveOwnedGoogleAdsDiscovery) and never the LF system fallback. A user
-// list is account data — its name, type and size — and Google Ads is ONE customer shared by
-// every foundation (docs/architecture.md, "Account Tenancy"), so through the fallback any
-// project with no connection of its own would enumerate every foundation's audiences. That is
-// the reason the BFF made shared-account reads root-only (lfx-self-serve-ops#54), and the
-// reason this service refuses the fallback for every caller rather than trusting a gate one
-// layer up. A project with no connection of its own gets domain.ErrNotFound (404).
+// accountID names the customer to read; empty means the customer a campaign create for the
+// project uses. It resolves exactly as ListConversionActions does (createAccountClient: the
+// project's own connection, the LF system fallback when it has none, and the forced-system
+// redirect), because the resource names it returns are only useful if the create accepts them,
+// and audienceSegments refuses a list owned by another customer.
 //
-// Lists cannot be project-scoped the way the monitor's campaigns are: this service records no
-// user list, so there is no project-owned set to filter to. That is why
-// Orchestrator.ReadUserLists refuses this read on a shared-tenancy platform before it reaches
-// here — Google Ads today — and only a per-foundation customer is ever listed.
-func (d *GoogleAdsDispatcher) ListUserLists(ctx context.Context, projectID string, platform model.Provider, accountID string) (*model.AudienceUserLists, error) {
+// TENANCY: Google Ads is ONE customer shared by every foundation (docs/architecture.md,
+// "Account Tenancy"), and this service records no user list per project, so the answer is every
+// foundation's user lists. It used to refuse the LF fallback, and Orchestrator.ReadUserLists
+// refused the shared customer outright, because the route admitted every campaign_manager,
+// executive directors included. The gateway now admits only global_marketing_ops of the
+// project (the LF marketing team), as for the conversion-action and audience reads, so both
+// refusals are gone.
+//
+// called reports whether Google was contacted: false for every local refusal before the search
+// (a malformed accountID, no connection, an unusable one, a stored account id that is not
+// digits only).
+func (d *GoogleAdsDispatcher) ListUserLists(ctx context.Context, projectID string, platform model.Provider, accountID string) (_ *model.AudienceUserLists, called bool, _ error) {
 	accountID = strings.TrimSpace(accountID)
 	// Validated before any credential is resolved, as the monitor does: a malformed id is a
 	// permanent request fault whatever the connection's state.
 	if accountID != "" {
 		if err := googleads.ValidateCustomerID(accountID); err != nil {
-			return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
+			return nil, false, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
 		}
 	}
-	client, res, err := d.resolveOwnedGoogleAdsDiscovery(ctx, projectID, platform, googleads.WithCallerScopedTokenRefresh())
+	// The create's client and account. A connection with no account selected, or a stored id
+	// that is not digits only, is refused here as a connection to fix (400, or 500 on the LF
+	// system row), whether or not accountID names another customer: the credential is the
+	// create's, and a create on that connection would fail the same way.
+	client, createAccount, err := d.createAccountClient(ctx, projectID, platform)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if accountID == "" {
-		stored := strings.TrimSpace(res.accountID)
-		if stored == "" {
-			// The connection was created credentials-first and no account was chosen yet.
-			// Both sentinels, as Microsoft's dispatch does: ErrConnectionNotUsable decides the
-			// status (400), ErrAccountNotSelected names the missing choice.
-			return nil, fmt.Errorf("%w: %w: project %s names no google ads account and none was requested",
-				domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID)
-		}
-		if verr := googleads.ValidateCustomerID(stored); verr != nil {
-			return nil, fmt.Errorf("%w: %w: stored google ads account id: %w",
-				domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, verr)
-		}
-		accountID = stored
+		accountID = createAccount
 	}
 	rows, lerr := client.ListUserLists(ctx, accountID, googleads.MaxUserListRows+1)
 	if lerr != nil {
-		return nil, lerr
+		return nil, true, lerr
 	}
 	lists := make([]model.AudienceUserList, 0, len(rows))
 	for _, r := range rows {
@@ -125,7 +120,7 @@ func (d *GoogleAdsDispatcher) ListUserLists(ctx context.Context, projectID strin
 			EligibleForSearch:  r.EligibleForSearch,
 		})
 	}
-	return &model.AudienceUserLists{AccountID: accountID, Lists: lists}, nil
+	return &model.AudienceUserLists{AccountID: accountID, Lists: lists}, true, nil
 }
 
 // ListConversionActions implements service.ConversionActionReader for Google Ads: the ENABLED
@@ -137,7 +132,7 @@ func (d *GoogleAdsDispatcher) ListUserLists(ctx context.Context, projectID strin
 // returns are only useful if the create accepts them: a conversion action belongs to one
 // customer, and validateConversionActions refuses a resource name owned by another.
 //
-// TENANCY: this deliberately does NOT follow ListUserLists. Google Ads is ONE customer shared
+// TENANCY: as for ListUserLists and ListAudiences, Google Ads is ONE customer shared
 // by every foundation (docs/architecture.md, "Account Tenancy"), so this read returns every
 // foundation's conversion action names. The gateway therefore admits only global_marketing_ops
 // of the project (the LF marketing team) to this route, not campaign_manager, which also admits

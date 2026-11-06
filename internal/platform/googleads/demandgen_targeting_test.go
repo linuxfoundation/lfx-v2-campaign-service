@@ -57,7 +57,7 @@ func TestValidateDemandGenAudience_RefusesMalformedNames(t *testing.T) {
 		"non-numeric customer": {"customers/abc/audiences/4242", "not a customers/<id>/audiences/<id>"},
 		// INVALID_CUSTOMER_ID upstream — but only after the budget (validateOnly probe,
 		// 2026-11-03), so it must be refused here.
-		"another account": {"customers/9999999999/audiences/4242", "belongs to customer 9999999999"},
+		"another account": {"customers/9999999999/audiences/4242", "belongs to customer \"9999999999\""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := validateDemandGenAudience(campaignKindDemandGen, "1234567890", tc.in)

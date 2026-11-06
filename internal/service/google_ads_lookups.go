@@ -32,9 +32,12 @@ type GeoTargetSuggester interface {
 // UserListReader is an OPTIONAL dispatcher capability: list the user lists (audiences) on one
 // ad account. accountID empty means the account the project's connection is bound to.
 //
-// A successful call MUST return a non-nil result with a non-nil Lists slice.
+// A successful call MUST return a non-nil result with a non-nil Lists slice. called reports
+// whether the platform was actually contacted: false for a local refusal before the search
+// (a malformed account_id, no connection, an unusable one), so only real upstream calls are
+// recorded.
 type UserListReader interface {
-	ListUserLists(ctx context.Context, projectID string, platform model.Provider, accountID string) (*model.AudienceUserLists, error)
+	ListUserLists(ctx context.Context, projectID string, platform model.Provider, accountID string) (res *model.AudienceUserLists, called bool, err error)
 }
 
 // ConversionActionReader is an OPTIONAL dispatcher capability: list the enabled conversion
@@ -109,22 +112,22 @@ func (o *Orchestrator) ReadUserLists(ctx context.Context, projectID string, plat
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTargetingLookupUnsupported, platform)
 	}
-	// Refused on a shared-tenancy platform, before any credential is resolved or Google is
-	// contacted. AccountMonitorScoper is this codebase's marker for "one upstream account shared
-	// by every foundation" (docs/architecture.md, "Account Tenancy"). Refusing the LF system
-	// fallback is not enough there: a project's OWN connection row points at the same shared
-	// customer, so an account-wide user_list read returns every foundation's audiences, and the
-	// monitor's remedy (filter to recorded ids) has nothing to filter by — no user list is
-	// recorded per project. The BFF's ROOT-only gate (lfx-self-serve-ops#54) is not a boundary
-	// this service can rely on, since a project campaign_manager can call it directly.
-	if _, shared := d.(AccountMonitorScoper); shared {
-		return nil, fmt.Errorf("%w: %s", domain.ErrUserListsSharedTenancy, platform)
-	}
+	// NOT refused on a shared-tenancy platform. It was, with 409, while the route admitted every
+	// campaign_manager: the read is account-wide, nothing scopes user lists per project, and a
+	// foundation executive director would have seen every foundation's lists. The gateway now
+	// admits only global_marketing_ops of the project (the LF marketing team) to this route, the
+	// same population that may read the conversion actions and audiences on the shared customer,
+	// so the refusal no longer protects anyone and only hid the LF account's lists from the
+	// people who build its campaigns.
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
 	start := time.Now()
-	lists, err := r.ListUserLists(callCtx, projectID, platform, accountID)
-	o.recordUpstream(ctx, platform, opListUserLists, start, err)
+	lists, called, err := r.ListUserLists(callCtx, projectID, platform, accountID)
+	// Recorded only when Google was reached, as ReadConversionActions does: a local refusal
+	// sent nothing, and recording it would count a connection fault as a platform error.
+	if called {
+		o.recordUpstream(ctx, platform, opListUserLists, start, err)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +140,7 @@ func (o *Orchestrator) ReadUserLists(ctx context.Context, projectID string, plat
 // ReadConversionActions lists the enabled conversion actions on the account a create for the
 // project uses, through the platform's dispatcher. A pure read; nothing is persisted.
 //
-// Unlike ReadUserLists this is NOT refused on a shared-tenancy platform, by decision (#458):
+// Like ReadUserLists, this is NOT refused on a shared-tenancy platform, by decision (#458):
 // the read exists for cross-foundation (LF admin) callers choosing the conversion actions a
 // Google create attaches, and on Google Ads those actions live on the one customer every
 // foundation shares, so the answer holds EVERY foundation's conversion action names. That is
@@ -218,8 +221,8 @@ var (
 		provider:    model.ProviderGoogleAds,
 		displayName: "google ads",
 		notUsableRemedy: "check that it is active, that the stored credential is valid json with " +
-			"every field set, that login_customer_id is digits only, and that an account_id is " +
-			"selected on the connection or passed as account_id",
+			"every field set, that login_customer_id is digits only, and that an account_id of " +
+			"digits only is selected on the connection",
 		operation: "user list lookup",
 	}
 	googleAdsConversionActionLookup = accountDiscovery{
@@ -262,9 +265,6 @@ const (
 func (s *ConnectionService) classifyTargetingLookupError(ctx context.Context, projectID string, d accountDiscovery, err error) error {
 	if errors.Is(err, ErrTargetingLookupUnsupported) {
 		return &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
-	}
-	if errors.Is(err, domain.ErrUserListsSharedTenancy) {
-		return &conn.UserListsConflictError{Code: "409", Message: domain.ErrUserListsSharedTenancy.Error() + "; enter the user-list resource name directly"}
 	}
 	return s.classifyDiscoveryError(ctx, projectID, d, err)
 }
@@ -361,9 +361,9 @@ func validateGeoTargetSuggestPayload(p *conn.SuggestGoogleAdsGeoTargetsPayload) 
 // ListGoogleAdsUserLists lists the user lists on a Google Ads customer for the
 // audienceSegments picker.
 //
-// OWN connection only, never the LF system fallback — see GoogleAdsDispatcher.ListUserLists
-// for why (user lists are account data on a customer every foundation shares). A project with
-// no connection of its own therefore gets the 404 classifyDiscoveryError gives ErrNotFound.
+// It resolves as a create does, the LF system fallback included — see
+// GoogleAdsDispatcher.ListUserLists. The answer is every foundation's lists on the shared
+// customer, which is why the gateway admits only global_marketing_ops of the project.
 func (s *ConnectionService) ListGoogleAdsUserLists(ctx context.Context, p *conn.ListGoogleAdsUserListsPayload) (*conn.GoogleAdsUserLists, error) {
 	if err := rejectSystemScope(p.ProjectID); err != nil {
 		return nil, err

@@ -5356,11 +5356,24 @@ same plan (`TestConfigSnapshot_BiddingRoundTripsThroughTheValidator`).
 `DispatchFailureMessage` (internal/service) reads:
 
 - `domain.PreflightRefusal`: a refusal THIS service wrote and raised before the first
-  upstream request. It is built with `PreflightRefusalf`, which renders an `error` argument as
+  upstream write (a read-only lookup, such as Google adoption's `FindCampaignByName`, may come
+  first). It is built with `PreflightRefusalf`, which renders an `error` argument as
   `(detail withheld)` and never as its text, or with `WrapPreflightRefusal(err)`, where the
   caller vouches for the whole chain. `Error()` is unchanged and `Unwrap` keeps
   `errors.Is`/`As` working (for example `BudgetAmountReason`). It deliberately has **no**
-  `NoUpstreamCreate`, so marking a message never changes a claim verdict.
+  `NoUpstreamCreate`, so marking a message never changes a claim verdict. A third constructor,
+  `WrapQuotedPreflightRefusal(err)` (#494), is for a client whose input refusals are too many to
+  rewrite one by one and that quotes every caller value with `%q`: `Error()` stays `err`'s text,
+  and the OPERATOR message (`OperatorMessage`, which is what `AsPreflightRefusal` returns) is
+  that text with every double-quoted segment re-rendered through `CallerValue`, so a quoted URL,
+  path or free text is `(value withheld)` in the job result even where the call site did not
+  call `CallerValue` itself. A quote left open to the end of its line, which a capped component
+  produces when the cap cuts its closing mark, is withheld the same way, and so is a value a cap
+  cut with a trailing `…`: the cut can remove what marks it a secret (an opaque token's only
+  digit past byte 100), so the surviving prefix is never shown. What it cannot enforce
+  stays the caller's promise: no caller value formatted unquoted, no upstream text, nothing raised
+  after the first upstream write. The google-ads
+  client is its one user (see `code/internal-platform-googleads.md` § Pre-flight refusals).
 - `domain.UpstreamStatusCarrier`: `UpstreamStatus() int` on every client's HTTP error type
   (reddit, linkedin, meta `APIError`, twitter, microsoft, hubspot, and — since the
   dispatch-failure classification fix — google-ads `*apiError`). It exposes the status and
@@ -5373,7 +5386,8 @@ same plan (`TestConfigSnapshot_BiddingRoundTripsThroughTheValidator`).
   rendered as the same status-less sentence while `StatusCode` sat on the struct unread.
 - `domain.UpstreamCreateOutcomeCarrier`: `UpstreamCreateOutcome() string`, the POST-request
   counterpart of `PreflightRefusal` (a separate type on purpose — `PreflightRefusal` promises
-  the refusal came before the first upstream request). It answers one question, as a
+  the refusal came before the first upstream write; a read-only lookup may precede it). It
+  answers one question, as a
   service-authored token from a fixed six-word vocabulary: what did the failed create leave in
   the ad account? `internal/dispatch/create_outcome.go`'s `withCreateOutcome` attaches it —
   `Error()` is the wrapped text unchanged and `Unwrap` keeps the chain, so it ADDS a question
