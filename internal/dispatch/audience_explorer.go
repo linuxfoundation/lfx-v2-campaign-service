@@ -2210,12 +2210,18 @@ func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.C
 	out := make([]string, 0, 8)
 	unverified := make([]string, 0)
 	for _, id := range excludedIDs {
+		wrapper, _, err := x.listWithFilters(ctx, client, cache, id)
+		// A name read that failed earlier and a read that answers now: the name is
+		// evidence after all, so the list is credited by it and is no longer unverified.
+		if err == nil && wrapper != nil && unreadable[id] {
+			nameByID[id] = wrapper.Name
+			delete(unreadable, id)
+		}
 		if name := nameByID[id]; name != "" {
 			out = append(out, name)
 		} else if unreadable[id] {
 			unverified = append(unverified, id)
 		}
-		wrapper, _, err := x.listWithFilters(ctx, client, cache, id)
 		if err != nil || wrapper == nil {
 			// An unreadable exclusion is reported by its own name only. Failing the
 			// whole audit would withhold the two checks that did complete. A 404 is

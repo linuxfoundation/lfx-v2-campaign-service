@@ -1298,6 +1298,34 @@ func TestRunQA_AnUnreadableListNameIsNotVerifiedRatherThanAbsent(t *testing.T) {
 		}
 	})
 
+	t.Run("an exclusion whose name read recovers later is credited by it", func(t *testing.T) {
+		for name, tc := range map[string]struct {
+			list, want string
+		}{
+			"a GDPR list":     {list: "LF Europe GDPR Suppression", want: ""},
+			"a non-GDPR list": {list: "Hard Bounces", want: absent},
+		} {
+			portal := seoulPortal()
+			portal.lists["26Q4 - KubeCon - Master"] = "500"
+			portal.lists["26Q4 - KubeCon 2026 Registrants"] = "610"
+			portal.lists[tc.list] = "601"
+			portal.flaky = map[string]int{"601": 1}
+			portal.branches = map[string]string{"500": or(and(f("IN_LIST", "610"), f("NOT_IN_LIST", "601")))}
+			srv := portal.serve(t)
+
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", true, false, nil)
+			srv.Close()
+			require.NoError(t, err, name)
+			assert.Empty(t, out.Checks.Suppression.UnverifiedListIDs, name)
+			assert.False(t, says(out, unverified), name)
+			if tc.want == "" {
+				assert.True(t, out.Checks.Suppression.AppliedGDPR, "%s: the recovered name is credited", name)
+				continue
+			}
+			assert.True(t, says(out, tc.want), "%s: read, it is no GDPR list, so the CRITICAL stands", name)
+		}
+	})
+
 	t.Run("a name read that recovers later is evidence again", func(t *testing.T) {
 		portal := seoulPortal()
 		portal.lists["26Q4 - Seoul - Master"] = "500"
