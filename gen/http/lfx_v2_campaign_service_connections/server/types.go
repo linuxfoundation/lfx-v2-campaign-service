@@ -6514,9 +6514,9 @@ type GoogleAdsAudienceResourceResponseBody struct {
 	// The kind that was read, echoing the type parameter
 	Type string `form:"type" json:"type" xml:"type"`
 	// Google's own classification, verbatim: custom_audience.type (AUTO, INTEREST,
-	// PURCHASE_INTENT, SEARCH), custom_interest.type (CUSTOM_AFFINITY,
-	// CUSTOM_INTENT) or user_interest.taxonomy_type (AFFINITY, IN_MARKET). Absent
-	// for combined_audience and audience, which have none.
+	// PURCHASE_INTENT, SEARCH), custom_interest.type (always CUSTOM_AFFINITY) or
+	// user_interest.taxonomy_type (AFFINITY, IN_MARKET). Absent for
+	// combined_audience and audience, which have none.
 	Subtype *string `form:"subtype,omitempty" json:"subtype,omitempty" xml:"subtype,omitempty"`
 	// Always ENABLED for custom_audience, combined_audience, audience and
 	// custom_interest: only enabled entries are listed. Absent for user_interest,

@@ -121,12 +121,14 @@ create form offer them in a picker instead of making an operator type them (self
     type. Google's `user_interest` has no status, so none is reported. `launched_to_all` is not
     filtered on: a read-only search of the LF customer on 2026-11-05 returned it false for all
     1008 AFFINITY and IN_MARKET rows. Feeds `userInterests` (Display).
-  - `custom_interest` (#517): `status = 'ENABLED'`; `subtype` is `custom_interest.type`
-    (CUSTOM_AFFINITY, CUSTOM_INTENT). Google's legacy custom affinity / custom intent segment,
+  - `custom_interest` (#517): `status = 'ENABLED' AND type = 'CUSTOM_AFFINITY'`; `subtype` is
+    `custom_interest.type`. Google's legacy custom affinity segment,
     `customers/{id}/customInterests/{id}`. Feeds `customAffinities` (Display, campaign-level and
-    each `displayAdGroups` entry), which accepts either type, so both are listed. A read-only
-    search of the LF customer on 2026-11-06 returned 57 enabled rows: 28 CUSTOM_AFFINITY, 29
-    CUSTOM_INTENT. Not cached, like the other account kinds.
+    each `displayAdGroups` entry). CUSTOM_INTENT rows are not offered: a validateOnly probe on
+    2026-11-06 (paused LFX Display ad group 210268047788) accepted a CUSTOM_AFFINITY resource in a
+    `customAffinity` criterion and refused two CUSTOM_INTENT ones with RESOURCE_NOT_FOUND. The LF
+    customer held 28 enabled CUSTOM_AFFINITY and 29 CUSTOM_INTENT rows that day. Not cached, like
+    the other account kinds.
 - Rows whose resource name is not `customers/{this customer}/{collection}/{canonical id}` are
   dropped (the create would refuse them). Sorted by name ignoring case, then resource name.
 - `q` (optional, 1-100 characters, not blank) keeps names containing it, ignoring case and

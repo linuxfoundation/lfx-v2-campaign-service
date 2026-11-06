@@ -89,16 +89,17 @@ func TestListAudiences_QueryAndParsePerKind(t *testing.T) {
 			want:   []Audience{{ResourceName: "customers/1234567890/userInterests/80276", ID: "80276", Name: "Software", Subtype: "IN_MARKET"}},
 		},
 		{
-			// #517: the legacy custom affinity / custom intent segment customAffinities takes.
-			// Both types are listed; the subtype is custom_interest.type, verbatim.
+			// #517: the legacy custom affinity segment customAffinities takes. Only CUSTOM_AFFINITY
+			// is listed (Google refuses a CUSTOM_INTENT one in a customAffinity criterion); the
+			// subtype is custom_interest.type, verbatim.
 			kind: AudienceKindCustomInterest,
 			body: `{"results":[` +
 				`{"customInterest":{"resourceName":"customers/1234567890/customInterests/2808384","id":"2808384","name":"OSSNA - Cloud Native","type":"CUSTOM_AFFINITY","status":"ENABLED"}},` +
-				`{"customInterest":{"resourceName":"customers/1234567890/customInterests/2760682","id":"2760682","name":"AI & Machine Learning","type":"CUSTOM_INTENT","status":"ENABLED","description":"d"}}` +
+				`{"customInterest":{"resourceName":"customers/1234567890/customInterests/2913421","id":"2913421","name":"Google & Kubernetes","type":"CUSTOM_AFFINITY","status":"ENABLED","description":"d"}}` +
 				`]}`,
-			wantQuery: []string{"FROM custom_interest", "custom_interest.type", "custom_interest.description", "WHERE custom_interest.status = 'ENABLED'", "ORDER BY custom_interest.id"},
+			wantQuery: []string{"FROM custom_interest", "custom_interest.type", "custom_interest.description", "WHERE custom_interest.status = 'ENABLED'", "custom_interest.type = 'CUSTOM_AFFINITY'", "ORDER BY custom_interest.id"},
 			want: []Audience{
-				{ResourceName: "customers/1234567890/customInterests/2760682", ID: "2760682", Name: "AI & Machine Learning", Subtype: "CUSTOM_INTENT", Status: "ENABLED", Description: "d"},
+				{ResourceName: "customers/1234567890/customInterests/2913421", ID: "2913421", Name: "Google & Kubernetes", Subtype: "CUSTOM_AFFINITY", Status: "ENABLED", Description: "d"},
 				{ResourceName: "customers/1234567890/customInterests/2808384", ID: "2808384", Name: "OSSNA - Cloud Native", Subtype: "CUSTOM_AFFINITY", Status: "ENABLED"},
 			},
 		},
@@ -195,13 +196,13 @@ func TestListAudiences_CustomInterestDropsOtherCollections(t *testing.T) {
 		`{"customInterest":{"resourceName":"customers/1234567890/customAudiences/1","name":"wrong collection","type":"CUSTOM_AFFINITY"}},`+
 		`{"customInterest":{"resourceName":"customers/9999999999/customInterests/2","name":"other customer","type":"CUSTOM_AFFINITY"}},`+
 		`{"customAudience":{"resourceName":"customers/1234567890/customInterests/3","name":"wrong object","type":"SEARCH"}},`+
-		`{"customInterest":{"resourceName":"customers/1234567890/customInterests/4","name":"kept","type":"CUSTOM_INTENT","status":"ENABLED"}}`+
+		`{"customInterest":{"resourceName":"customers/1234567890/customInterests/4","name":"kept","type":"CUSTOM_AFFINITY","status":"ENABLED"}}`+
 		`]}`)
 	got, err := newConversionTestClient(t, srv).ListAudiences(context.Background(), AudienceKindCustomInterest)
 	if err != nil {
 		t.Fatalf("ListAudiences: %v", err)
 	}
-	if len(got) != 1 || got[0].ID != "4" || got[0].Subtype != "CUSTOM_INTENT" {
+	if len(got) != 1 || got[0].ID != "4" || got[0].Subtype != "CUSTOM_AFFINITY" {
 		t.Errorf("got %+v, want only the customInterests row with id 4", got)
 	}
 }

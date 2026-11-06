@@ -55,9 +55,13 @@ const MaxAudienceScanRows = 10000
 // a create can use now:
 //
 //   - custom_audience, combined_audience, audience, custom_interest: status ENABLED (REMOVED
-//     cannot be attached). custom_interest holds both CUSTOM_AFFINITY and CUSTOM_INTENT rows
-//     (28 and 29 on the LF customer, read-only search 2026-11-06); both are listed, because
-//     customAffinities accepts any customInterests resource.
+//     cannot be attached).
+//   - custom_interest additionally type CUSTOM_AFFINITY. The LF customer holds 28
+//     CUSTOM_AFFINITY and 29 CUSTOM_INTENT rows (read-only search, 2026-11-06), but the one
+//     input this kind feeds, Display's customAffinities, sends a customAffinity criterion, and a
+//     validateOnly probe that day (paused LFX Display ad group 210268047788) accepted a
+//     CUSTOM_AFFINITY resource there and refused both CUSTOM_INTENT ones tried with
+//     RESOURCE_NOT_FOUND. Offering them would fail the create after the budget.
 //   - audience additionally scope CUSTOMER: an ASSET_GROUP-scoped Audience belongs to the one
 //     asset group it was made for and cannot be reused by another ad group or asset group.
 //   - user_interest has no status field, and is restricted to the AFFINITY and IN_MARKET
@@ -84,7 +88,8 @@ var audienceListQueries = map[AudienceKind]string{
 		"ORDER BY user_interest.user_interest_id LIMIT %d",
 	AudienceKindCustomInterest: "SELECT custom_interest.resource_name, custom_interest.id, custom_interest.name, " +
 		"custom_interest.type, custom_interest.status, custom_interest.description FROM custom_interest " +
-		"WHERE custom_interest.status = 'ENABLED' ORDER BY custom_interest.id LIMIT %d",
+		"WHERE custom_interest.status = 'ENABLED' AND custom_interest.type = 'CUSTOM_AFFINITY' " +
+		"ORDER BY custom_interest.id LIMIT %d",
 }
 
 // audienceCollections is each kind's resource collection in a resource name.
@@ -103,7 +108,7 @@ type Audience struct {
 	ID           string
 	Name         string
 	// Subtype is Google's own classification, verbatim: custom_audience.type (AUTO, INTEREST,
-	// PURCHASE_INTENT, SEARCH), custom_interest.type (CUSTOM_AFFINITY, CUSTOM_INTENT) or
+	// PURCHASE_INTENT, SEARCH), custom_interest.type (always CUSTOM_AFFINITY: see the query) or
 	// user_interest.taxonomy_type (AFFINITY, IN_MARKET). Empty
 	// for combined_audience and audience, which have none.
 	Subtype string

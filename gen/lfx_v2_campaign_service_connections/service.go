@@ -205,23 +205,24 @@ type Service interface {
 	// a Google create for this project uses, live from GAQL on custom_audience,
 	// combined_audience, audience, user_interest or custom_interest, for the
 	// audience pickers (#496; custom_interest, #517, is Google's legacy custom
-	// affinity or custom intent segment, the resource customAffinities takes).
-	// Only usable entries are listed: custom_audience, combined_audience, audience
-	// and custom_interest with status ENABLED; audience additionally with scope
-	// CUSTOMER (an ASSET_GROUP-scoped Audience belongs to one asset group);
-	// user_interest restricted to the AFFINITY and IN_MARKET taxonomies. q keeps
-	// entries whose name contains it, ignoring case. Sorted by name, capped at 500
-	// after the q filter, with `truncated` set when more matched; the AFFINITY and
-	// IN_MARKET taxonomy is about a thousand entries, more than the cap, so a
-	// picker should search it with q; the user_interest list is cached for 6 hours
-	// per account, so repeated searches do not reach Google. More than 10000
-	// entries of one type on the customer fails the read with 503. Credentials
-	// resolve as for a create: the project's own connection, or the shared LF
-	// system credential when it has none (or when the deployment forces the LF
-	// account). The Google Ads customer is shared by every foundation, so the
-	// response lists EVERY foundation's audiences, not only this project's; like
-	// list-google-ads-conversion-actions it is therefore gated on
-	// global_marketing_ops of {project_id} (the LF marketing team), not
+	// affinity segment, the resource customAffinities takes). Only usable entries
+	// are listed: custom_audience, combined_audience, audience and custom_interest
+	// with status ENABLED; custom_interest additionally with type CUSTOM_AFFINITY
+	// (Google refuses a CUSTOM_INTENT one in a customAffinity criterion); audience
+	// additionally with scope CUSTOMER (an ASSET_GROUP-scoped Audience belongs to
+	// one asset group); user_interest restricted to the AFFINITY and IN_MARKET
+	// taxonomies. q keeps entries whose name contains it, ignoring case. Sorted by
+	// name, capped at 500 after the q filter, with `truncated` set when more
+	// matched; the AFFINITY and IN_MARKET taxonomy is about a thousand entries,
+	// more than the cap, so a picker should search it with q; the user_interest
+	// list is cached for 6 hours per account, so repeated searches do not reach
+	// Google. More than 10000 entries of one type on the customer fails the read
+	// with 503. Credentials resolve as for a create: the project's own connection,
+	// or the shared LF system credential when it has none (or when the deployment
+	// forces the LF account). The Google Ads customer is shared by every
+	// foundation, so the response lists EVERY foundation's audiences, not only
+	// this project's; like list-google-ads-conversion-actions it is therefore
+	// gated on global_marketing_ops of {project_id} (the LF marketing team), not
 	// campaign_manager, which also admits a foundation's executive director. A
 	// pure read: the only upstream call is googleAds:search, and nothing is
 	// persisted.
@@ -1389,9 +1390,9 @@ type GoogleAdsAudienceResource struct {
 	// The kind that was read, echoing the type parameter
 	Type string
 	// Google's own classification, verbatim: custom_audience.type (AUTO, INTEREST,
-	// PURCHASE_INTENT, SEARCH), custom_interest.type (CUSTOM_AFFINITY,
-	// CUSTOM_INTENT) or user_interest.taxonomy_type (AFFINITY, IN_MARKET). Absent
-	// for combined_audience and audience, which have none.
+	// PURCHASE_INTENT, SEARCH), custom_interest.type (always CUSTOM_AFFINITY) or
+	// user_interest.taxonomy_type (AFFINITY, IN_MARKET). Absent for
+	// combined_audience and audience, which have none.
 	Subtype *string
 	// Always ENABLED for custom_audience, combined_audience, audience and
 	// custom_interest: only enabled entries are listed. Absent for user_interest,
