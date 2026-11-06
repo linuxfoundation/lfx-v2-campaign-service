@@ -171,7 +171,7 @@ func TestValidateDemandGenDemographics_Refusals(t *testing.T) {
 		}, "at most 20 Demand Gen genders"},
 		"another account's list": {func(in *CampaignInput) {
 			in.DemandGenDemographics.AudienceSegments = []string{"customers/9999999999/userLists/1"}
-		}, "is on customer 9999999999"},
+		}, `is on customer "9999999999"`},
 		"an Audience in the list": {func(in *CampaignInput) {
 			in.DemandGenDemographics.AudienceSegments = []string{testDemandGenAudience}
 		}, "is an Audience, which cannot go inside another Audience"},

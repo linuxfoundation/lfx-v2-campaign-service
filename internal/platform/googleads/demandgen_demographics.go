@@ -349,7 +349,7 @@ func validateDemographicUserLists(customerID string, names []string) ([]string, 
 			return nil, fmt.Errorf("google-ads: DemandGenDemographics.AudienceSegments entry %q is not a customers/<id>/userLists/<id> user list resource name", capForError(name))
 		}
 		if parts[1] != customerID {
-			return nil, fmt.Errorf("google-ads: DemandGenDemographics.AudienceSegments entry %q is on customer %s, not this campaign's account %s; name a user list on the campaign's own account", capForError(name), parts[1], customerID)
+			return nil, fmt.Errorf("google-ads: DemandGenDemographics.AudienceSegments entry %q is on customer %q, not this campaign's account %s; name a user list on the campaign's own account", capForError(name), parts[1], customerID)
 		}
 		if canonicalCampaignID(parts[3]) == "" {
 			return nil, fmt.Errorf("google-ads: DemandGenDemographics.AudienceSegments entry %q has the id %q, which is not the canonical base-10 spelling of a positive id (no leading zeros)", capForError(name), parts[3])
