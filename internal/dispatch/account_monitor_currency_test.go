@@ -144,7 +144,7 @@ func TestLinkedInMonitor_LocalCurrency(t *testing.T) {
 			if read.Currency != tc.wantCurrency {
 				t.Errorf("currency = %q, want %q", read.Currency, tc.wantCurrency)
 			}
-			rows, _ := rules.EvaluateLinkedInMonitor(read.Rows, 30, now)
+			rows, _ := rules.EvaluateLinkedInMonitor(read.Rows, 30, now, read.Currency)
 			for _, r := range rows {
 				if r.Metrics.Spend != 600 || r.Metrics.BudgetDay != 100 {
 					t.Errorf("row %s spend=%v budget=%v, want 600 local spend against 100/day", r.Metrics.PlatformCampaignID, r.Metrics.Spend, r.Metrics.BudgetDay)
