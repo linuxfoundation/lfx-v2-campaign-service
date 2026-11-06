@@ -78,6 +78,12 @@ enables it; off, a create naming one is refused before anything upstream exists.
 `app.environment.GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED.value` to `"true"` in that environment's
 ArgoCD overlay.
 
+`META_CALL_TO_ACTION_ENABLED` and `META_CONVERSION_EVENT_ENABLED` are the same kind of gate for
+Meta, each defaulting to `"false"` (#550): they opt a cluster in to `metaConfig.callToAction` (the
+ad's button) and `metaConfig.conversionEvent` (the conversions objective's `custom_event_type`).
+Only exactly `"true"` enables each; off, a create carrying the field is refused with a 400 before
+any job exists. Neither names an account resource, so neither is behind `global_marketing_ops`.
+
 `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the same kind of gate, defaulting to `"false"`
 (#461): it opts a cluster in to `googleAdsConfig.performanceMaxAudienceSignal`, one existing
 Google Ads Audience attached to a Performance Max asset group as a signal. Like the Demand Gen

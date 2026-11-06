@@ -170,6 +170,19 @@ const (
 	// account resource and are not gated.
 	EnvGoogleAdsDisplayAudiencesEnabled = "GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED"
 
+	// EnvMetaCallToActionEnabled opts a deployment IN to metaConfig.callToAction (#550): the
+	// button on every Meta ad (SIGN_UP, BUY_TICKETS, …) instead of the fixed LEARN_MORE. Only the
+	// exact value "true" enables it; unset or any other value fails closed, and a create carrying
+	// the field is refused with a 400 before any job exists. Off by default until the creative
+	// payload is verified against a live ad account. It names no account resource, so it needs no
+	// global_marketing_ops.
+	EnvMetaCallToActionEnabled = "META_CALL_TO_ACTION_ENABLED"
+
+	// EnvMetaConversionEventEnabled opts a deployment IN to metaConfig.conversionEvent (#550): the
+	// promoted object's custom_event_type for the conversions objective (COMPLETE_REGISTRATION,
+	// LEAD, …) instead of the fixed PURCHASE. Same rules as EnvMetaCallToActionEnabled.
+	EnvMetaConversionEventEnabled = "META_CONVERSION_EVENT_ENABLED"
+
 	// EnvGoogleAdsPMaxAudienceSignalEnabled opts a deployment IN to
 	// googleAdsConfig.performanceMaxAudienceSignal (#461): one existing Google Ads Audience
 	// attached to a Performance Max asset group as a signal. Only the exact value "true"

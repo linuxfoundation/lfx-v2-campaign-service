@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // metaCreds is the credential shape stored (encrypted) for a Meta connection. Meta
@@ -69,6 +71,44 @@ type metaConfig struct {
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
 	// (LOWEST_COST_WITHOUT_CAP, unchanged); manual creates a link-click bid cap — see metaBidPlan.
 	Bidding *biddingConfig `json:"bidding,omitempty"`
+	// CallToAction is the button on every ad (#550), meta.NormalizeCallToAction's allow-list;
+	// empty keeps LEARN_MORE. Refused while META_CALL_TO_ACTION_ENABLED is not "true".
+	CallToAction string `json:"callToAction"`
+	// ConversionEvent is the conversions objective's custom_event_type (#550),
+	// meta.NormalizeConversionEvent's allow-list; empty keeps PURCHASE. Refused on any other
+	// objective, and while META_CONVERSION_EVENT_ENABLED is not "true".
+	ConversionEvent string `json:"conversionEvent"`
+}
+
+// metaCreativeOptionDisabled refuses a creative option this deployment has not opted in to. It
+// wraps domain.ErrCreateConfigInvalid (a 400 before any job exists) and is a PreflightRefusal (the
+// job reports it verbatim).
+func metaCreativeOptionDisabled(field, env string) error {
+	return domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig.%s is disabled on this deployment (%s is not \"true\"); omit %s, or ask an operator to set %s to \"true\"",
+		domain.ErrCreateConfigInvalid, field, env, field, env))
+}
+
+// checkMetaCreativeOptions refuses a callToAction or conversionEvent the create cannot send (#550):
+// either one while its deployment flag is off — read per call, and only the exact value "true"
+// enables it — and otherwise a value the client's allow-lists refuse. A blank value is absent.
+func checkMetaCreativeOptions(cfg metaConfig) error {
+	if strings.TrimSpace(cfg.CallToAction) != "" {
+		if os.Getenv(constants.EnvMetaCallToActionEnabled) != "true" {
+			return metaCreativeOptionDisabled("callToAction", constants.EnvMetaCallToActionEnabled)
+		}
+		if _, err := meta.NormalizeCallToAction(cfg.CallToAction); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(cfg.ConversionEvent) != "" {
+		if os.Getenv(constants.EnvMetaConversionEventEnabled) != "true" {
+			return metaCreativeOptionDisabled("conversionEvent", constants.EnvMetaConversionEventEnabled)
+		}
+		if _, err := meta.NormalizeConversionEvent(cfg.Objective, cfg.ConversionEvent); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // creativeAssetReader is the ONE creative-asset operation this dispatcher needs: read a
@@ -677,6 +717,10 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	if err := checkMetaPublishIdentity(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The call-to-action and conversion event gates and allow-lists (#550), before any request.
+	if err := checkMetaCreativeOptions(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
 	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
@@ -760,6 +804,10 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		// stays pristine for campaignFromMeta's snapshot and degraded-count check.
 		Variants: variants,
 		BidCap:   plan.amount,
+		// The button and the conversion event as the caller sent them; the client normalizes them
+		// (#550). Gated above.
+		CallToAction:    cfg.CallToAction,
+		ConversionEvent: cfg.ConversionEvent,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-3): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of
@@ -1554,14 +1602,20 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 	if err := checkMetaPublishIdentity(cfg); err != nil {
 		return err
 	}
+	// The call-to-action and conversion event (#550). A wrong-typed one is refused on its type by
+	// checkMetaIdentityShape above, so it is never read here as absent.
+	if err := checkMetaCreativeOptions(cfg); err != nil {
+		return err
+	}
 	return domain.ErrPreflightNotApplicable
 }
 
-// metaIdentityKeys are the publish-identity fields checkMetaIdentityShape type-checks.
-var metaIdentityKeys = []string{"instagramUserId", "dsaBeneficiary", "dsaPayor"}
+// metaIdentityKeys are the string fields checkMetaIdentityShape type-checks: the publish identity,
+// and since #550 the call-to-action and conversion event, which would otherwise read as absent.
+var metaIdentityKeys = []string{"instagramUserId", "dsaBeneficiary", "dsaPayor", "callToAction", "conversionEvent"}
 
-// checkMetaIdentityShape refuses a metaConfig whose instagramUserId, dsaBeneficiary or dsaPayor is
-// present with a non-string JSON type (null is absent, as encoding/json reads it). PreflightCreate
+// checkMetaIdentityShape refuses a metaConfig whose instagramUserId, dsaBeneficiary, dsaPayor,
+// callToAction or conversionEvent is present with a non-string JSON type (null is absent, as encoding/json reads it). PreflightCreate
 // decodes best-effort and ignores type errors, so without this `"instagramUserId": true` or
 // `"dsaBeneficiary": 1` on an EU target would read as absent and fail open into a 202 — then fail
 // the job on Dispatch's strict decode. Keys are matched case-insensitively, as encoding/json
