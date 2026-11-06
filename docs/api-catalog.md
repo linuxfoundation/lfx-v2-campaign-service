@@ -920,7 +920,8 @@ audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTI
                                   channel with no keywords: when any Display audience list is given,
                                   the ad group is created with `targetingSetting.targetRestrictions`
                                   AGE_RANGE, GENDER, PARENTAL_STATUS and INCOME_RANGE bidOnly true
-                                  (Google's default for those, restated unchanged) then AUDIENCE
+                                  (Google's default for those, restated unchanged; a dimension named
+                                  in `displayDemographics` is sent bidOnly false) then AUDIENCE
                                   bidOnly false, accepted with these criteria by a validateOnly
                                   probe. Optimized targeting is left at Google's
                                   default and may widen reach beyond the named segments (not
@@ -1527,9 +1528,9 @@ excludedGenders?: string[]        campaign criteria. Age ranges are 18-24, 25-34
                                   too); genders are MALE, FEMALE or UNDETERMINED. At most 20 entries
                                   each, bounded independently.
 
-                                  EXCLUSIONS only — there is no positive TARGETING demographic field
-                                  on Search (it can OBSERVE a dimension through
-                                  `observedDemographics`, below). Google
+                                  EXCLUSIONS only — positive demographic TARGETING exists on Display
+                                  alone, as `displayDemographics` (#499), and Search can OBSERVE a
+                                  dimension through `observedDemographics` (#497), both below. Google
                                   targets demographics by excluding the buckets you do not want, and
                                   UNDETERMINED covers every user whose demographic Google has not
                                   inferred, which on Search is a large share of traffic: excluding it
@@ -1566,8 +1567,8 @@ excludedParentalStatuses?:        criteria like the two above, because the ad gr
                                   both channels; every group's own are in
                                   `adGroups[].demographicCriteriaIds`).
 
-                                  Positive TARGETING demographic criteria are not added; observation
-                                  on Search is `observedDemographics`, below.
+                                  Positive demographic TARGETING on Display is `displayDemographics`;
+                                  observation on Search is `observedDemographics`; both below.
 observedDemographics?:          — OPTIONAL, SEARCH ONLY (#497). Puts whole demographic dimensions in
   string[]                        OBSERVATION mode on every Search ad group: `AGE_RANGE`, `GENDER`
                                   and/or `INCOME_RANGE` (case-insensitive, deduped). Each named
@@ -2194,6 +2195,31 @@ displayAdGroups?:               — OPTIONAL several named Display ad groups (#4
                                   group's ad. Omitted, the campaign gets the single ad group it
                                   always had, byte-for-byte. The same validation runs on the
                                   `adoptExisting` path.
+
+displayDemographics?:           — OPTIONAL, DISPLAY ONLY (#499). Positive demographic TARGETING on
+  {ageRanges?, genders?,          every Display ad group (the single one, or every `displayAdGroups`
+   incomeRanges?,                 entry): each non-empty list restricts the ad to the values it
+   parentalStatuses?}             names. Vocabulary is the exclusion fields' own (`excludedAgeRanges`,
+                                  `excludedGenders`, `excludedIncomeRanges`,
+                                  `excludedParentalStatuses`), case-insensitive, deduped, at most 20
+                                  per list.
+
+                                  Each targeted dimension is sent `bidOnly: false` in the ad group's
+                                  `targetingSetting` (the other demographic dimensions stay `true`,
+                                  `AUDIENCE` follows as before when audience lists are set), and each
+                                  value as a positive ENABLED ad-group criterion in the same atomic
+                                  mutate as the income/parental exclusions. A value both targeted and
+                                  in its `excluded*` list is REFUSED before any request; excluding a
+                                  different value of a targeted dimension is accepted. REFUSED on
+                                  every channel but `display`. It names no account resource, so no
+                                  audience gate applies. Ids: `adGroups[].demographicTargetingCriteriaIds`
+                                  and `adGroupDemographicTargetingCriteriaIds` (the first group's).
+
+                                  Built from the v23 field names; the positive criteria and the
+                                  demographic `bidOnly: false` restrictions have NOT yet been checked
+                                  with a validateOnly probe, so the field is REFUSED before any request
+                                  unless the deployment sets GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED
+                                  to exactly `"true"`.
 
 searchAssets?:                  — OPTIONAL Search campaign image, logo and name assets (#477), each
   {adImages?: ImageRef[],         linked to the CAMPAIGN. SEARCH ONLY, and REFUSED on every other
