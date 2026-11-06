@@ -127,6 +127,11 @@ type RedditDispatcher struct {
 	clients *clientCache
 	// opts are extra reddit.Client options (e.g. WithBaseURL/WithTokenURL in tests).
 	opts []reddit.Option
+	// reportBudgets is the reporting-attempt ledger every client this dispatcher builds spends
+	// from (clientOptions): the SHARED ledger, which refuses every report until the container
+	// binds Postgres to it (SetRedditReportLedger), so replicas share one account-wide budget
+	// (#380). A reddit.WithReportBudgets in opts overrides it (tests, cmd/verify-metrics).
+	reportBudgets *reddit.ReportBudgets
 	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
 	// tests can pin it.
 	settingsNow func() time.Time
@@ -151,11 +156,43 @@ type RedditDispatcher struct {
 	targetingCooldown time.Duration
 }
 
+// newRedditReportBudgets builds each dispatcher's reporting budget: the shared ledger. A var only
+// so this package's test binary can make it unlimited (reddit_report_budget_main_test.go), the
+// way the reddit package's own tests make its default ledger unlimited.
+var newRedditReportBudgets = reddit.NewSharedReportBudgets
+
 // NewRedditDispatcher builds the adapter from the connection repo + encryptor.
 func NewRedditDispatcher(repo connReader, enc domain.Encryptor, opts ...reddit.Option) *RedditDispatcher {
 	return &RedditDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts,
 		audience: newRedditReportGuard[reddit.AudienceInsights](), keywords: newRedditReportGuard[reddit.KeywordPerformance](),
-		targetingLock: newLocalTargetingLock(domain.KeywordTargetingLockWait), targetingCooldown: domain.KeywordTargetingUnconfirmedCooldown}
+		targetingLock: newLocalTargetingLock(domain.KeywordTargetingLockWait), targetingCooldown: domain.KeywordTargetingUnconfirmedCooldown,
+		reportBudgets: newRedditReportBudgets()}
+}
+
+// SetRedditReportLedger binds the shared ledger the dispatcher's reporting budget records its
+// slots in (see domain.RedditReportLedger). The container binds the Postgres one on both wiring
+// paths; until then every Reddit report attempt is refused (reddit.ErrReportBudgetUnavailable),
+// never sent unbudgeted. Clients already built see the binding: they hold the same budget.
+func (d *RedditDispatcher) SetRedditReportLedger(l domain.RedditReportLedger) {
+	d.reportBudgets.BindLedger(l)
+}
+
+// RedditReportLedgerBound reports whether the dispatcher's reporting budget has its shared
+// ledger bound — for the container's wiring tests.
+func (d *RedditDispatcher) RedditReportLedgerBound() bool {
+	return d.reportBudgets.LedgerBound()
+}
+
+// clientOptions is the option list for a client this dispatcher builds: its shared reporting
+// budget first, so a WithReportBudgets in d.opts (applied later) overrides it, then d.opts, then
+// extra. Copied rather than appended in place: d.opts is shared by every call on this dispatcher,
+// and appending to it could publish one caller's extra options to the next through a reused
+// backing array.
+func (d *RedditDispatcher) clientOptions(extra ...reddit.Option) []reddit.Option {
+	opts := make([]reddit.Option, 0, 1+len(d.opts)+len(extra))
+	opts = append(opts, reddit.WithReportBudgets(d.reportBudgets))
+	opts = append(opts, d.opts...)
+	return append(opts, extra...)
 }
 
 // Dispatch implements service.PlatformDispatcher for Reddit.
@@ -433,10 +470,7 @@ func (d *RedditDispatcher) resolveRedditClientWithCredsCache(ctx context.Context
 				Label:             res.label,
 				ConversionPixelID: res.providerConfig["conversion_pixel_id"],
 			},
-			// Copied rather than appended in place: d.opts is shared by every call on this
-			// dispatcher, and appending to it could publish one caller's extra options to
-			// the next through a reused backing array.
-			append(append([]reddit.Option(nil), d.opts...), extra...)...,
+			d.clientOptions(extra...)...,
 		)
 	}
 	if !useCache {
@@ -518,7 +552,7 @@ func (d *RedditDispatcher) ListAccounts(ctx context.Context, projectID string, p
 	client := reddit.NewClient(
 		reddit.Credentials{ClientID: creds.ClientID, ClientSecret: creds.ClientSecret, RefreshToken: creds.RefreshToken},
 		reddit.AccountConfig{},
-		append(append([]reddit.Option(nil), d.opts...), reddit.WithCallerScopedTokenRefresh())...,
+		d.clientOptions(reddit.WithCallerScopedTokenRefresh())...,
 	)
 	adAccounts, lerr := client.ListAdAccounts(ctx)
 	if lerr != nil {

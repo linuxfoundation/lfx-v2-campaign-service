@@ -652,6 +652,19 @@ func bindKeywordTargetingWriteLock(dispatchers map[model.Provider]service.Platfo
 	rd.SetKeywordTargetingWriteLock(postgres.NewKeywordTargetingWriteLock(pool))
 }
 
+// bindRedditReportLedger gives the Reddit dispatcher the Postgres ledger its reporting budget
+// records slots in, so every replica spends from ONE 45-a-minute budget per ad account (#380; see
+// domain.RedditReportLedger). Both wiring paths call it with the pool they built the dispatchers
+// on. Without it the dispatcher's budget fails closed: every Reddit report is refused, none is
+// sent unbudgeted.
+func bindRedditReportLedger(dispatchers map[model.Provider]service.PlatformDispatcher, pool *postgres.Pool) {
+	rd, ok := dispatchers[model.ProviderRedditAds].(*dispatch.RedditDispatcher)
+	if !ok || pool == nil {
+		return
+	}
+	rd.SetRedditReportLedger(postgres.NewRedditReportLedger(pool))
+}
+
 // bindCreativeAssetSharing wires the stored-creative-asset paths that span more than one
 // component (LFXV2-2665), on BOTH live paths: the Meta, Microsoft, LinkedIn, X and Google dispatchers and the
 // signed-asset route share the container's single AssetReserver (registerDispatchers' own
@@ -1087,6 +1100,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	dispatchers := registerDispatchers(repo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool), nat64Prefixes(c))
 	c.bindStatsJobLease(dispatchers, pool)
 	bindKeywordTargetingWriteLock(dispatchers, pool)
+	bindRedditReportLedger(dispatchers, pool)
 	c.bindCreativeAssetSharing(dispatchers, postgres.NewCreativeAssetRepo(pool))
 	logMissingDispatchers(dispatchers)
 	// Surface claims stranded by a previous process (crash/eviction mid-dispatch) — they
@@ -1172,6 +1186,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			dispatchers := registerDispatchers(connRepo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool), nat64Prefixes(c))
 			c.bindStatsJobLease(dispatchers, pool)
 			bindKeywordTargetingWriteLock(dispatchers, pool)
+			bindRedditReportLedger(dispatchers, pool)
 			c.bindCreativeAssetSharing(dispatchers, postgres.NewCreativeAssetRepo(pool))
 			logMissingDispatchers(dispatchers)
 			// Same stuck-claim scan as the fast path: the DB only just became reachable, so

@@ -862,7 +862,7 @@ so an attempt that fails before it could be sent (a failed refresh, a cancelled 
 slot, and a wait for a slot does not eat the attempt's timeout. `acquire` also checks `ctx.Err()`
 before every take (the first, and again after each wait). When the
 path is the reports operation (`reportPathRE`, `/ad_accounts/{id}/reports`), the attempt takes a
-slot from the account's ledger in the process-wide `defaultReportBudgets` (sliding 60 s; 45 in all,
+slot from the account's ledger in the budget `WithReportBudgets` gave the client (sliding 60 s; 45 in all,
 24 for attempts whose context carries `withInsightsReports` — the audience and keyword reads, set once in `readBreakdownReports`). So each page and
 each 429 retry of the audience read, the campaign metrics read and the account monitor is counted.
 A slot that will not free before the context's deadline fails at once with
@@ -870,15 +870,38 @@ A slot that will not free before the context's deadline fails at once with
 ledger of their own; the package's tests run on an unlimited default ledger
 (`report_budget_main_test.go`) and `report_budget_test.go` exercises the real limits
 (`TestReportBudgets_UnsentAttemptsSpendNothing`: cancelled before the take, cancelled during a
-wait, a cancelled client read and a failing token refresh all leave `used` at zero). The ledger is
-per process and the ungated account monitor spends it too, so the chart refuses more than one
-replica unconditionally (see [Deployment](../kubernetes/deployment.md)).
+wait, a cancelled client read and a failing token refresh all leave `used` at zero).
+
+**Shared across replicas (#380).** The service's budget is `NewSharedReportBudgets`: its slots
+live in a `domain.RedditReportLedger` (`postgres.RedditReportLedger`, table `reddit_report_slots`)
+that `BindLedger` binds — `dispatch.RedditDispatcher` builds one per dispatcher and passes it to
+every client (`clientOptions`), and the container binds Postgres to it on both wiring paths
+(`bindRedditReportLedger`). So the 45 (and the 24) are account-wide at any replica count. It
+**fails closed**: with no ledger bound, or when the ledger errors or times out, the attempt is
+refused with `ErrReportBudgetUnavailable` before anything is sent (unclassified → the same 503 as
+`ErrReportBudgetExhausted`). A client given no ledger at all spends from `defaultReportBudgets`,
+an unbound shared budget, so it refuses every report too. The wait loop, the deadline check and
+the pre-send release stay in `reserve`; a full shared budget's wait comes from the ledger (the
+database clock), floored at 10 ms so a "frees now" answer cannot hot-loop and jittered by up to a
+tenth (at most 50 ms, `jitterReportWait`) so readers refused together do not ask again in the same
+instant. A Take the caller's own deadline cut short is `ErrReportBudgetExhausted` (the budget did
+not answer in time), not Unavailable; a genuine ledger failure is logged once at warn where it is
+raised, so a fail-closed outage reads as "the ledger is down". In the account monitor an exhausted
+budget classes as `throttle` (`monitorFailureClass`); Unavailable stays `other`. A shared release runs
+on a context detached from the request's cancellation (5 s bound); if it fails the slot simply
+ages out — the budget over-counts, never under-counts. `NewLocalReportBudgets` is a process-local
+ledger at the production sizing, for `cmd/verify-metrics` (read-only database session). It is NOT
+inside the 15-request headroom: an unshared 45 (an audience read alone needs 24), so a run while the
+service is busy on the same account can overdraw Reddit's 60 — run it off-peak. Tests: `report_ledger_shared_test.go` — unbound and
+erroring ledgers send nothing, production limits are passed, a pre-send dial failure releases the
+shared slot, a full budget fails whole before the deadline, and two budgets ("two processes") on
+one ledger send exactly 45 between them.
 
 `acquireReportSlot` returns a release func (`ReportBudgets.reserve`; `acquire` is `reserve`
 without it). The request loop calls it on exactly one branch: a `Do` error that
 `isPreSendDialError` proves was never sent, so a DNS or connect outage does not burn the budget.
 Every other `Do` error may have been sent and keeps its slot. Release removes exactly the
-recorded slot, once (`TestReportBudgets_PreSendDialFailureReleasesTheSlot`,
+recorded slot (or, on the shared budget, deletes its row), once (`TestReportBudgets_PreSendDialFailureReleasesTheSlot`,
 `TestReportBudgets_ReleaseIsExactAndIdempotent`).
 
 The ledger map (`byAccount`) is bounded: a ledger left empty by a release is deleted, and at most

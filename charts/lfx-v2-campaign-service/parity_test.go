@@ -1382,9 +1382,9 @@ func TestDeploymentRefusesXStatsJobsOnMultipleReplicas(t *testing.T) {
 // TestDeploymentAllowsMultipleReplicasForReddit is the inverse of a guard this chart used to
 // carry, and exists to keep it retired.
 //
-// The Reddit reporting budget (internal/platform/reddit/report_budget.go) is a per-process
+// The Reddit reporting budget (internal/platform/reddit/report_budget.go) was a per-process
 // ledger, and the ungated Reddit account monitor spends it whatever REDDIT_METRICS_ENABLED says,
-// so N replicas each carry a separate 45 against an ad account's 60 a minute. An earlier revision
+// so N replicas each carried a separate 45 against an ad account's 60 a minute. An earlier revision
 // turned that into an unconditional `fail` in templates/deployment.yaml. That was wrong twice
 // over: the ceiling is only reachable by concurrent user traffic (nothing polls these paths), and
 // a render-time fail blocked ArgoCD from generating the manifest AT ALL for a production
@@ -1395,8 +1395,8 @@ func TestDeploymentRefusesXStatsJobsOnMultipleReplicas(t *testing.T) {
 // the case sets an explicit replicaCount — that the render actually CARRIES it. Asserting only
 // that helm exits 0 would not keep the guard retired: a reinstated guard keyed above this
 // table's replica counts, or one that quietly clamps spec.replicas to 1 instead of failing,
-// would both pass. The real fix is a shared ledger (a Postgres token bucket keyed by ad
-// account), not a refusal to deploy. Note the two shortcuts
+// would both pass. The real fix was a shared ledger keyed by ad account in Postgres (#380, now in
+// place), not a refusal to deploy. Note the two shortcuts
 // that look like fixes and are not — a lease as the X stats jobs use makes non-owner pods refuse,
 // which is intolerable on a user-facing monitor endpoint, and dividing the 45 by the replica
 // count leaves less than the 24 one audience read already needs.
