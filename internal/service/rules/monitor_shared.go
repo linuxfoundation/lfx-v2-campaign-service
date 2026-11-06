@@ -246,6 +246,10 @@ func isHighAvgCpc(avgCpc float64, currency string) bool {
 	return ok && moneyAt(avgCpc, currency) > limit
 }
 
+// moneyRulesSkippedGoogleMicrosoft is moneyRulesSkippedItem's subject for Google and Microsoft,
+// which still flag a zero daily budget whatever the currency.
+const moneyRulesSkippedGoogleMicrosoft = "placeholder-budget and high-CPC checks on non-zero amounts were skipped (a zero daily budget is still flagged)"
+
 // moneyRulesSkippedItem is the account-wide LOW item that says the money-sized rules were not
 // run, so a caller can tell "no placeholder budget or expensive click" apart from "these could
 // not be checked" (#454 review). It is due when currency cannot be sized (absent, or not in
@@ -258,10 +262,6 @@ func isHighAvgCpc(avgCpc float64, currency string) bool {
 // It goes on an absent currency as well as an unlisted one: on Microsoft and X the currency comes
 // from a best-effort side read that can time out, and on Google from every row carrying the same
 // customer.currency_code, so a USD account can reach here on one request and not the next.
-// moneyRulesSkippedGoogleMicrosoft is moneyRulesSkippedItem's subject for Google and Microsoft,
-// which still flag a zero daily budget whatever the currency.
-const moneyRulesSkippedGoogleMicrosoft = "placeholder-budget and high-CPC checks on non-zero amounts were skipped (a zero daily budget is still flagged)"
-
 func moneyRulesSkippedItem(currency, skipped string, rows []model.AccountMonitorRow) (model.AccountMonitorActionItem, bool) {
 	if _, ok := accountThreshold(1, currency); ok {
 		return model.AccountMonitorActionItem{}, false
