@@ -2128,10 +2128,9 @@ asset created by temporary id and linked in the same `googleAds:mutate`. A live 
 `AD_IMAGE`, one `BUSINESS_LOGO` and one `BUSINESS_NAME` `campaign_asset` row, all `ENABLED` and
 naming the asset ids the response returned. Google answered the `BUSINESS_NAME` text create with an
 existing text asset of the same text, the reuse case the result check accepts. NOT LIVE-VERIFIED: a
-multi-operation
-`campaignSharedSets:mutate`, a shared set of another type (for example
-`NEGATIVE_PLACEMENTS`) on a Search campaign, and the 300x300 / 128x128 minimums and the
-20-image cap, which are Google's documented asset specifications.
+multi-operation `campaignSharedSets:mutate`, a shared set of another type (for example
+`NEGATIVE_PLACEMENTS`) on a Search campaign, and the 300x300 / 128x128 minimums and the 20-image
+cap, which are Google's documented asset specifications.
 
 ## Image asset names (#491)
 
