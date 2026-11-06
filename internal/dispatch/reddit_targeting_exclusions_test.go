@@ -60,6 +60,24 @@ func TestRedditExclusions_GateOffRefusesBothPaths(t *testing.T) {
 	}
 }
 
+// An unrelated mistyped field must not let a gated or invalid exclusion list through preflight as
+// an accepted job: the checks run on the best-effort decode, gate off and gate on.
+func TestRedditExclusions_PreflightRefusesDespiteUnrelatedDecodeError(t *testing.T) {
+	cfg := json.RawMessage(`{"redditConfig":{"budgetUsd":"bad","startDate":"2099-08-01","endDate":"2099-08-31","objective":"traffic","excludedSubreddits":["a b"]}}`)
+	t.Run("gate off", func(t *testing.T) {
+		t.Setenv(constants.EnvRedditTargetingExclusionsEnabled, "")
+		d := (&redditAssetHarness{}).dispatcher(t)
+		err := d.PreflightCreate(context.Background(), "cncf", model.ProviderRedditAds, cfg)
+		requireConfigInvalid(t, err, constants.EnvRedditTargetingExclusionsEnabled)
+	})
+	t.Run("gate on", func(t *testing.T) {
+		t.Setenv(constants.EnvRedditTargetingExclusionsEnabled, "true")
+		d := (&redditAssetHarness{}).dispatcher(t)
+		err := d.PreflightCreate(context.Background(), "cncf", model.ProviderRedditAds, cfg)
+		requireConfigInvalid(t, err, "redditConfig.excludedSubreddits")
+	})
+}
+
 // Only the exact value "true" opens the gate.
 func TestRedditExclusions_GateFailsClosedOnTypo(t *testing.T) {
 	t.Setenv(constants.EnvRedditTargetingExclusionsEnabled, "TRUE")

@@ -107,11 +107,14 @@ func (d *RedditDispatcher) PreflightCreate(_ context.Context, _ string, _ model.
 	if _, err := redditBidPlan(cfg); err != nil {
 		return err
 	}
-	if decodeErr != nil {
-		return domain.ErrPreflightNotApplicable // Dispatch reports a malformed config as the job failure
-	}
+	// The exclusions' gate and rules run on the best-effort decode too, like the bid plan: an
+	// unrelated mistyped field must not turn a gated or invalid exclusion list into an accepted
+	// job. checkRedditExclusionsShape above already refused a mistyped list, so the lists decoded.
 	if err := checkRedditTargetingExclusions(cfg); err != nil {
 		return err
+	}
+	if decodeErr != nil {
+		return domain.ErrPreflightNotApplicable // Dispatch reports a malformed config as the job failure
 	}
 	if _, err := d.checkRedditAssetChoice(cfg); err != nil {
 		return err

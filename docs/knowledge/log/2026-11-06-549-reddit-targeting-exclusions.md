@@ -13,7 +13,9 @@ regional target.
 - Synchronous 400 (`invalid campaign config: redditConfig.<field>: ...`) from
   `RedditDispatcher.PreflightCreate` for a rule breach or a value that is not an array of
   strings. A case-variant key is checked too, because encoding/json matches keys
-  case-insensitively. Dispatch and the client re-check before any Reddit call.
+  case-insensitively. The gate and rules run on the best-effort decode, as the bid plan does,
+  so an unrelated mistyped field cannot turn a gated or invalid list into an accepted job.
+  Dispatch and the client re-check before any Reddit call.
 - Both are sent on every ad-group attempt. The communities/interests retry never drops an
   exclusion.
 - Default-off deployment flag `REDDIT_TARGETING_EXCLUSIONS_ENABLED`; the chart sets `"false"`.
