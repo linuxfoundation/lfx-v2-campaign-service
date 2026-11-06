@@ -24,3 +24,7 @@ covers the flag (off, `"TRUE"`, `"1"`), the 400s, a wrong-typed block, Dispatch'
 wiring, and the gate classification; the service gate table adds six Meta cases. 26 hand-applied
 mutations (each guard, the flag default, the inclusion rule, dedupe, the gender codes, the wiring
 and the gate) each fail a test.
+
+Review fixes before the PR: the audience owner is compared with `sameMetaAccount` (the `act_`
+prefix ignored on either side), and a `metaConfig` carrying two case-variant `targeting` keys is a
+400, since the pre-check and Dispatch's decoder could otherwise judge different blocks.

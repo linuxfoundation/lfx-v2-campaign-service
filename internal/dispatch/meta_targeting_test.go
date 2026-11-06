@@ -58,6 +58,8 @@ func TestMeta_PreflightCreate_TargetingFlagOn(t *testing.T) {
 			want: `invalid campaign config: metaConfig: "targeting" must be an object`},
 		{name: "a wrong-typed field, case-variant key", config: `{"metaConfig":{"Targeting":{"ageMin":"25"}}}`,
 			want: `"Targeting" must be an object`},
+		{name: "two case-variant keys", config: `{"metaConfig":{"targeting":{"ageMin":25},"Targeting":{"ageMin":99}}}`,
+			want: `more than one targeting key ("Targeting", "targeting")`},
 		// Best-effort decode elsewhere: an unrelated broken field must not let bad targeting through.
 		{name: "bad targeting, broken budget", config: `{"metaConfig":{"budget":"lots","targeting":{"genders":["x"]}}}`,
 			want: "is not one of male, female"},

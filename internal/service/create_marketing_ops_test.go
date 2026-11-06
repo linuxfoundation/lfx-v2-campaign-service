@@ -120,6 +120,11 @@ func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *tes
 		"channel": "search", "audienceSegments": []any{"customers/1/userLists/2"},
 		"sharedNegativeKeywordLists": []any{"customers/1/sharedSets/2"}}}
 
+	// Text a 403's message must contain beyond wantNamed, by case name.
+	wantContains := map[string]string{
+		"google and meta, one check, both named": "googleAdsConfig inputs that name a resource on the shared Google Ads account " +
+			"require the global_marketing_ops role on this project: conversionActions; metaConfig inputs",
+	}
 	for _, tc := range []struct {
 		name      string
 		platforms []string
@@ -188,9 +193,8 @@ func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *tes
 				if tc.wantNamed != "" && !strings.HasSuffix(forbidden.Message, ": "+tc.wantNamed) {
 					t.Fatalf("403 message = %q, want it to name exactly %q", forbidden.Message, tc.wantNamed)
 				}
-				if strings.Contains(tc.name, "google and meta") &&
-					!strings.Contains(forbidden.Message, "googleAdsConfig inputs that name a resource on the shared Google Ads account require the global_marketing_ops role on this project: conversionActions; metaConfig inputs") {
-					t.Fatalf("403 message = %q, want both platforms' sentences", forbidden.Message)
+				if want := wantContains[tc.name]; want != "" && !strings.Contains(forbidden.Message, want) {
+					t.Fatalf("403 message = %q, want it to contain %q", forbidden.Message, want)
 				}
 			case "503":
 				var unavailable *briefs.ConnServiceUnavailableError

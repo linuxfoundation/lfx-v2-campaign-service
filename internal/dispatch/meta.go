@@ -1625,8 +1625,17 @@ func decodeMetaTargeting(config json.RawMessage) (*meta.AudienceTargeting, error
 	}
 	sort.Strings(keys)
 	var t *meta.AudienceTargeting
+	var seen []string
 	for _, k := range keys {
-		if !strings.EqualFold(k, "targeting") || isJSONNull(platformCfg[k]) {
+		if !strings.EqualFold(k, "targeting") {
+			continue
+		}
+		// Two case-variant keys would be read by Dispatch's encoding/json in DOCUMENT order, which
+		// this map cannot see, so the pre-check could judge a different block than the job sends.
+		if seen = append(seen, quoteKey(k)); len(seen) > 1 {
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: more than one targeting key (%s); send exactly one", domain.ErrCreateConfigInvalid, strings.Join(seen, ", ")))
+		}
+		if isJSONNull(platformCfg[k]) {
 			continue
 		}
 		var got meta.AudienceTargeting

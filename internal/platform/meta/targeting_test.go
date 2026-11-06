@@ -79,6 +79,20 @@ func (ts *targetingServer) adSetTargeting(t *testing.T) map[string]any {
 	return targeting
 }
 
+// readsSent and postsSent copy the recorded requests under the handler's lock, so the test
+// goroutine never reads what the handler goroutine writes without a happens-before edge.
+func (ts *targetingServer) readsSent() []string {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	return append([]string(nil), ts.reads...)
+}
+
+func (ts *targetingServer) postsSent() []string {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	return append([]string(nil), ts.posts...)
+}
+
 func boolp(b bool) *bool { return &b }
 
 // TestCreateCampaign_NoTargetingLeavesTheAdSetTargetingUnchanged: without a targeting block the
@@ -99,8 +113,8 @@ func TestCreateCampaign_NoTargetingLeavesTheAdSetTargetingUnchanged(t *testing.T
 					t.Errorf("targeting carries %s = %v, want it absent", k, got[k])
 				}
 			}
-			if len(ts.reads) != 0 {
-				t.Errorf("audience reads = %v, want none", ts.reads)
+			if reads := ts.readsSent(); len(reads) != 0 {
+				t.Errorf("audience reads = %v, want none", reads)
 			}
 		})
 	}
@@ -109,7 +123,8 @@ func TestCreateCampaign_NoTargetingLeavesTheAdSetTargetingUnchanged(t *testing.T
 // TestCreateCampaign_TargetingReachesTheAdSet pins the exact targeting keys for each shape the
 // #550 comment specifies, including when the Advantage+ flag is and is not sent.
 func TestCreateCampaign_TargetingReachesTheAdSet(t *testing.T) {
-	owners := map[string]string{"111": "777", "222": "777", "333": "777"}
+	// 222 answers with the act_ prefix: the comparison ignores it on either side (sameMetaAccount).
+	owners := map[string]string{"111": "777", "222": "act_777", "333": "777"}
 	type want map[string]any
 	for _, tc := range []struct {
 		name  string
@@ -162,8 +177,8 @@ func TestCreateCampaign_TargetingReachesTheAdSet(t *testing.T) {
 			if _, ok := got["geo_locations"]; !ok {
 				t.Error("geo_locations was dropped")
 			}
-			if !reflect.DeepEqual(ts.reads, tc.reads) {
-				t.Errorf("audience reads = %v, want %v", ts.reads, tc.reads)
+			if reads := ts.readsSent(); !reflect.DeepEqual(reads, tc.reads) {
+				t.Errorf("audience reads = %v, want %v", reads, tc.reads)
 			}
 		})
 	}
@@ -251,8 +266,8 @@ func TestCreateCampaign_ForeignOrUnreadableAudienceCreatesNothing(t *testing.T) 
 			if got := errors.As(err, &refusal); got != tc.wantRefuse {
 				t.Fatalf("pre-flight refusal = %v, want %v (%v)", got, tc.wantRefuse, err)
 			}
-			if len(ts.posts) != 0 {
-				t.Fatalf("POSTs sent = %v, want none", ts.posts)
+			if posts := ts.postsSent(); len(posts) != 0 {
+				t.Fatalf("POSTs sent = %v, want none", posts)
 			}
 		})
 	}

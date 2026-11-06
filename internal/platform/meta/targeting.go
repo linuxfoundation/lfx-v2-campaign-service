@@ -200,7 +200,8 @@ func audienceRefs(ids []string) []map[string]string {
 }
 
 // customAudienceOwner is the ownership read's answer: GET /{audience_id}?fields=id,account_id.
-// account_id is the ad account id WITHOUT the act_ prefix (Custom Audience reference).
+// account_id is the ad account id, documented WITHOUT the act_ prefix (Custom Audience reference);
+// it is compared through sameMetaAccount, which ignores the prefix on either side.
 type customAudienceOwner struct {
 	ID        string `json:"id"`
 	AccountID string `json:"account_id"`
@@ -215,7 +216,6 @@ func (c *Client) checkCustomAudiences(ctx context.Context, accountID string, t *
 	if t == nil {
 		return nil
 	}
-	want := strings.TrimPrefix(accountID, "act_")
 	for _, list := range []struct {
 		field string
 		ids   []string
@@ -229,7 +229,7 @@ func (c *Client) checkCustomAudiences(ctx context.Context, accountID string, t *
 			if err := json.Unmarshal(raw, &owner); err != nil {
 				return fmt.Errorf("meta targeting: %s audience %s read was not a custom audience, so nothing was created: %w", list.field, id, err)
 			}
-			if owner.ID != id || owner.AccountID != want {
+			if owner.ID != id || !sameMetaAccount(owner.AccountID, accountID) {
 				return domain.PreflightRefusalf("meta targeting: %s audience %s is not a custom audience of the connected ad account %s; nothing was created", list.field, id, accountID)
 			}
 		}

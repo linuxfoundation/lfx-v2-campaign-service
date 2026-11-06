@@ -3305,6 +3305,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
+	// Every custom audience the targeting names is read here, after the account preflight and
+	// before anything is created: an id Meta would refuse at the ad set is refused now instead.
+	if err := c.checkCustomAudiences(ctx, accountID, audience); err != nil {
+		return nil, err
+	}
+
 	// Resolve the currency offset used to convert the whole-currency-unit budget to
 	// Meta minor units (NOT an FX conversion — the caller's amount is already in the
 	// account's currency). Most currencies use 100; zero-decimal currencies
@@ -3321,12 +3327,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// The precedence itself lives in resolveCurrencyOffset, shared with the budget-WRITE
 	// path, so an amount this path would refuse to create with cannot be reached by editing
 	// a live campaign. Its rules and error texts are the ones that were inline here.
-	// Every custom audience the targeting names is read here, after the account preflight and
-	// before anything is created: an id Meta would refuse at the ad set is refused now instead.
-	if err := c.checkCustomAudiences(ctx, accountID, audience); err != nil {
-		return nil, err
-	}
-
 	offset, err := c.resolveCurrencyOffset(acct.Currency, preflightErr)
 	if err != nil {
 		return nil, err
