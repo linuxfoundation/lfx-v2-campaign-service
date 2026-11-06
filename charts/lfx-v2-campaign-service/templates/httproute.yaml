@@ -39,7 +39,8 @@ spec:
     #
     # The trailing wildcard is per-family and MUST mirror the RuleSet
     # (ruleset.yaml `project-api`, plus `marketing-ops-api` for
-    # google-ads/conversion-actions, google-ads/audiences and google-ads/user-lists) exactly, or the route would forward sub-paths
+    # google-ads/conversion-actions, google-ads/audiences, google-ads/user-lists and
+    # reddit-ads/custom-audiences) exactly, or the route would forward sub-paths
     # Heimdall has no rule for (a route/rule parity violation — an unruled path is
     # denied, or worse). Only briefs/jobs/hubspot carry `**` in the RuleSet, so
     # only they get the free `(/.*)?` tail here — which is also what routes every
@@ -48,7 +49,7 @@ spec:
     # for exactly the base, /test, and /set-credential sub-paths;
     # google-ads/keywords|audience|audiences|campaign-ref|geo-targets|user-lists|conversion-actions,
     # microsoft-ads/keywords|audience|campaign-ref,
-    # (linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience, reddit-ads/keywords and (meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref are
+    # (linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience, reddit-ads/keywords|custom-audiences and (meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref are
     # ruled at the base path only. There is NO per-provider /metrics branch: the chart used to
     # route (google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics, but no design/
     # method serves it — metrics are per campaign and per brief, under briefs/ — so it was
@@ -88,7 +89,7 @@ spec:
     - matches:
       - path:
           type: RegularExpression
-          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|send-workflows|google-ads/(keywords|audience|audiences|campaign-ref|geo-targets|user-lists|conversion-actions)|microsoft-ads/(keywords|audience|campaign-ref)|(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience|reddit-ads/keywords|(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run|custom/(interpret|preview|create)))$
+          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|send-workflows|google-ads/(keywords|audience|audiences|campaign-ref|geo-targets|user-lists|conversion-actions)|microsoft-ads/(keywords|audience|campaign-ref)|(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience|reddit-ads/(keywords|custom-audiences)|(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run|custom/(interpret|preview|create)))$
       {{- if .Values.heimdall.enabled }}
       filters:
         - type: ExtensionRef

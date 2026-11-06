@@ -66,6 +66,12 @@ type redditConfig struct {
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
 	// (BIDLESS, unchanged); manual creates a MANUAL_BIDDING CPC campaign — see redditBidPlan.
 	Bidding *biddingConfig `json:"bidding,omitempty"`
+	// CustomAudienceIDs / ExcludedCustomAudienceIDs are custom audiences on the ad account to
+	// target and to exclude (#549, reddit_custom_audiences.go). Admitted only behind
+	// REDDIT_CUSTOM_AUDIENCES_ENABLED, and only from global_marketing_ops
+	// (service.RedditMarketingOpsInputs), because the audiences belong to the shared ad account.
+	CustomAudienceIDs         []string `json:"customAudienceIds"`
+	ExcludedCustomAudienceIDs []string `json:"excludedCustomAudienceIds"`
 }
 
 // redditBidPlan resolves redditConfig's bidding choice. Manual bidding creates campaign and ad
@@ -234,6 +240,12 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	if err != nil {
 		return nil, notCreated(err)
 	}
+	// Custom audiences (#549): the deployment gate and the id rules, before any Reddit call
+	// (PreflightCreate normally refused a bad list already, as a 400). The type check needs the
+	// raw config: a mistyped list already failed the decode above.
+	if err := checkRedditCustomAudiences(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
 	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
@@ -309,6 +321,9 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		ConversionPixelID: cfg.ConversionPixelID,
 		VideoGoal:         cfg.VideoGoal,
 		ManualCPCBid:      plan.amount,
+
+		CustomAudienceIDs:         cfg.CustomAudienceIDs,
+		ExcludedCustomAudienceIDs: cfg.ExcludedCustomAudienceIDs,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-3): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of

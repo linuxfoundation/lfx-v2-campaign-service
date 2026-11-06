@@ -531,6 +531,26 @@ type RedditKeywordPerformance struct {
 	Truncated bool
 }
 
+// RedditCustomAudience is one custom audience on a Reddit ad account (#549), for the
+// customAudienceIds / excludedCustomAudienceIds picker. Type and Status are Reddit's values
+// verbatim; SizeLower / SizeUpper are nil when Reddit sent none.
+type RedditCustomAudience struct {
+	ID        string
+	Name      string
+	Type      string
+	Status    string
+	SizeLower *int64
+	SizeUpper *int64
+}
+
+// RedditCustomAudiences is the custom-audience read on the ad account a Reddit create for the
+// project uses. Truncated reports that the page walk stopped at its cap with more pages left.
+type RedditCustomAudiences struct {
+	AccountID string
+	Audiences []RedditCustomAudience
+	Truncated bool
+}
+
 // KeywordAction is one requested keyword mutation on a live campaign.
 type KeywordAction struct {
 	AdGroupID   string

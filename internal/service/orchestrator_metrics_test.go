@@ -423,6 +423,13 @@ func (d upstreamCapableDispatcher) ListAudiences(context.Context, string, model.
 	return &model.AudienceResources{Audiences: []model.AudienceResource{}}, true, nil
 }
 
+func (d upstreamCapableDispatcher) ListRedditCustomAudiences(context.Context, string, model.Provider) (*model.RedditCustomAudiences, bool, error) {
+	if d.err != nil {
+		return nil, true, d.err
+	}
+	return &model.RedditCustomAudiences{Audiences: []model.RedditCustomAudience{}}, true, nil
+}
+
 func (d upstreamCapableDispatcher) SearchEmails(context.Context, string, model.Provider, string) ([]model.MarketingEmail, error) {
 	if d.err != nil {
 		return nil, d.err
@@ -679,6 +686,14 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opListAudiences,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ReadAudiences(ctx, "p1", platform, "audience")
+				return err
+			},
+		},
+		{
+			name: "list reddit custom audiences",
+			op:   opListRedditCustomAudiences,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadRedditCustomAudiences(ctx, "p1", platform)
 				return err
 			},
 		},

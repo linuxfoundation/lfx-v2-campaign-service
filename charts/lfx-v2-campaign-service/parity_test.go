@@ -109,8 +109,13 @@ const googleAudiencesPath = "/projects/:projectId/google-ads/audiences"
 // TestUserListsIsAMarketingOpsRead pins that.
 const userListsPath = "/projects/:projectId/google-ads/user-lists"
 
+// redditCustomAudiencesPath is the Reddit custom-audience list (#549). It lists every
+// foundation's audiences on the shared LF Reddit ad account, so it is ruled by marketing-ops-api
+// only, and TestRedditCustomAudiencesIsAMarketingOpsRead pins that.
+const redditCustomAudiencesPath = "/projects/:projectId/reddit-ads/custom-audiences"
+
 // marketingOpsPaths is every path the marketing-ops-api rule must hold, in order, and nothing else.
-var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath}
+var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath}
 
 // ruleBlock isolates one rendered Heimdall rule (from its `- id: "<id>"` line up to
 // the next `- id:` or EOF) so path/authorizer extraction is scoped to a SINGLE rule.
@@ -206,6 +211,26 @@ func TestGoogleAudiencesIsAMarketingOpsRead(t *testing.T) {
 // campaign_manager (executive_director included) must not reach it.
 func TestUserListsIsAMarketingOpsRead(t *testing.T) {
 	assertMarketingOpsRead(t, userListsPath, "/projects/p1/google-ads/user-lists")
+}
+
+// TestRedditCustomAudiencesIsAMarketingOpsRead pins the same for the Reddit custom-audience list
+// (#549): it lists every foundation's custom audiences on the shared LF Reddit ad account, so a
+// campaign_manager (executive_director included) must not reach it. The sibling reddit-ads/audience
+// and reddit-ads/keywords performance reads stay project-api paths.
+func TestRedditCustomAudiencesIsAMarketingOpsRead(t *testing.T) {
+	assertMarketingOpsRead(t, redditCustomAudiencesPath, "/projects/p1/reddit-ads/custom-audiences")
+	ruleset := helmTemplate(t, "templates/ruleset.yaml")
+	for _, sibling := range []string{"/projects/p1/reddit-ads/audience", "/projects/p1/reddit-ads/keywords"} {
+		matched := false
+		for _, p := range rulePatterns(t, ruleset, projectAPIRuleID) {
+			if ruleMatcher(t, p).MatchString(sibling) {
+				matched = true
+			}
+		}
+		if !matched {
+			t.Errorf("%s rule no longer matches %s, a campaign_manager read", projectAPIRuleID, sibling)
+		}
+	}
 }
 
 // TestMarketingOpsRuleHoldsExactlyItsReads pins the marketing-ops-api rule's whole path set, so
