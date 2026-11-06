@@ -1207,6 +1207,12 @@ foundation executive directors, so `BriefService.CreateCampaigns` also requires
 this gate and the three below). The flag sits in the adapter so it also covers callers that
 reach `Dispatch` directly.
 
+`campaignAudienceSegments` (#513) is mapped verbatim onto `CampaignInput.CampaignAudienceSegments`;
+the client refuses it off Search and checks each list against the account. It has no
+deployment flag, but it names the shared account's user lists, so the create path counts it for
+the `global_marketing_ops` check (`service.GoogleAdsMarketingOpsInputs`, pinned by the same
+agreement test).
+
 `demandGenDemographics` (#498, `googleAdsDemandGenDemographicsConfig`) is mapped verbatim onto
 `CampaignInput.DemandGenDemographics` (`googleAdsDemandGenDemographics`) once two gates pass:
 any `demandGenDemographics` object, `{}` included, needs
