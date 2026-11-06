@@ -308,8 +308,8 @@ type campaignNegativeUserListCreate struct {
 //
 // Its own mutate after the group's audience targeting, so each failure sentence names only
 // what it left missing. A group with exclusions but no audiences sends no targetingSetting —
-// not probed; the setting governs positive criteria only, and the group's own audiences or
-// DisplayDemographics decide whether it is sent (displayAdGroupCreate). Called after the ad group exists, so a
+// not probed; the setting governs positive criteria only, and the group's own audiences
+// decide whether it is sent (displayAdGroupCreate). Called after the ad group exists, so a
 // failure is a partial result; an ambiguous outcome is UNCONFIRMED.
 func (c *Client) createAdGroupAudienceExclusions(ctx context.Context, adGroupResource, adGroupID string, userLists []string) ([]string, error) {
 	if ctxErr := ctx.Err(); ctxErr != nil {

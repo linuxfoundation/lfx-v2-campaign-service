@@ -430,8 +430,8 @@ func validateAudienceSegments(segments []string) ([]string, error) {
 // targetingSetting's doc comment in campaign.go, and its use in
 // adgroup_ad.go) — this function does not re-check that here. The Display cascade
 // is the one other caller, and it sends only the income/parental exclusions and its
-// demographic targeting (#499), whose bidOnly false is declared by
-// displayAdGroupTargetingSetting.
+// demographic targeting (#499), positives and the complement negatives; see
+// adGroupDemographicTargetingPlan.
 //
 // This is the highest-risk unverified assumption in this slice, mirroring the
 // AdGroupAd composite-resourceName flag from GA-3: verify against a live
@@ -524,9 +524,10 @@ func (c *Client) createAdGroupTargeting(ctx context.Context, adGroupResource, ad
 			IncomeRange: &set.observed.incomeRanges[i],
 		}})
 	}
-	// The Display demographic targeting (#499) is POSITIVE and ENABLED: the ad group's
-	// targetingSetting declares each targeted dimension bidOnly false, so these criteria
-	// restrict who sees the ad (see displayAdGroupTargetingSetting).
+	// The Display demographic targeting (#499): the targeted values POSITIVE and ENABLED, then
+	// every other value of a targeted dimension NEGATIVE. Google requires every demographic
+	// dimension to target all, so the negatives are what narrow reach; see
+	// adGroupDemographicTargetingPlan.
 	for i := range set.targeted.ageRanges {
 		ops = append(ops, mutateOperation{Create: adGroupCriterionCreate{
 			AdGroup: adGroupResource, Status: StatusEnabled, AgeRange: &set.targeted.ageRanges[i],
@@ -545,6 +546,26 @@ func (c *Client) createAdGroupTargeting(ctx context.Context, adGroupResource, ad
 	for i := range set.targeted.parentalStatuses {
 		ops = append(ops, mutateOperation{Create: adGroupCriterionCreate{
 			AdGroup: adGroupResource, Status: StatusEnabled, ParentalStatus: &set.targeted.parentalStatuses[i],
+		}})
+	}
+	for i := range set.targeted.negAgeRanges {
+		ops = append(ops, mutateOperation{Create: adGroupCriterionCreate{
+			AdGroup: adGroupResource, Negative: true, AgeRange: &set.targeted.negAgeRanges[i],
+		}})
+	}
+	for i := range set.targeted.negGenders {
+		ops = append(ops, mutateOperation{Create: adGroupCriterionCreate{
+			AdGroup: adGroupResource, Negative: true, Gender: &set.targeted.negGenders[i],
+		}})
+	}
+	for i := range set.targeted.negIncomeRanges {
+		ops = append(ops, mutateOperation{Create: adGroupCriterionCreate{
+			AdGroup: adGroupResource, Negative: true, IncomeRange: &set.targeted.negIncomeRanges[i],
+		}})
+	}
+	for i := range set.targeted.negParentalStatuses {
+		ops = append(ops, mutateOperation{Create: adGroupCriterionCreate{
+			AdGroup: adGroupResource, Negative: true, ParentalStatus: &set.targeted.negParentalStatuses[i],
 		}})
 	}
 

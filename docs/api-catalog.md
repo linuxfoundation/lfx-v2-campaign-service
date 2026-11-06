@@ -920,8 +920,8 @@ audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTI
                                   channel with no keywords: when any Display audience list is given,
                                   the ad group is created with `targetingSetting.targetRestrictions`
                                   AGE_RANGE, GENDER, PARENTAL_STATUS and INCOME_RANGE bidOnly true
-                                  (Google's default for those, restated unchanged; a dimension named
-                                  in `displayDemographics` is sent bidOnly false) then AUDIENCE
+                                  (Google's default for those, restated unchanged; never false, which
+                                  Google refuses, whatever `displayDemographics` holds) then AUDIENCE
                                   bidOnly false, accepted with these criteria by a validateOnly
                                   probe. Optimized targeting is left at Google's
                                   default and may widen reach beyond the named segments (not
@@ -2225,22 +2225,26 @@ displayDemographics?:           — OPTIONAL, DISPLAY ONLY (#499). Positive demo
                                   `excludedParentalStatuses`), case-insensitive, deduped, at most 20
                                   per list.
 
-                                  Each targeted dimension is sent `bidOnly: false` in the ad group's
-                                  `targetingSetting` (the other demographic dimensions stay `true`,
-                                  `AUDIENCE` follows as before when audience lists are set), and each
-                                  value as a positive ENABLED ad-group criterion in the same atomic
-                                  mutate as the income/parental exclusions. A value both targeted and
+                                  Google requires every demographic dimension to target all (a
+                                  validateOnly probe on 2026-11-05 refused `bidOnly: false` with
+                                  `TARGETING_SETTING_DEMOGRAPHIC_CRITERION_TYPE_GROUPS_MUST_BE_SET_TO_TARGET_ALL`),
+                                  so the ad group's `targetingSetting` is exactly what it is without
+                                  this field. A targeted dimension is sent instead as one positive
+                                  ENABLED ad-group criterion per named value plus one NEGATIVE
+                                  criterion for every other value of that dimension (UNDETERMINED
+                                  included unless named; values an `excluded*` list already excludes
+                                  are not repeated), in the same atomic mutate as the income/parental
+                                  exclusions. The probe accepted positives beside a negative in one
+                                  mutate. A value both targeted and
                                   in its `excluded*` list is REFUSED before any request; excluding a
                                   different value of a targeted dimension is accepted. REFUSED on
                                   every channel but `display`. It names no account resource, so no
                                   audience gate applies. Ids: `adGroups[].demographicTargetingCriteriaIds`
-                                  and `adGroupDemographicTargetingCriteriaIds` (the first group's).
+                                  and `adGroupDemographicTargetingCriteriaIds` (the first group's),
+                                  positives then complement negatives.
 
-                                  Built from the v23 field names; the positive criteria and the
-                                  demographic `bidOnly: false` restrictions have NOT yet been checked
-                                  with a validateOnly probe, so the field is REFUSED before any request
-                                  unless the deployment sets GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED
-                                  to exactly `"true"`.
+                                  REFUSED before any request unless the deployment sets
+                                  GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED to exactly `"true"`.
 
 searchAssets?:                  — OPTIONAL Search campaign image, logo and name assets (#477), each
   {adImages?: ImageRef[],         linked to the CAMPAIGN. SEARCH ONLY, and REFUSED on every other

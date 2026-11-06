@@ -87,12 +87,13 @@ type displayCampaignCreate struct {
 // refusal is a client limitation rather than an upstream one — Google does accept manual
 // CPC on Display — and displayBiddingStrategies is where that is written down.
 //
-// TargetingSetting is sent ONLY when the ad group carries audience criteria (#462) or
-// demographic targeting (#499), built by displayAdGroupTargetingSetting: the four
-// demographic dimensions, each bidOnly true unless targeted (then false), followed by
-// AUDIENCE bidOnly false when there are audience criteria, so those criteria target rather
-// than observe — the opposite of Search's ad group, which sends bidOnly true. With neither
-// the field is omitted and the payload is byte-identical to the one sent before #462. See
+// TargetingSetting is sent ONLY when the ad group carries audience criteria (#462), built by
+// displayAdGroupTargetingSetting: the four demographic dimensions restated at Google's default
+// bidOnly true, then AUDIENCE bidOnly false, so those criteria target rather than observe —
+// the opposite of Search's ad group, which sends bidOnly true. Demographic targeting (#499)
+// never changes it: Google refuses a demographic dimension set bidOnly false, so that
+// targeting narrows through negative criteria instead. With no audience input the field is
+// omitted and the payload is byte-identical to the one sent before #462. See
 // createDisplayAudienceCriteria for why the setting is sent rather than left to
 // Google's default.
 type displayAdGroupCreate struct {
@@ -354,12 +355,11 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 			Status:   "ENABLED",
 			Type:     adGroupTypeDisplayStandard,
 		}
-		// Audience criteria are attached as TARGETING (#462), which this setting declares, and
-		// so is the demographic targeting (#499), which every group carries. The setting is
-		// absent only when the group has neither audiences nor demographic targeting. Per
-		// group: each group with audiences carries the AUDIENCE entry, as the 2026-11-03
-		// validateOnly probe of two groups did. See displayAdGroupCreate.
-		adGroupCreateVal.TargetingSetting = displayAdGroupTargetingSetting(g.targeting.audienceCount() > 0, pf.displayDemographics)
+		// Audience criteria are attached as TARGETING (#462), which this setting declares;
+		// without audience input it stays absent, demographic targeting (#499) or not. Per
+		// group: each group with audiences carries it, as the 2026-11-03 validateOnly probe of
+		// two groups did. See displayAdGroupCreate.
+		adGroupCreateVal.TargetingSetting = displayAdGroupTargetingSetting(g.targeting.audienceCount() > 0)
 		adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: adGroupCreateVal}}}
 		adGroupResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), adGroupReq, false)
 		if err != nil {
@@ -424,7 +424,7 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 					n, adGroupDemographicStep(pf.adGroupDemographics))+tag)
 			}
 			if n := len(ids.targeted); n > 0 {
-				steps = append(steps, fmt.Sprintf("Demographic targeting applied: %d ad group criteria (%s) — declared as targeting (bidOnly false; not yet probed live)",
+				steps = append(steps, fmt.Sprintf("Demographic targeting applied: %d ad group criteria (%s)",
 					n, displayDemographicTargetingStep(pf.displayDemographics))+tag)
 			}
 			res.Steps = steps

@@ -29,9 +29,9 @@ func TestGoogleAds_DisplayDemographicsReachTheDisplayAdGroup(t *testing.T) {
 	groups, criteria := cap.adGroups, cap.adGroupCriteria
 	cap.mu.Unlock()
 
-	want := `"targetRestrictions":[{"targetingDimension":"AGE_RANGE","bidOnly":false},{"targetingDimension":"GENDER","bidOnly":false},{"targetingDimension":"PARENTAL_STATUS","bidOnly":false},{"targetingDimension":"INCOME_RANGE","bidOnly":false}]`
-	if len(groups) != 1 || !strings.Contains(string(groups[0]), want) {
-		t.Fatalf("ad group creates = %s, want every dimension targeted", groups)
+	// Google refuses a demographic dimension set bidOnly false, so no targetingSetting is sent.
+	if len(groups) != 1 || strings.Contains(string(groups[0]), "targetingSetting") {
+		t.Fatalf("ad group creates = %s, want no targetingSetting", groups)
 	}
 	if len(criteria) != 1 {
 		t.Fatalf("got %d adGroupCriteria mutates, want 1", len(criteria))
@@ -41,6 +41,11 @@ func TestGoogleAds_DisplayDemographicsReachTheDisplayAdGroup(t *testing.T) {
 		`"status":"ENABLED","gender":{"type":"FEMALE"}`,
 		`"status":"ENABLED","incomeRange":{"type":"INCOME_RANGE_90_UP"}`,
 		`"status":"ENABLED","parentalStatus":{"type":"PARENT"}`,
+		// one complement negative per dimension, as a sample
+		`"negative":true,"ageRange":{"type":"AGE_RANGE_18_24"}`,
+		`"negative":true,"gender":{"type":"MALE"}`,
+		`"negative":true,"incomeRange":{"type":"INCOME_RANGE_0_50"}`,
+		`"negative":true,"parentalStatus":{"type":"NOT_A_PARENT"}`,
 	} {
 		if !strings.Contains(string(criteria[0]), c) {
 			t.Errorf("criteria = %s, want %s", criteria[0], c)
