@@ -198,11 +198,17 @@ field would offer a knob a caller could turn with no effect.
 
 ## Currency
 
-The account monitors' two money thresholds — the placeholder daily budget (≤ about 1 USD;
-Google, Microsoft and X) and the high average CPC (> about 5 USD; Google and Microsoft) — live
-once in `monitor_shared.go` (`placeholderBudgetMaxUSD`, `highAvgCpcUSD`, `isPlaceholderBudget`,
-`isHighAvgCpc`) and are sized in the ad account's currency, which `EvaluateGoogleMonitor`,
-`EvaluateMicrosoftMonitor` and `EvaluateTwitterMonitor` now take (#454). `monitorUnitsPerUSD` is
+The account monitors' money thresholds — the placeholder daily budget (≤ about 1 USD;
+Google, Microsoft and X), the high average CPC (> about 5 USD; Google and Microsoft) and
+LinkedIn's paused-with-real-budget line (> about 10 USD lifetime, `pausedRealTotalBudgetMinUSD`,
+or > about 1 USD a day, the placeholder line read from the other side) — live once in
+`monitor_shared.go` (`placeholderBudgetMaxUSD`, `highAvgCpcUSD`, `isPlaceholderBudget`,
+`isHighAvgCpc`, `isRealBudget`, `aboveAccountThreshold`) and are sized in the ad account's
+currency, which `EvaluateGoogleMonitor`, `EvaluateMicrosoftMonitor` and `EvaluateTwitterMonitor`
+take since #454 and `EvaluateLinkedInMonitor` since #547. LinkedIn's currency is the campaign
+budgets' `currencyCode` from the same read, so an account with no budgeted campaign reports none;
+its skipped item is therefore computed over the measured, budgeted, PAUSED rows only
+(`linkedinPausedBudgeted`), not every measured row. `monitorUnitsPerUSD` is
 a table of rounded units-per-dollar magnitudes for the currencies whose rate is stable enough
 for a fixed figure; high-inflation currencies are left out. The sized threshold and the amount it
 is compared with are both rounded to the currency's ISO 4217 minor unit (`moneyAt`,
