@@ -354,12 +354,11 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 			Status:   "ENABLED",
 			Type:     adGroupTypeDisplayStandard,
 		}
-		// Audience criteria are attached as TARGETING (#462), which this setting declares;
-		// without audience input it stays absent. Per group: each group with audiences
-		// carries it, as the 2026-11-03 validateOnly probe of two groups did. See
-		// displayAdGroupCreate.
-		// The demographic targeting (#499) is declared on the same setting, per group, since
-		// every group carries it.
+		// Audience criteria are attached as TARGETING (#462), which this setting declares, and
+		// so is the demographic targeting (#499), which every group carries. The setting is
+		// absent only when the group has neither audiences nor demographic targeting. Per
+		// group: each group with audiences carries the AUDIENCE entry, as the 2026-11-03
+		// validateOnly probe of two groups did. See displayAdGroupCreate.
 		adGroupCreateVal.TargetingSetting = displayAdGroupTargetingSetting(g.targeting.audienceCount() > 0, pf.displayDemographics)
 		adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: adGroupCreateVal}}}
 		adGroupResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), adGroupReq, false)
@@ -425,7 +424,7 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 					n, adGroupDemographicStep(pf.adGroupDemographics))+tag)
 			}
 			if n := len(ids.targeted); n > 0 {
-				steps = append(steps, fmt.Sprintf("Demographic targeting applied: %d ad group criteria (%s) — attached as targeting (bidOnly false), so the ad serves only to those values",
+				steps = append(steps, fmt.Sprintf("Demographic targeting applied: %d ad group criteria (%s) — declared as targeting (bidOnly false; not yet probed live)",
 					n, displayDemographicTargetingStep(pf.displayDemographics))+tag)
 			}
 			res.Steps = steps

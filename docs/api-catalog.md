@@ -918,7 +918,8 @@ audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTI
                                   channel with no keywords: when any Display audience list is given,
                                   the ad group is created with `targetingSetting.targetRestrictions`
                                   AGE_RANGE, GENDER, PARENTAL_STATUS and INCOME_RANGE bidOnly true
-                                  (Google's default for those, restated unchanged) then AUDIENCE
+                                  (Google's default for those, restated unchanged; a dimension named
+                                  in `displayDemographics` is sent bidOnly false) then AUDIENCE
                                   bidOnly false, accepted with these criteria by a validateOnly
                                   probe. Optimized targeting is left at Google's
                                   default and may widen reach beyond the named segments (not

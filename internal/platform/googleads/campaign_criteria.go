@@ -882,8 +882,15 @@ func (d DisplayDemographics) empty() bool {
 	return len(d.AgeRanges)+len(d.Genders)+len(d.IncomeRanges)+len(d.ParentalStatuses) == 0
 }
 
-// genderTypeNames is genderTypes in the map[string]string form validateEnumExclusions takes.
-var genderTypeNames = map[string]string{"MALE": "MALE", "FEMALE": "FEMALE", "UNDETERMINED": "UNDETERMINED"}
+// genderTypeNames is genderTypes in the map[string]string form validateEnumExclusions takes,
+// built from it so targeting and exclusion can never accept different genders.
+var genderTypeNames = func() map[string]string {
+	m := make(map[string]string, len(genderTypes))
+	for g := range genderTypes {
+		m[g] = g
+	}
+	return m
+}()
 
 // Google's TargetingDimension names for the demographic dimensions.
 const (
@@ -931,7 +938,7 @@ func (p adGroupDemographicTargetingPlan) targets(dimension string) bool {
 // criteria from this client.
 //
 // The same value both targeted and excluded is REFUSED, naming both fields: the intent is
-// contradictory, and Google refuses a positive and a negative criterion for one value.
+// contradictory, whatever Google would do with the pair (not probed).
 // Excluding a different value of a targeted dimension is accepted. It is redundant, since the
 // targeting already leaves that value out, but it does not contradict anything.
 func validateDisplayDemographics(kind string, in DisplayDemographics, campaign criteriaPlan, adGroup adGroupDemographicPlan) (adGroupDemographicTargetingPlan, error) {

@@ -2013,10 +2013,11 @@ On Search all of a group's criteria share ONE atomic `adGroupCriteria:mutate`:
 `createAdGroupTargeting` now takes an `adGroupCriteriaSet` and sends keywords, audiences,
 negative keywords, then the exclusions, splitting the index-aligned results back by kind.
 Positive criteria keep `status: ENABLED`; negative ones carry `negative: true` and no status.
-Display calls the same function with only the exclusions, right after its ad group is
-created and before the images. The ids land in `AdGroupResult.NegativeKeywordCriteriaIDs` and
-`DemographicCriteriaIDs`, and in `CampaignResult.AdGroupDemographicCriteriaIDs` (the first
-group's on Search). A failure follows the partial-result contract, and a 5xx, transport
+Display calls the same function with the exclusions and its #499 demographic targeting,
+right after its ad group is created and before the images. The ids land in
+`AdGroupResult.NegativeKeywordCriteriaIDs`, `DemographicCriteriaIDs` and
+`DemographicTargetingCriteriaIDs`, and in `CampaignResult.AdGroupDemographicCriteriaIDs` and
+`AdGroupDemographicTargetingCriteriaIDs` (the first group's). A failure follows the partial-result contract, and a 5xx, transport
 error or short response is UNCONFIRMED.
 
 **Search campaign assets and shared negative keyword lists (#477).** The live KubeCon NA
@@ -3152,7 +3153,7 @@ AUDIENCE `bidOnly: false`, together with the four criteria, was accepted.
   (no setting sent) found exactly those four demographic entries, `bidOnly: true`, and no
   AUDIENCE restriction, so the default is not established. The four are restated unchanged so
   the create keeps Google's demographic default rather than relying on how Google merges a
-  partial list. With no audience input the
+  partial list. With neither audiences nor demographic targeting (#499) the
   ad-group payload is byte-identical to the pre-#462 one. `optimizedTargetingEnabled` is not
   sent: optimized targeting is left at Google's default and may widen reach beyond the named
   segments (not checked).
@@ -3214,8 +3215,8 @@ Display ad group (`{adGroup, userList:{userList}, negative:true}`) and on the ca
   so every criteria step still runs before any ad. Why a second pass: the ad is the only step
   that makes the campaign servable, so the campaign-level exclusions must land before any ad —
   creating each group's ad with its group would leave group 1 servable with no exclusions
-  applied if a later criteria step failed. A group with exclusions but no audiences sends no
-  targetingSetting — not probed; the setting governs positive criteria only. `negative` is
+  applied if a later criteria step failed. A group with exclusions but no audiences and no
+  demographic targeting sends no targetingSetting — not probed; the setting governs positive criteria only. `negative` is
   sent explicitly and no status is sent on either exclusion payload. The context is checked
   between groups in both passes.
 - **Result.** With the list, `AdGroups` holds one entry per group, appended BEFORE its mutate

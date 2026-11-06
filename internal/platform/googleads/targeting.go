@@ -406,8 +406,9 @@ func validateAudienceSegments(segments []string) ([]string, error) {
 // just extended to N operations instead of 1. The exclusions ride in the same
 // batch for the reason createCampaignTargetingCriteria gives for its own: a group
 // whose keywords committed and whose exclusions did not is serving the queries and
-// the audience it was told to avoid. That shared outcome is a Search guarantee: the
-// Display cascade sends only its exclusions through this call.
+// the audience it was told to avoid. On Display the same call carries the group's
+// exclusions and its demographic targeting (#499), which share one outcome the same way;
+// Display's audience criteria go through createDisplayAudienceCriteria instead.
 //
 // Every POSITIVE criterion is created ENABLED (not PAUSED, unlike the ad group/ad
 // shell): a criterion's own status is one more gate on top of its ancestors

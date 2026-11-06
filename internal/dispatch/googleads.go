@@ -485,8 +485,9 @@ type googleAdsConfig struct {
 	DeviceBidModifiers []googleAdsDeviceBidModifierConfig `json:"deviceBidModifiers"`
 	// ExcludedAgeRanges and ExcludedGenders are demographic EXCLUSIONS ("18-24",
 	// "MALE", …). Exclusion-only is Google's own shape at campaign level, not a
-	// narrowing this adapter chose: there is no "target only these" form here. Left
-	// empty, no demographic is excluded.
+	// narrowing this adapter chose: there is no "target only these" form at campaign level;
+	// Display's positive form is displayDemographics (#499). Left empty, no demographic is
+	// excluded.
 	ExcludedAgeRanges []string `json:"excludedAgeRanges"`
 	ExcludedGenders   []string `json:"excludedGenders"`
 	// ExcludedIncomeRanges ("INCOME_RANGE_0_50", …) and ExcludedParentalStatuses
@@ -1747,7 +1748,6 @@ type googleAdsDisplayAdGroupConfig struct {
 	ExcludedAudienceSegments []string                        `json:"excludedAudienceSegments"`
 }
 
-// googleAdsDisplayAdGroups maps the list verbatim; every refusal is the client's.
 // googleAdsDisplayDemographicsConfig is googleAdsConfig.displayDemographics on the wire (#499).
 type googleAdsDisplayDemographicsConfig struct {
 	AgeRanges        []string `json:"ageRanges"`
@@ -1770,6 +1770,7 @@ func googleAdsDisplayDemographics(in *googleAdsDisplayDemographicsConfig) google
 	}
 }
 
+// googleAdsDisplayAdGroups maps the list verbatim; every refusal is the client's.
 func googleAdsDisplayAdGroups(in []googleAdsDisplayAdGroupConfig) []googleads.DisplayAdGroup {
 	if len(in) == 0 {
 		return nil
