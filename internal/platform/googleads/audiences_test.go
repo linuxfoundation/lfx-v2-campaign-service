@@ -88,6 +88,20 @@ func TestListAudiences_QueryAndParsePerKind(t *testing.T) {
 			banned: []string{"launched_to_all"},
 			want:   []Audience{{ResourceName: "customers/1234567890/userInterests/80276", ID: "80276", Name: "Software", Subtype: "IN_MARKET"}},
 		},
+		{
+			// #517: the legacy custom affinity / custom intent segment customAffinities takes.
+			// Both types are listed; the subtype is custom_interest.type, verbatim.
+			kind: AudienceKindCustomInterest,
+			body: `{"results":[` +
+				`{"customInterest":{"resourceName":"customers/1234567890/customInterests/2808384","id":"2808384","name":"OSSNA - Cloud Native","type":"CUSTOM_AFFINITY","status":"ENABLED"}},` +
+				`{"customInterest":{"resourceName":"customers/1234567890/customInterests/2760682","id":"2760682","name":"AI & Machine Learning","type":"CUSTOM_INTENT","status":"ENABLED","description":"d"}}` +
+				`]}`,
+			wantQuery: []string{"FROM custom_interest", "custom_interest.type", "custom_interest.description", "WHERE custom_interest.status = 'ENABLED'", "ORDER BY custom_interest.id"},
+			want: []Audience{
+				{ResourceName: "customers/1234567890/customInterests/2760682", ID: "2760682", Name: "AI & Machine Learning", Subtype: "CUSTOM_INTENT", Status: "ENABLED", Description: "d"},
+				{ResourceName: "customers/1234567890/customInterests/2808384", ID: "2808384", Name: "OSSNA - Cloud Native", Subtype: "CUSTOM_AFFINITY", Status: "ENABLED"},
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.kind), func(t *testing.T) {
@@ -174,6 +188,24 @@ func TestListAudiences_TooManyRowsFailsTheRead(t *testing.T) {
 	}
 }
 
+// A custom_interest row is kept only under customInterests: the same id in another collection,
+// or on another customer, is dropped, since customAffinities would refuse it (#517).
+func TestListAudiences_CustomInterestDropsOtherCollections(t *testing.T) {
+	srv, _ := audienceSearchServer(t, `{"results":[`+
+		`{"customInterest":{"resourceName":"customers/1234567890/customAudiences/1","name":"wrong collection","type":"CUSTOM_AFFINITY"}},`+
+		`{"customInterest":{"resourceName":"customers/9999999999/customInterests/2","name":"other customer","type":"CUSTOM_AFFINITY"}},`+
+		`{"customAudience":{"resourceName":"customers/1234567890/customInterests/3","name":"wrong object","type":"SEARCH"}},`+
+		`{"customInterest":{"resourceName":"customers/1234567890/customInterests/4","name":"kept","type":"CUSTOM_INTENT","status":"ENABLED"}}`+
+		`]}`)
+	got, err := newConversionTestClient(t, srv).ListAudiences(context.Background(), AudienceKindCustomInterest)
+	if err != nil {
+		t.Fatalf("ListAudiences: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "4" || got[0].Subtype != "CUSTOM_INTENT" {
+		t.Errorf("got %+v, want only the customInterests row with id 4", got)
+	}
+}
+
 // An unknown kind is refused without contacting Google.
 func TestListAudiences_UnknownKindSendsNothing(t *testing.T) {
 	srv, seen := audienceSearchServer(t, `{}`)
@@ -186,12 +218,12 @@ func TestListAudiences_UnknownKindSendsNothing(t *testing.T) {
 }
 
 func TestParseAudienceKind(t *testing.T) {
-	for _, s := range []string{"custom_audience", "combined_audience", "audience", "user_interest"} {
+	for _, s := range []string{"custom_audience", "combined_audience", "audience", "user_interest", "custom_interest"} {
 		if k, ok := ParseAudienceKind(s); !ok || string(k) != s {
 			t.Errorf("ParseAudienceKind(%q) = %q, %v", s, k, ok)
 		}
 	}
-	for _, s := range []string{"", "user_list", "Audience", " audience", "custom_interest"} {
+	for _, s := range []string{"", "user_list", "Audience", " audience", "Custom_Interest", "custom_interests"} {
 		if _, ok := ParseAudienceKind(s); ok {
 			t.Errorf("ParseAudienceKind(%q) accepted", s)
 		}

@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Google Ads Targeting Lookups"
-description: "Four read-only pickers for the Google Ads create form: a geo target constant search (SuggestGeoTargetConstants, by name or postal code, returning the numeric id geoTargets accepts, readable through the LF system credential because it is public reference data), a user-list read (GAQL on user_list, returning the resource name audienceSegments accepts, resolved as a create resolves; it lists every foundation's user lists on the shared customer, so it is gated on global_marketing_ops), a conversion-action read (GAQL on conversion_action, ENABLED only, resolved as a create resolves; it lists every foundation's actions on the shared customer, so the gateway admits only global_marketing_ops, the LF marketing team, not campaign_manager, which also includes foundation executive directors), and an audience read (GAQL on custom_audience, combined_audience, audience or user_interest, one type per call, usable entries only, optional name search, resolved and gated like the conversion-action read)."
+description: "Four read-only pickers for the Google Ads create form: a geo target constant search (SuggestGeoTargetConstants, by name or postal code, returning the numeric id geoTargets accepts, readable through the LF system credential because it is public reference data), a user-list read (GAQL on user_list, returning the resource name audienceSegments accepts, resolved as a create resolves; it lists every foundation's user lists on the shared customer, so it is gated on global_marketing_ops), a conversion-action read (GAQL on conversion_action, ENABLED only, resolved as a create resolves; it lists every foundation's actions on the shared customer, so the gateway admits only global_marketing_ops, the LF marketing team, not campaign_manager, which also includes foundation executive directors), and an audience read (GAQL on custom_audience, combined_audience, audience, user_interest or custom_interest, one type per call, usable entries only, optional name search, resolved and gated like the conversion-action read)."
 resource: "internal/service/google_ads_lookups.go"
 ---
 
@@ -9,7 +9,7 @@ resource: "internal/service/google_ads_lookups.go"
 
 `googleAdsConfig.geoTargets`, `googleAdsConfig.audienceSegments`,
 `googleAdsConfig.conversionActions` and the audience inputs (`customAudiences`, `userInterests`,
-`demandGenAudience`, `performanceMaxAudienceSignal`) take raw Google ids. These four reads let the self-serve
+`demandGenAudience`, `performanceMaxAudienceSignal`, `customAffinities`) take raw Google ids. These four reads let the self-serve
 create form offer them in a picker instead of making an operator type them (self-serve #4455,
 #4456; campaign-service #458). None persists anything.
 
@@ -106,7 +106,8 @@ create form offer them in a picker instead of making an operator type them (self
 
 `GET /projects/{project_id}/google-ads/audiences?type=&q=` (`list-google-ads-audiences`, #496).
 
-- `type` is required: `custom_audience`, `combined_audience`, `audience` or `user_interest`,
+- `type` is required: `custom_audience`, `combined_audience`, `audience`, `user_interest` or
+  `custom_interest` (#517),
   spelled exactly (no case folding). One GAQL search on the resource of the same name
   (`googleads.ListAudiences`), bounded at `LIMIT 10001`; more than 10000 rows fails the read
   (503) rather than name-searching a partial set.
@@ -120,6 +121,12 @@ create form offer them in a picker instead of making an operator type them (self
     type. Google's `user_interest` has no status, so none is reported. `launched_to_all` is not
     filtered on: a read-only search of the LF customer on 2026-11-05 returned it false for all
     1008 AFFINITY and IN_MARKET rows. Feeds `userInterests` (Display).
+  - `custom_interest` (#517): `status = 'ENABLED'`; `subtype` is `custom_interest.type`
+    (CUSTOM_AFFINITY, CUSTOM_INTENT). Google's legacy custom affinity / custom intent segment,
+    `customers/{id}/customInterests/{id}`. Feeds `customAffinities` (Display, campaign-level and
+    each `displayAdGroups` entry), which accepts either type, so both are listed. A read-only
+    search of the LF customer on 2026-11-06 returned 57 enabled rows: 28 CUSTOM_AFFINITY, 29
+    CUSTOM_INTENT. Not cached, like the other account kinds.
 - Rows whose resource name is not `customers/{this customer}/{collection}/{canonical id}` are
   dropped (the create would refuse them). Sorted by name ignoring case, then resource name.
 - `q` (optional, 1-100 characters, not blank) keeps names containing it, ignoring case and

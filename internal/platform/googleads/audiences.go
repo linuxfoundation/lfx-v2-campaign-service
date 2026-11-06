@@ -20,7 +20,7 @@ import (
 // names the caller had to copy out of the Google Ads UI (#496). Listing them lets a picker
 // offer what the account actually has. User lists have their own read (ListUserLists).
 
-// AudienceKind names one of the four Google Ads resources ListAudiences reads.
+// AudienceKind names one of the five Google Ads resources ListAudiences reads.
 type AudienceKind string
 
 // The kinds ListAudiences reads, spelled as the GAQL resource names they select FROM.
@@ -29,13 +29,17 @@ const (
 	AudienceKindCombinedAudience AudienceKind = "combined_audience"
 	AudienceKindAudience         AudienceKind = "audience"
 	AudienceKindUserInterest     AudienceKind = "user_interest"
+	// AudienceKindCustomInterest is Google's legacy custom affinity / custom intent segment,
+	// the resource Display's customAffinities input takes (#517).
+	AudienceKindCustomInterest AudienceKind = "custom_interest"
 )
 
 // ParseAudienceKind returns the kind s names, exactly as spelled (no case folding: the
 // values are an API contract, and a near miss is a caller bug worth refusing).
 func ParseAudienceKind(s string) (AudienceKind, bool) {
 	switch k := AudienceKind(s); k {
-	case AudienceKindCustomAudience, AudienceKindCombinedAudience, AudienceKindAudience, AudienceKindUserInterest:
+	case AudienceKindCustomAudience, AudienceKindCombinedAudience, AudienceKindAudience, AudienceKindUserInterest,
+		AudienceKindCustomInterest:
 		return k, true
 	}
 	return "", false
@@ -50,8 +54,10 @@ const MaxAudienceScanRows = 10000
 // audienceListQueries holds, per kind, the GAQL search (v23 field names). Each keeps only entries
 // a create can use now:
 //
-//   - custom_audience, combined_audience, audience: status ENABLED (REMOVED cannot be
-//     attached).
+//   - custom_audience, combined_audience, audience, custom_interest: status ENABLED (REMOVED
+//     cannot be attached). custom_interest holds both CUSTOM_AFFINITY and CUSTOM_INTENT rows
+//     (28 and 29 on the LF customer, read-only search 2026-11-06); both are listed, because
+//     customAffinities accepts any customInterests resource.
 //   - audience additionally scope CUSTOMER: an ASSET_GROUP-scoped Audience belongs to the one
 //     asset group it was made for and cannot be reused by another ad group or asset group.
 //   - user_interest has no status field, and is restricted to the AFFINITY and IN_MARKET
@@ -76,6 +82,9 @@ var audienceListQueries = map[AudienceKind]string{
 	AudienceKindUserInterest: "SELECT user_interest.resource_name, user_interest.user_interest_id, user_interest.name, " +
 		"user_interest.taxonomy_type FROM user_interest WHERE user_interest.taxonomy_type IN ('AFFINITY', 'IN_MARKET') " +
 		"ORDER BY user_interest.user_interest_id LIMIT %d",
+	AudienceKindCustomInterest: "SELECT custom_interest.resource_name, custom_interest.id, custom_interest.name, " +
+		"custom_interest.type, custom_interest.status, custom_interest.description FROM custom_interest " +
+		"WHERE custom_interest.status = 'ENABLED' ORDER BY custom_interest.id LIMIT %d",
 }
 
 // audienceCollections is each kind's resource collection in a resource name.
@@ -84,6 +93,7 @@ var audienceCollections = map[AudienceKind]string{
 	AudienceKindCombinedAudience: "combinedAudiences",
 	AudienceKindAudience:         "audiences",
 	AudienceKindUserInterest:     "userInterests",
+	AudienceKindCustomInterest:   "customInterests",
 }
 
 // Audience is one entry ListAudiences returns.
@@ -93,22 +103,24 @@ type Audience struct {
 	ID           string
 	Name         string
 	// Subtype is Google's own classification, verbatim: custom_audience.type (AUTO, INTEREST,
-	// PURCHASE_INTENT, SEARCH) or user_interest.taxonomy_type (AFFINITY, IN_MARKET). Empty
+	// PURCHASE_INTENT, SEARCH), custom_interest.type (CUSTOM_AFFINITY, CUSTOM_INTENT) or
+	// user_interest.taxonomy_type (AFFINITY, IN_MARKET). Empty
 	// for combined_audience and audience, which have none.
 	Subtype string
-	// Status is ENABLED for the three account resources (the query filters on it) and empty
+	// Status is ENABLED for the four account resources (the query filters on it) and empty
 	// for user_interest, which has no status field.
 	Status      string
 	Description string
 }
 
-// audienceGaqlRow decodes any of the four kinds; each response row carries exactly one of the
-// four objects, keyed by the resource's camelCase name.
+// audienceGaqlRow decodes any of the five kinds; each response row carries exactly one of the
+// five objects, keyed by the resource's camelCase name.
 type audienceGaqlRow struct {
 	CustomAudience   *audienceGaqlFields `json:"customAudience"`
 	CombinedAudience *audienceGaqlFields `json:"combinedAudience"`
 	Audience         *audienceGaqlFields `json:"audience"`
 	UserInterest     *audienceGaqlFields `json:"userInterest"`
+	CustomInterest   *audienceGaqlFields `json:"customInterest"`
 }
 
 type audienceGaqlFields struct {
@@ -131,6 +143,8 @@ func (r audienceGaqlRow) fields(kind AudienceKind) *audienceGaqlFields {
 		return r.Audience
 	case AudienceKindUserInterest:
 		return r.UserInterest
+	case AudienceKindCustomInterest:
+		return r.CustomInterest
 	}
 	return nil
 }
@@ -172,7 +186,7 @@ func (c *Client) ListAudiences(ctx context.Context, kind AudienceKind) ([]Audien
 		}
 		a := Audience{ResourceName: rn, ID: id, Name: f.Name, Status: f.Status, Description: f.Description}
 		switch kind {
-		case AudienceKindCustomAudience:
+		case AudienceKindCustomAudience, AudienceKindCustomInterest:
 			a.Subtype = f.Type
 		case AudienceKindUserInterest:
 			a.Subtype = f.TaxonomyType

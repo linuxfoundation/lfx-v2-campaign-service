@@ -10351,7 +10351,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: list-google-ads-audiences lfx-v2-campaign-service-connections
-            description: 'List the custom audiences, combined audiences, Audience resources or user interests (one type per call) on the Google Ads customer a Google create for this project uses, live from GAQL on custom_audience, combined_audience, audience or user_interest, for the audience pickers (#496). Only usable entries are listed: custom_audience, combined_audience and audience with status ENABLED; audience additionally with scope CUSTOMER (an ASSET_GROUP-scoped Audience belongs to one asset group); user_interest restricted to the AFFINITY and IN_MARKET taxonomies. q keeps entries whose name contains it, ignoring case. Sorted by name, capped at 500 after the q filter, with `truncated` set when more matched; the AFFINITY and IN_MARKET taxonomy is about a thousand entries, more than the cap, so a picker should search it with q; the user_interest list is cached for 6 hours per account, so repeated searches do not reach Google. More than 10000 entries of one type on the customer fails the read with 503. Credentials resolve as for a create: the project''s own connection, or the shared LF system credential when it has none (or when the deployment forces the LF account). The Google Ads customer is shared by every foundation, so the response lists EVERY foundation''s audiences, not only this project''s; like list-google-ads-conversion-actions it is therefore gated on global_marketing_ops of {project_id} (the LF marketing team), not campaign_manager, which also admits a foundation''s executive director. A pure read: the only upstream call is googleAds:search, and nothing is persisted.'
+            description: 'List the custom audiences, combined audiences, Audience resources, user interests or custom interests (one type per call) on the Google Ads customer a Google create for this project uses, live from GAQL on custom_audience, combined_audience, audience, user_interest or custom_interest, for the audience pickers (#496; custom_interest, #517, is Google''s legacy custom affinity or custom intent segment, the resource customAffinities takes). Only usable entries are listed: custom_audience, combined_audience, audience and custom_interest with status ENABLED; audience additionally with scope CUSTOMER (an ASSET_GROUP-scoped Audience belongs to one asset group); user_interest restricted to the AFFINITY and IN_MARKET taxonomies. q keeps entries whose name contains it, ignoring case. Sorted by name, capped at 500 after the q filter, with `truncated` set when more matched; the AFFINITY and IN_MARKET taxonomy is about a thousand entries, more than the cap, so a picker should search it with q; the user_interest list is cached for 6 hours per account, so repeated searches do not reach Google. More than 10000 entries of one type on the customer fails the read with 503. Credentials resolve as for a create: the project''s own connection, or the shared LF system credential when it has none (or when the deployment forces the LF account). The Google Ads customer is shared by every foundation, so the response lists EVERY foundation''s audiences, not only this project''s; like list-google-ads-conversion-actions it is therefore gated on global_marketing_ops of {project_id} (the LF marketing team), not campaign_manager, which also admits a foundation''s executive director. A pure read: the only upstream call is googleAds:search, and nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#list-google-ads-audiences
             parameters:
                 - name: type
@@ -10364,6 +10364,7 @@ paths:
                     - combined_audience
                     - audience
                     - user_interest
+                    - custom_interest
                 - name: q
                   in: query
                   description: Optional case-insensitive name substring to keep
@@ -16500,15 +16501,15 @@ definitions:
                 example: CNCF KubeCon NA
             resource_name:
                 type: string
-                description: 'customers/{customerId}/{customAudiences|combinedAudiences|audiences|userInterests}/{id}, in exactly the form the create inputs accept: a custom_audience in googleAdsConfig.customAudiences (Display), an audience in demandGenAudience or performanceMaxAudienceSignal, a user_interest in userInterests (Display). No create input accepts a combined_audience today. The customer is the account a Google create for this project uses.'
+                description: 'customers/{customerId}/{customAudiences|combinedAudiences|audiences|userInterests|customInterests}/{id}, in exactly the form the create inputs accept: a custom_audience in googleAdsConfig.customAudiences (Display), an audience in demandGenAudience or performanceMaxAudienceSignal, a user_interest in userInterests (Display), a custom_interest in customAffinities (Display, campaign-level or a displayAdGroups entry). No create input accepts a combined_audience today. The customer is the account a Google create for this project uses.'
                 example: customers/8666746580/customAudiences/123
             status:
                 type: string
-                description: 'Always ENABLED for custom_audience, combined_audience and audience: only enabled entries are listed. Absent for user_interest, which has no status in Google Ads.'
+                description: 'Always ENABLED for custom_audience, combined_audience, audience and custom_interest: only enabled entries are listed. Absent for user_interest, which has no status in Google Ads.'
                 example: ENABLED
             subtype:
                 type: string
-                description: 'Google''s own classification, verbatim: custom_audience.type (AUTO, INTEREST, PURCHASE_INTENT, SEARCH) or user_interest.taxonomy_type (AFFINITY, IN_MARKET). Absent for combined_audience and audience, which have none.'
+                description: 'Google''s own classification, verbatim: custom_audience.type (AUTO, INTEREST, PURCHASE_INTENT, SEARCH), custom_interest.type (CUSTOM_AFFINITY, CUSTOM_INTENT) or user_interest.taxonomy_type (AFFINITY, IN_MARKET). Absent for combined_audience and audience, which have none.'
                 example: SEARCH
             type:
                 type: string
@@ -16519,6 +16520,7 @@ definitions:
                     - combined_audience
                     - audience
                     - user_interest
+                    - custom_interest
         example:
             description: People searching for KubeCon
             id: "123"
@@ -16585,6 +16587,7 @@ definitions:
                     - combined_audience
                     - audience
                     - user_interest
+                    - custom_interest
         example:
             account_id: "8666746580"
             audience_count: 1

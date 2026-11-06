@@ -92,17 +92,17 @@ var GoogleAdsConversionActions = Type("google-ads-conversion-actions", func() {
 
 // GoogleAdsAudienceResource is one entry of the audience read (#496).
 var GoogleAdsAudienceResource = Type("google-ads-audience-resource", func() {
-	Attribute("resource_name", String, "customers/{customerId}/{customAudiences|combinedAudiences|audiences|userInterests}/{id}, in exactly the form the create inputs accept: a custom_audience in googleAdsConfig.customAudiences (Display), an audience in demandGenAudience or performanceMaxAudienceSignal, a user_interest in userInterests (Display). No create input accepts a combined_audience today. The customer is the account a Google create for this project uses.", func() {
+	Attribute("resource_name", String, "customers/{customerId}/{customAudiences|combinedAudiences|audiences|userInterests|customInterests}/{id}, in exactly the form the create inputs accept: a custom_audience in googleAdsConfig.customAudiences (Display), an audience in demandGenAudience or performanceMaxAudienceSignal, a user_interest in userInterests (Display), a custom_interest in customAffinities (Display, campaign-level or a displayAdGroups entry). No create input accepts a combined_audience today. The customer is the account a Google create for this project uses.", func() {
 		Example("customers/8666746580/customAudiences/123")
 	})
 	Attribute("id", String, "The entry's numeric id (user_interest_id for a user_interest)", func() { Example("123") })
 	Attribute("name", String, "The entry's display name. Not an identifier.", func() { Example("CNCF KubeCon NA") })
 	Attribute("type", String, "The kind that was read, echoing the type parameter", func() {
-		Enum("custom_audience", "combined_audience", "audience", "user_interest")
+		Enum("custom_audience", "combined_audience", "audience", "user_interest", "custom_interest")
 		Example("custom_audience")
 	})
-	Attribute("subtype", String, "Google's own classification, verbatim: custom_audience.type (AUTO, INTEREST, PURCHASE_INTENT, SEARCH) or user_interest.taxonomy_type (AFFINITY, IN_MARKET). Absent for combined_audience and audience, which have none.", func() { Example("SEARCH") })
-	Attribute("status", String, "Always ENABLED for custom_audience, combined_audience and audience: only enabled entries are listed. Absent for user_interest, which has no status in Google Ads.", func() { Example("ENABLED") })
+	Attribute("subtype", String, "Google's own classification, verbatim: custom_audience.type (AUTO, INTEREST, PURCHASE_INTENT, SEARCH), custom_interest.type (CUSTOM_AFFINITY, CUSTOM_INTENT) or user_interest.taxonomy_type (AFFINITY, IN_MARKET). Absent for combined_audience and audience, which have none.", func() { Example("SEARCH") })
+	Attribute("status", String, "Always ENABLED for custom_audience, combined_audience, audience and custom_interest: only enabled entries are listed. Absent for user_interest, which has no status in Google Ads.", func() { Example("ENABLED") })
 	Attribute("description", String, "The entry's description. Absent when Google sent none, and always for user_interest.", func() { Example("People searching for KubeCon") })
 	Required("resource_name", "id", "name", "type")
 })
@@ -111,7 +111,7 @@ var GoogleAdsAudienceResource = Type("google-ads-audience-resource", func() {
 var GoogleAdsAudienceResources = Type("google-ads-audience-resources", func() {
 	Attribute("account_id", String, "The Google Ads customer the entries were read from: the account a Google create for this project uses", func() { Example("8666746580") })
 	Attribute("type", String, "The kind that was read", func() {
-		Enum("custom_audience", "combined_audience", "audience", "user_interest")
+		Enum("custom_audience", "combined_audience", "audience", "user_interest", "custom_interest")
 		Example("custom_audience")
 	})
 	Attribute("audiences", ArrayOf(GoogleAdsAudienceResource), "Matching entries sorted by name (ignoring case), capped at 500 (see `truncated`)")
@@ -250,10 +250,12 @@ func googleAdsLookupMethods() {
 	})
 
 	Method("list-google-ads-audiences", func() {
-		Description("List the custom audiences, combined audiences, Audience resources or user interests (one type per " +
-			"call) on the Google Ads customer a Google create for this project uses, live from GAQL on custom_audience, " +
-			"combined_audience, audience or user_interest, for the audience pickers (#496). Only usable entries are " +
-			"listed: custom_audience, combined_audience and audience with status ENABLED; audience additionally with " +
+		Description("List the custom audiences, combined audiences, Audience resources, user interests or custom interests " +
+			"(one type per call) on the Google Ads customer a Google create for this project uses, live from GAQL on " +
+			"custom_audience, combined_audience, audience, user_interest or custom_interest, for the audience pickers " +
+			"(#496; custom_interest, #517, is Google's legacy custom affinity or custom intent segment, the resource " +
+			"customAffinities takes). Only usable entries are " +
+			"listed: custom_audience, combined_audience, audience and custom_interest with status ENABLED; audience additionally with " +
 			"scope CUSTOMER (an ASSET_GROUP-scoped Audience belongs to one asset group); user_interest restricted to " +
 			"the AFFINITY and IN_MARKET taxonomies. q keeps entries whose " +
 			"name contains it, ignoring case. Sorted by name, capped at 500 after the q filter, with `truncated` set " +
@@ -269,7 +271,7 @@ func googleAdsLookupMethods() {
 			bearerToken()
 			projectIDAttr()
 			Attribute("type", String, "Which kind to list", func() {
-				Enum("custom_audience", "combined_audience", "audience", "user_interest")
+				Enum("custom_audience", "combined_audience", "audience", "user_interest", "custom_interest")
 				Example("custom_audience")
 			})
 			Attribute("q", String, "Optional case-insensitive name substring to keep", func() {

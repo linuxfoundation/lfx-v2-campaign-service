@@ -500,6 +500,26 @@ func TestListGoogleAdsAudiences_MapsEveryField(t *testing.T) {
 	}
 }
 
+// custom_interest (#517) is accepted, passed down as spelled, and mapped like the other account
+// kinds: subtype is custom_interest.type and status is reported.
+func TestListGoogleAdsAudiences_CustomInterest(t *testing.T) {
+	d := &mockLookupDispatcher{audiences: &model.AudienceResources{AccountID: "8666746580", Kind: "custom_interest", Audiences: []model.AudienceResource{
+		{ResourceName: "customers/8666746580/customInterests/2808384", ID: "2808384", Name: "OSSNA - Cloud Native", Subtype: "CUSTOM_AFFINITY", Status: "ENABLED"},
+	}}}
+	res, err := lookupService(d).ListGoogleAdsAudiences(context.Background(), &conn.ListGoogleAdsAudiencesPayload{ProjectID: "cncf", Type: "custom_interest", Q: strp("cloud")})
+	if err != nil {
+		t.Fatalf("ListGoogleAdsAudiences: %v", err)
+	}
+	if d.gotKind != "custom_interest" || res.Type != "custom_interest" || res.AudienceCount != 1 {
+		t.Fatalf("kind=%q res=%+v", d.gotKind, res)
+	}
+	b, _ := json.Marshal(res.Audiences[0])
+	const want = `{"ResourceName":"customers/8666746580/customInterests/2808384","ID":"2808384","Name":"OSSNA - Cloud Native","Type":"custom_interest","Subtype":"CUSTOM_AFFINITY","Status":"ENABLED","Description":null}`
+	if string(b) != want {
+		t.Errorf("row = %s\nwant  %s", b, want)
+	}
+}
+
 // q keeps names containing it, ignoring case and surrounding space, and the 500 cap applies
 // after the filter, with truncated reporting what was cut.
 func TestListGoogleAdsAudiences_FiltersByNameThenCaps(t *testing.T) {
@@ -551,6 +571,7 @@ func TestListGoogleAdsAudiences_RejectsBadInputBeforeAnyUpstreamCall(t *testing.
 		"empty type":       {ProjectID: "cncf", Type: ""},
 		"unknown type":     {ProjectID: "cncf", Type: "user_list"},
 		"case-folded type": {ProjectID: "cncf", Type: "Custom_Audience"},
+		"plural type":      {ProjectID: "cncf", Type: "custom_interests"},
 		"blank q":          {ProjectID: "cncf", Type: "audience", Q: strp("   ")},
 		"empty q":          {ProjectID: "cncf", Type: "audience", Q: strp("")},
 		"q over 100 chars": {ProjectID: "cncf", Type: "audience", Q: strp(strings.Repeat("a", 101))},

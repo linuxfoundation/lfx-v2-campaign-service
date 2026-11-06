@@ -6499,12 +6499,13 @@ type GoogleAdsConversionActionResponseBody struct {
 // GoogleAdsAudienceResourceResponseBody is used to define fields on response
 // body types.
 type GoogleAdsAudienceResourceResponseBody struct {
-	// customers/{customerId}/{customAudiences|combinedAudiences|audiences|userInterests}/{id},
+	// customers/{customerId}/{customAudiences|combinedAudiences|audiences|userInterests|customInterests}/{id},
 	// in exactly the form the create inputs accept: a custom_audience in
 	// googleAdsConfig.customAudiences (Display), an audience in demandGenAudience
-	// or performanceMaxAudienceSignal, a user_interest in userInterests (Display).
-	// No create input accepts a combined_audience today. The customer is the
-	// account a Google create for this project uses.
+	// or performanceMaxAudienceSignal, a user_interest in userInterests (Display),
+	// a custom_interest in customAffinities (Display, campaign-level or a
+	// displayAdGroups entry). No create input accepts a combined_audience today.
+	// The customer is the account a Google create for this project uses.
 	ResourceName *string `form:"resource_name,omitempty" json:"resource_name,omitempty" xml:"resource_name,omitempty"`
 	// The entry's numeric id (user_interest_id for a user_interest)
 	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
@@ -6513,12 +6514,13 @@ type GoogleAdsAudienceResourceResponseBody struct {
 	// The kind that was read, echoing the type parameter
 	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
 	// Google's own classification, verbatim: custom_audience.type (AUTO, INTEREST,
-	// PURCHASE_INTENT, SEARCH) or user_interest.taxonomy_type (AFFINITY,
-	// IN_MARKET). Absent for combined_audience and audience, which have none.
+	// PURCHASE_INTENT, SEARCH), custom_interest.type (CUSTOM_AFFINITY,
+	// CUSTOM_INTENT) or user_interest.taxonomy_type (AFFINITY, IN_MARKET). Absent
+	// for combined_audience and audience, which have none.
 	Subtype *string `form:"subtype,omitempty" json:"subtype,omitempty" xml:"subtype,omitempty"`
-	// Always ENABLED for custom_audience, combined_audience and audience: only
-	// enabled entries are listed. Absent for user_interest, which has no status in
-	// Google Ads.
+	// Always ENABLED for custom_audience, combined_audience, audience and
+	// custom_interest: only enabled entries are listed. Absent for user_interest,
+	// which has no status in Google Ads.
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// The entry's description. Absent when Google sent none, and always for
 	// user_interest.
@@ -15685,8 +15687,8 @@ func ValidateListGoogleAdsAudiencesResponseBody(body *ListGoogleAdsAudiencesResp
 		err = goa.MergeErrors(err, goa.MissingFieldError("truncated", "body"))
 	}
 	if body.Type != nil {
-		if !(*body.Type == "custom_audience" || *body.Type == "combined_audience" || *body.Type == "audience" || *body.Type == "user_interest") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"custom_audience", "combined_audience", "audience", "user_interest"}))
+		if !(*body.Type == "custom_audience" || *body.Type == "combined_audience" || *body.Type == "audience" || *body.Type == "user_interest" || *body.Type == "custom_interest") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"custom_audience", "combined_audience", "audience", "user_interest", "custom_interest"}))
 		}
 	}
 	for _, e := range body.Audiences {
@@ -22947,8 +22949,8 @@ func ValidateGoogleAdsAudienceResourceResponseBody(body *GoogleAdsAudienceResour
 		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
 	}
 	if body.Type != nil {
-		if !(*body.Type == "custom_audience" || *body.Type == "combined_audience" || *body.Type == "audience" || *body.Type == "user_interest") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"custom_audience", "combined_audience", "audience", "user_interest"}))
+		if !(*body.Type == "custom_audience" || *body.Type == "combined_audience" || *body.Type == "audience" || *body.Type == "user_interest" || *body.Type == "custom_interest") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"custom_audience", "combined_audience", "audience", "user_interest", "custom_interest"}))
 		}
 	}
 	return
@@ -22971,8 +22973,8 @@ func validateGoogleAdsAudienceResourceResponseBody(body *GoogleAdsAudienceResour
 		err = goa.MergeErrors(err, goa.MissingFieldError("type", path))
 	}
 	if body.Type != nil {
-		if !(*body.Type == "custom_audience" || *body.Type == "combined_audience" || *body.Type == "audience" || *body.Type == "user_interest") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".type", *body.Type, []any{"custom_audience", "combined_audience", "audience", "user_interest"}))
+		if !(*body.Type == "custom_audience" || *body.Type == "combined_audience" || *body.Type == "audience" || *body.Type == "user_interest" || *body.Type == "custom_interest") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".type", *body.Type, []any{"custom_audience", "combined_audience", "audience", "user_interest", "custom_interest"}))
 		}
 	}
 	return
