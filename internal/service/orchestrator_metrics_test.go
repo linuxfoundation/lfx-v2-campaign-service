@@ -402,11 +402,11 @@ func (d upstreamCapableDispatcher) SuggestGeoTargets(context.Context, string, mo
 	return []model.GeoTargetSuggestion{}, true, nil
 }
 
-func (d upstreamCapableDispatcher) ListUserLists(context.Context, string, model.Provider, string) (*model.AudienceUserLists, error) {
+func (d upstreamCapableDispatcher) ListUserLists(context.Context, string, model.Provider, string) (*model.AudienceUserLists, bool, error) {
 	if d.err != nil {
-		return nil, d.err
+		return nil, true, d.err
 	}
-	return &model.AudienceUserLists{Lists: []model.AudienceUserList{}}, nil
+	return &model.AudienceUserLists{Lists: []model.AudienceUserList{}}, true, nil
 }
 
 func (d upstreamCapableDispatcher) ListConversionActions(context.Context, string, model.Provider) (*model.ConversionActions, bool, error) {

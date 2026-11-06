@@ -78,13 +78,17 @@ func (d *GoogleAdsDispatcher) SuggestGeoTargets(ctx context.Context, projectID s
 // executive directors included. The gateway now admits only global_marketing_ops of the
 // project (the LF marketing team), as for the conversion-action and audience reads, so both
 // refusals are gone.
-func (d *GoogleAdsDispatcher) ListUserLists(ctx context.Context, projectID string, platform model.Provider, accountID string) (*model.AudienceUserLists, error) {
+//
+// called reports whether Google was contacted: false for every local refusal before the search
+// (a malformed accountID, no connection, an unusable one, a stored account id that is not
+// digits only).
+func (d *GoogleAdsDispatcher) ListUserLists(ctx context.Context, projectID string, platform model.Provider, accountID string) (_ *model.AudienceUserLists, called bool, _ error) {
 	accountID = strings.TrimSpace(accountID)
 	// Validated before any credential is resolved, as the monitor does: a malformed id is a
 	// permanent request fault whatever the connection's state.
 	if accountID != "" {
 		if err := googleads.ValidateCustomerID(accountID); err != nil {
-			return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
+			return nil, false, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
 		}
 	}
 	// The create's client and account. A connection with no account selected, or a stored id
@@ -93,14 +97,14 @@ func (d *GoogleAdsDispatcher) ListUserLists(ctx context.Context, projectID strin
 	// create's, and a create on that connection would fail the same way.
 	client, createAccount, err := d.createAccountClient(ctx, projectID, platform)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if accountID == "" {
 		accountID = createAccount
 	}
 	rows, lerr := client.ListUserLists(ctx, accountID, googleads.MaxUserListRows+1)
 	if lerr != nil {
-		return nil, lerr
+		return nil, true, lerr
 	}
 	lists := make([]model.AudienceUserList, 0, len(rows))
 	for _, r := range rows {
@@ -116,7 +120,7 @@ func (d *GoogleAdsDispatcher) ListUserLists(ctx context.Context, projectID strin
 			EligibleForSearch:  r.EligibleForSearch,
 		})
 	}
-	return &model.AudienceUserLists{AccountID: accountID, Lists: lists}, nil
+	return &model.AudienceUserLists{AccountID: accountID, Lists: lists}, true, nil
 }
 
 // ListConversionActions implements service.ConversionActionReader for Google Ads: the ENABLED
@@ -128,7 +132,7 @@ func (d *GoogleAdsDispatcher) ListUserLists(ctx context.Context, projectID strin
 // returns are only useful if the create accepts them: a conversion action belongs to one
 // customer, and validateConversionActions refuses a resource name owned by another.
 //
-// TENANCY: this deliberately does NOT follow ListUserLists. Google Ads is ONE customer shared
+// TENANCY: as for ListUserLists and ListAudiences, Google Ads is ONE customer shared
 // by every foundation (docs/architecture.md, "Account Tenancy"), so this read returns every
 // foundation's conversion action names. The gateway therefore admits only global_marketing_ops
 // of the project (the LF marketing team) to this route, not campaign_manager, which also admits

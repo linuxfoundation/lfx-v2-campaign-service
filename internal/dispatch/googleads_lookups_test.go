@@ -80,7 +80,7 @@ func TestGoogleAdsListUserLists_UsesTheSystemFallback(t *testing.T) {
 	})
 	d := NewGoogleAdsDispatcher(splitConnReader{system: googleAdsConnFor("5555555555")}, identityEncryptor{}, opts...)
 
-	res, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "")
+	res, _, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "")
 	if err != nil {
 		t.Fatalf("ListUserLists through the system fallback: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestGoogleAdsListUserLists_FollowsTheForcedSystemAccount(t *testing.T) {
 	})
 	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
 	d := NewGoogleAdsDispatcher(splitConnReader{own: googleAdsConnFor("1234567890"), system: googleAdsConnFor("5555555555")}, identityEncryptor{}, opts...)
-	res, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "")
+	res, _, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "")
 	if err != nil || res.AccountID != "5555555555" || res.Lists == nil {
 		t.Fatalf("res=%+v err=%v, want the forced system account and a non-nil empty list", res, err)
 	}
@@ -114,7 +114,7 @@ func TestGoogleAdsListUserLists_FollowsTheForcedSystemAccount(t *testing.T) {
 // No connection anywhere is ErrNotFound (404), and Google is not contacted.
 func TestGoogleAdsListUserLists_NoConnectionAnywhereIsNotFound(t *testing.T) {
 	opts, reached := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, userListBody) })
-	_, err := NewGoogleAdsDispatcher(splitConnReader{}, identityEncryptor{}, opts...).ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "")
+	_, _, err := NewGoogleAdsDispatcher(splitConnReader{}, identityEncryptor{}, opts...).ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "")
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -131,7 +131,7 @@ func TestGoogleAdsListUserLists_ReadsTheConnectionsAccountByDefault(t *testing.T
 	})
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 
-	res, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "")
+	res, _, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "")
 	if err != nil {
 		t.Fatalf("ListUserLists: %v", err)
 	}
@@ -160,9 +160,12 @@ func TestGoogleAdsListUserLists_ExplicitAccountAndItsGuards(t *testing.T) {
 			_, _ = io.WriteString(w, `{"results":[{"userList":{"resourceName":"customers/5555555555/userLists/1","id":"1","name":"x","type":"CRM_BASED","membershipStatus":"OPEN"}},{"userList":{"resourceName":"customers/1234567890/userLists/2","id":"2","name":"foreign"}}]}`)
 		})
 		d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
-		res, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "5555555555")
+		res, called, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "5555555555")
 		if err != nil {
 			t.Fatalf("ListUserLists: %v", err)
+		}
+		if !called {
+			t.Error("called = false after a search reached Google")
 		}
 		if res.AccountID != "5555555555" || len(res.Lists) != 1 || res.Lists[0].ResourceName != "customers/5555555555/userLists/1" {
 			t.Errorf("res = %+v; a row naming another customer must be dropped", res)
@@ -173,9 +176,12 @@ func TestGoogleAdsListUserLists_ExplicitAccountAndItsGuards(t *testing.T) {
 	})
 	t.Run("malformed account never resolves a credential", func(t *testing.T) {
 		d := NewGoogleAdsDispatcher(fakeConnReader{err: errors.New("must not be consulted")}, identityEncryptor{})
-		_, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "866-674-6580")
+		_, called, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "866-674-6580")
 		if !errors.Is(err, domain.ErrAccountIDMalformed) {
 			t.Fatalf("err = %v, want ErrAccountIDMalformed", err)
+		}
+		if called {
+			t.Error("called = true for a refusal made before any request")
 		}
 	})
 	t.Run("no account anywhere is a not-usable connection", func(t *testing.T) {
@@ -183,12 +189,31 @@ func TestGoogleAdsListUserLists_ExplicitAccountAndItsGuards(t *testing.T) {
 		c := activeGoogleAdsConn(goodGoogleAdsCreds)
 		c.AccountID = ""
 		d := NewGoogleAdsDispatcher(fakeConnReader{conn: c}, identityEncryptor{}, opts...)
-		_, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "")
+		_, called, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "")
 		if !errors.Is(err, domain.ErrConnectionNotUsable) || !errors.Is(err, domain.ErrAccountNotSelected) {
 			t.Fatalf("err = %v, want ErrConnectionNotUsable + ErrAccountNotSelected", err)
 		}
 		if reached.Load() {
 			t.Error("Google was contacted with no account to read")
+		}
+		if called {
+			t.Error("called = true for a refusal made before any request")
+		}
+	})
+	// An explicit account_id does not stand in for the connection's own account: the credential
+	// is the create's, so a connection with none selected is refused whatever the request names,
+	// and the remedy (google_ads_lookups.go) says to select one on the connection.
+	t.Run("explicit account with no stored account is still not usable", func(t *testing.T) {
+		opts, reached := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{}`) })
+		c := activeGoogleAdsConn(goodGoogleAdsCreds)
+		c.AccountID = ""
+		d := NewGoogleAdsDispatcher(fakeConnReader{conn: c}, identityEncryptor{}, opts...)
+		_, called, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "5555555555")
+		if !errors.Is(err, domain.ErrConnectionNotUsable) || !errors.Is(err, domain.ErrAccountNotSelected) {
+			t.Fatalf("err = %v, want ErrConnectionNotUsable + ErrAccountNotSelected", err)
+		}
+		if reached.Load() || called {
+			t.Errorf("reached = %v, called = %v; nothing may be sent without a stored account", reached.Load(), called)
 		}
 	})
 }

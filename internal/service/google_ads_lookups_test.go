@@ -40,10 +40,10 @@ func (m *mockLookupDispatcher) SuggestGeoTargets(_ context.Context, _ string, _ 
 	return m.geo, !m.notCalled, m.err
 }
 
-func (m *mockLookupDispatcher) ListUserLists(_ context.Context, _ string, _ model.Provider, accountID string) (*model.AudienceUserLists, error) {
+func (m *mockLookupDispatcher) ListUserLists(_ context.Context, _ string, _ model.Provider, accountID string) (*model.AudienceUserLists, bool, error) {
 	m.calls++
 	m.gotAccount = accountID
-	return m.lists, m.err
+	return m.lists, !m.notCalled, m.err
 }
 
 func (m *mockLookupDispatcher) ListConversionActions(context.Context, string, model.Provider) (*model.ConversionActions, bool, error) {
@@ -338,6 +338,34 @@ func TestReadGeoTargetSuggestions_RecordsOnlyCallsThatReachedGoogle(t *testing.T
 			o := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: tc.d})
 			o.SetMetrics(rec)
 			_, _ = o.ReadGeoTargetSuggestions(context.Background(), "cncf", model.ProviderGoogleAds, model.GeoTargetQuery{Query: "a"})
+			if got := len(rec.upstreamCalls()); got != tc.want {
+				t.Errorf("%d upstream calls recorded, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// The user-list read records only searches that reached Google: since #508 the shared-account
+// refusal is gone, so local connection failures reach the dispatcher and must not be counted as
+// platform calls.
+func TestReadUserLists_RecordsOnlyCallsThatReachedGoogle(t *testing.T) {
+	cases := []struct {
+		name string
+		d    *mockLookupDispatcher
+		want int
+	}{
+		{"no connection", &mockLookupDispatcher{err: domain.ErrNotFound, notCalled: true}, 0},
+		{"unusable connection", &mockLookupDispatcher{err: fmt.Errorf("%w: x", domain.ErrConnectionNotUsable), notCalled: true}, 0},
+		{"malformed account", &mockLookupDispatcher{err: domain.ErrAccountIDMalformed, notCalled: true}, 0},
+		{"success", &mockLookupDispatcher{lists: &model.AudienceUserLists{Lists: []model.AudienceUserList{}}}, 1},
+		{"upstream failure", &mockLookupDispatcher{err: errors.New("google 500")}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingMetrics{}
+			o := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: tc.d})
+			o.SetMetrics(rec)
+			_, _ = o.ReadUserLists(context.Background(), "cncf", model.ProviderGoogleAds, "")
 			if got := len(rec.upstreamCalls()); got != tc.want {
 				t.Errorf("%d upstream calls recorded, want %d", got, tc.want)
 			}
