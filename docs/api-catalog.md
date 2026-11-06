@@ -1117,7 +1117,12 @@ geoTargets?: string[]           — OPTIONAL locations the campaign should serve
                                   (which rejects campaign-level location criteria) — on EVERY Demand
                                   Gen ad group when `demandGenAdGroups` names several (#460).
                                   Case/whitespace-insensitive and de-duplicated by the RESOLVED
-                                  id — "US" and "2840" are one criterion; at most 60 entries.
+                                  id — "US" and "2840" are one criterion; at most 500 entries (#515;
+                                  it was 60, and the live KubeCon NA 2026 Demand Gen YouTube
+                                  campaign targets 63: US states plus Canadian provinces). Each
+                                  list still goes in ONE criteria mutate; 500 inclusions, 500
+                                  exclusions and 20 radius targets in one request passed a
+                                  validateOnly probe (2026-11-06).
 
                                   A numeric id is checked for SHAPE only, but that shape check is
                                   stricter than "all digits": the entry must be the CANONICAL base-10
@@ -1155,7 +1160,7 @@ geoTargets?: string[]           — OPTIONAL locations the campaign should serve
                                   Supply it for any campaign with a target region.
 excludedGeoTargets?: string[]   — OPTIONAL locations the campaign must NOT serve in (LFXV2-2665).
                                   Exactly the vocabulary, caps, case rules and dedupe of `geoTargets`
-                                  above (country codes or raw constant ids, at most 60), attached as
+                                  above (country codes or raw constant ids, at most 500), attached as
                                   NEGATIVE location criteria at the same channel-dependent level. The
                                   two lists are bounded and de-duplicated independently — a parent
                                   region may legitimately be targeted while a city inside it is
