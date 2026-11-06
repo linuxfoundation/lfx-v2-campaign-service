@@ -20,16 +20,17 @@ instead of making an operator paste resource names.
   was contacted. The `user_interest` answer is cached for 6 hours per account, after
   resolution, so a picker's typeahead does not search Google per keystroke; the account kinds
   are not cached.
-- Authorization: a `campaign_manager` read in the `project-api` Heimdall rule, beside
-  `user-lists`. The answer lists every foundation's audiences on the shared customer, but
-  foundation executive directors get every audience feature (owner decision, 2026-11-05), so it
-  is not a `marketing-ops-api` (`global_marketing_ops`) read. The PR first put it there and moved
-  it before merge. `TestGoogleAudiencesIsACampaignManagerRead` pins it to `project-api` (and off
-  `marketing-ops-api`), and `TestMarketingOpsRuleHoldsExactlyItsReads` pins `marketing-ops-api`
-  to the conversion-action read alone. The HTTPRoute regex forwards the path, not sub-paths.
+- Tenancy: the answer lists every foundation's audiences on the shared customer, so the path is
+  in the `marketing-ops-api` Heimdall rule (`global_marketing_ops`), not `project-api`, and the
+  HTTPRoute regex forwards it. `TestGoogleAudiencesIsAMarketingOpsRead` and
+  `TestMarketingOpsRuleHoldsExactlyItsReads` (`charts/lfx-v2-campaign-service/parity_test.go`)
+  pin the path and the rule's whole path set. The conversion-action test now shares the
+  `assertMarketingOpsRead` helper. The paid-marketing owner confirmed this gate on 2026-11-05: a
+  move to `campaign_manager` was considered and dropped, so audiences stay a marketing-ops read.
 - Read-only GAQL on the LF customer (2026-11-05) returned 85 enabled custom audiences, 0 combined
   audiences, 53 CUSTOMER-scoped Audiences (10 more are ASSET_GROUP-scoped), and 1008
   AFFINITY + IN_MARKET user interests. `user_interest.launched_to_all` was false on every one of
   those rows, so the read does not filter on it.
 
-The user-list read (`google-ads/user-lists`) is unchanged: it stays on `project-api`.
+The user-list read (`google-ads/user-lists`) is unchanged: it stays on `project-api` and is
+refused with 409 on the shared account.

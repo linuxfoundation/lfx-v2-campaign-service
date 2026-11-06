@@ -205,10 +205,10 @@ func (d *GoogleAdsDispatcher) createAccountClient(ctx context.Context, projectID
 // reason: the resource names it returns are only useful if the create accepts them, and every
 // audience input refuses a resource name owned by another customer.
 //
-// TENANCY: unlike ListUserLists, it is not refused on the shared customer, so it returns every
-// foundation's custom audiences, combined audiences and Audiences (user_interest is Google's own
-// taxonomy and holds no foundation's data). The gateway admits campaign_manager of the project:
-// foundation EDs get every audience feature (owner decision, 2026-11-05, #496).
+// TENANCY: like ListConversionActions, and unlike ListUserLists, it is not refused on the
+// shared customer, so it returns every foundation's custom audiences, combined audiences and
+// Audiences (user_interest is Google's own taxonomy and holds no foundation's data). The
+// gateway therefore admits only global_marketing_ops of the project to this route.
 //
 // An unknown kind is refused before any credential is resolved. called reports whether Google
 // was contacted, as ListConversionActions' does: false for a local refusal and for a cache hit.

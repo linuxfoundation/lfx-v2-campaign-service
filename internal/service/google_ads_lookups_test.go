@@ -548,7 +548,7 @@ func TestListGoogleAdsAudiences_RejectsBadInputBeforeAnyUpstreamCall(t *testing.
 }
 
 // Like the conversion-action read, the audience read is NOT refused on a shared-tenancy
-// platform (#496); the gateway admits campaign_manager (charts parity_test.go).
+// platform (#496); the gateway admits only global_marketing_ops (charts parity_test.go).
 func TestListGoogleAdsAudiences_SharedTenancyIsNotRefused(t *testing.T) {
 	d := &sharedTenancyLookupDispatcher{mockLookupDispatcher{audiences: &model.AudienceResources{
 		AccountID: "1", Kind: "audience", Audiences: []model.AudienceResource{{ResourceName: "customers/1/audiences/2", ID: "2", Name: "x"}},

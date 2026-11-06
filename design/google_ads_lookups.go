@@ -262,11 +262,11 @@ func googleAdsLookupMethods() {
 			"when more matched; the AFFINITY and IN_MARKET taxonomy is about a thousand entries, more than the cap, so a picker should search it " +
 			"with q; the user_interest list is cached for 6 hours per account, so repeated searches do not reach Google. More than 10000 entries of one type on the customer fails the read with 503. " +
 			"Credentials resolve as for a create: the project's own connection, or the shared LF system " +
-			"credential when it has none (or when the deployment forces the LF account). Gated on campaign_manager " +
-			"of {project_id}, like every audience feature, so a foundation's executive director may call it. The " +
-			"Google Ads customer is shared by every foundation, so the response lists every foundation's audiences " +
-			"on it, not only this project's. A pure read: the only upstream call is googleAds:search, and nothing " +
-			"is persisted.")
+			"credential when it has none (or when the deployment forces the LF account). The Google Ads customer " +
+			"is shared by every foundation, so the response lists EVERY foundation's audiences, not only this " +
+			"project's; like list-google-ads-conversion-actions it is therefore gated on global_marketing_ops " +
+			"of {project_id} (the LF marketing team), not campaign_manager, which also admits a foundation's " +
+			"executive director. A pure read: the only upstream call is googleAds:search, and nothing is persisted.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
