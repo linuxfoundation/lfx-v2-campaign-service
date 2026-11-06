@@ -120,7 +120,8 @@ type Service interface {
 	// (Search campaign-level observed user lists); performanceMaxAudienceSignal;
 	// sharedNegativeKeywordLists; conversionActions,
 	// demandGenDemographics.audienceSegments,
-	// demandGenDemographics.customAudiences; any non-empty value, whitespace
+	// demandGenDemographics.customAudiences, and the same two lists in any
+	// demandGenAdGroups entry's demographics; any non-empty value, whitespace
 	// included, on any channel, Search audienceSegments included;
 	// demandGenDemographics without audienceSegments or customAudiences is not
 	// gated, as its Audience is new and names no existing account resource)

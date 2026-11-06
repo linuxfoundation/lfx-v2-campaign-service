@@ -31,7 +31,10 @@ import (
 // CampaignInput.DemandGenDemographics makes that Audience. Before the budget mutate the
 // cascade creates ONE Audience (audiences:mutate) holding the demographics, and optionally
 // existing user lists, then attaches it to every Demand Gen ad group it creates, exactly as
-// DemandGenAudience is attached.
+// DemandGenAudience is attached. Since #518 a DemandGenAdGroups entry may set Demographics of
+// its own: that group gets an Audience of its own, built by the same buildDemographicPlan and
+// created the same way, which overrides the campaign-level one for that group (the live
+// KubeCon NA campaign has a different Audience on each group).
 //
 // Every shape here was accepted by a validateOnly probe on 2026-11-05 (v23, account
 // 8666746580): all four demographic dimensions together, the same plus an audienceSegments
@@ -54,7 +57,8 @@ import (
 // ---------------------------------------------------------------------------
 
 // DemandGenDemographics is the demographic targeting of a Demand Gen campaign, built into
-// a new Audience that every Demand Gen ad group of the campaign references.
+// a new Audience that every Demand Gen ad group of the campaign references, or, as
+// DemandGenAdGroup.Demographics (#518), into one Audience for that ad group alone.
 //
 // Each list uses the vocabulary of its excluded* counterpart (ExcludedAgeRanges,
 // ExcludedGenders, ExcludedIncomeRanges, ExcludedParentalStatuses): case-insensitive,
@@ -141,6 +145,9 @@ type audienceCreate struct {
 type demandGenDemographicPlan struct {
 	create  audienceCreate
 	summary string
+	// attachTo is the step line's target: every Demand Gen ad group for the campaign-level
+	// Audience, or the one ad group whose Demographics it holds (#518).
+	attachTo string
 }
 
 const (
@@ -199,14 +206,112 @@ func validateDemandGenDemographics(kind, customerID, campaignName string, in Cam
 			return nil, fmt.Errorf("google-ads: DemandGenDemographics cannot be combined with an Audience on Demand Gen ad group %d (every ad group gets the demographic Audience, and an ad group takes only one); omit that group's Audience, or omit DemandGenDemographics", i+1)
 		}
 	}
+	// A group's own Demographics (#518) override the campaign-level ones for that group, so
+	// when every group sets its own the campaign-level Audience would be attached to nothing.
+	if n := len(in.DemandGenAdGroups); n > 0 && !slices.ContainsFunc(in.DemandGenAdGroups, func(g DemandGenAdGroup) bool { return g.Demographics == nil }) {
+		return nil, fmt.Errorf("google-ads: DemandGenDemographics would be attached to no ad group: each of the %d Demand Gen ad groups sets its own Demographics, which replace the campaign-level ones for that group; omit DemandGenDemographics, or leave a group without its own", n)
+	}
+	return buildDemographicPlan(campaignDemographicOwner, customerID, campaignName, campaignName, d)
+}
 
+// demographicOwner says whose demographics a plan is built from, so one builder serves the
+// campaign-level DemandGenDemographics (#498) and each DemandGenAdGroups entry's Demographics
+// (#518) and its refusals name the field the caller set.
+type demographicOwner struct {
+	// field is the Go-side name of the object ("DemandGenDemographics"); its lists are
+	// named field+".AudienceSegments" and so on.
+	field string
+	// group is the full ad group name of a DemandGenAdGroups entry, "" for the campaign.
+	group string
+	// useAudience is the remedy for an Audience resource named inside the object.
+	useAudience string
+}
+
+var campaignDemographicOwner = demographicOwner{
+	field:       "DemandGenDemographics",
+	useAudience: "set DemandGenAudience to it and omit DemandGenDemographics",
+}
+
+func groupDemographicOwner(name string) demographicOwner {
+	return demographicOwner{
+		field:       fmt.Sprintf("the Demographics of Demand Gen ad group %q", name),
+		group:       name,
+		useAudience: "set that ad group's Audience to it and omit its Demographics",
+	}
+}
+
+// list names one of the object's lists in a refusal.
+func (o demographicOwner) list(name string) string {
+	if o.group == "" {
+		return o.field + "." + name
+	}
+	return fmt.Sprintf("Demographics.%s of Demand Gen ad group %q", name, o.group)
+}
+
+// wrap adds the ad group to a refusal that does not name its field (a value-vocabulary
+// refusal), so the caller can tell which group's list it is about. The campaign-level
+// refusals are returned unchanged.
+func (o demographicOwner) wrap(err error) error {
+	if err == nil || o.group == "" {
+		return err
+	}
+	return fmt.Errorf("%w (in the Demographics of Demand Gen ad group %q)", err, o.group)
+}
+
+// attachTo is the step line's "to be attached to ..." target.
+func (o demographicOwner) attachTo() string {
+	if o.group == "" {
+		return "every Demand Gen ad group"
+	}
+	return fmt.Sprintf("Demand Gen ad group %q", o.group)
+}
+
+// validateDemandGenGroupDemographics resolves each DemandGenAdGroups entry's Demographics
+// (#518) onto its plan in groups (validateDemandGenAdGroups' output, in entry order): a new
+// Audience of that group's own, built and named by the same rules as the campaign-level one.
+// Pure, and run in preflightCampaignKind after validateDemandGenDemographics.
+func validateDemandGenGroupDemographics(customerID, campaignName string, in CampaignInput, groups []demandGenGroupPlan) error {
+	if len(in.DemandGenAdGroups) == 0 {
+		return nil
+	}
+	if len(groups) != len(in.DemandGenAdGroups) {
+		return fmt.Errorf("google-ads: internal error: %d Demand Gen ad group plans for %d entries", len(groups), len(in.DemandGenAdGroups))
+	}
+	for i, g := range in.DemandGenAdGroups {
+		d := g.Demographics
+		if d == nil {
+			continue
+		}
+		name := groups[i].name
+		owner := groupDemographicOwner(name)
+		if d.empty() {
+			return fmt.Errorf("google-ads: %s is set but empty; set at least one of AgeRanges, Genders, IncomeRanges, ParentalStatuses, AudienceSegments or CustomAudiences, or omit it", owner.field)
+		}
+		if g.Audience != "" {
+			return fmt.Errorf("google-ads: Demand Gen ad group %q sets both Audience and Demographics (an ad group takes one Audience, and this client does not edit an existing one); put the demographics inside that Audience in the Google Ads UI, or omit its Audience and list the Audience's user lists in its Demographics.AudienceSegments", name)
+		}
+		// The group's label joins the campaign name in the Audience name, so each group's
+		// Audience has a name of its own even when two hold the same dimensions.
+		plan, err := buildDemographicPlan(owner, customerID, campaignName+" | "+sanitizeNamePart(g.Name), campaignName, d)
+		if err != nil {
+			return err
+		}
+		groups[i].demographics = plan
+	}
+	return nil
+}
+
+// buildDemographicPlan builds the Audience for one demographics object: its dimensions, in
+// Google's order, and its deterministic name "<namePrefix> | Demographics <hash>". owner names
+// the object in every refusal.
+func buildDemographicPlan(owner demographicOwner, customerID, namePrefix, campaignName string, d *DemandGenDemographics) (*demandGenDemographicPlan, error) {
 	var dims []audienceDimension
 	var summary []string
 
 	ages, ageUndetermined, err := demographicTargets("Demand Gen age range", "Demand Gen age ranges", d.AgeRanges, ageRangeTypes,
 		"18-24, 25-34, 35-44, 45-54, 55-64, 65+ or UNDETERMINED (Google's AGE_RANGE_* enum names are accepted too)", "AGE_RANGE_UNDETERMINED")
 	if err != nil {
-		return nil, err
+		return nil, owner.wrap(err)
 	}
 	// A dimension naming every value AND UNDETERMINED restricts nobody, and Google drops it
 	// from the Audience it stores (#519, read back from a real create on 2026-11-06), so it is
@@ -223,7 +328,7 @@ func validateDemandGenDemographics(kind, customerID, campaignName string, in Cam
 	genders, genderUndetermined, err := demographicTargets("Demand Gen gender", "Demand Gen genders", d.Genders, genderTargetTypes,
 		"MALE, FEMALE or UNDETERMINED", "UNDETERMINED")
 	if err != nil {
-		return nil, err
+		return nil, owner.wrap(err)
 	}
 	switch {
 	case coversEveryone(genders, genderUndetermined, len(demographicGenderOrder)):
@@ -235,7 +340,7 @@ func validateDemandGenDemographics(kind, customerID, campaignName string, in Cam
 	incomes, incomeUndetermined, err := demographicTargets("Demand Gen income range", "Demand Gen income ranges", d.IncomeRanges, incomeRangeTypes,
 		"INCOME_RANGE_0_50, INCOME_RANGE_50_60, INCOME_RANGE_60_70, INCOME_RANGE_70_80, INCOME_RANGE_80_90, INCOME_RANGE_90_UP or UNDETERMINED", "INCOME_RANGE_UNDETERMINED")
 	if err != nil {
-		return nil, err
+		return nil, owner.wrap(err)
 	}
 	switch {
 	case coversEveryone(incomes, incomeUndetermined, len(allIncomeRanges)-1): // allIncomeRanges ends with UNDETERMINED
@@ -247,7 +352,7 @@ func validateDemandGenDemographics(kind, customerID, campaignName string, in Cam
 	parents, parentUndetermined, err := demographicTargets("Demand Gen parental status", "Demand Gen parental statuses", d.ParentalStatuses, parentalStatusTypes,
 		"PARENT, NOT_A_PARENT or UNDETERMINED", "UNDETERMINED")
 	if err != nil {
-		return nil, err
+		return nil, owner.wrap(err)
 	}
 	switch {
 	case coversEveryone(parents, parentUndetermined, len(demographicParentalOrder)):
@@ -256,11 +361,11 @@ func validateDemandGenDemographics(kind, customerID, campaignName string, in Cam
 		dims = append(dims, audienceDimension{ParentalStatus: &parentalStatusDimension{ParentalStatuses: inOrder(demographicParentalOrder, parents), IncludeUndetermined: parentUndetermined}})
 		summary = append(summary, fmt.Sprintf("%d parental status(es)", len(parents)))
 	}
-	lists, err := validateDemographicUserLists(customerID, d.AudienceSegments)
+	lists, err := validateDemographicUserLists(owner, customerID, d.AudienceSegments)
 	if err != nil {
 		return nil, err
 	}
-	customs, err := validateDemographicCustomAudiences(customerID, d.CustomAudiences)
+	customs, err := validateDemographicCustomAudiences(owner, customerID, d.CustomAudiences)
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +392,7 @@ func validateDemandGenDemographics(kind, customerID, campaignName string, in Cam
 	}
 
 	if len(dims) == 0 {
-		return nil, fmt.Errorf("google-ads: DemandGenDemographics restricts nobody: each dimension it sets (%s) names every value and UNDETERMINED, and it names no user list or custom audience, so Google would store an Audience with no dimensions; narrow a dimension, add a segment, or omit DemandGenDemographics", strings.Join(everyone, ", "))
+		return nil, fmt.Errorf("google-ads: %s restricts nobody: each dimension it sets (%s) names every value and UNDETERMINED, and it names no user list or custom audience, so Google would store an Audience with no dimensions; narrow a dimension, add a segment, or omit %s", owner.field, strings.Join(everyone, ", "), owner.field)
 	}
 	if len(everyone) > 0 {
 		summary = append(summary, "every "+strings.Join(everyone, ", ")+" (no restriction, left out)")
@@ -295,11 +400,12 @@ func validateDemandGenDemographics(kind, customerID, campaignName string, in Cam
 
 	return &demandGenDemographicPlan{
 		create: audienceCreate{
-			Name:        demographicAudienceName(campaignName, dims),
+			Name:        demographicAudienceName(namePrefix, dims),
 			Description: "Created by LFX for " + campaignName,
 			Dimensions:  dims,
 		},
-		summary: strings.Join(summary, ", "),
+		summary:  strings.Join(summary, ", "),
+		attachTo: owner.attachTo(),
 	}, nil
 }
 
@@ -386,35 +492,36 @@ func ageSegments(enums []string) []ageSegment {
 // validateDemographicUserLists checks DemandGenDemographics.AudienceSegments: full
 // customers/<this account>/userLists/<id> names, canonical ids, deduplicated, at most
 // maxAudienceSegments.
-func validateDemographicUserLists(customerID string, names []string) ([]string, error) {
+func validateDemographicUserLists(owner demographicOwner, customerID string, names []string) ([]string, error) {
+	field := owner.list("AudienceSegments")
 	if len(names) == 0 {
 		return nil, nil
 	}
 	if len(names) > maxAudienceSegments {
-		return nil, fmt.Errorf("google-ads: at most %d DemandGenDemographics.AudienceSegments entries are supported, got %d", maxAudienceSegments, len(names))
+		return nil, fmt.Errorf("google-ads: at most %d %s entries are supported, got %d", maxAudienceSegments, field, len(names))
 	}
 	seen := make(map[string]struct{}, len(names))
 	out := make([]string, 0, len(names))
 	for _, raw := range names {
 		name := strings.TrimSpace(raw)
 		if name == "" {
-			return nil, fmt.Errorf("google-ads: DemandGenDemographics.AudienceSegments entry must not be empty")
+			return nil, fmt.Errorf("google-ads: %s entry must not be empty", field)
 		}
 		parts := strings.Split(name, "/")
 		if len(parts) == 4 && parts[0] == "customers" && parts[2] == "audiences" {
-			return nil, fmt.Errorf("google-ads: DemandGenDemographics.AudienceSegments entry %q is an Audience, which cannot go inside another Audience; name its user lists here, or set DemandGenAudience to it and omit DemandGenDemographics", capForError(name))
+			return nil, fmt.Errorf("google-ads: %s entry %q is an Audience, which cannot go inside another Audience; name its user lists here, or %s", field, capForError(name), owner.useAudience)
 		}
 		if len(parts) == 4 && parts[0] == "customers" && parts[2] == "customAudiences" {
-			return nil, fmt.Errorf("google-ads: DemandGenDemographics.AudienceSegments entry %q is a custom audience; AudienceSegments takes user lists only, so move it to DemandGenDemographics.CustomAudiences", capForError(name))
+			return nil, fmt.Errorf("google-ads: %s entry %q is a custom audience; AudienceSegments takes user lists only, so move it to %s", field, capForError(name), owner.list("CustomAudiences"))
 		}
 		if len(parts) != 4 || parts[0] != "customers" || parts[2] != "userLists" || !numericID(parts[1]) || !numericID(parts[3]) {
-			return nil, fmt.Errorf("google-ads: DemandGenDemographics.AudienceSegments entry %q is not a customers/<id>/userLists/<id> user list resource name", capForError(name))
+			return nil, fmt.Errorf("google-ads: %s entry %q is not a customers/<id>/userLists/<id> user list resource name", field, capForError(name))
 		}
 		if parts[1] != customerID {
-			return nil, fmt.Errorf("google-ads: DemandGenDemographics.AudienceSegments entry %q is on customer %q, not this campaign's account %q; name a user list on the campaign's own account", capForError(name), parts[1], customerID)
+			return nil, fmt.Errorf("google-ads: %s entry %q is on customer %q, not this campaign's account %q; name a user list on the campaign's own account", field, capForError(name), parts[1], customerID)
 		}
 		if canonicalCampaignID(parts[3]) == "" {
-			return nil, fmt.Errorf("google-ads: DemandGenDemographics.AudienceSegments entry %q has the id %q, which is not the canonical base-10 spelling of a positive id (no leading zeros)", capForError(name), parts[3])
+			return nil, fmt.Errorf("google-ads: %s entry %q has the id %q, which is not the canonical base-10 spelling of a positive id (no leading zeros)", field, capForError(name), parts[3])
 		}
 		if _, dup := seen[name]; dup {
 			continue
@@ -430,41 +537,42 @@ func validateDemographicUserLists(customerID string, names []string) ([]string, 
 // maxAudienceSegments. A resource of another kind is refused with the field it belongs in, or,
 // for the kinds an Audience cannot hold, with why: Google refuses a legacy customInterests
 // resource inside an Audience (RESOURCE_NAME_MALFORMED, validateOnly probe 2026-11-06).
-func validateDemographicCustomAudiences(customerID string, names []string) ([]string, error) {
+func validateDemographicCustomAudiences(owner demographicOwner, customerID string, names []string) ([]string, error) {
+	field := owner.list("CustomAudiences")
 	if len(names) == 0 {
 		return nil, nil
 	}
 	if len(names) > maxAudienceSegments {
-		return nil, fmt.Errorf("google-ads: at most %d DemandGenDemographics.CustomAudiences entries are supported, got %d", maxAudienceSegments, len(names))
+		return nil, fmt.Errorf("google-ads: at most %d %s entries are supported, got %d", maxAudienceSegments, field, len(names))
 	}
 	seen := make(map[string]struct{}, len(names))
 	out := make([]string, 0, len(names))
 	for _, raw := range names {
 		name := strings.TrimSpace(raw)
 		if name == "" {
-			return nil, fmt.Errorf("google-ads: DemandGenDemographics.CustomAudiences entry must not be empty")
+			return nil, fmt.Errorf("google-ads: %s entry must not be empty", field)
 		}
 		parts := strings.Split(name, "/")
 		if len(parts) == 4 && parts[0] == "customers" {
 			switch parts[2] {
 			case "userLists":
-				return nil, fmt.Errorf("google-ads: DemandGenDemographics.CustomAudiences entry %q is a user list; move it to DemandGenDemographics.AudienceSegments", capForError(name))
+				return nil, fmt.Errorf("google-ads: %s entry %q is a user list; move it to %s", field, capForError(name), owner.list("AudienceSegments"))
 			case "audiences":
-				return nil, fmt.Errorf("google-ads: DemandGenDemographics.CustomAudiences entry %q is an Audience, which cannot go inside another Audience; name its custom audiences here, or set DemandGenAudience to it and omit DemandGenDemographics", capForError(name))
+				return nil, fmt.Errorf("google-ads: %s entry %q is an Audience, which cannot go inside another Audience; name its custom audiences here, or %s", field, capForError(name), owner.useAudience)
 			case "customInterests":
-				return nil, fmt.Errorf("google-ads: DemandGenDemographics.CustomAudiences entry %q is a legacy custom interest, which Google refuses inside an Audience; name a customers/<id>/customAudiences/<id> custom audience instead", capForError(name))
+				return nil, fmt.Errorf("google-ads: %s entry %q is a legacy custom interest, which Google refuses inside an Audience; name a customers/<id>/customAudiences/<id> custom audience instead", field, capForError(name))
 			case "userInterests":
-				return nil, fmt.Errorf("google-ads: DemandGenDemographics.CustomAudiences entry %q is a user interest, not a custom audience; name a customers/<id>/customAudiences/<id> custom audience", capForError(name))
+				return nil, fmt.Errorf("google-ads: %s entry %q is a user interest, not a custom audience; name a customers/<id>/customAudiences/<id> custom audience", field, capForError(name))
 			}
 		}
 		if len(parts) != 4 || parts[0] != "customers" || parts[2] != "customAudiences" || !numericID(parts[1]) || !numericID(parts[3]) {
-			return nil, fmt.Errorf("google-ads: DemandGenDemographics.CustomAudiences entry %q is not a customers/<id>/customAudiences/<id> custom audience resource name", capForError(name))
+			return nil, fmt.Errorf("google-ads: %s entry %q is not a customers/<id>/customAudiences/<id> custom audience resource name", field, capForError(name))
 		}
 		if parts[1] != customerID {
-			return nil, fmt.Errorf("google-ads: DemandGenDemographics.CustomAudiences entry %q is on customer %q, not this campaign's account %q; name a custom audience on the campaign's own account", capForError(name), parts[1], customerID)
+			return nil, fmt.Errorf("google-ads: %s entry %q is on customer %q, not this campaign's account %q; name a custom audience on the campaign's own account", field, capForError(name), parts[1], customerID)
 		}
 		if canonicalCampaignID(parts[3]) == "" {
-			return nil, fmt.Errorf("google-ads: DemandGenDemographics.CustomAudiences entry %q has the id %q, which is not the canonical base-10 spelling of a positive id (no leading zeros)", capForError(name), parts[3])
+			return nil, fmt.Errorf("google-ads: %s entry %q has the id %q, which is not the canonical base-10 spelling of a positive id (no leading zeros)", field, capForError(name), parts[3])
 		}
 		if _, dup := seen[name]; dup {
 			continue
@@ -662,5 +770,40 @@ func segmentKey(s audienceSegment) string {
 
 // demographicAudienceStep is the step line for the Audience.
 func demographicAudienceStep(how, resource string, plan *demandGenDemographicPlan) string {
-	return fmt.Sprintf("Demographic Audience %s: %s (%s), to be attached to every Demand Gen ad group", how, resource, plan.summary)
+	return fmt.Sprintf("Demographic Audience %s: %s (%s), to be attached to %s", how, resource, plan.summary, plan.attachTo)
+}
+
+// DemandGenAdGroupAudience is one Demand Gen ad group's own demographic Audience (#518) in
+// CampaignResult.DemandGenAdGroupAudiences.
+type DemandGenAdGroupAudience struct {
+	// AdGroupName is the full ad group name the Audience is attached to.
+	AdGroupName string `json:"adGroupName"`
+	// DemographicAudience is the Audience's resource name, empty when its create is
+	// UNCONFIRMED.
+	DemographicAudience string `json:"demographicAudience,omitempty"`
+	// DemographicAudienceName is the planned deterministic name, the key to find the
+	// Audience by when DemographicAudience is empty.
+	DemographicAudienceName string `json:"demographicAudienceName"`
+}
+
+// demographicAudiencesInPlace reports whether result names any demographic Audience this
+// attempt created, reused or may have created before the budget: the campaign-level one or any
+// ad group's (#518).
+func demographicAudiencesInPlace(result *CampaignResult) bool {
+	return result.DemandGenDemographicAudience != "" || len(result.DemandGenAdGroupAudiences) > 0
+}
+
+// demographicAudienceResources lists the resource names of the demographic Audiences result
+// names, campaign-level first, for an error sentence.
+func demographicAudienceResources(result *CampaignResult) []string {
+	var out []string
+	if result.DemandGenDemographicAudience != "" {
+		out = append(out, result.DemandGenDemographicAudience)
+	}
+	for _, a := range result.DemandGenAdGroupAudiences {
+		if a.DemographicAudience != "" {
+			out = append(out, a.DemographicAudience)
+		}
+	}
+	return out
 }
