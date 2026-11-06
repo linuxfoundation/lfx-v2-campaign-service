@@ -2137,8 +2137,8 @@ before the budget mutate, and refused on every channel but Search.
   account (`SELECT shared_set.resource_name, shared_set.type, shared_set.status FROM shared_set
   WHERE shared_set.resource_name IN (...)`, the validated names as literals). A list whose row is
   not `NEGATIVE_KEYWORDS`, is not `ENABLED`, or is missing is refused as a
-  `WrapQuotedPreflightRefusal`. The refusal names the list's 1-based position, the full name and
-  the set id, each quoted, and the stored account id, quoted as #528 does. Only the set id
+  `WrapQuotedPreflightRefusal`. The refusal names the list by its full name and its set id, each
+  quoted, and the stored account id, quoted as #528 does. Only the set id
   survives into the job result. The type is named only from a fixed vocabulary
   (`sharedSetTypesNamed`), never echoed from the response. A read that fails, or rows that do not
   decode, name a set not asked for, or repeat one, fail the create as a plain error before any

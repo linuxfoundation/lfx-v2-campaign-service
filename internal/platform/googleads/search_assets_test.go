@@ -946,14 +946,14 @@ func TestCreateCampaign_RefusesSharedListsThatAreNotNegativeKeywordLists(t *test
 		notWant string
 	}{
 		{name: "negative placements", body: rowB("NEGATIVE_PLACEMENTS", "ENABLED"),
-			want: `is a NEGATIVE_PLACEMENTS shared set, not NEGATIVE_KEYWORDS`},
+			want: `is a shared set of type NEGATIVE_PLACEMENTS, not NEGATIVE_KEYWORDS`},
 		{name: "brands", body: rowB("BRANDS", "ENABLED"),
-			want: `is a BRANDS shared set, not NEGATIVE_KEYWORDS`},
+			want: `is a shared set of type BRANDS, not NEGATIVE_KEYWORDS`},
 		{name: "account-level negative keywords",
 			body: rowB("ACCOUNT_LEVEL_NEGATIVE_KEYWORDS", "ENABLED"),
-			want: `is a ACCOUNT_LEVEL_NEGATIVE_KEYWORDS shared set, not NEGATIVE_KEYWORDS`},
+			want: `is a shared set of type ACCOUNT_LEVEL_NEGATIVE_KEYWORDS, not NEGATIVE_KEYWORDS`},
 		{name: "webpages", body: rowB("WEBPAGES", "ENABLED"),
-			want: `is a WEBPAGES shared set, not NEGATIVE_KEYWORDS`},
+			want: `is a shared set of type WEBPAGES, not NEGATIVE_KEYWORDS`},
 		{name: "unrecognised type is not echoed", body: rowB("SOME_FUTURE_TYPE", "ENABLED"),
 			want: "of a type this client does not recognise", notWant: "SOME_FUTURE_TYPE"},
 		{name: "missing type", body: rowB("", "ENABLED"),
@@ -965,8 +965,8 @@ func TestCreateCampaign_RefusesSharedListsThatAreNotNegativeKeywordLists(t *test
 		{name: "not in the account", body: `{"results":[` + good + `]}`,
 			want: `was not found in account "1234567890"`},
 		{name: "empty answer", body: `{}`,
-			// list 1 is the first missing one
-			want: `list 1 "customers/1234567890/sharedSets/501" (shared set "501") was not found`},
+			// the first list is the first missing one
+			want: `list "customers/1234567890/sharedSets/501" (shared set "501") was not found`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1036,7 +1036,7 @@ func TestCreateCampaign_SharedListTypeReadFailureFailsClosed(t *testing.T) {
 			want: "not asked for"},
 		{name: "a set twice", status: http.StatusOK,
 			body: `{"results":[` + good + `,` + goodB + `,` + goodB + `]}`,
-			want: "list 2 twice"},
+			want: `shared set "502" twice`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

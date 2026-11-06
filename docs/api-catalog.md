@@ -1328,14 +1328,14 @@ sharedNegativeKeywordLists?:    — OPTIONAL EXISTING shared negative keyword li
                                   this service checks the TYPE itself (#548). Before the budget
                                   mutate it reads `shared_set.type` and `shared_set.status` for
                                   every named list in ONE read-only GAQL query on the connected
-                                  account. It refuses, naming the list's position, its set id and
-                                  what it is, any list that is not `NEGATIVE_KEYWORDS`
+                                  account. It refuses, naming the list (by its set id, since the full
+                                  resource name is withheld from the job result) and what it is, any list that is not `NEGATIVE_KEYWORDS`
                                   (`NEGATIVE_PLACEMENTS`, `BRANDS`,
                                   `ACCOUNT_LEVEL_NEGATIVE_KEYWORDS`, `WEBPAGES`, or a type this
                                   service does not recognise), is not `ENABLED`, or is not in the
                                   account. Example job error: `google-ads: shared negative keyword
-                                  list 1 "(value withheld)" (shared set "1558651517") is a
-                                  NEGATIVE_PLACEMENTS shared set, not NEGATIVE_KEYWORDS; ...`.
+                                  list (value withheld) (shared set "1558651517") is a shared set
+                                  of type NEGATIVE_PLACEMENTS, not NEGATIVE_KEYWORDS; ...`.
                                   Nothing is created. A read that fails stops the create too,
                                   before anything is created ("answered HTTP n before anything was
                                   created" for a 5xx or 429). A list is never attached unchecked.

@@ -145,8 +145,8 @@ type Service interface {
 	// read-only GAQL query reads every named list's shared_set.type and status
 	// before anything is created. A NEGATIVE_PLACEMENTS, BRANDS or other set, a
 	// REMOVED set or a set not in the account is refused in the job's Google Ads
-	// error, which names the list's position, its set id and its type. A read that
-	// fails stops the create too, with nothing created.
+	// error, which names the list, its set id and its type. A read that fails
+	// stops the create too, with nothing created.
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Create ONE HubSpot workflow that sends an already-staged series of emails,
 	// and return it DISABLED. Each brief named in brief_ids must already have a

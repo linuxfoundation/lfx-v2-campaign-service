@@ -449,8 +449,8 @@ func TestGoogleAds_SharedListTypeCheckJobMessages(t *testing.T) {
 		{name: "negative placements set", status: 200,
 			body: `{"results":[{"sharedSet":{"resourceName":"` + gaSharedSet +
 				`","type":"NEGATIVE_PLACEMENTS","status":"ENABLED"}}]}`,
-			want: []string{`(shared set "501") is a NEGATIVE_PLACEMENTS shared set, not ` +
-				`NEGATIVE_KEYWORDS`, "omit it"}},
+			want: []string{`(shared set "501") is a shared set of type NEGATIVE_PLACEMENTS, ` +
+				`not NEGATIVE_KEYWORDS`, "omit it"}},
 		{name: "set not in the account", status: 200, body: `{"results":[]}`,
 			want: []string{`(shared set "501") was not found in account "1234567890"`}},
 		{name: "read unavailable", status: 503, body: `{"error":{"code":14}}`,

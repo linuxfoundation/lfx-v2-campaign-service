@@ -155,7 +155,7 @@ type sharedSetRow struct {
 // Outcomes:
 //
 //   - a refusal of the caller's input (a wrong type, a set not ENABLED, no row for a set) is a
-//     domain.PreflightRefusal naming the list, its position and its id: a read made it, and no
+//     domain.PreflightRefusal naming the list and its id: a read made it, and no
 //     write has been sent;
 //   - a read that failed is returned as it is, so the dispatch layer's mapping reports the
 //     status (a 5xx or 429 as "answered HTTP n before anything was created") and the claim is
@@ -193,52 +193,52 @@ func (c *Client) checkSharedNegativeKeywordListTypes(ctx context.Context, lists 
 		}
 		if found[i] != nil {
 			return fmt.Errorf("google-ads shared negative keyword lists could not be checked "+
-				"(the read returned shared set list %d twice; nothing was created)", i+1)
+				"(the read returned shared set %q twice; nothing was created)", resourceID(lists[i]))
 		}
 		found[i] = &row
 	}
 	for i, name := range lists {
-		if err := sharedSetRefusal(c.account.CustomerID, i, name, found[i]); err != nil {
+		if err := sharedSetRefusal(c.account.CustomerID, name, found[i]); err != nil {
 			return domain.WrapQuotedPreflightRefusal(err)
 		}
 	}
 	return nil
 }
 
-// sharedSetRefusal is the refusal for list i, or nil when row is an ENABLED NEGATIVE_KEYWORDS
+// sharedSetRefusal is the refusal for the named list, or nil when row is an ENABLED NEGATIVE_KEYWORDS
 // set. Every caller value and the stored account id are quoted (%q), as the foreign-account
 // refusals quote theirs (#528); the type and status are named only from this file's fixed
 // vocabulary, never echoed from the response.
-func sharedSetRefusal(customerID string, i int, name string, row *sharedSetRow) error {
+func sharedSetRefusal(customerID, name string, row *sharedSetRow) error {
 	id := resourceID(name)
 	if row == nil {
-		return fmt.Errorf("google-ads: shared negative keyword list %d %q (shared set %q) was not "+
+		return fmt.Errorf("google-ads: shared negative keyword list %q (shared set %q) was not "+
 			"found in account %q; name an existing negative keyword list of that account, or omit "+
-			"it", i+1, name, id, customerID)
+			"it", name, id, customerID)
 	}
 	switch t := row.SharedSet.Type; {
 	case t == sharedSetTypeNegativeKeywords:
 	case sharedSetTypesNamed[t]:
-		return fmt.Errorf("google-ads: shared negative keyword list %d %q (shared set %q) is a %s "+
-			"shared set, not %s; sharedNegativeKeywordLists attaches only negative keyword lists, "+
-			"so omit it", i+1, name, id, t, sharedSetTypeNegativeKeywords)
+		return fmt.Errorf("google-ads: shared negative keyword list %q (shared set %q) is a shared "+
+			"set of type %s, not %s; sharedNegativeKeywordLists attaches only negative keyword lists, "+
+			"so omit it", name, id, t, sharedSetTypeNegativeKeywords)
 	default:
-		return fmt.Errorf("google-ads: shared negative keyword list %d %q (shared set %q) is a "+
+		return fmt.Errorf("google-ads: shared negative keyword list %q (shared set %q) is a "+
 			"shared set of a type this client does not recognise, not %s; "+
 			"sharedNegativeKeywordLists attaches only negative keyword lists, so omit it",
-			i+1, name, id, sharedSetTypeNegativeKeywords)
+			name, id, sharedSetTypeNegativeKeywords)
 	}
 	switch s := row.SharedSet.Status; s {
 	case sharedSetStatusEnabled:
 		return nil
 	case sharedSetStatusRemoved:
-		return fmt.Errorf("google-ads: shared negative keyword list %d %q (shared set %q) is %s in "+
+		return fmt.Errorf("google-ads: shared negative keyword list %q (shared set %q) is %s in "+
 			"account %q; name an ENABLED negative keyword list, or omit it",
-			i+1, name, id, sharedSetStatusRemoved, customerID)
+			name, id, sharedSetStatusRemoved, customerID)
 	default:
-		return fmt.Errorf("google-ads: shared negative keyword list %d %q (shared set %q) is not "+
+		return fmt.Errorf("google-ads: shared negative keyword list %q (shared set %q) is not "+
 			"ENABLED in account %q; name an ENABLED negative keyword list, or omit it",
-			i+1, name, id, customerID)
+			name, id, customerID)
 	}
 }
 
