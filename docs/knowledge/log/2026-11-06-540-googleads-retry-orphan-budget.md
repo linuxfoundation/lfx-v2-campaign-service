@@ -26,3 +26,7 @@ first write. A retry of a create that already succeeded therefore sends no
   and unreadable-budget refusals. `TestGoogleAds_Adoption_IsOptInAndOffByDefault` now pins that a
   dispatch without `adoptExisting` refuses rather than adopts. Not live-verified: no live call was
   made for this change.
+- **Docs.** The `adoptExisting` entry in `docs/api-catalog.md` and the operator sentence for
+  `campaign_name_taken` (`internal/service/dispatch_failure.go`) now describe the pre-write
+  refusal: the budget named may be the one the existing campaign already uses, and this attempt
+  sent nothing. Search re-checks its context after the two reads, before the first mutate.

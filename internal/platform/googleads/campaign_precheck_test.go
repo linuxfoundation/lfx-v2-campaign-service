@@ -150,11 +150,13 @@ func existingCampaignClient(t *testing.T, srv *httptest.Server) *Client {
 	c := demandGenClient(t, srv)
 	// demandGenClient answers the lookup with an empty account for every other test; undo
 	// that here.
-	if tr, ok := c.httpClient.Transport.(noExistingCampaignTransport); ok {
-		hc := *c.httpClient
-		hc.Transport = tr.base
-		c.httpClient = &hc
+	tr, ok := c.httpClient.Transport.(noExistingCampaignTransport)
+	if !ok {
+		t.Fatalf("demandGenClient's transport is %T, want noExistingCampaignTransport to unwrap", c.httpClient.Transport)
 	}
+	hc := *c.httpClient
+	hc.Transport = tr.base
+	c.httpClient = &hc
 	return c
 }
 
@@ -272,6 +274,48 @@ func TestCreateCampaign_ExistingCampaignWithUnreadableBudgetSendsNoWrite(t *test
 	res, err := existingCampaignClient(t, srv).CreateCampaign(context.Background(), in)
 	if err == nil || res != nil {
 		t.Fatalf("an existing campaign with no readable budget must refuse pre-create, got res=%v err=%v", res, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(mutates) != 0 {
+		t.Errorf("no write may be sent, got %v", mutates)
+	}
+}
+
+// A campaign found live by name and then read back REMOVED (gone between the two reads) is
+// refused before any write too: there is no live campaign to report a budget for, and a
+// retry will see the account as it now is.
+func TestCreateCampaign_ExistingCampaignRemovedBetweenReadsSendsNoWrite(t *testing.T) {
+	in := sampleInput()
+	name := ComposeName(CampaignKindSearch, in)
+	var (
+		mu      sync.Mutex
+		mutates []string
+	)
+	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			raw, _ := io.ReadAll(r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			if bytes.Contains(raw, []byte(campaignByNameQueryMarker)) {
+				_ = json.NewEncoder(w).Encode(searchResponse{Results: []json.RawMessage{lookupRow("24433950855", name, StatusPaused)}})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(searchResponse{Results: []json.RawMessage{json.RawMessage(
+				`{"campaign":{"resourceName":"customers/1234567890/campaigns/24433950855","id":"24433950855","name":` +
+					jsonQuote(name) + `,"status":"REMOVED"},"campaignBudget":{"id":"` + existingCampaignBudgetID + `"}}`)}})
+			return
+		}
+		mu.Lock()
+		mutates = append(mutates, r.URL.Path)
+		mu.Unlock()
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	res, err := existingCampaignClient(t, srv).CreateCampaign(context.Background(), in)
+	if err == nil || res != nil {
+		t.Fatalf("a campaign removed between the reads must refuse pre-create, got res=%v err=%v", res, err)
+	}
+	if !strings.Contains(err.Error(), "absent or removed") {
+		t.Errorf("err = %v, want it to say the campaign is now removed", err)
 	}
 	mu.Lock()
 	defer mu.Unlock()

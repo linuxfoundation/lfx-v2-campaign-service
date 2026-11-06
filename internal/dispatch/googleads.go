@@ -1356,9 +1356,10 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 			return nil, notCreated(fmt.Errorf("google ads campaign creation failed before any upstream create: %w", cerr))
 		}
 		// A non-nil result means SOMETHING may exist upstream (an ambiguous create, a
-		// duplicate-name "already exists", or a definite campaign 4xx that still left a
-		// created budget orphan), so the claim is RETAINED and the orphan recorded either
-		// way. Do NOT prepend "UNCONFIRMED": the client already classifies the outcome
+		// duplicate-name "already exists" — including a campaign of the composed name found
+		// before any write (#540), whose partial names that campaign's own budget — or a
+		// definite campaign 4xx that still left a created budget orphan), so the claim is
+		// RETAINED and the partial recorded either way. Do NOT prepend "UNCONFIRMED": the client already classifies the outcome
 		// precisely — "UNCONFIRMED (may exist)" for an ambiguous create vs "creation failed
 		// (budget created)" for a definite 4xx — so a blanket prefix would overwrite that
 		// distinction and route an operator to reconcile an ambiguous outcome for what is

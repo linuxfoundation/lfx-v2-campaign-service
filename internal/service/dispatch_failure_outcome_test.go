@@ -56,8 +56,9 @@ func TestDispatchFailureMessage_OutcomeArms(t *testing.T) {
 			outcome: domain.CreateOutcomeCampaignNameTaken,
 			// "EXISTS", not "WAS created": since budget-name adoption the budget behind this
 			// token may have been reused from an earlier attempt rather than created by this
-			// one. What the operator needs is that a budget for the brief is there.
-			wantAll:  []string{"already exists", "budget for this attempt EXISTS"},
+			// one, and since #540 it may be the budget the existing campaign already uses, found
+			// before any write. What the operator needs is that a budget for the brief is there.
+			wantAll:  []string{"already exists", "budget for this brief EXISTS", "the existing campaign already uses"},
 			wantNone: []string{"nothing new was created"},
 		},
 		{
