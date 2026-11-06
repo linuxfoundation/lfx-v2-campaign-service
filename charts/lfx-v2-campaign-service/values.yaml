@@ -14,13 +14,11 @@ image:
 # default is 1; deployments may and do set more (production runs 3), and
 # nothing here refuses that.
 #
-# One known ceiling comes with multiple replicas: the Reddit reporting budget
-# (internal/platform/reddit/report_budget.go) is a per-process ledger, so each
-# replica carries its own 45 report requests a minute against an ad account's
-# shared 60. Every path that spends it is request-driven, so this is a
-# concurrency ceiling that surfaces as a Reddit 429, not a sustained overdraw —
-# see templates/deployment.yaml for why a render-time guard was the wrong
-# answer and what the real fix is.
+# The Reddit reporting budget (internal/platform/reddit/report_budget.go) does
+# not depend on this: since #380 its ledger is shared in Postgres, so every
+# replica together spends at most 45 report requests a minute against an ad
+# account's 60 — see templates/deployment.yaml for the history, including why
+# a render-time replica guard was the wrong answer.
 replicaCount: 1
 
 # podAnnotations are additional annotations applied to the pod template.
@@ -279,9 +277,9 @@ app:
     # (reddit-ads/audience, reddit-ads/keywords, LFXV2-2665), which run on the
     # same reporting operation with breakdowns.
     # Their reporting budget (Reddit's 60 report requests a minute per ad
-    # account) is kept per process and is ALSO spent by the ungated Reddit
-    # account monitor, so turning this flag off does not bound that budget —
-    # see replicaCount for the multi-replica ceiling that follows from it.
+    # account; this service takes at most 45, shared across replicas in Postgres)
+    # is ALSO spent by the ungated Reddit account monitor, so turning this flag
+    # off does not bound that budget.
     REDDIT_METRICS_ENABLED:
       value: "false"
 

@@ -2839,3 +2839,40 @@ caller deadline) and, in-package, `TestLiveKeywordTargetingWriteLock_FailedTryLo
 request's cancellation and refuses a second writer, ends at its cooldown or at an explicit
 `Release`, and `StopCooldownsForShutdown` releases it at once and returns the connection; a hold
 cooled after shutdown began releases immediately).
+
+## `RedditReportLedger` — the Reddit reporting budget, shared by every replica (#380)
+
+`reddit_report_ledger.go` implements `domain.RedditReportLedger` on `reddit_report_slots`
+(migration 000055): one row per Reddit reporting attempt (`ad_account_id`, `insights`,
+`taken_at`), so `reddit.NewSharedReportBudgets` spends ONE 45-a-minute budget per ad account (24
+for the insight reads) across every replica, where the in-memory ledger it replaced let N replicas
+spend N × 45.
+
+- **Atomic per account.** `Take` is one transaction: `pg_advisory_xact_lock(class "RRPT",
+  FNV(account))`, then ONE statement (`redditReportLedgerTakeSQL`) that counts the account's rows
+  inside the window and inserts a slot only when `count < Total` and, for an insight attempt,
+  `insight count < Insights`. The statement runs after the lock, so its READ COMMITTED snapshot sees
+  every slot a previous holder committed; the transaction lock is released by the commit and can
+  never be stranded on a pooled connection. Without the lock two concurrent counts both see 44 and
+  both insert (the mutation the live test kills). Colliding keys only serialize two accounts; the
+  count is always by account id.
+- **The database's clock.** `taken_at` and the window use `clock_timestamp()`, read once
+  (`MATERIALIZED`) after the lock — never a pod's clock (skew between replicas) and never `now()`
+  (the transaction start, which would back-date a Take that waited for the lock). A refusal returns
+  `Wait`, the seconds until the earliest blocking slot leaves the window.
+- **Pruning.** Every Take deletes up to 500 expired rows of ANY account with `FOR UPDATE SKIP
+  LOCKED`, so the table holds about one window of attempts and two prunes never wait on each
+  other; the count filters by the window itself, so a pruned-or-not expired row changes nothing.
+- **Release** deletes the row by id (no lock: a delete only lowers a count); idempotent.
+- **Fails closed.** No pool, a failed checkout, a failed lock or statement, or the 5 s bound
+  (`redditReportLedgerTimeout`) is an error, and `ReportBudgets` refuses the attempt
+  (`reddit.ErrReportBudgetUnavailable`) — nothing sent unbudgeted.
+- **Pool cost:** one pooled connection per Take for two short statements; never held across a
+  Reddit call.
+
+Not a refilling token bucket, deliberately: a bucket of 45 refilled at 45 a minute admits a full
+bucket plus a minute's refill — up to 90 — inside one 60 s window, past Reddit's 60. Tests
+(`dbtest/reddit_report_ledger_live_test.go`): two ledgers on two separate pools race 60 Takes each
+and are granted exactly 45 (and 24 insight Takes, then the remaining 21), a refusal's wait is
+inside the window, Release frees a slot idempotently, a slot frees after the reported wait on the
+database clock, and a closed or missing pool returns an error, never a grant.

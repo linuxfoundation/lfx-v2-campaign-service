@@ -271,7 +271,11 @@ func newDispatcher(p model.Provider, be *backend, secrets *secretSet, hc *http.C
 	enc := &recordingDecryptor{inner: be.enc, secrets: secrets}
 	switch p {
 	case model.ProviderRedditAds:
-		opts := []reddit.Option{reddit.WithHTTPClient(hc)}
+		// A process-local reporting budget: this command's database session is read-only, so it
+		// cannot record slots in the service's shared ledger (which the dispatcher would
+		// otherwise use, and which refuses every report until bound). Its attempts sit inside the
+		// 15 of Reddit's 60 the shared budget leaves for tools it cannot see.
+		opts := []reddit.Option{reddit.WithHTTPClient(hc), reddit.WithReportBudgets(reddit.NewLocalReportBudgets())}
 		if ep.api != "" {
 			opts = append(opts, reddit.WithBaseURL(ep.api))
 		}

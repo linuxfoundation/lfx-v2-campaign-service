@@ -7,25 +7,31 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // Reddit publishes ONE rate limit for the reporting operation (POST /ad_accounts/{id}/reports):
-// the `ads-reporting` policy, 60 requests per 60 seconds. Every caller of that operation in this
-// service — the campaign metrics read, the account monitor, the audience read — spends from it, so
-// a budget that only one of them respects is not a budget. This file is the process-wide ledger:
-// EVERY HTTP attempt at the reporting operation, made by any Client in the process (each page of a
-// paginated report, and each 429 retry, is its own attempt), takes one slot from the ad account's
-// ledger before it is sent (requestWithThrottleRetryCounted). The slot is taken as late as
-// possible — after the token refresh and the request build, immediately before the send — so an
-// attempt that fails before it could be sent (a failed refresh, a cancelled context) spends none.
+// the `ads-reporting` policy, 60 requests per 60 seconds per ad account. Every caller of that
+// operation in this service — the campaign metrics read, the account monitor, the audience read —
+// spends from it, so a budget that only one of them respects is not a budget. This file is the
+// ledger: EVERY HTTP attempt at the reporting operation (each page of a paginated report, and each
+// 429 retry, is its own attempt) takes one slot from the ad account's ledger before it is sent
+// (requestWithThrottleRetryCounted). The slot is taken as late as possible — after the token
+// refresh and the request build, immediately before the send — so an attempt that fails before it
+// could be sent (a failed refresh, a cancelled context) spends none.
 //
-// Sizing (per ad account, per process, over a sliding 60-second window):
+// Sizing (per ad account, ACROSS EVERY REPLICA, over a sliding 60-second window):
 //
 //   - reportBudgetTotal (45) of Reddit's 60 for ALL report attempts. The 15 left over are headroom
-//     for what this ledger cannot see: Reddit Ads Manager and other tools on the same account.
+//     for what this ledger cannot see: Reddit Ads Manager and other tools on the same account
+//     (cmd/verify-metrics among them — an operator CLI on a read-only database session, which
+//     keeps a process-local ledger of its own: NewLocalReportBudgets).
 //   - reportBudgetInsights (24) of those 45 for the project-scoped insight reads (the audience and
 //     keyword performance reads, which share readBreakdownReports; marked with
 //     withInsightsReports). So an insight read can never take more than 24 of the 45, and the
@@ -36,17 +42,21 @@ import (
 // than sleeping into a timeout, and nothing is sent: an insight read then fails whole (503), never
 // partially.
 //
-// PER PROCESS. With more than one replica each process keeps its own ledger, so the account-wide
-// total is up to replicas × 45 against the account's 60. That is a CEILING reachable by concurrent
-// user traffic, not a rate the service sustains: every path that spends this budget — the audience
-// and keyword reads, the metrics read, and the ungated account monitor — is driven by an inbound
-// request, and nothing polls them. The chart does NOT refuse multiple replicas over it (see
-// templates/deployment.yaml, which records why an earlier render-time guard was wrong and must not
-// come back); production runs three. Lifting the ceiling itself needs a SHARED ledger — a token
-// bucket keyed by ad account in Postgres. Note that neither of the obvious shortcuts works here:
-// a lease like the X stats jobs' makes non-owner pods refuse, which is intolerable on the
-// user-facing monitor endpoint, and dividing this 45 by the replica count leaves less than the 24
-// a single audience read already needs.
+// SHARED ACROSS REPLICAS (#380). The service's ledger is NewSharedReportBudgets, which records
+// slots in Postgres (domain.RedditReportLedger, postgres.RedditReportLedger): one table row per
+// slot, counted and inserted under a per-account transaction advisory lock, on the database's
+// clock. So the account-wide total is 45 however many replicas run. It FAILS CLOSED: until the
+// container binds the ledger, and whenever Postgres cannot be asked, an attempt is refused with
+// ErrReportBudgetUnavailable and nothing is sent (the same unclassified 503 as an exhausted
+// budget) — never sent unbudgeted. It is a sliding window of slots rather than a refilling token
+// bucket on purpose: a bucket of 45 refilled at 45 a minute admits a full bucket plus a minute's
+// refill — up to 90 — inside one 60-second window, past Reddit's 60. Neither shortcut considered
+// before it works: a lease like the X stats jobs' makes non-owner pods refuse, which is
+// intolerable on the user-facing monitor endpoint, and dividing this 45 by the replica count
+// leaves less than the 24 a single audience read already needs.
+//
+// The process-local ledger (NewReportBudgets, NewLocalReportBudgets) remains for tests and the
+// read-only operator CLI; it is exact for one process only.
 const (
 	reportBudgetWindow   = 60 * time.Second
 	reportBudgetTotal    = 45
@@ -57,6 +67,20 @@ const (
 // cannot get a slot in the ad account's reporting budget before its context's deadline. Fixed
 // text: no account id.
 var ErrReportBudgetExhausted = errors.New("reddit-ads: the ad account's reporting request budget is exhausted for this deadline")
+
+// ErrReportBudgetUnavailable is returned, before any request is sent, when the shared reporting
+// ledger could not be asked for a slot: none is bound yet, or Postgres failed or did not answer in
+// time. The attempt is refused rather than sent unbudgeted (fail closed), and maps to the same
+// unclassified 503 as ErrReportBudgetExhausted. Fixed text: no account id; the cause stays wrapped
+// for the log.
+var ErrReportBudgetUnavailable = errors.New("reddit-ads: the shared reporting request budget is unavailable")
+
+// reportLedgerReleaseTimeout bounds handing a shared slot back. The release runs on a context
+// detached from the request's cancellation: it follows a failure, and the request may be ending.
+const reportLedgerReleaseTimeout = 5 * time.Second
+
+// reportLedgerMinWait floors the wait between two asks of the shared ledger on a full budget.
+const reportLedgerMinWait = 10 * time.Millisecond
 
 // reportPathRE matches the reporting operation's path (query string already split off), capturing
 // the ad account id the budget is keyed by.
@@ -75,9 +99,11 @@ func isInsightsReports(ctx context.Context) bool {
 	return v
 }
 
-// ReportBudgets is the per-ad-account ledger of reporting attempts. The zero value is not usable;
-// use NewReportBudgets. One process-wide instance (defaultReportBudgets) is shared by every Client
-// unless a test injects its own (WithReportBudgets).
+// ReportBudgets is the per-ad-account ledger of reporting attempts. The zero value is not usable.
+// NewSharedReportBudgets is the service's: its slots live in a domain.RedditReportLedger every
+// replica shares. NewReportBudgets and NewLocalReportBudgets keep them in this process's memory.
+// A Client spends from the ledger WithReportBudgets gives it, or from defaultReportBudgets — an
+// unbound shared ledger, so a client nobody gave a ledger refuses every report (fail closed).
 type ReportBudgets struct {
 	window          time.Duration
 	total, insights int
@@ -87,6 +113,12 @@ type ReportBudgets struct {
 	// onReserve, when set, is called after each slot is taken. Tests only: it lets a test prove a
 	// slot was reserved and then released, not merely that the ledger ended empty.
 	onReserve func(accountID string, insights bool)
+
+	// shared marks a ledger built by NewSharedReportBudgets: slots are taken from the bound
+	// domain.RedditReportLedger (ledger), never from byAccount, and with none bound every attempt
+	// is refused (ErrReportBudgetUnavailable).
+	shared bool
+	ledger atomic.Pointer[boundReportLedger]
 
 	mu        sync.Mutex
 	byAccount map[string]*accountReportLedger
@@ -100,13 +132,45 @@ type accountReportLedger struct {
 	all, insights []time.Time
 }
 
-var defaultReportBudgets = newReportBudgets(reportBudgetWindow, reportBudgetTotal, reportBudgetInsights, time.Now)
+// boundReportLedger boxes the bound shared ledger for the atomic pointer.
+type boundReportLedger struct{ l domain.RedditReportLedger }
 
-// NewReportBudgets builds a separate ledger. Production code never calls it — every production
-// Client spends from defaultReportBudgets — it exists so tests in other packages can give a client
-// a ledger of their own (WithReportBudgets) instead of sharing the process-wide one.
+// defaultReportBudgets is what a Client with no WithReportBudgets spends from: an UNBOUND shared
+// ledger, which refuses every report. The service's clients are all built by
+// dispatch.RedditDispatcher, which gives them its own shared ledger once the container binds
+// Postgres to it.
+var defaultReportBudgets = NewSharedReportBudgets()
+
+// NewSharedReportBudgets builds the service's ledger at the production sizing (45 of Reddit's 60
+// per account per minute, 24 of them for insight reads), its slots kept in the domain
+// ledger BindLedger binds — shared by every replica. Until one is bound every attempt is refused
+// with ErrReportBudgetUnavailable.
+func NewSharedReportBudgets() *ReportBudgets {
+	b := newReportBudgets(reportBudgetWindow, reportBudgetTotal, reportBudgetInsights, time.Now)
+	b.shared = true
+	return b
+}
+
+// BindLedger binds the shared ledger this budget records its slots in (a nil l is ignored).
+// Only meaningful on a NewSharedReportBudgets budget; safe to call while clients spend from it.
+func (b *ReportBudgets) BindLedger(l domain.RedditReportLedger) {
+	if b != nil && l != nil && b.shared {
+		b.ledger.Store(&boundReportLedger{l: l})
+	}
+}
+
+// NewReportBudgets builds a process-local ledger. The service never spends from one (its
+// clients use the shared ledger); it exists so tests can give a client a ledger of their own
+// (WithReportBudgets).
 func NewReportBudgets(window time.Duration, total, insights int) *ReportBudgets {
 	return newReportBudgets(window, total, insights, time.Now)
+}
+
+// NewLocalReportBudgets is a process-local ledger at the production sizing, for a process that
+// cannot write the shared one: cmd/verify-metrics, whose database session is read-only. Its
+// attempts are outside the shared ledger, inside the 15 requests of headroom Reddit's 60 leave.
+func NewLocalReportBudgets() *ReportBudgets {
+	return newReportBudgets(reportBudgetWindow, reportBudgetTotal, reportBudgetInsights, time.Now)
 }
 
 func newReportBudgets(window time.Duration, total, insights int, now func() time.Time) *ReportBudgets {
@@ -139,13 +203,16 @@ func (b *ReportBudgets) reserve(ctx context.Context, accountID string, insights 
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrReportBudgetExhausted, err)
 		}
-		at, wait, ok := b.tryTake(accountID, insights)
+		rel, wait, ok, err := b.take(ctx, accountID, insights)
+		if err != nil {
+			return nil, err
+		}
 		if ok {
 			if b.onReserve != nil {
 				b.onReserve(accountID, insights)
 			}
 			var once sync.Once
-			return func() { once.Do(func() { b.release(accountID, insights, at) }) }, nil
+			return func() { once.Do(rel) }, nil
 		}
 		if dl, has := ctx.Deadline(); has && b.now().Add(wait).After(dl) {
 			return nil, ErrReportBudgetExhausted
@@ -154,6 +221,42 @@ func (b *ReportBudgets) reserve(ctx context.Context, accountID string, insights 
 			return nil, fmt.Errorf("%w: %w", ErrReportBudgetExhausted, err)
 		}
 	}
+}
+
+// take makes one attempt at a slot: from the bound shared ledger, or from this process's memory.
+// It returns the slot's release on success, or the wait until the earliest blocking slot expires.
+// An error — the shared ledger unbound or unanswering — refuses the attempt (fail closed).
+func (b *ReportBudgets) take(ctx context.Context, accountID string, insights bool) (release func(), wait time.Duration, ok bool, err error) {
+	if !b.shared {
+		at, wait, ok := b.tryTake(accountID, insights)
+		if !ok {
+			return nil, wait, false, nil
+		}
+		return func() { b.release(accountID, insights, at) }, 0, true, nil
+	}
+	bound := b.ledger.Load()
+	if bound == nil {
+		return nil, 0, false, fmt.Errorf("%w: no shared ledger is bound", ErrReportBudgetUnavailable)
+	}
+	res, err := bound.l.Take(ctx, accountID, insights, domain.RedditReportLimits{Window: b.window, Total: b.total, Insights: b.insights})
+	if err != nil {
+		return nil, 0, false, fmt.Errorf("%w: %w", ErrReportBudgetUnavailable, err)
+	}
+	if !res.Taken {
+		// Floored, so a ledger that reports a full budget expiring "now" (clock rounding) costs
+		// a short sleep before the next ask, not a hot loop against the database.
+		return nil, max(res.Wait, reportLedgerMinWait), false, nil
+	}
+	id := res.SlotID
+	return func() {
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reportLedgerReleaseTimeout)
+		defer cancel()
+		if err := bound.l.Release(rctx, id); err != nil {
+			// The slot stays recorded until it ages out: the budget over-counts by one for at
+			// most a window, never under-counts.
+			slog.WarnContext(ctx, "could not hand a Reddit reporting slot back to the shared ledger; it is held until it expires", "error", err)
+		}
+	}, 0, true, nil
 }
 
 // release removes one slot recorded at `at` from the account's ledger (and from its insight
@@ -275,9 +378,9 @@ func pruneBefore(ts []time.Time, cutoff time.Time) []time.Time {
 	return append(ts[:0:0], ts[i:]...)
 }
 
-// WithReportBudgets makes the client spend from b instead of the process-wide ledger. Tests only,
-// like WithBaseURL: production clients must share defaultReportBudgets, or the budget is not
-// truthful.
+// WithReportBudgets makes the client spend from b instead of defaultReportBudgets (an unbound
+// shared ledger, which refuses every report). dispatch.RedditDispatcher passes its shared ledger
+// this way; tests and cmd/verify-metrics pass a process-local one.
 func WithReportBudgets(b *ReportBudgets) Option {
 	return func(c *Client) { c.reportBudgets = b }
 }
