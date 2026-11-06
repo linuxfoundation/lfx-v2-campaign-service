@@ -270,16 +270,16 @@ func (s *ConnectionService) classifyMonitorError(ctx context.Context, projectID 
 // shared uniformly, so each caller passes its own platform's Evaluate*Monitor. Google's
 // EvaluateGoogleMonitor takes `days` but no `now` (expected spend is budget_day*days, with no
 // flight-date dependency). LinkedIn's and Reddit's take a `now`, which their callers close over.
-// Meta's EvaluateMetaMonitor takes neither a clock nor a closure: each row carries the exact
-// Insights window the read used (MetricsWindowStart/End), so its pacing never consults a clock
-// of its own and the method value is passed directly.
+// Meta's EvaluateMetaMonitor takes no clock: each row carries the exact Insights window the read
+// used (MetricsWindowStart/End), so its pacing never consults a clock of its own. Google's and
+// Microsoft's also take the read's currency, which sizes their money thresholds (#454).
 func (s *ConnectionService) monitorAccount(
 	ctx context.Context,
 	projectID, accountID string,
 	days int,
 	platform model.Provider,
 	discovery accountDiscovery,
-	evaluate func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem),
+	evaluate func(read *model.AccountMonitorRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem),
 ) (*conn.AccountMonitor, error) {
 	if err := rejectSystemScope(projectID); err != nil {
 		return nil, err
@@ -296,7 +296,7 @@ func (s *ConnectionService) monitorAccount(
 		return nil, s.classifyMonitorError(ctx, projectID, platform, discovery, merr)
 	}
 
-	rows, actionItems := evaluate(read.Rows)
+	rows, actionItems := evaluate(read)
 	reportUnmeasuredRows(ctx, orch.dispatchMetrics(), projectID, platform, rows)
 	return buildAccountMonitor(accountID, days, rows, actionItems, read.Currency), nil
 }
@@ -451,8 +451,8 @@ func (s *ConnectionService) monitorReportedAccount(
 // project (Orchestrator.ReadAccountCampaignMetrics).
 func (s *ConnectionService) MonitorGoogleAdsAccount(ctx context.Context, p *conn.MonitorGoogleAdsAccountPayload) (*conn.AccountMonitor, error) {
 	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderGoogleAds, googleAdsMonitorDiscovery,
-		func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
-			return rules.EvaluateGoogleMonitor(rows, p.Days)
+		func(read *model.AccountMonitorRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
+			return rules.EvaluateGoogleMonitor(read.Rows, p.Days, read.Currency)
 		})
 }
 
@@ -461,8 +461,8 @@ func (s *ConnectionService) MonitorGoogleAdsAccount(ctx context.Context, p *conn
 func (s *ConnectionService) MonitorLinkedinAdsAccount(ctx context.Context, p *conn.MonitorLinkedinAdsAccountPayload) (*conn.AccountMonitor, error) {
 	now := time.Now()
 	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderLinkedInAds, linkedInAdsMonitorDiscovery,
-		func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
-			return rules.EvaluateLinkedInMonitor(rows, p.Days, now)
+		func(read *model.AccountMonitorRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
+			return rules.EvaluateLinkedInMonitor(read.Rows, p.Days, now)
 		})
 }
 
@@ -474,7 +474,9 @@ func (s *ConnectionService) MonitorMetaAdsAccount(ctx context.Context, p *conn.M
 	// No clock here: each row carries the Insights window its spend covers, and the rules pace
 	// against exactly those days (see rules.EvaluateMetaMonitor).
 	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderMetaAds, metaAdsMonitorDiscovery,
-		rules.EvaluateMetaMonitor)
+		func(read *model.AccountMonitorRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
+			return rules.EvaluateMetaMonitor(read.Rows)
+		})
 }
 
 // MonitorMicrosoftAdsAccount reads every live campaign on a Microsoft Advertising account, with
@@ -483,7 +485,7 @@ func (s *ConnectionService) MonitorMetaAdsAccount(ctx context.Context, p *conn.M
 func (s *ConnectionService) MonitorMicrosoftAdsAccount(ctx context.Context, p *conn.MonitorMicrosoftAdsAccountPayload) (*conn.AccountMonitor, error) {
 	return s.monitorReportedAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderMicrosoftAds, microsoftAdsMonitorDiscovery,
 		func(read *model.ReportedAccountRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
-			return rules.EvaluateMicrosoftMonitor(read.Rows, p.Days)
+			return rules.EvaluateMicrosoftMonitor(read.Rows, p.Days, read.Currency)
 		})
 }
 
@@ -498,7 +500,7 @@ func (s *ConnectionService) MonitorMicrosoftAdsAccount(ctx context.Context, p *c
 func (s *ConnectionService) MonitorTwitterAdsAccount(ctx context.Context, p *conn.MonitorTwitterAdsAccountPayload) (*conn.AccountMonitor, error) {
 	return s.monitorReportedAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderTwitterAds, twitterAdsMonitorDiscovery,
 		func(read *model.ReportedAccountRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
-			return rules.EvaluateTwitterMonitor(read.Rows, read.MetricsWindowStart, read.MetricsWindowEnd)
+			return rules.EvaluateTwitterMonitor(read.Rows, read.MetricsWindowStart, read.MetricsWindowEnd, read.Currency)
 		})
 }
 
@@ -511,7 +513,7 @@ func (s *ConnectionService) MonitorTwitterAdsAccount(ctx context.Context, p *con
 func (s *ConnectionService) MonitorRedditAdsAccount(ctx context.Context, p *conn.MonitorRedditAdsAccountPayload) (*conn.AccountMonitor, error) {
 	now := time.Now()
 	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderRedditAds, redditAdsAccountDiscovery,
-		func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
-			return rules.EvaluateRedditMonitor(rows, p.Days, now)
+		func(read *model.AccountMonitorRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
+			return rules.EvaluateRedditMonitor(read.Rows, p.Days, now)
 		})
 }
