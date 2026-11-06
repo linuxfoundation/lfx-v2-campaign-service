@@ -32,9 +32,9 @@ func TestResolveConversionEvent(t *testing.T) {
 		{"conversions", "MOBILE_CONVERSION_PURCHASE", "", "is not one of"},
 		{"conversions", "LANDING_PAGE_VISIT", "", "is not one of"},
 		// An objective that is not one of Reddit's (objectives are matched exactly, so
-		// "Conversions" is not one) is left to the objective check, which names it as unsupported.
-		{"Conversions", "SIGN_UP", "SIGN_UP", ""},
-		{"bogus", "LEAD", "LEAD", ""},
+		// "Conversions" is not one) is named as unsupported, not as the event's problem.
+		{"Conversions", "SIGN_UP", "", "unsupported Reddit objective"},
+		{"bogus", "LEAD", "", "unsupported Reddit objective"},
 	} {
 		got, err := ResolveConversionEvent(tc.objective, tc.event)
 		if tc.errHas == "" {

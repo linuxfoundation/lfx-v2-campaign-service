@@ -659,10 +659,13 @@ func ResolveConversionEvent(objective, event string) (string, error) {
 		return "", fmt.Errorf("conversionEvent %s is not one of %s", domain.CallerValue(event), strings.Join(conversionEvents, ", "))
 	}
 	// Objectives are matched exactly (redditObjectiveParams is keyed in lower case and nothing
-	// normalizes them), so an objective that is not one of them is the objective check's refusal
-	// ("unsupported Reddit objective"), not this one: saying "Conversions takes its own goal" would
-	// misname the problem.
-	if _, known := redditObjectiveParams[objective]; known && objective != "conversions" {
+	// normalizes them), so "Conversions" is not one. It is refused HERE, in the objective
+	// check's own words, so the dispatcher's synchronous preflight refuses it too rather than
+	// admitting a job that fails later; saying "Conversions takes its own goal" would misname it.
+	if _, known := redditObjectiveParams[objective]; !known {
+		return "", fmt.Errorf("unsupported Reddit objective: %s", domain.CallerValue(objective))
+	}
+	if objective != "conversions" {
 		return "", fmt.Errorf("conversionEvent is the event a conversions campaign optimizes toward; objective %s takes its own goal, so omit conversionEvent or use objective \"conversions\"", domain.CallerValue(objective))
 	}
 	return canonical, nil

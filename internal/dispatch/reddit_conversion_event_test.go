@@ -83,6 +83,8 @@ func TestRedditConversionEvent_PreflightRefusesBadValues(t *testing.T) {
 		{"wrong objective", `,"objective":"traffic","conversionEvent":"SIGN_UP"`, "objective"},
 		{"video objective", `,"objective":"video_views","videoGoal":"VIDEO_VIEW_6S","conversionEvent":"LEAD"`, "objective"},
 		{"case variant key", `,"ConversionEvent":"SIGN_UP"`, "exact spelling"},
+		{"mis-cased objective", `,"objective":"Conversions","conversionEvent":"SIGN_UP"`, "unsupported Reddit objective"},
+		{"unknown objective", `,"objective":"bogus","conversionEvent":"SIGN_UP"`, "unsupported Reddit objective"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := d.PreflightCreate(context.Background(), "cncf", model.ProviderRedditAds, conversionEventCfg(tc.extra))
