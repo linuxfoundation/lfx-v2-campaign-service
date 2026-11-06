@@ -17,14 +17,16 @@ behind `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` (off), so nothing reached the 
   Google Ads UI stores checked and unchecked brackets. The same probe accepted positive
   `ageRange`/`gender`/`incomeRange`/`parentalStatus` criteria beside a negative `ageRange` in one
   `adGroupCriteria:mutate`.
-- **Full shape probed.** The first probe covered positives in all four dimensions beside ONE
-  negative `ageRange`. A second validateOnly probe on 2026-11-06 (v23, the same ad group)
-  covered the full shape this code sends and was ACCEPTED with no errors: one
-  `adGroupCriteria:mutate` with four positive ENABLED criteria (AGE_RANGE_25_34, FEMALE,
-  INCOME_RANGE_90_UP, NOT_A_PARENT) and eight complement negatives (AGE_RANGE_18_24,
-  AGE_RANGE_UNDETERMINED, MALE, gender UNDETERMINED, INCOME_RANGE_0_50,
-  INCOME_RANGE_UNDETERMINED, PARENT, parental UNDETERMINED). That clears
-  `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` to be turned on for Display (argocd #2031).
+- **Every negative criterion type probed.** The first probe covered positives in all four
+  dimensions beside ONE negative `ageRange`. A second validateOnly probe on 2026-11-06 (v23, the
+  same ad group) was ACCEPTED with no errors: one `adGroupCriteria:mutate` with four positive
+  ENABLED criteria (AGE_RANGE_25_34, FEMALE, INCOME_RANGE_90_UP, NOT_A_PARENT) and eight
+  negatives, two per dimension (AGE_RANGE_18_24, AGE_RANGE_UNDETERMINED, MALE, gender
+  UNDETERMINED, INCOME_RANGE_0_50, INCOME_RANGE_UNDETERMINED, PARENT, parental UNDETERMINED).
+  That covers every negative criterion type beside a positive of the same dimension, but not the
+  complete payload: for those four positives with no exclusions this code emits 16 negatives
+  (6 age, 2 gender, 6 income, 2 parental). The remaining negatives are further values of the
+  same four criterion types.
 - `displayDemographics` is classified as ungated in the marketing-ops field list (#505), which
   crossed with #507 and left that test failing on main.
 - The `displayDemographics` gate check no longer shadows the dispatcher receiver.
