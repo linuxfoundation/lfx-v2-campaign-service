@@ -15948,16 +15948,16 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: list-google-ads-user-lists lfx-v2-campaign-service-connections
-            description: 'List the Google Ads user lists (audiences) on a customer, live from GAQL on user_list, for picking googleAdsConfig.audienceSegments (Search and Display). account_id names the customer; omitted, the customer the project''s connection is bound to is read. Like the account monitor, this resolves the project''s OWN connection only and never falls back to the shared LF system credential: user lists are account data on a customer shared across foundations, so a project with no Google Ads connection of its own gets a 404, not the LF account''s audiences. On a platform whose ad account is shared across foundations — Google Ads today — the read is refused with 409 before Google is contacted: the read is account-wide, this service records no user list per project, and a project''s own connection points at the same shared customer, so answering would expose every foundation''s audiences. Only a per-foundation customer is listed. An account_id the credential cannot reach is refused by Google and answered 503, like the account monitor. A pure read: nothing is persisted.'
+            description: 'List the Google Ads user lists (audiences) on a customer, live from GAQL on user_list, for picking googleAdsConfig.audienceSegments (Search observed lists, and Display). account_id names the customer; omitted, the customer a Google create for this project uses is read. Credentials resolve as for a create: the project''s own connection, or the shared LF system credential when it has none (or when the deployment forces the LF account), so the resource names are on the account the create uses. The Google Ads customer is shared by every foundation, so the response lists EVERY foundation''s user lists (HubSpot CRM lists, website visitor lists and the rest), not only this project''s; like list-google-ads-conversion-actions and list-google-ads-audiences it is therefore gated on global_marketing_ops of {project_id} (the LF marketing team), not campaign_manager, which also admits a foundation''s executive director. An account_id the credential cannot reach is refused by Google and answered 503, like the account monitor. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#list-google-ads-user-lists
             parameters:
                 - name: account_id
                   in: query
-                  description: Optional Google Ads customer to read (digits only). Defaults to the connection's account.
+                  description: Optional Google Ads customer to read (digits only). Defaults to the account a Google create for this project uses.
                   allowEmptyValue: true
                   schema:
                     type: string
-                    description: Optional Google Ads customer to read (digits only). Defaults to the connection's account.
+                    description: Optional Google Ads customer to read (digits only). Defaults to the account a Google create for this project uses.
                     example: "8666746580"
                     pattern: ^[0-9]+$
                     maxLength: 64
@@ -16054,15 +16054,6 @@ paths:
                             example:
                                 code: "404"
                                 message: The connection was not found.
-                "409":
-                    description: 'Conflict: User lists cannot be listed per project on an ad account shared across foundations'
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/UserListsConflictError'
-                            example:
-                                code: "409"
-                                message: user lists cannot be listed per project on an ad account shared across foundations; enter the user-list resource name directly
                 "413":
                     description: 'PayloadTooLarge: Payload too large'
                     content:
@@ -23757,7 +23748,7 @@ components:
                     example: KubeCon NA 2025 registrants
                 resource_name:
                     type: string
-                    description: customers/{customerId}/userLists/{id}, in exactly the form googleAdsConfig.audienceSegments accepts (Search and Display). A list targets campaigns on its own customer.
+                    description: customers/{customerId}/userLists/{id}, in exactly the form googleAdsConfig.audienceSegments accepts (Search and Display). A list targets campaigns on its own customer, which by default is the account a Google create for this project uses.
                     example: customers/8666746580/userLists/7012345678
                     pattern: ^customers/[0-9]+/userLists/[1-9][0-9]{0,18}$
                 size_for_search:
@@ -23795,7 +23786,7 @@ components:
             properties:
                 account_id:
                     type: string
-                    description: The Google Ads customer the lists were read from
+                    description: 'The Google Ads customer the lists were read from: account_id when given, else the account a Google create for this project uses'
                     example: "8666746580"
                 truncated:
                     type: boolean
@@ -28671,23 +28662,6 @@ components:
             required:
                 - content_type
                 - bytes
-        UserListsConflictError:
-            type: object
-            properties:
-                code:
-                    type: string
-                    description: HTTP status code
-                    example: "409"
-                message:
-                    type: string
-                    description: Error message
-                    example: user lists cannot be listed per project on an ad account shared across foundations; enter the user-list resource name directly
-            example:
-                code: "409"
-                message: user lists cannot be listed per project on an ad account shared across foundations; enter the user-list resource name directly
-            required:
-                - code
-                - message
         WizardChat:
             type: object
             properties:

@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Google Ads Targeting Lookups"
-description: "Four read-only pickers for the Google Ads create form: a geo target constant search (SuggestGeoTargetConstants, by name or postal code, returning the numeric id geoTargets accepts, readable through the LF system credential because it is public reference data), a user-list read (GAQL on user_list, returning the resource name audienceSegments accepts, own connection only, and refused with 409 on a shared-tenancy platform such as Google Ads because the read is account-wide and no user list is recorded per project), a conversion-action read (GAQL on conversion_action, ENABLED only, resolved as a create resolves; it lists every foundation's actions on the shared customer, so the gateway admits only global_marketing_ops, the LF marketing team, not campaign_manager, which also includes foundation executive directors), and an audience read (GAQL on custom_audience, combined_audience, audience or user_interest, one type per call, usable entries only, optional name search, resolved and gated like the conversion-action read)."
+description: "Four read-only pickers for the Google Ads create form: a geo target constant search (SuggestGeoTargetConstants, by name or postal code, returning the numeric id geoTargets accepts, readable through the LF system credential because it is public reference data), a user-list read (GAQL on user_list, returning the resource name audienceSegments accepts, resolved as a create resolves; it lists every foundation's user lists on the shared customer, so it is gated on global_marketing_ops), a conversion-action read (GAQL on conversion_action, ENABLED only, resolved as a create resolves; it lists every foundation's actions on the shared customer, so the gateway admits only global_marketing_ops, the LF marketing team, not campaign_manager, which also includes foundation executive directors), and an audience read (GAQL on custom_audience, combined_audience, audience or user_interest, one type per call, usable entries only, optional name search, resolved and gated like the conversion-action read)."
 resource: "internal/service/google_ads_lookups.go"
 ---
 
@@ -52,20 +52,24 @@ create form offer them in a picker instead of making an operator type them (self
 - `resource_name` is `customers/{id}/userLists/{id}`, exactly what `validateAudienceSegments`
   accepts (Search; on Display, `validateDisplayAudienceList`, which also requires the
   campaign's account). A row naming another customer, or a non-userLists resource, is dropped.
-- `account_id` (digits only) picks the customer; omitted, the connection's stored account is
-  read. No account either way is a 400 (`ErrConnectionNotUsable` + `ErrAccountNotSelected`).
-- **Refused with 409 on a shared-tenancy platform** (`domain.ErrUserListsSharedTenancy`), before
-  any credential is resolved. `Orchestrator.ReadUserLists` keys on `service.AccountMonitorScoper`,
-  the codebase's shared-tenancy marker, which the Google Ads dispatcher implements. Refusing the
-  LF fallback is not enough: per `docs/architecture.md` ("Account Tenancy") each project's OWN
-  connection row points at the one shared customer, so an account-wide `user_list` read hands
-  every foundation's audiences to any project `campaign_manager`. The account monitor's remedy
-  (filter to ids recorded for the project) has nothing to filter by, since no user list is
-  recorded per project, and the BFF's ROOT-only gate (lfx-self-serve-ops#54) is bypassed by a
-  direct call. Until a per-project list mapping exists, the picker falls back to manual entry
-  on Google Ads; the read itself remains for a per-foundation customer.
-- **Resolution, where it runs: own connection only** (`resolveOwnedGoogleAdsDiscovery`, caller-scoped
-  token refresh), never the LF system fallback; a project with no connection of its own gets 404.
+- `account_id` (digits only) picks the customer; omitted, the account a create for this project
+  uses is read. A malformed `account_id` is a 400 before any credential is resolved.
+- **Resolution: as a create resolves** (`createAccountClient`, shared with the conversion-action
+  and audience reads): the project's own connection, else the LF system fallback, and the LF
+  account whenever the deployment forces it, so the lists are on the account the create uses. A
+  connection with no account selected or a non-digit stored id is refused as a connection to fix
+  (400 on the project's row, 500 on the LF row), even when `account_id` names another customer.
+- **A `global_marketing_ops` read.** On the shared Google Ads customer the answer is every
+  foundation's user lists: 450 on the LF customer on 2026-11-05 (84 CRM_BASED, 110 RULE_BASED,
+  89 REMARKETING, 151 SIMILAR, 15 LOGICAL, 1 LOOKALIKE; 351 OPEN; 378 eligible for Search). Until
+  2026-11-05 this was a `campaign_manager` read, so it resolved the project's own connection
+  only and `Orchestrator.ReadUserLists` refused a shared-tenancy platform with 409
+  (`ErrUserListsSharedTenancy`): nothing scopes user lists per project, and a foundation
+  executive director would have seen every foundation's lists. The route moved to the
+  `marketing-ops-api` rule (the LF marketing team only), the same population as the
+  conversion-action and audience reads, so both refusals and the 409 response were removed and
+  the Search observed-lists picker can list the LF account's HubSpot CRM and website visitor
+  lists.
 
 ## Conversion actions
 
@@ -86,7 +90,7 @@ create form offer them in a picker instead of making an operator type them (self
   account id is checked for digits only before any request: 400 on the project's own row, and
   500 on the LF system row it fell back to (`ErrSystemConnectionNotUsable`), which only an
   operator can fix.
-- **A `global_marketing_ops` read, not a `campaign_manager` one.** Unlike user lists, this
+- **A `global_marketing_ops` read, not a `campaign_manager` one.** Like the user-list read, this
   read is NOT refused on a shared-tenancy platform. Google Ads is one customer shared by every
   foundation, so the answer holds every foundation's conversion action names, and
   `{project_id}` only selects whose connection supplies the credential. `campaign_manager`
@@ -96,8 +100,7 @@ create form offer them in a picker instead of making an operator type them (self
   first ruled by a ROOT-only Heimdall rule (`root-campaign-admin:get`, keyed on a chart value
   `openfga.rootProjectUid` that no environment ever set, so it answered 403 to everyone); that
   rule and the value were removed and the path moved into its own `marketing-ops-api` rule.
-  GET only. User lists
-  are still refused on the shared account.
+  GET only. The user-list read is gated the same way since 2026-11-05.
 
 ## Audiences
 
@@ -140,7 +143,7 @@ create form offer them in a picker instead of making an operator type them (self
 ## Shared
 
 - Authorization: the gateway's check on `project:{projectId}` (`ruleset.yaml`):
-  `campaign_manager` for the geo and user-list reads, `global_marketing_ops` for the
+  `campaign_manager` for the geo read, `global_marketing_ops` for the user-list,
   conversion-action and audience reads;
   JWT verified in the service, the reserved `system:linuxfoundation` scope
   refused with 404 (`rejectSystemScope`).
