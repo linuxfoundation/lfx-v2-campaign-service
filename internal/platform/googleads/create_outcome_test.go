@@ -44,6 +44,7 @@ func TestCreateOutcome_ClassifiesEveryPartialShape(t *testing.T) {
 
 		{"budget name taken", namePartial, budgetDup, domain.CreateOutcomeBudgetNameTaken, true},
 		{"campaign name taken", budgetPartial, campaignDup, domain.CreateOutcomeCampaignNameTaken, true},
+		{"campaign found before any write (#540)", budgetPartial, &campaignExistsBeforeCreateError{channel: "search", campaignName: "c", campaignID: "1", budgetID: "2"}, domain.CreateOutcomeCampaignNameTaken, true},
 
 		{"budget created, campaign refused", budgetPartial, refused4xx, domain.CreateOutcomeBudgetCreatedCampaignRefused, true},
 		{"budget created, campaign unconfirmed", budgetPartial, ambiguous5xx, domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed, true},

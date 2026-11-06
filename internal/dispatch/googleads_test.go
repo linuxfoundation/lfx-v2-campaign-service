@@ -1724,44 +1724,47 @@ func TestGoogleAds_Adoption_ProceedsToCreateWhenAbsent(t *testing.T) {
 }
 
 // TestGoogleAds_Adoption_IsOptInAndOffByDefault is the binding test for the delete/
-// re-dispatch defect. A config with no adoptExisting must not perform the lookup AT ALL.
+// re-dispatch defect. A config with no adoptExisting must never ADOPT the live upstream
+// campaign that carries the composed name.
 //
 // Why the default is the property that matters: ComposeName is deterministic in
 // Project/EventName/NameSuffix and is unchanged by a soft delete of the local campaign
 // row, while getCampaignByPlatformQuery excludes deleted rows — so after a documented
 // delete the orchestrator sees "never dispatched" and takes the fresh-claim path into
-// Dispatch. With an unconditional lookup that dispatch re-attaches to the still-live
-// upstream campaign the delete walked away from, persists THIS request's budget and
-// config against it, and pushes none of it upstream. Nothing surfaces: the caller is
-// told a campaign was provisioned.
+// Dispatch. An unconditional adoption would re-attach that dispatch to the still-live
+// upstream campaign the delete walked away from, persist THIS request's budget and
+// config against it, and push none of it upstream. Nothing would surface: the caller
+// would be told a campaign was provisioned.
 //
-// The server here fails the test if the search endpoint is touched, which is the whole
-// assertion — the create path proceeding to id 222 is the corroborating half.
+// The client's own pre-write check (#540) does read the account for a campaign of the
+// composed name, and finds 999 here. It must REFUSE, not adopt: no write is sent (so no
+// orphan budget), no campaign id is bound, and the failure is reported as the name being
+// taken. The adoption decision stays the dispatcher's, behind adoptExisting.
 func TestGoogleAds_Adoption_IsOptInAndOffByDefault(t *testing.T) {
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
 	}))
 	t.Cleanup(tokenSrv.Close)
+	var (
+		mu      sync.Mutex
+		mutates []string
+	)
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
-			// Answering with the live campaign would let an unguarded lookup adopt it —
-			// so an implementation that regresses fails on the id AND on this Errorf.
-			t.Errorf("adoption lookup ran without adoptExisting; a re-dispatch after a local "+
-				"delete would silently re-attach to the live upstream campaign (path %q)", r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			raw, _ := io.ReadAll(r.Body)
+			if strings.Contains(string(raw), "campaign_budget.id") {
+				// The pre-write check's read of the found campaign's attached budget.
+				_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"999","name":"LFX | Search Campaign | cncf | KubeCon NA 2026 | brief-1","status":"ENABLED","resourceName":"customers/1234567890/campaigns/999"},"campaignBudget":{"id":"888"}}]}`)
+				return
+			}
 			_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"999","name":"LFX | Search Campaign | cncf | KubeCon NA 2026 | brief-1","status":"ENABLED","resourceName":"customers/1234567890/campaigns/999"}}]}`)
-		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
-			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
-		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
-			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
-		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
-			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
-		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
-			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
-		default:
-			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+			return
 		}
+		mu.Lock()
+		mutates = append(mutates, r.URL.Path)
+		mu.Unlock()
+		http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
 	}))
 	t.Cleanup(apiSrv.Close)
 
@@ -1775,15 +1778,19 @@ func TestGoogleAds_Adoption_IsOptInAndOffByDefault(t *testing.T) {
 	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50}}`)
 
 	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
-	if err != nil {
-		t.Fatalf("Dispatch without adoptExisting must create, got: %v", err)
+	if err == nil {
+		t.Fatalf("a dispatch without adoptExisting must not succeed against a live campaign of its name, got %+v", camp)
 	}
-	if camp == nil || camp.PlatformCampaignID != "222" {
-		t.Fatalf("campaign = %+v, want a freshly CREATED campaign with id 222, not the "+
-			"adopted 999", camp)
+	if camp != nil && camp.PlatformCampaignID != "" {
+		t.Fatalf("campaign bound to %q without adoptExisting; it must never adopt the live 999", camp.PlatformCampaignID)
 	}
-	if camp.Status != campaignStatusCreated {
-		t.Errorf("status = %q, want %q", camp.Status, campaignStatusCreated)
+	if outcome, ok := domain.UpstreamCreateOutcome(err); !ok || outcome != domain.CreateOutcomeCampaignNameTaken {
+		t.Errorf("create outcome = %q, %v; want %q", outcome, ok, domain.CreateOutcomeCampaignNameTaken)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(mutates) != 0 {
+		t.Errorf("no write may be sent when the campaign already exists, got %v", mutates)
 	}
 }
 

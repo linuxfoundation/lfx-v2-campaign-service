@@ -16,7 +16,8 @@ const platformGoogleAds = "google-ads"
 // the creative classifier consumes.
 //
 // It is BUILT FROM the same private tables and constants the create path validates
-// against — performanceMaxImageSlots, demandGenImageSlots, displayImageSlots and the
+// against — performanceMaxImageSlots, demandGenImageSlots, displayImageSlots,
+// searchImageSlots and the
 // count ceilings beside them — rather than restating Google's published geometry a second
 // time. That direction is the whole point of the file. A plan that promised an operator a
 // 4:5 portrait at 480x600 while the create path demanded something else would be worse
@@ -36,7 +37,8 @@ func ImageSlotCatalog() creative.Catalog {
 	pmax := performanceMaxCatalog()
 	demandGen := demandGenCatalog()
 	display := displayCatalog()
-	return creative.Merge(pmax, demandGen, display)
+	search := searchCatalog()
+	return creative.Merge(pmax, demandGen, display, search)
 }
 
 // shapeOf converts one row of a channel's private slot table into the classifier's shape
@@ -152,6 +154,25 @@ func displayCatalog() creative.Catalog {
 			slotFrom(ch, s[displaySquareMarketingSlotIndex], 1, 0, marketingImageGroup, maxDisplayMarketingImages),
 			slotFrom(ch, s[displayLogoSlotIndex], 0, 0, logoImageGroup, maxDisplayLogos),
 			slotFrom(ch, s[displaySquareLogoSlotIndex], 0, 0, logoImageGroup, maxDisplayLogos),
+		},
+	}
+}
+
+// searchCatalog publishes the three Search campaign asset slots (#477, #538).
+//
+// Every one is optional: a Search campaign serves on its ads alone, and validateSearchAssets
+// accepts any of the three without the others. The square and landscape ad images both link
+// as AD_IMAGE and Google counts them as one twenty-image ceiling (RESOURCE_LIMIT on the 21st,
+// whatever the mix), so they share the marketing-image group under maxSearchAdImages, and the
+// business logo carries its own ceiling of one.
+func searchCatalog() creative.Catalog {
+	s := searchImageSlots
+	ch := advertisingChannelSearch
+	return creative.Catalog{
+		Slots: []creative.SlotSpec{
+			slotFrom(ch, s[searchAdImageSlotIndex], 0, 0, marketingImageGroup, maxSearchAdImages),
+			slotFrom(ch, s[searchLandscapeAdImageSlotIndex], 0, 0, marketingImageGroup, maxSearchAdImages),
+			slotFrom(ch, s[searchBusinessLogoSlotIndex], 0, maxSearchBusinessLogos, "", 0),
 		},
 	}
 }

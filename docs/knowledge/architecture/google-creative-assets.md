@@ -24,8 +24,9 @@ and everything after it is the path that already existed.
 The second difference is the number of places an image can appear. Google has many image
 slots — five Demand Gen, five Performance Max and four Display, plus the Demand Gen video logo,
 each `demandGenAdGroups` entry's slots (#460), each ad's in `demandGenAds` or a group's `ads`
-(#474), four more for each `displayAdGroups` entry (#475) and the Search campaign's two
-(`searchAssets.adImages` and `searchAssets.businessLogoImages`, #477), so no fixed number — where the
+(#474), four more for each `displayAdGroups` entry (#475) and the Search campaign's three
+(`searchAssets.adImages`, `searchAssets.landscapeAdImages` (#538) and
+`searchAssets.businessLogoImages`, #477), so no fixed number — where the
 siblings have one slot, or one per variant. `googleAdsCreativeSlots` enumerates them
 by pointer, and the resolve, the config-key contract test and the fixture that exercises every
 slot all drive off that one enumeration rather than off a hand-written list.

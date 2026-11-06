@@ -2041,6 +2041,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("google-ads campaign creation aborted before any request (context already done): %w", ctxErr)
 	}
 
+	// Before the first write: a campaign of this name already in the account means a retry
+	// of a create that got past the campaign step, and the budget create below would succeed
+	// and orphan a second budget (#540). See refuseIfCampaignExists.
+	if r, err := c.refuseIfCampaignExists(ctx, "search", campaignName, campaignNamePartial); err != nil {
+		return r, err
+	}
+
 	// Step 1: create the campaign budget.
 	shared := false
 	budgetReq := mutateRequest{Operations: []mutateOperation{{Create: campaignBudgetCreate{

@@ -1357,9 +1357,10 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 			return nil, notCreated(fmt.Errorf("google ads campaign creation failed before any upstream create: %w", cerr))
 		}
 		// A non-nil result means SOMETHING may exist upstream (an ambiguous create, a
-		// duplicate-name "already exists", or a definite campaign 4xx that still left a
-		// created budget orphan), so the claim is RETAINED and the orphan recorded either
-		// way. Do NOT prepend "UNCONFIRMED": the client already classifies the outcome
+		// duplicate-name "already exists" — including a campaign of the composed name found
+		// before any write (#540), whose partial names that campaign's own budget — or a
+		// definite campaign 4xx that still left a created budget orphan), so the claim is
+		// RETAINED and the partial recorded either way. Do NOT prepend "UNCONFIRMED": the client already classifies the outcome
 		// precisely — "UNCONFIRMED (may exist)" for an ambiguous create vs "creation failed
 		// (budget created)" for a definite 4xx — so a blanket prefix would overwrite that
 		// distinction and route an operator to reconcile an ambiguous outcome for what is
@@ -1983,11 +1984,14 @@ func googleAdsDisplayAdGroups(in []googleAdsDisplayAdGroupConfig) []googleads.Di
 }
 
 // googleAdsSearchAssetsConfig is the Search campaign's linked assets (#477) for the "search"
-// channel. Its two image lists carry URLs or stored-asset ids, so it is named in
+// channel. Its three image lists carry URLs or stored-asset ids, so it is named in
 // googleAdsSnapshotConfig's early return and sanitized there with the creatives.
 type googleAdsSearchAssetsConfig struct {
-	// AdImages are AD_IMAGE assets: square (1:1), at least 300x300, at most 20.
+	// AdImages are square AD_IMAGE assets: 1:1, at least 300x300.
 	AdImages googleAdsImageRefs `json:"adImages"`
+	// LandscapeAdImages are landscape AD_IMAGE assets: 1.91:1, at least 600x314 (#538). At
+	// most 20 together with AdImages.
+	LandscapeAdImages googleAdsImageRefs `json:"landscapeAdImages"`
 	// BusinessLogoImages is the BUSINESS_LOGO asset: at most one square image, at least
 	// 128x128.
 	BusinessLogoImages googleAdsImageRefs `json:"businessLogoImages"`
@@ -2004,6 +2008,7 @@ func googleAdsSearchAssets(in *googleAdsSearchAssetsConfig) googleads.SearchCamp
 	}
 	return googleads.SearchCampaignAssets{
 		AdImages:           in.AdImages.slotEntries(),
+		LandscapeAdImages:  in.LandscapeAdImages.slotEntries(),
 		BusinessLogoImages: in.BusinessLogoImages.slotEntries(),
 		BusinessName:       in.BusinessName,
 	}
@@ -2142,6 +2147,7 @@ func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 	if cfg.SearchAssets != nil {
 		assets := *cfg.SearchAssets
 		assets.AdImages = sanitizeSnapshotImageRefs(cfg.SearchAssets.AdImages)
+		assets.LandscapeAdImages = sanitizeSnapshotImageRefs(cfg.SearchAssets.LandscapeAdImages)
 		assets.BusinessLogoImages = sanitizeSnapshotImageRefs(cfg.SearchAssets.BusinessLogoImages)
 		snapshot.SearchAssets = &assets
 	}

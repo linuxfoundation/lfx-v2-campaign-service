@@ -67,10 +67,13 @@ func CreateOutcome(result *CampaignResult, err error) (string, bool) {
 		// clean budget_name_taken to "verify everything" would cost the operator the one
 		// token that tells them exactly what to look for.
 		return domain.CreateOutcomeBudgetNameTaken, true
-	case result.CampaignID == "" && result.CampaignBudgetID != "" && isDuplicateCampaignNameErr(err):
+	case result.CampaignID == "" && result.CampaignBudgetID != "" &&
+		(isDuplicateCampaignNameErr(err) || isCampaignExistsBeforeCreateErr(err)):
 		// The budget id gate is what makes this token's sentence true: it promises a budget
 		// for this brief exists, which only a budget id establishes — one returned by this
-		// attempt's create, or one this attempt adopted after a DUPLICATE_NAME.
+		// attempt's create, one this attempt adopted after a DUPLICATE_NAME, or (#540) the one
+		// an existing campaign of the composed name is attached to, found before any write by
+		// refuseIfCampaignExists.
 		return domain.CreateOutcomeCampaignNameTaken, true
 	case result.CampaignID != "":
 		// The campaign resource name came back, so the campaign exists whatever failed
