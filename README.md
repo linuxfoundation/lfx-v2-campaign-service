@@ -236,6 +236,15 @@ openssl rand -base64 32
   exercised against a live ad account. The read
   (`GET .../keyword-targeting`) is not gated. The chart sets it to
   `"false"`.
+- `REDDIT_CONVERSION_EVENT_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `redditConfig.conversionEvent` (#549), the pixel event a
+  conversions campaign optimizes toward (sent as `optimization_goal` on the
+  campaign and the ad group instead of the default `PURCHASE`). Only the
+  exact value `true` enables it; anything else fails closed, and a create
+  that sets the field is refused with a 400 before any job exists. Off by
+  default because no live create has yet confirmed Reddit accepts a goal
+  other than `PURCHASE` on a CONVERSIONS campaign under budget optimization.
+  The chart sets it to `"false"`.
 - `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.demandGenAudience`, one
   existing Google Ads Audience on a Demand Gen ad group (#459). Only the

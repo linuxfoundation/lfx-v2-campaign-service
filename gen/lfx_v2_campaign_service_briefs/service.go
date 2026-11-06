@@ -1139,7 +1139,18 @@ type CampaignCreateInput struct {
 	// character, a non-numeric instagramUserId, and any of the three with a
 	// non-string JSON type (null counts as absent) are refused here with a 400,
 	// before any job exists. An absent instagramUserId is not refused, but Meta
-	// will not publish an Instagram placement without it.
+	// will not publish an Instagram placement without it. REDDIT CONVERSION EVENT
+	// (#549): redditConfig.conversionEvent names the pixel event a conversions
+	// campaign optimizes toward, sent as the campaign's and the ad group's
+	// optimization_goal: PURCHASE, SIGN_UP, LEAD, PAGE_VISIT, VIEW_CONTENT,
+	// ADD_TO_CART, ADD_TO_WISHLIST or SEARCH, case-insensitive. Omitted means
+	// PURCHASE, as before. It is accepted only with objective conversions (also
+	// the default when objective is omitted) and only while the deployment sets
+	// REDDIT_CONVERSION_EVENT_ENABLED to "true". An unknown value, another
+	// objective, an explicit null, an empty or non-string value, a case variant of
+	// the key, or the field while the flag is off is refused synchronously with
+	// 400 "invalid campaign config: redditConfig.conversionEvent: ..." before any
+	// job exists.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
