@@ -24,8 +24,10 @@ import (
 // When a CampaignInput carries Targeting it REPLACES the profile clause (TargetingProfile and the
 // runtime config's TargetingProfiles are not read) and the hard-coded jobFunctions and
 // seniorityExclusions. The runtime config's EmployerExclusions are still merged into
-// exclude.employers, so the staff exclusions the caller's ConfigMap carries keep applying.
-// Without Targeting, nothing changes.
+// exclude.employers, so the staff exclusions keep applying. The dispatcher builds that runtime
+// list from the request's own linkedInConfig.employerExclusions (which the self-serve BFF fills
+// from its ConfigMap) and nothing else, so its synchronous pre-flight and CreateCampaign validate
+// the same list. Without Targeting, nothing changes.
 
 // Targeting is linkedInConfig.targeting.
 type Targeting struct {
@@ -128,7 +130,10 @@ func cleanFacet(key string, values []string, where string, exclude bool) ([]stri
 	if len(values) == 0 {
 		return nil, targetingInvalid("%s.%s is empty; omit the facet instead", where, key)
 	}
-	out := make([]string, 0, len(values))
+	// A set, and a stop at the first value past the cap, keep this linear in the input however
+	// long the caller's list is: it runs in the synchronous pre-flight.
+	out := make([]string, 0, min(len(values), f.max+1))
+	seen := make(map[string]struct{}, min(len(values), f.max+1))
 	for _, v := range values {
 		if strings.TrimSpace(v) == "" {
 			return nil, targetingInvalid("%s.%s holds a blank value", where, key)
@@ -143,12 +148,14 @@ func cleanFacet(key string, values []string, where string, exclude bool) ([]stri
 		} else if !f.pattern.MatchString(v) {
 			return nil, targetingInvalid("%s.%s value %s is not %s", where, key, quoteValue(v), f.shape)
 		}
-		if !slices.Contains(out, v) {
-			out = append(out, v)
+		if _, dup := seen[v]; dup {
+			continue
 		}
-	}
-	if len(out) > f.max {
-		return nil, targetingInvalid("%s.%s holds %d values; LinkedIn allows at most %d", where, key, len(out), f.max)
+		seen[v] = struct{}{}
+		out = append(out, v)
+		if len(out) > f.max {
+			return nil, targetingInvalid("%s.%s holds more than %d distinct values; LinkedIn allows at most %d", where, key, f.max, f.max)
+		}
 	}
 	return out, nil
 }
@@ -228,13 +235,17 @@ func ValidateTargeting(t *Targeting, employerExclusions []string) (*Targeting, e
 	if err != nil {
 		return nil, targetingInvalid("employerExclusions: %v", err)
 	}
+	includedEmployers := make(map[string]struct{}, len(included["employers"]))
+	for _, v := range included["employers"] {
+		includedEmployers[employerKey(v)] = struct{}{}
+	}
 	for _, v := range configured {
-		if facetContains("employers", included["employers"], v) {
+		if _, ok := includedEmployers[employerKey(v)]; ok {
 			return nil, targetingInvalid("employers value %s is included but is in employerExclusions", quoteValue(v))
 		}
 	}
-	if n := len(mergeEmployers(out.Exclude["employers"], configured)); n > maxEmployerFacetValues {
-		return nil, targetingInvalid("exclude.employers with employerExclusions holds %d employers; LinkedIn allows at most %d", n, maxEmployerFacetValues)
+	if _, over := mergeEmployersCapped(out.Exclude["employers"], configured, maxEmployerFacetValues); over {
+		return nil, targetingInvalid("exclude.employers with employerExclusions holds more than %d employers; LinkedIn allows at most %d", maxEmployerFacetValues, maxEmployerFacetValues)
 	}
 	return out, nil
 }
@@ -258,13 +269,34 @@ func facetContains(key string, list []string, v string) bool {
 
 // mergeEmployers appends extra to base, skipping an employer already present by id.
 func mergeEmployers(base, extra []string) []string {
-	out := append([]string(nil), base...)
-	for _, e := range extra {
-		if !facetContains("employers", out, e) {
-			out = append(out, e)
+	out, _ := mergeEmployersCapped(base, extra, -1)
+	return out
+}
+
+// mergeEmployersCapped is mergeEmployers with a set of ids, so it is linear, and an optional cap
+// (negative for none): it stops and reports over as soon as the merged list passes it.
+func mergeEmployersCapped(base, extra []string, limit int) (out []string, over bool) {
+	seen := make(map[string]struct{}, len(base))
+	add := func(v string) bool {
+		k := employerKey(v)
+		if _, dup := seen[k]; dup {
+			return true
+		}
+		seen[k] = struct{}{}
+		out = append(out, v)
+		return limit < 0 || len(out) <= limit
+	}
+	for _, v := range base {
+		if !add(v) {
+			return nil, true
 		}
 	}
-	return out
+	for _, v := range extra {
+		if !add(v) {
+			return nil, true
+		}
+	}
+	return out, false
 }
 
 // SegmentFacetsSet reports whether t names an ad segment anywhere (include or exclude). The
