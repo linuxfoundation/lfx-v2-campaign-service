@@ -179,6 +179,8 @@ func TestRedditConversionEvent_DispatchRefusesBeforeAnyRequest(t *testing.T) {
 		{"gate off", "", `,"conversionEvent":"SIGN_UP"`, constants.EnvRedditConversionEventEnabled},
 		{"wrong objective", "true", `,"objective":"awareness","conversionEvent":"SIGN_UP"`, "objective"},
 		{"null", "true", `,"conversionEvent":null`, "must be a string"},
+		// A non-string fails the config decode too; the field-specific refusal must still win.
+		{"number", "true", `,"conversionEvent":5`, "must be a string"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(constants.EnvRedditConversionEventEnabled, tc.flag)
@@ -199,5 +201,29 @@ func TestRedditConversionEvent_DispatchRefusesBeforeAnyRequest(t *testing.T) {
 				t.Fatalf("%d Reddit requests were sent before the refusal", a.requests)
 			}
 		})
+	}
+}
+
+// A stored config_snapshot must replay as a valid config: an omitted event stays absent (the
+// validator refuses an explicit ""), and a set one replays to the same value.
+func TestRedditConversionEvent_ConfigSnapshotReplays(t *testing.T) {
+	t.Setenv(constants.EnvRedditConversionEventEnabled, "true")
+	for _, extra := range []string{``, `,"conversionEvent":"LEAD"`} {
+		config := conversionEventCfg(extra)
+		var cfg redditConfig
+		mustDecode(t, config, "redditConfig", &cfg)
+		snapshot := campaignFromReddit(context.Background(), &reddit.CampaignResult{}, cfg).ConfigSnapshot
+		if extra == `` && strings.Contains(string(snapshot), redditConversionEventKey) {
+			t.Fatalf("snapshot %s records an omitted conversionEvent", snapshot)
+		}
+		replay := json.RawMessage(`{"redditConfig":` + string(snapshot) + `}`)
+		var again redditConfig
+		mustDecode(t, replay, "redditConfig", &again)
+		if err := checkRedditConversionEvent(replay, again); err != nil {
+			t.Fatalf("snapshot %s does not replay: %v", snapshot, err)
+		}
+		if again.ConversionEvent != cfg.ConversionEvent {
+			t.Fatalf("replayed event %q, want %q", again.ConversionEvent, cfg.ConversionEvent)
+		}
 	}
 }

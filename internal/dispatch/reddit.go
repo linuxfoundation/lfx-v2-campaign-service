@@ -65,7 +65,9 @@ type redditConfig struct {
 	// ConversionEvent is the pixel event a conversions campaign optimizes toward (#549); empty
 	// keeps PURCHASE. Gated by REDDIT_CONVERSION_EVENT_ENABLED and validated, synchronously, by
 	// checkRedditConversionEvent (reddit_conversion_event.go).
-	ConversionEvent string `json:"conversionEvent"`
+	// omitempty: an omitted event must stay ABSENT in the persisted ConfigSnapshot, because the
+	// validator refuses an explicit "" and a stored snapshot must replay as a valid config.
+	ConversionEvent string `json:"conversionEvent,omitempty"`
 	VideoGoal       string `json:"videoGoal"`
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
 	// (BIDLESS, unchanged); manual creates a MANUAL_BIDDING CPC campaign — see redditBidPlan.
@@ -227,6 +229,12 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 
 	var cfg redditConfig
 	if err := unmarshalPlatformConfig(config, "redditConfig", &cfg); err != nil {
+		// A wrong-typed conversionEvent also fails this decode; report it by its own field-specific
+		// refusal (checkRedditConversionEvent reads the raw key) rather than as the generic decode
+		// failure, exactly as PreflightCreate would have.
+		if cerr := checkRedditConversionEvent(config, cfg); cerr != nil {
+			return nil, notCreated(cerr)
+		}
 		return nil, notCreated(err)
 	}
 	// The bidding choice, validated before any upstream call (PreflightCreate normally refused a
