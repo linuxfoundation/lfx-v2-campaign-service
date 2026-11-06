@@ -142,7 +142,7 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	// fetchDemandGenGroupImages.
 	groupImages, err := c.fetchDemandGenGroupImages(ctx, pf.demandGenGroups)
 	if err != nil {
-		return nil, err // pre-create: nothing was sent
+		return nil, imageFetchRefusal(ctx, err) // pre-create: nothing was sent
 	}
 
 	campaignName := pf.campaignName

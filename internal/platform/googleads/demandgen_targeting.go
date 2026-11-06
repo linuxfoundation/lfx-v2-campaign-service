@@ -105,7 +105,7 @@ func validateDemandGenAudienceField(kind, customerID, field, audience string) (s
 		return "", fmt.Errorf("google-ads: %s %q is not a customers/<id>/audiences/<id> Audience resource name with a positive canonical id (user lists and custom audiences go inside that Audience in the Google Ads UI)", field, capForError(trimmed))
 	}
 	if m[1] != customerID {
-		return "", fmt.Errorf("google-ads: %s %q belongs to customer %s, not the campaign's account %s; Google refuses another customer's Audience on this account's ad group (INVALID_CUSTOMER_ID)", field, capForError(trimmed), m[1], customerID)
+		return "", fmt.Errorf("google-ads: %s %q belongs to customer %q, not the campaign's account %s; Google refuses another customer's Audience on this account's ad group (INVALID_CUSTOMER_ID)", field, capForError(trimmed), m[1], customerID)
 	}
 	return trimmed, nil
 }

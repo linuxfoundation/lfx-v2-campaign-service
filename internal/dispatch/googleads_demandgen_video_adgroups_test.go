@@ -122,7 +122,7 @@ func TestGoogleAds_DemandGenVideoAndAdGroupRefusalsArePreCreate(t *testing.T) {
 		{"unlisted call to action", `"channel":"demand-gen",` + strings.Replace(video, `"businessName":"LF"`, `"businessName":"LF","callToAction":"REGISTER"`, 1), "is not one this client accepts"},
 		{"ad groups on display", `"channel":"display","demandGenAdGroups":[{"name":"A",` + video + `}]`, "Demand Gen ad groups are not supported on"},
 		{"duplicate group names", `"channel":"demand-gen","demandGenAdGroups":[{"name":"A","videoCreative":` + video[len(`"demandGenVideoCreative":`):] + `},{"name":"a","videoCreative":` + video[len(`"demandGenVideoCreative":`):] + `}]`, "is used more than once"},
-		{"foreign group audience", `"channel":"demand-gen","demandGenAdGroups":[{"name":"A","audience":"customers/9999999999/audiences/4","videoCreative":` + video[len(`"demandGenVideoCreative":`):] + `}]`, "belongs to customer 9999999999"},
+		{"foreign group audience", `"channel":"demand-gen","demandGenAdGroups":[{"name":"A","audience":"customers/9999999999/audiences/4","videoCreative":` + video[len(`"demandGenVideoCreative":`):] + `}]`, "belongs to customer \"9999999999\""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -15,6 +15,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // ---------------------------------------------------------------------------
@@ -1498,10 +1500,33 @@ func budgetKindFor(campaignKind string) string {
 	}
 }
 
+// preflightCampaignKind runs every check a create makes before its first request, for one
+// campaign kind.
+//
+// The connection's own account ids are checked first and returned as they are: a bad stored
+// customer id is the connection's fault, not the operator's input. Every refusal after that is
+// the operator's input, judged by this client's own rules before anything is sent, so it is
+// marked operator-safe (#494): before that, all of them reached the job result as "platform
+// campaign creation failed", including the ones that name the exact rule broken (a Performance
+// Max create with no 60-character description failed in prod that way). Those validators quote
+// caller values with %q, and WrapQuotedPreflightRefusal re-renders each quoted value through
+// domain.CallerValue for the job result, so a URL or free text in one is withheld there.
 func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaignPreflight, error) {
 	if err := c.validateAccountIDs(); err != nil {
 		return nil, err
 	}
+	pf, err := c.preflightCampaignInput(kind, in)
+	if err != nil {
+		return nil, domain.WrapQuotedPreflightRefusal(err)
+	}
+	return pf, nil
+}
+
+// preflightCampaignInput is preflightCampaignKind's input checks, after the connection's
+// account ids are known good. Every error it returns is a refusal of the caller's input raised
+// before any request, and every caller value it formats is quoted (%q); keep both true, because
+// preflightCampaignKind marks its errors operator-safe on that basis.
+func (c *Client) preflightCampaignInput(kind string, in CampaignInput) (*campaignPreflight, error) {
 	// Require BOTH attribution fields (mirrors the meta/twitter/reddit clients, which
 	// require Project and EventName independently). Project is the canonical
 	// attribution key the data pipeline parses out of the campaign name, so a campaign
@@ -1897,7 +1922,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// over-sized file or a non-square image costs an error and nothing else.
 	searchImages, err := c.fetchSearchAssetImages(ctx, pf.searchAssets)
 	if err != nil {
-		return nil, err // pre-create: nothing was sent
+		return nil, imageFetchRefusal(ctx, err) // pre-create: nothing was sent
 	}
 	amountMicros, budgetName, campaignName := pf.amountMicros, pf.budgetName, pf.campaignName
 	// The ad group, its bid, its copy and its targeting are no longer read

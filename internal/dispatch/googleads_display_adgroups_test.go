@@ -110,7 +110,7 @@ func TestGoogleAds_DisplayAdGroupsReachThePreflight(t *testing.T) {
 		t.Fatal(err)
 	}
 	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, raw)
-	if err == nil || !strings.Contains(err.Error(), `| Prospecting": google-ads: ExcludedAudienceSegments entry "customers/9999999999/userLists/70" is on customer 9999999999`) {
+	if err == nil || !strings.Contains(err.Error(), `| Prospecting": google-ads: ExcludedAudienceSegments entry "customers/9999999999/userLists/70" is on customer "9999999999"`) {
 		t.Fatalf("err = %v, want the second group's foreign exclusion refused by name", err)
 	}
 	if camp != nil {
@@ -445,7 +445,7 @@ func TestGoogleAds_DisplayAudienceExclusionsGateOpensOnExactlyTrue(t *testing.T)
 	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, raw)
 	if err == nil || strings.Contains(err.Error(), "disabled on this deployment") ||
 		!strings.Contains(err.Error(), `| Prospecting": google-ads: ExcludedAudienceSegments `+
-			`entry "customers/9999999999/userLists/70" is on customer 9999999999`) {
+			`entry "customers/9999999999/userLists/70" is on customer "9999999999"`) {
 		t.Fatalf("err = %v, want the client's refusal of group 2's foreign exclusion, "+
 			"not the gate", err)
 	}
@@ -469,7 +469,7 @@ func TestGoogleAds_DisplayAudienceExclusionsGateLeavesUngatedGroupInputsAlone(t 
 	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, raw)
 	if err == nil || strings.Contains(err.Error(), "disabled on this deployment") ||
 		!strings.Contains(err.Error(), `| Prospecting": google-ads: UserInterests entry `+
-			`"customers/9999999999/userInterests/44" is on customer 9999999999`) {
+			`"customers/9999999999/userInterests/44" is on customer "9999999999"`) {
 		t.Fatalf("err = %v, want the client's refusal of group 2's foreign user interest, "+
 			"not the gate", err)
 	}
