@@ -106,10 +106,10 @@ func TestLiveMigration000056RefusesAMismatchedCampaign(t *testing.T) {
 	}
 }
 
-// TestLiveMigration000056SwapsTheBriefFK pins the other half: over consistent rows 000056 applies,
-// replaces the id-only key with the composite one, and from then on refuses a campaign that names
-// a brief under another project.
-func TestLiveMigration000056SwapsTheBriefFK(t *testing.T) {
+// TestLiveMigration000056AddsTheCompositeFK pins the other half: over consistent rows 000056
+// applies, adds the composite key beside the (now redundant) id-only one, and from then on
+// refuses a campaign that names a brief under another project.
+func TestLiveMigration000056AddsTheCompositeFK(t *testing.T) {
 	_ = dbtest.Pool(t)
 	ctx := context.Background()
 
@@ -131,8 +131,9 @@ func TestLiveMigration000056SwapsTheBriefFK(t *testing.T) {
 		t.Fatalf("migrate to 56 over consistent rows: %s", dbtest.SafeDSNErrFor(dsn, err))
 	}
 	idOnly, composite := campaignBriefFKs(ctx, t, conn)
-	if idOnly || !composite {
-		t.Errorf("after 000056: id-only FK = %v, composite FK = %v; want (false, true)", idOnly, composite)
+	if !idOnly || !composite {
+		t.Errorf("after 000056: id-only FK = %v, composite FK = %v; want (true, true) -- the "+
+			"id-only key is deliberately kept (dropping it needs ACCESS EXCLUSIVE)", idOnly, composite)
 	}
 
 	_, err = conn.Exec(ctx,
@@ -291,7 +292,82 @@ func TestLiveMigration000056WaitsOutABusyTableWithoutBlockingIt(t *testing.T) {
 	if version != 56 || dirty {
 		t.Errorf("after the wait: version = %d dirty = %v, want 56 and clean", version, dirty)
 	}
-	if idOnly, composite := campaignBriefFKs(ctx, t, conn); idOnly || !composite {
-		t.Errorf("after the wait: id-only FK = %v, composite FK = %v; want (false, true)", idOnly, composite)
+	if _, composite := campaignBriefFKs(ctx, t, conn); !composite {
+		t.Error("after the wait: the composite FK is missing")
+	}
+}
+
+// TestLiveMigration000056RetriesADeadlock pins the deadlock arm of 000056's retry loop. A
+// transaction that updates a brief and then writes a campaign takes ROW EXCLUSIVE on
+// campaign_briefs, then on campaigns. The ADD takes SHARE ROW EXCLUSIVE on campaigns, then on
+// campaign_briefs: the opposite order. Interleaved, the two deadlock, and because the migration
+// started waiting first its deadlock_timeout expires first, so PostgreSQL aborts the migration's
+// attempt (40P01). That must be retried, not leave version 56 dirty, and the application
+// transaction must commit.
+func TestLiveMigration000056RetriesADeadlock(t *testing.T) {
+	_ = dbtest.Pool(t)
+	ctx := context.Background()
+
+	dsn := freshDatabase(ctx, t)
+	m := newMigrator(t, dsn)
+	if err := m.Migrate(55); err != nil {
+		t.Fatalf("migrate to 55: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+
+	connect := func() *pgx.Conn {
+		t.Helper()
+		c, err := pgx.Connect(ctx, dsn)
+		if err != nil {
+			t.Fatalf("connect to the scratch database: %s", dbtest.SafeDSNErrFor(dsn, err))
+		}
+		t.Cleanup(func() { _ = c.Close(context.Background()) })
+		return c
+	}
+	conn, app := connect(), connect()
+	briefID, _ := seedBriefAndCampaign(ctx, t, conn, "p-owner", "p-owner", "s-ok")
+
+	atx, err := app.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin the application transaction: %v", err)
+	}
+	defer func() { _ = atx.Rollback(context.Background()) }()
+	if _, err := atx.Exec(ctx, `UPDATE campaign_briefs SET updated_at = now() WHERE id = $1`, briefID); err != nil {
+		t.Fatalf("update the brief: %v", err)
+	}
+
+	migrated := make(chan error, 1)
+	go func() { migrated <- m.Migrate(56) }()
+
+	// Let the ADD take campaigns and queue on campaign_briefs, then close the cycle.
+	time.Sleep(300 * time.Millisecond)
+	if _, err := atx.Exec(ctx,
+		`INSERT INTO campaigns (project_id, brief_id, platform, campaign_name, status)
+		 VALUES ('p-owner', $1, 'meta-ads', 'n/a', 'created')`, briefID); err != nil {
+		t.Fatalf("the application's campaign write was the deadlock victim (%v); the migration, "+
+			"which waited first, should have been", err)
+	}
+	if err := atx.Commit(ctx); err != nil {
+		t.Fatalf("commit the application transaction: %v", err)
+	}
+
+	if merr := <-migrated; merr != nil {
+		t.Fatalf("000056 failed after a deadlock: %s — a 40P01 must be retried, not fail the "+
+			"migration and leave version 56 dirty", dbtest.SafeDSNErrFor(dsn, merr))
+	}
+	if _, cerr := m.Close(); cerr != nil {
+		t.Fatalf("close the migrator: %v", cerr)
+	}
+	var (
+		version int
+		dirty   bool
+	)
+	if err := conn.QueryRow(ctx, `SELECT version, dirty FROM public.schema_migrations LIMIT 1`).Scan(&version, &dirty); err != nil {
+		t.Fatalf("read the migration version: %v", err)
+	}
+	if version != 56 || dirty {
+		t.Errorf("after the deadlock: version = %d dirty = %v, want 56 and clean", version, dirty)
+	}
+	if _, composite := campaignBriefFKs(ctx, t, conn); !composite {
+		t.Error("after the deadlock: the composite FK is missing")
 	}
 }

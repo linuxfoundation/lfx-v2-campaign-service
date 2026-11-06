@@ -22,16 +22,25 @@
 -- it (Up() refuses with ErrDirty, which startup treats as permanent). Recovery: resolve the rows
 -- by hand, then `migrate force 55` and restart; the next boot runs 000056 again.
 --
--- A LOCK WAIT NEVER FAILS IT, AND NEVER QUEUES TRAFFIC FOR LONG. ADD CONSTRAINT takes SHARE ROW
--- EXCLUSIVE on campaigns and campaign_briefs and the DROP takes ACCESS EXCLUSIVE on campaigns.
--- Queued behind one long transaction, either request would stall every later brief and campaign
--- write (and, for the DROP, read) that the N-1 pods serve during the rollout. So the DDL runs in a
--- retry loop: each attempt waits at most 2s for its locks (lock_timeout), and on 55P03 its
--- subtransaction rolls back, releasing every lock it took and leaving the queue, then sleeps 1s so
--- queued traffic drains. Failing the migration on a timeout instead would leave version 56 dirty
--- (see above), turning a busy table into a manual recovery, which is why the timeout is caught
--- rather than allowed to abort. After 30 attempts (about 90s) the last attempt waits without a
--- timeout, as every earlier migration here does, so a lock wait still ends in success.
+-- ADD ONLY, NO DROP. 000002's id-only campaigns_brief_id_fkey stays. It is redundant (the
+-- composite key implies it), and dropping it would need ACCESS EXCLUSIVE on campaigns, which
+-- blocks reads, and an ADD -> DROP lock upgrade inside one transaction, which can deadlock against
+-- an ordinary read-then-update. ADD CONSTRAINT alone takes SHARE ROW EXCLUSIVE on campaigns and
+-- campaign_briefs: writes to either wait for it, reads never do. A later migration may drop the
+-- redundant key once that cost is worth paying.
+--
+-- BOUNDED, RETRIED LOCK WAITS. Queued behind one long transaction, the ADD's lock request would
+-- hold every later campaign and brief write behind it. So it runs in a retry loop: each attempt
+-- waits at most 2s (lock_timeout), and on 55P03 or 40P01 (a deadlock with a transaction that
+-- updates a brief and then writes a campaign, which PostgreSQL resolves by aborting the attempt)
+-- its subtransaction rolls back, releasing the locks it took and its place in the queue, and
+-- sleeps 1s so queued writes drain. A caught failure is not a migration failure, so it does not
+-- dirty the version.
+--
+-- The loop is bounded at 15 attempts (about 45s), well inside the chart's ~90s startupProbe
+-- budget: migrations run at boot, and a pod killed mid-migration would leave version 56 dirty
+-- anyway. If every attempt fails, it raises, which leaves version 56 dirty like the precheck
+-- does: wait out or end the blocking transaction, then `migrate force 55` and restart.
 --
 -- campaign_jobs is deliberately NOT included: it has no project_id column, so a composite key
 -- there needs a new column and a backfill, which this migration does not do. Its tenant scope
@@ -52,21 +61,18 @@ BEGIN
     LOOP
         attempt := attempt + 1;
         BEGIN
-            -- is_local: scoped to this transaction, and reverted with the subtransaction.
-            PERFORM set_config('lock_timeout', CASE WHEN attempt <= 30 THEN '2s' ELSE '0' END, true);
-
-            -- Add the composite key before dropping the id-only one, so the table is never
-            -- without a brief reference.
+            -- is_local: scoped to this transaction.
+            PERFORM set_config('lock_timeout', '2s', true);
             ALTER TABLE campaigns
                 ADD CONSTRAINT campaigns_brief_project_fkey
                 FOREIGN KEY (brief_id, project_id)
                 REFERENCES campaign_briefs (id, project_id);
-
-            ALTER TABLE campaigns
-                DROP CONSTRAINT IF EXISTS campaigns_brief_id_fkey;
             EXIT;
-        EXCEPTION WHEN lock_not_available THEN
-            RAISE NOTICE '000056: attempt % could not take its locks within 2s; retrying', attempt;
+        EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
+            IF attempt >= 15 THEN
+                RAISE EXCEPTION '000056: could not take the campaigns / campaign_briefs locks in % attempts (last: %); end the blocking transaction, then migrate force 55 and restart', attempt, SQLERRM;
+            END IF;
+            RAISE NOTICE '000056: attempt % failed (%); retrying', attempt, SQLERRM;
             PERFORM pg_sleep(1);
         END;
     END LOOP;

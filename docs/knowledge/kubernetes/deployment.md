@@ -372,9 +372,12 @@ refuse (it never rewrites data), and the refusal leaves the version recorded as 
 new pod fails at boot with `ErrDirty` and a restart does not retry it. Recovery, in order: confirm
 the schema still has `campaigns_brief_id_fkey` and no `campaigns_brief_project_fkey` (the file is
 one transaction, so it rolled back), resolve each mismatched row by hand, run `migrate force 55`
-against the database, then restart the pods. A busy `campaigns` table does NOT cause this: the
-DDL retries with a 2s lock timeout per attempt and gives up its lock-queue place between attempts,
-so it waits the blocker out without failing or stalling traffic. Rolling back past `000056` needs
+against the database, then restart the pods. A briefly busy table does NOT cause this: the ADD
+retries lock timeouts and deadlocks with a 2s lock timeout per attempt, giving up its lock-queue
+place between attempts. Writes to `campaigns` and `campaign_briefs` wait at most 2s at a time, and
+reads never wait. It gives up after 15 attempts (about 45s, inside the ~90s startupProbe), which
+also leaves version 56 dirty. Recover the same way: end the blocking transaction (find it in
+`pg_stat_activity`), `migrate force 55`, restart. Rolling back past `000056` needs
 no schema step: the older image writes only matching pairs, so leave the composite key in place.
 
 **Rolling back past the Google multi-campaign release (cs-2).** No migration: cs-2 only adds

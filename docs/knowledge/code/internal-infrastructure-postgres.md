@@ -531,27 +531,35 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `TestLiveClaimWritesLabelsOnlyOnInsert` and `TestLiveCampaignLabelChecksMatchTheModel` (under
   `dbtest/`), and by the scan-order tests in `campaign_repo_test.go`.
 
-- `000056` — composite tenant foreign key on `campaigns` (#534): replaces `000002`'s
-  `brief_id`-only key with `(brief_id, project_id) -> campaign_briefs (id, project_id)`, the
-  shape `000007`, `000028` and `000033` gave audiences, creative assets and wizard sessions (the
-  referenced `UNIQUE (id, project_id)` is `000007`'s). Every writer already paired the two: the
-  dispatch claim and upsert stamp `brief.ProjectID`/`brief.ID` from the loaded brief, and the
-  adopt INSERT runs under `lockAdoptBriefQuery`. The up FAILS LOUDLY on any existing row whose
-  `project_id` differs from its brief's (a `DO` block raises with the count) and never rewrites
-  data. That refusal rolls the schema back but leaves version 56 DIRTY (golang-migrate records the
-  version before running the file, and `runMigrations` surfaces `ErrDirty`, which startup treats as
-  permanent), so no later boot retries it. Recovery: resolve the mismatched rows by hand, run
-  `migrate force 55`, and restart; the next boot runs `000056` again. A LOCK WAIT never fails it:
-  the DDL runs in a retry loop where each attempt waits at most 2s (`lock_timeout`), and on
-  `55P03` the attempt's subtransaction rolls back (releasing its locks and its place in the queue)
-  and sleeps 1s so queued traffic drains; after 30 attempts the last one waits without a timeout.
-  Pre-deploy, `SELECT count(*) FROM campaigns c JOIN campaign_briefs b ON b.id = c.brief_id
-  WHERE b.project_id <> c.project_id` must be 0. The down restores the id-only key and always
-  applies. `campaign_jobs` is NOT included: it has no `project_id` column, so a composite key
-  there needs a new column plus a backfill; its tenant scope stays `GetJob`'s JOIN through
-  `campaign_briefs`. Pinned by `TestLiveMigration000056RefusesAMismatchedCampaign`,
-  `TestLiveMigration000056SwapsTheBriefFK`, `TestLiveMigration000056WaitsOutABusyTableWithoutBlockingIt`
-  and `TestLiveListCampaignsForBriefExcludesAnotherProject`.
+- `000056` — composite tenant foreign key on `campaigns` (#534): ADDS
+  `campaigns_brief_project_fkey`, `(brief_id, project_id) -> campaign_briefs (id, project_id)`,
+  the shape `000007`, `000028` and `000033` gave audiences, creative assets and wizard sessions
+  (the referenced `UNIQUE (id, project_id)` is `000007`'s). `000002`'s id-only
+  `campaigns_brief_id_fkey` is deliberately KEPT, redundant: dropping it needs ACCESS EXCLUSIVE on
+  `campaigns` (blocking reads) and an ADD -> DROP lock upgrade that can deadlock, while the ADD
+  alone takes SHARE ROW EXCLUSIVE on both tables (writes wait, reads never do). Every writer
+  already paired the two columns: the dispatch claim and upsert stamp `brief.ProjectID`/`brief.ID`
+  from the loaded brief, and the adopt INSERT runs under `lockAdoptBriefQuery`.
+  - **Mismatched rows: fails loudly, never repairs.** A `DO` block raises with the count. The
+    schema rolls back but golang-migrate leaves version 56 DIRTY (it records the version before
+    running the file; `runMigrations` surfaces `ErrDirty`, which startup treats as permanent), so
+    no later boot retries it. Recovery: resolve the rows by hand, `migrate force 55`, restart.
+    Pre-deploy, `SELECT count(*) FROM campaigns c JOIN campaign_briefs b ON b.id = c.brief_id
+    WHERE b.project_id <> c.project_id` must be 0.
+  - **Lock waits and deadlocks are retried.** The ADD runs in a loop: each attempt waits at most
+    2s (`lock_timeout`); on `55P03` or `40P01` its subtransaction rolls back (releasing its locks
+    and queue place) and sleeps 1s, so queued writes drain. A caught failure does not dirty the
+    version. The loop is bounded at 15 attempts (about 45s), inside the chart's ~90s startupProbe
+    budget, because a pod killed mid-migration would dirty it anyway. If every attempt fails it
+    raises (dirty): end the blocking transaction, `migrate force 55`, restart.
+  - The down drops the composite key only and always applies. `campaign_jobs` is NOT included: it
+    has no `project_id` column, so a composite key there needs a new column plus a backfill; its
+    tenant scope stays `GetJob`'s JOIN through `campaign_briefs`.
+  - Pinned by `TestLiveMigration000056RefusesAMismatchedCampaign`,
+    `TestLiveMigration000056AddsTheCompositeFK`,
+    `TestLiveMigration000056WaitsOutABusyTableWithoutBlockingIt`,
+    `TestLiveMigration000056RetriesADeadlock` and
+    `TestLiveListCampaignsForBriefExcludesAnotherProject`.
 
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
 
@@ -2030,7 +2038,7 @@ That transaction's OPENING statement is `lockBriefRowForReplaceQuery` on the par
 unconditionally — the same ROW lock `lockBriefForAssetWriteQuery` takes, with the same
 `(id, project_id)` predicate (#534). Until 000056 it was keyed on `brief_id` alone, because
 `campaigns`' FK was on `id` alone and a `project_id` predicate could then match nothing on a row
-whose columns disagreed; the composite tenant FK in 000056 rules that row out. The result is
+whose columns disagreed; the composite tenant FK 000056 adds rules that row out. The result is
 scanned, and a miss is `ErrNotFound`.
 `ReplaceCampaign` writes every mutable column — `config_snapshot` included — so
 every one of its callers rewrites the snapshot whether or not it meant to change it, and the

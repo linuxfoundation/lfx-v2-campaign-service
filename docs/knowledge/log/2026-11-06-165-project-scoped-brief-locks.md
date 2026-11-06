@@ -11,13 +11,18 @@ cannot cross projects.
 - `ReplaceCampaign`'s opening brief lock is now `lockBriefRowForReplaceQuery` (renamed from
   `lockBriefRowByIDQuery`), keyed on `(id, project_id)`. A mismatched project is `ErrNotFound`
   at once, without waiting on the brief's row lock.
-- Migration `000056` swaps `campaigns`' `brief_id`-only FK for the composite
-  `(brief_id, project_id) -> campaign_briefs (id, project_id)`. It fails loudly on any existing
-  mismatched row and never rewrites data. That failure leaves version 56 dirty, so a restart does
-  not retry it: resolve the rows, `migrate force 55`, restart. A lock wait never fails it: the DDL
-  retries with a 2s `lock_timeout` per attempt, giving up its queue place between attempts, so a
-  busy table neither dirties the version nor stalls traffic behind the migration. The id-only key was why the replace lock could not
-  carry `project_id` before: a two-column predicate could have silently missed.
+- Migration `000056` adds the composite `(brief_id, project_id) -> campaign_briefs (id,
+  project_id)` key to `campaigns`. 000002's id-only key stays, redundant: dropping it would need
+  ACCESS EXCLUSIVE (blocking reads) and an ADD -> DROP lock upgrade that can deadlock. The id-only
+  key was why the replace lock could not carry `project_id` before: a two-column predicate could
+  have silently missed.
+- It fails loudly on any existing mismatched row and never rewrites data. That failure leaves
+  version 56 dirty, so a restart does not retry it: resolve the rows, `migrate force 55`, restart.
+- Lock waits and deadlocks do not fail it. The ADD retries with a 2s `lock_timeout` per attempt,
+  catching `55P03` and `40P01` and giving up its queue place between attempts, for at most 15
+  attempts (about 45s, inside the ~90s startupProbe). Only exhausting all 15 fails it, which
+  dirties the version like the precheck (same recovery). While it waits, writes queue for at most
+  2s at a time and reads never queue.
 - `campaign_jobs` keeps its id-only FK: it has no `project_id` column, and a composite key would
   need a new column plus a backfill.
 - `TestBriefRowLocks_AreProjectScoped` pins every named brief `FOR UPDATE` statement to
