@@ -984,6 +984,12 @@ demandGenDemographics?:         — OPTIONAL, DEMAND GEN ONLY (#498). Demographi
                                   `UNDETERMINED` adds the users Google could not classify and needs a
                                   real value beside it. An empty or absent list does not restrict
                                   that dimension; an object with every list empty is refused.
+                                  A list naming EVERY value of its dimension plus `UNDETERMINED`
+                                  restricts nobody, and Google drops such a dimension from the
+                                  stored Audience (#519, real create read back 2026-11-06), so it is
+                                  left out of the request too; an object whose every set dimension
+                                  is like that and that names no segment is refused ("restricts
+                                  nobody").
                                   `audienceSegments` are EXISTING user lists,
                                   `customers/<this account>/userLists/<id>`, at most 20, put in the
                                   same Audience. `customAudiences` (#516) are EXISTING custom

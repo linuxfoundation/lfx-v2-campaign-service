@@ -48,6 +48,9 @@ import (
 //   - an age segment off Google's bracket bounds, e.g. 30-50 (DIMENSION_INVALID);
 //   - a name longer than 255 characters (TOO_LONG);
 //   - a name already used in the account (NAME_ALREADY_IN_USE), which is how a retry lands.
+// #519's real create and GAQL read-back (2026-11-06) showed Google DROPS a dimension naming every
+// value and undetermined, since it restricts nobody, so this file leaves one out too: see
+// coversEveryone.
 // ---------------------------------------------------------------------------
 
 // DemandGenDemographics is the demographic targeting of a Demand Gen campaign, built into
@@ -205,7 +208,15 @@ func validateDemandGenDemographics(kind, customerID, campaignName string, in Cam
 	if err != nil {
 		return nil, err
 	}
-	if len(ages) > 0 {
+	// A dimension naming every value AND UNDETERMINED restricts nobody, and Google drops it
+	// from the Audience it stores (#519, read back from a real create on 2026-11-06), so it is
+	// left out of the request too: the planned dimensions must be the ones Google holds, or a
+	// retry's NAME_ALREADY_IN_USE reuse finds them different and dead-ends.
+	var everyone []string
+	switch {
+	case coversEveryone(ages, ageUndetermined, len(ageBrackets)):
+		everyone = append(everyone, "age")
+	case len(ages) > 0:
 		dims = append(dims, audienceDimension{Age: &ageDimension{AgeRanges: ageSegments(ages), IncludeUndetermined: ageUndetermined}})
 		summary = append(summary, fmt.Sprintf("%d age range(s)", len(ages)))
 	}
@@ -214,7 +225,10 @@ func validateDemandGenDemographics(kind, customerID, campaignName string, in Cam
 	if err != nil {
 		return nil, err
 	}
-	if len(genders) > 0 {
+	switch {
+	case coversEveryone(genders, genderUndetermined, len(demographicGenderOrder)):
+		everyone = append(everyone, "gender")
+	case len(genders) > 0:
 		dims = append(dims, audienceDimension{Gender: &genderDimension{Genders: inOrder(demographicGenderOrder, genders), IncludeUndetermined: genderUndetermined}})
 		summary = append(summary, fmt.Sprintf("%d gender(s)", len(genders)))
 	}
@@ -223,7 +237,10 @@ func validateDemandGenDemographics(kind, customerID, campaignName string, in Cam
 	if err != nil {
 		return nil, err
 	}
-	if len(incomes) > 0 {
+	switch {
+	case coversEveryone(incomes, incomeUndetermined, len(allIncomeRanges)-1): // allIncomeRanges ends with UNDETERMINED
+		everyone = append(everyone, "income")
+	case len(incomes) > 0:
 		dims = append(dims, audienceDimension{HouseholdIncome: &householdIncomeDimension{IncomeRanges: inOrder(allIncomeRanges, incomes), IncludeUndetermined: incomeUndetermined}})
 		summary = append(summary, fmt.Sprintf("%d income range(s)", len(incomes)))
 	}
@@ -232,7 +249,10 @@ func validateDemandGenDemographics(kind, customerID, campaignName string, in Cam
 	if err != nil {
 		return nil, err
 	}
-	if len(parents) > 0 {
+	switch {
+	case coversEveryone(parents, parentUndetermined, len(demographicParentalOrder)):
+		everyone = append(everyone, "parental status")
+	case len(parents) > 0:
 		dims = append(dims, audienceDimension{ParentalStatus: &parentalStatusDimension{ParentalStatuses: inOrder(demographicParentalOrder, parents), IncludeUndetermined: parentUndetermined}})
 		summary = append(summary, fmt.Sprintf("%d parental status(es)", len(parents)))
 	}
@@ -264,6 +284,13 @@ func validateDemandGenDemographics(kind, customerID, campaignName string, in Cam
 		if len(customs) > 0 {
 			summary = append(summary, fmt.Sprintf("%d custom audience(s)", len(customs)))
 		}
+	}
+
+	if len(dims) == 0 {
+		return nil, fmt.Errorf("google-ads: DemandGenDemographics restricts nobody: each dimension it sets (%s) names every value and UNDETERMINED, and it names no user list or custom audience, so Google would store an Audience with no dimensions; narrow a dimension, add a segment, or omit DemandGenDemographics", strings.Join(everyone, ", "))
+	}
+	if len(everyone) > 0 {
+		summary = append(summary, "every "+strings.Join(everyone, ", ")+" (no restriction, left out)")
 	}
 
 	return &demandGenDemographicPlan{
@@ -313,6 +340,12 @@ func demographicTargets(noun, plural string, values []string, allowed map[string
 		return nil, false, fmt.Errorf("google-ads: %s list holds only UNDETERMINED; Google needs at least one real value in the dimension (UNDETERMINED only adds the users it could not classify), so add one or omit the list", strings.TrimPrefix(noun, "Demand Gen "))
 	}
 	return out, include, nil
+}
+
+// coversEveryone reports whether a resolved dimension names every one of its n values and
+// UNDETERMINED, which is no restriction at all.
+func coversEveryone(values []string, undetermined bool, n int) bool {
+	return undetermined && len(values) == n
 }
 
 // inOrder returns the members of set in the order of order.
