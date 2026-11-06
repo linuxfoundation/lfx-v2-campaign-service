@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,8 +41,8 @@ const validLinkedInTargeting = `{"include":[{"titles":["urn:li:title:1234","urn:
 
 func TestLinkedIn_TargetingRefusedWhileTheFlagIsOff(t *testing.T) {
 	t.Setenv(constants.EnvLinkedInAdsTargetingEnabled, "")
-	calls := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
 	defer srv.Close()
 	d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
 	cfg := linkedInTargetingConfig(validLinkedInTargeting)
@@ -55,8 +56,8 @@ func TestLinkedIn_TargetingRefusedWhileTheFlagIsOff(t *testing.T) {
 	if !errors.Is(err, domain.ErrCreateConfigInvalid) || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
 		t.Fatalf("Dispatch = %v, want a not-created config refusal", err)
 	}
-	if calls != 0 {
-		t.Errorf("%d LinkedIn requests for a refused create", calls)
+	if n := calls.Load(); n != 0 {
+		t.Errorf("%d LinkedIn requests for a refused create", n)
 	}
 }
 
@@ -70,6 +71,7 @@ func TestLinkedIn_TargetingPreflight(t *testing.T) {
 		{"titles with seniorities", `{"include":[{"titles":["urn:li:title:1"]},{"seniorities":["urn:li:seniority:5"]}]}`, "titles together"},
 		{"unknown facet", `{"include":[{"memberBehaviors":["urn:li:memberBehavior:2"]}]}`, "unknown facet"},
 		{"no clauses", `{"include":[]}`, "at least one clause"},
+		{"included employer in employerExclusions", `{"include":[{"employers":["urn:li:organization:1111"]}]}`, "is in employerExclusions"},
 		{"locale excluded", `{"include":[{"skills":["urn:li:skill:1"]}],"exclude":{"interfaceLocales":["urn:li:locale:en_US"]}}`, "only under include"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -137,8 +139,11 @@ func TestLinkedIn_TargetingReachesTheCampaign(t *testing.T) {
 		`"include":{"and":[{"or":{"urn:li:adTargetingFacet:locations":["urn:li:geo:103644278"]}},` +
 		`{"or":{"urn:li:adTargetingFacet:titles":["urn:li:title:1234"]}},` +
 		`{"or":{"urn:li:adTargetingFacet:dynamicSegments":["urn:li:adSegment:16182906"]}}]}}`
-	if string(criteria) != want {
-		t.Errorf("targetingCriteria:\n got %s\nwant %s", criteria, want)
+	mu.Lock()
+	got := string(criteria)
+	mu.Unlock()
+	if got != want {
+		t.Errorf("targetingCriteria:\n got %s\nwant %s", got, want)
 	}
 	if !strings.Contains(string(camp.ConfigSnapshot), `"targeting"`) || !strings.Contains(string(camp.ConfigSnapshot), "urn:li:adSegment:16182906") {
 		t.Errorf("snapshot lost the targeting: %s", camp.ConfigSnapshot)
