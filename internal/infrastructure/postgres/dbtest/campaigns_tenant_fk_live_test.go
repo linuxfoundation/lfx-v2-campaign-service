@@ -210,3 +210,88 @@ func TestLiveReplaceCampaignBriefLockIsProjectScoped(t *testing.T) {
 		t.Fatalf("the owning project's ReplaceCampaign: %v", err)
 	}
 }
+
+// TestLiveMigration000056WaitsOutABusyTableWithoutBlockingIt pins 000056's lock-retry loop. A
+// transaction holding a conflicting lock on campaigns (here ROW EXCLUSIVE, what any INSERT or
+// UPDATE takes) for longer than one attempt's 2s lock_timeout must neither fail the migration —
+// a failure would leave version 56 dirty and need `migrate force 55` — nor hold a queued lock
+// request for the whole wait: an INSERT issued while the migration is waiting has to get through
+// before the blocker lets go, which it can only do once an attempt gives up its place in the queue.
+func TestLiveMigration000056WaitsOutABusyTableWithoutBlockingIt(t *testing.T) {
+	_ = dbtest.Pool(t)
+	ctx := context.Background()
+
+	dsn := freshDatabase(ctx, t)
+	m := newMigrator(t, dsn)
+	if err := m.Migrate(55); err != nil {
+		t.Fatalf("migrate to 55: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+
+	connect := func() *pgx.Conn {
+		t.Helper()
+		c, err := pgx.Connect(ctx, dsn)
+		if err != nil {
+			t.Fatalf("connect to the scratch database: %s", dbtest.SafeDSNErrFor(dsn, err))
+		}
+		t.Cleanup(func() { _ = c.Close(context.Background()) })
+		return c
+	}
+	conn, blocker, writer := connect(), connect(), connect()
+	briefID, _ := seedBriefAndCampaign(ctx, t, conn, "p-owner", "p-owner", "s-ok")
+
+	const hold = 5 * time.Second
+	btx, err := blocker.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin the blocker: %v", err)
+	}
+	if _, err := btx.Exec(ctx, `LOCK TABLE campaigns IN ROW EXCLUSIVE MODE`); err != nil {
+		t.Fatalf("take the blocking lock: %v", err)
+	}
+	released := make(chan time.Time, 1)
+	go func() {
+		time.Sleep(hold)
+		_ = btx.Rollback(context.Background())
+		released <- time.Now()
+	}()
+
+	migrated := make(chan error, 1)
+	go func() { migrated <- m.Migrate(56) }()
+
+	// Let the first attempt queue behind the blocker, then write.
+	time.Sleep(300 * time.Millisecond)
+	if _, err := writer.Exec(ctx,
+		`INSERT INTO campaigns (project_id, brief_id, platform, campaign_name, status)
+		 VALUES ('p-owner', $1, 'meta-ads', 'n/a', 'created')`, briefID); err != nil {
+		t.Fatalf("insert while 000056 waits: %v", err)
+	}
+	wrote := time.Now()
+
+	merr := <-migrated
+	releasedAt := <-released
+	if merr != nil {
+		t.Fatalf("000056 failed while a transaction held campaigns for %s: %s — a lock wait must "+
+			"be retried, not fail the migration and leave version 56 dirty", hold, dbtest.SafeDSNErrFor(dsn, merr))
+	}
+	if !wrote.Before(releasedAt) {
+		t.Errorf("an INSERT issued while 000056 waited completed only after the blocker released "+
+			"(%s after it): the migration's lock request queued traffic for the whole wait",
+			wrote.Sub(releasedAt))
+	}
+
+	if _, cerr := m.Close(); cerr != nil {
+		t.Fatalf("close the migrator: %v", cerr)
+	}
+	var (
+		version int
+		dirty   bool
+	)
+	if err := conn.QueryRow(ctx, `SELECT version, dirty FROM public.schema_migrations LIMIT 1`).Scan(&version, &dirty); err != nil {
+		t.Fatalf("read the migration version: %v", err)
+	}
+	if version != 56 || dirty {
+		t.Errorf("after the wait: version = %d dirty = %v, want 56 and clean", version, dirty)
+	}
+	if idOnly, composite := campaignBriefFKs(ctx, t, conn); idOnly || !composite {
+		t.Errorf("after the wait: id-only FK = %v, composite FK = %v; want (false, true)", idOnly, composite)
+	}
+}

@@ -13,7 +13,10 @@ cannot cross projects.
   at once, without waiting on the brief's row lock.
 - Migration `000056` swaps `campaigns`' `brief_id`-only FK for the composite
   `(brief_id, project_id) -> campaign_briefs (id, project_id)`. It fails loudly on any existing
-  mismatched row and never rewrites data. The id-only key was why the replace lock could not
+  mismatched row and never rewrites data. That failure leaves version 56 dirty, so a restart does
+  not retry it: resolve the rows, `migrate force 55`, restart. A lock wait never fails it: the DDL
+  retries with a 2s `lock_timeout` per attempt, giving up its queue place between attempts, so a
+  busy table neither dirties the version nor stalls traffic behind the migration. The id-only key was why the replace lock could not
   carry `project_id` before: a two-column predicate could have silently missed.
 - `campaign_jobs` keeps its id-only FK: it has no `project_id` column, and a composite key would
   need a new column plus a backfill.

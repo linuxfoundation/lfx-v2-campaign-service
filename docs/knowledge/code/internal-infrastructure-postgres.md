@@ -538,13 +538,20 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   dispatch claim and upsert stamp `brief.ProjectID`/`brief.ID` from the loaded brief, and the
   adopt INSERT runs under `lockAdoptBriefQuery`. The up FAILS LOUDLY on any existing row whose
   `project_id` differs from its brief's (a `DO` block raises with the count) and never rewrites
-  data. It sets `SET LOCAL lock_timeout = '5s'` so its table locks never queue indefinitely behind
-  a long transaction (a timeout aborts cleanly at `000055`). Pre-deploy, `SELECT count(*) FROM campaigns c JOIN campaign_briefs b ON b.id = c.brief_id
+  data. That refusal rolls the schema back but leaves version 56 DIRTY (golang-migrate records the
+  version before running the file, and `runMigrations` surfaces `ErrDirty`, which startup treats as
+  permanent), so no later boot retries it. Recovery: resolve the mismatched rows by hand, run
+  `migrate force 55`, and restart; the next boot runs `000056` again. A LOCK WAIT never fails it:
+  the DDL runs in a retry loop where each attempt waits at most 2s (`lock_timeout`), and on
+  `55P03` the attempt's subtransaction rolls back (releasing its locks and its place in the queue)
+  and sleeps 1s so queued traffic drains; after 30 attempts the last one waits without a timeout.
+  Pre-deploy, `SELECT count(*) FROM campaigns c JOIN campaign_briefs b ON b.id = c.brief_id
   WHERE b.project_id <> c.project_id` must be 0. The down restores the id-only key and always
   applies. `campaign_jobs` is NOT included: it has no `project_id` column, so a composite key
   there needs a new column plus a backfill; its tenant scope stays `GetJob`'s JOIN through
   `campaign_briefs`. Pinned by `TestLiveMigration000056RefusesAMismatchedCampaign`,
-  `TestLiveMigration000056SwapsTheBriefFK` and `TestLiveListCampaignsForBriefExcludesAnotherProject`.
+  `TestLiveMigration000056SwapsTheBriefFK`, `TestLiveMigration000056WaitsOutABusyTableWithoutBlockingIt`
+  and `TestLiveListCampaignsForBriefExcludesAnotherProject`.
 
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
 
