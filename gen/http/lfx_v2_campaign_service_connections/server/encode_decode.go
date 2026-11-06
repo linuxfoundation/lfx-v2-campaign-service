@@ -7443,8 +7443,8 @@ func DecodeListGoogleAdsAudiencesRequest(mux goahttp.Muxer, decoder func(*http.R
 		if type_ == "" {
 			err = goa.MergeErrors(err, goa.MissingFieldError("type", "query string"))
 		}
-		if !(type_ == "custom_audience" || type_ == "combined_audience" || type_ == "audience" || type_ == "user_interest") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("type", type_, []any{"custom_audience", "combined_audience", "audience", "user_interest"}))
+		if !(type_ == "custom_audience" || type_ == "combined_audience" || type_ == "audience" || type_ == "user_interest" || type_ == "custom_interest") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("type", type_, []any{"custom_audience", "combined_audience", "audience", "user_interest", "custom_interest"}))
 		}
 		qRaw := qp.Get("q")
 		if qRaw != "" {

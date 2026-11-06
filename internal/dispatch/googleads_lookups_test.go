@@ -606,6 +606,42 @@ func TestGoogleAdsListAudiences_OneSearchOnTheConnectionsAccount(t *testing.T) {
 	}
 }
 
+// custom_interest (#517) is an account kind, not Google's taxonomy, so it is NOT cached: a
+// custom affinity created a minute ago must be offered, and each read reaches Google.
+func TestGoogleAdsListAudiences_CustomInterestIsNotCached(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		queries []string
+	)
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var req struct {
+			Query string `json:"query"`
+		}
+		_ = json.Unmarshal(b, &req)
+		mu.Lock()
+		queries = append(queries, req.Query)
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"results":[{"customInterest":{"resourceName":"customers/1234567890/customInterests/7","id":"7","name":"Cloud Native","type":"CUSTOM_AFFINITY","status":"ENABLED"}}]}`)
+	})
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	want := model.AudienceResource{ResourceName: "customers/1234567890/customInterests/7", ID: "7", Name: "Cloud Native", Subtype: "CUSTOM_AFFINITY", Status: "ENABLED"}
+	for i := 0; i < 2; i++ {
+		res, called, err := d.ListAudiences(context.Background(), "proj-1", model.ProviderGoogleAds, "custom_interest")
+		if err != nil || !called {
+			t.Fatalf("read %d: err=%v called=%v, want Google contacted every time", i, err, called)
+		}
+		if res.Kind != "custom_interest" || len(res.Audiences) != 1 || res.Audiences[0] != want {
+			t.Fatalf("read %d: res = %+v", i, res)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(queries) != 2 || !strings.Contains(queries[0], "FROM custom_interest") {
+		t.Errorf("queries = %v, want two custom_interest searches", queries)
+	}
+}
+
 // Resolution is the create's: the LF system fallback for a project with no connection, and
 // the forced system account over the project's own row.
 func TestGoogleAdsListAudiences_ResolvesLikeACreate(t *testing.T) {
