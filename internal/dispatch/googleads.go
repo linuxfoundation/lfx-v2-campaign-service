@@ -900,8 +900,8 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 			constants.EnvGoogleAdsDemographicTargetingEnabled, "observedDemographics")
 	}
 	// displayDemographics (#499) likewise: any list in it, whatever its entries hold.
-	if d := cfg.DisplayDemographics; d != nil &&
-		len(d.AgeRanges)+len(d.Genders)+len(d.IncomeRanges)+len(d.ParentalStatuses) > 0 &&
+	if dd := cfg.DisplayDemographics; dd != nil &&
+		len(dd.AgeRanges)+len(dd.Genders)+len(dd.IncomeRanges)+len(dd.ParentalStatuses) > 0 &&
 		!googleAdsDemographicTargetingEnabled() {
 		return nil, googleAdsInputDisabled("displayDemographics is",
 			constants.EnvGoogleAdsDemographicTargetingEnabled, "displayDemographics")
