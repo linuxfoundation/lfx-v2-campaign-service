@@ -44,7 +44,11 @@ import (
 // port, unlike LinkedIn/Meta/Reddit, computes expected spend as budgetDay*days directly rather
 // than from the campaign's own flight dates, exactly as resolveDateRange/parseCampaignMetrics
 // do (Google Ads campaigns read here are not flight-scheduled in the BFF's model).
-func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
+//
+// currency is the ad account's ISO 4217 code as the read reported it (customer.currency_code), or
+// "". It sizes the two rules whose thresholds are amounts of money — the placeholder budget and
+// the high average CPC — in the account's own currency; see monitorUnitsPerUSD.
+func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int, currency string) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 	out := make([]model.AccountMonitorRow, 0, len(rows))
 	items := make([]model.AccountMonitorActionItem, 0)
 
@@ -80,14 +84,15 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 		// budget — $0.00 spent vs $0.00 expected". Reddit already routes this case through
 		// PacingUnknown; Google and Meta did not (Meta's own guard was dead code, never taken).
 		//
-		// The real signal for this campaign is not lost: the BudgetDay <= 1 rule in
-		// googleActionItems still fires, and says the accurate thing — that the budget is a
-		// placeholder — at HIGH rather than burying it in a pacing complaint at MED.
+		// The real signal for this campaign is not lost: the placeholder-budget rule in
+		// googleActionItems still fires (a zero budget is a placeholder in every currency), and
+		// says the accurate thing — that the budget is a placeholder — at HIGH rather than
+		// burying it in a pacing complaint at MED.
 		expectedSpend := m.BudgetDay * float64(days)
 		if expectedSpend <= 0 {
 			row := unknownPacingRow(m)
 			out = append(out, row)
-			items = append(items, googleActionItems(row.Metrics, 0, row.PacingLabel, days)...)
+			items = append(items, googleActionItems(row.Metrics, 0, row.PacingLabel, days, currency)...)
 			continue
 		}
 
@@ -97,9 +102,12 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 		row := model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label}
 		out = append(out, row)
 
-		items = append(items, googleActionItems(m, pacingPct, label, days)...)
+		items = append(items, googleActionItems(m, pacingPct, label, days, currency)...)
 	}
 
+	if it, ok := moneyRulesSkippedItem(currency, moneyRulesSkippedGoogleMicrosoft, out); ok {
+		items = append(items, it)
+	}
 	sortByPriority(items)
 	return out, items
 }
@@ -123,7 +131,7 @@ const (
 	googleStatusDraft   = "draft"
 )
 
-func googleActionItems(m model.AccountCampaignMetrics, pacingPct float64, label model.MonitorPacingLabel, days int) []model.AccountMonitorActionItem {
+func googleActionItems(m model.AccountCampaignMetrics, pacingPct float64, label model.MonitorPacingLabel, days int, currency string) []model.AccountMonitorActionItem {
 	var items []model.AccountMonitorActionItem
 	status := strings.ToLower(m.Status)
 	add := func(priority model.MonitorPriority, issue, action string) {
@@ -138,7 +146,7 @@ func googleActionItems(m model.AccountCampaignMetrics, pacingPct float64, label 
 			fmt.Sprintf("Campaign limited by Google — only %d impressions on a daily budget of %s", m.Impressions, accountMoney(m.BudgetDay)),
 			"Switch bid strategy to Maximize Clicks, or expand keyword match types to increase eligible auctions")
 	}
-	if m.BudgetDay <= 1 && status == googleStatusEnabled {
+	if status == googleStatusEnabled && isPlaceholderBudget(m.BudgetDay, currency) {
 		add(model.MonitorPriorityHigh,
 			fmt.Sprintf("Daily budget is %s — this is a placeholder and won't generate meaningful traffic", accountMoney(m.BudgetDay)),
 			"Set a realistic daily budget for the campaign's goal and audience before expecting results")
@@ -177,7 +185,7 @@ func googleActionItems(m model.AccountCampaignMetrics, pacingPct float64, label 
 	if m.Clicks > 0 {
 		avgCpc = m.Spend / float64(m.Clicks)
 	}
-	if avgCpc > 5 && m.Clicks > 10 {
+	if m.Clicks > 10 && isHighAvgCpc(avgCpc, currency) {
 		add(model.MonitorPriorityMed,
 			fmt.Sprintf("Avg CPC is %s — spending %s for only %d clicks", accountMoney(avgCpc), accountMoney(m.Spend), m.Clicks),
 			"Switch to a Target CPA or Maximize Clicks bid strategy, add long-tail keywords with lower competition")

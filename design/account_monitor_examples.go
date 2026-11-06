@@ -18,7 +18,7 @@ import (
 // campaign_url, only Google and Microsoft can be search campaigns, Google and Microsoft report no
 // flight dates or lifetime budget, Meta/Reddit/X measure no conversions, each platform has its
 // own status literals and pacing formula, only the report-backed platforms (Microsoft, X) set
-// metrics_as_of / metrics_window_* / metrics_pending, and Google alone never sets currency. No
+// metrics_as_of / metrics_window_* / metrics_pending. No
 // single example is a response all six handlers could return, so AccountMonitor and AccountMonitorCampaign carry none (Meta
 // "openapi:example" false) and each method declares its own 200 example.
 //
@@ -41,8 +41,8 @@ const (
 	accountMonitorExampleWindowFrom = "2026-09-06"
 	accountMonitorExampleWindowTo   = "2026-10-05"
 	accountMonitorExampleDays       = 30
-	// accountMonitorExampleCurrency is the ISO 4217 code every non-Google example reports in its
-	// currency field. Action-item text prints amounts as "N.NN in account currency", never with a
+	// accountMonitorExampleCurrency is the ISO 4217 code every example reports in its currency
+	// field. Action-item text prints amounts as "N.NN in account currency", never with a
 	// symbol (#435).
 	accountMonitorExampleCurrency = "USD"
 )
@@ -109,7 +109,7 @@ func accountMonitorExampleBody(body expr.UserType, example map[string]any) func(
 // than inherited from the shared type: account_id carries an id in this platform's format (the
 // shared "8666746580" is impossible on Meta, Reddit and X), and the report-window fields carry
 // examples only on the report-backed platforms, which are the only ones that set them. currency
-// is the platform's example currency, "" for Google Ads, whose monitor never sets the field.
+// is the platform's example currency, "" for a platform whose monitor never sets the field.
 func accountMonitorBodyType(name, platform, accountID string, reported bool, currency string) expr.UserType {
 	return Type(name, func() {
 		Description("The " + platform + " account monitor read. The same fields as every ad-platform account monitor; a schema of its own only so this operation's example can show rows in " + platform + "'s own shape.")
@@ -142,8 +142,7 @@ func accountMonitorBodyType(name, platform, accountID string, reported bool, cur
 }
 
 var (
-	// Google Ads carries no currency example: its monitor never sets the field.
-	googleAccountMonitorBody    = accountMonitorBodyType("google-ads-account-monitor", "Google Ads", "8666746580", false, "")
+	googleAccountMonitorBody    = accountMonitorBodyType("google-ads-account-monitor", "Google Ads", "8666746580", false, accountMonitorExampleCurrency)
 	linkedinAccountMonitorBody  = accountMonitorBodyType("linkedin-ads-account-monitor", "LinkedIn Ads", "512345678", false, accountMonitorExampleCurrency)
 	metaAccountMonitorBody      = accountMonitorBodyType("meta-ads-account-monitor", "Meta Ads", "act_8666746580", false, accountMonitorExampleCurrency)
 	microsoftAccountMonitorBody = accountMonitorBodyType("microsoft-ads-account-monitor", "Microsoft Ads", "187654321", true, accountMonitorExampleCurrency)
@@ -171,7 +170,7 @@ func googleAccountMonitorExample() map[string]any {
 		"campaign_id": "24183781329", "campaign_name": "KubeCon NA 2026 - Search", "priority": "MED",
 		"issue":  "Only spending 42% of a daily budget of 150.00 in account currency — 1890.00 in account currency spent vs 4500.00 in account currency expected",
 		"action": "Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions",
-	}}, false, "")
+	}}, false, accountMonitorExampleCurrency)
 }
 
 // LinkedIn: pacing is UNROUNDED, and a daily budget is expected over the days from 29 days

@@ -93,3 +93,11 @@ file-linter finding in a path those settings exclude; see
 
 When a fix commit — the review round's or a preflight one — changes what the
 code does, the knowledge-bundle rules above still apply to it.
+
+Code review skill: `/campaign-service-code-reviewer`. It is not part of the
+pre-PR round above. `/lfx-skills:lfx-local-review` loads it as its `repo_code`
+reviewer, and the KB review skill as its `repo_learnings` reviewer, through the
+`.claude/skills/local-code-review` and `local-learnings-review` symlinks. Its
+method is `.github/skills/campaign-service-code-review/SKILL.md`, kept once and
+shared with Copilot. See
+[Local pre-PR review](docs/knowledge/architecture/local-pre-pr-review.md).

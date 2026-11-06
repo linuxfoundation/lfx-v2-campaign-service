@@ -95,11 +95,11 @@ func monitorCallers(t *testing.T) []monitorCaller {
 	xLast := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
 	return []monitorCaller{
 		{"google", roundedMonitorWant, func(m model.AccountCampaignMetrics) model.AccountMonitorRow {
-			rows, _ := EvaluateGoogleMonitor([]model.AccountCampaignMetrics{m}, 10)
+			rows, _ := EvaluateGoogleMonitor([]model.AccountCampaignMetrics{m}, 10, "USD")
 			return pinOneRow(t, rows)
 		}},
 		{"microsoft", roundedMonitorWant, func(m model.AccountCampaignMetrics) model.AccountMonitorRow {
-			rows, _ := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{m}, 10)
+			rows, _ := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{m}, 10, "USD")
 			return pinOneRow(t, rows)
 		}},
 		{"meta", roundedMonitorWant, func(m model.AccountCampaignMetrics) model.AccountMonitorRow {
@@ -111,7 +111,7 @@ func monitorCallers(t *testing.T) []monitorCaller {
 			return pinOneRow(t, rows)
 		}},
 		{"x", roundedMonitorWant, func(m model.AccountCampaignMetrics) model.AccountMonitorRow {
-			rows, _ := EvaluateTwitterMonitor([]model.AccountCampaignMetrics{m}, &xFirst, &xLast)
+			rows, _ := EvaluateTwitterMonitor([]model.AccountCampaignMetrics{m}, &xFirst, &xLast, "USD")
 			return pinOneRow(t, rows)
 		}},
 		// LinkedIn's daily branch counts ceil(days-1) whole days back from now, so days=11 is a
@@ -198,7 +198,7 @@ func TestPin_MonitorLadder_NaN(t *testing.T) {
 		t.Errorf("pacingLabelFor(NaN) = %q, want normal", got)
 	}
 	row := pinOneRow(t, func() []model.AccountMonitorRow {
-		rows, _ := EvaluateGoogleMonitor([]model.AccountCampaignMetrics{pinMonitorRow(math.NaN())}, 10)
+		rows, _ := EvaluateGoogleMonitor([]model.AccountCampaignMetrics{pinMonitorRow(math.NaN())}, 10, "USD")
 		return rows
 	}())
 	if row.PacingLabel != model.MonitorPacingNormal {

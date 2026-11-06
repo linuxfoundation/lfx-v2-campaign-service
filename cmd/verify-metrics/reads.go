@@ -284,9 +284,9 @@ func evaluateMonitor(p model.Provider, days int, read *model.ReportedAccountRead
 	out := &monitorResult{Read: read}
 	switch p {
 	case model.ProviderMicrosoftAds:
-		out.Rows, out.ActionItems = rules.EvaluateMicrosoftMonitor(read.Rows, days)
+		out.Rows, out.ActionItems = rules.EvaluateMicrosoftMonitor(read.Rows, days, read.Currency)
 	case model.ProviderTwitterAds:
-		out.Rows, out.ActionItems = rules.EvaluateTwitterMonitor(read.Rows, read.MetricsWindowStart, read.MetricsWindowEnd)
+		out.Rows, out.ActionItems = rules.EvaluateTwitterMonitor(read.Rows, read.MetricsWindowStart, read.MetricsWindowEnd, read.Currency)
 	}
 	return out
 }
