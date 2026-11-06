@@ -79,10 +79,20 @@ var geoTargetConstants = map[string]string{
 // reached without duplicates". That stopped being true when resolveGeoList began
 // accepting raw geo target constant ids as well as country codes: a city-level
 // campaign targets the metro areas an event draws from, and there are far more
-// than 30 of those. The cap is now sized like maxKeywords, for the same reason
+// than 30 of those. It was then sized like maxKeywords (60), for the same reason
 // the 2026-08-13 keyword incident gives — a cap the product's own callers exceed
 // by default refuses creates Google would have accepted.
-const maxGeoTargets = 60
+//
+// 60 was exceeded in turn (#515): the live KubeCon NA 2026 Demand Gen YouTube
+// campaign targets 63 locations (50 US state-level ids and 13 Canadian provinces and
+// territories), and a DMA-level US campaign needs about 210 (Google lists 210 US DMA
+// regions). 500 covers every US DMA plus the states and provinces with headroom.
+// The one-mutate rule still holds at the cap: the criteria call carries at most
+// 500 inclusions + 500 exclusions + maxProximityTargets operations, far below
+// Google's per-request operation limit, and a validateOnly probe on 2026-11-06 accepted
+// exactly that 1020-operation campaignCriteria:mutate (Search) and a
+// 1000-operation adGroupCriteria:mutate (Demand Gen ad group) of real constants.
+const maxGeoTargets = 500
 
 // maxProximityTargets bounds the radius-targeting list. Lower than maxGeoTargets
 // on purpose: a proximity criterion carries a point and a radius rather than one

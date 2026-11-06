@@ -695,6 +695,11 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 		// refused before the handler — and this arm — ever run; this classification exists for
 		// non-HTTP callers, which bypass Goa entirely.
 		return &conn.BadRequestError{Code: "400", Message: "the account id is not valid for " + d.displayName}
+	case errors.Is(aerr, domain.ErrAccountIDNotAllowed):
+		// A well-formed account id this credential may not read (the LF system credential on
+		// the user-list read): the remedy is to omit it, which reads the account a create uses.
+		return &conn.BadRequestError{Code: "400", Message: "account_id must be the account a " + d.displayName +
+			" create for this project uses when the LF system connection is used; omit account_id"}
 	case errors.Is(aerr, domain.ErrAccountTooManyActiveCampaigns):
 		// A permanent refusal of a report-backed monitor (the X monitor is the only producer,
 		// and monitor-twitter-ads-account the only method that declares this 409): the account
