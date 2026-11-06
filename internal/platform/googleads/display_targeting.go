@@ -254,7 +254,7 @@ func validateDisplayAudienceList(field, collection, customerID string, names []s
 			return nil, fmt.Errorf("google-ads: %s entry %q is not a customers/{customerId}/%s/{id} resource name", field, name, collection)
 		}
 		if parts[1] != customerID {
-			return nil, fmt.Errorf("google-ads: %s entry %q is on customer %s, not this campaign's account %s; name a resource on the campaign's own account", field, name, parts[1], customerID)
+			return nil, fmt.Errorf("google-ads: %s entry %q is on customer %q, not this campaign's account %s; name a resource on the campaign's own account", field, name, parts[1], customerID)
 		}
 		// Digits alone are not the id test: "userLists/011" and "userLists/11" would pass
 		// as two names for one list, slipping past this de-dupe and refuseExcludedOverlap.
@@ -311,10 +311,10 @@ func validateExcludedPlacements(placements []string) ([]string, error) {
 			return nil, fmt.Errorf("google-ads: excluded placement must not be empty")
 		}
 		if strings.Contains(entry, "://") {
-			return nil, fmt.Errorf("google-ads: excluded placement %s carries a scheme; send the bare domain (example.com) — it is not stripped for you", redactURLForError(entry))
+			return nil, fmt.Errorf("google-ads: excluded placement %q carries a scheme; send the bare domain (example.com) — it is not stripped for you", redactURLForError(entry))
 		}
 		if strings.ContainsAny(entry, "/?#:@") {
-			return nil, fmt.Errorf("google-ads: excluded placement %s must be a bare domain such as example.com, with no path, query, fragment, port or credentials", redactURLForError(entry))
+			return nil, fmt.Errorf("google-ads: excluded placement %q must be a bare domain such as example.com, with no path, query, fragment, port or credentials", redactURLForError(entry))
 		}
 		// ASCII is checked on the entry as sent, before case is folded: strings.ToLower maps
 		// some non-ASCII runes to ASCII (KELVIN SIGN U+212A becomes "k"), which would turn the

@@ -128,7 +128,7 @@ func TestValidateDemandGenAdGroups_Refusals(t *testing.T) {
 		}, "needs at least 1 YouTube video"},
 		"foreign audience": {campaignKindDemandGen, func(in *CampaignInput) {
 			in.DemandGenAdGroups = []DemandGenAdGroup{{Name: "A", Audience: "customers/9999999999/audiences/41", Creative: fullCreative()}}
-		}, "belongs to customer 9999999999"},
+		}, "belongs to customer \"9999999999\""},
 		"malformed audience": {campaignKindDemandGen, func(in *CampaignInput) {
 			in.DemandGenAdGroups = []DemandGenAdGroup{{Name: "A", Audience: "customers/1234567890/userLists/41", Creative: fullCreative()}}
 		}, "not a customers/<id>/audiences/<id>"},

@@ -1079,7 +1079,7 @@ func TestGoogleAds_DemandGenAudienceRefusalsArePreCreate(t *testing.T) {
 	}{
 		{"on search", `"demandGenAudience":"customers/1234567890/audiences/4242"`, "a Demand Gen audience is not supported"},
 		{"on display", `"channel":"display","demandGenAudience":"customers/1234567890/audiences/4242"`, "a Demand Gen audience is not supported"},
-		{"another account", `"channel":"demand-gen","demandGenAudience":"customers/9999999999/audiences/4242"`, "belongs to customer 9999999999"},
+		{"another account", `"channel":"demand-gen","demandGenAudience":"customers/9999999999/audiences/4242"`, "belongs to customer \"9999999999\""},
 		{"user list on demand gen", `"channel":"demand-gen","audienceSegments":["customers/1234567890/userLists/1"]`, "audience-grouped"},
 	}
 	for _, tc := range cases {
