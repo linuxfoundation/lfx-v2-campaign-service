@@ -386,6 +386,23 @@ finished, a reload, a second tab) creates ANOTHER campaign, and it ignores `funn
 Rolling forward again needs no data step: labelled rows keep their labels, and rows created while
 rolled back are unlabelled (legacy).
 
+**Deploying `000056` (composite tenant FK on `campaigns`, #534).** Before the rollout, run
+`SELECT count(*) FROM campaigns c JOIN campaign_briefs b ON b.id = c.brief_id WHERE b.project_id
+<> c.project_id` against the production database; it must be 0. A nonzero count makes `000056`
+refuse (it never rewrites data), and the refusal leaves the version recorded as 56 DIRTY, so every
+new pod fails at boot with `ErrDirty` and a restart does not retry it. Recovery, in order: confirm
+the schema still has `campaigns_brief_id_fkey` and no `campaigns_brief_project_fkey` (the file is
+one transaction, so it rolled back), resolve each mismatched row by hand, run `migrate force 55`
+against the database, then restart the pods. A briefly busy table does NOT cause this: the ADD
+retries lock timeouts and deadlocks with a 2s lock timeout per attempt, giving up its lock-queue
+place between attempts. The 2s bounds lock ACQUISITION, not total time: failed attempts add up to
+about 45s at most, and on top of that the successful attempt holds SHARE ROW EXCLUSIVE on both
+tables while it validates every existing `campaigns` row, so writes wait for that scan too (reads
+never wait). The scan and the precheck have no time limit of their own and scale with the table,
+so check `SELECT count(*) FROM campaigns` before deploying. Giving up after 15 failed attempts also leaves version 56 dirty. Recover the same way: end the blocking transaction (find it in
+`pg_stat_activity`), `migrate force 55`, restart. Rolling back past `000056` needs
+no schema step: the older image writes only matching pairs, so leave the composite key in place.
+
 **Rolling back past the Google multi-campaign release (cs-2).** No migration: cs-2 only adds
 `google-ads` to the `new_version` and label allowlists and makes Google's budget, campaign and ad
 group names carry the claimed row's slot suffix (`<brief>-2`), stage token and tactic. The image

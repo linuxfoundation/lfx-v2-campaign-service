@@ -45,8 +45,8 @@ func installCommitTrigger(ctx context.Context, t *testing.T, pool *pgxpool.Pool,
 func seedCommitCampaign(ctx context.Context, t *testing.T, pool *pgxpool.Pool) (repo *postgres.CampaignRepo, loaded *model.Campaign, version int64) {
 	t.Helper()
 	repo = postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
-	briefID := insertBrief(ctx, t, pool)
 	projectID := dbtest.UniqueID(t, "project")
+	briefID := insertBrief(ctx, t, pool, projectID)
 	var id string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO campaigns (project_id, brief_id, platform, campaign_name, status)

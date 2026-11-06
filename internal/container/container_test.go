@@ -155,7 +155,7 @@ func (r *stubJobRepo) create() (*model.CampaignJob, error) {
 func (r *stubJobRepo) CreateJob(context.Context, string) (*model.CampaignJob, error) {
 	return r.create()
 }
-func (r *stubJobRepo) CreateJobForApprovedBrief(context.Context, string, int64) (*model.CampaignJob, error) {
+func (r *stubJobRepo) CreateJobForApprovedBrief(context.Context, string, string, int64) (*model.CampaignJob, error) {
 	return r.create()
 }
 func (r *stubJobRepo) GetJob(context.Context, string, string) (*model.CampaignJob, error) {
