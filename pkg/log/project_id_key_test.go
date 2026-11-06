@@ -39,6 +39,9 @@ var logMethods = map[string]bool{
 // log line logging the project as "project", "projectID" or a hashed "project_id_hash"
 // fails here, rather than leaving the repo answering the question two ways.
 //
+// Only string-literal keys are checked: a key held in a named constant or built at runtime
+// is not seen. None exists today; keep project keys literal so this guard can see them.
+//
 // The floor on how many project_id keys were seen is the positive control: a walker that
 // silently scanned nothing (a moved directory, a broken selector match) would otherwise
 // pass vacuously.
@@ -85,7 +88,7 @@ func TestProjectIDLogKeyIsUniform(t *testing.T) {
 	for _, d := range drift {
 		t.Errorf("log attribute key names the project but is not %q: %s", projectIDLogKey, d)
 	}
-	// 131 non-test sites when #229 was filed; the floor only has to prove the walk ran.
+	// 204 project_id keys when #229 was settled; the floor only has to prove the walk ran.
 	if canonical < 100 {
 		t.Fatalf("saw only %d %q log keys; the source walk is not reaching the log calls", canonical, projectIDLogKey)
 	}

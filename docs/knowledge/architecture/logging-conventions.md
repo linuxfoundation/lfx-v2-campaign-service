@@ -38,15 +38,17 @@ Why this option and not the other three #229 weighed:
 
 **One key, everywhere.** The spelling is `project_id`: not `project`,
 `projectID`, `projectId`, `project_uid`, `project_slug`, nor a hashed variant.
-When the decision was taken every non-test log site already used it (215
-string-literal keys under `internal/`, `cmd/` and `pkg/`), so applying it
+When the decision was taken every non-test log site already used it (204
+string-literal log keys under `internal/`, `cmd/` and `pkg/`, as counted by
+`TestProjectIDLogKeyIsUniform`), so applying it
 needed no call-site change.
 
 **Pinned:** `TestProjectIDLogKeyIsUniform` (`pkg/log/project_id_key_test.go`)
 parses every non-test Go file under `internal/`, `cmd/` and `pkg/` and fails on
 any string-literal key passed to an slog call or `slog.Attr` that names the
 project under another spelling. A floor on the number of `project_id` keys it
-sees keeps the walk from passing vacuously.
+sees keeps the walk from passing vacuously. It checks string-literal keys only,
+so keep project keys literal: a key held in a named constant is not seen.
 
 **For reviewers:** "`project_id` is logged" is not a finding on this repo; see
 `docs/reviews/knowledge-base/known-false-positives.md` § "Settled by decision".

@@ -9,8 +9,8 @@ clear, as `"project_id"`.
   URL path of 99 routes (`/projects/{project_id}/...`) and so in every access log already; and
   it is the only field naming whose connection, brief or campaign a warning is about. Hashing
   keeps grouping but loses grep, and dropping or gating it makes alerts tenantless.
-- No call site changed: all 215 non-test string-literal log keys naming the project already
-  read `project_id`. The only other `"project"` literal outside tests is a `flag` name in
+- No call site changed: all 204 non-test string-literal log keys naming the project (as counted by
+  the test below) already read `project_id`. The only other `"project"` literal outside tests is a `flag` name in
   `cmd/verify-metrics`, not a log key.
 - `TestProjectIDLogKeyIsUniform` (`pkg/log/project_id_key_test.go`) pins it: it parses every
   non-test file under `internal/`, `cmd/` and `pkg/` and fails on any slog call or `slog.Attr`
