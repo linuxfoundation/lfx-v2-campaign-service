@@ -111,16 +111,19 @@ type Service interface {
 	// imageAssetId that is not a UUID, or imageAssetId while signed creative-asset
 	// URLs are not configured ('stored creative assets are not enabled for Reddit;
 	// supply imageUrl'): 400 with that message. GOOGLE ADS AUDIENCES: a
-	// googleAdsConfig that sets demandGenAudience or an audience on any
-	// demandGenAdGroups entry (any non-empty value, whitespace included) requires
-	// the caller to hold global_marketing_ops on this project, checked before any
-	// job exists: 403 when they do not, 503 when the check cannot be made (project
+	// googleAdsConfig that sets demandGenAudience, an audience on any
+	// demandGenAdGroups entry (any non-empty value, whitespace included) or any
+	// demandGenDemographics.audienceSegments (any non-empty list) requires the
+	// caller to hold global_marketing_ops on this project, checked before any job
+	// exists: 403 when they do not, 503 when the check cannot be made (project
 	// lookup or authorization service unavailable). The gateway admits every
 	// campaign_manager, which includes foundation executive directors, and an
-	// Audience is a resource of the Google Ads account every foundation shares. An
-	// invalid per-platform `bidding` object (see the config attribute) is also
-	// refused synchronously, with 400 "invalid campaign config:
-	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
+	// Audience is a resource of the Google Ads account every foundation shares.
+	// demandGenDemographics without audienceSegments is not part of this check:
+	// the Audience it creates holds only demographic brackets and names no
+	// existing account resource. An invalid per-platform `bidding` object (see the
+	// config attribute) is also refused synchronously, with 400 "invalid campaign
+	// config: <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
 	// Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc)
 	// and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are
 	// immediately eligible for the bid lever, and eligibility follows the

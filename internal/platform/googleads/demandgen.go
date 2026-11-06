@@ -92,7 +92,8 @@ type demandGenAdGroupCreate struct {
 	Status   string `json:"status"`
 }
 
-// CreateDemandGenCampaign creates a PAUSED Demand Gen campaign: budget → campaign →
+// CreateDemandGenCampaign creates a PAUSED Demand Gen campaign: the demographic Audience
+// when DemandGenDemographics is set (#498) → budget → campaign →
 // conversion goal → campaign-level ad schedule and device criteria → sitelinks (#474) →
 // ad group → ad-group-level geo → ad-group-level audience and languages (#459) → ad, the
 // last four repeated per ad group when DemandGenAdGroups names several (#460). It is a port of the
@@ -150,6 +151,20 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	amountMicros := pf.amountMicros
 	steps := []string{}
 
+	// The demographic Audience (#498), the last step before the budget, after the image
+	// fetch so a bad image costs no Audience either. Every failure returns (nil, err): no
+	// budget or campaign exists, and an Audience it may have left is found by name and
+	// reused on the retry (ensureDemandGenDemographicAudience).
+	var demographicAudience string
+	if pf.demandGenDemographics != nil {
+		resource, how, audErr := c.ensureDemandGenDemographicAudience(ctx, pf.demandGenDemographics)
+		if audErr != nil {
+			return nil, audErr
+		}
+		demographicAudience = resource
+		steps = append(steps, demographicAudienceStep(how, resource, pf.demandGenDemographics))
+	}
+
 	// namePartial carries the names an operator needs to reconcile by, for a failure
 	// that may have created something we never got an id for.
 	namePartial := func() *CampaignResult {
@@ -163,6 +178,8 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 			CampaignName:       campaignName,
 			CampaignBudgetName: budgetName,
 			Steps:              steps,
+			// The Audience exists before the budget, so every partial names it.
+			DemandGenDemographicAudience: demographicAudience,
 		}
 	}
 
@@ -448,8 +465,14 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		// the only level Demand Gen takes either at (see demandgen_targeting.go for the probe
 		// facts). Its own mutate after geo rather than inside geo's;
 		// createDemandGenAdGroupTargeting says why.
-		if g.audience != "" || len(pf.criteria.languages) > 0 {
-			audienceIDs, languageIDs, targetErr := c.createDemandGenAdGroupTargeting(ctx, adGroupResource, adGroupID, g.audience, pf.criteria.languages)
+		// The demographic Audience (#498) goes on every group; the preflight refused it
+		// beside any group's own Audience, so it never replaces one.
+		audience := g.audience
+		if demographicAudience != "" {
+			audience = demographicAudience
+		}
+		if audience != "" || len(pf.criteria.languages) > 0 {
+			audienceIDs, languageIDs, targetErr := c.createDemandGenAdGroupTargeting(ctx, adGroupResource, adGroupID, audience, pf.criteria.languages)
 			if targetErr != nil {
 				return fail(targetErr)
 			}
@@ -461,7 +484,7 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 				entry.AudienceCriteriaIDs = audienceIDs
 				entry.TargetingCriterionIDs = languageIDs
 			}
-			steps = append(steps, fmt.Sprintf("Audience and language targeting applied: %d ad-group criteria (%s)", len(audienceIDs)+len(languageIDs), demandGenTargetingStep(g.audience, pf.criteria.languages))+tag)
+			steps = append(steps, fmt.Sprintf("Audience and language targeting applied: %d ad-group criteria (%s)", len(audienceIDs)+len(languageIDs), demandGenTargetingStep(audience, pf.criteria.languages))+tag)
 			res.Steps = steps
 		}
 

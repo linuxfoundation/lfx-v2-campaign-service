@@ -25,12 +25,21 @@ func TestDemandGenAudienceDetectionAgreesWithTheCreateGate(t *testing.T) {
 		`{"googleAdsConfig":{"demandGenAdGroups":[{"name":"a","Audience":"\t"}]}}`,
 		`{"microsoftConfig":{"budget":5}}`,
 		`{"GoogleAdsConfig":{"demandGenAudience":"customers/1/audiences/2"}}`,
+		// #498: the demographic Audience counts only when it names existing user lists.
+		`{"googleAdsConfig":{"demandGenDemographics":{"ageRanges":["25-34"]}}}`,
+		`{"googleAdsConfig":{"demandGenDemographics":{}}}`,
+		`{"googleAdsConfig":{"demandGenDemographics":null}}`,
+		`{"googleAdsConfig":{"demandGenDemographics":{"audienceSegments":[]}}}`,
+		`{"googleAdsConfig":{"demandGenDemographics":{"audienceSegments":["customers/1/userLists/2"]}}}`,
+		`{"googleAdsConfig":{"demandGenDemographics":{"audienceSegments":[""]}}}`,
+		`{"googleAdsConfig":{"demandGenDemographics":{"AudienceSegments":["customers/1/userLists/2"]}}}`,
 	} {
 		var cfg googleAdsConfig
 		if err := unmarshalPlatformConfig([]byte(raw), "googleAdsConfig", &cfg); err != nil {
 			t.Fatalf("%s: decode: %v", raw, err)
 		}
-		dispatcher := cfg.DemandGenAudience != "" || googleAdsDemandGenAdGroupAudiencesSet(cfg) != ""
+		dispatcher := cfg.DemandGenAudience != "" || googleAdsDemandGenAdGroupAudiencesSet(cfg) != "" ||
+			googleAdsDemandGenDemographicSegmentsSet(cfg)
 		if gate := service.GoogleAdsDemandGenAudienceRequested(json.RawMessage(raw)); gate != dispatcher {
 			t.Errorf("%s: create gate sees an audience = %v, dispatcher = %v", raw, gate, dispatcher)
 		}

@@ -35,10 +35,15 @@ func (s *BriefService) marketingOpsChecker() MarketingOpsChecker {
 }
 
 // GoogleAdsDemandGenAudienceRequested reports whether config's googleAdsConfig names an
-// existing Google Ads Audience: demandGenAudience, or the audience of any demandGenAdGroups
-// entry. Any non-empty value counts, whitespace included, exactly as the dispatcher's
-// GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED gate counts it, so the two cannot disagree about
-// whether a request carries an audience. It decodes the envelope the way the dispatcher's
+// existing Google Ads Audience or audience segment: demandGenAudience, the audience of any
+// demandGenAdGroups entry, or the user lists in demandGenDemographics.audienceSegments (#498).
+// Any non-empty value counts, whitespace included (any non-empty list, for audienceSegments),
+// exactly as the dispatcher's GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED gate counts it, so the two
+// cannot disagree about whether a request carries an audience.
+//
+// demandGenDemographics WITHOUT audienceSegments is deliberately not counted: the Audience it
+// makes is created fresh for this campaign and holds only Google's demographic brackets, so it
+// names no existing account resource and no other foundation's data (the #498 decision). It decodes the envelope the way the dispatcher's
 // unmarshalPlatformConfig does (exact envelope key, then encoding/json into the same field
 // names and types), and dispatch's tests pin the agreement.
 //
@@ -62,9 +67,15 @@ func GoogleAdsDemandGenAudienceRequested(config json.RawMessage) bool {
 		DemandGenAdGroups []struct {
 			Audience string `json:"audience"`
 		} `json:"demandGenAdGroups"`
+		DemandGenDemographics *struct {
+			AudienceSegments []string `json:"audienceSegments"`
+		} `json:"demandGenDemographics"`
 	}
 	_ = json.Unmarshal(raw, &cfg) // see above: a partial decode is still inspected
 	if cfg.DemandGenAudience != "" {
+		return true
+	}
+	if cfg.DemandGenDemographics != nil && len(cfg.DemandGenDemographics.AudienceSegments) > 0 {
 		return true
 	}
 	for _, g := range cfg.DemandGenAdGroups {
@@ -77,8 +88,8 @@ func GoogleAdsDemandGenAudienceRequested(config json.RawMessage) bool {
 
 // demandGenAudienceForbiddenMessage is the 403 sentence. Service-authored: it names the input
 // and the relation, never a caller value.
-const demandGenAudienceForbiddenMessage = "Demand Gen audiences (googleAdsConfig.demandGenAudience and each " +
-	"demandGenAdGroups audience) require the global_marketing_ops role on this project"
+const demandGenAudienceForbiddenMessage = "Demand Gen audiences (googleAdsConfig.demandGenAudience, each " +
+	"demandGenAdGroups audience and demandGenDemographics.audienceSegments) require the global_marketing_ops role on this project"
 
 // requireMarketingOpsForAudiences refuses a google-ads create that names a Demand Gen Audience
 // unless the caller holds global_marketing_ops on the path project.

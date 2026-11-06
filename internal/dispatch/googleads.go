@@ -306,6 +306,16 @@ type googleAdsConfig struct {
 	// Refused outright unless GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED is "true" — see
 	// googleAdsDemandGenAudienceEnabled.
 	DemandGenAudience string `json:"demandGenAudience"`
+	// DemandGenDemographics is the Demand Gen campaign's demographic targeting (#498): age
+	// ranges, genders, income ranges and parental statuses, plus optional existing user lists
+	// (audienceSegments), which the client builds into ONE new Audience before the budget and
+	// attaches to every Demand Gen ad group. DEMAND GEN ONLY, and refused beside
+	// demandGenAudience or any demandGenAdGroups audience. Refusals are the client's
+	// preflight's (googleads.validateDemandGenDemographics), except two gates checked here:
+	// any demandGenDemographics needs GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED, and
+	// audienceSegments, which name account resources, also need
+	// GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED, as demandGenAudience does.
+	DemandGenDemographics *googleAdsDemandGenDemographicsConfig `json:"demandGenDemographics"`
 	// CustomAudiences, CustomAffinities and UserInterests are the other three segment
 	// kinds a Display ad group targets (#462): EXISTING customers/{id}/customAudiences/{id},
 	// customers/{id}/customInterests/{id} and customers/{id}/userInterests/{id} resource
@@ -625,6 +635,38 @@ type googleAdsConfig struct {
 	AdoptExisting bool `json:"adoptExisting"`
 }
 
+// googleAdsDemandGenDemographicsConfig is googleAdsConfig.demandGenDemographics (#498), each
+// list in the vocabulary of its excluded* counterpart. See googleads.DemandGenDemographics.
+type googleAdsDemandGenDemographicsConfig struct {
+	AgeRanges        []string `json:"ageRanges"`
+	Genders          []string `json:"genders"`
+	IncomeRanges     []string `json:"incomeRanges"`
+	ParentalStatuses []string `json:"parentalStatuses"`
+	AudienceSegments []string `json:"audienceSegments"`
+}
+
+// googleAdsDemandGenDemographics maps the config verbatim; every refusal is the client's.
+func googleAdsDemandGenDemographics(in *googleAdsDemandGenDemographicsConfig) *googleads.DemandGenDemographics {
+	if in == nil {
+		return nil
+	}
+	return &googleads.DemandGenDemographics{
+		AgeRanges:        in.AgeRanges,
+		Genders:          in.Genders,
+		IncomeRanges:     in.IncomeRanges,
+		ParentalStatuses: in.ParentalStatuses,
+		AudienceSegments: in.AudienceSegments,
+	}
+}
+
+// googleAdsDemandGenDemographicSegmentsSet reports whether demandGenDemographics names any
+// existing user list (#498): any non-empty audienceSegments list, whatever its entries hold.
+// Those lists are account resources, so they share demandGenAudience's deployment gate and,
+// on the create path, its global_marketing_ops check (service.GoogleAdsDemandGenAudienceRequested).
+func googleAdsDemandGenDemographicSegmentsSet(cfg googleAdsConfig) bool {
+	return cfg.DemandGenDemographics != nil && len(cfg.DemandGenDemographics.AudienceSegments) > 0
+}
+
 // googleAdsDemandGenAudienceEnabled reports whether this deployment opted in to
 // googleAdsConfig.demandGenAudience. Read per call, like REDDIT_KEYWORD_TARGETING_WRITES_ENABLED,
 // so it flips without a rebuild.
@@ -706,7 +748,8 @@ func googleAdsSharedNegativeListsEnabled() bool {
 }
 
 // googleAdsDemographicTargetingEnabled reports whether this deployment opted in to the
-// demographic inputs whose request shape is not yet probed live: observedDemographics (#497).
+// demographic inputs whose request shape is not yet probed live: observedDemographics (#497)
+// and demandGenDemographics (#498).
 // Read per call, like the gates above. Unlike them it names no account resource; it keeps an
 // unverified shape off the shared account until a validateOnly probe has passed. See
 // constants.EnvGoogleAdsDemographicTargetingEnabled.
@@ -886,6 +929,20 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return nil, googleAdsInputDisabled("observedDemographics is",
 			constants.EnvGoogleAdsDemographicTargetingEnabled, "observedDemographics")
 	}
+	// The Demand Gen demographic Audience (#498), on the same terms: any demandGenDemographics
+	// object at all, `{}` included, so the refusal never depends on the client's validation.
+	if cfg.DemandGenDemographics != nil && !googleAdsDemographicTargetingEnabled() {
+		return nil, googleAdsInputDisabled("demandGenDemographics is",
+			constants.EnvGoogleAdsDemographicTargetingEnabled, "demandGenDemographics")
+	}
+	// Its user lists are existing account resources, so they also sit behind the Demand Gen
+	// audience gate, as demandGenAudience does: any non-empty list, whatever it holds. The
+	// create service's global_marketing_ops check (service.GoogleAdsDemandGenAudienceRequested)
+	// counts the same lists.
+	if googleAdsDemandGenDemographicSegmentsSet(cfg) && !googleAdsDemandGenAudienceEnabled() {
+		return nil, googleAdsInputDisabled("demandGenDemographics.audienceSegments is",
+			constants.EnvGoogleAdsDemandGenAudienceEnabled, "demandGenDemographics.audienceSegments")
+	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -932,9 +989,11 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		// Mapped verbatim once the deployment gate above has passed, as AudienceSegments and
 		// GeoTargets are: the channel fence and the account check are the client's preflight's.
 		DemandGenAudience: cfg.DemandGenAudience,
-		GeoTargets:        cfg.GeoTargets,
-		CPCBid:            cfg.CPCBid,
-		StartDate:         cfg.StartDate,
+		// Mapped verbatim once both gates above have passed (#498).
+		DemandGenDemographics: googleAdsDemandGenDemographics(cfg.DemandGenDemographics),
+		GeoTargets:            cfg.GeoTargets,
+		CPCBid:                cfg.CPCBid,
+		StartDate:             cfg.StartDate,
 		// Passed through verbatim for the same reason the targeting inputs below are:
 		// which strategies a channel accepts, which targets a strategy carries, and
 		// whether a conversion action belongs to this account are all decided by the

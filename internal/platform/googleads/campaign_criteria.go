@@ -331,7 +331,7 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 	// campaign level was not probed, so they belong inside the Audience instead.
 	if kind == campaignKindDemandGen {
 		if len(in.ExcludedAgeRanges)+len(in.ExcludedGenders) > 0 {
-			return criteriaPlan{}, fmt.Errorf("google-ads: demographic exclusions are not supported on %s (Google refuses demographic criteria on the audience-grouped Demand Gen ad group); omit ExcludedAgeRanges and ExcludedGenders, and set the demographics inside the Audience that DemandGenAudience or the ad group's Audience references", kind)
+			return criteriaPlan{}, fmt.Errorf("google-ads: demographic exclusions are not supported on %s (Google refuses demographic criteria on the audience-grouped Demand Gen ad group); omit ExcludedAgeRanges and ExcludedGenders, and set them as inclusions in DemandGenDemographics, or inside the Audience that DemandGenAudience or the ad group's Audience references", kind)
 		}
 		for i, sch := range in.AdSchedules {
 			if sch.BidModifier != nil {

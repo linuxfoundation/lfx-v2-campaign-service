@@ -45,6 +45,12 @@ func TestGoogleAdsDemandGenAudienceRequested(t *testing.T) {
 		// A type error elsewhere in the object does not hide an audience decoded before it.
 		{"audience before a type error", `{"googleAdsConfig":{"demandGenAudience":"customers/1/audiences/2","demandGenAdGroups":"x"}}`, true},
 		{"malformed envelope", `{`, false},
+		// #498: a demographic Audience counts only when it names existing user lists.
+		{"demographics alone", `{"googleAdsConfig":{"demandGenDemographics":{"ageRanges":["25-34"],"genders":["MALE"]}}}`, false},
+		{"empty demographics", `{"googleAdsConfig":{"demandGenDemographics":{}}}`, false},
+		{"empty segment list", `{"googleAdsConfig":{"demandGenDemographics":{"audienceSegments":[]}}}`, false},
+		{"demographic user lists", `{"googleAdsConfig":{"demandGenDemographics":{"ageRanges":["25-34"],"audienceSegments":["customers/1/userLists/2"]}}}`, true},
+		{"blank demographic user list counts", `{"googleAdsConfig":{"demandGenDemographics":{"audienceSegments":[""]}}}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := GoogleAdsDemandGenAudienceRequested(json.RawMessage(tc.config)); got != tc.want {
@@ -62,6 +68,12 @@ func TestBriefService_CreateCampaigns_DemandGenAudienceNeedsMarketingOps(t *test
 	groupAudience := map[string]any{"googleAdsConfig": map[string]any{
 		"channel": "demand-gen", "demandGenAdGroups": []any{map[string]any{"name": "g", "audience": " "}}}}
 	noAudience := map[string]any{"googleAdsConfig": map[string]any{"channel": "demand-gen"}}
+	// #498: a demographic Audience is created fresh, so only its user lists need the role.
+	demographics := map[string]any{"googleAdsConfig": map[string]any{
+		"channel": "demand-gen", "demandGenDemographics": map[string]any{"ageRanges": []any{"25-34"}}}}
+	demographicLists := map[string]any{"googleAdsConfig": map[string]any{
+		"channel": "demand-gen", "demandGenDemographics": map[string]any{
+			"ageRanges": []any{"25-34"}, "audienceSegments": []any{"customers/1/userLists/2"}}}}
 
 	for _, tc := range []struct {
 		name      string
@@ -80,6 +92,8 @@ func TestBriefService_CreateCampaigns_DemandGenAudienceNeedsMarketingOps(t *test
 		{"no checker is unavailable", []string{"google-ads"}, audience, nil, testActor, "503", 0},
 		{"no actor is unavailable", []string{"google-ads"}, audience, &fakeMarketingOps{allow: true}, nil, "503", 0},
 		{"no audience is not checked", []string{"google-ads"}, noAudience, &fakeMarketingOps{}, testActor, "", 0},
+		{"demographics alone are not checked", []string{"google-ads"}, demographics, &fakeMarketingOps{}, testActor, "", 0},
+		{"demographic user lists are checked", []string{"google-ads"}, demographicLists, &fakeMarketingOps{}, testActor, "403", 1},
 		// googleAdsConfig is read only by the google-ads dispatcher, so another platform's create
 		// carrying it is not checked.
 		{"another platform is not checked", []string{"microsoft-ads"}, audience, &fakeMarketingOps{}, testActor, "", 0},

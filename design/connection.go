@@ -281,8 +281,8 @@ var UserListsConflictError = Type("user-lists-conflict-error", func() {
 // (internal/service demandGenAudienceForbiddenMessage); design does not import internal, so it
 // is copied, and TestForbiddenErrorExampleMatchesService pins the two together.
 var ForbiddenError = Type("forbidden-error", func() {
-	errorAttrs("403", "Demand Gen audiences (googleAdsConfig.demandGenAudience and each "+
-		"demandGenAdGroups audience) require the global_marketing_ops role on this project")
+	errorAttrs("403", "Demand Gen audiences (googleAdsConfig.demandGenAudience, each "+
+		"demandGenAdGroups audience and demandGenDemographics.audienceSegments) require the global_marketing_ops role on this project")
 })
 
 var PreconditionFailedError = Type("precondition-failed-error", func() {

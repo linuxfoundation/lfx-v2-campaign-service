@@ -246,7 +246,7 @@ type CampaignInput struct {
 	AudienceSegments []string
 	// DemandGenAudience is ONE existing Google Ads Audience resource
 	// (`customers/<this account>/audiences/<id>`) attached to the Demand Gen ad group as
-	// an `audience` criterion (#459). This client never creates audiences: the Audience,
+	// an `audience` criterion (#459). This client never creates this Audience: it,
 	// and the custom segments and user lists inside it, are built in the Google Ads UI.
 	//
 	// One string rather than a list because Google admits exactly one: a Demand Gen ad
@@ -256,6 +256,13 @@ type CampaignInput struct {
 	// verified by a validateOnly probe on 2026-11-03. DEMAND GEN ONLY, refused on every
 	// other channel; see validateDemandGenAudience.
 	DemandGenAudience string
+	// DemandGenDemographics is the Demand Gen campaign's demographic targeting (#498): age,
+	// gender, household income and parental status, and optionally existing user lists,
+	// built into ONE new Audience before the budget and attached to every Demand Gen ad
+	// group, as DemandGenAudience is attached. Refused beside DemandGenAudience or any
+	// DemandGenAdGroups[].Audience, since an ad group takes one Audience. DEMAND GEN ONLY.
+	// See validateDemandGenDemographics.
+	DemandGenDemographics *DemandGenDemographics
 	// CustomAudiences, CustomAffinities and UserInterests are the three other segment
 	// kinds a Display ad group takes, each a list of EXISTING resource names on this
 	// campaign's own account (#462): customers/{id}/customAudiences/{id},
@@ -636,6 +643,11 @@ type CampaignResult struct {
 	// Empty is ambiguous in the three ways GeoCriterionIDs documents below.
 	KeywordCriteriaIDs  []string `json:"keywordCriteriaIds,omitempty"`
 	AudienceCriteriaIDs []string `json:"audienceCriteriaIds,omitempty"`
+	// DemandGenDemographicAudience is the resource name of the Audience created, or reused
+	// from an earlier attempt, for CampaignInput.DemandGenDemographics (#498), before the
+	// budget. Set on every partial past that step, so a reconciler can find it; each Demand
+	// Gen ad group's AudienceCriteriaIDs hold its attachment. A step line says which.
+	DemandGenDemographicAudience string `json:"demandGenDemographicAudience,omitempty"`
 	// GeoCriterionIDs are the location criteria created for CampaignInput.GeoTargets
 	// (LFXV2-3283).
 	//
@@ -1154,6 +1166,9 @@ type campaignPreflight struct {
 	// for shape and for THIS account, because Google refuses a foreign customer id only
 	// at the criteria mutate, after the budget. See validateDemandGenAudience.
 	demandGenAudience string
+	// demandGenDemographics is the Audience CreateDemandGenCampaign creates (or reuses)
+	// before the budget for CampaignInput.DemandGenDemographics (#498); nil when unset.
+	demandGenDemographics *demandGenDemographicPlan
 	// geo is the whole resolved location intent — inclusions, exclusions and
 	// proximity — with every country code already mapped to its Google geo target
 	// constant id. Resolved during the preflight so an unmapped country code, a
@@ -1785,6 +1800,12 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	// The Demand Gen demographic Audience (#498), after the ad groups so its refusals of a
+	// group's own Audience come after that group's own checks.
+	demandGenDemographics, err := validateDemandGenDemographics(kind, c.account.CustomerID, campaignName, in)
+	if err != nil {
+		return nil, err
+	}
 	// The Display ad groups (#475): the single group the campaign-level creative and
 	// audience lists describe, or the caller's named list. After every validator it draws
 	// on, like the Search and Demand Gen lists above.
@@ -1835,6 +1856,8 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 
 		urlCustomParameters: urlCustomParameters,
 		utmCampaignStep:     utmCampaignStep,
+
+		demandGenDemographics: demandGenDemographics,
 	}, nil
 }
 

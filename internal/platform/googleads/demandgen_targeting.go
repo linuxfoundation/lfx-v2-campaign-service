@@ -30,7 +30,9 @@ import (
 //
 // So CampaignInput.DemandGenAudience is one string, AudienceSegments stays refused on
 // this channel with a message pointing at it, and Languages attach here rather than
-// through createCampaignTargetingCriteria. This client never creates the Audience.
+// through createCampaignTargetingCriteria. This client never creates the Audience that
+// DemandGenAudience names; the one Audience it does create holds DemandGenDemographics
+// (#498, demandgen_demographics.go).
 // ---------------------------------------------------------------------------
 
 // demandGenAudienceRE is the only spelling DemandGenAudience accepts: a full Audience

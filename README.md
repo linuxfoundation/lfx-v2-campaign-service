@@ -248,7 +248,9 @@ openssl rand -base64 32
   any Demand Gen audience: 403 without it, 503 when the check cannot be made
   (it asks project-service and fga-sync over NATS). The same flag gates each
   `demandGenAdGroups[].audience` (#460), the same input on a named ad
-  group: off, a create naming any is refused before the budget. The rest of Demand Gen, including ad groups without
+  group, and `demandGenDemographics.audienceSegments` (#498), existing user
+  lists put in the demographic Audience: off, a create naming any is refused
+  before the budget. The rest of Demand Gen, including ad groups without
   an audience, is not gated. The chart sets it to `"false"`
   (`app.environment.GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED.value`); enable
   both per-environment by setting it to `"true"` in the ArgoCD overlay.
@@ -297,7 +299,9 @@ openssl rand -base64 32
 - `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to the Google Ads demographic inputs whose request
   shape has not yet been checked with a validateOnly probe:
-  `googleAdsConfig.observedDemographics` (#497). Only the exact value
+  `googleAdsConfig.observedDemographics` (#497) and
+  `googleAdsConfig.demandGenDemographics` (#498; its Audience shape was
+  accepted by a validateOnly probe on 2026-11-05). Only the exact value
   `true` enables it; anything else fails closed, and a create naming one,
   on any channel, is refused before the budget. It names no account
   resource; it keeps an unverified shape off the shared account. The chart

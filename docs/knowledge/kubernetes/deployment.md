@@ -92,7 +92,8 @@ anything upstream exists. `searchAssets` is not gated.
 
 `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` defaults to `"false"` too (#497), but gates something
 different: not an account resource, but a request shape nobody has probed live yet —
-`googleAdsConfig.observedDemographics`. Only exactly `"true"` enables it; off, a create naming it,
+`googleAdsConfig.observedDemographics`, and `googleAdsConfig.demandGenDemographics` (#498), whose
+Audience shape a validateOnly probe accepted on 2026-11-05. Only exactly `"true"` enables it; off, a create naming it,
 on any channel, is refused before anything upstream exists. Turn it on once the validateOnly probe
 in the field's docs passes.
 

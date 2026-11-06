@@ -141,8 +141,9 @@ const (
 
 	// EnvGoogleAdsDemandGenAudienceEnabled opts a deployment IN to googleAdsConfig.demandGenAudience
 	// (#459): one existing Google Ads Audience attached to a Demand Gen ad group, and to each
-	// googleAdsConfig.demandGenAdGroups[].audience (#460), the same input on a named ad group.
-	// Only the exact value "true" enables them; unset or any other value fails closed, and a
+	// googleAdsConfig.demandGenAdGroups[].audience (#460), the same input on a named ad group,
+	// and to googleAdsConfig.demandGenDemographics.audienceSegments (#498), existing user lists put
+	// in the demographic Audience. Only the exact value "true" enables them; unset or any other value fails closed, and a
 	// create naming one is refused before anything upstream exists.
 	//
 	// A per-deployment opt-in, off by default; ops turns it on by setting it to exactly "true"
@@ -196,7 +197,8 @@ const (
 
 	// EnvGoogleAdsDemographicTargetingEnabled opts a deployment IN to the Google Ads demographic
 	// inputs whose upstream contract has NOT yet been checked with a validateOnly probe:
-	// googleAdsConfig.observedDemographics (#497) today. Only the exact value "true" enables
+	// googleAdsConfig.observedDemographics (#497) and googleAdsConfig.demandGenDemographics
+	// (#498, whose Audience shape a validateOnly probe accepted on 2026-11-05). Only the exact value "true" enables
 	// it; unset or any other value fails closed, and a create naming one is refused before
 	// anything upstream exists.
 	//
