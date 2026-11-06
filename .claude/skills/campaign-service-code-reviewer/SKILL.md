@@ -1,6 +1,14 @@
 ---
 name: campaign-service-code-reviewer
-description: Repo-owned code review brain for lfx-v2-campaign-service, the repo_code role of /lfx-skills:lfx-local-review. Applies the line-level review method that lives, once, at .github/skills/campaign-service-code-review/SKILL.md (the same method the PR-side Copilot reviewer uses: the house standards, the Go quality dimensions, the campaign-service specifics and the security anchors) to the host-pinned commit range, and returns a Markdown review. Carries no rules of its own, so the two reviewers cannot drift apart. Launched by the local review host; not a skill a developer invokes by hand.
+description: >-
+  Repo-owned code review brain for lfx-v2-campaign-service, the repo_code role
+  of /lfx-skills:lfx-local-review. Applies the line-level review method that
+  lives, once, at .github/skills/campaign-service-code-review/SKILL.md (the
+  same method the PR-side Copilot reviewer uses: the house standards, the Go
+  quality dimensions, the campaign-service specifics and the security anchors)
+  to the host-pinned commit range, and returns a Markdown review. Carries no
+  rules of its own, so the two reviewers cannot drift apart. Launched by the
+  local review host; not a skill a developer invokes by hand.
 ---
 
 <!-- Copyright The Linux Foundation and each contributor to LFX. -->
