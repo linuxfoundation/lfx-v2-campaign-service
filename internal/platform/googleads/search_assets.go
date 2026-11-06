@@ -34,10 +34,11 @@ package googleads
 // The 2026-11-03 validateOnly probes (v23, recorded on #477) accepted: a campaignAsset with
 // AD_IMAGE and one with BUSINESS_LOGO, each naming an EXISTING square image asset; and a
 // BUSINESS_NAME campaignAsset naming a text asset created by temporary id in the same
-// googleAds:mutate. NOT LIVE-VERIFIED: an IMAGE asset created by temporary id inside
-// googleAds:mutate and linked in that same request — the exact shape sent below. Image asset
-// creation itself is the shape Display and Demand Gen send to assets:mutate, and the temporary-
-// id link is the shape the BUSINESS_NAME probe accepted; the two have not been probed together.
+// googleAds:mutate. A 2026-11-06 validateOnly probe (#514, v23) then accepted the exact shape
+// sent below, on a paused LFX Search campaign: ONE googleAds:mutate creating two named 1:1
+// AD_IMAGE image assets, one named 1:1 BUSINESS_LOGO image asset and one BUSINESS_NAME text
+// asset, each under a temporary id, followed by the four campaignAsset links naming those
+// temporary ids (eight operations). No such campaign has yet been created live.
 // A 2026-11-05 validateOnly probe of that image creation (assets:mutate, #491) found the field
 // every image create was missing: Google refuses an image asset with no name
 // (NAME_REQUIRED_FOR_ASSET_TYPE) and accepts the same bytes named, so the creates below now

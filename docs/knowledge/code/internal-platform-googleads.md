@@ -2088,8 +2088,10 @@ Evidence, from the 2026-11-03 validateOnly probes recorded on #477 (v23): accept
 `campaignAsset` with `AD_IMAGE` and one with `BUSINESS_LOGO`, each naming an EXISTING square
 image asset; a `BUSINESS_NAME` link naming a text asset created by temporary id in the same
 `googleAds:mutate`; and a `campaignSharedSet` naming an existing `NEGATIVE_KEYWORDS` set.
-Another customer's set was refused. NOT LIVE-VERIFIED: an IMAGE asset created by temporary id
-and linked in the same `googleAds:mutate` (the exact request sent), a multi-operation
+Another customer's set was refused. A 2026-11-06 validateOnly probe (#514) accepted the exact
+image request sent: named IMAGE assets (AD_IMAGE and BUSINESS_LOGO) and a BUSINESS_NAME text
+asset created by temporary id and linked in the same `googleAds:mutate`. NOT LIVE-VERIFIED: a
+persisted create of that request, a multi-operation
 `campaignSharedSets:mutate`, a shared set of another type (for example
 `NEGATIVE_PLACEMENTS`) on a Search campaign, and the 300x300 / 128x128 minimums and the
 20-image cap, which are Google's documented asset specifications.
