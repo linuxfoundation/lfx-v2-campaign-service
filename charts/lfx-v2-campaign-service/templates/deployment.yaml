@@ -55,65 +55,15 @@
   {{- end }}
 {{- end }}
 {{- /*
-  Guard: the X (Twitter) stats-job features run on ONE replica — a first line of defence.
-
-  TWITTER_METRICS_ENABLED turns on the X account monitor and the X audience read, which create
-  asynchronous stats jobs on X ad accounts shared across foundations (X allows 100 concurrent
-  jobs per account). Their limits — the audience read's per-account job budget, singleflight and
-  slot (internal/dispatch/twitter_audience_guard.go) and the account-keyed write pacer
-  (internal/platform/twitter/pacer.go) — are process-local, so the binding guarantee is made at
-  RUNTIME: only the pod holding the per-account Postgres advisory lease
-  (internal/infrastructure/postgres/stats_job_lease.go) runs stats jobs, and every other pod
-  refuses. This render-time check cannot see an out-of-band scale or an external HPA (ArgoCD
-  ignores /spec/replicas), so it is belt-and-braces: it stops the configurations it CAN see from
-  rendering at all.
-
-  It judges the EFFECTIVE value the container gets. The env list renders app.environment first
-  and app.extraEnv after it, and Kubernetes resolves a repeated name to its LAST occurrence, so
-  the last extraEnv entry named TWITTER_METRICS_ENABLED wins over app.environment. An
-  app.environment entry renders `value` when the key is present and `valueFrom` otherwise. A
-  valueFrom on the effective entry cannot be inspected and is treated as on.
+  No replica guard for X (Twitter) — deliberately (#381). TWITTER_METRICS_ENABLED with more
+  than one replica used to `fail` the render here. It is now a WARNING in templates/NOTES.txt,
+  computed by "lfx-v2-campaign-service.xStatsMultiReplica" in templates/_helpers.tpl, which also
+  records why: the per-account Postgres stats-job lease confines X stats-job creation (the
+  audience read AND the account monitor's report submission) to one pod at runtime, and nothing
+  polls either path. Deployments set three replicas, so a render-time `fail` here would block
+  every unrelated ArgoCD sync of this service the moment the flag was turned on — the outage #378
+  fixed. Do not reinstate one.
 */}}
-{{- $xStats := false }}
-{{- with (get .Values.app.environment "TWITTER_METRICS_ENABLED") }}
-  {{- if hasKey . "value" }}
-    {{- $xStats = eq (toString .value) "true" }}
-  {{- else if .valueFrom }}
-    {{- $xStats = true }}
-  {{- end }}
-{{- end }}
-{{- range $entry := .Values.app.extraEnv }}
-  {{- if eq (toString (default "" $entry.name)) "TWITTER_METRICS_ENABLED" }}
-    {{- $xStats = or (and $entry.valueFrom true) (eq (toString $entry.value) "true") }}
-  {{- end }}
-{{- end }}
-{{- /*
-  NOTE — this guard is now reachable in production, which it was not when it was written. Until
-  the Reddit guard below it was retired, the chart refused ANY render above one replica, so this
-  one could never be the thing that fired. Deployments set three replicas
-  (lfx-v2-argocd values/global/lfx-v2-campaign-service.yaml), so from here on, turning
-  TWITTER_METRICS_ENABLED on in a deployed environment makes `helm template` fail and ArgoCD
-  unable to generate the manifest AT ALL — blocking every unrelated deploy of this service, which
-  is the incident the Reddit guard caused. No environment sets the flag today, so this is latent,
-  not live.
-
-  It is kept for now because it is flag-scoped and opt-in rather than unconditional, so the blast
-  radius is "whoever turns the flag on", not "everyone, always". But the argument that retired the
-  Reddit guard likely applies here too: the runtime lease (postgres.StatsJobLease) already confines
-  the background stats jobs to one pod, which leaves this guard covering only the user-facing X
-  monitor — and if nothing polls that either, this should become a non-fatal signal (a NOTES.txt
-  warning or a CI-side `helm template` assertion) rather than a render failure. That needs the same
-  poller audit the Reddit paths got before it is acted on; it has not been done. Do not reinstate
-  an unconditional guard here in the meantime.
-*/}}
-{{- if $xStats }}
-  {{- $replicas := int (default 1 .Values.replicaCount) }}
-  {{- $autoscaleMax := 1 }}
-  {{- with .Values.autoscaling }}{{- if .enabled }}{{- $autoscaleMax = int (default 2 .maxReplicas) }}{{- end }}{{- end }}
-  {{- if or (gt $replicas 1) (gt $autoscaleMax 1) }}
-    {{- fail "TWITTER_METRICS_ENABLED is on with more than one replica (replicaCount > 1, or autoscaling with maxReplicas > 1). The X stats-job features' per-account limits (job budget, write pacer) are per process, so each replica would multiply them against X ad accounts shared across foundations. Run one replica while the flag is on (the runtime lease also refuses non-owner pods)." }}
-  {{- end }}
-{{- end }}
 {{- /*
   No replica guard for Reddit — deliberately, and this is not an oversight. An earlier revision of
   this file refused to render at replicaCount > 1 on the reasoning below; that refusal was wrong
@@ -149,9 +99,7 @@
 
   The fix that does work — a SHARED ledger keyed by ad account in Postgres, replacing the
   process-local one — landed in #380 (a sliding window of slot rows rather than a refilling token
-  bucket, which could admit up to 90 in one window). (The X guard above stays: it is flag-scoped,
-  TWITTER_METRICS_ENABLED gates the X monitor too, and the runtime lease already confines those
-  jobs to one pod.)
+  bucket, which could admit up to 90 in one window).
 */}}
 ---
 apiVersion: apps/v1

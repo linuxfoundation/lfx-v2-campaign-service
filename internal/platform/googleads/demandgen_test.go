@@ -190,8 +190,9 @@ func TestCreateDemandGenAdGroupOmitsTheSearchType(t *testing.T) {
 		if _, ok := create["type"]; ok {
 			t.Errorf("Demand Gen ad group must not send a type, got %v", create["type"])
 		}
-		if got := create["status"]; got != "ENABLED" {
-			t.Errorf("ad group status = %v, want ENABLED", got)
+		// PAUSED, as on every channel (#535).
+		if got := create["status"]; got != StatusPaused {
+			t.Errorf("ad group status = %v, want %s", got, StatusPaused)
 		}
 		return
 	}

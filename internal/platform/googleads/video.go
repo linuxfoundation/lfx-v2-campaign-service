@@ -346,12 +346,13 @@ func (c *Client) createVideoCampaignCascade(ctx context.Context, in CampaignInpu
 	}
 
 	// Step 5: the ad group, typed VIDEO_RESPONSIVE so the ad below is a shape it
-	// accepts.
+	// accepts. PAUSED, as on every channel here (#535); ToggleStatus's activate cascade
+	// enables it, and its ad, before the campaign.
 	adGroupName := videoAdGroupName(in)
 	adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: videoAdGroupCreate{
 		Name:     adGroupName,
 		Campaign: campaignResource,
-		Status:   "ENABLED",
+		Status:   StatusPaused,
 		Type:     adGroupTypeVideoResponsive,
 	}}}}
 	// The deterministic ad-group NAME goes on every failure arm below, as on the
