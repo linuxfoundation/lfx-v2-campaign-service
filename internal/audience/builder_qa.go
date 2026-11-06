@@ -726,10 +726,13 @@ type SuppressionCheck struct {
 //
 // unverifiedIDs are exclusions whose names could not be read (#399). Every finding
 // below that asserts a suppression is ABSENT is withheld while any exist, and one
-// NEEDS VERIFY finding naming them is raised instead: an unreadable name is missing
-// evidence, and turning it into the CRITICAL would send an operator to re-apply a
-// GDPR suppression that may already be applied. A suppression that WAS read is still
-// credited, so a readable GDPR list plus an unreadable sibling reports GDPR applied.
+// finding naming them and what could not be verified is raised instead: an unreadable
+// name is missing evidence, and "No GDPR suppression list found" would send an operator
+// to re-apply a GDPR suppression that may already be applied. It stays CRITICAL when an
+// EU audience's GDPR suppression is the thing unverified -- fail closed: a throttled
+// read must not soften an EU send that may have no GDPR suppression at all -- and is a
+// HIGH (NEEDS VERIFY) otherwise. A suppression that WAS read is still credited, so a
+// readable GDPR list plus an unreadable sibling reports GDPR applied.
 func CheckSuppression(exclusionNames, unverifiedIDs []string, targetsEU, targetsCA bool) SuppressionCheck {
 	gdpr, optOut, anySuppression := false, false, false
 	for _, name := range exclusionNames {
@@ -760,10 +763,14 @@ func CheckSuppression(exclusionNames, unverifiedIDs []string, targetsEU, targets
 			what = append(what, "CASL-relevant")
 		}
 		if len(what) > 0 {
+			severity, blocks := SeverityHigh, ""
+			if targetsEU && !gdpr {
+				severity, blocks = SeverityCritical, " This audience targets the EU, so the send stays blocked until a GDPR suppression is verified."
+			}
 			findings = append(findings, Finding{
-				Severity: SeverityHigh,
-				Message: fmt.Sprintf("Could not read excluded list(s) %s from HubSpot, so %s suppression could not be verified. This is not evidence the suppression is missing.",
-					strings.Join(unverified, ", "), strings.Join(what, " and ")),
+				Severity: severity,
+				Message: fmt.Sprintf("Could not read excluded list(s) %s from HubSpot, so %s suppression could not be verified. This is not evidence the suppression is missing.%s",
+					strings.Join(unverified, ", "), strings.Join(what, " and "), blocks),
 				Fix: "Re-run the QA once HubSpot answers for these lists, or confirm in HubSpot that they are the expected suppression lists before sending.",
 			})
 		}

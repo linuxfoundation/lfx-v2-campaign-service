@@ -14,9 +14,12 @@ set and an EU audience got the CRITICAL "No GDPR suppression list found", with
   whose own filters failed for anything but a 404 (its covered lists are unknown), and an
   unreadable covered child.
 - `CheckSuppression(names, unverifiedIDs, eu, ca)`: while any id is unverified it withholds every
-  absence finding (the CRITICAL, the excludes-NOTHING MEDIUM, the opt-out HIGH and the Canada
-  MEDIUM) and raises one HIGH NEEDS VERIFY naming the ids and what could not be verified. A
-  suppression that was read is still credited.
+  absence finding (the "No GDPR suppression list found" CRITICAL, the excludes-NOTHING MEDIUM,
+  the opt-out HIGH and the Canada MEDIUM) and raises one finding naming the ids and what could
+  not be verified. It is CRITICAL (FAIL) when an EU audience's GDPR suppression is the unverified
+  one: fail closed, so a throttled read never softens an EU send that may have no GDPR
+  suppression (raised in review). Otherwise it is HIGH (NEEDS VERIFY). A suppression that was
+  read is still credited.
 - Response shape, additive: optional `checks.suppression.unverified_list_ids`. Absent when every
   exclusion was read, so `applied_gdpr` / `applied_opt_out` keep their meaning for existing
   clients; present, a false flag means "not verified", not "absent".

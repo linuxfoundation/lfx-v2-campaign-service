@@ -1182,8 +1182,8 @@ func TestRunQA_ASuppressionWrapperCreditsOnlyWhatItFullyCovers(t *testing.T) {
 }
 
 // A list name the portal refused to return (403 from the v3 and legacy APIs) is missing
-// evidence, not an absent list (#399): check 3 must not raise the CRITICAL "no GDPR
-// suppression" or publish the opt-out as absent on it, and check 1 (signal mapping) and
+// evidence, not an absent list (#399): check 3 must not report "No GDPR suppression list
+// found" on it -- the EU send stays blocked, on an unverified finding naming the list -- and check 1 (signal mapping) and
 // check 4 (current registrants) must name the list they could not read instead of judging
 // without it. The 404 case is the control: a list that is not there is still absent.
 func TestRunQA_AnUnreadableListNameIsNotVerifiedRatherThanAbsent(t *testing.T) {
@@ -1197,14 +1197,16 @@ func TestRunQA_AnUnreadableListNameIsNotVerifiedRatherThanAbsent(t *testing.T) {
 		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
 	}
 	country := `{"filterType":"PROPERTY","property":"country","operation":{"operationType":"MULTISTRING","operator":"IS_EQUAL_TO","values":["Germany"]}}`
-	critical := func(out *audience.QaOutcome) bool {
+	// absent reports check 3's "not found" finding; unverified its "could not read" one.
+	says := func(out *audience.QaOutcome, text string) bool {
 		for _, finding := range out.Checks.Suppression.Findings {
-			if finding.Severity == audience.SeverityCritical {
+			if strings.Contains(finding.Message, text) {
 				return true
 			}
 		}
 		return false
 	}
+	const absent, unverified = "No GDPR suppression list found", "Could not read excluded list(s)"
 	for name, tc := range map[string]struct {
 		master    string
 		send      []string
@@ -1236,14 +1238,16 @@ func TestRunQA_AnUnreadableListNameIsNotVerifiedRatherThanAbsent(t *testing.T) {
 			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", true, false, tc.send)
 			require.NoError(t, err)
 			if tc.unread == "" {
-				assert.True(t, critical(out), "a GDPR list that does not exist is still absent")
+				assert.True(t, says(out, absent), "a GDPR list that does not exist is still absent")
+				assert.False(t, says(out, unverified))
 				assert.Empty(t, out.Checks.Suppression.UnverifiedListIDs)
 				return
 			}
-			assert.False(t, critical(out), "an unreadable name is no evidence the GDPR suppression is missing")
-			assert.Equal(t, audience.VerdictNeedsVerify, out.Checks.Suppression.Verdict)
+			assert.False(t, says(out, absent), "an unreadable name is no evidence the GDPR suppression is missing")
+			assert.True(t, says(out, unverified+" "+tc.unread), "the finding names the list it could not read")
+			assert.Equal(t, audience.VerdictFail, out.Checks.Suppression.Verdict, "an EU send with no verified GDPR suppression stays blocked")
 			assert.Equal(t, []string{tc.unread}, out.Checks.Suppression.UnverifiedListIDs)
-			assert.NotEqual(t, audience.VerdictFail, out.Overall)
+			assert.NotEqual(t, audience.VerdictFail, out.Checks.ExclusionCompleteness.Verdict, "an unread exclusion is not zero exclusions")
 		})
 	}
 

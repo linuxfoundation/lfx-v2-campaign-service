@@ -233,20 +233,27 @@ func TestCheckSignalMapping_AnUnreadableNameIsNotVerifiedRatherThanFailed(t *tes
 	assert.Equal(t, VerdictFail, excluded.Verdict, "an unreadable EXCLUSION carries no inclusion signal either way")
 }
 
-// An unreadable exclusion name withholds every absence finding, including the one
-// CRITICAL, and says what it could not verify instead (#399). What WAS read is still
-// credited.
+// An unreadable exclusion name withholds every absence finding and says what it could
+// not verify instead (#399). An EU audience whose GDPR suppression is unverified stays
+// blocked (fail closed), but on an "unverified" finding, never "not found". What WAS read
+// is still credited.
 func TestCheckSuppression_AnUnreadableExclusionIsNotVerifiedRatherThanAbsent(t *testing.T) {
 	got := CheckSuppression([]string{"LF Global Opt-Outs"}, []string{"601"}, true, true)
-	assert.Equal(t, VerdictNeedsVerify, got.Verdict, "no CRITICAL on evidence that could not be read")
+	assert.Equal(t, VerdictFail, got.Verdict, "an EU send with no verified GDPR suppression stays blocked")
 	assert.False(t, got.AppliedGDPR)
 	assert.True(t, got.AppliedOptOut, "a suppression that was read is still credited")
 	assert.Equal(t, []string{"601"}, got.UnverifiedListIDs)
-	require.Len(t, got.Findings, 1)
-	assert.Equal(t, SeverityHigh, got.Findings[0].Severity)
-	assert.Contains(t, got.Findings[0].Message, "601")
-	assert.Contains(t, got.Findings[0].Message, "GDPR")
+	require.Len(t, got.Findings, 1, "the unverified finding replaces the absence ones")
+	assert.Equal(t, SeverityCritical, got.Findings[0].Severity)
+	assert.Contains(t, got.Findings[0].Message, "Could not read excluded list(s) 601")
+	assert.NotContains(t, got.Findings[0].Message, "No GDPR suppression list found", "unread is not absent")
 	assert.NotContains(t, got.Findings[0].Message, "Opt-Out", "the opt-out was read and found")
+
+	notEU := CheckSuppression([]string{"Hard Bounces"}, []string{"601"}, false, false)
+	assert.Equal(t, VerdictNeedsVerify, notEU.Verdict)
+	require.Len(t, notEU.Findings, 1)
+	assert.Equal(t, SeverityHigh, notEU.Findings[0].Severity, "outside the EU an unverified suppression is a NEEDS VERIFY")
+	assert.Contains(t, notEU.Findings[0].Message, "Global Opt-Out")
 
 	nothingRead := CheckSuppression(nil, []string{"601", "601"}, false, false)
 	assert.Equal(t, VerdictNeedsVerify, nothingRead.Verdict)

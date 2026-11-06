@@ -5069,9 +5069,11 @@ returns `(name, unreadable)`, `unreadable` when neither API produced a name and 
 anything but a 404 (a throttle, a 401/403, a 5xx), and `RunQA` keeps those ids beside `nameByID`.
 `exclusionNames` returns, with the names, every exclusion it could not read — an unreadable name,
 a wrapper whose own filters failed for anything but a 404, and an unreadable covered child — and
-`CheckSuppression` takes them: while any exist it withholds every absence finding, the CRITICAL
-"no GDPR suppression" included, and raises one HIGH NEEDS VERIFY naming the ids and what it could
-not verify; a suppression that WAS read is still credited. The ids are published as the optional
+`CheckSuppression` takes them: while any exist it withholds every absence finding, "No GDPR
+suppression list found" included, and raises one finding naming the ids and what it could not
+verify. That finding stays CRITICAL (FAIL) for an EU audience whose GDPR suppression is the
+unverified one, so a throttled read never softens a send that may really lack it (fail closed), and
+is a HIGH NEEDS VERIFY otherwise; a suppression that WAS read is still credited. The ids are published as the optional
 `unverified_list_ids` on the suppression check, where a false `applied_gdpr` / `applied_opt_out`
 means not verified rather than absent. `CheckSignalMapping` takes the same set and, when no
 engagement signal is found and an inclusion references an unread list, names it in a MEDIUM NEEDS
