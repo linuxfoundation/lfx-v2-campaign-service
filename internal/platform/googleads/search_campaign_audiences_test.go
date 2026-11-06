@@ -195,7 +195,7 @@ func TestValidateCampaignInputKind_CampaignAudienceSegmentsRefusals(t *testing.T
 		}, "is not a user list; a Search campaign observes user lists only"},
 		{"another customer", CampaignKindSearch, func(in *CampaignInput) {
 			in.CampaignAudienceSegments = []string{"customers/999/userLists/1"}
-		}, `is on customer "999", not this campaign's account 1234567890`},
+		}, `is on customer "999", not this campaign's account "1234567890"`},
 		{"non-canonical id", CampaignKindSearch, func(in *CampaignInput) {
 			in.CampaignAudienceSegments = []string{"customers/1234567890/userLists/011"}
 		}, "not the canonical base-10 spelling"},

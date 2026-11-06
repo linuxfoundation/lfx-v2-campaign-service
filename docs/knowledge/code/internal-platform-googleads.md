@@ -2137,14 +2137,15 @@ asset create here set one, so every image-bearing creative failed in prod after 
 campaign and ad group existed — a Display create on 2026-11-05 left campaign 24431381015 with
 no ad. Every image asset create now sends `imageAssetName(data)` (`image_assets.go`, beside
 `base64Image`): `LFX image ` and the first 16 hex characters of the bytes' SHA-256. That
-covers Display (`createDisplayAd`), the Demand Gen image ad (`createDemandGenAd`), the Demand Gen video ad's logo, Performance Max
-(`buildPerformanceMaxAssets`) and the Search campaign assets (`buildSearchAssets`); text,
-video and call-to-action assets still send no name. The name comes from the bytes, never the
-source URL, so no creative URL is exported to Google as an asset label, and the same bytes
-always get the same name. validateOnly probes on 2026-11-05 (account 8666746580) established
-the facts it relies on: a named image asset is accepted, names need not be unique in the
-account (a name already used, and one name twice in one request, were both accepted), and 128
-characters is accepted while 129 is refused `TOO_LONG`; the name is always 26.
+covers Display (`createDisplayAd`), the Demand Gen image ad (`createDemandGenAd`), the Demand
+Gen video ad's logo, Performance Max (`buildPerformanceMaxAssets`) and the Search campaign
+assets (`buildSearchAssets`); text, video and call-to-action assets still send no name. The
+name comes from the bytes, never the source URL, so no creative URL is exported to Google as
+an asset label, and the same bytes always get the same name. validateOnly probes on 2026-11-05
+(account 8666746580) established the facts it relies on: a named image asset is accepted,
+names need not be unique in the account (a name already used, and one name twice in one
+request, were both accepted), and 128 characters is accepted while 129 is refused `TOO_LONG`;
+the name is always 26.
 
 ## Pre-flight refusals reach the job result (#494)
 
@@ -2198,6 +2199,19 @@ tests that pin a message see exactly what they saw before. A headline longer tha
 `capForError`'s 100 bytes is quoted with a trailing `…`, and the operator message withholds any
 cut value outright, since the cut may have removed the digit that made it an opaque token (#495
 review).
+
+The foreign-account refusals also quote the connection's OWN account id (#511): conversion
+action, Demand Gen Audience, Demand Gen demographics user list and custom audience, Display
+audience resource, Performance Max audience signal, shared negative keyword list and Search
+audience segment, eight call sites. That id comes from stored connection config, not the
+operator, but `validateAccountIDs` checks its alphabet and not its length, so a mis-stored
+40-digit value formatted with `%s` reached the job result as it was. Quoted, the operator
+message withholds it as it would a caller's. `Error()` now quotes it too, so the pinned
+messages read `account "1234567890"`.
+`TestPreflightCampaignKind_StoredAccountIDIsQuotedInForeignAccountRefusals` sweeps an ordinary
+resource name in each collection through every caller string slot against a 40-digit stored id,
+fails if any operator message shows it, and fails if any of the seven refusal texts is never
+reached.
 
 ## Demand Gen ad creation (LFXV2-2665)
 

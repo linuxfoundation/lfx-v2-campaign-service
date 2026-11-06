@@ -155,7 +155,7 @@ func resolvePerformanceMaxAudience(customerID, raw string) (string, error) {
 	// which Google would refuse after the asset group exists.
 	if m[1] != customerID {
 		return "", fmt.Errorf("google-ads: audience signal %q belongs to customer %q, not the "+
-			"campaign's account %s; an audience cannot be shared across accounts",
+			"campaign's account %q; an audience cannot be shared across accounts",
 			capForError(audience), m[1], customerID)
 	}
 	return audience, nil
