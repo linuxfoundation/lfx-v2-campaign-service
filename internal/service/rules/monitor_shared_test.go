@@ -83,7 +83,7 @@ func TestBudgetlessCampaignIsPacingUnknown_AllPlatforms(t *testing.T) {
 		eval   func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem)
 	}{
 		{"google", "enabled", func(r []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
-			return EvaluateGoogleMonitor(r, 10)
+			return EvaluateGoogleMonitor(r, 10, "USD")
 		}},
 		{"meta", "ACTIVE", func(r []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return EvaluateMetaMonitor(withMetaWindow(r, 10, now))
@@ -97,13 +97,13 @@ func TestBudgetlessCampaignIsPacingUnknown_AllPlatforms(t *testing.T) {
 		// Microsoft has daily budgets only and no flight dates, so like Google its evaluator
 		// takes no clock.
 		{"microsoft", "Active", func(r []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
-			return EvaluateMicrosoftMonitor(r, 10)
+			return EvaluateMicrosoftMonitor(r, 10, "USD")
 		}},
 		// X, the second report-backed platform, paces a daily or a total budget; with neither
 		// there is nothing to pace.
 		{"x", "ACTIVE", func(r []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			first, last := now.AddDate(0, 0, -9), now
-			return EvaluateTwitterMonitor(r, &first, &last)
+			return EvaluateTwitterMonitor(r, &first, &last, "USD")
 		}},
 	}
 
@@ -139,7 +139,7 @@ func TestBudgetlessCampaignIsPacingUnknown_AllPlatforms(t *testing.T) {
 func TestBudgetlessGoogleCampaignStillRaisesThePlaceholderBudget(t *testing.T) {
 	_, items := EvaluateGoogleMonitor([]model.AccountCampaignMetrics{
 		{PlatformCampaignID: "1", Name: "No Budget", Status: "enabled", Spend: 25},
-	}, 10)
+	}, 10, "USD")
 
 	var found bool
 	for _, it := range items {

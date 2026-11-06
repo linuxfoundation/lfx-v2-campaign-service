@@ -4009,6 +4009,16 @@ no longer drops a campaign whose name merely begins with those two letters. The
 low-CTR pair is now the named `googleLowCtrPct`/`googleMinImpressions` rather than
 inline literals — same values, same behaviour.
 
+The query also selects `customer.currency_code` (#454) — `customer` is an attributed resource
+of `campaign`, so the code rides on every campaign row of the same request — and each
+`AccountCampaignRow` carries it as `CurrencyCode`. The field is decoded on its own
+(`monitorCurrencyField`), so a non-string value costs only the currency, never the read; across
+repeated rows for one campaign the first row's code is kept only while every later row agrees,
+and any mismatch or missing code clears it for good. `GoogleAdsDispatcher.ReadAccountMonitor`
+(`service.AccountMonitorReader`) publishes it as the monitor's `currency` only when every row
+carries the same well-formed code (`googleAdsAccountCurrency`), and the rule engine sizes its
+money thresholds in it.
+
 See [internal/platform/googleads](../../../internal/platform/googleads).
 
 ## Connection-probe predicates (LFXV2-2665)
