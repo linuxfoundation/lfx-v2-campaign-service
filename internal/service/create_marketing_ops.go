@@ -188,6 +188,66 @@ func GoogleAdsMarketingOpsInputs(config json.RawMessage) []string {
 	return set
 }
 
+// LinkedInMarketingOpsInputs names the linkedInConfig inputs this config sets that name an ad
+// segment (a matched or retargeting audience) on the connected LinkedIn ad account, so that only
+// global_marketing_ops may send them (#552): audienceMatchingSegments and dynamicSegments in any
+// targeting.include clause ("linkedInConfig.targeting.include[1].dynamicSegments") or in
+// targeting.exclude. Ad segments belong to the ad account, and the LF system account is the
+// fallback connection of every project without its own, so one foundation's executive director
+// could otherwise target or exclude lists built for another. The other targeting facets name
+// LinkedIn's own taxonomies (skills, titles, industries…), not account resources, and are not
+// gated.
+//
+// Any non-empty list counts, whatever its entries hold, so this agrees with the dispatcher
+// whatever its own validation later says. Clause positions are 0-based like the dispatcher's
+// refusals, and every name is service-derived. A config that fails to decode reports what the
+// decoder populated, as GoogleAdsMarketingOpsInputs does.
+func LinkedInMarketingOpsInputs(config json.RawMessage) []string {
+	if len(config) == 0 {
+		return nil
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(config, &envelope); err != nil {
+		return nil
+	}
+	raw, ok := envelope["linkedInConfig"]
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	var cfg struct {
+		Targeting *struct {
+			Include []map[string][]string `json:"include"`
+			Exclude map[string][]string   `json:"exclude"`
+		} `json:"targeting"`
+	}
+	_ = json.Unmarshal(raw, &cfg) // see above: a partial decode is still inspected
+	if cfg.Targeting == nil {
+		return nil
+	}
+	segmentKeys := []string{"audienceMatchingSegments", "dynamicSegments"}
+	var set []string
+	for i, clause := range cfg.Targeting.Include {
+		for _, k := range segmentKeys {
+			if len(clause[k]) > 0 {
+				set = append(set, "linkedInConfig.targeting.include["+strconv.Itoa(i)+"]."+k)
+			}
+		}
+	}
+	for _, k := range segmentKeys {
+		if len(cfg.Targeting.Exclude[k]) > 0 {
+			set = append(set, "linkedInConfig.targeting.exclude."+k)
+		}
+	}
+	return set
+}
+
+// linkedInMarketingOpsForbiddenMessage is the 403 sentence for the gated LinkedIn inputs.
+// Service-authored, like marketingOpsForbiddenMessage.
+func linkedInMarketingOpsForbiddenMessage(fields []string) string {
+	return "linkedInConfig inputs that name an ad segment on the LinkedIn ad account require " +
+		"the global_marketing_ops role on this project: " + strings.Join(fields, ", ")
+}
+
 // marketingOpsForbiddenMessage is the 403 sentence for the gated fields. Service-authored: it
 // names the inputs (service-derived, see GoogleAdsMarketingOpsInputs) and the relation, never a
 // caller value.
@@ -211,40 +271,61 @@ func marketingOpsForbiddenMessage(fields []string) string {
 //
 // Fail closed: no checker, no actor, or a check that could not be completed answers 503, and
 // only a definite grant admits the request.
+//
+// The LinkedIn ad-segment inputs (LinkedInMarketingOpsInputs, #552) take the same one check
+// when linkedin-ads is selected; a request setting both is checked once and both are named.
 func (s *BriefService) requireMarketingOpsForSharedAccountInputs(ctx context.Context, projectSlug string, platforms []model.Provider, config json.RawMessage) error {
-	if !slices.Contains(platforms, model.ProviderGoogleAds) {
-		return nil
+	var googleFields, linkedInFields []string
+	if slices.Contains(platforms, model.ProviderGoogleAds) {
+		googleFields = GoogleAdsMarketingOpsInputs(config)
 	}
-	fields := GoogleAdsMarketingOpsInputs(config)
+	if slices.Contains(platforms, model.ProviderLinkedInAds) {
+		linkedInFields = LinkedInMarketingOpsInputs(config)
+	}
+	fields := append(append([]string(nil), googleFields...), linkedInFields...)
 	if len(fields) == 0 {
 		return nil
 	}
 	named := strings.Join(fields, ", ")
+	configKeys := "googleAdsConfig"
+	switch {
+	case len(googleFields) == 0:
+		configKeys = "linkedInConfig"
+	case len(linkedInFields) > 0:
+		configKeys = "googleAdsConfig and linkedInConfig"
+	}
 	unavailable := &briefs.ConnServiceUnavailableError{Code: "503",
-		Message: "could not verify the global_marketing_ops role that these googleAdsConfig inputs require (" +
+		Message: "could not verify the global_marketing_ops role that these " + configKeys + " inputs require (" +
 			named + "); retry, or omit them"}
 	checker := s.marketingOpsChecker()
 	if checker == nil {
-		slog.ErrorContext(ctx, "refusing shared-account Google Ads inputs: no marketing-ops checker is configured (NATS_URL empty?)",
+		slog.ErrorContext(ctx, "refusing shared-account ad inputs: no marketing-ops checker is configured (NATS_URL empty?)",
 			"project_id", projectSlug, "fields", named)
 		return unavailable
 	}
 	actor := actorFromCtx(ctx)
 	if actor == nil || actor.Username == "" {
-		slog.ErrorContext(ctx, "refusing shared-account Google Ads inputs: the request carries no authenticated username",
+		slog.ErrorContext(ctx, "refusing shared-account ad inputs: the request carries no authenticated username",
 			"project_id", projectSlug, "fields", named)
 		return unavailable
 	}
 	ok, err := checker.IsGlobalMarketingOps(ctx, projectSlug, actor.Username)
 	if err != nil {
-		slog.ErrorContext(ctx, "refusing shared-account Google Ads inputs: the global_marketing_ops check failed",
+		slog.ErrorContext(ctx, "refusing shared-account ad inputs: the global_marketing_ops check failed",
 			"project_id", projectSlug, "fields", named, "error", err)
 		return unavailable
 	}
 	if !ok {
-		slog.WarnContext(ctx, "refused shared-account Google Ads inputs from a caller without global_marketing_ops",
+		slog.WarnContext(ctx, "refused shared-account ad inputs from a caller without global_marketing_ops",
 			"project_id", projectSlug, "fields", named)
-		return &briefs.ForbiddenError{Code: "403", Message: marketingOpsForbiddenMessage(fields)}
+		var msgs []string
+		if len(googleFields) > 0 {
+			msgs = append(msgs, marketingOpsForbiddenMessage(googleFields))
+		}
+		if len(linkedInFields) > 0 {
+			msgs = append(msgs, linkedInMarketingOpsForbiddenMessage(linkedInFields))
+		}
+		return &briefs.ForbiddenError{Code: "403", Message: strings.Join(msgs, "; ")}
 	}
 	return nil
 }
