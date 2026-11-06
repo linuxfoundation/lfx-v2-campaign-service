@@ -5082,7 +5082,9 @@ with anything but a 404 is still never credited, but it joins check 3's unverifi
 `CheckExclusionCompleteness` takes those ids so "zero exclusions" becomes a NEEDS VERIFY naming them
 rather than the FAIL. Check 4 (`current_registrants`) is never left a PASS while an included list
 the send still reaches has an unread name: that list may be this edition's registrants, so the PASS
-becomes a HIGH NEEDS VERIFY naming it. A list both APIs 404 is still a genuine "" and still absent. A single request-scoped `map[string]*hubspot.List` cache
+becomes a HIGH NEEDS VERIFY naming it. An included list whose name read failed but whose later `listWithFilters` read succeeds is
+recovered: its name goes into `nameByID` and it leaves the unreadable set, so neither check flags
+evidence that did arrive. A list both APIs 404 is still a genuine "" and still absent. A single request-scoped `map[string]*hubspot.List` cache
 (seeded from the `SearchLists` hits already in hand, then filled in as `listWithFilters` and
 `listName` resolve ids) is threaded through the whole call so a list referenced from more than one
 place — the searched-for candidate itself, or a list excluded by more than one other list — is

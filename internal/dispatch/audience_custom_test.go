@@ -53,6 +53,9 @@ type fakePortal struct {
 	// legacyNames are names the legacy API returns by id, ahead of forbidden: a list
 	// whose name is readable there while its v3 read (and so its filters) is refused.
 	legacyNames map[string]string
+	// flaky are list ids refused with a 403, from both APIs, for that many name lookups;
+	// each legacy read uses one up, after which the list reads normally.
+	flaky map[string]int
 }
 
 func (p *fakePortal) serve(t *testing.T) *httptest.Server {
@@ -73,13 +76,18 @@ func (p *fakePortal) serve(t *testing.T) *httptest.Server {
 				}
 			}
 			_, _ = io.WriteString(w, `{"lists":[`+strings.Join(hits, ",")+`],"hasMore":false}`)
-		case strings.HasPrefix(r.URL.Path, "/contacts/v1/lists/") && r.Method == http.MethodGet && (p.forbidden != nil || p.legacyNames != nil):
+		case strings.HasPrefix(r.URL.Path, "/contacts/v1/lists/") && r.Method == http.MethodGet && (p.forbidden != nil || p.legacyNames != nil || p.flaky != nil):
 			// Served only to a test that models the legacy API; any other legacy call
 			// still reaches the default arm and fails as unexpected.
 			// The legacy API knows only legacyNames: every other list here is a v3 one.
 			legacyID := strings.TrimPrefix(r.URL.Path, "/contacts/v1/lists/")
 			if name, ok := p.legacyNames[legacyID]; ok {
 				_, _ = io.WriteString(w, `{"listId":`+legacyID+`,"name":"`+name+`"}`)
+				return
+			}
+			if p.flaky[legacyID] > 0 {
+				p.flaky[legacyID]--
+				w.WriteHeader(http.StatusForbidden)
 				return
 			}
 			if p.forbidden[legacyID] {
@@ -89,7 +97,7 @@ func (p *fakePortal) serve(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusNotFound)
 		case strings.HasPrefix(r.URL.Path, "/crm/v3/lists/") && r.Method == http.MethodGet:
 			id := strings.TrimPrefix(r.URL.Path, "/crm/v3/lists/")
-			if p.forbidden[id] {
+			if p.forbidden[id] || p.flaky[id] > 0 {
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
@@ -1287,6 +1295,24 @@ func TestRunQA_AnUnreadableListNameIsNotVerifiedRatherThanAbsent(t *testing.T) {
 			assert.Equal(t, audience.VerdictNeedsVerify, out.Checks.CurrentRegistrants.Verdict, "unread, the include cannot be cleared")
 			require.Len(t, out.Checks.CurrentRegistrants.Findings, 1)
 			assert.Contains(t, out.Checks.CurrentRegistrants.Findings[0].Message, "610")
+		}
+	})
+
+	t.Run("a name read that recovers later is evidence again", func(t *testing.T) {
+		portal := seoulPortal()
+		portal.lists["26Q4 - Seoul - Master"] = "500"
+		portal.lists["26Q4 - Seoul - Prospects"] = "611"
+		portal.lists["26Q4 - Seoul - Meetup Prospects"] = "610"
+		portal.flaky = map[string]int{"610": 1}
+		portal.branches = map[string]string{"500": or(and(f("IN_LIST", "611")), and(f("IN_LIST", "610")))}
+		srv := portal.serve(t)
+		defer srv.Close()
+
+		out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", "", false, false, nil)
+		require.NoError(t, err)
+		assert.Equal(t, audience.VerdictPass, out.Checks.CurrentRegistrants.Verdict, "610 read on the second try, and it is no registrants list")
+		for _, finding := range out.Checks.SignalMapping.Findings {
+			assert.NotContains(t, finding.Message, "Could not read", "check 1 sees the recovered name too")
 		}
 	})
 

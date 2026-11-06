@@ -34,7 +34,8 @@ set and an EU audience got the CRITICAL "No GDPR suppression list found", with
   VERIFY naming it instead of the zero-exclusions FAIL.
 - Check 4 (`current_registrants`): a PASS is replaced by a HIGH NEEDS VERIFY while an included
   list the send still reaches has an unread name, since it may be this edition's registrants.
-  A verdict reached on names that were read is left alone.
+  A verdict reached on names that were read is left alone. An included list whose name read failed but whose later filter
+  read succeeds is recovered (name taken from that read) and is no longer unverified.
 
 Tests: `TestRunQA_AnUnreadableListNameIsNotVerifiedRatherThanAbsent` (a fake portal answering
 403 from v3 and legacy for one id: direct exclusion, wrapper child, wrapper whose filters fail,

@@ -2095,6 +2095,12 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		// A referenced list is judged the same way: its registration branches' editions
 		// (less any suppressed whole), and its name unless they are its whole membership.
 		if ref, _, rerr := x.listWithFilters(ctx, client, cache, id); rerr == nil && ref != nil {
+			// A read that failed earlier has answered now: its name and filters are evidence
+			// after all, so the list is no longer unverified for check 1 or check 4.
+			if unreadable[id] {
+				nameByID[id] = ref.Name
+				delete(unreadable, id)
+			}
 			if addEvidence(ref.FilterBranch, nameByID[id], localAway(ref.FilterBranch)) {
 				emptied[id] = true
 			}
