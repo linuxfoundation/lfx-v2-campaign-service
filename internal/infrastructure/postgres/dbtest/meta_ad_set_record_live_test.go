@@ -113,8 +113,8 @@ func onePoolService(ctx context.Context, t *testing.T, d *pauseRecordDispatcher)
 
 func seedRecordedMetaCampaign(ctx context.Context, t *testing.T, pool *pgxpool.Pool) (projectID, briefID, id string, version int64) {
 	t.Helper()
-	briefID = insertBrief(ctx, t, pool)
 	projectID = dbtest.UniqueID(t, "project")
+	briefID = insertBrief(ctx, t, pool, projectID)
 	// A run-unique Meta campaign id: 000043 allows one live row per Meta campaign in the WHOLE
 	// shared schema, so a fixed id would collide with the previous test's seed.
 	metaID := strconv.FormatInt(time.Now().UnixNano(), 10)

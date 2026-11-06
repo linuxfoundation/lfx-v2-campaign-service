@@ -66,8 +66,8 @@ func TestLiveClaimThenUpsertPersistsProvenance(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			briefID := insertBrief(ctx, t, pool)
 			projectID := dbtest.UniqueID(t, "project")
+			briefID := insertBrief(ctx, t, pool, projectID)
 			jobID := uuid.NewString()
 
 			// Step 1 — the claim. This INSERTs the 'pending' placeholder that makes the
@@ -171,8 +171,8 @@ func TestLiveProvenanceIsWrittenOnceThenFrozen(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			briefID := insertBrief(ctx, t, pool)
 			projectID := dbtest.UniqueID(t, "project")
+			briefID := insertBrief(ctx, t, pool, projectID)
 			jobID := uuid.NewString()
 			name := dbtest.UniqueID(t, "campaign")
 			upstream := dbtest.UniqueID(t, "upstream")

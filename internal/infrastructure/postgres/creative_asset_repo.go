@@ -197,7 +197,7 @@ const creativeAssetQuotaQuery = `SELECT count(*), COALESCE(sum(byte_size), 0),
 // briefs archived long ago, whose bytes nothing serves; see its doc comment. CreateAsset takes it
 // to order itself against a concurrent ArchiveBrief; DeleteAsset takes it to order itself
 // against a concurrent dispatch claim (see deleteCreativeAssetQuery); campaign_repo.go's
-// ReplaceCampaign takes the same ROW lock through lockBriefRowByIDQuery below, because it
+// ReplaceCampaign takes the same ROW lock through lockBriefRowForReplaceQuery below, because it
 // rewrites config_snapshot, the column DeleteAsset reads to decide whether an asset is still
 // referenced.
 //
@@ -229,36 +229,25 @@ const creativeAssetQuotaQuery = `SELECT count(*), COALESCE(sum(byte_size), 0),
 const lockBriefForAssetWriteQuery = `SELECT status FROM campaign_briefs
 	WHERE id = $1 AND project_id = $2 FOR UPDATE`
 
-// lockBriefRowByIDQuery takes the SAME row lock as lockBriefForAssetWriteQuery, keyed on the
-// brief id ALONE. It exists for ReplaceCampaign, and the difference is deliberate rather than a
-// shortcut. The two asset endpoints receive a project from the request path and must refuse a
-// brief owned by someone else, so project_id belongs in THEIR predicate as an authorization
-// check. ReplaceCampaign has already resolved and authorized its campaign by the time it gets
-// here; all it needs is the brief's row lock, and a row lock on `id` is the same lock whatever
-// else the WHERE clause tests.
+// lockBriefRowForReplaceQuery takes the SAME row lock as lockBriefForAssetWriteQuery, with the
+// same (id, project_id) predicate. It exists for ReplaceCampaign, which has already resolved and
+// authorized its campaign by the time it gets here; all it needs is the brief's row lock. The
+// project_id term is defence in depth (#534): a caller that skipped the project-scoped read
+// cannot take a lock on another project's brief, and is refused with ErrNotFound instead.
 //
-// Carrying project_id across would be actively wrong here, because `campaigns` has a brief_id
-// foreign key on id ALONE (`brief_id UUID NOT NULL REFERENCES campaign_briefs(id)`, 000002) --
-// campaign_audiences, creative_assets and wizard_sessions were each upgraded to a composite
-// (brief_id, project_id) FK and `campaigns` never was. So the FK guarantees a match on id and
-// guarantees nothing about project_id, and a two-column predicate on a row whose columns
-// disagreed would match nothing, take NO lock and return NO error: the one hazard this statement
-// exists to remove, failing silently. On id alone the FK makes a miss mean the brief is genuinely
-// gone, which the caller scans for and refuses.
-//
-// The PREDICATE is what removes that hazard; be precise about what the caller's scan adds on top
-// of it. On id alone the FK guarantees a match, so an Exec would take the same lock in every
-// reachable case and pgx.ErrNoRows is unreachable today. That rests on TWO legs, not one: the FK
-// constrains rows in `campaigns`, not the in-memory campaign the caller holds, so it is only
-// decisive because every caller passes a campaign LOADED from that table (brief.go, brief_bid.go,
-// brief_budget.go and meta_ad_sets.go, the last via a copy of the loaded row). A future caller
-// that synthesized a BriefID would make the miss reachable -- and would land on the scan rather
-// than on silence. So the scan is there for the predicate's next editor: it converts any future
-// miss from a silent loss of the lock into ErrNotFound, which is what the asset-side callers
+// The two-column predicate cannot silently miss on a row whose columns disagree, because
+// `campaigns` carries the composite tenant FK (brief_id, project_id) -> campaign_briefs(id,
+// project_id) (000056), as campaign_audiences, creative_assets and wizard_sessions already did.
+// Before 000056 the FK was on id alone and said nothing about project_id, which is why this lock
+// was keyed on id alone until then. So for a campaign LOADED from the table (brief.go,
+// brief_bid.go, brief_budget.go and meta_ad_sets.go, the last via a copy of the loaded row) the
+// FK guarantees a match and pgx.ErrNoRows is unreachable today. The caller's scan is there for
+// the predicate's next editor and for a future caller that synthesizes its campaign: it converts
+// any miss from a silent loss of the lock into ErrNotFound, which is what the asset-side callers
 // already do (CreateAsset maps ErrNoRows the same way). Do not read it as evidence that the lock
 // could fail today.
-const lockBriefRowByIDQuery = `SELECT status FROM campaign_briefs
-	WHERE id = $1 FOR UPDATE`
+const lockBriefRowForReplaceQuery = `SELECT status FROM campaign_briefs
+	WHERE id = $1 AND project_id = $2 FOR UPDATE`
 
 // CreateAsset stores an uploaded image and returns it, or ErrNotFound when the parent brief is
 // absent, archived, or owned by another project. Idempotent on (brief_id, checksum).

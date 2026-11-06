@@ -56,13 +56,14 @@ func TestLiveCampaignActorColumnsExistAndAreNullable(t *testing.T) {
 	// And a nil actor really does insert. The catalog says the column permits NULL; this
 	// says the table as a whole does — no trigger, no CHECK, no later migration has since
 	// made an unattributed campaign unwritable.
-	briefID := insertBrief(ctx, t, pool)
+	projectID := dbtest.UniqueID(t, "project")
+	briefID := insertBrief(ctx, t, pool, projectID)
 	var createdBy, updatedBy *string
 	err := pool.QueryRow(ctx, `
 		INSERT INTO campaigns (project_id, brief_id, platform, campaign_name, status, created_by, updated_by)
 		VALUES ($1, $2, 'google-ads', $3, 'draft', NULL, NULL)
 		RETURNING created_by::text, updated_by::text`,
-		dbtest.UniqueID(t, "project"), briefID, dbtest.UniqueID(t, "unattributed")).
+		projectID, briefID, dbtest.UniqueID(t, "unattributed")).
 		Scan(&createdBy, &updatedBy)
 	if err != nil {
 		t.Fatalf("insert a campaign with no actor: %v — an unattributed dispatch cannot commit", err)
@@ -92,8 +93,8 @@ func TestLiveReplaceCampaignActorWrite(t *testing.T) {
 	ctx := context.Background()
 
 	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
-	briefID := insertBrief(ctx, t, pool)
 	projectID := dbtest.UniqueID(t, "project")
+	briefID := insertBrief(ctx, t, pool, projectID)
 
 	// created_by is seeded too, and asserted unchanged throughout: replaceCampaignQuery does not
 	// name the column at all, so an edit that started writing it — the natural-looking symmetry —

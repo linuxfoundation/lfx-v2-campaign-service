@@ -57,7 +57,7 @@ func (r *fakeJobRepo) createLocked(briefID string) (*model.CampaignJob, error) {
 // CreateJobForApprovedBrief mirrors the unconditional create for the orchestrator
 // tests (which don't wire a brief store, so the approval guard is exercised
 // separately by the brief-service TOCTOU test with its own version-aware fake).
-func (r *fakeJobRepo) CreateJobForApprovedBrief(_ context.Context, briefID string, _ int64) (*model.CampaignJob, error) {
+func (r *fakeJobRepo) CreateJobForApprovedBrief(_ context.Context, _, briefID string, _ int64) (*model.CampaignJob, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.createLocked(briefID)

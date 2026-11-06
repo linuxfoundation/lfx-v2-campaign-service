@@ -531,6 +531,20 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `TestLiveClaimWritesLabelsOnlyOnInsert` and `TestLiveCampaignLabelChecksMatchTheModel` (under
   `dbtest/`), and by the scan-order tests in `campaign_repo_test.go`.
 
+- `000056` — composite tenant foreign key on `campaigns` (#534): replaces `000002`'s
+  `brief_id`-only key with `(brief_id, project_id) -> campaign_briefs (id, project_id)`, the
+  shape `000007`, `000028` and `000033` gave audiences, creative assets and wizard sessions (the
+  referenced `UNIQUE (id, project_id)` is `000007`'s). Every writer already paired the two: the
+  dispatch claim and upsert stamp `brief.ProjectID`/`brief.ID` from the loaded brief, and the
+  adopt INSERT runs under `lockAdoptBriefQuery`. The up FAILS LOUDLY on any existing row whose
+  `project_id` differs from its brief's (a `DO` block raises with the count) and never rewrites
+  data; pre-deploy, `SELECT count(*) FROM campaigns c JOIN campaign_briefs b ON b.id = c.brief_id
+  WHERE b.project_id <> c.project_id` must be 0. The down restores the id-only key and always
+  applies. `campaign_jobs` is NOT included: it has no `project_id` column, so a composite key
+  there needs a new column plus a backfill; its tenant scope stays `GetJob`'s JOIN through
+  `campaign_briefs`. Pinned by `TestLiveMigration000056RefusesAMismatchedCampaign`,
+  `TestLiveMigration000056SwapsTheBriefFK` and `TestLiveListCampaignsForBriefExcludesAnotherProject`.
+
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
 
 `campaign_jobs` is append-only — nothing else in the service deletes a row — so it
@@ -1443,8 +1457,9 @@ the brief, re-reads the CURRENT committed status and version, and refuses with
 `ErrStaleApproval` unless both still match — closing the approve→dispatch TOCTOU race in which
 a `ReplaceBrief` (back to `'draft'`, version+1) or `ArchiveBrief` commits between the
 approver's read and the dispatch. What it protects is real ad spend, and none of it is
-observable against a fake, which satisfies the check by construction. The live test drives the
-draft, stale-version, withdrawn-approval and absent-brief arms; each is revert-verified, and
+observable against a fake, which satisfies the check by construction. The lock is keyed on `(id, project_id)` (`lockApprovedBriefForJobQuery`, #534), so another
+project naming the brief is refused with `ErrStaleApproval` even at the approved version. The
+live test drives the draft, cross-project, stale-version, withdrawn-approval and absent-brief arms; each is revert-verified, and
 the status and version halves of the guard are pinned independently.
 
 **`FailStuckJobs` is table-wide, and that makes it a hazard to its neighbours.** It carries no
@@ -2003,10 +2018,12 @@ second pooled connection beside the claim. Every other caller's handling is unch
 own rows: a raise for the confirmed rollback, and a slow commit under a short deadline for the
 lost acknowledgement.
 
-That transaction's OPENING statement is `lockBriefRowByIDQuery` on the parent brief,
-unconditionally — the same ROW lock `lockBriefForAssetWriteQuery` takes, keyed on `brief_id` alone
-because `campaigns`' FK is on `id` alone and a `project_id` predicate could match nothing, take no
-lock and report no error; the result is scanned, and a miss is `ErrNotFound`.
+That transaction's OPENING statement is `lockBriefRowForReplaceQuery` on the parent brief,
+unconditionally — the same ROW lock `lockBriefForAssetWriteQuery` takes, with the same
+`(id, project_id)` predicate (#534). Until 000056 it was keyed on `brief_id` alone, because
+`campaigns`' FK was on `id` alone and a `project_id` predicate could then match nothing on a row
+whose columns disagreed; the composite tenant FK in 000056 rules that row out. The result is
+scanned, and a miss is `ErrNotFound`.
 `ReplaceCampaign` writes every mutable column — `config_snapshot` included — so
 every one of its callers rewrites the snapshot whether or not it meant to change it, and the
 statement cannot tell the two apart; the hazard belongs to the method, not to any one caller.
