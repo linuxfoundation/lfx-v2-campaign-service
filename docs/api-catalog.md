@@ -1666,11 +1666,14 @@ observedDemographics?:          — OPTIONAL, SEARCH ONLY (#497). Puts whole dem
                                   but `search`. Ids: `adGroups[].observedDemographicCriteriaIds` and
                                   `adGroupObservedDemographicCriteriaIds` (the first group's).
 
-                                  Built from the v23 field names; the positive criteria and the
-                                  demographic `bidOnly` restrictions have NOT yet been checked with a
-                                  validateOnly probe, so the field is REFUSED before any request
-                                  unless the deployment sets GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED
-                                  to exactly `"true"`.
+                                  validateOnly probes on 2026-11-06 (#497) accepted the ad group
+                                  restrictions (AGE_RANGE, GENDER, INCOME_RANGE `bidOnly: true`) and
+                                  the positive criteria (7 age, 3 gender, 7 income values, also
+                                  beside a negative income value) on a paused LFX Search ad group;
+                                  no such campaign has been created live yet. The field stays
+                                  REFUSED before any request unless the deployment sets
+                                  GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED to exactly `"true"`
+                                  (off by default until lfx-v2-argocd turns it on).
 sitelinks?:                     — OPTIONAL sitelink extensions (LFXV2-2665): extra links shown under the
   {text, description1?,           ad. `text` ≤25 runes, required and unique within the list.
    description2?, finalUrl}       `description1`/`description2` are ≤35 runes each and ALL-OR-NOTHING —
@@ -2335,9 +2338,12 @@ searchAssets?:                  — OPTIONAL Search campaign image, logo and nam
                                   The 2026-11-03 validateOnly probes accepted AD_IMAGE and
                                   BUSINESS_LOGO links to EXISTING square image assets, and a
                                   BUSINESS_NAME link to a text asset created by temporary id in the
-                                  same request. NOT LIVE-VERIFIED: an image asset created by
-                                  temporary id in that request, which is what is sent; the minimums
-                                  and the 20-image cap are Google's documented specifications.
+                                  same request. A 2026-11-06 validateOnly probe (#514) accepted
+                                  the exact request sent: two named AD_IMAGE images, a named
+                                  BUSINESS_LOGO image and a BUSINESS_NAME text asset created by
+                                  temporary id, and their four links, in one `googleAds:mutate`.
+                                  No such campaign has been created live yet. The minimums and the
+                                  20-image cap are Google's documented specifications.
 adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When true, the dispatcher first
                                   looks the composed campaign name up on the account and, if a single
                                   live campaign already carries it, ADOPTS that campaign instead of
