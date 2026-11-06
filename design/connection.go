@@ -262,15 +262,6 @@ var AccountMonitorScopeConflictError = Type("account-monitor-scope-conflict-erro
 	Required("reason")
 })
 
-// UserListsConflictError is the 409 body of list-google-ads-user-lists: the platform's ad account
-// is shared across foundations, so its user lists cannot be listed per project. It has its own
-// type for the reason AccountMonitorConflictError does: ConflictError's published example is a
-// connection collision (`already_exists`) this method never returns. It carries no `reason`,
-// since the method has exactly one kind of conflict.
-var UserListsConflictError = Type("user-lists-conflict-error", func() {
-	errorAttrs("409", "user lists cannot be listed per project on an ad account shared across foundations; enter the user-list resource name directly")
-})
-
 // ForbiddenError is the 403 body of create-campaigns when the request carries an input that
 // only the LF marketing team may send. The gateway admits every campaign_manager to the route,
 // and campaign_manager includes foundation executive directors, so the service checks the

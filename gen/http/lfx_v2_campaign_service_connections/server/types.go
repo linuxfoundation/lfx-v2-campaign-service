@@ -847,7 +847,8 @@ type SuggestGoogleAdsGeoTargetsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
 // endpoint HTTP response body.
 type ListGoogleAdsUserListsResponseBody struct {
-	// The Google Ads customer the lists were read from
+	// The Google Ads customer the lists were read from: account_id when given,
+	// else the account a Google create for this project uses
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// User lists on the customer, sorted by name, capped at 500 (see `truncated`)
 	UserLists []*GoogleAdsUserListResponseBody `form:"user_lists" json:"user_lists" xml:"user_lists"`
@@ -4341,16 +4342,6 @@ type ListGoogleAdsUserListsUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
-// ListGoogleAdsUserListsConflictResponseBody is the type of the
-// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
-// endpoint HTTP response body for the "Conflict" error.
-type ListGoogleAdsUserListsConflictResponseBody struct {
-	// HTTP status code
-	Code string `form:"code" json:"code" xml:"code"`
-	// Error message
-	Message string `form:"message" json:"message" xml:"message"`
-}
-
 // ListGoogleAdsConversionActionsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-google-ads-conversion-actions" endpoint HTTP response body for the
@@ -6452,7 +6443,8 @@ type GoogleAdsGeoTargetSuggestionResponseBody struct {
 type GoogleAdsUserListResponseBody struct {
 	// customers/{customerId}/userLists/{id}, in exactly the form
 	// googleAdsConfig.audienceSegments accepts (Search and Display). A list
-	// targets campaigns on its own customer.
+	// targets campaigns on its own customer, which by default is the account a
+	// Google create for this project uses.
 	ResourceName string `form:"resource_name" json:"resource_name" xml:"resource_name"`
 	// The user list id
 	ID string `form:"id" json:"id" xml:"id"`
@@ -12140,17 +12132,6 @@ func NewListGoogleAdsUserListsPayloadTooLargeResponseBody(res *lfxv2campaignserv
 // "lfx-v2-campaign-service-connections" service.
 func NewListGoogleAdsUserListsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListGoogleAdsUserListsUnauthorizedResponseBody {
 	body := &ListGoogleAdsUserListsUnauthorizedResponseBody{
-		Code:    res.Code,
-		Message: res.Message,
-	}
-	return body
-}
-
-// NewListGoogleAdsUserListsConflictResponseBody builds the HTTP response body
-// from the result of the "list-google-ads-user-lists" endpoint of the
-// "lfx-v2-campaign-service-connections" service.
-func NewListGoogleAdsUserListsConflictResponseBody(res *lfxv2campaignserviceconnections.UserListsConflictError) *ListGoogleAdsUserListsConflictResponseBody {
-	body := &ListGoogleAdsUserListsConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}

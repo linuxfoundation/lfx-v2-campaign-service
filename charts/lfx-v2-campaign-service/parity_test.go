@@ -104,8 +104,13 @@ const conversionActionsPath = "/projects/:projectId/google-ads/conversion-action
 // pins that.
 const googleAudiencesPath = "/projects/:projectId/google-ads/audiences"
 
+// userListsPath is the Google user-list read. It lists every foundation's user lists on the
+// shared customer (it used to answer 409 there), so it is ruled by marketing-ops-api only, and
+// TestUserListsIsAMarketingOpsRead pins that.
+const userListsPath = "/projects/:projectId/google-ads/user-lists"
+
 // marketingOpsPaths is every path the marketing-ops-api rule must hold, in order, and nothing else.
-var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath}
+var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath}
 
 // ruleBlock isolates one rendered Heimdall rule (from its `- id: "<id>"` line up to
 // the next `- id:` or EOF) so path/authorizer extraction is scoped to a SINGLE rule.
@@ -194,6 +199,13 @@ func TestGoogleAudiencesIsAMarketingOpsRead(t *testing.T) {
 	if !matched {
 		t.Errorf("%s rule no longer matches %s, the campaign_manager audience performance read", projectAPIRuleID, perf)
 	}
+}
+
+// TestUserListsIsAMarketingOpsRead pins the same for the Google user-list read: on the shared
+// customer it answers every foundation's HubSpot CRM and website visitor lists, so a
+// campaign_manager (executive_director included) must not reach it.
+func TestUserListsIsAMarketingOpsRead(t *testing.T) {
+	assertMarketingOpsRead(t, userListsPath, "/projects/p1/google-ads/user-lists")
 }
 
 // TestMarketingOpsRuleHoldsExactlyItsReads pins the marketing-ops-api rule's whole path set, so

@@ -847,7 +847,8 @@ type SuggestGoogleAdsGeoTargetsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
 // endpoint HTTP response body.
 type ListGoogleAdsUserListsResponseBody struct {
-	// The Google Ads customer the lists were read from
+	// The Google Ads customer the lists were read from: account_id when given,
+	// else the account a Google create for this project uses
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 	// User lists on the customer, sorted by name, capped at 500 (see `truncated`)
 	UserLists []*GoogleAdsUserListResponseBody `form:"user_lists,omitempty" json:"user_lists,omitempty" xml:"user_lists,omitempty"`
@@ -4341,16 +4342,6 @@ type ListGoogleAdsUserListsUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
-// ListGoogleAdsUserListsConflictResponseBody is the type of the
-// "lfx-v2-campaign-service-connections" service "list-google-ads-user-lists"
-// endpoint HTTP response body for the "Conflict" error.
-type ListGoogleAdsUserListsConflictResponseBody struct {
-	// HTTP status code
-	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
-	// Error message
-	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
-}
-
 // ListGoogleAdsConversionActionsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-google-ads-conversion-actions" endpoint HTTP response body for the
@@ -6452,7 +6443,8 @@ type GoogleAdsGeoTargetSuggestionResponseBody struct {
 type GoogleAdsUserListResponseBody struct {
 	// customers/{customerId}/userLists/{id}, in exactly the form
 	// googleAdsConfig.audienceSegments accepts (Search and Display). A list
-	// targets campaigns on its own customer.
+	// targets campaigns on its own customer, which by default is the account a
+	// Google create for this project uses.
 	ResourceName *string `form:"resource_name,omitempty" json:"resource_name,omitempty" xml:"resource_name,omitempty"`
 	// The user list id
 	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
@@ -11844,18 +11836,6 @@ func NewListGoogleAdsUserListsUnauthorized(body *ListGoogleAdsUserListsUnauthori
 		Message: *body.Message,
 	}
 	v.WwwAuthenticate = wwwAuthenticate
-
-	return v
-}
-
-// NewListGoogleAdsUserListsConflict builds a
-// lfx-v2-campaign-service-connections service list-google-ads-user-lists
-// endpoint Conflict error.
-func NewListGoogleAdsUserListsConflict(body *ListGoogleAdsUserListsConflictResponseBody) *lfxv2campaignserviceconnections.UserListsConflictError {
-	v := &lfxv2campaignserviceconnections.UserListsConflictError{
-		Code:    *body.Code,
-		Message: *body.Message,
-	}
 
 	return v
 }
@@ -20193,18 +20173,6 @@ func ValidateListGoogleAdsUserListsPayloadTooLargeResponseBody(body *ListGoogleA
 // ValidateListGoogleAdsUserListsUnauthorizedResponseBody runs the validations
 // defined on ListGoogleAdsUserListsUnauthorizedResponseBody
 func ValidateListGoogleAdsUserListsUnauthorizedResponseBody(body *ListGoogleAdsUserListsUnauthorizedResponseBody) (err error) {
-	if body.Code == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
-	}
-	if body.Message == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
-	}
-	return
-}
-
-// ValidateListGoogleAdsUserListsConflictResponseBody runs the validations
-// defined on ListGoogleAdsUserListsConflictResponseBody
-func ValidateListGoogleAdsUserListsConflictResponseBody(body *ListGoogleAdsUserListsConflictResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

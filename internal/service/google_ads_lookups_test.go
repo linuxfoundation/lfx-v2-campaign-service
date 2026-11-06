@@ -303,18 +303,17 @@ func (*sharedTenancyLookupDispatcher) MonitorScopeForAccount([]model.ProjectCamp
 	return nil, nil
 }
 
-// On a shared-tenancy platform the account-wide user-list read is refused with 409 before the
-// dispatcher is reached, whatever account the caller names.
-func TestListGoogleAdsUserLists_SharedTenancyIsRefusedWith409(t *testing.T) {
+// On a shared-tenancy platform the account-wide user-list read is NOT refused any more: the
+// route is global_marketing_ops only (charts parity_test.go), so it reaches the dispatcher and
+// answers, whatever account the caller names.
+func TestListGoogleAdsUserLists_SharedTenancyIsNotRefused(t *testing.T) {
 	for _, acct := range []*string{nil, strp("8666746580")} {
-		d := &sharedTenancyLookupDispatcher{mockLookupDispatcher{lists: &model.AudienceUserLists{Lists: []model.AudienceUserList{}}}}
-		_, err := lookupService(d).ListGoogleAdsUserLists(context.Background(), &conn.ListGoogleAdsUserListsPayload{ProjectID: "cncf", AccountID: acct})
-		var c *conn.UserListsConflictError
-		if !errors.As(err, &c) || c.Code != "409" {
-			t.Fatalf("err = %T %v, want 409", err, err)
-		}
-		if d.calls != 0 {
-			t.Error("the dispatcher was reached on a shared-tenancy platform")
+		d := &sharedTenancyLookupDispatcher{mockLookupDispatcher{lists: &model.AudienceUserLists{AccountID: "8666746580", Lists: []model.AudienceUserList{
+			{ResourceName: "customers/8666746580/userLists/1", ID: "1", Name: "HubSpot CRM", Type: "CRM_BASED", MembershipStatus: "OPEN"},
+		}}}}
+		res, err := lookupService(d).ListGoogleAdsUserLists(context.Background(), &conn.ListGoogleAdsUserListsPayload{ProjectID: "cncf", AccountID: acct})
+		if err != nil || d.calls != 1 || res.UserListCount != 1 {
+			t.Fatalf("account %v: err=%v calls=%d res=%+v, want the shared account's list", acct, err, d.calls, res)
 		}
 	}
 }

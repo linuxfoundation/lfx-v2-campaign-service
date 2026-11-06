@@ -69,20 +69,57 @@ const userListBody = `{"results":[` +
 	`{"userList":{"resourceName":"customers/1234567890/userLists/11","id":"11","name":"Alpha","type":"CRM_BASED","membershipStatus":"CLOSED"}}` +
 	`]}`
 
-// User lists are account data on a customer every foundation shares: the system fallback is
-// refused outright, and Google is never contacted.
-func TestGoogleAdsListUserLists_RefusesTheSystemFallback(t *testing.T) {
-	opts, reached := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, userListBody)
+// A project with no connection of its own reads the LF system account, exactly as its create
+// would, so the lists it is offered are on the account the create uses (the route is
+// global_marketing_ops only, so the LF account's lists are what its callers need).
+func TestGoogleAdsListUserLists_UsesTheSystemFallback(t *testing.T) {
+	rec := &pathRecorder{}
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		rec.add(r.URL.Path)
+		_, _ = io.WriteString(w, `{"results":[{"userList":{"resourceName":"customers/5555555555/userLists/7","id":"7","name":"HubSpot CRM","type":"CRM_BASED","membershipStatus":"OPEN"}}]}`)
 	})
-	d := NewGoogleAdsDispatcher(ownOnlyConnReader{system: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	d := NewGoogleAdsDispatcher(splitConnReader{system: googleAdsConnFor("5555555555")}, identityEncryptor{}, opts...)
 
-	_, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "")
+	res, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "")
+	if err != nil {
+		t.Fatalf("ListUserLists through the system fallback: %v", err)
+	}
+	if res.AccountID != "5555555555" || len(res.Lists) != 1 || res.Lists[0].ResourceName != "customers/5555555555/userLists/7" {
+		t.Errorf("res = %+v, want the LF system account's list", res)
+	}
+	if got := rec.all(); len(got) != 1 || !strings.Contains(got[0], "/customers/5555555555/googleAds:search") {
+		t.Errorf("paths = %v", got)
+	}
+}
+
+// While the deployment forces the LF system account, a create ignores the project's own
+// connection, so this read must too.
+func TestGoogleAdsListUserLists_FollowsTheForcedSystemAccount(t *testing.T) {
+	rec := &pathRecorder{}
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		rec.add(r.URL.Path)
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	d := NewGoogleAdsDispatcher(splitConnReader{own: googleAdsConnFor("1234567890"), system: googleAdsConnFor("5555555555")}, identityEncryptor{}, opts...)
+	res, err := d.ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "")
+	if err != nil || res.AccountID != "5555555555" || res.Lists == nil {
+		t.Fatalf("res=%+v err=%v, want the forced system account and a non-nil empty list", res, err)
+	}
+	if got := rec.all(); len(got) != 1 || !strings.Contains(got[0], "/customers/5555555555/") {
+		t.Errorf("paths = %v", got)
+	}
+}
+
+// No connection anywhere is ErrNotFound (404), and Google is not contacted.
+func TestGoogleAdsListUserLists_NoConnectionAnywhereIsNotFound(t *testing.T) {
+	opts, reached := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, userListBody) })
+	_, err := NewGoogleAdsDispatcher(splitConnReader{}, identityEncryptor{}, opts...).ListUserLists(context.Background(), "proj-1", model.ProviderGoogleAds, "")
 	if !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("err = %v, want ErrNotFound (no connection of the project's own)", err)
+		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 	if reached.Load() {
-		t.Error("Google was contacted with the LF system credential")
+		t.Error("Google was contacted with no connection")
 	}
 }
 
@@ -156,32 +193,27 @@ func TestGoogleAdsListUserLists_ExplicitAccountAndItsGuards(t *testing.T) {
 	})
 }
 
-// Regression for the cross-tenant read: two projects whose OWN connections point at the same
-// shared Google Ads customer. Neither may list user lists through the orchestrator — the read
-// is refused (ErrUserListsSharedTenancy) before any credential is used or Google contacted, so
-// project A can never see lists project B created.
-func TestGoogleAdsUserLists_TwoProjectsOnOneSharedCustomerAreRefused(t *testing.T) {
-	opts, reached := keywordActionServers(t, func(w http.ResponseWriter, _ *http.Request) {
+// On the shared customer the read is no longer refused (the route is global_marketing_ops
+// only): through the orchestrator, a project whose own connection points at the shared customer
+// gets that customer's lists.
+func TestGoogleAdsUserLists_SharedCustomerIsListedThroughTheOrchestrator(t *testing.T) {
+	rec := &pathRecorder{}
+	opts, _ := keywordActionServers(t, func(w http.ResponseWriter, r *http.Request) {
+		rec.add(r.URL.Path)
 		_, _ = io.WriteString(w, userListBody)
 	})
-	a := activeGoogleAdsConn(goodGoogleAdsCreds)
-	b := activeGoogleAdsConn(goodGoogleAdsCreds) // same customer 1234567890
-	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-a": a, "proj-b": b}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-a": activeGoogleAdsConn(goodGoogleAdsCreds)}}
 	d := NewGoogleAdsDispatcher(repo, identityEncryptor{}, opts...)
 	orch := service.NewOrchestrator(nil, nil, map[model.Provider]service.PlatformDispatcher{model.ProviderGoogleAds: d})
-	for _, p := range []string{"proj-a", "proj-b"} {
-		for _, acct := range []string{"", "1234567890"} {
-			_, err := orch.ReadUserLists(context.Background(), p, model.ProviderGoogleAds, acct)
-			if !errors.Is(err, domain.ErrUserListsSharedTenancy) {
-				t.Fatalf("%s/%q: err = %v, want ErrUserListsSharedTenancy", p, acct, err)
-			}
-		}
+	res, err := orch.ReadUserLists(context.Background(), "proj-a", model.ProviderGoogleAds, "")
+	if err != nil {
+		t.Fatalf("ReadUserLists on the shared customer: %v", err)
 	}
-	if reached.Load() {
-		t.Error("Google was contacted for a shared-customer user-list read")
+	if res.AccountID != "1234567890" || len(res.Lists) != 2 {
+		t.Errorf("res = %+v, want the shared customer's two lists", res)
 	}
-	if len(repo.gets) != 0 {
-		t.Errorf("connections were resolved (%v); the refusal must come first", repo.gets)
+	if got := rec.all(); len(got) != 1 {
+		t.Errorf("paths = %v, want one search", got)
 	}
 }
 
