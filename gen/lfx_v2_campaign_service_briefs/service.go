@@ -130,16 +130,21 @@ type Service interface {
 	// they do not, 503 when the check cannot be made (project lookup or
 	// authorization service unavailable). The gateway admits every
 	// campaign_manager, which includes foundation executive directors, and those
-	// resources belong to the Google Ads account every foundation shares. An
-	// invalid per-platform `bidding` object (see the config attribute) is also
-	// refused synchronously, with 400 "invalid campaign config:
-	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
-	// Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc)
-	// and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are
-	// immediately eligible for the bid lever, and eligibility follows the
-	// platform's current strategy. Every other dispatch failure, including an
-	// imageAssetId that does not exist for this brief, still arrives later, as the
-	// job's own result.
+	// resources belong to the Google Ads account every foundation shares. META
+	// CREATIVE OPTIONS: metaConfig.callToAction outside its allow-list,
+	// metaConfig.conversionEvent outside its allow-list or on an objective other
+	// than conversions, or either one while its deployment flag
+	// (META_CALL_TO_ACTION_ENABLED, META_CONVERSION_EVENT_ENABLED) is not "true",
+	// is a synchronous 400 "invalid campaign config:
+	// metaConfig.callToAction|conversionEvent...". An invalid per-platform
+	// `bidding` object (see the config attribute) is also refused synchronously,
+	// with 400 "invalid campaign config: <configKey>.bidding: ...". Bidding
+	// defaults changed in LFXV2-2665: a Microsoft campaign created without bidding
+	// is MaxClicks (it was EnhancedCpc) and a LinkedIn one
+	// WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are immediately eligible
+	// for the bid lever, and eligibility follows the platform's current strategy.
+	// Every other dispatch failure, including an imageAssetId that does not exist
+	// for this brief, still arrives later, as the job's own result.
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Create ONE HubSpot workflow that sends an already-staged series of emails,
 	// and return it DISABLED. Each brief named in brief_ids must already have a
