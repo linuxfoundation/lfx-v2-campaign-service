@@ -214,6 +214,10 @@ func (r ShapeRule) fits(a Asset) bool {
 // exactly 1% off and Google accepts it (validateOnly, 2026-11-06, #538), while 304x300 is
 // refused by both. The googleads preflight (checkImageGeometry) calls this same function, so
 // the catalog's eligibility and the create path's refusal cannot disagree on a boundary.
+//
+// Exactness holds for tol = 0.01, the only value any caller passes: float64(0.01) is a hair
+// above 1/100, so tol*h*ratioW never rounds below an integer boundary. A tolerance that is not
+// a clean decimal fraction should be re-checked at its boundary before it is used here.
 func AspectWithin(w, h, ratioW, ratioH int, tol float64) bool {
 	if w <= 0 || h <= 0 || ratioW <= 0 || ratioH <= 0 {
 		return false

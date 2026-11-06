@@ -56,7 +56,7 @@ package googleads
 //     DIMENSIONS_NOT_ALLOWED; 303x300 (exactly +1%) accepted, 304x300 refused
 //     ASPECT_RATIO_NOT_ALLOWED.
 //   - AD_IMAGE landscape: 600x314 and 1200x628 accepted; 599x314 and 600x313 refused
-//     IMAGE_CONSTRAINTS_VIOLATED; 1188x628 (-1%) and 1209x628 accepted, 1218x628 (+1.5%) and
+//     IMAGE_CONSTRAINTS_VIOLATED; 1188x628 (-0.96%) and 1209x628 accepted, 1218x628 (+1.5%) and
 //     2:1 refused ASPECT_RATIO_NOT_ALLOWED. Until #538 this client refused the landscape shape.
 //   - Twenty AD_IMAGE links accepted and the twenty-first refused, whether square, landscape
 //     or mixed (19 + 2): ONE cap over both shapes.
@@ -255,8 +255,8 @@ func (c *Client) searchTempAssetName(i int) string {
 
 // buildSearchAssets turns the plan and the fetched images into the asset list, in a FIXED
 // order: images in slot order (square ad images, landscape ad images, then the logo), then the
-// business name. The order is
-// what the positional result check below reads, and a test pins it.
+// business name. The order is what the positional result check below reads, and a test pins
+// it.
 func (c *Client) buildSearchAssets(
 	plan searchAssetPlan, images []fetchedImage,
 ) []pendingSearchAsset {
