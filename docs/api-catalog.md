@@ -2383,8 +2383,11 @@ searchAssets?:                  — OPTIONAL Search campaign image, logo and nam
                                   the exact request sent: two named AD_IMAGE images, a named
                                   BUSINESS_LOGO image and a BUSINESS_NAME text asset created by
                                   temporary id, and their four links, in one `googleAds:mutate`.
-                                  No such campaign has been created live yet. The minimums and the
-                                  20-image cap are Google's documented specifications.
+                                  A live create on 2026-11-06 (#520, paused campaign 24444541804)
+                                  persisted it, and GAQL read back the four campaign_asset rows
+                                  (2 AD_IMAGE, BUSINESS_LOGO, BUSINESS_NAME), all ENABLED. The
+                                  minimums and the 20-image cap are Google's documented
+                                  specifications.
 adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When true, the dispatcher first
                                   looks the composed campaign name up on the account and, if a single
                                   live campaign already carries it, ADOPTS that campaign instead of

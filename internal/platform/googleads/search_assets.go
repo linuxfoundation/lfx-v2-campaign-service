@@ -41,8 +41,11 @@ package googleads
 // then accepted the exact shape sent below, on a paused LFX Search campaign: ONE
 // googleAds:mutate creating two named 1:1 AD_IMAGE image assets, one named 1:1 BUSINESS_LOGO
 // image asset and one BUSINESS_NAME text asset, each under a temporary id, followed by the
-// four campaignAsset links naming those temporary ids (eight operations). No such campaign
-// has yet been created live.
+// four campaignAsset links naming those temporary ids (eight operations). A live create on
+// 2026-11-06 (#520) then persisted that request on paused probe campaign 24444541804: GAQL read
+// back two AD_IMAGE, one BUSINESS_LOGO and one BUSINESS_NAME campaign_asset rows, all ENABLED
+// and naming the assets the response returned. Google answered the BUSINESS_NAME create with
+// an EXISTING text asset of the same text, which is the reuse case the result check accepts.
 // The slot minimums (300x300 for AD_IMAGE, 128x128 for BUSINESS_LOGO) and the twenty-image cap
 // are Google's documented asset specifications, not probed values.
 
