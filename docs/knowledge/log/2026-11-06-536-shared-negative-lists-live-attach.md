@@ -1,6 +1,6 @@
 # 2026-11-06 — #536 the multi-list shared negative keyword list attach is verified live
 
-**Docs**: records a live create of the `sharedNegativeKeywordLists` attach and replaces the
+**Docs** — records a live create of the `sharedNegativeKeywordLists` attach and replaces the
 NOT LIVE-VERIFIED wording it settles. No request shape or behaviour changes.
 
 - **validateOnly (nothing persisted).** A `googleAds:mutate` with a temp-id budget, a PAUSED Search
