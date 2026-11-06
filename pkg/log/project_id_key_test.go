@@ -112,7 +112,12 @@ func TestProjectIDLogKeyIsUniform(t *testing.T) {
 			t.Fatalf("type-check %s: %v", p.ImportPath, cerr)
 		}
 		for _, f := range files {
-			for _, h := range logKeys(f, info) {
+			hits, over := logKeys(f, info)
+			if over {
+				t.Errorf("%s: a log call's spread slice has more than %d paths; the guard cannot check them all, so simplify how the slice is built",
+					fset.Position(f.Package).Filename, 1024)
+			}
+			for _, h := range hits {
 				switch {
 				case h.key == projectIDLogKey:
 					canonical++
@@ -250,6 +255,23 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 				panic(fields)
 			}
 			slog.Info("m", fields...)`, []string{"project_id"}},
+		{"fallthrough carries a clause's paths into the next", `fields := []any{"kind"}
+			switch {
+			case c:
+				fields = append(fields, "ok")
+				fallthrough
+			default:
+				fields = append(fields, "projectID", id)
+			}
+			slog.Info("m", fields...)`, []string{"kind", "projectID"}},
+		{"a call in the clause after a fallthrough sees its paths", `fields := []any{"kind"}
+			switch {
+			case c:
+				fields = append(fields, "ok")
+				fallthrough
+			default:
+				slog.Info("m", append(fields, "projectID", id)...)
+			}`, []string{"kind", "projectID"}},
 		{"a multi-value assignment makes the slice unknown", `fields := []any{"projectID", id}
 			fields, e = mk()
 			slog.Info("m", fields...)`, nil},
@@ -309,7 +331,11 @@ func f() {
 				t.Fatalf("type-check: %v", err)
 			}
 			var got []string
-			for _, h := range logKeys(f, info) {
+			hits, over := logKeys(f, info)
+			if over {
+				t.Fatalf("path overflow")
+			}
+			for _, h := range hits {
 				got = append(got, h.key)
 			}
 			if !reflect.DeepEqual(got, tc.want) {
@@ -360,7 +386,8 @@ func newInfo() *types.Info {
 }
 
 // logKeys returns the distinct constant attribute keys a type-checked file passes to
-// log/slog, in source order. A key is read where slog reads one, by argument type:
+// log/slog, in source order, and whether a spread slice had more paths than the guard
+// tracks (maxPaths), in which case the keys are incomplete and the caller must fail. A key is read where slog reads one, by argument type:
 //   - in a log call's key/value arguments (from kvStart on), a string argument is a key
 //     and takes two slots, a slog.Attr takes one, and anything else takes one (slog logs
 //     it under !BADKEY);
@@ -372,7 +399,7 @@ func newInfo() *types.Info {
 //
 // Calls are matched by the function they resolve to, so a same-named function or method
 // of another package (http.Error, a builder's With) is not a log call.
-func logKeys(f *ast.File, info *types.Info) []keyHit {
+func logKeys(f *ast.File, info *types.Info) ([]keyHit, bool) {
 	seen := map[token.Pos]bool{}
 	var out []keyHit
 	addKey := func(e ast.Expr) {
@@ -409,6 +436,7 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 	// through (a return ends a path); a loop body runs zero or one times, after a for
 	// loop's initializer.
 	const maxPaths = 1024
+	overflow := false // a distinct path was dropped at maxPaths: the result is incomplete
 	type path = map[types.Object][]ast.Expr
 	clonePath := func(p path) path {
 		out := make(path, len(p))
@@ -441,10 +469,15 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 				}
 				sort.Strings(keys)
 				key := strings.Join(keys, ";")
-				if !seen[key] && len(out) < maxPaths {
-					seen[key] = true
-					out = append(out, p)
+				if seen[key] {
+					continue
 				}
+				if len(out) == maxPaths {
+					overflow = true
+					continue
+				}
+				seen[key] = true
+				out = append(out, p)
 			}
 		}
 		return out
@@ -610,9 +643,16 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 				ps = exec(init, ps)
 			}
 			var out flow
+			var ft []path // paths that fell through from the clause before
 			for _, b := range bodies {
-				f := execListF(b, clonePaths(ps))
-				out.next = union(out.next, f.next, f.brk) // a break leaves the switch
+				f := execListF(b, union(clonePaths(ps), ft))
+				ft = nil
+				if endsInFallthrough(b) {
+					ft = f.next // they enter the next clause, not the code after the switch
+				} else {
+					out.next = union(out.next, f.next)
+				}
+				out.next = union(out.next, f.brk) // a break leaves the switch
 				out.cont = union(out.cont, f.cont)
 			}
 			if !always {
@@ -667,9 +707,15 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 				if init != nil && !contains(init, target) {
 					ps = exec(init, ps)
 				}
+				var ft []path
 				for i, n := range nodes {
+					entry := union(clonePaths(ps), ft)
 					if contains(n, target) {
-						return pathsAt(bodies[i], ps, target)
+						return pathsAt(bodies[i], entry, target)
+					}
+					ft = nil
+					if endsInFallthrough(bodies[i]) {
+						ft = execListF(bodies[i], entry).next
 					}
 				}
 			}
@@ -753,7 +799,16 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 		return true
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].pos < out[j].pos })
-	return out
+	return out, overflow
+}
+
+// endsInFallthrough reports whether a case clause body ends in a fallthrough statement.
+func endsInFallthrough(body []ast.Stmt) bool {
+	if len(body) == 0 {
+		return false
+	}
+	b, ok := body[len(body)-1].(*ast.BranchStmt)
+	return ok && b.Tok == token.FALLTHROUGH
 }
 
 // isAppend reports whether call is the append builtin.
@@ -817,4 +872,29 @@ func isAnySlice(t types.Type) bool {
 	}
 	it, ok := s.Elem().Underlying().(*types.Interface)
 	return ok && it.Empty()
+}
+
+// TestLogKeys_PathOverflowIsReported pins that the path bound never drops a branch
+// silently: eleven independent conditional appends make 2048 paths, past the bound, and
+// logKeys says so rather than checking an arbitrary subset.
+func TestLogKeys_PathOverflowIsReported(t *testing.T) {
+	var body strings.Builder
+	body.WriteString("fields := []any{\"a\", 1}\n")
+	for i := 0; i < 11; i++ {
+		body.WriteString("if c {\nfields = append(fields, \"k\", 1)\n}\n")
+	}
+	body.WriteString("slog.Info(\"m\", fields...)\n")
+	src := "package p\nimport \"log/slog\"\nvar c bool\nfunc f() {\n" + body.String() + "}\n"
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "p.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info := newInfo()
+	if _, err := (&types.Config{Importer: importer.Default()}).Check("p", fset, []*ast.File{f}, info); err != nil {
+		t.Fatalf("type-check: %v", err)
+	}
+	if _, over := logKeys(f, info); !over {
+		t.Fatal("2048 paths did not report an overflow")
+	}
 }

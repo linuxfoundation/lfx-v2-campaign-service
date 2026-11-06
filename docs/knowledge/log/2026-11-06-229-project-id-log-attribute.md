@@ -24,7 +24,9 @@ clear, as `"project_id"`.
     up to the call, tracking whole paths, so slices assigned together stay together.
     Branches run in sequence and the paths that fall through are joined (a `return` ends a
     path, as does a `panic`), loops run zero or one times after a `for` initializer, a
-    `break` skips the post statement, and aliases are followed.
+    `break` skips the post statement, `fallthrough` carries paths into the next clause,
+    and aliases are followed. More than 1024 paths fails the guard (pinned by
+    `TestLogKeys_PathOverflowIsReported`) rather than checking a subset.
     Every resulting path is checked.
   - It looks through `any("k")` conversions, and reads elided `[]slog.Attr` elements,
     named-constant keys, and group names (`slog.Group`, `slog.GroupAttrs`,
@@ -40,7 +42,8 @@ clear, as `"project_id"`.
     were dropped, and appends were attached to a replaced slice. Then an alias was lost, and
     appends within one branch were treated as independent. Then a `for` initializer was
     skipped, per-variable joins mixed exclusive branches, and returned paths were merged.
-    Then a `break` still ran the loop's post statement.
+    Then a `break` still ran the loop's post statement,
+    `fallthrough` was ignored, and the path bound dropped branches silently.
 - Mutation-checked:
   - Renaming one key to `projectID` in `internal/service/connection.go`, or the spread-slice
     key in `internal/service/meta_ad_sets.go`, fails the guard.
