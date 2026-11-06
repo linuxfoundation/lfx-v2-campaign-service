@@ -23,8 +23,9 @@ clear, as `"project_id"`.
     read correctly. The slice is traced by interpreting the enclosing function's statements
     up to the call. Branches run in sequence and their exits are joined, loops run zero or
     one times, and aliases are followed. Every resulting alternative is checked.
-  - It looks through `any("k")` conversions, and reads elided `[]slog.Attr` elements and
-    named-constant keys.
+  - It looks through `any("k")` conversions, and reads elided `[]slog.Attr` elements,
+    named-constant keys, and group names (`slog.Group`, `slog.GroupAttrs`,
+    `Logger.WithGroup`).
   - It does not see keys that reach slog through another function's parameter (a `...any`
     wrapper, a slice parameter). The repo has no such wrapper, and the logging-conventions
     page states the limit.

@@ -46,10 +46,11 @@ var kvStart = map[string]int{
 	"Log": 3, "With": 0,
 }
 
-// attrCtors are the log/slog functions whose first argument is an attribute key.
+// attrCtors are the log/slog functions whose first argument is an attribute key (a group's
+// name included). Logger.WithGroup, a method, is handled beside them.
 var attrCtors = map[string]bool{
 	"String": true, "Int": true, "Int64": true, "Uint64": true, "Float64": true,
-	"Bool": true, "Time": true, "Duration": true, "Any": true, "Group": true,
+	"Bool": true, "Time": true, "Duration": true, "Any": true, "Group": true, "GroupAttrs": true,
 }
 
 // keyHit is one constant log attribute key and where it is passed.
@@ -218,6 +219,8 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 				fields = append(fields, "projectID", id)
 				slog.Info("m", fields...)
 			}()`, []string{"a", "projectID"}},
+		{"group names are keys", `_ = logger.WithGroup("project")
+			_ = slog.GroupAttrs("projectID", slog.Int("n", 1))`, []string{"project", "projectID", "n"}},
 		{"interface conversion is looked through", `slog.Info("m", any("project_id"), "project")`, []string{"project_id"}},
 		{"elided slog.Attr in a slice", `slog.LogAttrs(ctx, lvl, "m", []slog.Attr{{Key: "projectID", Value: slog.AnyValue(v)}}...)`, []string{"projectID"}},
 		{"explicit slog.Attr", `_ = slog.Attr{Key: "project", Value: slog.AnyValue(v)}`, []string{"project"}},
@@ -651,7 +654,9 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 			}
 			name := fn.Name()
 			isMethod := fn.Type().(*types.Signature).Recv() != nil
-			if !isMethod && attrCtors[name] {
+			if isMethod && name == "WithGroup" && len(x.Args) > 0 {
+				addKey(x.Args[0])
+			} else if !isMethod && attrCtors[name] {
 				if len(x.Args) > 0 {
 					addKey(x.Args[0])
 				}
