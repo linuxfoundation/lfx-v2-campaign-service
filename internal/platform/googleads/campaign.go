@@ -1764,7 +1764,8 @@ func (c *Client) preflightCampaignInput(kind string, in CampaignInput) (*campaig
 		return nil, err
 	}
 	// Shared lists (#477) are refused off Search and checked for this account here, before the
-	// budget: Google refuses another customer's set only at the attach.
+	// budget: Google refuses another customer's set only at the attach. Their TYPE needs a read,
+	// so CreateCampaign checks it next (checkSharedNegativeKeywordListTypes, #548).
 	sharedNegativeLists, err := validateSharedNegativeKeywordLists(
 		kind, c.account.CustomerID, in.SharedNegativeKeywordLists)
 	if err != nil {
@@ -1983,6 +1984,13 @@ func (c *Client) preflightCampaignInput(kind string, in CampaignInput) (*campaig
 func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
 	pf, err := c.preflightCampaign(in)
 	if err != nil {
+		return nil, err
+	}
+	// The shared negative keyword lists' types (#548): one read-only query, before the image
+	// fetch and the budget mutate, so a list that is not an ENABLED NEGATIVE_KEYWORDS set of
+	// this account is refused with nothing created. Google itself accepts a NEGATIVE_PLACEMENTS
+	// or BRANDS set in the attach (#536), so this is the only place it is caught.
+	if err := c.checkSharedNegativeKeywordListTypes(ctx, pf.sharedNegativeLists); err != nil {
 		return nil, err
 	}
 	// The Search campaign asset images (#477) are fetched BEFORE the first mutate, in one
