@@ -20,9 +20,12 @@ cannot cross projects.
   version 56 dirty, so a restart does not retry it: resolve the rows, `migrate force 55`, restart.
 - Lock waits and deadlocks do not fail it. The ADD retries with a 2s `lock_timeout` per attempt,
   catching `55P03` and `40P01` and giving up its queue place between attempts, for at most 15
-  attempts (about 45s, inside the ~90s startupProbe). Only exhausting all 15 fails it, which
-  dirties the version like the precheck (same recovery). While it waits, writes queue for at most
-  2s at a time and reads never queue.
+  attempts. Only exhausting all 15 fails it, which dirties the version like the precheck (same
+  recovery). The 2s bounds lock ACQUISITION only: failed attempts add up to about 45s, and a
+  queued attempt holds writes for at most 2s, but the attempt that succeeds then holds SHARE ROW
+  EXCLUSIVE on both tables while it validates every existing `campaigns` row, so writes also wait
+  for that scan. Neither the scan nor the precheck has a time limit; both scale with the table,
+  which is small. Reads never queue.
 - `campaign_jobs` keeps its id-only FK: it has no `project_id` column, and a composite key would
   need a new column plus a backfill.
 - `TestBriefRowLocks_AreProjectScoped` pins every named brief `FOR UPDATE` statement to

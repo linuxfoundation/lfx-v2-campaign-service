@@ -549,8 +549,11 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   - **Lock waits and deadlocks are retried.** The ADD runs in a loop: each attempt waits at most
     2s (`lock_timeout`); on `55P03` or `40P01` its subtransaction rolls back (releasing its locks
     and queue place) and sleeps 1s, so queued writes drain. A caught failure does not dirty the
-    version. The loop is bounded at 15 attempts (about 45s), inside the chart's ~90s startupProbe
-    budget, because a pod killed mid-migration would dirty it anyway. If every attempt fails it
+    version. Failed attempts are bounded at 15 (about 45s of lock waiting), inside the chart's
+    ~90s startupProbe budget, because a pod killed mid-migration would dirty it anyway. That bound
+    covers lock ACQUISITION only: the successful attempt then holds SHARE ROW EXCLUSIVE on both
+    tables while it validates every existing `campaigns` row, and that scan and the precheck have
+    no time limit of their own (they scale with the table, which is small). If every attempt fails it
     raises (dirty): end the blocking transaction, `migrate force 55`, restart.
   - The down drops the composite key only and always applies. `campaign_jobs` is NOT included: it
     has no `project_id` column, so a composite key there needs a new column plus a backfill; its

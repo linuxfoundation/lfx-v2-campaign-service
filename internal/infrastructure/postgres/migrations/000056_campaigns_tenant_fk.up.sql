@@ -37,9 +37,12 @@
 -- sleeps 1s so queued writes drain. A caught failure is not a migration failure, so it does not
 -- dirty the version.
 --
--- The loop is bounded at 15 attempts (about 45s), well inside the chart's ~90s startupProbe
--- budget: migrations run at boot, and a pod killed mid-migration would leave version 56 dirty
--- anyway. If every attempt fails, it raises, which leaves version 56 dirty like the precheck
+-- The loop is bounded at 15 attempts (about 45s of lock waiting), well inside the chart's ~90s
+-- startupProbe budget: migrations run at boot, and a pod killed mid-migration would leave version
+-- 56 dirty anyway. lock_timeout bounds lock ACQUISITION only. The attempt that gets its locks
+-- holds them while it validates every existing campaigns row, so writes also wait for that scan,
+-- and neither it nor the precheck above has a time limit of its own. Both scale with the table,
+-- which is small. If every attempt fails, it raises, which leaves version 56 dirty like the precheck
 -- does: wait out or end the blocking transaction, then `migrate force 55` and restart.
 --
 -- campaign_jobs is deliberately NOT included: it has no project_id column, so a composite key
