@@ -44,11 +44,9 @@ func (s *observedServer) client(t *testing.T) *Client {
 		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
 			okCampaign(w, r)
 		case strings.HasSuffix(r.URL.Path, "campaignCriteria:mutate"):
-			parts := make([]string, 0, len(createOps(t, string(body))))
-			for i := range createOps(t, string(body)) {
-				parts = append(parts, `{"resourceName":"customers/1234567890/campaignCriteria/222~`+strconv.Itoa(700+i)+`"}`)
-			}
-			_, _ = io.WriteString(w, `{"results":[`+strings.Join(parts, ",")+`]}`)
+			// perGroupResults, not createOps: createOps calls t.Fatalf, which must not run on
+			// the handler goroutine.
+			_, _ = io.WriteString(w, perGroupResults(body, "campaignCriteria", "222", 700))
 		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
 			s.groups = append(s.groups, string(body))
 			id := strconv.Itoa(330 + s.seq)

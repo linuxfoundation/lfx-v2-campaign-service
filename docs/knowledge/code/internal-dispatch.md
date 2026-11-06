@@ -1018,7 +1018,10 @@ top level and on each `adGroups[].ads[]` entry, `adGroups[].negativeKeywords` (m
 `excludedParentalStatuses`. Which channel takes each is the client preflight's decision, so
 an off-channel value is refused there for the create and the adoption path alike.
 `observedDemographics` (#497) is passed through the same way; the client refuses it off
-Search.
+Search. Dispatch refuses any non-empty list first, on any channel, unless
+`GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` is exactly `"true"`
+(`googleAdsDemographicTargetingEnabled`): its request shape is not yet probed, and a wrong
+guess would fail after the budget and campaign exist.
 
 The #477 fields follow the same rule. `sharedNegativeKeywordLists` is passed through
 verbatim. `searchAssets` is `googleAdsSearchAssetsConfig`: `adImages` and

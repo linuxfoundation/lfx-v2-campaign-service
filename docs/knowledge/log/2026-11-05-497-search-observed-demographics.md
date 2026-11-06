@@ -16,4 +16,7 @@ positive ENABLED ad-group criterion in the group's criteria mutate, after the ex
 
 Built from the v23 field names. The positive demographic criteria and the demographic
 `bidOnly` restrictions on a Search ad group have not yet been checked with a validateOnly
-probe.
+probe, so the field is behind a new deployment gate, `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED`
+(chart default `"false"`). Dispatch refuses a non-empty list on any channel before anything
+upstream exists unless the gate is exactly `"true"`. Turn it on in lfx-v2-argocd once the probe
+passes.

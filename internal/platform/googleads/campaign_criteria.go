@@ -883,6 +883,10 @@ var (
 	}
 )
 
+// maxObservedDemographicEntries bounds the ObservedDemographics list. Three distinct values
+// exist; the slack tolerates a caller that repeats one, which is collapsed.
+const maxObservedDemographicEntries = 6
+
 // Google's TargetingDimension names for the demographic dimensions.
 const (
 	targetingDimensionAgeRange       = "AGE_RANGE"
@@ -937,8 +941,10 @@ func validateObservedDemographics(kind string, values []string, campaign criteri
 	if kind != campaignKindSearch {
 		return adGroupObservationPlan{}, fmt.Errorf("google-ads: observed demographics are not supported on %s (this client puts demographics in observation mode on the Search ad group only); omit ObservedDemographics, or create a Search campaign to observe demographics", kind)
 	}
-	if len(values) > maxDemographicExclusions {
-		return adGroupObservationPlan{}, fmt.Errorf("google-ads: at most %d observed demographics are supported, got %d", maxDemographicExclusions, len(values))
+	// A length guard only: three distinct values exist, and any other is refused below. The
+	// cap bounds a list padded with repeats.
+	if len(values) > maxObservedDemographicEntries {
+		return adGroupObservationPlan{}, fmt.Errorf("google-ads: at most %d observed demographic entries are supported, got %d (only AGE_RANGE, GENDER and INCOME_RANGE are distinct values)", maxObservedDemographicEntries, len(values))
 	}
 	excludedAges := make(map[string]struct{}, len(campaign.ageRanges))
 	for _, a := range campaign.ageRanges {

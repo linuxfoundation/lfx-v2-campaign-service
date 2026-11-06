@@ -499,7 +499,10 @@ type googleAdsConfig struct {
 	// ObservedDemographics puts demographic dimensions ("AGE_RANGE", "GENDER",
 	// "INCOME_RANGE") in observation mode on every Search ad group (#497): reporting and
 	// bid adjustments, no narrowing. "search" only; PARENTAL_STATUS is refused there.
-	// Values excluded above stay excluded. See googleads.validateObservedDemographics.
+	// Values excluded above stay excluded. Refused outright unless
+	// GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED is "true", because its request shape is not yet
+	// probed live (see googleAdsDemographicTargetingEnabled). See
+	// googleads.validateObservedDemographics.
 	ObservedDemographics []string `json:"observedDemographics"`
 	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions,
 	// created as account-level assets then linked to the campaign. Accepted on Search,
@@ -702,6 +705,15 @@ func googleAdsSharedNegativeListsEnabled() bool {
 	return os.Getenv(constants.EnvGoogleAdsSharedNegativeListsEnabled) == "true"
 }
 
+// googleAdsDemographicTargetingEnabled reports whether this deployment opted in to the
+// demographic inputs whose request shape is not yet probed live: observedDemographics (#497).
+// Read per call, like the gates above. Unlike them it names no account resource; it keeps an
+// unverified shape off the shared account until a validateOnly probe has passed. See
+// constants.EnvGoogleAdsDemographicTargetingEnabled.
+func googleAdsDemographicTargetingEnabled() bool {
+	return os.Getenv(constants.EnvGoogleAdsDemographicTargetingEnabled) == "true"
+}
+
 // googleAdsInputDisabled is the refusal for an input a deployment gate keeps off: not-created,
 // so the claim is released, and a domain.PreflightRefusal, so the asynchronous create job
 // copies the sentence verbatim instead of reporting a generic failure. The sentence is
@@ -867,6 +879,12 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return nil, googleAdsInputDisabled("sharedNegativeKeywordLists is",
 			constants.EnvGoogleAdsSharedNegativeListsEnabled,
 			"sharedNegativeKeywordLists")
+	}
+	// The unprobed demographic inputs (#497), on the same terms: any non-empty list, on any
+	// channel, so the refusal never depends on the client's own validation of the values.
+	if len(cfg.ObservedDemographics) > 0 && !googleAdsDemographicTargetingEnabled() {
+		return nil, googleAdsInputDisabled("observedDemographics is",
+			constants.EnvGoogleAdsDemographicTargetingEnabled, "observedDemographics")
 	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {

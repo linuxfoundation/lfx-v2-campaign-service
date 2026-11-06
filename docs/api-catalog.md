@@ -1567,7 +1567,9 @@ observedDemographics?:          — OPTIONAL, SEARCH ONLY (#497). Puts whole dem
 
                                   Built from the v23 field names; the positive criteria and the
                                   demographic `bidOnly` restrictions have NOT yet been checked with a
-                                  validateOnly probe.
+                                  validateOnly probe, so the field is REFUSED before any request
+                                  unless the deployment sets GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED
+                                  to exactly `"true"`.
 sitelinks?:                     — OPTIONAL sitelink extensions (LFXV2-2665): extra links shown under the
   {text, description1?,           ad. `text` ≤25 runes, required and unique within the list.
    description2?, finalUrl}       `description1`/`description2` are ≤35 runes each and ALL-OR-NOTHING —
