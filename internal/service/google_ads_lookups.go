@@ -445,8 +445,8 @@ func (s *ConnectionService) ListGoogleAdsConversionActions(ctx context.Context, 
 	}, nil
 }
 
-// ListGoogleAdsAudiences lists the custom audiences, combined audiences, Audience resources or
-// user interests on the Google Ads customer a create for this project uses, for the audience
+// ListGoogleAdsAudiences lists the custom audiences, combined audiences, Audience resources,
+// user interests or custom interests on the Google Ads customer a create for this project uses, for the audience
 // pickers (#496).
 //
 // Resolution and tenancy are ListGoogleAdsConversionActions': the answer is account-wide on a
@@ -459,7 +459,7 @@ func (s *ConnectionService) ListGoogleAdsAudiences(ctx context.Context, p *conn.
 	// Mirrors the design Enum, Pattern and MaxLength for a caller that bypasses Goa.
 	kind, ok := googleads.ParseAudienceKind(p.Type)
 	if !ok {
-		return nil, &conn.BadRequestError{Code: "400", Message: "type must be one of custom_audience, combined_audience, audience, user_interest"}
+		return nil, &conn.BadRequestError{Code: "400", Message: "type must be one of custom_audience, combined_audience, audience, user_interest, custom_interest"}
 	}
 	needle := ""
 	if p.Q != nil {

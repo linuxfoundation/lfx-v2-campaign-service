@@ -2908,7 +2908,8 @@ reports as configured while recording nothing.
 
 `audiences.go` is the audience-picker read (#496), also strictly read-only:
 `ListAudiences(kind)` is one GAQL search on `custom_audience`, `combined_audience`,
-`audience` (CUSTOMER scope) or `user_interest` (AFFINITY and IN_MARKET), usable entries
+`audience` (CUSTOMER scope), `user_interest` (AFFINITY and IN_MARKET) or `custom_interest`
+(ENABLED and CUSTOM_AFFINITY; the legacy custom affinity segments `customAffinities` takes, #517), usable entries
 only, bounded at `MaxAudienceScanRows` (10000; more fails the read). It returns resource
 name, id, name, Google's subtype, status (none for `user_interest`) and description,
 sorted by name ignoring case; a row outside this customer's collection is dropped. Served

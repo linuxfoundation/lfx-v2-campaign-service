@@ -6499,12 +6499,13 @@ type GoogleAdsConversionActionResponseBody struct {
 // GoogleAdsAudienceResourceResponseBody is used to define fields on response
 // body types.
 type GoogleAdsAudienceResourceResponseBody struct {
-	// customers/{customerId}/{customAudiences|combinedAudiences|audiences|userInterests}/{id},
+	// customers/{customerId}/{customAudiences|combinedAudiences|audiences|userInterests|customInterests}/{id},
 	// in exactly the form the create inputs accept: a custom_audience in
 	// googleAdsConfig.customAudiences (Display), an audience in demandGenAudience
-	// or performanceMaxAudienceSignal, a user_interest in userInterests (Display).
-	// No create input accepts a combined_audience today. The customer is the
-	// account a Google create for this project uses.
+	// or performanceMaxAudienceSignal, a user_interest in userInterests (Display),
+	// a custom_interest in customAffinities (Display, campaign-level or a
+	// displayAdGroups entry). No create input accepts a combined_audience today.
+	// The customer is the account a Google create for this project uses.
 	ResourceName string `form:"resource_name" json:"resource_name" xml:"resource_name"`
 	// The entry's numeric id (user_interest_id for a user_interest)
 	ID string `form:"id" json:"id" xml:"id"`
@@ -6513,12 +6514,13 @@ type GoogleAdsAudienceResourceResponseBody struct {
 	// The kind that was read, echoing the type parameter
 	Type string `form:"type" json:"type" xml:"type"`
 	// Google's own classification, verbatim: custom_audience.type (AUTO, INTEREST,
-	// PURCHASE_INTENT, SEARCH) or user_interest.taxonomy_type (AFFINITY,
-	// IN_MARKET). Absent for combined_audience and audience, which have none.
+	// PURCHASE_INTENT, SEARCH), custom_interest.type (always CUSTOM_AFFINITY) or
+	// user_interest.taxonomy_type (AFFINITY, IN_MARKET). Absent for
+	// combined_audience and audience, which have none.
 	Subtype *string `form:"subtype,omitempty" json:"subtype,omitempty" xml:"subtype,omitempty"`
-	// Always ENABLED for custom_audience, combined_audience and audience: only
-	// enabled entries are listed. Absent for user_interest, which has no status in
-	// Google Ads.
+	// Always ENABLED for custom_audience, combined_audience, audience and
+	// custom_interest: only enabled entries are listed. Absent for user_interest,
+	// which has no status in Google Ads.
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// The entry's description. Absent when Google sent none, and always for
 	// user_interest.
