@@ -9,7 +9,8 @@
   audience, Display audience resource, Performance Max audience signal, shared negative keyword
   list, Search audience segment. A new sweep,
   `TestPreflightCampaignKind_StoredAccountIDIsQuotedInForeignAccountRefusals`, runs against a
-  40-digit stored id and fails if any operator message shows it. Reverting any one of the eight
+  40-digit stored id and fails if any operator message shows it, or if its channel's sweep
+  never reaches one of the eight sites. Reverting any one of the eight
   sites to `%s` fails it. See `code/internal-platform-googleads.md` § Pre-flight refusals reach
   the job result (#494).
 - `PreflightRefusal.OperatorMessage`'s doc comment no longer says it is `Error()` under another

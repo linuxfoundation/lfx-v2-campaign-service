@@ -2210,8 +2210,9 @@ message withholds it as it would a caller's. `Error()` now quotes it too, so the
 messages read `account "1234567890"`.
 `TestPreflightCampaignKind_StoredAccountIDIsQuotedInForeignAccountRefusals` sweeps an ordinary
 resource name in each collection through every caller string slot against a 40-digit stored id,
-fails if any operator message shows it, and fails if any of the seven refusal texts is never
-reached.
+fails if any operator message shows it, and fails if any of the eight sites is never reached.
+It keys reach by channel and refusal text, since the Demand Gen demographics user list and the
+Search audience segment end in the same words (#528 review).
 
 ## Demand Gen ad creation (LFXV2-2665)
 

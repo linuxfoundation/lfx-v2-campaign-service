@@ -170,16 +170,19 @@ func TestPreflightCampaignKind_NoCallerTextReachesTheOperatorMessage(t *testing.
 // caller's owner id cannot pass for one that echoes the connection's own.
 const sweepStoredDigits = "5115115115115115115115115115115115115115"
 
-// sweepForeignTails names each foreign-account refusal by the text after the account it
-// formats, so the sweep below can prove it reached every one of them.
-var sweepForeignTails = []string{
-	"a conversion action cannot be shared across accounts",
-	"Google refuses another customer's Audience on this account's ad group",
-	"name a user list on the campaign's own account",
-	"name a custom audience on the campaign's own account",
-	"name a resource on the campaign's own account",
-	"an audience cannot be shared across accounts",
-	"a shared set cannot be attached across accounts",
+// sweepForeignSites names each of the eight foreign-account refusals by the channel whose
+// sweep reaches it and the text after the account it formats, so the sweep below can prove it
+// reached every one of them. The channel is part of the key because two sites share a tail: the
+// Demand Gen demographics user list and the Search audience segment (#528 review).
+var sweepForeignSites = []struct{ kind, tail string }{
+	{campaignKindSearch, "a conversion action cannot be shared across accounts"},
+	{campaignKindDemandGen, "Google refuses another customer's Audience on this account's ad group"},
+	{campaignKindDemandGen, "name a user list on the campaign's own account"},
+	{campaignKindDemandGen, "name a custom audience on the campaign's own account"},
+	{campaignKindDisplay, "name a resource on the campaign's own account"},
+	{campaignKindPerformanceMax, "an audience cannot be shared across accounts"},
+	{campaignKindSearch, "a shared set cannot be attached across accounts"},
+	{campaignKindSearch, "name a user list on the campaign's own account"},
 }
 
 // TestPreflightCampaignKind_StoredAccountIDIsQuotedInForeignAccountRefusals puts an ordinary
@@ -210,7 +213,7 @@ func TestPreflightCampaignKind_StoredAccountIDIsQuotedInForeignAccountRefusals(t
 		{campaignKindDisplay, func() CampaignInput { return displayCreativeInput(fullDisplayCreative()) }},
 		{campaignKindVideo, sampleInput},
 	}
-	reached := map[string]bool{}
+	reached := map[struct{ kind, tail string }]bool{}
 	for _, b := range bases {
 		total := 0
 		probe := b.in()
@@ -228,9 +231,9 @@ func TestPreflightCampaignKind_StoredAccountIDIsQuotedInForeignAccountRefusals(t
 				if !ok {
 					continue
 				}
-				for _, tail := range sweepForeignTails {
-					if strings.Contains(msg, tail) {
-						reached[tail] = true
+				for _, site := range sweepForeignSites {
+					if site.kind == b.kind && strings.Contains(msg, site.tail) {
+						reached[site] = true
 					}
 				}
 				if strings.Contains(msg, sweepStoredDigits) {
@@ -240,9 +243,9 @@ func TestPreflightCampaignKind_StoredAccountIDIsQuotedInForeignAccountRefusals(t
 		}
 	}
 	// The sweep proves nothing about a refusal it never reaches.
-	for _, tail := range sweepForeignTails {
-		if !reached[tail] {
-			t.Errorf("no input reached the foreign-account refusal ending %q", tail)
+	for _, site := range sweepForeignSites {
+		if !reached[site] {
+			t.Errorf("no %s input reached the foreign-account refusal ending %q", site.kind, site.tail)
 		}
 	}
 }
