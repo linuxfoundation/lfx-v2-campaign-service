@@ -300,6 +300,19 @@ deliberately deferred or accepted, so raising them again adds nothing:
 - **Worker ownership / lease / heartbeat** (PR #11) — never implemented; recovery
   keys on a 15-minute stale-job cutoff and the code defends that choice in a
   comment. Proposing the lease design is architecture review, not code review.
+- **`project_id` in log attributes** (PR #228, issue #229) — raised as a security
+  nit on the connection-probe log lines
+  ([`r4110028657`](https://github.com/linuxfoundation/lfx-v2-campaign-service/pull/228#discussion_r4110028657),
+  whose own fix line reads "No action needed; consistent with existing logging
+  conventions"), then decided repo-wide in #229: `project_id` is a caller-supplied
+  project UUID or slug, already in every `/projects/{project_id}/...` access log,
+  and the triage key, so it stays, in clear, under exactly that key. Do not raise
+  "logs `project_id`" or propose hashing, dropping or gating it. A log key that
+  names the project under **another spelling** (`project`, `projectID`,
+  `project_id_hash`, ...) is still a finding.
+  **Current proof:** `docs/knowledge/architecture/logging-conventions.md` §
+  "`project_id` is logged, in clear, under one key", and
+  `TestProjectIDLogKeyIsUniform` in `pkg/log/project_id_key_test.go`.
 
 ---
 
