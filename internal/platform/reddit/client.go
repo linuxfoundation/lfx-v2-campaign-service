@@ -453,10 +453,16 @@ type CampaignInput struct {
 	Subreddits      []string
 	Interests       []string
 	Keywords        []string
-	Variants        []AdVariant
-	Project         string
-	Objective       string // one of: awareness, traffic, conversions, video_views
-	PostURL         string
+	// ExcludedSubreddits and ExcludedGeoTargets are the ad group's excluded_communities and
+	// excluded_geolocations (#549), normalized and refused by NormalizeTargetingExclusions before
+	// any upstream call. Both are sent on EVERY ad-group attempt: the communities/interests retry
+	// never drops a brand-safety exclusion.
+	ExcludedSubreddits []string
+	ExcludedGeoTargets []string
+	Variants           []AdVariant
+	Project            string
+	Objective          string // one of: awareness, traffic, conversions, video_views
+	PostURL            string
 	// ImageURL, when set and PostURL is empty, makes CreateCampaign AUTHOR a
 	// promoted ("dark") image post from this URL before creating the campaign and
 	// attach it as the ad's creative — so a caller can go brief->servable ad
@@ -1861,6 +1867,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		geos = []string{"US"}
 	}
 
+	// The exclusions (#549), refused before any mutating call with the same rule set the
+	// dispatcher's PreflightCreate applies, so a value that slipped past it still creates nothing.
+	exclusions, err := NormalizeTargetingExclusions(in.Subreddits, in.GeoTargets, in.ExcludedSubreddits, in.ExcludedGeoTargets)
+	if err != nil {
+		return nil, domain.PreflightRefusalf("%s", err.Error())
+	}
+
 	// Compose BOTH names (campaign + ad group) and validate their lengths. The per-field
 	// EventName/Project bounds keep caller inputs sane, but the composed names also include
 	// region/objective (campaign) and a "+"-joined geo list (ad group), and GeoTargets has no
@@ -2209,6 +2222,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if len(in.Keywords) > 0 {
 		baseTargeting["keywords"] = in.Keywords
 	}
+	// Exclusions live in baseTargeting, the payload of BOTH attempts, so the retry that drops
+	// rejected communities and interests can never widen the campaign into a community or country
+	// the operator excluded. A Reddit refusal of an exclusion fails the ad group instead (a
+	// definite 4xx, campaign left PAUSED), like any other ad-group rejection.
+	if len(exclusions.Communities) > 0 {
+		baseTargeting["excluded_communities"] = exclusions.Communities
+	}
+	if len(exclusions.Geolocations) > 0 {
+		baseTargeting["excluded_geolocations"] = exclusions.Geolocations
+	}
 	// in.Interests is deliberately NOT set here: baseTargeting is the RETRY payload, and the
 	// retry exists to drop the dimensions Reddit rejected. Interests are added to
 	// optionalTargeting below, alongside communities.
@@ -2378,6 +2401,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		surviving = append(surviving, fmt.Sprintf("%d interests", len(in.Interests)))
 	}
 	surviving = append(surviving, fmt.Sprintf("%d keywords", len(in.Keywords)), fmt.Sprintf("%d geos", len(geos)))
+	if n := len(exclusions.Communities); n > 0 {
+		surviving = append(surviving, fmt.Sprintf("%d excluded communities", n))
+	}
+	if n := len(exclusions.Geolocations); n > 0 {
+		surviving = append(surviving, fmt.Sprintf("%d excluded geos", n))
+	}
 	steps = append(steps, "Targeting: "+strings.Join(surviving, ", "))
 
 	// Report each dropped dimension by its ACTUAL reason. Merging them into one

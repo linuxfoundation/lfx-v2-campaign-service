@@ -929,6 +929,29 @@ matching rule.
 `CampaignResult.BidApplied` is always true on success: this client never reuses a campaign or ad
 group by name.
 
+## Create-time targeting exclusions (`targeting_exclusions.go`, #549)
+
+`CampaignInput.ExcludedSubreddits` and `ExcludedGeoTargets` become the ad group's
+`targeting.excluded_communities` (subreddit NAMES, like `communities`) and
+`targeting.excluded_geolocations` (ISO alpha-2), the field names of `components_schema_targeting`
+in Reddit's published v3 OpenAPI document. `NormalizeTargetingExclusions` is the one rule set:
+`r/` stripped, blanks and malformed names (`[A-Za-z0-9_]{2,21}`) refused, case-insensitive
+duplicates dropped, codes checked against the same `iso3166Alpha2` set as `geoTargets`, caps of
+100 and 50, and an exclusion that is also targeted refused, including the `US` default when
+`geoTargets` is empty. `CreateCampaign` applies it before any request, and refuses a breach as a
+`domain.PreflightRefusal`. The dispatcher applies it in `PreflightCreate` so a breach is a
+synchronous 400, and returns the refused field structurally (`ExclusionError.Field`).
+
+Both go in `baseTargeting`, the payload of BOTH ad-group attempts. The retry that drops rejected
+communities and interests exists to rescue the ad group, and rescuing it by widening into a
+community or country the operator excluded would trade an orphan for a brand-safety breach.
+If Reddit refuses an exclusion, the ad group fails like any other definite 4xx and the campaign is
+left PAUSED with a partial result. Pinned by `TestCreateCampaign_RetryKeepsExclusions`.
+
+The dispatcher keeps both behind `REDDIT_TARGETING_EXCLUSIONS_ENABLED` (default off): no live
+create has sent either field. What Reddit answers for an excluded community that does not exist
+is unknown, so it is not part of the communities-fallback match.
+
 ## Campaign name (multi-campaign cs-3)
 
 `buildRedditCampaignName` composes the data pipeline's 8-segment name, `Events | <event> |
