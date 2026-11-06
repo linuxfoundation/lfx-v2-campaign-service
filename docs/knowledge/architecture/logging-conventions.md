@@ -66,7 +66,7 @@ the log call. Every `[]any` variable is tracked, so an alias is followed.
 - Statements run in order.
 - An `if`, `switch` or `select` runs each branch in sequence from its entry
   state and joins the exits.
-- A loop body runs zero or one times.
+- A loop body runs zero or one times, after a `for` loop's initializer.
 - A log call inside a closure sees the state where the closure sits.
 
 Each resulting sequence is resolved in full before it is paired, so a pair split

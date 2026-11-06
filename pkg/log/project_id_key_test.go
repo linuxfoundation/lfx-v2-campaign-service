@@ -221,6 +221,13 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 			}()`, []string{"a", "projectID"}},
 		{"group names are keys", `_ = logger.WithGroup("project")
 			_ = slog.GroupAttrs("projectID", slog.Int("n", 1))`, []string{"project", "projectID", "n"}},
+		{"a for loop's initializer is traced", `for fields := []any{"projectID", id}; c; {
+				slog.Info("m", fields...)
+				break
+			}`, []string{"projectID"}},
+		{"a multi-value assignment makes the slice unknown", `fields := []any{"projectID", id}
+			fields, e = mk()
+			slog.Info("m", fields...)`, nil},
 		{"interface conversion is looked through", `slog.Info("m", any("project_id"), "project")`, []string{"project_id"}},
 		{"elided slog.Attr in a slice", `slog.LogAttrs(ctx, lvl, "m", []slog.Attr{{Key: "projectID", Value: slog.AnyValue(v)}}...)`, []string{"projectID"}},
 		{"explicit slog.Attr", `_ = slog.Attr{Key: "project", Value: slog.AnyValue(v)}`, []string{"project"}},
@@ -246,6 +253,7 @@ var (
 	logger  *slog.Logger
 	errAttr func(error) slog.Attr
 	c       bool
+	mk      func() ([]any, error)
 )
 const keyConst = "projectID"
 func f() {
@@ -441,12 +449,12 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 	}
 
 	assign := func(lhs []ast.Expr, rhs []ast.Expr, st state) {
-		if len(lhs) != len(rhs) {
-			return
-		}
-		vals := make([]seqs, len(rhs))
-		for i, r := range rhs {
-			vals[i] = evalSlice(r, st)
+		vals := make([]seqs, len(lhs))
+		for i := range lhs {
+			vals[i] = seqs{nil} // a multi-value call's results are not traced
+			if len(lhs) == len(rhs) {
+				vals[i] = evalSlice(rhs[i], st)
+			}
 		}
 		for i, l := range lhs {
 			if id, ok := l.(*ast.Ident); ok {
@@ -462,6 +470,14 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 			st = exec(s, st)
 		}
 		return st
+	}
+	// loopOnce runs one iteration of a for loop's body and post statement.
+	loopOnce := func(x *ast.ForStmt, st state) state {
+		out := execList(x.Body.List, clone(st))
+		if x.Post != nil {
+			out = exec(x.Post, out)
+		}
+		return out
 	}
 	exec = func(s ast.Stmt, st state) state {
 		switch x := s.(type) {
@@ -494,7 +510,10 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 			}
 			return join(thenSt, elseSt)
 		case *ast.ForStmt:
-			return join(st, execList(x.Body.List, clone(st)))
+			if x.Init != nil {
+				st = exec(x.Init, st)
+			}
+			return join(st, loopOnce(x, st))
 		case *ast.RangeStmt:
 			return join(st, execList(x.Body.List, clone(st)))
 		case *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt:
@@ -560,8 +579,11 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 					return stateAt([]ast.Stmt{x.Else}, st, target)
 				}
 			case *ast.ForStmt:
+				if x.Init != nil && !contains(x.Init, target) {
+					st = exec(x.Init, st)
+				}
 				if contains(x.Body, target) {
-					return stateAt(x.Body.List, join(st, execList(x.Body.List, clone(st))), target)
+					return stateAt(x.Body.List, join(st, loopOnce(x, st)), target)
 				}
 			case *ast.RangeStmt:
 				if contains(x.Body, target) {
