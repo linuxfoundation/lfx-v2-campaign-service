@@ -233,6 +233,12 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 	// of a create that got past the campaign step, and the budget create below would succeed
 	// and orphan a second budget (#540). See refuseIfCampaignExists.
 	if r, err := c.refuseIfCampaignExists(ctx, "performance max", campaignName, namePartial); err != nil {
+		if r != nil {
+			// The existing campaign may predate the final-URL-expansion opt-out, exactly as
+			// on the DUPLICATE_CAMPAIGN_NAME arm below, and this check neither reads nor
+			// changes that setting.
+			r.Steps = append(r.Steps, expansionActionRequiredIfExists)
+		}
 		return r, err
 	}
 

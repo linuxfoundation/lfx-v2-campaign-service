@@ -22,11 +22,13 @@ first write. A retry of a create that already succeeded therefore sends no
   reuse, ambiguous-create resolution, and Demand Gen Audience reuse (#529/#531).
 - **Tests.** `campaign_precheck_test.go` has one test per channel (Demand Gen with and without
   Audiences). Each fails with that channel's call removed: the retry sends `campaignBudgets:mutate`
-  (`audiences:mutate` for Demand Gen with Audiences). Two more tests cover the unverifiable-lookup
-  and unreadable-budget refusals. `TestGoogleAds_Adoption_IsOptInAndOffByDefault` now pins that a
+  (`audiences:mutate` for Demand Gen with Audiences). Three more tests cover the unverifiable-lookup,
+  unreadable-budget and removed-between-reads refusals. `TestGoogleAds_Adoption_IsOptInAndOffByDefault` now pins that a
   dispatch without `adoptExisting` refuses rather than adopts. Not live-verified: no live call was
   made for this change.
 - **Docs.** The `adoptExisting` entry in `docs/api-catalog.md` and the operator sentence for
   `campaign_name_taken` (`internal/service/dispatch_failure.go`) now describe the pre-write
   refusal: the budget named may be the one the existing campaign already uses, and this attempt
-  sent nothing. Search re-checks its context after the two reads, before the first mutate.
+  sent nothing. `refuseIfCampaignExists` re-checks the context after its read, so a deadline that passes there is a
+  pre-create refusal on every channel, and the Performance Max partial keeps the final-URL-expansion
+  ACTION REQUIRED step the DUPLICATE_CAMPAIGN_NAME arm adds.

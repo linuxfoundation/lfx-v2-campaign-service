@@ -7,9 +7,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -202,6 +204,9 @@ func TestCreatePerformanceMaxCampaign_ExistingCampaignCreatesNoBudget(t *testing
 	srv, mutates := existingCampaignServer(t, ComposeName(CampaignKindPerformanceMax, in), pmaxImages(t))
 	res, err := existingCampaignClient(t, srv).CreatePerformanceMaxCampaign(context.Background(), pmaxInput(pmaxCreativeAt(srv.URL)))
 	assertCampaignNameTakenWithoutWrites(t, res, err, mutates())
+	if res != nil && !slices.Contains(res.Steps, expansionActionRequiredIfExists) {
+		t.Errorf("an existing Performance Max campaign may predate the final-URL-expansion opt-out; steps = %v, want the ACTION REQUIRED step", res.Steps)
+	}
 }
 
 func TestCreateVideoCampaignCascade_ExistingCampaignCreatesNoBudget(t *testing.T) {
@@ -322,4 +327,50 @@ func TestCreateCampaign_ExistingCampaignRemovedBetweenReadsSendsNoWrite(t *testi
 	if len(mutates) != 0 {
 		t.Errorf("no write may be sent, got %v", mutates)
 	}
+}
+
+// A context that ends during the campaign-name read is a pre-create refusal for every
+// channel, not a first mutate sent on a dead context (which would read as ambiguous).
+func TestRefuseIfCampaignExists_ContextDoneAfterReadIsPreCreate(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv := demandGenTLSServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+	c := existingCampaignClient(t, srv)
+	// The read answers in full, then the deadline passes before the caller's next step.
+	hc := *c.httpClient
+	hc.Transport = cancelAfterSearchTransport{base: hc.Transport, cancel: cancel}
+	c.httpClient = &hc
+
+	res, err := c.refuseIfCampaignExists(ctx, "demand gen", "LFX | DemandGen Campaign | x", func() *CampaignResult { return &CampaignResult{} })
+	if res != nil || err == nil {
+		t.Fatalf("got res=%v err=%v, want a pre-create (nil, err)", res, err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want it to wrap context.Canceled", err)
+	}
+}
+
+// cancelAfterSearchTransport buffers a googleAds:search response whole, then cancels: the
+// read succeeds and the context is done by the time the caller looks at it again.
+type cancelAfterSearchTransport struct {
+	base   http.RoundTripper
+	cancel context.CancelFunc
+}
+
+func (t cancelAfterSearchTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(r)
+	if err != nil || !strings.HasSuffix(r.URL.Path, "googleAds:search") {
+		return resp, err
+	}
+	raw, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(raw))
+	t.cancel()
+	return resp, nil
 }

@@ -2047,11 +2047,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if r, err := c.refuseIfCampaignExists(ctx, "search", campaignName, campaignNamePartial); err != nil {
 		return r, err
 	}
-	// The two reads above can outlast the caller's deadline; re-check before the first
-	// mutate for the same reason as the guard above.
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, fmt.Errorf("google-ads campaign creation aborted before any write (context done after the campaign-name check): %w", ctxErr)
-	}
 
 	// Step 1: create the campaign budget.
 	shared := false

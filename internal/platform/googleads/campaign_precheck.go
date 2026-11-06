@@ -85,6 +85,13 @@ func (c *Client) refuseIfCampaignExists(ctx context.Context, channel, campaignNa
 		return nil, fmt.Errorf("google-ads %s campaign creation not attempted: could not establish whether a campaign named %q already exists, and creating a budget without knowing would orphan it on a retry: %w", channel, campaignName, err)
 	}
 	if campaignID == "" {
+		// The read can outlast the caller's deadline. A context already done here would
+		// otherwise reach the channel's first mutate, fail inside httpClient.Do and be
+		// classified as an ambiguous create that never left the process, so the claim
+		// would be retained for nothing. Refuse pre-create instead, for every channel.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("google-ads %s campaign creation aborted before any write (context done after the campaign-name check): %w", channel, ctxErr)
+		}
 		return nil, nil
 	}
 
