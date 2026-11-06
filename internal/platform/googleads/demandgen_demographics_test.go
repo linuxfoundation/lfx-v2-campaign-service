@@ -19,7 +19,7 @@ import (
 func fullDemographics() *DemandGenDemographics {
 	return &DemandGenDemographics{
 		AgeRanges:        []string{"45-54", "25-34", "age_range_35_44", "25-34"},
-		Genders:          []string{"female", "UNDETERMINED", "MALE"},
+		Genders:          []string{"female", "UNDETERMINED", "female"},
 		IncomeRanges:     []string{"INCOME_RANGE_90_UP", "income_range_80_90"},
 		ParentalStatuses: []string{"NOT_A_PARENT"},
 		AudienceSegments: []string{" customers/1234567890/userLists/123 ", "customers/1234567890/userLists/123"},
@@ -30,7 +30,7 @@ func fullDemographics() *DemandGenDemographics {
 // into one segment, values in enum order, UNDETERMINED as includeUndetermined, repeats gone.
 const wantFullDimensions = `[
 	{"age":{"ageRanges":[{"minAge":25,"maxAge":54}],"includeUndetermined":false}},
-	{"gender":{"genders":["MALE","FEMALE"],"includeUndetermined":true}},
+	{"gender":{"genders":["FEMALE"],"includeUndetermined":true}},
 	{"householdIncome":{"incomeRanges":["INCOME_RANGE_80_90","INCOME_RANGE_90_UP"],"includeUndetermined":false}},
 	{"parentalStatus":{"parentalStatuses":["NOT_A_PARENT"],"includeUndetermined":false}},
 	{"audienceSegments":{"segments":[{"userList":{"userList":"customers/1234567890/userLists/123"}}]}}]`
@@ -40,7 +40,7 @@ const wantFullDimensions = `[
 // (and so to which Audience a retry reuses) fails here rather than in production.
 const (
 	demandGenDemographicsCampaign = "LFX | DemandGen Campaign | tlf | KubeCon Europe 2026"
-	demandGenDemographicsName     = demandGenDemographicsCampaign + " | Demographics f339a2ebe4b8c46f"
+	demandGenDemographicsName     = demandGenDemographicsCampaign + " | Demographics fd5e416a97e20e22"
 )
 
 func demographicsInput() CampaignInput {
@@ -67,7 +67,7 @@ func TestValidateDemandGenDemographics_BuildsTheAudience(t *testing.T) {
 	if pf.campaignName != demandGenDemographicsCampaign {
 		t.Errorf("campaign name = %q, want %q", pf.campaignName, demandGenDemographicsCampaign)
 	}
-	if want := "3 age range(s), 2 gender(s), 2 income range(s), 1 parental status(es), 1 user list(s)"; plan.summary != want {
+	if want := "3 age range(s), 1 gender(s), 2 income range(s), 1 parental status(es), 1 user list(s)"; plan.summary != want {
 		t.Errorf("summary = %q, want %q", plan.summary, want)
 	}
 
@@ -303,7 +303,7 @@ func TestCreateDemandGenCampaign_CreatesAndAttachesTheDemographicAudience(t *tes
 	if strings.Join(res.AudienceCriteriaIDs, ",") != "800" {
 		t.Errorf("AudienceCriteriaIDs = %v, want [800]", res.AudienceCriteriaIDs)
 	}
-	want := "Demographic Audience created: " + testDemographicAudience + " (3 age range(s), 2 gender(s), 2 income range(s), 1 parental status(es), 1 user list(s)), to be attached to every Demand Gen ad group"
+	want := "Demographic Audience created: " + testDemographicAudience + " (3 age range(s), 1 gender(s), 2 income range(s), 1 parental status(es), 1 user list(s)), to be attached to every Demand Gen ad group"
 	if res.Steps[0] != want {
 		t.Errorf("first step = %q, want %q", res.Steps[0], want)
 	}
@@ -692,4 +692,86 @@ func TestSameAudienceDimensions_CustomAudiences(t *testing.T) {
 			}
 		})
 	}
+}
+
+// liveProbe519Dimensions is what Google held for the #519 real create on 2026-11-06 (Audience
+// customers/8666746580/audiences/363763755, REST read-back): the request also carried
+// parentalStatus {PARENT, NOT_A_PARENT, includeUndetermined}, which Google dropped because it
+// names everyone. A false includeUndetermined comes back omitted.
+const liveProbe519Dimensions = `[{"age":{"ageRanges":[{"maxAge":54,"minAge":25}],"includeUndetermined":true}},
+{"gender":{"genders":["FEMALE","MALE"]}},
+{"householdIncome":{"incomeRanges":["INCOME_RANGE_70_80","INCOME_RANGE_80_90","INCOME_RANGE_90_UP"]}},
+{"audienceSegments":{"segments":[{"userList":{"userList":"customers/8666746580/userLists/8172048852"}},{"userList":{"userList":"customers/8666746580/userLists/9022008922"}},{"customAudience":{"customAudience":"customers/8666746580/customAudiences/2808384"}},{"customAudience":{"customAudience":"customers/8666746580/customAudiences/741982839"}}]}}]`
+
+func probe519Demographics() *DemandGenDemographics {
+	return &DemandGenDemographics{
+		AgeRanges:        []string{"25-34", "35-44", "45-54", "UNDETERMINED"},
+		Genders:          []string{"FEMALE", "MALE"},
+		IncomeRanges:     []string{"INCOME_RANGE_70_80", "INCOME_RANGE_80_90", "INCOME_RANGE_90_UP"},
+		ParentalStatuses: []string{"PARENT", "NOT_A_PARENT", "UNDETERMINED"},
+		AudienceSegments: []string{"customers/8666746580/userLists/9022008922", "customers/8666746580/userLists/8172048852"},
+		CustomAudiences:  []string{"customers/8666746580/customAudiences/741982839", "customers/8666746580/customAudiences/2808384"},
+	}
+}
+
+// #519: a dimension naming every value and UNDETERMINED is left out of the request, as Google
+// leaves it out of the stored Audience, so the plan matches the live read-back and a retry's
+// NAME_ALREADY_IN_USE lookup reuses the Audience instead of refusing it as different.
+func TestValidateDemandGenDemographics_EveryoneDimensionMatchesGooglesReadBack(t *testing.T) {
+	in := demandGenInput()
+	in.DemandGenDemographics = probe519Demographics()
+	p, err := validateDemandGenDemographics(campaignKindDemandGen, "8666746580", "C", in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []json.RawMessage
+	if err := json.Unmarshal([]byte(liveProbe519Dimensions), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !sameAudienceDimensions(got, p.create.Dimensions) {
+		body, _ := json.Marshal(p.create.Dimensions)
+		t.Errorf("planned dimensions %s differ from Google's read-back %s", body, liveProbe519Dimensions)
+	}
+	if want := "every parental status (no restriction, left out)"; !strings.Contains(p.summary, want) {
+		t.Errorf("summary = %q, want it to contain %q", p.summary, want)
+	}
+}
+
+func TestValidateDemandGenDemographics_EveryoneDimensionPerKind(t *testing.T) {
+	all := &DemandGenDemographics{
+		AgeRanges:        []string{"18-24", "25-34", "35-44", "45-54", "55-64", "65+", "UNDETERMINED"},
+		Genders:          []string{"MALE", "FEMALE", "UNDETERMINED"},
+		IncomeRanges:     []string{"INCOME_RANGE_0_50", "INCOME_RANGE_50_60", "INCOME_RANGE_60_70", "INCOME_RANGE_70_80", "INCOME_RANGE_80_90", "INCOME_RANGE_90_UP", "UNDETERMINED"},
+		ParentalStatuses: []string{"PARENT", "NOT_A_PARENT", "UNDETERMINED"},
+	}
+	in := demandGenInput()
+
+	// Every dimension names everyone and there is no segment: nothing would be restricted.
+	in.DemandGenDemographics = all
+	if _, err := validateDemandGenDemographics(campaignKindDemandGen, "1234567890", "C", in); err == nil ||
+		!strings.Contains(err.Error(), "restricts nobody") || !strings.Contains(err.Error(), "age, gender, income, parental status") {
+		t.Errorf("error = %v, want a 'restricts nobody' refusal naming all four dimensions", err)
+	}
+
+	// With a segment beside them, only the segment is sent (the 2026-11-06 live create of an
+	// Audience with all four everyone-dimensions and a user list stored the user list alone).
+	d := *all
+	d.AudienceSegments = []string{"customers/1234567890/userLists/1"}
+	in.DemandGenDemographics = &d
+	p, err := validateDemandGenDemographics(campaignKindDemandGen, "1234567890", "C", in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(p.create.Dimensions)
+	jsonEqual(t, body, `[{"audienceSegments":{"segments":[{"userList":{"userList":"customers/1234567890/userLists/1"}}]}}]`)
+
+	// Every value WITHOUT UNDETERMINED is a restriction (it leaves the unclassified out), so it
+	// is sent; Google kept such a gender dimension on the #519 create.
+	in.DemandGenDemographics = &DemandGenDemographics{Genders: []string{"MALE", "FEMALE"}, ParentalStatuses: []string{"PARENT", "NOT_A_PARENT"}}
+	p, err = validateDemandGenDemographics(campaignKindDemandGen, "1234567890", "C", in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = json.Marshal(p.create.Dimensions)
+	jsonEqual(t, body, `[{"gender":{"genders":["MALE","FEMALE"],"includeUndetermined":false}},{"parentalStatus":{"parentalStatuses":["PARENT","NOT_A_PARENT"],"includeUndetermined":false}}]`)
 }

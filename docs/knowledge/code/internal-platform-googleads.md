@@ -2556,7 +2556,12 @@ one `AudienceDimension` per non-empty list, values in enum order, `UNDETERMINED`
 dimension's `includeUndetermined` (Google refuses it as a value, `INVALID_ENUM_VALUE`, and
 refuses the flag on a dimension with no value, `DIMENSION_INVALID`, so a list of only
 `UNDETERMINED` is refused), and adjacent age brackets merged into one `AgeSegment` (the live
-KubeCon NA 2026 Audience stores 25-54 that way). It refuses the field off Demand Gen, an
+KubeCon NA 2026 Audience stores 25-54 that way). A dimension naming every value and `UNDETERMINED` (`coversEveryone`) is left
+out, because Google drops it from the stored Audience (#519: a real create sent parental status
+PARENT + NOT_A_PARENT + undetermined and read back without it; an Audience of four such
+dimensions and a user list read back as the user list alone), and a plan left with no dimension
+at all is refused; sending it made the NAME_ALREADY_IN_USE reuse below find "different"
+dimensions and dead-end every retry. It refuses the field off Demand Gen, an
 empty object, and the field beside `DemandGenAudience` or any group `Audience` (one Audience
 per ad group, and an existing one is never edited). The name is
 `<campaign name> | Demographics <16 hex of SHA-256(campaign name, dimensions)>`, with the
