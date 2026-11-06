@@ -1326,6 +1326,25 @@ func TestRunQA_AnUnreadableListNameIsNotVerifiedRatherThanAbsent(t *testing.T) {
 		}
 	})
 
+	t.Run("a wrapper child recovered as a later direct exclusion is not unverified", func(t *testing.T) {
+		portal := seoulPortal()
+		portal.lists["26Q4 - KubeCon - Master"] = "500"
+		portal.lists["26Q4 - KubeCon 2026 Registrants"] = "610"
+		portal.lists["Hard Bounces"] = "601"
+		portal.lists["26Q4 - Combined Suppression"] = "700"
+		portal.flaky = map[string]int{"601": 1}
+		// 700 is met first and names 601 as a child while 601's name read is failing;
+		// 601 is then read directly and answers.
+		portal.branches = map[string]string{"500": or(and(f("IN_LIST", "610"), f("NOT_IN_LIST", "700"), f("NOT_IN_LIST", "601"))), "700": or(and(f("IN_LIST", "601")))}
+		srv := portal.serve(t)
+		defer srv.Close()
+
+		out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", true, false, nil)
+		require.NoError(t, err)
+		assert.Empty(t, out.Checks.Suppression.UnverifiedListIDs, "601 was read in the end")
+		assert.True(t, says(out, absent), "read, Hard Bounces is no GDPR list, so the CRITICAL stands")
+	})
+
 	t.Run("a name read that recovers later is evidence again", func(t *testing.T) {
 		portal := seoulPortal()
 		portal.lists["26Q4 - Seoul - Master"] = "500"

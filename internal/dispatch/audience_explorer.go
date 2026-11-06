@@ -2208,7 +2208,15 @@ func unreadableIncluded(filters []audience.ListFilter, sentAway, unreadable map[
 // is updated in place for the children resolved here.
 func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.Client, cache map[string]*hubspot.List, excludedIDs []string, nameByID map[string]string, unreadable map[string]bool) ([]string, []string) {
 	out := make([]string, 0, 8)
+	// unverified keeps first-seen order; pending is what is still unverified, because a
+	// list met first as an unreadable wrapper child can be read later as a direct
+	// exclusion, and the answer must not depend on which came first.
 	unverified := make([]string, 0)
+	pending := map[string]bool{}
+	mark := func(id string) {
+		unverified = append(unverified, id)
+		pending[id] = true
+	}
 	for _, id := range excludedIDs {
 		wrapper, _, err := x.listWithFilters(ctx, client, cache, id)
 		// A name read that failed earlier and a read that answers now: the name is
@@ -2216,11 +2224,12 @@ func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.C
 		if err == nil && wrapper != nil && unreadable[id] {
 			nameByID[id] = wrapper.Name
 			delete(unreadable, id)
+			delete(pending, id)
 		}
 		if name := nameByID[id]; name != "" {
 			out = append(out, name)
 		} else if unreadable[id] {
-			unverified = append(unverified, id)
+			mark(id)
 		}
 		if err != nil || wrapper == nil {
 			// An unreadable exclusion is reported by its own name only. Failing the
@@ -2228,7 +2237,7 @@ func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.C
 			// an answer (no such list, so nothing behind it to credit); any other
 			// failure leaves what the wrapper covers unknown.
 			if err != nil && !errors.Is(err, audience.ErrListNotFound) && !unreadable[id] {
-				unverified = append(unverified, id)
+				mark(id)
 			}
 			continue
 		}
@@ -2246,11 +2255,17 @@ func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.C
 			if name := nameByID[childID]; name != "" {
 				out = append(out, name)
 			} else if unreadable[childID] {
-				unverified = append(unverified, childID)
+				mark(childID)
 			}
 		}
 	}
-	return out, audience.UniqueIDs(unverified)
+	still := make([]string, 0, len(unverified))
+	for _, id := range unverified {
+		if pending[id] {
+			still = append(still, id)
+		}
+	}
+	return out, audience.UniqueIDs(still)
 }
 
 // listName resolves a list id to a name via the cache, falling back to the legacy

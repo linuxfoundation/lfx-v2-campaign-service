@@ -37,7 +37,9 @@ set and an EU audience got the CRITICAL "No GDPR suppression list found", with
   A verdict reached on names that were read is left alone. An included list whose name read failed but whose later filter
   read succeeds is recovered (name taken from that read) and is no longer unverified;
   `exclusionNames` does the same for an excluded list, before collecting names, so a recovered
-  "Hard Bounces" is judged as read and a recovered GDPR list is credited.
+  "Hard Bounces" is judged as read and a recovered GDPR list is credited. The result does not depend on exclusion
+  order: a list first met as an unreadable wrapper child and then read directly is dropped from
+  the unverified ids.
 
 Tests: `TestRunQA_AnUnreadableListNameIsNotVerifiedRatherThanAbsent` (a fake portal answering
 403 from v3 and legacy for one id: direct exclusion, wrapper child, wrapper whose filters fail,
