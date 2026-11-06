@@ -2112,6 +2112,9 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	}
 
 	signalMapping := audience.CheckSignalMapping(filters, nameByID, unreadable)
+	// A send-time id whose read failed may have been read since (as one of the list's own
+	// exclusions); the cache holds only lists that were read, and those are evidence.
+	unverifiedSendTime = slices.DeleteFunc(unverifiedSendTime, func(id string) bool { return cache[id] != nil })
 	suppression := audience.CheckSuppression(exclusionNames, append(unverifiedExclusions, unverifiedSendTime...), targetsEU, targetsCA)
 	completeness := audience.CheckExclusionCompleteness(filters, len(sendTimeIDs), unverifiedSendTime)
 	// stage gates check 4: a Post-Event send is FOR this edition's attendees, so it reports

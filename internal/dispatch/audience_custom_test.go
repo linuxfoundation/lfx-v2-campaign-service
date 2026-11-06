@@ -53,8 +53,8 @@ type fakePortal struct {
 	// legacyNames are names the legacy API returns by id, ahead of forbidden: a list
 	// whose name is readable there while its v3 read (and so its filters) is refused.
 	legacyNames map[string]string
-	// flaky are list ids refused with a 403, from both APIs, for that many name lookups;
-	// each legacy read uses one up, after which the list reads normally.
+	// flaky are list ids refused with a 403 for that many reads, v3 or legacy, after which
+	// the list reads normally. A failed name lookup is two reads (v3, then legacy).
 	flaky map[string]int
 }
 
@@ -97,7 +97,12 @@ func (p *fakePortal) serve(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusNotFound)
 		case strings.HasPrefix(r.URL.Path, "/crm/v3/lists/") && r.Method == http.MethodGet:
 			id := strings.TrimPrefix(r.URL.Path, "/crm/v3/lists/")
-			if p.forbidden[id] || p.flaky[id] > 0 {
+			if p.flaky[id] > 0 {
+				p.flaky[id]--
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			if p.forbidden[id] {
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
@@ -1309,7 +1314,7 @@ func TestRunQA_AnUnreadableListNameIsNotVerifiedRatherThanAbsent(t *testing.T) {
 			portal.lists["26Q4 - KubeCon - Master"] = "500"
 			portal.lists["26Q4 - KubeCon 2026 Registrants"] = "610"
 			portal.lists[tc.list] = "601"
-			portal.flaky = map[string]int{"601": 1}
+			portal.flaky = map[string]int{"601": 2}
 			portal.branches = map[string]string{"500": or(and(f("IN_LIST", "610"), f("NOT_IN_LIST", "601")))}
 			srv := portal.serve(t)
 
@@ -1332,7 +1337,7 @@ func TestRunQA_AnUnreadableListNameIsNotVerifiedRatherThanAbsent(t *testing.T) {
 		portal.lists["26Q4 - KubeCon 2026 Registrants"] = "610"
 		portal.lists["Hard Bounces"] = "601"
 		portal.lists["26Q4 - Combined Suppression"] = "700"
-		portal.flaky = map[string]int{"601": 1}
+		portal.flaky = map[string]int{"601": 2}
 		// 700 is met first and names 601 as a child while 601's name read is failing;
 		// 601 is then read directly and answers.
 		portal.branches = map[string]string{"500": or(and(f("IN_LIST", "610"), f("NOT_IN_LIST", "700"), f("NOT_IN_LIST", "601"))), "700": or(and(f("IN_LIST", "601")))}
@@ -1345,12 +1350,31 @@ func TestRunQA_AnUnreadableListNameIsNotVerifiedRatherThanAbsent(t *testing.T) {
 		assert.True(t, says(out, absent), "read, Hard Bounces is no GDPR list, so the CRITICAL stands")
 	})
 
+	t.Run("a send-time list read later as an exclusion is not unverified", func(t *testing.T) {
+		portal := seoulPortal()
+		portal.lists["26Q4 - KubeCon - Master"] = "500"
+		portal.lists["26Q4 - KubeCon 2026 Registrants"] = "610"
+		portal.lists["LF Global Opt-Outs"] = "602"
+		portal.lists["Hard Bounces"] = "601"
+		// Three failed reads: the name lookup (v3 + legacy) and the send-time read; the
+		// exclusion read then answers.
+		portal.flaky = map[string]int{"601": 3}
+		portal.branches = map[string]string{"500": or(and(f("IN_LIST", "610"), f("NOT_IN_LIST", "601"), f("NOT_IN_LIST", "602")))}
+		srv := portal.serve(t)
+		defer srv.Close()
+
+		out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", true, false, []string{"601"})
+		require.NoError(t, err)
+		assert.Empty(t, out.Checks.Suppression.UnverifiedListIDs, "601 was read in the end")
+		assert.True(t, says(out, absent), "read, Hard Bounces is no GDPR list, so the CRITICAL stands")
+	})
+
 	t.Run("a name read that recovers later is evidence again", func(t *testing.T) {
 		portal := seoulPortal()
 		portal.lists["26Q4 - Seoul - Master"] = "500"
 		portal.lists["26Q4 - Seoul - Prospects"] = "611"
 		portal.lists["26Q4 - Seoul - Meetup Prospects"] = "610"
-		portal.flaky = map[string]int{"610": 1}
+		portal.flaky = map[string]int{"610": 2}
 		portal.branches = map[string]string{"500": or(and(f("IN_LIST", "611")), and(f("IN_LIST", "610")))}
 		srv := portal.serve(t)
 		defer srv.Close()
