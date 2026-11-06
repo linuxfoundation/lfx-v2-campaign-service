@@ -1329,28 +1329,36 @@ func TestScrapePortCannotDriftFromServicePort(t *testing.T) {
 // xStatsWarning is a phrase only the X multi-replica warning in templates/NOTES.txt carries.
 const xStatsWarning = "TWITTER_METRICS_ENABLED is on with more than one replica"
 
-// helmNotes renders the chart's NOTES.txt for the given --set arguments. `helm template` never
-// renders NOTES, so this goes through a client-side dry-run install, which needs no cluster.
+// helmNotes renders the chart's NOTES.txt for the given --set arguments and returns it.
+//
+// `helm template` never renders NOTES.txt, and `helm install --dry-run=client` still asks the
+// cluster for its version on Helm v3 (CI's helm), so neither works offline. Instead the chart is
+// copied to a temp dir with one extra template that wraps NOTES.txt's text, read verbatim, in a
+// `define` and renders it as a JSON string. That is the real NOTES.txt against the real helpers
+// and values; only the place the text is printed differs.
 func helmNotes(t *testing.T, sets ...string) string {
 	t.Helper()
-	args := []string{"install", "notes-test", chartDir, "--dry-run=client"}
+	notes, err := os.ReadFile(filepath.Join(chartDir, "templates", "NOTES.txt"))
+	if err != nil {
+		t.Fatalf("read NOTES.txt: %v", err)
+	}
+	dir := filepath.Join(t.TempDir(), "chart")
+	if err := os.CopyFS(dir, os.DirFS(chartDir)); err != nil {
+		t.Fatalf("copy chart: %v", err)
+	}
+	probe := `{{- define "notesProbe" }}` + string(notes) + "{{- end }}\nnotes: {{ include \"notesProbe\" . | toJson }}\n"
+	if err := os.WriteFile(filepath.Join(dir, "templates", "notes-probe.yaml"), []byte(probe), 0o600); err != nil {
+		t.Fatalf("write NOTES probe: %v", err)
+	}
+	args := []string{"template", dir, "--show-only", "templates/notes-probe.yaml"}
 	for _, s := range sets {
 		args = append(args, "--set", s)
 	}
-	cmd := exec.Command("helm", args...)
-	// --dry-run=client never contacts a cluster, but point KUBECONFIG at nothing anyway so a
-	// future flag change cannot reach whatever context the developer has selected.
-	cmd.Env = append(os.Environ(), "KUBECONFIG="+filepath.Join(t.TempDir(), "none"))
-	out, err := cmd.CombinedOutput()
+	out, err := exec.Command("helm", args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("helm %v failed: %v\n%s", args, err, out)
 	}
-	_, notes, ok := strings.Cut(string(out), "\nNOTES:\n")
-	if !ok {
-		// A chart whose NOTES render empty prints no NOTES section at all.
-		return ""
-	}
-	return notes
+	return string(out)
 }
 
 // TestDeploymentWarnsOnXStatsJobsWithMultipleReplicas pins that the X stats-job replica check is
@@ -1361,8 +1369,8 @@ func helmNotes(t *testing.T, sets ...string) string {
 // turned on, the outage #378 fixed for Reddit.
 //
 // So every case must render the Deployment — carrying the requested spec.replicas, since a guard
-// that clamped the count instead of failing would still be a guard — and NOTES.txt must carry the
-// warning exactly when the EFFECTIVE flag is on (set through either env input, or sourced where the
+// that clamped the count instead of failing would still be a guard — and NOTES.txt (rendered by
+// helmNotes) must carry the warning exactly when the EFFECTIVE flag is on (set through either env input, or sourced where the
 // template cannot see it) with more than one replica.
 func TestDeploymentWarnsOnXStatsJobsWithMultipleReplicas(t *testing.T) {
 	if _, err := exec.LookPath("helm"); err != nil {

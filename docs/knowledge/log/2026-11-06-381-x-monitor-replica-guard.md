@@ -37,8 +37,10 @@ The poller audit the issue asked for came first and found nothing polling the X 
 `TestDeploymentRefusesXStatsJobsOnMultipleReplicas` is replaced by
 `TestDeploymentWarnsOnXStatsJobsWithMultipleReplicas`, which runs the same effective-value matrix
 plus the production shape (flag on, three replicas). In every case the Deployment must render
-and carry the requested `spec.replicas`. The `NOTES.txt` warning, read from a `helm install
---dry-run=client`, must appear exactly when the effective flag is on above one replica. Mutation
+and carry the requested `spec.replicas`. The `NOTES.txt` warning must appear exactly when the effective flag is on above
+one replica. `helm template` never renders `NOTES.txt`, and on Helm v3 `helm install
+--dry-run=client` still contacts the cluster, so the test copies the chart into a temp dir and
+renders the real `NOTES.txt` text through a probe template. Mutation
 checks: the test fails if the `fail` is put back, if replicas are clamped to 1, if the helper never
 fires, if it ignores `extraEnv`, autoscaling or `valueFrom`. The comments and docs that described
 the refusal were updated: `values.yaml`, `README.md`, `docs/api-catalog.md`, `pacer.go`,
