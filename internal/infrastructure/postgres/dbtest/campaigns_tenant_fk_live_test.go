@@ -53,6 +53,31 @@ func seedBriefAndCampaign(ctx context.Context, t *testing.T, conn *pgx.Conn, bri
 	return briefID, campaignID
 }
 
+// waitForQueuedLock blocks until some backend in this database is waiting, ungranted, for
+// SHARE ROW EXCLUSIVE on relation — 000056's ADD CONSTRAINT queued on it — so a test can act at a
+// point where the migration is provably blocked rather than after a guessed sleep.
+func waitForQueuedLock(ctx context.Context, t *testing.T, conn *pgx.Conn, relation string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		var queued bool
+		if err := conn.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM pg_locks l
+			  WHERE l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+			    AND l.relation = $1::regclass
+			    AND l.mode = 'ShareRowExclusiveLock' AND NOT l.granted)`, relation).Scan(&queued); err != nil {
+			t.Fatalf("read pg_locks: %v", err)
+		}
+		if queued {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("000056 never queued for SHARE ROW EXCLUSIVE on %s within 30s", relation)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // TestLiveMigration000056RefusesAMismatchedCampaign pins the "fail loudly, never repair" half of
 // 000056. A campaigns row whose project_id differs from its brief's is a tenant-boundary question
 // a person has to answer, so the migration must abort — with its own legible message — and leave
@@ -258,8 +283,9 @@ func TestLiveMigration000056WaitsOutABusyTableWithoutBlockingIt(t *testing.T) {
 	migrated := make(chan error, 1)
 	go func() { migrated <- m.Migrate(56) }()
 
-	// Let the first attempt queue behind the blocker, then write.
-	time.Sleep(300 * time.Millisecond)
+	// Write only once the ADD is provably queued behind the blocker: the INSERT then queues
+	// behind the ADD, and gets through only if an attempt times out and leaves the queue.
+	waitForQueuedLock(ctx, t, conn, "campaigns")
 	if _, err := writer.Exec(ctx,
 		`INSERT INTO campaigns (project_id, brief_id, platform, campaign_name, status)
 		 VALUES ('p-owner', $1, 'meta-ads', 'n/a', 'created')`, briefID); err != nil {
@@ -338,13 +364,20 @@ func TestLiveMigration000056RetriesADeadlock(t *testing.T) {
 	migrated := make(chan error, 1)
 	go func() { migrated <- m.Migrate(56) }()
 
-	// Let the ADD take campaigns and queue on campaign_briefs, then close the cycle.
-	time.Sleep(300 * time.Millisecond)
+	// Close the cycle only once the ADD provably holds campaigns and is queued on
+	// campaign_briefs. The INSERT must then block (it needs campaigns) until PostgreSQL breaks the
+	// cycle; the elapsed time below proves the two really overlapped.
+	waitForQueuedLock(ctx, t, conn, "campaign_briefs")
+	insertStart := time.Now()
 	if _, err := atx.Exec(ctx,
 		`INSERT INTO campaigns (project_id, brief_id, platform, campaign_name, status)
 		 VALUES ('p-owner', $1, 'meta-ads', 'n/a', 'created')`, briefID); err != nil {
 		t.Fatalf("the application's campaign write was the deadlock victim (%v); the migration, "+
 			"which waited first, should have been", err)
+	}
+	if blocked := time.Since(insertStart); blocked < 300*time.Millisecond {
+		t.Fatalf("the application's INSERT returned after %s without waiting on the migration: "+
+			"no deadlock formed, so this run proves nothing about the retry", blocked)
 	}
 	if err := atx.Commit(ctx); err != nil {
 		t.Fatalf("commit the application transaction: %v", err)
