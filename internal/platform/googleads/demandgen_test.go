@@ -64,8 +64,8 @@ func newDemandGenClient(t *testing.T, apiURL string) *Client {
 	t.Helper()
 	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
 	t.Cleanup(tokenSrv.Close)
-	return NewClient(testCreds(), testAccount(),
-		WithTokenURL(tokenSrv.URL), WithBaseURL(apiURL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+	return noExistingCampaign(NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiURL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond)))
 }
 
 // The contract that distinguishes this path from Search. A Demand Gen campaign must
@@ -225,8 +225,8 @@ func TestCreateDemandGenCampaignReturnsThePartialAfterBudgetCommits(t *testing.T
 	}))
 	t.Cleanup(apiSrv.Close)
 
-	c := NewClient(testCreds(), testAccount(),
-		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+	c := noExistingCampaign(NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond)))
 	res, err := c.CreateDemandGenCampaign(context.Background(), demandGenInput())
 
 	if err == nil {
@@ -268,8 +268,8 @@ func TestCreateDemandGenCampaign_AmbiguousBudgetKeepsTheClaim(t *testing.T) {
 	}))
 	t.Cleanup(apiSrv.Close)
 
-	c := NewClient(testCreds(), testAccount(),
-		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+	c := noExistingCampaign(NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond)))
 	res, err := c.CreateDemandGenCampaign(context.Background(), demandGenInput())
 
 	if err == nil {
@@ -342,8 +342,8 @@ func TestCreateDemandGenAdGroupFailureIsReconcilable(t *testing.T) {
 	}))
 	t.Cleanup(apiSrv.Close)
 
-	c := NewClient(testCreds(), testAccount(),
-		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+	c := noExistingCampaign(NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond)))
 	res, err := c.CreateDemandGenCampaign(context.Background(), demandGenInput())
 
 	if err == nil {
@@ -390,8 +390,8 @@ func TestCreateDemandGenAdGroupRejectsAForeignResource(t *testing.T) {
 	}))
 	t.Cleanup(apiSrv.Close)
 
-	c := NewClient(testCreds(), testAccount(),
-		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+	c := noExistingCampaign(NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond)))
 	res, err := c.CreateDemandGenCampaign(context.Background(), demandGenInput())
 
 	if err == nil {

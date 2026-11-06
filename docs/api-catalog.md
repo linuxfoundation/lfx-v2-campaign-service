@@ -2444,8 +2444,10 @@ adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When t
                                   composed name is deterministic and survives a campaign DELETE, so an
                                   unconditional lookup would silently re-attach a re-dispatch to the
                                   still-live campaign the delete walked away from. With the flag off,
-                                  that dispatch creates, and Google's duplicate-name response surfaces
-                                  as a job failure requiring reconciliation.
+                                  that dispatch does not create: the client's pre-write check finds the
+                                  live campaign of the composed name, sends no write (so no orphan
+                                  budget, #540), and the job fails as `campaign_name_taken` carrying the
+                                  existing campaign's budget id, requiring reconciliation.
                                   On Google the adopted campaign also takes the brief SLOT its
                                   `campaign.advertising_channel_type` maps to, and the slot is keyed on
                                   that TYPE alone — the lookup does not read

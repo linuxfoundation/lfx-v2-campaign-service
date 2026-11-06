@@ -263,9 +263,9 @@ func newTargetingClientWith(t *testing.T, onAdGroup func(map[string]any), criter
 		}
 	}))
 	t.Cleanup(apiSrv.Close)
-	return NewClient(testCreds(), testAccount(),
+	return noExistingCampaign(NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
-		withRetryBaseDelay(time.Millisecond))
+		withRetryBaseDelay(time.Millisecond)))
 }
 
 // newTargetingClient is newTargetingClientWith with no ad-group-body capture.
@@ -297,9 +297,9 @@ func newTargetingClientFull(t *testing.T, budgetH, campaignH, adGroupH, adGroupA
 		}
 	}))
 	t.Cleanup(apiSrv.Close)
-	return NewClient(testCreds(), testAccount(),
+	return noExistingCampaign(NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
-		withRetryBaseDelay(time.Millisecond))
+		withRetryBaseDelay(time.Millisecond)))
 }
 
 func okAdGroupCriteria(w http.ResponseWriter, _ *http.Request) {
