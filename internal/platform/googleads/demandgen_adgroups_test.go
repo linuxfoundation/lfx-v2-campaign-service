@@ -238,7 +238,7 @@ func TestCreateDemandGenCampaign_TwoAdGroups(t *testing.T) {
 	}
 	groups := rig.sent("adGroups:mutate")
 	for i, name := range []string{"KubeCon Europe 2026 - Display | Retargeting", "KubeCon Europe 2026 - Display | Prospecting"} {
-		jsonEqual(t, groups[i], `{"operations":[{"create":{"name":"`+name+`","campaign":"customers/1234567890/campaigns/222","status":"ENABLED"}}]}`)
+		jsonEqual(t, groups[i], `{"operations":[{"create":{"name":"`+name+`","campaign":"customers/1234567890/campaigns/222","status":"PAUSED"}}]}`)
 	}
 	criteria := rig.sent("adGroupCriteria:mutate")
 	// Geo then audience+language, per group, each on its own ad group.

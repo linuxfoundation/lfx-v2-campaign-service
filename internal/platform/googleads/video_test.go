@@ -202,8 +202,14 @@ func TestCreateVideoCampaign_HappyPath(t *testing.T) {
 
 	// The ad group must be typed, or the videoResponsiveAd lands in a
 	// VIDEO_TRUE_VIEW_IN_STREAM group that refuses it.
-	if got := mutateCreate(t, readAdGroup())["type"]; got != adGroupTypeVideoResponsive {
+	videoAdGroup := mutateCreate(t, readAdGroup())
+	if got := videoAdGroup["type"]; got != adGroupTypeVideoResponsive {
 		t.Errorf("ad group type = %v, want %q", got, adGroupTypeVideoResponsive)
+	}
+	// PAUSED, as on every channel (#535): enabling the campaign outside this service's
+	// toggle must not start the ad group serving.
+	if got := videoAdGroup["status"]; got != StatusPaused {
+		t.Errorf("ad group status = %v, want %s", got, StatusPaused)
 	}
 
 	// The asset mutate must be a YouTube video asset, never an image one.

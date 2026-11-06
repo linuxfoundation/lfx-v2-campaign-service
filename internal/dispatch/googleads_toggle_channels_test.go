@@ -384,3 +384,39 @@ func TestToggleStatus_BothAssetGroupAndAdGroupsCascadeToBoth(t *testing.T) {
 		t.Errorf("the campaign must be flipped LAST on activate, got %v", paths)
 	}
 }
+
+// TestToggleStatus_ActivateEnablesTheAdGroupsTheCreatePathPaused pins the dependency #535
+// introduced. Every ad-group channel now creates its ad group PAUSED, as Search always did,
+// so an activate that flipped only the campaign would leave a campaign reporting ENABLED with
+// nothing beneath it able to serve. On every ad-group channel, ACTIVATE must enable the ad
+// group and its ad, and only then the campaign.
+func TestToggleStatus_ActivateEnablesTheAdGroupsTheCreatePathPaused(t *testing.T) {
+	for _, variant := range []string{googleAdsChannelDemandGen, googleAdsChannelDisplay, googleAdsChannelVideo} {
+		t.Run(variant, func(t *testing.T) {
+			d, rec := toggleDispatcher(t)
+			camp := demandGenCampaign()
+			camp.Variant = variant
+			if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive); err != nil {
+				t.Fatalf("ToggleStatus: %v", err)
+			}
+			paths, bodies := rec.seen()
+			var order []string
+			for i, p := range paths {
+				switch {
+				case strings.HasSuffix(p, "adGroups:mutate"):
+					order = append(order, "adGroups")
+					if !strings.Contains(bodies[i], `"status":"ENABLED"`) {
+						t.Errorf("ad group update body = %s, want status ENABLED", bodies[i])
+					}
+				case strings.HasSuffix(p, "adGroupAds:mutate"):
+					order = append(order, "adGroupAds")
+				case strings.HasSuffix(p, "campaigns:mutate"):
+					order = append(order, "campaigns")
+				}
+			}
+			if got, want := strings.Join(order, ","), "adGroups,adGroupAds,campaigns"; got != want {
+				t.Errorf("activate mutates = %s, want %s (the PAUSED ad group and ad enabled before the campaign)", got, want)
+			}
+		})
+	}
+}

@@ -198,10 +198,11 @@ func TestCreateDisplayCampaign_HappyPath(t *testing.T) {
 	if adGroup["type"] != adGroupTypeDisplayStandard {
 		t.Errorf("ad group type = %v, want %q", adGroup["type"], adGroupTypeDisplayStandard)
 	}
-	// ENABLED, as on Demand Gen and Video. Search is the only channel here that pauses
-	// its ad group, and the campaign is PAUSED regardless.
-	if adGroup["status"] != "ENABLED" {
-		t.Errorf("ad group status = %v, want ENABLED", adGroup["status"])
+	// PAUSED, as on every channel (#535 — a live Display ad group read back ENABLED under
+	// a PAUSED campaign): enabling the campaign outside this service's toggle must not
+	// start the ad group serving.
+	if adGroup["status"] != StatusPaused {
+		t.Errorf("ad group status = %v, want %s", adGroup["status"], StatusPaused)
 	}
 
 	// The asset mutate must carry the BYTES, base64 encoded — Google's image asset takes
