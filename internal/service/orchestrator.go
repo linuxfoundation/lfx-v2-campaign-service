@@ -2411,8 +2411,10 @@ var reconcileIdentifierSuffixes = []string{"ids", "urns", "names", "id", "urn", 
 // admit credential-shaped fields (apiKey, tokenKey). Every dispatcher's partial-result struct
 // was checked when this list was written.
 // Google Ads' demandGenDemographicAudience (#498) is the resource name of an Audience created
-// BEFORE the budget, the handle to it on a partial that may carry no campaign at all.
-var reconcileIdentifierExactKeys = map[string]bool{"mediakey": true, "demandgendemographicaudience": true}
+// BEFORE the budget, the handle to it on a partial that may carry no campaign at all; each
+// demandGenAdGroupAudiences entry's demographicAudience (#518) is the same handle for an ad
+// group's own Audience.
+var reconcileIdentifierExactKeys = map[string]bool{"mediakey": true, "demandgendemographicaudience": true, "demographicaudience": true}
 
 func isReconcileIdentifierKey(k string) bool {
 	lk := strings.ToLower(k)

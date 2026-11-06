@@ -321,7 +321,8 @@ type googleAdsConfig struct {
 	// DemandGenDemographics is the Demand Gen campaign's demographic targeting (#498): age
 	// ranges, genders, income ranges and parental statuses, plus optional existing user lists
 	// (audienceSegments), which the client builds into ONE new Audience before the budget and
-	// attaches to every Demand Gen ad group. DEMAND GEN ONLY, and refused beside
+	// attaches to every Demand Gen ad group that sets no demographics of its own (#518). DEMAND
+	// GEN ONLY, and refused beside
 	// demandGenAudience or any demandGenAdGroups audience. Refusals are the client's
 	// preflight's (googleads.validateDemandGenDemographics), except two gates checked here:
 	// any demandGenDemographics needs GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED, and
@@ -589,7 +590,9 @@ type googleAdsConfig struct {
 	// which must then be empty when this list is set. DEMAND GEN ONLY. Refusals are the
 	// client's preflight's, except one: a group's audience is refused outright unless
 	// GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED is "true", as demandGenAudience is — see
-	// googleAdsDemandGenAdGroupAudiencesSet.
+	// googleAdsDemandGenAdGroupAudiencesSet. A group's demographics (#518) sit behind the same
+	// two gates as demandGenDemographics (googleAdsDemandGenGroupDemographicsSet,
+	// googleAdsDemandGenDemographicSegmentsSet).
 	DemandGenAdGroups []googleAdsDemandGenAdGroupConfig `json:"demandGenAdGroups"`
 	// PerformanceMaxCreative is the ASSET GROUP for a Performance Max campaign, the
 	// third member of the same family and PERFORMANCE MAX ONLY.
@@ -695,18 +698,51 @@ func googleAdsDemandGenDemographics(in *googleAdsDemandGenDemographicsConfig) *g
 // resources, so they share demandGenAudience's deployment gate and, on the create path, its
 // global_marketing_ops check (service.GoogleAdsMarketingOpsInputs).
 func googleAdsDemandGenDemographicSegmentsSet(cfg googleAdsConfig) []string {
-	d := cfg.DemandGenDemographics
-	if d == nil {
-		return nil
-	}
 	var set []string
-	if len(d.AudienceSegments) > 0 {
-		set = append(set, "demandGenDemographics.audienceSegments")
+	segments := func(prefix string, d *googleAdsDemandGenDemographicsConfig) {
+		if d == nil {
+			return
+		}
+		if len(d.AudienceSegments) > 0 {
+			set = append(set, prefix+"demographics.audienceSegments")
+		}
+		if len(d.CustomAudiences) > 0 {
+			set = append(set, prefix+"demographics.customAudiences")
+		}
 	}
-	if len(d.CustomAudiences) > 0 {
-		set = append(set, "demandGenDemographics.customAudiences")
+	if d := cfg.DemandGenDemographics; d != nil {
+		if len(d.AudienceSegments) > 0 {
+			set = append(set, "demandGenDemographics.audienceSegments")
+		}
+		if len(d.CustomAudiences) > 0 {
+			set = append(set, "demandGenDemographics.customAudiences")
+		}
+	}
+	// Each demandGenAdGroups entry's own demographics (#518), by 1-based position.
+	for i, g := range cfg.DemandGenAdGroups {
+		segments("demandGenAdGroups entry "+strconv.Itoa(i+1)+" ", g.Demographics)
 	}
 	return set
+}
+
+// googleAdsDemandGenGroupDemographicsSet is the refusal's subject naming the demandGenAdGroups
+// entries that set demographics (#518), by 1-based position, or "" when none does. Any object
+// counts, `{}` included, as for demandGenDemographics.
+func googleAdsDemandGenGroupDemographicsSet(cfg googleAdsConfig) string {
+	var set []string
+	for i, g := range cfg.DemandGenAdGroups {
+		if g.Demographics != nil {
+			set = append(set, strconv.Itoa(i+1))
+		}
+	}
+	switch len(set) {
+	case 0:
+		return ""
+	case 1:
+		return "the demographics on demandGenAdGroups entry " + set[0] + " are"
+	default:
+		return "the demographics on demandGenAdGroups entries " + strings.Join(set, ", ") + " are"
+	}
 }
 
 // googleAdsDemandGenAudienceEnabled reports whether this deployment opted in to
@@ -996,6 +1032,13 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if cfg.DemandGenDemographics != nil && !googleAdsDemographicTargetingEnabled() {
 		return nil, googleAdsInputDisabled("demandGenDemographics is",
 			constants.EnvGoogleAdsDemographicTargetingEnabled, "demandGenDemographics")
+	}
+	// Each demandGenAdGroups entry's own demographics (#518), on the same terms: the list
+	// replaces the single ad group, so without this a caller could move the gated input into a
+	// group.
+	if subject := googleAdsDemandGenGroupDemographicsSet(cfg); subject != "" && !googleAdsDemographicTargetingEnabled() {
+		return nil, googleAdsInputDisabled(subject,
+			constants.EnvGoogleAdsDemographicTargetingEnabled, "the demographics from each demandGenAdGroups entry")
 	}
 	// Its user lists and custom audiences are existing account resources, so they also sit
 	// behind the Demand Gen audience gate, as demandGenAudience does: any non-empty list,
@@ -1614,8 +1657,11 @@ func googleAdsDemandGenVideoCreative(in *googleAdsDemandGenVideoCreativeConfig) 
 // googleAdsDemandGenAdGroupConfig is one entry of demandGenAdGroups (#460): a name, an
 // optional Audience, and exactly one of creative / videoCreative — or ads (#474).
 type googleAdsDemandGenAdGroupConfig struct {
-	Name          string                                 `json:"name"`
-	Audience      string                                 `json:"audience"`
+	Name     string `json:"name"`
+	Audience string `json:"audience"`
+	// Demographics is this group's own demographic Audience (#518), the same object as
+	// demandGenDemographics and gated the same way (googleAdsDemandGenGroupDemographicsSet).
+	Demographics  *googleAdsDemandGenDemographicsConfig  `json:"demographics"`
 	Creative      *googleAdsDemandGenCreativeConfig      `json:"creative"`
 	VideoCreative *googleAdsDemandGenVideoCreativeConfig `json:"videoCreative"`
 	Ads           []googleAdsDemandGenAdConfig           `json:"ads"`
@@ -1639,6 +1685,7 @@ func googleAdsDemandGenAdGroups(in []googleAdsDemandGenAdGroupConfig) []googlead
 		out[i] = googleads.DemandGenAdGroup{
 			Name:          g.Name,
 			Audience:      g.Audience,
+			Demographics:  googleAdsDemandGenDemographics(g.Demographics),
 			Creative:      googleAdsDemandGenCreative(g.Creative),
 			VideoCreative: googleAdsDemandGenVideoCreative(g.VideoCreative),
 			Ads:           googleAdsDemandGenAds(g.Ads),

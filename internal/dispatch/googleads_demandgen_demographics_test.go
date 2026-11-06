@@ -6,10 +6,12 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -158,6 +160,62 @@ func TestGoogleAds_DemandGenDemographicCustomAudiencesNeedTheAudienceGate(t *tes
 			d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 			cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"demand-gen","demandGenDemographics":` + tc.demographics + `}}`)
 			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want the gate refusal containing %q", err, tc.want)
+			}
+			assertNothingCreated(t, cap, camp)
+		})
+	}
+}
+
+// #518: each demandGenAdGroups entry's demographics decode and map onto the client's group
+// field by field, so the group's own Audience is built from exactly what was sent.
+func TestGoogleAds_DemandGenAdGroupDemographicsMapEveryField(t *testing.T) {
+	raw := json.RawMessage(`{"googleAdsConfig":{"channel":"demand-gen","demandGenAdGroups":[
+		{"name":"Retargeting","demographics":{"ageRanges":["25-34"],"genders":["FEMALE"],"incomeRanges":["INCOME_RANGE_90_UP"],
+			"parentalStatuses":["PARENT"],"audienceSegments":["customers/1234567890/userLists/55"],
+			"customAudiences":["customers/1234567890/customAudiences/66"]}},
+		{"name":"Prospecting"}]}}`)
+	var cfg googleAdsConfig
+	if err := unmarshalPlatformConfig(raw, "googleAdsConfig", &cfg); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	groups := googleAdsDemandGenAdGroups(cfg.DemandGenAdGroups)
+	want := &googleads.DemandGenDemographics{
+		AgeRanges: []string{"25-34"}, Genders: []string{"FEMALE"}, IncomeRanges: []string{"INCOME_RANGE_90_UP"},
+		ParentalStatuses: []string{"PARENT"}, AudienceSegments: []string{"customers/1234567890/userLists/55"},
+		CustomAudiences: []string{"customers/1234567890/customAudiences/66"},
+	}
+	if len(groups) != 2 || !reflect.DeepEqual(groups[0].Demographics, want) || groups[1].Demographics != nil {
+		t.Errorf("groups = %+v, want group 1's demographics mapped and group 2's absent", groups)
+	}
+}
+
+// A group's demographics sit behind the same two gates as demandGenDemographics:
+// GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED for any object, `{}` included, and
+// GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED for its user lists and custom audiences. Both refuse
+// before the Audience or the budget.
+func TestGoogleAds_DemandGenAdGroupDemographicsAreGated(t *testing.T) {
+	groups := func(d1, d2 string) string {
+		return `{"googleAdsConfig":{"budget":50,"channel":"demand-gen","demandGenAdGroups":[` +
+			`{"name":"A","demographics":` + d1 + `},{"name":"B","demographics":` + d2 + `}]}}`
+	}
+	for name, tc := range map[string]struct {
+		demographicsEnv, audienceEnv, cfg, want string
+	}{
+		"demographics gate off": {"false", "true", groups(`{"ageRanges":["25-34"]}`, `{}`),
+			"the demographics on demandGenAdGroups entries 1, 2 are disabled on this deployment (" + constants.EnvGoogleAdsDemographicTargetingEnabled},
+		"demographics gate unset, one entry": {unsetEnv, "true", groups(`null`, `{"ageRanges":["25-34"]}`),
+			"the demographics on demandGenAdGroups entry 2 are disabled on this deployment (" + constants.EnvGoogleAdsDemographicTargetingEnabled},
+		"audience gate off": {"true", "false", groups(`{"audienceSegments":["customers/1234567890/userLists/55"]}`, `{"customAudiences":["customers/1234567890/customAudiences/66"]}`),
+			"demandGenAdGroups entry 1 demographics.audienceSegments and demandGenAdGroups entry 2 demographics.customAudiences are disabled on this deployment (" + constants.EnvGoogleAdsDemandGenAudienceEnabled},
+	} {
+		t.Run(name, func(t *testing.T) {
+			setGateEnv(t, constants.EnvGoogleAdsDemographicTargetingEnabled, tc.demographicsEnv)
+			setGateEnv(t, constants.EnvGoogleAdsDemandGenAudienceEnabled, tc.audienceEnv)
+			opts, cap := targetingServers(t)
+			d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, json.RawMessage(tc.cfg))
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want the gate refusal containing %q", err, tc.want)
 			}

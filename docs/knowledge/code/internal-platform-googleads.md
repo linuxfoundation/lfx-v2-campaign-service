@@ -2602,6 +2602,27 @@ validateOnly probe on 2026-11-05, including a temporary Audience attached to a D
 group; a persisted create and its read-back are not yet verified, which is why
 `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` still gates it.
 
+**An Audience per ad group (#518).** `DemandGenAdGroup.Demographics` is the same
+`DemandGenDemographics` object on one `DemandGenAdGroups` entry. `validateDemandGenGroupDemographics`
+runs in `preflightCampaignKind` after `validateDemandGenDemographics` and puts a plan on that
+group's `demandGenGroupPlan.demographics`. Both validators share `buildDemographicPlan` (the
+dimensions, the #529 everyone-dimension rule, the segment validators and the name); a
+`demographicOwner` names the object in each refusal (`DemandGenDemographics.AudienceSegments`,
+or `Demographics.AudienceSegments of Demand Gen ad group "<name>"`). A group's Audience is named
+`demographicAudienceName(<campaign name> | <label>, dims)`, so each group gets a name of its own.
+The group's plan is refused beside that group's `Audience` and when empty. A group's own
+demographics override the campaign-level ones for that group, and the campaign-level Audience
+still goes on every other group. `validateDemandGenDemographics` therefore refuses the
+campaign-level field only when every group sets its own, and still refuses it beside any group
+`Audience`. `CreateDemandGenCampaign` runs `ensureDemandGenDemographicAudience` for the
+campaign-level plan, then for each group's plan, all before the budget. When a create fails,
+`audienceFailed` returns `(nil, err)` only when nothing is in place. Otherwise it returns
+`namePartial()`, which carries `DemandGenAdGroupAudiences` (`{AdGroupName, DemographicAudience,
+DemographicAudienceName}`, with an UNCONFIRMED entry holding the name only).
+`demographicAudiencesInPlace` lets `CreateOutcome` and the budget-failure arm count either kind.
+`reconcileRef` keeps each entry's `demographicAudience` (an exact key) and
+`demographicAudienceName`.
+
 **Sitelinks.** `validateAssetPlan` admits `Sitelinks` on Demand Gen and refuses every other
 extension type there (callouts and snippets were not probed). The cascade calls the Search
 path's `createCampaignAssets` after the campaign criteria; the probe sent the asset and its

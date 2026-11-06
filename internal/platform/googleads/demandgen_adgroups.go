@@ -48,6 +48,12 @@ type DemandGenAdGroup struct {
 	// Audience is this group's single Google Ads Audience, under the same rules as
 	// CampaignInput.DemandGenAudience. Optional.
 	Audience string
+	// Demographics builds a NEW Audience for this group alone (#518), the same object and the
+	// same rules as CampaignInput.DemandGenDemographics, created before the budget and
+	// attached as this group's one Audience. Optional, refused beside Audience, and it
+	// overrides a campaign-level DemandGenDemographics for this group. See
+	// validateDemandGenGroupDemographics.
+	Demographics *DemandGenDemographics
 	// Creative and VideoCreative are this group's ad: exactly one of them, or Ads instead.
 	// A named group with no ad cannot serve, and the list is new, so no caller depends on
 	// that shape.
@@ -64,6 +70,9 @@ type demandGenGroupPlan struct {
 	name     string
 	audience string
 	ads      []demandGenAdPlan
+	// demographics is the group's own Audience to create (#518); nil when the entry sets no
+	// Demographics. Set by validateDemandGenGroupDemographics.
+	demographics *demandGenDemographicPlan
 }
 
 // validateDemandGenAdGroups resolves the groups the Demand Gen cascade creates. base is
