@@ -20,10 +20,16 @@ package googleads
 //
 // Verified with validateOnly on 2026-11-03 (v23, recorded on #477): a campaignSharedSet naming
 // an existing NEGATIVE_KEYWORDS shared set was accepted, and one naming another customer's set
-// was refused. NOT LIVE-VERIFIED: the exact request below — campaignSharedSets:mutate carrying
-// several operations — and what Google does with a shared set of a different type (for example
-// NEGATIVE_PLACEMENTS) on a Search campaign. A resource name says nothing about its set's type,
-// and checking it would need a read this preflight does not make.
+// was refused. Verified live on 2026-11-06 (#536, v23): CreateCampaign attached two
+// NEGATIVE_KEYWORDS sets to paused Search campaign 24433949469 through the exact request below,
+// one campaignSharedSets:mutate carrying both operations. Google answered with
+// <campaignId>~<sharedSetId> results in operation order, the positional check passed, and GAQL
+// read back both campaign_shared_set rows ENABLED, along with the sets' BROAD, PHRASE and EXACT
+// keyword criteria. A shared set of another type is NOT refused by Google. validateOnly on the
+// same day accepted a NEGATIVE_PLACEMENTS and a BRANDS set on a Search campaign. This client does
+// not refuse one either, because a resource name says nothing about its set's type and checking
+// it would need a read this preflight does not make. No such set has been attached for real, so
+// its effect on a Search campaign is unobserved.
 
 import (
 	"context"
