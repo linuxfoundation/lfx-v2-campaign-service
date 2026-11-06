@@ -271,6 +271,20 @@ var UserListsConflictError = Type("user-lists-conflict-error", func() {
 	errorAttrs("409", "user lists cannot be listed per project on an ad account shared across foundations; enter the user-list resource name directly")
 })
 
+// ForbiddenError is the 403 body of create-campaigns when the request carries an input that
+// only the LF marketing team may send. The gateway admits every campaign_manager to the route,
+// and campaign_manager includes foundation executive directors, so the service checks the
+// narrower global_marketing_ops relation itself for the inputs that name resources on a
+// Google Ads account shared across foundations.
+//
+// The message example is the exact sentence the service returns
+// (internal/service demandGenAudienceForbiddenMessage); design does not import internal, so it
+// is copied, and TestForbiddenErrorExampleMatchesService pins the two together.
+var ForbiddenError = Type("forbidden-error", func() {
+	errorAttrs("403", "Demand Gen audiences (googleAdsConfig.demandGenAudience and each "+
+		"demandGenAdGroups audience) require the global_marketing_ops role on this project")
+})
+
 var PreconditionFailedError = Type("precondition-failed-error", func() {
 	errorAttrs("412", "The supplied ETag does not match the current version.")
 })

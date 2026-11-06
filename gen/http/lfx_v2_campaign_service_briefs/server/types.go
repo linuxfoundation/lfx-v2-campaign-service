@@ -2462,6 +2462,16 @@ type CreateCampaignsServiceUnavailableResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CreateCampaignsForbiddenResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
+// response body for the "Forbidden" error.
+type CreateCampaignsForbiddenResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // CreateCampaignsInternalServerErrorResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // response body for the "InternalServerError" error.
@@ -7476,6 +7486,17 @@ func NewCreateCampaignsConflictResponseBody(res *lfxv2campaignservicebriefs.Conf
 // "lfx-v2-campaign-service-briefs" service.
 func NewCreateCampaignsServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *CreateCampaignsServiceUnavailableResponseBody {
 	body := &CreateCampaignsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateCampaignsForbiddenResponseBody builds the HTTP response body from
+// the result of the "create-campaigns" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewCreateCampaignsForbiddenResponseBody(res *lfxv2campaignservicebriefs.ForbiddenError) *CreateCampaignsForbiddenResponseBody {
+	body := &CreateCampaignsForbiddenResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}

@@ -54,9 +54,11 @@ read is not gated.
 (#459): it opts a cluster in to `googleAdsConfig.demandGenAudience`, one existing Google Ads
 Audience on a Demand Gen ad group. It is a per-deployment opt-in, turned on by setting it to
 exactly `"true"` in that environment's lfx-v2-argocd overlay. The service checks the Audience
-against the connected Google Ads account (same customer id), which is the boundary.
-Per-foundation ownership (#468) was closed as won't do: campaign managers are the LF marketing
-team, who manage every foundation. It also gates each
+against the connected Google Ads account (same customer id). That account is shared by every
+foundation and `campaign_manager` includes foundation executive directors, so create-campaigns
+also requires `global_marketing_ops` on the project for any Demand Gen audience, asked of
+project-service (`lfx.projects-api.slug_to_uid`) and fga-sync (`lfx.access_check.request`) over
+the same NATS connection the indexer uses; with `NATS_URL` empty such a create answers 503. It also gates each
 `googleAdsConfig.demandGenAdGroups[].audience` (#460), the same input on a named ad group. Only
 exactly `"true"` enables them; off, a create naming one is refused before anything upstream
 exists, and a Demand Gen ad group without an audience is unaffected.

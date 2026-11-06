@@ -89,6 +89,9 @@ type BriefService struct {
 	// (WizardProgress) rather than in the constructor, so the ~40 existing NewBriefService
 	// call sites are unaffected and the SSE route is never handed a nil hub.
 	wizardProgress *WizardProgressHub
+	// marketingOps checks global_marketing_ops for the create inputs that need it
+	// (SetMarketingOpsChecker). Nil refuses those inputs; every other request is unaffected.
+	marketingOps MarketingOpsChecker
 }
 
 // SetClock overrides the time source used for pacing. For tests.
@@ -748,6 +751,12 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 	// The create-time `bidding` object exists only on the platforms that implement it; on any
 	// other selected platform it is refused rather than silently ignored.
 	if err := refuseUnsupportedBidding(platforms, config); err != nil {
+		return nil, err
+	}
+	// Demand Gen audiences need the narrower global_marketing_ops role, which the gateway cannot
+	// check because the input is in the body. Before PreflightCreate, so a refused caller costs
+	// no upstream read.
+	if err := s.requireMarketingOpsForAudiences(ctx, p.ProjectID, platforms, config); err != nil {
 		return nil, err
 	}
 	// Refuse a request that can never produce what it asks for BEFORE the job exists. Dispatch

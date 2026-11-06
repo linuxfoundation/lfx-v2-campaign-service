@@ -110,15 +110,23 @@ type Service interface {
 	// alone: redditConfig.imageAssetId together with imageUrl or postUrl, an
 	// imageAssetId that is not a UUID, or imageAssetId while signed creative-asset
 	// URLs are not configured ('stored creative assets are not enabled for Reddit;
-	// supply imageUrl'): 400 with that message. An invalid per-platform `bidding`
-	// object (see the config attribute) is also refused synchronously, with 400
-	// "invalid campaign config: <configKey>.bidding: ...". Bidding defaults
-	// changed in LFXV2-2665: a Microsoft campaign created without bidding is
-	// MaxClicks (it was EnhancedCpc) and a LinkedIn one WEBSITE_VISIT/MAX_CLICK;
-	// manual-created campaigns are immediately eligible for the bid lever, and
-	// eligibility follows the platform's current strategy. Every other dispatch
-	// failure, including an imageAssetId that does not exist for this brief, still
-	// arrives later, as the job's own result.
+	// supply imageUrl'): 400 with that message. GOOGLE ADS AUDIENCES: a
+	// googleAdsConfig that sets demandGenAudience or an audience on any
+	// demandGenAdGroups entry (any non-empty value, whitespace included) requires
+	// the caller to hold global_marketing_ops on this project, checked before any
+	// job exists: 403 when they do not, 503 when the check cannot be made (project
+	// lookup or authorization service unavailable). The gateway admits every
+	// campaign_manager, which includes foundation executive directors, and an
+	// Audience is a resource of the Google Ads account every foundation shares. An
+	// invalid per-platform `bidding` object (see the config attribute) is also
+	// refused synchronously, with 400 "invalid campaign config:
+	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
+	// Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc)
+	// and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are
+	// immediately eligible for the bid lever, and eligibility follows the
+	// platform's current strategy. Every other dispatch failure, including an
+	// imageAssetId that does not exist for this brief, still arrives later, as the
+	// job's own result.
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Create ONE HubSpot workflow that sends an already-staged series of emails,
 	// and return it DISABLED. Each brief named in brief_ids must already have a
@@ -1760,6 +1768,13 @@ type FindBriefPayload struct {
 	Stage string
 }
 
+type ForbiddenError struct {
+	// HTTP status code
+	Code string
+	// Error message
+	Message string
+}
+
 // GenerateEmailCopyPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service generate-email-copy method.
 type GenerateEmailCopyPayload struct {
@@ -2971,6 +2986,23 @@ func (e *ConnServiceUnavailableError) ErrorName() string {
 // GoaErrorName returns the error name.
 func (e *ConnServiceUnavailableError) GoaErrorName() string {
 	return "ServiceUnavailable"
+}
+
+// Error returns an error description.
+func (e *ForbiddenError) Error() string {
+	return ""
+}
+
+// ErrorName returns the error name.
+//
+// Deprecated: Use GoaErrorName - https://github.com/goadesign/goa/issues/3105
+func (e *ForbiddenError) ErrorName() string {
+	return e.GoaErrorName()
+}
+
+// GoaErrorName returns the error name.
+func (e *ForbiddenError) GoaErrorName() string {
+	return "Forbidden"
 }
 
 // Error returns an error description.

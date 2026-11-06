@@ -327,9 +327,10 @@ app:
     # input on a named ad group. A per-deployment opt-in, off by default; ops
     # turns it on by setting it to exactly "true" in lfx-v2-argocd. The service
     # checks the Audience against the connected Google Ads account (same
-    # customer id), which is the boundary. Per-foundation ownership (#468) was
-    # closed as won't do: campaign managers are the LF marketing team, who
-    # manage every foundation.
+    # customer id). That account is shared by every foundation and
+    # campaign_manager includes foundation executive directors, so
+    # create-campaigns also requires global_marketing_ops on the project for
+    # any Demand Gen audience (checked over NATS; 403 without it).
     # While off, a create naming one is refused before anything upstream exists;
     # the rest of Demand Gen, languages and ad groups without an audience
     # included, is unaffected. Any value other
