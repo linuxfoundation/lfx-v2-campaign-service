@@ -61,7 +61,14 @@ type:
   shadowing variable counts as a different variable.
 
 A spread sequence is resolved in full before it is paired, so a pair split
-across a slice and its `append` is paired as slog pairs it. An explicit
+across a slice and its `append` is paired as slog pairs it. The trace replays
+the assignments that precede the call, and is path-aware:
+
+- An assignment in a block that encloses the call replaces or extends what came
+  before.
+- One in a nested branch adds an alternative instead, and every alternative is
+  checked.
+- An append after the call is not part of it. An explicit
 `any("k")` conversion is looked through, because slog classifies the dynamic
 value. Calls are matched by the function they resolve to, so `http.Error` is
 not a log call. A message or value that reads "project" is not a key and

@@ -170,6 +170,30 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 		{"pair split across a slice and a later append", `fields := []any{"a", 1, "b"}
 			fields = append(fields, "ok", "projectID", id)
 			slog.Info("m", fields...)`, []string{"a", "b", "projectID"}},
+		{"conditionally replaced tail spread through append", `tail := []any{"kind", 1}
+			if c {
+				tail = []any{"projectID", id}
+			}
+			slog.Info("m", append([]any{}, tail...)...)`, []string{"kind", "projectID"}},
+		{"conditionally replaced tail after a base", `extra := []any{"project_id", id}
+			if c {
+				extra = []any{"projectID", id}
+			}
+			slog.Info("m", append([]any{"event", "x"}, extra...)...)`, []string{"project_id", "projectID", "event"}},
+		{"conditional self-append forks rather than extends", `fields := []any{"a", 1}
+			if c {
+				fields = append(fields, "projectId", 2)
+			}
+			slog.Info("m", fields...)`, []string{"a", "projectId"}},
+		{"replacement discards earlier appends", `fields := []any{"a", 1}
+			fields = append(fields, "unused")
+			fields = []any{"kind", 1}
+			fields = append(fields, "projectID", id)
+			slog.Info("m", fields...)`, []string{"kind", "projectID"}},
+		{"an append after the call is not part of it", `fields := []any{"a", 1}
+			slog.Info("m", fields...)
+			fields = append(fields, "projectID", id)
+			_ = fields`, []string{"a"}},
 		{"interface conversion is looked through", `slog.Info("m", any("project_id"), "project")`, []string{"project_id"}},
 		{"elided slog.Attr in a slice", `slog.LogAttrs(ctx, lvl, "m", []slog.Attr{{Key: "projectID", Value: slog.AnyValue(v)}}...)`, []string{"projectID"}},
 		{"explicit slog.Attr", `_ = slog.Attr{Key: "project", Value: slog.AnyValue(v)}`, []string{"project"}},
@@ -194,6 +218,7 @@ var (
 	db      *sql.DB
 	logger  *slog.Logger
 	errAttr func(error) slog.Attr
+	c       bool
 )
 const keyConst = "projectID"
 func f() {
@@ -302,9 +327,50 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 		return info.Uses[id]
 	}
 
-	// sources: every expression assigned to each variable, so a spread can be traced back
-	// to the []any literal and the appends that built it.
-	sources := map[types.Object][]ast.Expr{}
+	// parents maps every node to its parent, so an assignment can be placed relative to
+	// the log call it feeds.
+	parents := map[ast.Node]ast.Node{}
+	var stack []ast.Node
+	ast.Inspect(f, func(n ast.Node) bool {
+		if n == nil {
+			stack = stack[:len(stack)-1]
+			return true
+		}
+		if len(stack) > 0 {
+			parents[n] = stack[len(stack)-1]
+		}
+		stack = append(stack, n)
+		return true
+	})
+	// dominates reports whether stmt sits directly in a statement list that encloses at,
+	// so it runs on every path to at (straight-line code; an assignment in a nested
+	// branch does not). It is what makes a reassignment replace the earlier contents.
+	dominates := func(stmt, at ast.Node) bool {
+		var list ast.Node
+		for n := parents[stmt]; n != nil; n = parents[n] {
+			switch n.(type) {
+			case *ast.BlockStmt, *ast.CaseClause, *ast.CommClause:
+				list = n
+			}
+			if list != nil {
+				break
+			}
+		}
+		for n := at; n != nil; n = parents[n] {
+			if n == list {
+				return true
+			}
+		}
+		return false
+	}
+
+	// sources: every assignment to each variable, in source order, so a spread can be
+	// traced back to the []any literals and appends that built it.
+	type source struct {
+		stmt ast.Node
+		rhs  ast.Expr
+	}
+	sources := map[types.Object][]source{}
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.AssignStmt:
@@ -312,7 +378,7 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 				for i, l := range x.Lhs {
 					if id, ok := l.(*ast.Ident); ok {
 						if o := objOf(id); o != nil {
-							sources[o] = append(sources[o], x.Rhs[i])
+							sources[o] = append(sources[o], source{x, x.Rhs[i]})
 						}
 					}
 				}
@@ -321,7 +387,7 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 			if len(x.Names) == len(x.Values) {
 				for i, id := range x.Names {
 					if o := objOf(id); o != nil {
-						sources[o] = append(sources[o], x.Values[i])
+						sources[o] = append(sources[o], source{x, x.Values[i]})
 					}
 				}
 			}
@@ -329,25 +395,35 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 		return true
 	})
 
-	// flatten resolves an argument list whose last element may be a spread into the
-	// sequences slog would see, one per alternative way the spread slice was built. The
-	// whole sequence is resolved before anything is classified, so a key/value pair that
-	// straddles a slice and its append (fields := []any{"kind"}; append(fields, "ok",
-	// "projectID", id)...) is paired exactly as slog pairs it.
-	var flatten func(args []ast.Expr, spreadLast bool, visiting map[types.Object]bool) [][]ast.Expr
-	var flattenSlice func(e ast.Expr, visiting map[types.Object]bool) [][]ast.Expr
-	flatten = func(args []ast.Expr, spreadLast bool, visiting map[types.Object]bool) [][]ast.Expr {
-		if !spreadLast || len(args) == 0 {
-			return [][]ast.Expr{args}
-		}
-		head := args[:len(args)-1]
+	// maxAlternatives bounds the sequences one spread can expand to; past it the extra
+	// alternatives are dropped rather than letting a long chain of branches explode.
+	const maxAlternatives = 1024
+	cartesian := func(as, bs [][]ast.Expr) [][]ast.Expr {
 		var out [][]ast.Expr
-		for _, tail := range flattenSlice(args[len(args)-1], visiting) {
-			out = append(out, append(append([]ast.Expr{}, head...), tail...))
+		for _, a := range as {
+			for _, b := range bs {
+				if len(out) == maxAlternatives {
+					return out
+				}
+				out = append(out, append(append([]ast.Expr{}, a...), b...))
+			}
 		}
 		return out
 	}
-	// selfAppend reports whether e is append(o, ...) and returns the appended arguments.
+
+	// flatten resolves an argument list whose last element may be a spread into every
+	// sequence slog could see at node at. The whole sequence is resolved before anything
+	// is classified, so a pair that straddles a slice and its append is paired as slog
+	// pairs it, and every alternative a branch can produce is kept.
+	var flatten func(args []ast.Expr, spreadLast bool, at ast.Node, visiting map[types.Object]bool) [][]ast.Expr
+	var flattenSlice func(e ast.Expr, at ast.Node, visiting map[types.Object]bool) [][]ast.Expr
+	flatten = func(args []ast.Expr, spreadLast bool, at ast.Node, visiting map[types.Object]bool) [][]ast.Expr {
+		if !spreadLast || len(args) == 0 {
+			return [][]ast.Expr{args}
+		}
+		return cartesian([][]ast.Expr{args[:len(args)-1]}, flattenSlice(args[len(args)-1], at, visiting))
+	}
+	// selfAppend reports whether e is append(o, ...), returning the call.
 	selfAppend := func(e ast.Expr, o types.Object) (*ast.CallExpr, bool) {
 		c, ok := ast.Unparen(e).(*ast.CallExpr)
 		if !ok || len(c.Args) == 0 || !isAppend(c, info) {
@@ -356,7 +432,7 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 		id, ok := ast.Unparen(c.Args[0]).(*ast.Ident)
 		return c, ok && objOf(id) == o
 	}
-	flattenSlice = func(e ast.Expr, visiting map[types.Object]bool) [][]ast.Expr {
+	flattenSlice = func(e ast.Expr, at ast.Node, visiting map[types.Object]bool) [][]ast.Expr {
 		switch x := ast.Unparen(e).(type) {
 		case *ast.Ident:
 			o := objOf(x)
@@ -365,37 +441,37 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 			}
 			visiting[o] = true
 			defer delete(visiting, o)
-			// Each non-append assignment is one way the slice starts; every
-			// x = append(x, ...) then extends it, in source order.
-			var bases [][]ast.Expr
-			var extra []ast.Expr
+			// Replay the assignments that precede at, in source order. One that dominates
+			// at replaces (or, for an append, extends) every version so far; one in a
+			// nested branch adds the result as an alternative beside them.
+			versions := [][]ast.Expr{nil} // a parameter, or declared without a value
 			for _, src := range sources[o] {
-				if c, ok := selfAppend(src, o); ok {
-					extra = append(extra, flatten(c.Args[1:], c.Ellipsis.IsValid(), visiting)[0]...)
+				if src.stmt.Pos() >= at.Pos() {
 					continue
 				}
-				bases = append(bases, flattenSlice(src, visiting)...)
+				var next [][]ast.Expr
+				if c, ok := selfAppend(src.rhs, o); ok {
+					next = cartesian(versions, flatten(c.Args[1:], c.Ellipsis.IsValid(), src.stmt, visiting))
+				} else {
+					next = flattenSlice(src.rhs, src.stmt, visiting)
+				}
+				if dominates(src.stmt, at) {
+					versions = next
+				} else {
+					versions = append(versions, next...)
+					if len(versions) > maxAlternatives {
+						versions = versions[:maxAlternatives]
+					}
+				}
 			}
-			if len(bases) == 0 {
-				bases = [][]ast.Expr{nil} // a parameter, or declared without a value
-			}
-			var out [][]ast.Expr
-			for _, b := range bases {
-				out = append(out, append(append([]ast.Expr{}, b...), extra...))
-			}
-			return out
+			return versions
 		case *ast.CompositeLit:
 			if isAnySlice(info.TypeOf(x)) {
 				return [][]ast.Expr{x.Elts}
 			}
 		case *ast.CallExpr:
 			if isAppend(x, info) && len(x.Args) > 0 {
-				var out [][]ast.Expr
-				rest := flatten(x.Args[1:], x.Ellipsis.IsValid(), visiting)[0]
-				for _, b := range flattenSlice(x.Args[0], visiting) {
-					out = append(out, append(append([]ast.Expr{}, b...), rest...))
-				}
-				return out
+				return cartesian(flattenSlice(x.Args[0], at, visiting), flatten(x.Args[1:], x.Ellipsis.IsValid(), at, visiting))
 			}
 		}
 		return [][]ast.Expr{nil}
@@ -415,8 +491,8 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 			i++
 		}
 	}
-	kvWalk := func(args []ast.Expr, spreadLast bool) {
-		for _, seq := range flatten(args, spreadLast, map[types.Object]bool{}) {
+	kvWalk := func(call *ast.CallExpr, args []ast.Expr) {
+		for _, seq := range flatten(args, call.Ellipsis.IsValid(), call, map[types.Object]bool{}) {
 			classify(seq)
 		}
 	}
@@ -435,10 +511,10 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 					addKey(x.Args[0])
 				}
 				if name == "Group" && len(x.Args) > 1 {
-					kvWalk(x.Args[1:], x.Ellipsis.IsValid())
+					kvWalk(x, x.Args[1:])
 				}
 			} else if start, ok := kvStart[name]; ok && len(x.Args) > start {
-				kvWalk(x.Args[start:], x.Ellipsis.IsValid())
+				kvWalk(x, x.Args[start:])
 			}
 		case *ast.CompositeLit:
 			if isSlogAttr(info.TypeOf(x)) {
