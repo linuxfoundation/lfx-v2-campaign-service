@@ -1463,10 +1463,11 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	// something. The asset-side callers of the sibling query DO act on it (CreateAsset refuses an
 	// archived brief), so the asymmetry is worth stating rather than leaving a reader to infer a
 	// status check from the variable's name. A replace under an archived brief stays allowed; that
-	// is pre-existing behaviour and this change does not alter it. Why the predicate is brief_id
-	// alone, and what this scan adds on top of it, are above lockBriefRowByIDQuery.
+	// is pre-existing behaviour and this change does not alter it. Why the predicate is
+	// (brief_id, project_id), and what this scan adds on top of it, are above
+	// lockBriefRowForReplaceQuery.
 	var briefStatus string
-	if lerr := tx.QueryRow(ctx, lockBriefRowByIDQuery, c.BriefID).Scan(&briefStatus); lerr != nil {
+	if lerr := tx.QueryRow(ctx, lockBriefRowForReplaceQuery, c.BriefID, c.ProjectID).Scan(&briefStatus); lerr != nil {
 		if errors.Is(lerr, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
 		}

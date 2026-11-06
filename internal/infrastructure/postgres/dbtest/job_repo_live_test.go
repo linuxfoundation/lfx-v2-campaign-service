@@ -482,7 +482,7 @@ func TestLiveCreateJobForApprovedBriefGuardsTheApproval(t *testing.T) {
 
 	// A DRAFT brief is not dispatchable at any version: the guard checks status as well as
 	// version, and a draft that happens to sit at the expected version must still be refused.
-	if _, err := jobs.CreateJobForApprovedBrief(ctx, created.ID, created.Version); !errors.Is(err, domain.ErrStaleApproval) {
+	if _, err := jobs.CreateJobForApprovedBrief(ctx, project, created.ID, created.Version); !errors.Is(err, domain.ErrStaleApproval) {
 		t.Fatalf("CreateJobForApprovedBrief on a DRAFT brief = %v, want domain.ErrStaleApproval", err)
 	}
 
@@ -491,8 +491,16 @@ func TestLiveCreateJobForApprovedBriefGuardsTheApproval(t *testing.T) {
 		t.Fatalf("Approve: %v", err)
 	}
 
+	// Another project naming this brief takes no lock and is refused, even though the brief is
+	// approved at exactly this version: the lock is keyed on (id, project_id), so a caller that
+	// skipped the project-scoped brief read still cannot dispatch another tenant's brief.
+	if _, err := jobs.CreateJobForApprovedBrief(ctx, dbtest.UniqueID(t, "other-project"), approved.ID, approved.Version); !errors.Is(err, domain.ErrStaleApproval) {
+		t.Fatalf("CreateJobForApprovedBrief from another project = %v, want domain.ErrStaleApproval: "+
+			"the brief lock is not project-scoped", err)
+	}
+
 	// The approved version dispatches, and the job lands queued against this brief.
-	job, err := jobs.CreateJobForApprovedBrief(ctx, approved.ID, approved.Version)
+	job, err := jobs.CreateJobForApprovedBrief(ctx, project, approved.ID, approved.Version)
 	if err != nil {
 		t.Fatalf("CreateJobForApprovedBrief at the approved version: %v", err)
 	}
@@ -505,7 +513,7 @@ func TestLiveCreateJobForApprovedBriefGuardsTheApproval(t *testing.T) {
 
 	// A STALE version is refused even though the brief is still approved — this is the arm
 	// that catches an approve→replace→approve cycle the dispatcher did not observe.
-	if _, err := jobs.CreateJobForApprovedBrief(ctx, approved.ID, approved.Version-1); !errors.Is(err, domain.ErrStaleApproval) {
+	if _, err := jobs.CreateJobForApprovedBrief(ctx, project, approved.ID, approved.Version-1); !errors.Is(err, domain.ErrStaleApproval) {
 		t.Errorf("CreateJobForApprovedBrief at a stale version = %v, want domain.ErrStaleApproval", err)
 	}
 
@@ -518,14 +526,14 @@ func TestLiveCreateJobForApprovedBriefGuardsTheApproval(t *testing.T) {
 	if _, err := briefs.ReplaceBrief(ctx, edit, approved.Version, nil); err != nil {
 		t.Fatalf("ReplaceBrief to withdraw the approval: %v", err)
 	}
-	if _, err := jobs.CreateJobForApprovedBrief(ctx, approved.ID, approved.Version); !errors.Is(err, domain.ErrStaleApproval) {
+	if _, err := jobs.CreateJobForApprovedBrief(ctx, project, approved.ID, approved.Version); !errors.Is(err, domain.ErrStaleApproval) {
 		t.Errorf("CreateJobForApprovedBrief after the approval was withdrawn = %v, want domain.ErrStaleApproval: "+
 			"a dispatch is being created against content nobody approved", err)
 	}
 
 	// A brief that does not exist is ErrStaleApproval too, not ErrNotFound: there is nothing
 	// approved at the expected version to dispatch from, and the caller's remedy is the same.
-	if _, err := jobs.CreateJobForApprovedBrief(ctx, "00000000-0000-4000-8000-00000000cafe", 1); !errors.Is(err, domain.ErrStaleApproval) {
+	if _, err := jobs.CreateJobForApprovedBrief(ctx, project, "00000000-0000-4000-8000-00000000cafe", 1); !errors.Is(err, domain.ErrStaleApproval) {
 		t.Errorf("CreateJobForApprovedBrief on an absent brief = %v, want domain.ErrStaleApproval", err)
 	}
 }

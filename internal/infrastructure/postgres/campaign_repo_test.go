@@ -891,6 +891,27 @@ func TestLockAdoptBriefQuery_IsProjectScoped(t *testing.T) {
 		"the lock must use FOR UPDATE to serialize concurrent mutations")
 }
 
+// TestBriefRowLocks_AreProjectScoped pins every SELECT ... FOR UPDATE on campaign_briefs to the
+// caller's project (#534, the #165 audit's hardening). Each runs after a project-scoped read
+// today; the project_id term means a future caller that skipped that read still cannot take a
+// lock on, and then write under, another project's brief.
+func TestBriefRowLocks_AreProjectScoped(t *testing.T) {
+	for name, q := range map[string]string{
+		"lockAdoptBriefQuery":          lockAdoptBriefQuery,
+		"lockBriefForAssetWriteQuery":  lockBriefForAssetWriteQuery,
+		"lockBriefRowForReplaceQuery":  lockBriefRowForReplaceQuery,
+		"lockApprovedBriefForJobQuery": lockApprovedBriefForJobQuery,
+	} {
+		t.Run(name, func(t *testing.T) {
+			upper := strings.ToUpper(normalizeWS(q))
+			require.Contains(t, upper, "FROM CAMPAIGN_BRIEFS", "%s must lock the brief row", name)
+			require.Contains(t, upper, "FOR UPDATE", "%s must take a row lock", name)
+			require.Regexp(t, regexp.MustCompile(`WHERE ID = \$\d+ AND PROJECT_ID = \$\d+`), upper,
+				"%s must key the brief lock on (id, project_id), never id alone", name)
+		})
+	}
+}
+
 func TestListProjectPlatformMonitorCampaignIDs_UsesOneScopedSnapshot(t *testing.T) {
 	q := normalizeWS(listProjectPlatformMonitorCampaignIDsQuery)
 	require.Contains(t, q, "c.project_id=$1 AND c.platform=$2")
