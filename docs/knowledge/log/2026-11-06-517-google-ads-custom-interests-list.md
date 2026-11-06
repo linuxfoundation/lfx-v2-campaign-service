@@ -18,5 +18,7 @@ KubeCon NA 2025 Display campaign used two custom affinities.
   minute ago is offered at once (`TestGoogleAdsListAudiences_CustomInterestIsNotCached`).
 - Gate unchanged: the path is already in the `marketing-ops-api` Heimdall rule
   (`global_marketing_ops`), which keys on the path, not the query.
-- A read-only search of the LF customer on 2026-11-06, with the exact query, returned 57
-  enabled rows, 28 CUSTOM_AFFINITY and 29 CUSTOM_INTENT; the read now offers the 28.
+- A read-only inventory search of the LF customer on 2026-11-06, filtered on ENABLED status but
+  not on type, returned 57 rows: 28 CUSTOM_AFFINITY and 29 CUSTOM_INTENT. The shipped picker query
+  adds `custom_interest.type = 'CUSTOM_AFFINITY'`, so it offers only the 28; that query itself was
+  not run live.
