@@ -22,7 +22,15 @@ const sweepSentinel = "SENTINEL494"
 // review: the owner was echoed with %s).
 const sweepOwnerDigits = "4949494949494949494949494949494949494949"
 
+// sweepLongToken is an opaque token whose only digit sits past byte 100, so the 100-byte
+// capForError cut removes what marks it a secret and leaves a letters-only prefix (#495 review).
+// Its prefix carries no digit, so the plain sentinel can't stand in for it.
+const sweepLongTokenPrefix = "ghp_SENTINELTOKEN"
+
+var sweepLongToken = sweepLongTokenPrefix + strings.Repeat("x", 105) + "7"
+
 var sweepValues = []string{
+	sweepLongToken,
 	sweepSentinel + " x?token=y",
 	"customers/1234567890/" + sweepSentinel + " x?token=y/1",
 	"customers/1234567890/userLists/" + sweepSentinel + "?token=y",
@@ -144,7 +152,7 @@ func TestPreflightCampaignKind_NoCallerTextReachesTheOperatorMessage(t *testing.
 					continue
 				}
 				refusals++
-				if strings.Contains(msg, sweepSentinel) || strings.Contains(msg, "token=") || strings.Contains(msg, sweepOwnerDigits) {
+				if strings.Contains(msg, sweepSentinel) || strings.Contains(msg, "token=") || strings.Contains(msg, sweepOwnerDigits) || strings.Contains(msg, sweepLongTokenPrefix) {
 					t.Errorf("%s slot %d with %q: the operator message shows caller text: %s", b.kind, n, value, msg)
 				}
 			}

@@ -131,9 +131,8 @@ func WrapQuotedPreflightRefusal(err error) error {
 var quotedSegment = regexp.MustCompile(`(?m)'"'|"(?:[^"\\\n]|\\.)*"|"(?:[^"\\\n]|\\.)*\\?$`)
 
 // quotedCallerValues re-renders every double-quoted segment of msg through CallerValue. A
-// segment that does not unquote is withheld rather than shown. A value capForError-style
-// helpers cut with a trailing "…" is judged without it, so a showable cut value reads as
-// CallerValue's truncated form rather than being withheld for the ellipsis.
+// segment that does not unquote is withheld rather than shown, and so is a value
+// capForError-style helpers cut with a trailing "…": what survived the cut cannot be judged.
 func quotedCallerValues(msg string) string {
 	return quotedSegment.ReplaceAllStringFunc(msg, func(q string) string {
 		if q == `'"'` {
@@ -143,10 +142,11 @@ func quotedCallerValues(msg string) string {
 		if err != nil {
 			return callerValueWithheld
 		}
-		if body, cut := strings.CutSuffix(v, "…"); cut && body != "" {
-			if shown := CallerValue(body); strings.HasSuffix(shown, " (truncated)") {
-				return shown
-			}
+		// A value capForError-style helpers cut ends in "…", and the cut may have removed the
+		// very part that marks it a secret (an opaque token's digit past byte 100). The prefix
+		// that survives cannot be judged, so a cut value is never shown.
+		if strings.HasSuffix(v, "…") {
+			return callerValueWithheld
 		}
 		return CallerValue(v)
 	})

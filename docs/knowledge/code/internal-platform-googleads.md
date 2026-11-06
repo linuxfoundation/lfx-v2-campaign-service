@@ -2128,7 +2128,10 @@ can lose its closing mark to that cap; `quotedCallerValues` withholds a quote le
 of its line, so the cut fragment does not show. `TestPreflightCampaignKind_NoCallerTextReachesTheOperatorMessage`
 holds the class: it puts a sentinel into every caller string of each channel's input, one at a
 time, and fails if any refusal's operator message shows it. `Error()` is unchanged, so logs and
-tests that pin a message see exactly what they saw before.
+tests that pin a message see exactly what they saw before. A headline longer than
+`capForError`'s 100 bytes is quoted with a trailing `…`, and the operator message withholds any
+cut value outright, since the cut may have removed the digit that made it an opaque token (#495
+review).
 
 ## Demand Gen ad creation (LFXV2-2665)
 

@@ -251,3 +251,38 @@ func TestGoogleAds_PreflightRefusalsNeverEchoHostileCallerInput(t *testing.T) {
 		})
 	}
 }
+
+// A Performance Max headline holding an opaque token longer than the 100-byte error cap is
+// refused for its width with the value capped, and the cut removes the token's only digit. The
+// job result must still withhold it: the prefix that survives the cap is never shown (#495).
+func TestGoogleAds_PreflightRefusalWithholdsACappedToken(t *testing.T) {
+	token := "ghp_" + strings.Repeat("x", 105) + "7"
+	config := gaPMaxConfig(t, func(c map[string]any) {
+		c["headlines"] = []string{token, "Three days in Amsterdam", "Meet the maintainers"}
+	})
+	tr := &noSendTransport{}
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithHTTPClient(&http.Client{Transport: tr}))
+	d.SetCreativeAssetRepo(gaStoredAsset(msTestPNG(t, 1200, 628)))
+	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, time.Second))
+
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, config)
+	if err == nil {
+		t.Fatal("expected a pre-flight refusal")
+	}
+	if !strings.Contains(err.Error(), "ghp_xxxx") {
+		t.Fatalf("the refusal no longer quotes the capped headline, so the leak check proves nothing: %v", err)
+	}
+	got := service.DispatchFailureMessage(model.ProviderGoogleAds, err, true)
+	if !strings.Contains(got, "headline (value withheld)") {
+		t.Errorf("job result error = %q, want the headline withheld", got)
+	}
+	for _, leak := range []string{"ghp_", "xxxx"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("job result error %q contains %q from the capped token", got, leak)
+		}
+	}
+	if n := tr.sent.Load(); n != 0 {
+		t.Errorf("%d request(s) sent before a pre-flight refusal", n)
+	}
+}

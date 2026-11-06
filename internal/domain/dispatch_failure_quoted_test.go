@@ -84,15 +84,24 @@ func TestQuotedCallerValues(t *testing.T) {
 		}
 	}
 
-	// A showable value cut the way the Google client's capForError cuts (past 100 bytes, with a
-	// trailing "…") reads as CallerValue's truncated form, so a cut value cannot pass for a whole one.
-	long := strings.Repeat("a", 120)
-	cut := `id "` + long[:100] + `…"`
-	want := `id ` + CallerValue(long[:100])
-	if !strings.HasSuffix(want, " (truncated)") {
-		t.Fatalf("CallerValue no longer truncates a 100-byte value, so this case proves nothing: %q", want)
-	}
-	if got := quotedCallerValues(cut); got != want {
-		t.Errorf("quotedCallerValues(capForError cut) = %q, want %q", got, want)
+	// A value cut the way the Google client's capForError cuts (past 100 bytes, with a trailing
+	// "…") is withheld, even when the surviving prefix would be showable: the cut can remove the
+	// part that marks it a secret. The opaque-token case is the one #495's review found, a
+	// "ghp_" token whose only digit sits past byte 100.
+	for _, whole := range []string{
+		strings.Repeat("a", 120),
+		"ghp_" + strings.Repeat("x", 105) + "7",
+	} {
+		if CallerValue(whole) != callerValueWithheld && strings.HasPrefix(whole, "ghp_") {
+			t.Fatalf("CallerValue no longer withholds the whole token, so this case proves nothing: %q", whole)
+		}
+		cut := `id "` + whole[:100] + `…"`
+		got := quotedCallerValues(cut)
+		if got != `id (value withheld)` {
+			t.Errorf("quotedCallerValues(capForError cut of %.12q…) = %q, want it withheld", whole, got)
+		}
+		if strings.Contains(got, "ghp_") || strings.Contains(got, "xxxx") || strings.Contains(got, "aaaa") {
+			t.Errorf("cut value leaked: %q", got)
+		}
 	}
 }

@@ -11,8 +11,10 @@ marks what the slot refused but not transport failures, and `ErrVideoCreateUnsup
 marked too. The connection's account-id check stays unmarked. The two excluded-placement
 refusals now quote their value, and a Display user-list exclusion no longer echoes an unknown
 collection segment. The five foreign-account refusals quote the caller's customer id, and a
-quote a capped error left open to the end of its line is withheld. A sentinel sweep over every
-caller string of each channel's input, including digits-only owner ids and an over-long
-malformed URL, guards the class, and a `'"'` rune literal no longer shifts the quote pairing. See
+quote a capped error left open to the end of its line is withheld, as is any value a cap cut
+with a trailing `…`. A sentinel sweep over every
+caller string of each channel's input, including digits-only owner ids, an over-long
+malformed URL and an opaque token whose only digit sits past the 100-byte cap, guards the
+class, and a `'"'` rune literal no longer shifts the quote pairing. See
 `code/internal-platform-googleads.md` § Pre-flight refusals reach the job result (#494) and
 `code/internal-dispatch.md` § Operator-safe pre-flight refusals.
