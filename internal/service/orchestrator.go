@@ -1449,7 +1449,7 @@ func (o *Orchestrator) StartWithOptions(ctx context.Context, brief *model.Campai
 	// read. This re-verifies approval atomically with job creation, so a concurrent
 	// replace/archive that commits in the approve→dispatch window causes this
 	// request to FAIL (ErrConflict → 409) instead of dispatching from stale state.
-	job, err := o.jobs.CreateJobForApprovedBrief(ctx, brief.ID, approvedVersion)
+	job, err := o.jobs.CreateJobForApprovedBrief(ctx, brief.ProjectID, brief.ID, approvedVersion)
 	if err != nil {
 		o.wg.Done()
 		return "", err
