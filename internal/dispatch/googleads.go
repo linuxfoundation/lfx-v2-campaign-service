@@ -299,6 +299,14 @@ type googleAdsConfig struct {
 	// audienceSegments, here and on each adGroups entry, because they name the shared
 	// account's user lists (service.GoogleAdsMarketingOpsInputs).
 	AudienceSegments []string `json:"audienceSegments"`
+	// CampaignAudienceSegments are EXISTING user lists observed at the Search CAMPAIGN level
+	// (#513), as campaign criteria under the campaign's targetingSetting AUDIENCE bidOnly, so
+	// they cover every ad group. SEARCH ONLY, and refused beside audienceSegments or any
+	// adGroups entry's audienceSegments. No deployment flag (every shape passed a validateOnly
+	// probe), but they name the shared account's user lists, so the create path requires
+	// global_marketing_ops (service.GoogleAdsMarketingOpsInputs). See
+	// googleads.CampaignInput.CampaignAudienceSegments.
+	CampaignAudienceSegments []string `json:"campaignAudienceSegments"`
 	// DemandGenAudience is ONE existing Google Ads Audience resource name,
 	// `customers/<this account>/audiences/<id>`, attached to the Demand Gen ad group
 	// (#459). DEMAND GEN ONLY, refused on every other channel. Named after its channel
@@ -1085,6 +1093,9 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		UserInterests:            cfg.UserInterests,
 		ExcludedPlacements:       cfg.ExcludedPlacements,
 		ExcludedAudienceSegments: cfg.ExcludedAudienceSegments,
+		// Passed through verbatim: the client's preflight refuses them off Search and checks
+		// each against the account (#513).
+		CampaignAudienceSegments: cfg.CampaignAudienceSegments,
 		SearchAssets:             googleAdsSearchAssets(cfg.SearchAssets),
 		// Passed through verbatim: the shape, account and channel checks are the client's
 		// preflight, before its first mutate.

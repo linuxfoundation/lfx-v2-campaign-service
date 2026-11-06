@@ -1121,6 +1121,29 @@ per-platform dispatcher config (`internal/dispatch/googleads.go`,
 `googleAdsConfig.Keywords`/`.AudienceSegments`) maps the wire JSON shape 1:1
 into `CampaignInput.Keywords`/`.AudienceSegments`.
 
+### Campaign-level observed user lists (#513)
+
+`CampaignInput.CampaignAudienceSegments` (`search_campaign_audiences.go`) observes user lists
+at the Search CAMPAIGN level, as the live KubeCon NA 2026 Search campaign (24188338792) does,
+instead of on each ad group. The campaign create carries `targetingSetting.targetRestrictions
+[{AUDIENCE, bidOnly: true}]` (`campaignCreate.TargetingSetting`, sent only with the field), and
+each list is a positive ENABLED `campaignCriterion.userList` in ONE `campaignCriteria:mutate`
+after the language, schedule, device and demographic criteria, before the extensions and any ad
+group (`createCampaignAudienceObservation`). The ids are `CampaignAudienceCriteriaIDs`; a
+definite refusal is a partial result with the campaign recorded, an ambiguous one or a result
+naming another campaign is UNCONFIRMED.
+
+`validateCampaignAudienceSegments` refuses before any request: the field off Search; beside
+`AudienceSegments` or any `AdGroups` entry's `AudienceSegments` (a list is observed at one
+level); an entry that is not `customers/<this account>/userLists/<id>` with canonical ids
+(Google refuses a custom audience as a Search campaign criterion); more than 20. Duplicates are
+dropped. The lists name the shared account's resources, so the create path requires
+`global_marketing_ops` (`service.GoogleAdsMarketingOpsInputs`). No deployment flag: the exact
+create, criteria and ad group bodies passed a validateOnly probe on 2026-11-06, which also
+showed a campaign `targetingSetting` and an ad group's own (`observedDemographics`) coexist.
+Bid modifiers on the lists are not sent: the live campaign's 0.8 / 1.3 have no effect under its
+Maximize conversion value strategy.
+
 ## Campaign settings readback (LFXV2-3067)
 
 `GetCampaignSettings` (in `campaign_settings.go`) reads a campaign's CURRENT
