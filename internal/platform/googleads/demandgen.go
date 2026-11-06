@@ -191,7 +191,7 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 			return nil, err // definitely nothing new was created
 		}
 		if unconfirmed {
-			steps = append(steps, fmt.Sprintf("Demographic Audience UNCONFIRMED: %q may exist; nothing else was created", name)+tag)
+			steps = append(steps, fmt.Sprintf("Demographic Audience UNCONFIRMED: %q may exist; no budget or campaign was created", name)+tag)
 		}
 		return namePartial(), err
 	}

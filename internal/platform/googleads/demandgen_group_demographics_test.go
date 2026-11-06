@@ -291,7 +291,8 @@ func TestCreateDemandGenCampaign_GroupAudienceFailures(t *testing.T) {
 			last := res.DemandGenAdGroupAudiences[tc.wantAuds-1]
 			if strings.Contains(tc.wantErr, "UNCONFIRMED") {
 				if last.DemographicAudience != "" || last.DemographicAudienceName == "" ||
-					!strings.Contains(res.Steps[len(res.Steps)-1], "UNCONFIRMED") || !strings.Contains(res.Steps[len(res.Steps)-1], `[ad group "`) {
+					!strings.Contains(res.Steps[len(res.Steps)-1], "UNCONFIRMED") || !strings.Contains(res.Steps[len(res.Steps)-1], `[ad group "`) ||
+					!strings.Contains(res.Steps[len(res.Steps)-1], "no budget or campaign was created") {
 					t.Errorf("last = %+v, steps = %q; want the planned name, no resource, an UNCONFIRMED step for the group", last, res.Steps)
 				}
 			} else if last.DemographicAudience != "customers/1234567890/audiences/901" {
