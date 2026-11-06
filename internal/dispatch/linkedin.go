@@ -225,6 +225,8 @@ func linkedinTargeting(cfg linkedinConfig) (*linkedin.Targeting, error) {
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.targeting is disabled on this deployment (%s is not \"true\"); omit it, or ask an operator to set %s to \"true\"",
 			domain.ErrCreateConfigInvalid, constants.EnvLinkedInAdsTargetingEnabled, constants.EnvLinkedInAdsTargetingEnabled))
 	}
+	// cfg.EmployerExclusions is exactly the runtime EmployerExclusions Dispatch hands the client
+	// (no deployment default is added), so this checks the same merged list CreateCampaign does.
 	t, err := linkedin.ValidateTargeting(cfg.Targeting, cfg.EmployerExclusions)
 	if err != nil {
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.targeting: %w", domain.ErrCreateConfigInvalid, err))

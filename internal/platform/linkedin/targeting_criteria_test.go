@@ -102,9 +102,9 @@ func TestCreateCampaign_CustomTargetingReachesTheWire(t *testing.T) {
 	}
 }
 
-// TestCreateCampaign_NoTargetingKeepsTheProfileCriteria pins that without targeting the campaign
+// TestBuildTargetingCriteria_ProfileKeepsFixedFacets pins that without targeting the campaign
 // still carries the profile clause and the hard-coded job functions and seniority exclusions.
-func TestCreateCampaign_NoTargetingKeepsTheProfileCriteria(t *testing.T) {
+func TestBuildTargetingCriteria_ProfileKeepsFixedFacets(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig())
 	crit, err := c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"})
 	if err != nil {
