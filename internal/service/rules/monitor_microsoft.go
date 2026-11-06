@@ -41,12 +41,11 @@ const (
 )
 
 // Thresholds. Every one is the same rule as Google's and carries Google's value (which, for the
-// low-CTR pair, LinkedIn and Reddit share too — see monitor_linkedin.go's const block).
+// low-CTR pair, LinkedIn and Reddit share too — see monitor_linkedin.go's const block). The two
+// that are amounts of money — the placeholder budget and the high average CPC — are not here:
+// they are Google's too, shared through isPlaceholderBudget and isHighAvgCpc in
+// monitor_shared.go, which size them in the account's currency (#454).
 const (
-	// msPlaceholderBudgetMax is the daily budget at or below which an active campaign is treated
-	// as carrying a placeholder: a 1/day budget buys too few clicks to read anything from.
-	// INCLUSIVE — Google's `BudgetDay <= 1`.
-	msPlaceholderBudgetMax = 1.0
 	// msSearchLowCtrPct is the search CTR benchmark; search ads below 2% are mismatched to intent.
 	msSearchLowCtrPct = 2.0
 	// msSearchMinClicks is the click volume (EXCLUSIVE) below which a search CTR is noise.
@@ -58,9 +57,6 @@ const (
 	// msClicksNoConversions is the click volume (EXCLUSIVE) above which zero measured conversions
 	// is a broken funnel rather than variance. Google's 20: same daily-budget search click volumes.
 	msClicksNoConversions = 20
-	// msHighAvgCpc is the average CPC (EXCLUSIVE) above which clicks are too expensive for an
-	// event/awareness campaign.
-	msHighAvgCpc = 5.0
 	// msHighCpcMinClicks is the click volume (EXCLUSIVE) below which an average CPC is noise.
 	msHighCpcMinClicks = 10
 )
@@ -84,7 +80,10 @@ const (
 //   - expected <= 0: no budget (or no window) to pace against. The budget-independent rules
 //     still run, and so does the placeholder-budget rule — a 0 budget on an active,
 //     non-shared campaign IS the placeholder finding, at HIGH.
-func EvaluateMicrosoftMonitor(rows []model.AccountCampaignMetrics, days int) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
+//
+// currency is the ad account's ISO 4217 code as the read reported it, or "". It sizes the
+// placeholder-budget and high-CPC rules in the account's own currency; see monitorUnitsPerUSD.
+func EvaluateMicrosoftMonitor(rows []model.AccountCampaignMetrics, days int, currency string) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 	out := make([]model.AccountMonitorRow, 0, len(rows))
 	items := make([]model.AccountMonitorActionItem, 0)
 
@@ -102,7 +101,7 @@ func EvaluateMicrosoftMonitor(rows []model.AccountCampaignMetrics, days int) ([]
 			// make a plain zero-budget row indistinguishable from a shared-budget one and silence
 			// the placeholder rule exactly where it should fire. m.PacingUnknown is still the
 			// dispatcher's own shared-budget signal here.
-			items = append(items, microsoftActionItems(m, 0, row.PacingLabel, days)...)
+			items = append(items, microsoftActionItems(m, 0, row.PacingLabel, days, currency)...)
 			continue
 		}
 
@@ -110,9 +109,12 @@ func EvaluateMicrosoftMonitor(rows []model.AccountCampaignMetrics, days int) ([]
 		label := pacingLabelFor(pacingPct)
 		row := model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label}
 		out = append(out, row)
-		items = append(items, microsoftActionItems(m, pacingPct, label, days)...)
+		items = append(items, microsoftActionItems(m, pacingPct, label, days, currency)...)
 	}
 
+	if it, ok := moneyRulesSkippedItem(currency, moneyRulesSkippedGoogleMicrosoft, out); ok {
+		items = append(items, it)
+	}
 	sortByPriority(items)
 	return out, items
 }
@@ -121,7 +123,7 @@ func EvaluateMicrosoftMonitor(rows []model.AccountCampaignMetrics, days int) ([]
 // dispatcher sent it, so m.PacingUnknown means "shared budget" and nothing else. label is a real
 // pacing verdict only on the paced path; on the unknown path the caller passes the placeholder
 // normal label, so the three pacing rules cannot fire.
-func microsoftActionItems(m model.AccountCampaignMetrics, pacingPct float64, label model.MonitorPacingLabel, days int) []model.AccountMonitorActionItem {
+func microsoftActionItems(m model.AccountCampaignMetrics, pacingPct float64, label model.MonitorPacingLabel, days int, currency string) []model.AccountMonitorActionItem {
 	var items []model.AccountMonitorActionItem
 	status := strings.ToLower(m.Status)
 	active := status == msStatusActive
@@ -154,7 +156,7 @@ func microsoftActionItems(m model.AccountCampaignMetrics, pacingPct float64, lab
 		add(model.MonitorPriorityHigh, issue, action)
 	}
 	// Shared-budget rows carry BudgetDay 0 by construction; that is not a placeholder.
-	if !m.PacingUnknown && active && m.BudgetDay <= msPlaceholderBudgetMax {
+	if !m.PacingUnknown && active && isPlaceholderBudget(m.BudgetDay, currency) {
 		add(model.MonitorPriorityHigh,
 			fmt.Sprintf("Daily budget is %s — this is a placeholder and won't generate meaningful traffic", accountMoney(m.BudgetDay)),
 			"Set a realistic daily budget for the campaign's goal and audience before expecting results")
@@ -199,7 +201,7 @@ func microsoftActionItems(m model.AccountCampaignMetrics, pacingPct float64, lab
 			"Verify the UET tag and conversion goals are firing correctly, check landing page load speed, and review if the CTA matches the ad promise")
 	}
 	if m.Clicks > msHighCpcMinClicks {
-		if avgCpc := m.Spend / float64(m.Clicks); avgCpc > msHighAvgCpc {
+		if avgCpc := m.Spend / float64(m.Clicks); isHighAvgCpc(avgCpc, currency) {
 			add(model.MonitorPriorityMed,
 				fmt.Sprintf("Avg CPC is %s — spending %s for only %d clicks", accountMoney(avgCpc), accountMoney(m.Spend), m.Clicks),
 				"Switch to a Target CPA or Maximize Clicks bid strategy, add long-tail keywords with lower competition")

@@ -41,8 +41,16 @@ type accountMonitorExamplePlatform struct {
 	// reported: Microsoft and X are report-backed, so their responses carry metrics_as_of,
 	// metrics_window_start/end and metrics_pending; every other platform omits all four.
 	reported bool
-	// currency: every platform but Google Ads reports the account's currency.
+	// currency: whether the platform reports the account's currency (every one does since #454,
+	// when Google Ads began reading customer.currency_code).
 	currency bool
+}
+
+// exampleCurrency is the currency an example reports, which the evaluators that size money rules in
+// it (Google, Microsoft, X) are run in; "" when the example has none.
+func exampleCurrency(ex map[string]any) string {
+	c, _ := ex["currency"].(string)
+	return c
 }
 
 // accountMonitorExamplePlatforms maps every ad-monitor operation to its handler's evaluator — the
@@ -50,11 +58,11 @@ type accountMonitorExamplePlatform struct {
 // here fails the test rather than going unchecked.
 var accountMonitorExamplePlatforms = map[string]accountMonitorExamplePlatform{
 	"monitor-google-ads-account": {
-		evaluate: func(rows []model.AccountCampaignMetrics, days int, _ map[string]any) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem, error) {
-			r, i := rules.EvaluateGoogleMonitor(rows, days)
+		evaluate: func(rows []model.AccountCampaignMetrics, days int, ex map[string]any) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem, error) {
+			r, i := rules.EvaluateGoogleMonitor(rows, days, exampleCurrency(ex))
 			return r, i, nil
 		},
-		activeStatus: "ENABLED", campaignURL: true, searchChannel: true, conversions: true,
+		activeStatus: "ENABLED", campaignURL: true, searchChannel: true, conversions: true, currency: true,
 	},
 	"monitor-linkedin-ads-account": {
 		evaluate: func(rows []model.AccountCampaignMetrics, days int, _ map[string]any) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem, error) {
@@ -89,8 +97,8 @@ var accountMonitorExamplePlatforms = map[string]accountMonitorExamplePlatform{
 		activeStatus: "ACTIVE", flightDates: true, totalBudget: true, currency: true,
 	},
 	"monitor-microsoft-ads-account": {
-		evaluate: func(rows []model.AccountCampaignMetrics, days int, _ map[string]any) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem, error) {
-			r, i := rules.EvaluateMicrosoftMonitor(rows, days)
+		evaluate: func(rows []model.AccountCampaignMetrics, days int, ex map[string]any) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem, error) {
+			r, i := rules.EvaluateMicrosoftMonitor(rows, days, exampleCurrency(ex))
 			return r, i, nil
 		},
 		activeStatus: "Active", searchChannel: true, conversions: true, reported: true, currency: true,
@@ -103,7 +111,7 @@ var accountMonitorExamplePlatforms = map[string]accountMonitorExamplePlatform{
 			if err1 != nil || err2 != nil {
 				return nil, nil, fmt.Errorf("unparseable metrics window %v..%v", ex["metrics_window_start"], ex["metrics_window_end"])
 			}
-			r, i := rules.EvaluateTwitterMonitor(rows, &ws, &we)
+			r, i := rules.EvaluateTwitterMonitor(rows, &ws, &we, exampleCurrency(ex))
 			return r, i, nil
 		},
 		activeStatus: "ACTIVE", flightDates: true, totalBudget: true, reported: true, currency: true,

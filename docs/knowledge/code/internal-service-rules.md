@@ -32,7 +32,7 @@ line items, whenever it is set (`twitterCoveredDays` / `twitterScheduledDays`), 
 envelope `StartDate..EndDate`, which counts the gap between two line items as scheduled and so
 raised a false zero-delivery HIGH for a window inside it
 (`TestEvaluateTwitterMonitor_FlightRangesNotEnvelope`). Its rules reuse siblings' values under
-named constants (Google's placeholder budget ≤ 1/day, the shared 0.3%/1000 low-CTR pair), add
+named constants (Google's placeholder budget ≤ 1/day, sized in the account's currency since #454 — see Currency below — and the shared 0.3%/1000 low-CTR pair), add
 a HIGH zero-delivery item gated on at least one scheduled day in the window, print amounts as
 "12.50 in account currency" with no currency symbol (X's figures are in the account's own
 currency, which the read does not learn; every ad-platform monitor now prints money this way
@@ -197,6 +197,23 @@ derived from `Constrained` — the healthy band runs up to and including it. Car
 field would offer a knob a caller could turn with no effect.
 
 ## Currency
+
+The account monitors' two money thresholds — the placeholder daily budget (≤ about 1 USD;
+Google, Microsoft and X) and the high average CPC (> about 5 USD; Google and Microsoft) — live
+once in `monitor_shared.go` (`placeholderBudgetMaxUSD`, `highAvgCpcUSD`, `isPlaceholderBudget`,
+`isHighAvgCpc`) and are sized in the ad account's currency, which `EvaluateGoogleMonitor`,
+`EvaluateMicrosoftMonitor` and `EvaluateTwitterMonitor` now take (#454). `monitorUnitsPerUSD` is
+a table of rounded units-per-dollar magnitudes for the currencies whose rate is stable enough
+for a fixed figure; high-inflation currencies are left out. The sized threshold and the amount it
+is compared with are both rounded to the currency's ISO 4217 minor unit (`moneyAt`,
+`monitorMinorUnitDigits`: two decimals by default, 0 for JPY/KRW/CLP/VND, 3 for
+KWD/BHD/OMR/JOD), so a float product such as 5 × 1.38 = 6.8999… cannot call a CAD 6.90 click
+above a CAD 6.90 threshold. A currency missing from it, or an
+absent one, fires neither rule on an amount — Google's and Microsoft's zero daily budget is still
+a placeholder in any currency — and the evaluator adds one account-wide LOW item
+(`moneyRulesSkippedItem`) saying those checks were skipped, whenever at least one returned row
+was measured, so a skipped check is never mistaken for a clean one. Before this, a JPY account tripped the high-CPC rule on a ¥50
+click and a KWD account's 1/day budget (about $3) was flagged HIGH as a placeholder.
 
 Pacing is meaningful **per campaign only**. This service performs no FX conversion and platform
 cost is reported in each platform's native unit, so `Pct` must never be totalled or averaged

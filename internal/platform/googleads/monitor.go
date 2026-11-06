@@ -27,6 +27,14 @@ type AccountCampaignRow struct {
 	SpendUSD        float64
 	Conversions     *float64
 	BudgetDailyUSD  float64
+	// CurrencyCode is customer.currency_code as Google returned it on this campaign's row(s): the
+	// ad account's currency, which SpendUSD and BudgetDailyUSD are in despite their names (no FX
+	// happens anywhere on this path). Unvalidated beyond being a JSON string; "" when any of the
+	// campaign's rows sent none or a value that is not a string, and "" when several rows were
+	// folded into one campaign and any two disagree — once cleared it stays cleared, so a later
+	// row cannot restore a code an earlier row contradicted. The dispatcher decides whether the
+	// account has one currency it can vouch for.
+	CurrencyCode string
 	// FetchFailed marks a row some part of whose upstream data could not be trusted: either its
 	// GAQL metrics fields could not be parsed (round-19 review), or its campaign_budget.
 	// amount_micros was present but unparseable alongside otherwise-good metrics (round-24/25
@@ -39,6 +47,12 @@ type AccountCampaignRow struct {
 // monitorGaqlRow mirrors gaqlMetricsRow's string-encoded-integer convention (see that
 // type's doc comment) plus the campaign/budget fields the account-monitor query adds.
 type monitorGaqlRow struct {
+	// Customer.CurrencyCode is RAW and decoded on its own (monitorCurrencyField): it is optional,
+	// and a value of the wrong JSON type must cost only the currency — decoded as a typed field it
+	// would fail this whole row's decode, and with it the account's metrics read.
+	Customer struct {
+		CurrencyCode json.RawMessage `json:"currencyCode"`
+	} `json:"customer"`
 	Campaign struct {
 		ID                     string `json:"id"`
 		Name                   string `json:"name"`
@@ -54,6 +68,16 @@ type monitorGaqlRow struct {
 		CostMicros  string   `json:"costMicros"`
 		Conversions *float64 `json:"conversions"`
 	} `json:"metrics"`
+}
+
+// monitorCurrencyField is customer.currency_code when the raw field is a JSON string, and "" for
+// anything else: absent, null, a number, an object, an array or a boolean.
+func monitorCurrencyField(raw json.RawMessage) string {
+	var code string
+	if len(raw) == 0 || json.Unmarshal(raw, &code) != nil {
+		return "" // null unmarshals into a string as "", which is dropped too
+	}
+	return code
 }
 
 // ListAccountCampaigns ports getMonitorData: every campaign visible on customerID over an
@@ -99,8 +123,14 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, da
 	// Performance Max, Video and Display rows, and only for an account that has one serving; that is the fix
 	// being visible, not a port defect. Every future create path must add its type here in
 	// the same commit.
+	//
+	// customer.currency_code is selected for the rule engine (#454): the budget and cost read
+	// here are in the account's own currency, and the two monitor rules whose thresholds are
+	// amounts of money are sized in it. customer is an attributed resource of campaign in
+	// Google Ads API v23, so the field rides on every campaign row of this same query; no extra
+	// request is made.
 	query := fmt.Sprintf(
-		"SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, "+
+		"SELECT customer.currency_code, campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, "+
 			"campaign_budget.amount_micros, metrics.impressions, metrics.clicks, metrics.cost_micros, "+
 			"metrics.conversions FROM campaign WHERE segments.date BETWEEN '%s' AND '%s' "+
 			"AND campaign.advertising_channel_type IN ('SEARCH', 'DEMAND_GEN', 'PERFORMANCE_MAX', 'VIDEO', 'DISPLAY') "+
@@ -131,6 +161,7 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, da
 		}
 		existing, ok := byID[id]
 		budgetUSD, budgetOK := microsToUSD(row.CampaignBudget.AmountMicros)
+		currency := monitorCurrencyField(row.Customer.CurrencyCode)
 		if !ok {
 			existing = &AccountCampaignRow{
 				CampaignID:      id,
@@ -138,11 +169,19 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, da
 				Status:          row.Campaign.Status,
 				IsSearchChannel: row.Campaign.AdvertisingChannelType == "SEARCH",
 				BudgetDailyUSD:  budgetUSD,
+				CurrencyCode:    currency,
 			}
 			byID[id] = existing
 			order = append(order, id)
 			budgetTrusted[id] = budgetOK
-		} else if budgetOK && !budgetTrusted[id] {
+		}
+		if ok && currency != existing.CurrencyCode {
+			// A later row that disagrees with the code held so far, or carries none, clears it.
+			// Once "" it stays "": every later non-empty code differs from it, and an empty one
+			// leaves it as it is.
+			existing.CurrencyCode = ""
+		}
+		if ok && budgetOK && !budgetTrusted[id] {
 			// The first-sighting row's budget failed to parse but this later row's parsed
 			// fine — recover the real value instead of leaving BudgetDailyUSD stuck at 0
 			// forever (round-29 review: the previous code only ever assigned BudgetDailyUSD
