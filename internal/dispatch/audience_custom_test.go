@@ -47,6 +47,15 @@ type fakePortal struct {
 	eventPropTypes map[string]string
 	// regProps are the registration event's properties, name -> type.
 	regProps map[string]string
+	// forbidden are list ids the portal refuses to read with a 403, from both the v3
+	// and the legacy API: a list that exists but whose name cannot be read.
+	forbidden map[string]bool
+	// legacyNames are names the legacy API returns by id, ahead of forbidden: a list
+	// whose name is readable there while its v3 read (and so its filters) is refused.
+	legacyNames map[string]string
+	// flaky are list ids refused with a 403 for that many reads, v3 or legacy, after which
+	// the list reads normally. A failed name lookup is two reads (v3, then legacy).
+	flaky map[string]int
 }
 
 func (p *fakePortal) serve(t *testing.T) *httptest.Server {
@@ -67,8 +76,36 @@ func (p *fakePortal) serve(t *testing.T) *httptest.Server {
 				}
 			}
 			_, _ = io.WriteString(w, `{"lists":[`+strings.Join(hits, ",")+`],"hasMore":false}`)
+		case strings.HasPrefix(r.URL.Path, "/contacts/v1/lists/") && r.Method == http.MethodGet && (p.forbidden != nil || p.legacyNames != nil || p.flaky != nil):
+			// Served only to a test that models the legacy API; any other legacy call
+			// still reaches the default arm and fails as unexpected.
+			// The legacy API knows only legacyNames: every other list here is a v3 one.
+			legacyID := strings.TrimPrefix(r.URL.Path, "/contacts/v1/lists/")
+			if name, ok := p.legacyNames[legacyID]; ok {
+				_, _ = io.WriteString(w, `{"listId":`+legacyID+`,"name":"`+name+`"}`)
+				return
+			}
+			if p.flaky[legacyID] > 0 {
+				p.flaky[legacyID]--
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			if p.forbidden[legacyID] {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
 		case strings.HasPrefix(r.URL.Path, "/crm/v3/lists/") && r.Method == http.MethodGet:
 			id := strings.TrimPrefix(r.URL.Path, "/crm/v3/lists/")
+			if p.flaky[id] > 0 {
+				p.flaky[id]--
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			if p.forbidden[id] {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
 			for name, lid := range p.lists {
 				if lid == id {
 					size, _ := json.Marshal(p.sizes[id])
@@ -1155,6 +1192,235 @@ func TestRunQA_ASuppressionWrapperCreditsOnlyWhatItFullyCovers(t *testing.T) {
 			assert.Equal(t, tc.applied, out.Checks.Suppression.AppliedOptOut, "opt-out credited")
 		})
 	}
+}
+
+// A list name the portal refused to return (403 from the v3 and legacy APIs) is missing
+// evidence, not an absent list (#399): check 3 must not report "No GDPR suppression list
+// found" on it -- the EU send stays blocked, on an unverified finding naming the list -- and check 1 (signal mapping) and
+// check 4 (current registrants) must name the list they could not read instead of judging
+// without it. The 404 case is the control: a list that is not there is still absent.
+func TestRunQA_AnUnreadableListNameIsNotVerifiedRatherThanAbsent(t *testing.T) {
+	f := func(op, id string) string {
+		return `{"filterType":"IN_LIST","operator":"` + op + `","listId":` + id + `}`
+	}
+	and := func(fs ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(fs, ",") + `]}`
+	}
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	country := `{"filterType":"PROPERTY","property":"country","operation":{"operationType":"MULTISTRING","operator":"IS_EQUAL_TO","values":["Germany"]}}`
+	// absent reports check 3's "not found" finding; unverified its "could not read" one.
+	says := func(out *audience.QaOutcome, text string) bool {
+		for _, finding := range out.Checks.Suppression.Findings {
+			if strings.Contains(finding.Message, text) {
+				return true
+			}
+		}
+		return false
+	}
+	const absent, unverified = "No GDPR suppression list found", "Could not read excluded list(s)"
+	for name, tc := range map[string]struct {
+		master    string
+		send      []string
+		forbidden map[string]bool
+		legacy    map[string]string
+		// unread is the id the run could not read; "" is the 404 control.
+		unread string
+	}{
+		// The wrapper's own name reads (from the legacy API) but its filters do not, so
+		// what it covers -- the GDPR list -- is unknown.
+		"a wrapper whose filters cannot be read":  {master: or(and(f("IN_LIST", "610"), f("NOT_IN_LIST", "700"))), forbidden: map[string]bool{"700": true}, legacy: map[string]string{"700": "26Q4 - Combined Suppression"}, unread: "700"},
+		"a directly excluded GDPR list":           {master: or(and(f("IN_LIST", "610"), f("NOT_IN_LIST", "601"))), forbidden: map[string]bool{"601": true}, unread: "601"},
+		"a GDPR list inside a wrapper":            {master: or(and(f("IN_LIST", "610"))), send: []string{"700"}, forbidden: map[string]bool{"601": true}, unread: "601"},
+		"a send-time GDPR list":                   {master: or(and(f("IN_LIST", "610"))), send: []string{"601"}, forbidden: map[string]bool{"601": true}, unread: "601"},
+		"a send-time wrapper that cannot be read": {master: or(and(f("IN_LIST", "610"))), send: []string{"700"}, forbidden: map[string]bool{"700": true}, unread: "700"},
+		"a GDPR list that is not there (404)":     {master: or(and(f("IN_LIST", "610"), f("NOT_IN_LIST", "404404"))), forbidden: map[string]bool{}, unread: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			portal := seoulPortal()
+			portal.lists["26Q4 - KubeCon - Master"] = "500"
+			portal.lists["LF Europe GDPR Suppression"] = "601"
+			portal.lists["26Q4 - KubeCon 2026 Registrants"] = "610"
+			portal.lists["26Q4 - Combined Suppression"] = "700"
+			portal.forbidden, portal.legacyNames = tc.forbidden, tc.legacy
+			portal.branches = map[string]string{"500": tc.master, "700": or(and(f("IN_LIST", "601")))}
+			srv := portal.serve(t)
+			defer srv.Close()
+
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", true, false, tc.send)
+			require.NoError(t, err)
+			if tc.unread == "" {
+				assert.True(t, says(out, absent), "a GDPR list that does not exist is still absent")
+				assert.False(t, says(out, unverified))
+				assert.Empty(t, out.Checks.Suppression.UnverifiedListIDs)
+				return
+			}
+			assert.False(t, says(out, absent), "an unreadable name is no evidence the GDPR suppression is missing")
+			assert.True(t, says(out, unverified+" "+tc.unread), "the finding names the list it could not read")
+			assert.Equal(t, audience.VerdictFail, out.Checks.Suppression.Verdict, "an EU send with no verified GDPR suppression stays blocked")
+			assert.Equal(t, []string{tc.unread}, out.Checks.Suppression.UnverifiedListIDs)
+			assert.NotEqual(t, audience.VerdictFail, out.Checks.ExclusionCompleteness.Verdict, "an unread exclusion is not zero exclusions")
+		})
+	}
+
+	t.Run("an unreadable included list is named by check 1's signal mapping", func(t *testing.T) {
+		portal := seoulPortal()
+		portal.lists["26Q4 - KubeCon - Master"] = "500"
+		portal.lists["26Q4 - KubeCon 2026 Registrants"] = "610"
+		portal.forbidden = map[string]bool{"610": true}
+		portal.branches = map[string]string{"500": or(and(country, f("IN_LIST", "610")))}
+		srv := portal.serve(t)
+		defer srv.Close()
+
+		out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", false, false, nil)
+		require.NoError(t, err)
+		assert.Equal(t, audience.VerdictNeedsVerify, out.Checks.SignalMapping.Verdict)
+		require.Len(t, out.Checks.SignalMapping.Findings, 1)
+		assert.Contains(t, out.Checks.SignalMapping.Findings[0].Message, "610")
+	})
+
+	t.Run("an unreadable included list is no check 4 PASS", func(t *testing.T) {
+		for name, forbidden := range map[string]map[string]bool{"readable": nil, "unreadable": {"610": true}} {
+			portal := seoulPortal()
+			portal.lists["26Q4 - Seoul - Master"] = "500"
+			portal.lists["26Q4 - KubeCon 2026 Registrants"] = "610"
+			portal.lists["26Q4 - Seoul - Prospects"] = "611"
+			portal.forbidden = forbidden
+			portal.branches = map[string]string{"500": or(and(f("IN_LIST", "611")), and(f("IN_LIST", "610")))}
+			srv := portal.serve(t)
+
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", "", false, false, nil)
+			srv.Close()
+			require.NoError(t, err, name)
+			if forbidden == nil {
+				assert.Equal(t, audience.VerdictFail, out.Checks.CurrentRegistrants.Verdict, "read, this edition's registrants are included")
+				continue
+			}
+			assert.Equal(t, audience.VerdictNeedsVerify, out.Checks.CurrentRegistrants.Verdict, "unread, the include cannot be cleared")
+			require.Len(t, out.Checks.CurrentRegistrants.Findings, 1)
+			assert.Contains(t, out.Checks.CurrentRegistrants.Findings[0].Message, "610")
+		}
+	})
+
+	t.Run("an exclusion whose name read recovers later is credited by it", func(t *testing.T) {
+		for name, tc := range map[string]struct {
+			list, want string
+		}{
+			"a GDPR list":     {list: "LF Europe GDPR Suppression", want: ""},
+			"a non-GDPR list": {list: "Hard Bounces", want: absent},
+		} {
+			portal := seoulPortal()
+			portal.lists["26Q4 - KubeCon - Master"] = "500"
+			portal.lists["26Q4 - KubeCon 2026 Registrants"] = "610"
+			portal.lists[tc.list] = "601"
+			portal.flaky = map[string]int{"601": 2}
+			portal.branches = map[string]string{"500": or(and(f("IN_LIST", "610"), f("NOT_IN_LIST", "601")))}
+			srv := portal.serve(t)
+
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", true, false, nil)
+			srv.Close()
+			require.NoError(t, err, name)
+			assert.Empty(t, out.Checks.Suppression.UnverifiedListIDs, name)
+			assert.False(t, says(out, unverified), name)
+			if tc.want == "" {
+				assert.True(t, out.Checks.Suppression.AppliedGDPR, "%s: the recovered name is credited", name)
+				continue
+			}
+			assert.True(t, says(out, tc.want), "%s: read, it is no GDPR list, so the CRITICAL stands", name)
+		}
+	})
+
+	t.Run("a wrapper child recovered as a later direct exclusion is not unverified", func(t *testing.T) {
+		portal := seoulPortal()
+		portal.lists["26Q4 - KubeCon - Master"] = "500"
+		portal.lists["26Q4 - KubeCon 2026 Registrants"] = "610"
+		portal.lists["Hard Bounces"] = "601"
+		portal.lists["26Q4 - Combined Suppression"] = "700"
+		portal.flaky = map[string]int{"601": 2}
+		// 700 is met first and names 601 as a child while 601's name read is failing;
+		// 601 is then read directly and answers.
+		portal.branches = map[string]string{"500": or(and(f("IN_LIST", "610"), f("NOT_IN_LIST", "700"), f("NOT_IN_LIST", "601"))), "700": or(and(f("IN_LIST", "601")))}
+		srv := portal.serve(t)
+		defer srv.Close()
+
+		out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", true, false, nil)
+		require.NoError(t, err)
+		assert.Empty(t, out.Checks.Suppression.UnverifiedListIDs, "601 was read in the end")
+		assert.True(t, says(out, absent), "read, Hard Bounces is no GDPR list, so the CRITICAL stands")
+	})
+
+	t.Run("a send-time list read later as an exclusion is not unverified", func(t *testing.T) {
+		portal := seoulPortal()
+		portal.lists["26Q4 - KubeCon - Master"] = "500"
+		portal.lists["26Q4 - KubeCon 2026 Registrants"] = "610"
+		portal.lists["LF Global Opt-Outs"] = "602"
+		portal.lists["Hard Bounces"] = "601"
+		// Three failed reads: the name lookup (v3 + legacy) and the send-time read; the
+		// exclusion read then answers.
+		portal.flaky = map[string]int{"601": 3}
+		portal.branches = map[string]string{"500": or(and(f("IN_LIST", "610"), f("NOT_IN_LIST", "601"), f("NOT_IN_LIST", "602")))}
+		srv := portal.serve(t)
+		defer srv.Close()
+
+		out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", true, false, []string{"601"})
+		require.NoError(t, err)
+		assert.Empty(t, out.Checks.Suppression.UnverifiedListIDs, "601 was read in the end")
+		assert.True(t, says(out, absent), "read, Hard Bounces is no GDPR list, so the CRITICAL stands")
+	})
+
+	t.Run("a send-time list read later only as an inclusion stays unverified", func(t *testing.T) {
+		portal := seoulPortal()
+		portal.lists["26Q4 - KubeCon - Master"] = "500"
+		portal.lists["26Q4 - Seoul - Prospects"] = "611"
+		portal.lists["LF Europe GDPR Suppression"] = "601"
+		// The name lookup and the send-time read fail; the inclusion walk's read answers,
+		// but that never judges 601 as a suppression.
+		portal.flaky = map[string]int{"601": 3}
+		portal.branches = map[string]string{"500": or(and(f("IN_LIST", "611")), and(f("IN_LIST", "601")))}
+		srv := portal.serve(t)
+		defer srv.Close()
+
+		out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", "", true, false, []string{"601"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"601"}, out.Checks.Suppression.UnverifiedListIDs)
+		assert.False(t, says(out, absent), "never judged as a suppression, so not reported absent")
+		assert.NotEqual(t, audience.VerdictFail, out.Checks.ExclusionCompleteness.Verdict, "nor zero exclusions")
+	})
+
+	t.Run("a name read that recovers later is evidence again", func(t *testing.T) {
+		portal := seoulPortal()
+		portal.lists["26Q4 - Seoul - Master"] = "500"
+		portal.lists["26Q4 - Seoul - Prospects"] = "611"
+		portal.lists["26Q4 - Seoul - Meetup Prospects"] = "610"
+		portal.flaky = map[string]int{"610": 2}
+		portal.branches = map[string]string{"500": or(and(f("IN_LIST", "611")), and(f("IN_LIST", "610")))}
+		srv := portal.serve(t)
+		defer srv.Close()
+
+		out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", "", false, false, nil)
+		require.NoError(t, err)
+		assert.Equal(t, audience.VerdictPass, out.Checks.CurrentRegistrants.Verdict, "610 read on the second try, and it is no registrants list")
+		for _, finding := range out.Checks.SignalMapping.Findings {
+			assert.NotContains(t, finding.Message, "Could not read", "check 1 sees the recovered name too")
+		}
+	})
+
+	t.Run("an unreadable included list the send suppresses does not block check 4", func(t *testing.T) {
+		portal := seoulPortal()
+		portal.lists["26Q4 - Seoul - Master"] = "500"
+		portal.lists["26Q4 - KubeCon 2026 Registrants"] = "610"
+		portal.lists["26Q4 - Seoul - Prospects"] = "611"
+		portal.lists["26Q4 - Combined Suppression"] = "700"
+		portal.forbidden = map[string]bool{"610": true}
+		portal.branches = map[string]string{"500": or(and(f("IN_LIST", "611")), and(f("IN_LIST", "610"))), "700": or(and(f("IN_LIST", "610")))}
+		srv := portal.serve(t)
+		defer srv.Close()
+
+		out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", "", false, false, []string{"700"})
+		require.NoError(t, err)
+		assert.Equal(t, audience.VerdictPass, out.Checks.CurrentRegistrants.Verdict, "the send never reaches 610, read or not")
+	})
 }
 
 // A send-time wrapper that fully covers the audience itself excludes every contact,

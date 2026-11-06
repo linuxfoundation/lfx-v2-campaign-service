@@ -5024,9 +5024,9 @@ legacy loop decides the same way at every step it has, not only on the mapped id
 `ListIDForLegacy` and `LegacyListName` return their error beside the "" they already returned, so
 a throttled or rejected id mapping, and a failed name lookup on an id that never mapped, are both
 `Unresolved` rather than `Missing` — reading a 401 on the mapping call as a deletion was the same
-#238 failure through a second door. Both still answer "" for a 404 and for a failure alike, and a
-caller that only wants a name (`listName`) discards the error; only the row classification asks
-`hubspot.IsNotFound` about it. An unresolved row keeps its `HubSpotURL` where there is a v3 id to
+#238 failure through a second door. Both still answer "" for a 404 and for a failure alike, and
+the callers that must tell them apart ask `hubspot.IsNotFound`: the row classification here, and
+`listName` for QA (#399, below). An unresolved row keeps its `HubSpotURL` where there is a v3 id to
 build one from, because opening the list by hand is the operator's remedy; it is built from the
 MAPPED id, not the legacy id the row came in as. The `objectLists` route resolves v3 (ILS) ids
 only, so a link built from a legacy id opens HubSpot on "list not found" — exactly the deletion the
@@ -5069,7 +5069,27 @@ requires membership of (`audience.RequiredInListIDs` walks the filter tree; for 
 suppressing A still leaves B minus A, so A counts), or one it already excludes is skipped; the rest feed `CheckSuppression` and
 `CheckExclusionCompleteness(filters, len(sendTimeIDs))`, so `exclusion_count` includes them and
 `send_time_count` reports their share. A name it cannot read is a suppression it cannot credit, which is why the legacy
-lookup is not optional decoration. A single request-scoped `map[string]*hubspot.List` cache
+lookup is not optional decoration. Nor is an unread name evidence of ABSENCE (#399): `listName`
+returns `(name, unreadable)`, `unreadable` when neither API produced a name and either failed with
+anything but a 404 (a throttle, a 401/403, a 5xx), and `RunQA` keeps those ids beside `nameByID`.
+`exclusionNames` returns, with the names, every exclusion it could not read — an unreadable name,
+a wrapper whose own filters failed for anything but a 404, and an unreadable covered child — and
+`CheckSuppression` takes them: while any exist it withholds every absence finding, "No GDPR
+suppression list found" included, and raises one finding naming the ids and what it could not
+verify. That finding stays CRITICAL (FAIL) for an EU audience whose GDPR suppression is the
+unverified one, so a throttled read never softens a send that may really lack it (fail closed), and
+is a HIGH NEEDS VERIFY otherwise; a suppression that WAS read is still credited. The ids are published as the optional
+`unverified_list_ids` on the suppression check, where a false `applied_gdpr` / `applied_opt_out`
+means not verified rather than absent. `CheckSignalMapping` takes the same set and, when no
+engagement signal is found and an inclusion references an unread list, names it in a MEDIUM NEEDS
+VERIFY instead of the generic "could not classify". A send-time suppression id whose read fails
+with anything but a 404 is still never credited, but it joins check 3's unverified set, and
+`CheckExclusionCompleteness` takes those ids so "zero exclusions" becomes a NEEDS VERIFY naming them
+rather than the FAIL. Check 4 (`current_registrants`) is never left a PASS while an included list
+the send still reaches has an unread name: that list may be this edition's registrants, so the PASS
+becomes a HIGH NEEDS VERIFY naming it. An included or excluded list whose name read failed but whose later `listWithFilters` read succeeds is
+recovered: its name goes into `nameByID` and it leaves the unreadable set, so neither check flags
+evidence that did arrive. A list both APIs 404 is still a genuine "" and still absent. A single request-scoped `map[string]*hubspot.List` cache
 (seeded from the `SearchLists` hits already in hand, then filled in as `listWithFilters` and
 `listName` resolve ids) is threaded through the whole call so a list referenced from more than one
 place — the searched-for candidate itself, or a list excluded by more than one other list — is

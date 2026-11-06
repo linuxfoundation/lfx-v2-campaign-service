@@ -14075,6 +14075,11 @@ definitions:
                     - fix: Aut sint neque.
                       message: Veniam qui possimus iure quo.
                       severity: MEDIUM
+                unverified_list_ids:
+                    - Molestias blanditiis.
+                    - Soluta voluptatibus.
+                    - Dicta magnam.
+                    - Sed non possimus reprehenderit repellendus.
                 verdict: NEEDS VERIFY
         required:
             - signal_mapping
@@ -14278,6 +14283,11 @@ definitions:
                         - fix: Aut sint neque.
                           message: Veniam qui possimus iure quo.
                           severity: MEDIUM
+                    unverified_list_ids:
+                        - Molestias blanditiis.
+                        - Soluta voluptatibus.
+                        - Dicta magnam.
+                        - Sed non possimus reprehenderit repellendus.
                     verdict: NEEDS VERIFY
             findings:
                 - fix: Aut sint neque.
@@ -14368,6 +14378,17 @@ definitions:
                     - fix: Aut sint neque.
                       message: Veniam qui possimus iure quo.
                       severity: MEDIUM
+            unverified_list_ids:
+                type: array
+                items:
+                    type: string
+                    example: Molestias blanditiis.
+                description: Excluded list ids whose names (or, for a suppression wrapper, whose covered lists) could not be read from HubSpot (a non-404 failure). When present, applied_gdpr / applied_opt_out false means the suppression could not be verified, not that it is absent.
+                example:
+                    - Molestias blanditiis.
+                    - Soluta voluptatibus.
+                    - Dicta magnam.
+                    - Sed non possimus reprehenderit repellendus.
             verdict:
                 type: string
                 description: Check verdict
@@ -14386,6 +14407,11 @@ definitions:
                 - fix: Aut sint neque.
                   message: Veniam qui possimus iure quo.
                   severity: MEDIUM
+            unverified_list_ids:
+                - Molestias blanditiis.
+                - Soluta voluptatibus.
+                - Dicta magnam.
+                - Sed non possimus reprehenderit repellendus.
             verdict: NEEDS VERIFY
         required:
             - verdict
