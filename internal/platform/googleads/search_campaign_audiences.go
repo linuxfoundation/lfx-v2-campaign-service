@@ -76,7 +76,10 @@ func validateCampaignAudienceSegments(kind, customerID string, in CampaignInput)
 			return nil, fmt.Errorf("google-ads: %s and AdGroups entry %d AudienceSegments cannot both be set (a user list is observed at one level); keep the lists in one of them", field, i+1)
 		}
 	}
-	if len(in.CampaignAudienceSegments) > maxAudienceSegments {
+	// A loose bound on the raw input, so an oversized request is refused before any parsing; the
+	// real cap is on the DISTINCT lists, checked after the dedupe below, so duplicates that
+	// collapse to maxAudienceSegments or fewer are accepted.
+	if len(in.CampaignAudienceSegments) > 4*maxAudienceSegments {
 		return nil, fmt.Errorf("google-ads: at most %d %s entries are supported, got %d", maxAudienceSegments, field, len(in.CampaignAudienceSegments))
 	}
 	seen := make(map[string]struct{}, len(in.CampaignAudienceSegments))
@@ -104,6 +107,9 @@ func validateCampaignAudienceSegments(kind, customerID string, in CampaignInput)
 		}
 		seen[name] = struct{}{}
 		out = append(out, name)
+	}
+	if len(out) > maxAudienceSegments {
+		return nil, fmt.Errorf("google-ads: at most %d distinct %s entries are supported, got %d", maxAudienceSegments, field, len(out))
 	}
 	return out, nil
 }

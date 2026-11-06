@@ -1136,8 +1136,9 @@ naming another campaign is UNCONFIRMED.
 `validateCampaignAudienceSegments` refuses before any request: the field off Search; beside
 `AudienceSegments` or any `AdGroups` entry's `AudienceSegments` (a list is observed at one
 level); an entry that is not `customers/<this account>/userLists/<id>` with canonical ids
-(Google refuses a custom audience as a Search campaign criterion); more than 20. Duplicates are
-dropped. The lists name the shared account's resources, so the create path requires
+(Google refuses a custom audience as a Search campaign criterion); more than 20 distinct lists
+(duplicates are dropped first, so 21 entries that collapse to 20 are accepted; a raw list over 80
+entries is refused before parsing). The lists name the shared account's resources, so the create path requires
 `global_marketing_ops` (`service.GoogleAdsMarketingOpsInputs`). No deployment flag: the exact
 create, criteria and ad group bodies passed a validateOnly probe on 2026-11-06, which also
 showed a campaign `targetingSetting` and an ad group's own (`observedDemographics`) coexist.

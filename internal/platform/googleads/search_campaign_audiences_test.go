@@ -180,7 +180,14 @@ func TestValidateCampaignInputKind_CampaignAudienceSegmentsRefusals(t *testing.T
 	}{
 		{"search accepts", CampaignKindSearch, func(in *CampaignInput) { in.CampaignAudienceSegments = []string{testUserList1, testUserList2} }, ""},
 		{"search accepts exactly the cap", CampaignKindSearch, func(in *CampaignInput) { in.CampaignAudienceSegments = many[:maxAudienceSegments] }, ""},
-		{"over the cap", CampaignKindSearch, func(in *CampaignInput) { in.CampaignAudienceSegments = many }, "at most 20 CampaignAudienceSegments entries"},
+		{"over the cap", CampaignKindSearch, func(in *CampaignInput) { in.CampaignAudienceSegments = many }, "at most 20 distinct CampaignAudienceSegments entries"},
+		// The cap counts distinct lists: 21 entries that dedupe to 20 are accepted.
+		{"duplicates within the cap", CampaignKindSearch, func(in *CampaignInput) {
+			in.CampaignAudienceSegments = append(append([]string{}, many[:maxAudienceSegments]...), many[0])
+		}, ""},
+		{"raw input far over the cap", CampaignKindSearch, func(in *CampaignInput) {
+			in.CampaignAudienceSegments = make([]string, 4*maxAudienceSegments+1)
+		}, "at most 20 CampaignAudienceSegments entries are supported, got 81"},
 		{"empty entry", CampaignKindSearch, func(in *CampaignInput) { in.CampaignAudienceSegments = []string{" "} }, "CampaignAudienceSegments entry must not be empty"},
 		{"malformed", CampaignKindSearch, func(in *CampaignInput) { in.CampaignAudienceSegments = []string{"userLists/1"} }, "is not a customers/{customerId}/userLists/{id} user list resource name"},
 		{"custom audience", CampaignKindSearch, func(in *CampaignInput) {
