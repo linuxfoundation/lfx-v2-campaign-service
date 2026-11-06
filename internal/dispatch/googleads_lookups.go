@@ -107,7 +107,7 @@ func (d *GoogleAdsDispatcher) ListUserLists(ctx context.Context, projectID strin
 	// before the fallback applied to this read.
 	if fromSystem && accountID != "" && accountID != createAccount {
 		return nil, false, fmt.Errorf("%w: account_id must be the account the LF system connection creates on, or omitted",
-			domain.ErrAccountIDMalformed)
+			domain.ErrAccountIDNotAllowed)
 	}
 	if accountID == "" {
 		accountID = createAccount
