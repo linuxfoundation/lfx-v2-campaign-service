@@ -1983,11 +1983,14 @@ func googleAdsDisplayAdGroups(in []googleAdsDisplayAdGroupConfig) []googleads.Di
 }
 
 // googleAdsSearchAssetsConfig is the Search campaign's linked assets (#477) for the "search"
-// channel. Its two image lists carry URLs or stored-asset ids, so it is named in
+// channel. Its three image lists carry URLs or stored-asset ids, so it is named in
 // googleAdsSnapshotConfig's early return and sanitized there with the creatives.
 type googleAdsSearchAssetsConfig struct {
-	// AdImages are AD_IMAGE assets: square (1:1), at least 300x300, at most 20.
+	// AdImages are square AD_IMAGE assets: 1:1, at least 300x300.
 	AdImages googleAdsImageRefs `json:"adImages"`
+	// LandscapeAdImages are landscape AD_IMAGE assets: 1.91:1, at least 600x314 (#538). At
+	// most 20 together with AdImages.
+	LandscapeAdImages googleAdsImageRefs `json:"landscapeAdImages"`
 	// BusinessLogoImages is the BUSINESS_LOGO asset: at most one square image, at least
 	// 128x128.
 	BusinessLogoImages googleAdsImageRefs `json:"businessLogoImages"`
@@ -2004,6 +2007,7 @@ func googleAdsSearchAssets(in *googleAdsSearchAssetsConfig) googleads.SearchCamp
 	}
 	return googleads.SearchCampaignAssets{
 		AdImages:           in.AdImages.slotEntries(),
+		LandscapeAdImages:  in.LandscapeAdImages.slotEntries(),
 		BusinessLogoImages: in.BusinessLogoImages.slotEntries(),
 		BusinessName:       in.BusinessName,
 	}
@@ -2142,6 +2146,7 @@ func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 	if cfg.SearchAssets != nil {
 		assets := *cfg.SearchAssets
 		assets.AdImages = sanitizeSnapshotImageRefs(cfg.SearchAssets.AdImages)
+		assets.LandscapeAdImages = sanitizeSnapshotImageRefs(cfg.SearchAssets.LandscapeAdImages)
 		assets.BusinessLogoImages = sanitizeSnapshotImageRefs(cfg.SearchAssets.BusinessLogoImages)
 		snapshot.SearchAssets = &assets
 	}

@@ -9,10 +9,9 @@ package googleads
 // business name, all linked to the CAMPAIGN as campaign assets. An LFX-built Search campaign
 // carried none of them. This file adds the three field types, and only the three:
 //
-//   - AD_IMAGE, SQUARE images only. The validateOnly probe covered a square image, and no slot
-//     in this package documents a 1.91:1 shape for this field type, so the landscape shape is
-//     not admitted.
-//   - BUSINESS_LOGO, at most one, square.
+//   - AD_IMAGE, in two shapes under the one field type: square (1:1, min 300x300, adImages)
+//     and landscape (1.91:1, min 600x314, landscapeAdImages, #538), at most twenty together.
+//   - BUSINESS_LOGO, at most one, square, min 128x128.
 //   - BUSINESS_NAME, at most one, at most 25 display-width units, sent as a TEXT asset.
 //
 // The images reuse the machinery every other image-bearing creative here uses: the slot table
@@ -46,8 +45,25 @@ package googleads
 // back two AD_IMAGE, one BUSINESS_LOGO and one BUSINESS_NAME campaign_asset rows, all ENABLED
 // and naming the assets the response returned. Google answered the BUSINESS_NAME create with
 // an EXISTING text asset of the same text, which is the reuse case the result check accepts.
-// The slot minimums (300x300 for AD_IMAGE, 128x128 for BUSINESS_LOGO) and the twenty-image cap
-// are Google's documented asset specifications, not probed values.
+//
+// The slot geometry and the counts were then probed at their boundaries (#538, 2026-11-06,
+// validateOnly googleAds:mutate on account 8666746580, v23, sending buildSearchAssets' own
+// operations under a temporary-id PAUSED campaign). Google enforces them on the campaignAsset
+// link's field_type, as mediaUploadError, and the count as resourceCountLimitExceededError
+// RESOURCE_LIMIT on the first link over the cap:
+//
+//   - AD_IMAGE square: 300x300 accepted; 299x299, 300x299 and 299x300 refused
+//     DIMENSIONS_NOT_ALLOWED; 303x300 (exactly +1%) accepted, 304x300 refused
+//     ASPECT_RATIO_NOT_ALLOWED.
+//   - AD_IMAGE landscape: 600x314 and 1200x628 accepted; 599x314 and 600x313 refused
+//     IMAGE_CONSTRAINTS_VIOLATED; 1188x628 (-0.96%) and 1209x628 accepted, 1218x628 (+1.5%) and
+//     2:1 refused ASPECT_RATIO_NOT_ALLOWED. Until #538 this client refused the landscape shape.
+//   - Twenty AD_IMAGE links accepted and the twenty-first refused, whether square, landscape
+//     or mixed (19 + 2): ONE cap over both shapes.
+//   - BUSINESS_LOGO: one accepted, a second refused RESOURCE_LIMIT; 130x128 and 4:1 refused
+//     ASPECT_RATIO_NOT_ALLOWED. Google's API floor is 16x16 (15x15 refused
+//     DIMENSIONS_NOT_ALLOWED); this client keeps 128x128, Google's documented business-logo
+//     specification, as a deliberate floor above the API's — see searchImageSlots.
 
 import (
 	"context"
@@ -65,12 +81,13 @@ const (
 	assetFieldAdImage      = "AD_IMAGE"
 	assetFieldBusinessLogo = "BUSINESS_LOGO"
 
-	// maxSearchAdImages bounds the AD_IMAGE list. Google documents up to twenty image assets
-	// per campaign; this is that ceiling, not probed. The live reference campaign carries
-	// seven.
+	// maxSearchAdImages bounds the AD_IMAGE links, square and landscape TOGETHER: Google
+	// accepted twenty and refused the twenty-first with RESOURCE_LIMIT whatever the mix of
+	// shapes (#538). The live reference campaign carries seven.
 	maxSearchAdImages = 20
 
-	// maxSearchBusinessLogos is one: a campaign shows one business logo, and #477 asks for one.
+	// maxSearchBusinessLogos is one: Google refused a second BUSINESS_LOGO link with
+	// RESOURCE_LIMIT (#538).
 	maxSearchBusinessLogos = 1
 
 	// maxSearchBusinessNameWeight is the business name's limit in display-width units, the
@@ -85,10 +102,13 @@ const (
 // Every field is optional and each is independent: a logo without a name, or images alone, is
 // accepted. Left empty, nothing is fetched and no request is sent, which is the pre-#477 shape.
 type SearchCampaignAssets struct {
-	// AdImages are AD_IMAGE assets: square (1:1) images, at least 300x300, at most twenty. Each
-	// entry is an https URL this client fetches or a stored-asset entry the caller resolved
-	// (ResolvedImageRefPrefix), exactly as on the other creatives.
+	// AdImages are square AD_IMAGE assets: 1:1, at least 300x300. Each entry is an https URL
+	// this client fetches or a stored-asset entry the caller resolved (ResolvedImageRefPrefix),
+	// exactly as on the other creatives. At most twenty together with LandscapeAdImages.
 	AdImages []string
+	// LandscapeAdImages are landscape AD_IMAGE assets: 1.91:1, at least 600x314, linked under
+	// the same AD_IMAGE field type as AdImages (#538). Entries as AdImages.
+	LandscapeAdImages []string
 	// BusinessLogoImages is the BUSINESS_LOGO asset: at most one square (1:1) image, at least
 	// 128x128. A list so it shares the slot machinery; more than one is refused.
 	BusinessLogoImages []string
@@ -98,16 +118,24 @@ type SearchCampaignAssets struct {
 
 // empty reports whether the caller asked for no Search campaign asset at all.
 func (a SearchCampaignAssets) empty() bool {
-	return len(a.AdImages) == 0 && len(a.BusinessLogoImages) == 0 &&
+	return len(a.AdImages) == 0 && len(a.LandscapeAdImages) == 0 &&
+		len(a.BusinessLogoImages) == 0 &&
 		strings.TrimSpace(a.BusinessName) == ""
 }
 
 // searchImageSlots is the Search campaign's image slots, in the order the assets are sent.
 // Each label names its channel, as every slot table here does, because the validators and the
 // fetcher are shared and a bare "logo image" would not say which creative was wrong.
+//
+// Every row is Google's own boundary as probed on #538, except the logo's minimum: the API
+// accepts a BUSINESS_LOGO down to 16x16, and 128x128 is the business-logo size Google's
+// asset specification documents. The floor is kept there on purpose, so a logo too small for
+// that specification is sent back to the designer rather than shipped.
 var searchImageSlots = []imageSlot{
 	{label: "Search ad image", jsonKey: "adImages",
 		ratioW: 1, ratioH: 1, minW: 300, minH: 300},
+	{label: "Search landscape ad image", jsonKey: "landscapeAdImages",
+		ratioW: 191, ratioH: 100, minW: 600, minH: 314},
 	{label: "Search business logo", jsonKey: "businessLogoImages",
 		ratioW: 1, ratioH: 1, minW: 128, minH: 128},
 }
@@ -115,13 +143,14 @@ var searchImageSlots = []imageSlot{
 // Indices into searchImageSlots, so the rules naming a slot address it by position rather than
 // by label.
 const (
-	searchAdImageSlotIndex      = 0
-	searchBusinessLogoSlotIndex = 1
+	searchAdImageSlotIndex          = 0
+	searchLandscapeAdImageSlotIndex = 1
+	searchBusinessLogoSlotIndex     = 2
 )
 
 // searchImageSlotFieldTypes is the campaignAsset field type each slot links under, positionally
 // parallel to searchImageSlots.
-var searchImageSlotFieldTypes = []string{assetFieldAdImage, assetFieldBusinessLogo}
+var searchImageSlotFieldTypes = []string{assetFieldAdImage, assetFieldAdImage, assetFieldBusinessLogo}
 
 // searchAssetPlan is the validated input: the per-slot entries (parallel to searchImageSlots),
 // the trimmed business name and the caller's resolved bytes.
@@ -154,7 +183,7 @@ func validateSearchAssets(kind string, in CampaignInput) (searchAssetPlan, error
 		urls:     make([][]string, len(searchImageSlots)),
 		resolved: in.ResolvedImages,
 	}
-	raw := [][]string{a.AdImages, a.BusinessLogoImages}
+	raw := [][]string{a.AdImages, a.LandscapeAdImages, a.BusinessLogoImages}
 	for i, slot := range searchImageSlots {
 		entries, err := validateImageEntries(slot, raw[i], in.ResolvedImages)
 		if err != nil {
@@ -162,9 +191,10 @@ func validateSearchAssets(kind string, in CampaignInput) (searchAssetPlan, error
 		}
 		plan.urls[i] = entries
 	}
-	if n := len(plan.urls[searchAdImageSlotIndex]); n > maxSearchAdImages {
+	if n := plan.adImageCount(); n > maxSearchAdImages {
 		return searchAssetPlan{}, fmt.Errorf(
-			"google-ads Search campaign accepts at most %d ad images, got %d", maxSearchAdImages, n)
+			"google-ads Search campaign accepts at most %d ad images (square and landscape "+
+				"together), got %d", maxSearchAdImages, n)
 	}
 	if n := len(plan.urls[searchBusinessLogoSlotIndex]); n > maxSearchBusinessLogos {
 		return searchAssetPlan{}, fmt.Errorf(
@@ -179,6 +209,11 @@ func validateSearchAssets(kind string, in CampaignInput) (searchAssetPlan, error
 	}
 	plan.businessName = name
 	return plan, nil
+}
+
+// adImageCount is the number of AD_IMAGE links the plan asks for, both shapes together.
+func (p searchAssetPlan) adImageCount() int {
+	return len(p.urls[searchAdImageSlotIndex]) + len(p.urls[searchLandscapeAdImageSlotIndex])
 }
 
 // fetchSearchAssetImages downloads and shape-checks every image the plan names, through the
@@ -219,8 +254,9 @@ func (c *Client) searchTempAssetName(i int) string {
 }
 
 // buildSearchAssets turns the plan and the fetched images into the asset list, in a FIXED
-// order: images in slot order (ad images, then the logo), then the business name. The order is
-// what the positional result check below reads, and a test pins it.
+// order: images in slot order (square ad images, landscape ad images, then the logo), then the
+// business name. The order is what the positional result check below reads, and a test pins
+// it.
 func (c *Client) buildSearchAssets(
 	plan searchAssetPlan, images []fetchedImage,
 ) []pendingSearchAsset {
@@ -391,7 +427,7 @@ func sameSearchAsset(a, b searchAssetCreate) bool {
 // searchAssetStep summarises the linked assets for the step list, naming only what was asked.
 func searchAssetStep(plan searchAssetPlan) string {
 	parts := make([]string, 0, 3)
-	if n := len(plan.urls[searchAdImageSlotIndex]); n > 0 {
+	if n := plan.adImageCount(); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d ad image(s)", n))
 	}
 	if len(plan.urls[searchBusinessLogoSlotIndex]) > 0 {

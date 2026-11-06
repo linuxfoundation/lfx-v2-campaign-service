@@ -19,6 +19,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/creative"
+
 	// Registered for their DecodeConfig side effect only. Google accepts GIF, JPEG
 	// and PNG for Demand Gen image assets and nothing else, so these three are both
 	// what we can decode and what we are allowed to send — the decoder set IS the
@@ -819,12 +821,13 @@ func checkImageGeometry(slot imageSlot, ref, format string, w, h int) error {
 	if w < slot.minW || h < slot.minH {
 		return fmt.Errorf("google-ads %s %q is %dx%d (%s), below the %dx%d minimum", slot.label, imageRefForError(ref), w, h, format, slot.minW, slot.minH)
 	}
-	// Compared as a ratio of float64s against Google's documented +-1%. The target
-	// is built from the two integers so the documented value stays the value in the
-	// code; the division happens once, here.
-	want := float64(slot.ratioW) / float64(slot.ratioH)
-	got := float64(w) / float64(h)
-	if diff := (got - want) / want; diff > demandGenAspectTolerance || diff < -demandGenAspectTolerance {
+	// Google's documented +-1%, boundary included, decided by creative.AspectWithin's exact
+	// cross-multiplication: a float division here refused 303x300 as 1:1 (it drifts
+	// 0.010000000000000009 in float64) although Google accepts it (#538). The ratios below
+	// are computed only for the message.
+	if !creative.AspectWithin(w, h, slot.ratioW, slot.ratioH, demandGenAspectTolerance) {
+		want := float64(slot.ratioW) / float64(slot.ratioH)
+		got := float64(w) / float64(h)
 		return fmt.Errorf("google-ads %s %q is %dx%d, an aspect ratio of %.4f — Google requires %d:%d (%.4f) within %.0f%%", slot.label, imageRefForError(ref), w, h, got, slot.ratioW, slot.ratioH, want, demandGenAspectTolerance*100)
 	}
 	return nil
