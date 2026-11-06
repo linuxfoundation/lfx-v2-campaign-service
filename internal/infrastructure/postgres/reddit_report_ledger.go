@@ -16,8 +16,10 @@ import (
 )
 
 // redditReportLedgerClass is the first key of the two-int transaction advisory lock a Take holds:
-// "RRPT". The class keeps it apart from the X stats-job lease ("XSTJ") and the keyword-targeting
-// lock ("RKTW"); the two-int form is a separate key space from the one-bigint form.
+// "RRPT". The class keeps it apart from every other two-int lock in this package — the X
+// stats-job lease ("XSTJ"), the keyword-targeting lock ("RKTW"), the campaign slot lock
+// (campaignSlotLockNamespace) and the archived-asset prune ("CAPR") — and the two-int form is a
+// separate key space from the one-bigint form.
 const redditReportLedgerClass int32 = 0x52525054
 
 // redditReportLedgerTimeout bounds one Take or Release: the lock wait, the statements and the
@@ -30,8 +32,13 @@ const redditReportLedgerTimeout = 5 * time.Second
 // idle spell, or a restore) is cleared over several Takes instead of inside one.
 const redditReportLedgerPruneLimit = 500
 
+// redditReportLedgerLockBusyWait is the Wait a Take returns when another Take on the account
+// holds the lock: the time to hand the connection back and ask again, not a budget answer. Two
+// short statements is all the holder does, so this is generous.
+const redditReportLedgerLockBusyWait = 20 * time.Millisecond
+
 const (
-	redditReportLedgerLockSQL = "SELECT pg_advisory_xact_lock($1, $2)"
+	redditReportLedgerLockSQL = "SELECT pg_try_advisory_xact_lock($1, $2)"
 
 	// redditReportLedgerTakeSQL counts the account's slots inside the window and inserts one when
 	// both limits have room, in ONE statement on ONE clock reading (now, MATERIALIZED so every
@@ -88,12 +95,19 @@ FROM t, w`
 // (migration 000055): one row per reporting attempt, so every replica counts every replica's
 // attempts and the 45-a-minute budget is account-wide (#380).
 //
-// ATOMIC PER ACCOUNT. A Take is one transaction: pg_advisory_xact_lock on the account's key, then
-// one statement that counts and inserts. Two Takes on one account — on any replicas — therefore
-// run one after the other, and the second counts the first's slot; without the lock two
+// ATOMIC PER ACCOUNT. A Take is one transaction: pg_try_advisory_xact_lock on the account's key,
+// then one statement that counts and inserts. Two Takes on one account — on any replicas —
+// therefore run one after the other, and the second counts the first's slot; without the lock two
 // concurrent counts could both see 44 and both insert. The lock is the TRANSACTION form, released
 // by the commit, so it can never be stranded on a pooled connection; it is held for two short
 // statements, never across a Reddit call.
+//
+// TRY, NEVER BLOCK — the keyword-targeting lock's rule. A blocked pg_advisory_xact_lock would pin
+// a pooled connection for as long as the holder takes (a stalled holder: up to the 5 s bound, on
+// every replica), and refused readers that wake together would fill the pool queued on one lock.
+// A Take that finds the lock held rolls back at once — the connection goes back to the pool — and
+// answers Taken false with redditReportLedgerLockBusyWait; reddit.ReportBudgets' wait loop (with
+// jitter) asks again.
 //
 // THE DATABASE'S CLOCK. Slots are stamped and the window measured with clock_timestamp(), read
 // after the lock is granted — never a pod's clock, which can skew between replicas, and never
@@ -125,6 +139,12 @@ func redditReportLedgerKey(accountID string) int32 {
 	return int32(h.Sum32()) //nolint:gosec // a hash folded to the lock's int4 key, overflow intended
 }
 
+// RedditReportLedgerLockKeys returns the two advisory-lock keys a Take on accountID takes, for
+// the live tests.
+func RedditReportLedgerLockKeys(accountID string) (int32, int32) {
+	return redditReportLedgerClass, redditReportLedgerKey(accountID)
+}
+
 var errNoReportLedgerPool = errors.New("reddit report ledger: no database pool")
 
 // Take implements domain.RedditReportLedger. See the type comment.
@@ -138,12 +158,16 @@ func (l *RedditReportLedger) Take(ctx context.Context, accountID string, insight
 	ctx, cancel := context.WithTimeout(ctx, l.timeout)
 	defer cancel()
 	var (
-		id   *int64
-		wait float64
+		id     *int64
+		wait   float64
+		locked bool
 	)
 	err := pgx.BeginFunc(ctx, l.pool.Pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, redditReportLedgerLockSQL, redditReportLedgerClass, redditReportLedgerKey(accountID)); err != nil {
+		if err := tx.QueryRow(ctx, redditReportLedgerLockSQL, redditReportLedgerClass, redditReportLedgerKey(accountID)).Scan(&locked); err != nil {
 			return fmt.Errorf("lock: %w", err)
+		}
+		if !locked {
+			return nil // held by another Take: commit the empty transaction and ask again
 		}
 		if err := tx.QueryRow(ctx, redditReportLedgerTakeSQL, accountID, insights, limits.Window.Seconds(),
 			limits.Total, limits.Insights, redditReportLedgerPruneLimit).Scan(&id, &wait); err != nil {
@@ -153,6 +177,9 @@ func (l *RedditReportLedger) Take(ctx context.Context, accountID string, insight
 	})
 	if err != nil {
 		return domain.RedditReportTake{}, fmt.Errorf("reddit report ledger: %w", err)
+	}
+	if !locked {
+		return domain.RedditReportTake{Wait: redditReportLedgerLockBusyWait}, nil
 	}
 	if id == nil {
 		return domain.RedditReportTake{Wait: time.Duration(wait * float64(time.Second))}, nil

@@ -273,8 +273,9 @@ func newDispatcher(p model.Provider, be *backend, secrets *secretSet, hc *http.C
 	case model.ProviderRedditAds:
 		// A process-local reporting budget: this command's database session is read-only, so it
 		// cannot record slots in the service's shared ledger (which the dispatcher would
-		// otherwise use, and which refuses every report until bound). Its attempts sit inside the
-		// 15 of Reddit's 60 the shared budget leaves for tools it cannot see.
+		// otherwise use, and which refuses every report until bound). It is an UNSHARED 45 (an
+		// audience read alone needs 24, more than the 15 of headroom), so a run while the
+		// service is busy on the same account can overdraw Reddit's 60: run it off-peak.
 		opts := []reddit.Option{reddit.WithHTTPClient(hc), reddit.WithReportBudgets(reddit.NewLocalReportBudgets())}
 		if ep.api != "" {
 			opts = append(opts, reddit.WithBaseURL(ep.api))

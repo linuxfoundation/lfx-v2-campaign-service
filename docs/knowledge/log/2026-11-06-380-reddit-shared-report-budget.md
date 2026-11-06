@@ -8,9 +8,10 @@ now live in Postgres: `postgres.RedditReportLedger` on the new `reddit_report_sl
 `dispatch.RedditDispatcher` gives its clients and the container binds on both wiring paths
 (`bindRedditReportLedger`). The account-wide ceiling is 45 at any replica count.
 
-- **Atomic:** a `Take` is one transaction — `pg_advisory_xact_lock` on the account, then one
+- **Atomic:** a `Take` is one transaction — `pg_try_advisory_xact_lock` on the account, then one
   statement that counts the window and inserts only when both limits have room — on the
-  database's clock (`clock_timestamp()` after the lock).
+  database's clock (`clock_timestamp()` after the lock). A busy lock is answered at once with a
+  short wait (never a blocked pooled connection) and re-asked after a jittered sleep.
 - **Fails closed:** an unbound ledger, a Postgres error or the 5 s bound refuses the attempt with
   `reddit.ErrReportBudgetUnavailable` (unclassified → 503) before anything is sent.
 - **Contract kept:** the slot is still taken immediately before the send; a pre-send dial failure
@@ -21,7 +22,10 @@ now live in Postgres: `postgres.RedditReportLedger` on the new `reddit_report_sl
   refuse — rejected in the issue for the user-facing monitor. The ledger reuses the lease's and the
   keyword-targeting lock's two-int advisory-lock convention (class "RRPT") instead.
 - `cmd/verify-metrics` (read-only database session) keeps a process-local ledger at the production
-  sizing (`reddit.NewLocalReportBudgets`), inside the 15-request headroom.
+  sizing (`reddit.NewLocalReportBudgets`). It is unshared and NOT inside the 15-request headroom,
+  so it is for off-peak use.
+- The Reddit account monitor classes an exhausted budget as `throttle`; a ledger failure is logged
+  at warn where it is raised.
 
 Tests: two ledgers on two separate pools race 120 Takes and are granted exactly 45 (and 24 insight
 slots); two shared budgets on one ledger send exactly 45 between them; unbound and erroring ledgers

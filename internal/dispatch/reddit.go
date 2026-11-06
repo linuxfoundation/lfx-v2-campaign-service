@@ -177,6 +177,12 @@ func (d *RedditDispatcher) SetRedditReportLedger(l domain.RedditReportLedger) {
 	d.reportBudgets.BindLedger(l)
 }
 
+// RedditReportLedgerBound reports whether the dispatcher's reporting budget has its shared
+// ledger bound — for the container's wiring tests.
+func (d *RedditDispatcher) RedditReportLedgerBound() bool {
+	return d.reportBudgets.LedgerBound()
+}
+
 // clientOptions is the option list for a client this dispatcher builds: its shared reporting
 // budget first, so a WithReportBudgets in d.opts (applied later) overrides it, then d.opts, then
 // extra. Copied rather than appended in place: d.opts is shared by every call on this dispatcher,

@@ -2848,7 +2848,7 @@ cooled after shutdown began releases immediately).
 for the insight reads) across every replica, where the in-memory ledger it replaced let N replicas
 spend N × 45.
 
-- **Atomic per account.** `Take` is one transaction: `pg_advisory_xact_lock(class "RRPT",
+- **Atomic per account.** `Take` is one transaction: `pg_try_advisory_xact_lock(class "RRPT",
   FNV(account))`, then ONE statement (`redditReportLedgerTakeSQL`) that counts the account's rows
   inside the window and inserts a slot only when `count < Total` and, for an insight attempt,
   `insight count < Insights`. The statement runs after the lock, so its READ COMMITTED snapshot sees
@@ -2856,6 +2856,12 @@ spend N × 45.
   never be stranded on a pooled connection. Without the lock two concurrent counts both see 44 and
   both insert (the mutation the live test kills). Colliding keys only serialize two accounts; the
   count is always by account id.
+- **Try, never block** — the keyword-targeting lock's rule. A Take that finds the lock held
+  commits its empty transaction at once (the connection goes back to the pool) and answers
+  `Taken: false` with a 20 ms `Wait`; `ReportBudgets`' loop asks again after a jittered sleep. A
+  blocking lock would pin a pooled connection behind a stalled holder for up to the 5 s bound on
+  every replica, and readers refused together would queue the pool on one lock
+  (`TestLiveRedditReportLedger_HeldLockAnswersAtOnce`).
 - **The database's clock.** `taken_at` and the window use `clock_timestamp()`, read once
   (`MATERIALIZED`) after the lock — never a pod's clock (skew between replicas) and never `now()`
   (the transaction start, which would back-date a Take that waited for the lock). A refusal returns
@@ -2873,6 +2879,6 @@ spend N × 45.
 Not a refilling token bucket, deliberately: a bucket of 45 refilled at 45 a minute admits a full
 bucket plus a minute's refill — up to 90 — inside one 60 s window, past Reddit's 60. Tests
 (`dbtest/reddit_report_ledger_live_test.go`): two ledgers on two separate pools race 60 Takes each
-and are granted exactly 45 (and 24 insight Takes, then the remaining 21), a refusal's wait is
+(re-asking on a busy lock) and are granted exactly 45 (and 24 insight Takes, then the remaining 21), a refusal's wait is
 inside the window, Release frees a slot idempotently, a slot frees after the reported wait on the
 database clock, and a closed or missing pool returns an error, never a grant.

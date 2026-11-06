@@ -882,11 +882,17 @@ refused with `ErrReportBudgetUnavailable` before anything is sent (unclassified 
 `ErrReportBudgetExhausted`). A client given no ledger at all spends from `defaultReportBudgets`,
 an unbound shared budget, so it refuses every report too. The wait loop, the deadline check and
 the pre-send release stay in `reserve`; a full shared budget's wait comes from the ledger (the
-database clock), floored at 10 ms so a "frees now" answer cannot hot-loop. A shared release runs
+database clock), floored at 10 ms so a "frees now" answer cannot hot-loop and jittered by up to a
+tenth (at most 50 ms, `jitterReportWait`) so readers refused together do not ask again in the same
+instant. A Take the caller's own deadline cut short is `ErrReportBudgetExhausted` (the budget did
+not answer in time), not Unavailable; a genuine ledger failure is logged once at warn where it is
+raised, so a fail-closed outage reads as "the ledger is down". In the account monitor an exhausted
+budget classes as `throttle` (`monitorFailureClass`); Unavailable stays `other`. A shared release runs
 on a context detached from the request's cancellation (5 s bound); if it fails the slot simply
 ages out — the budget over-counts, never under-counts. `NewLocalReportBudgets` is a process-local
-ledger at the production sizing, for `cmd/verify-metrics` (read-only database session; its
-attempts sit in the 15-request headroom). Tests: `report_ledger_shared_test.go` — unbound and
+ledger at the production sizing, for `cmd/verify-metrics` (read-only database session). It is NOT
+inside the 15-request headroom: an unshared 45 (an audience read alone needs 24), so a run while the
+service is busy on the same account can overdraw Reddit's 60 — run it off-peak. Tests: `report_ledger_shared_test.go` — unbound and
 erroring ledgers send nothing, production limits are passed, a pre-send dial failure releases the
 shared slot, a full budget fails whole before the deadline, and two budgets ("two processes") on
 one ledger send exactly 45 between them.

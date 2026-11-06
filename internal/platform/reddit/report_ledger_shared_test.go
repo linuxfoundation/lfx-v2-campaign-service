@@ -232,3 +232,44 @@ func TestSharedReportBudgets_FullBudgetFailsWholeBeforeTheDeadline(t *testing.T)
 		t.Errorf("sent %d requests on a full budget", n)
 	}
 }
+
+// blockingSharedLedger's Take waits for its context to end, as a Take stuck behind a slow
+// database does, then fails with the context's error.
+type blockingSharedLedger struct{ memSharedLedger }
+
+func (*blockingSharedLedger) Take(ctx context.Context, _ string, _ bool, _ domain.RedditReportLimits) (domain.RedditReportTake, error) {
+	<-ctx.Done()
+	return domain.RedditReportTake{}, ctx.Err()
+}
+
+// A Take the caller's own deadline cut short is the budget not answering in time —
+// ErrReportBudgetExhausted, as for a wait past the deadline — not the ledger being down.
+func TestSharedReportBudgets_DeadlineDuringTakeIsExhausted(t *testing.T) {
+	b := NewSharedReportBudgets()
+	b.BindLedger(&blockingSharedLedger{})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	err := b.acquire(ctx, "t2_a", false)
+	if !errors.Is(err, ErrReportBudgetExhausted) || errors.Is(err, ErrReportBudgetUnavailable) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("acquire = %v, want ErrReportBudgetExhausted wrapping the deadline, not Unavailable", err)
+	}
+}
+
+// A shared-ledger wait is never shortened, is floored, and is spread by at most a tenth (capped).
+func TestJitterReportWait(t *testing.T) {
+	spread := false
+	for range 200 {
+		for _, d := range []time.Duration{reportLedgerMinWait, time.Second, time.Minute} {
+			got := jitterReportWait(d)
+			if got < d || got > d+min(d/10, reportLedgerMaxJitter) {
+				t.Fatalf("jitterReportWait(%s) = %s, want within [d, d+min(d/10, %s)]", d, got, reportLedgerMaxJitter)
+			}
+			if got != d {
+				spread = true
+			}
+		}
+	}
+	if !spread {
+		t.Error("jitterReportWait never added any jitter")
+	}
+}

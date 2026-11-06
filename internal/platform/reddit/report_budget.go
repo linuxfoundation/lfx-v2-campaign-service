@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"regexp"
 	"sync"
 	"sync/atomic"
@@ -29,9 +30,10 @@ import (
 // Sizing (per ad account, ACROSS EVERY REPLICA, over a sliding 60-second window):
 //
 //   - reportBudgetTotal (45) of Reddit's 60 for ALL report attempts. The 15 left over are headroom
-//     for what this ledger cannot see: Reddit Ads Manager and other tools on the same account
-//     (cmd/verify-metrics among them — an operator CLI on a read-only database session, which
-//     keeps a process-local ledger of its own: NewLocalReportBudgets).
+//     for what this ledger cannot see: Reddit Ads Manager and other tools on the same account.
+//     cmd/verify-metrics is NOT inside that headroom: an operator CLI on a read-only database
+//     session, it keeps an unshared process-local ledger of its own (NewLocalReportBudgets) at
+//     the full 45, so a run while the service is busy can overdraw the account — run it off-peak.
 //   - reportBudgetInsights (24) of those 45 for the project-scoped insight reads (the audience and
 //     keyword performance reads, which share readBreakdownReports; marked with
 //     withInsightsReports). So an insight read can never take more than 24 of the 45, and the
@@ -81,6 +83,19 @@ const reportLedgerReleaseTimeout = 5 * time.Second
 
 // reportLedgerMinWait floors the wait between two asks of the shared ledger on a full budget.
 const reportLedgerMinWait = 10 * time.Millisecond
+
+// reportLedgerMaxJitter caps the random delay added to a shared-ledger wait.
+const reportLedgerMaxJitter = 50 * time.Millisecond
+
+// jitterReportWait adds up to a tenth of d (at most reportLedgerMaxJitter) to d. Never less than
+// d: waking before the slot frees would only be refused again.
+func jitterReportWait(d time.Duration) time.Duration {
+	j := min(d/10, reportLedgerMaxJitter)
+	if j <= 0 {
+		return d
+	}
+	return d + rand.N(j) //nolint:gosec // spreading wake-ups, not a secret
+}
 
 // reportPathRE matches the reporting operation's path (query string already split off), capturing
 // the ad account id the budget is keyed by.
@@ -159,6 +174,11 @@ func (b *ReportBudgets) BindLedger(l domain.RedditReportLedger) {
 	}
 }
 
+// LedgerBound reports whether a shared ledger is bound (always false for a process-local one).
+func (b *ReportBudgets) LedgerBound() bool {
+	return b != nil && b.shared && b.ledger.Load() != nil
+}
+
 // NewReportBudgets builds a process-local ledger. The service never spends from one (its
 // clients use the shared ledger); it exists so tests can give a client a ledger of their own
 // (WithReportBudgets).
@@ -168,7 +188,9 @@ func NewReportBudgets(window time.Duration, total, insights int) *ReportBudgets 
 
 // NewLocalReportBudgets is a process-local ledger at the production sizing, for a process that
 // cannot write the shared one: cmd/verify-metrics, whose database session is read-only. Its
-// attempts are outside the shared ledger, inside the 15 requests of headroom Reddit's 60 leave.
+// attempts are NOT counted by the shared ledger, and it is a full 45 (an audience read alone needs
+// 24, more than the 15 of headroom), so it can overdraw the account while the service is also
+// reading it: such a process is for off-peak operator use.
 func NewLocalReportBudgets() *ReportBudgets {
 	return newReportBudgets(reportBudgetWindow, reportBudgetTotal, reportBudgetInsights, time.Now)
 }
@@ -240,12 +262,22 @@ func (b *ReportBudgets) take(ctx context.Context, accountID string, insights boo
 	}
 	res, err := bound.l.Take(ctx, accountID, insights, domain.RedditReportLimits{Window: b.window, Total: b.total, Insights: b.insights})
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			// The caller's deadline or cancellation ended the ask: that is the budget not
+			// answering in time, as for a wait that outlasts the deadline — not the ledger down.
+			return nil, 0, false, fmt.Errorf("%w: %w", ErrReportBudgetExhausted, ctxErr)
+		}
+		// Logged here, once per refused attempt, so a Postgres outage that fails Reddit reads
+		// closed reads as "the ledger is down" and not as generic Reddit errors.
+		slog.WarnContext(ctx, "the shared Reddit reporting ledger could not be asked; refusing the report attempt (fail closed)", "error", err)
 		return nil, 0, false, fmt.Errorf("%w: %w", ErrReportBudgetUnavailable, err)
 	}
 	if !res.Taken {
 		// Floored, so a ledger that reports a full budget expiring "now" (clock rounding) costs
-		// a short sleep before the next ask, not a hot loop against the database.
-		return nil, max(res.Wait, reportLedgerMinWait), false, nil
+		// a short sleep before the next ask, not a hot loop against the database; and
+		// jittered, so the readers one full budget refused do not all ask again in the same
+		// instant the oldest slot expires.
+		return nil, jitterReportWait(max(res.Wait, reportLedgerMinWait)), false, nil
 	}
 	id := res.SlotID
 	return func() {

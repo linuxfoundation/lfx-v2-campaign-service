@@ -42,7 +42,8 @@ func heldSlots(t *testing.T, pool *pgxpool.Pool, account string) (all, insights 
 	return all, insights
 }
 
-// takeConcurrently runs n Takes per ledger at once, released together, and counts the grants.
+// takeConcurrently runs n Takes per ledger at once, released together, and counts the grants. A
+// Take that finds the account's lock busy is retried until it gets a budget answer.
 func takeConcurrently(t *testing.T, ledgers []*postgres.RedditReportLedger, n int, account string, insights bool) (taken int32, waits []time.Duration) {
 	t.Helper()
 	var (
@@ -55,10 +56,20 @@ func takeConcurrently(t *testing.T, ledgers []*postgres.RedditReportLedger, n in
 		for range n {
 			wg.Go(func() {
 				<-start
-				res, err := l.Take(context.Background(), account, insights, productionReportLimits)
-				if err != nil {
-					t.Errorf("Take: %v", err)
-					return
+				var res domain.RedditReportTake
+				for {
+					var err error
+					res, err = l.Take(context.Background(), account, insights, productionReportLimits)
+					if err != nil {
+						t.Errorf("Take: %v", err)
+						return
+					}
+					// A lock-busy answer (a short wait) is asked again, as ReportBudgets does;
+					// a full budget's wait is most of the 60 s window.
+					if res.Taken || res.Wait >= time.Second {
+						break
+					}
+					time.Sleep(res.Wait)
 				}
 				if res.Taken {
 					got.Add(1)
@@ -98,8 +109,8 @@ func TestLiveRedditReportLedger_TwoProcessesCannotExceedTheBudget(t *testing.T) 
 		t.Errorf("%d refusals, want %d", len(waits), 120-45)
 	}
 	for _, w := range waits {
-		if w <= 0 || w > time.Minute {
-			t.Errorf("refusal wait %s, want inside (0, 1m]", w)
+		if w < time.Second || w > time.Minute {
+			t.Errorf("refusal wait %s, want a full budget's wait inside [1s, 1m]", w)
 			break
 		}
 	}
@@ -182,5 +193,44 @@ func TestLiveRedditReportLedger_UnavailableDatabaseFailsClosed(t *testing.T) {
 	}
 	if res, err := postgres.NewRedditReportLedger(nil).Take(context.Background(), "t2_x", false, productionReportLimits); err == nil || res.Taken {
 		t.Fatalf("Take with no pool = (%+v, %v), want an error and no slot", res, err)
+	}
+}
+
+// A Take that finds another Take holding the account's lock does not wait on it — that would pin
+// a pooled connection behind the holder — but answers at once: no slot, a short wait, nothing
+// recorded. Once the holder is gone the next Take is granted.
+func TestLiveRedditReportLedger_HeldLockAnswersAtOnce(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+	account := dbtest.UniqueID(t, "acct")
+	l := postgres.NewRedditReportLedger(&postgres.Pool{Pool: pool})
+
+	holder, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Rollback(ctx) }()
+	class, key := postgres.RedditReportLedgerLockKeys(account)
+	if _, err := holder.Exec(ctx, "SELECT pg_advisory_xact_lock($1, $2)", class, key); err != nil {
+		t.Fatalf("hold the lock: %v", err)
+	}
+
+	start := time.Now()
+	res, err := l.Take(ctx, account, false, productionReportLimits)
+	if err != nil || res.Taken || res.Wait <= 0 || res.Wait > time.Second {
+		t.Fatalf("Take while the lock is held = (%+v, %v), want no slot and a short wait", res, err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Errorf("Take waited %s behind the held lock", took)
+	}
+	if all, _ := heldSlots(t, pool, account); all != 0 {
+		t.Errorf("%d slots recorded while the lock was held, want 0", all)
+	}
+
+	if err := holder.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := l.Take(ctx, account, false, productionReportLimits); err != nil || !res.Taken {
+		t.Fatalf("Take after the holder ended = (%+v, %v), want a slot", res, err)
 	}
 }
