@@ -4,16 +4,23 @@
 package log
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"go/ast"
+	"go/constant"
+	"go/importer"
 	"go/parser"
 	"go/token"
-	"io/fs"
+	"go/types"
+	"io"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
-	"strings"
 	"testing"
 )
 
@@ -27,61 +34,83 @@ const projectIDLogKey = "project_id"
 // a hashed project_id_hash. Only projectIDLogKey itself is allowed.
 var projectKeyVariant = regexp.MustCompile(`(?i)^proj(ect)?[_-]?(id|uid|uuid|slug|key)?([_-]?hash)?$`)
 
-// kvStart is, for each slog.Logger method and package-level slog function that takes a
-// message and alternating key/value arguments, the index of its first key/value argument:
-// Info(msg, args...), InfoContext(ctx, msg, args...), Log(ctx, level, msg, args...),
-// With(args...). LogAttrs takes ...Attr only, so it has no entry: its attributes are
-// slog.Attr expressions, which attrKeys reads where they are built.
+// kvStart is, for each log/slog function or *slog.Logger method that takes alternating
+// key/value arguments, the index of the first of them: Info(msg, args...),
+// InfoContext(ctx, msg, args...), Log(ctx, level, msg, args...), With(args...). LogAttrs
+// takes ...Attr only, so it has no entry: its attributes are slog.Attr values, read where
+// they are built.
 var kvStart = map[string]int{
 	"Debug": 1, "Info": 1, "Warn": 1, "Error": 1,
 	"DebugContext": 2, "InfoContext": 2, "WarnContext": 2, "ErrorContext": 2,
 	"Log": 3, "With": 0,
 }
 
-// attrCtors are the slog functions whose first argument is an attribute key.
+// attrCtors are the log/slog functions whose first argument is an attribute key.
 var attrCtors = map[string]bool{
 	"String": true, "Int": true, "Int64": true, "Uint64": true, "Float64": true,
 	"Bool": true, "Time": true, "Duration": true, "Any": true, "Group": true,
 }
 
-// keyHit is one string-literal log attribute key and where it sits.
+// keyHit is one constant log attribute key and where it is passed.
 type keyHit struct {
 	pos token.Pos
 	key string
 }
 
 // TestProjectIDLogKeyIsUniform pins issue #229's decision so it does not erode: every
-// string-literal log attribute key that names a project is spelled "project_id". A new
-// log line logging the project as "project", "projectID" or a hashed "project_id_hash"
-// fails here, rather than leaving the repo answering the question two ways.
+// constant log attribute key that names a project is spelled "project_id". A new log line
+// logging the project as "project", "projectID" or a hashed "project_id_hash" fails here,
+// rather than leaving the repo answering the question two ways.
 //
-// Only KEY positions are read (see logKeys): a message or a value that happens to be the
-// word "project" is not a key and is not checked. Only string-literal keys are seen: a key
-// held in a named constant or built at runtime is not. None exists today; keep project
-// keys literal so this guard can see them.
+// The source is type-checked (export data from `go list -export`), so a key is read by
+// what slog does with each argument's TYPE, not by its spelling: see logKeys. A key built
+// at runtime is not a constant and is not seen; keep project keys constant.
 //
-// The floor on how many project_id keys were seen is the positive control: a walker that
-// silently scanned nothing (a moved directory, a broken selector match) would otherwise
-// pass vacuously.
+// The floor on how many project_id keys were seen is the positive control: a walk that
+// silently checked nothing (a moved directory, a failed type-check) would otherwise pass
+// vacuously.
 func TestProjectIDLogKeyIsUniform(t *testing.T) {
-	root := filepath.Join("..", "..")
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkgs := goListExport(t, root, "./internal/...", "./cmd/...", "./pkg/...")
+	exports := map[string]string{}
+	for _, p := range pkgs {
+		exports[p.ImportPath] = p.Export
+	}
+	imp := importer.ForCompiler(token.NewFileSet(), "gc", func(path string) (io.ReadCloser, error) {
+		f, ok := exports[path]
+		if !ok || f == "" {
+			return nil, errors.New("no export data for " + path)
+		}
+		return os.Open(f)
+	})
+
 	fset := token.NewFileSet()
 	var canonical int
 	var drift []string
-
-	for _, dir := range []string{"internal", "cmd", "pkg"} {
-		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			f, perr := parser.ParseFile(fset, path, nil, 0)
+	for _, p := range pkgs {
+		if p.DepOnly {
+			continue
+		}
+		if len(p.CgoFiles) > 0 {
+			t.Fatalf("%s has cgo files; this guard type-checks GoFiles only", p.ImportPath)
+		}
+		var files []*ast.File
+		for _, name := range p.GoFiles {
+			f, perr := parser.ParseFile(fset, filepath.Join(p.Dir, name), nil, 0)
 			if perr != nil {
-				return perr
+				t.Fatalf("parse: %v", perr)
 			}
-			for _, h := range logKeys(f) {
+			files = append(files, f)
+		}
+		info := newInfo()
+		if _, cerr := (&types.Config{Importer: imp}).Check(p.ImportPath, fset, files, info); cerr != nil {
+			t.Fatalf("type-check %s: %v", p.ImportPath, cerr)
+		}
+		for _, f := range files {
+			for _, h := range logKeys(f, info) {
 				switch {
 				case h.key == projectIDLogKey:
 					canonical++
@@ -89,10 +118,6 @@ func TestProjectIDLogKeyIsUniform(t *testing.T) {
 					drift = append(drift, fset.Position(h.pos).String()+": "+strconv.Quote(h.key))
 				}
 			}
-			return nil
-		})
-		if err != nil {
-			t.Fatalf("walk %s: %v", dir, err)
 		}
 	}
 
@@ -108,7 +133,7 @@ func TestProjectIDLogKeyIsUniform(t *testing.T) {
 
 // TestLogKeys_ReadsKeyPositionsOnly pins the extractor itself, so the repo-wide guard
 // neither rejects valid logging (a message or value that reads "project") nor lets a key
-// escape through a slice, a spread or an elided slog.Attr literal.
+// escape through a slice, a spread, an Attr-valued argument or an elided slog.Attr.
 func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 	cases := []struct {
 		name string
@@ -116,32 +141,70 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 		want []string
 	}{
 		{"message and value are not keys", `slog.Info("project", "kind", "project")`, []string{"kind"}},
-		{"ctor value is not a key", `slog.String("project_id", "project")`, []string{"project_id"}},
+		{"ctor value is not a key", `_ = slog.String("project_id", "project")`, []string{"project_id"}},
 		{"context method", `slog.InfoContext(ctx, "project", "projectID", x)`, []string{"projectID"}},
 		{"Log skips ctx, level and message", `slog.Log(ctx, lvl, "project", "project_slug", x)`, []string{"project_slug"}},
-		{"logger method with an attr then a pair", `logger.Warn("m", slog.String("projectID", x), "k", "project")`, []string{"projectID", "k"}},
-		{"With is all pairs", `logger.With("projectId", x)`, []string{"projectId"}},
-		{"group key and its pairs", `slog.Group("g", "project_uid", 1)`, []string{"g", "project_uid"}},
+		{"logger method with an attr then a pair", `logger.Warn("m", slog.String("projectID", q), "k", "project")`, []string{"projectID", "k"}},
+		{"With is all pairs", `_ = logger.With("projectId", x)`, []string{"projectId"}},
+		{"group key and its pairs", `_ = slog.Group("g", "project_uid", 1)`, []string{"g", "project_uid"}},
+		{"named constant key", `slog.Info("m", keyConst, x)`, []string{"projectID"}},
+		{"non-string non-attr argument takes one slot", `slog.Info("m", 42, "project_slug", x)`, []string{"project_slug"}},
+		{"attr variable takes one slot, key after it is read", `a := slog.Int("attempt", 1)
+			slog.Info("m", a, "projectID", id)`, []string{"attempt", "projectID"}},
+		{"attr variable takes one slot, value after it is not a key", `a := slog.Int("attempt", 1)
+			slog.Info("m", a, "project_id", "project")`, []string{"attempt", "project_id"}},
+		{"attr from a helper takes one slot", `slog.Info("m", errAttr(e), "project", id)`, []string{"project"}},
 		{"slice spread through append", `fields := []any{"projectID", id, "brief_id", "project"}
 			slog.WarnContext(ctx, "m", append(fields, "err", e)...)`, []string{"projectID", "brief_id", "err"}},
 		{"slice grown by append then spread", `attrs := []any{"a", 1}
 			attrs = append(attrs, "projectId", 2)
 			slog.Info("m", attrs...)`, []string{"a", "projectId"}},
-		{"elided slog.Attr in a slice", `slog.LogAttrs(ctx, lvl, "m", []slog.Attr{{Key: "projectID", Value: v}}...)`, []string{"projectID"}},
-		{"explicit slog.Attr", `_ = slog.Attr{Key: "project", Value: v}`, []string{"project"}},
+		{"shadowed slice: only the logged one is read", `args := []any{"project", 1}
+			_, _ = db.Query(q, args...)
+			{
+				args := []any{"project_id", id}
+				slog.Info("m", args...)
+			}`, []string{"project_id"}},
+		{"elided slog.Attr in a slice", `slog.LogAttrs(ctx, lvl, "m", []slog.Attr{{Key: "projectID", Value: slog.AnyValue(v)}}...)`, []string{"projectID"}},
+		{"explicit slog.Attr", `_ = slog.Attr{Key: "project", Value: slog.AnyValue(v)}`, []string{"project"}},
 		{"another package's Error is not a log call", `http.Error(w, "project", 400)`, nil},
 		{"an unrelated slice is not log fields", `args := []any{"project", 1}
-			db.Query(q, args...)`, nil},
+			_, _ = db.Query(q, args...)`, nil},
 	}
+	const prelude = `package p
+import (
+	"context"
+	"database/sql"
+	"log/slog"
+	"net/http"
+)
+var (
+	ctx     context.Context
+	lvl     slog.Level
+	x, id, v any
+	e       error
+	w       http.ResponseWriter
+	q       string
+	db      *sql.DB
+	logger  *slog.Logger
+	errAttr func(error) slog.Attr
+)
+const keyConst = "projectID"
+func f() {
+`
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			src := "package p\nimport (\n\"log/slog\"\n\"net/http\"\n)\nvar _ = http.Error\nfunc f() {\n" + tc.body + "\n}\n"
-			f, err := parser.ParseFile(token.NewFileSet(), "p.go", src, 0)
+			fset := token.NewFileSet()
+			f, err := parser.ParseFile(fset, "p.go", prelude+tc.body+"\n}\n", 0)
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
+			info := newInfo()
+			if _, err := (&types.Config{Importer: importer.Default()}).Check("p", fset, []*ast.File{f}, info); err != nil {
+				t.Fatalf("type-check: %v", err)
+			}
 			var got []string
-			for _, h := range logKeys(f) {
+			for _, h := range logKeys(f, info) {
 				got = append(got, h.key)
 			}
 			if !reflect.DeepEqual(got, tc.want) {
@@ -151,58 +214,69 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 	}
 }
 
-// logKeys returns the distinct string-literal attribute keys a file passes to slog, in
-// source order. A key is read only where slog reads one:
-//   - in a log call's key/value arguments (after the message, per kvStart), a string
-//     literal in key position; a slog.X(...) call or slog.Attr literal there is one
-//     attribute and takes one slot; any other expression is taken as a non-literal key
-//     and takes two (slog's own rule for a string-typed argument);
-//   - the first argument of an attribute constructor (attrCtors), and slog.Group's pairs;
-//   - the Key of a slog.Attr literal, including an element of a []slog.Attr literal whose
-//     type is elided;
-//   - the elements of a []any slice that reaches a log call through a spread (fields... or
-//     append(fields, ...)...), resolved within the enclosing function.
-func logKeys(f *ast.File) []keyHit {
-	imports := map[string]string{} // local name -> import path
-	for _, im := range f.Imports {
-		path, _ := strconv.Unquote(im.Path.Value)
-		name := path[strings.LastIndex(path, "/")+1:]
-		if im.Name != nil {
-			name = im.Name.Name
-		}
-		imports[name] = path
-	}
-	isSlog := func(e ast.Expr) bool {
-		id, ok := e.(*ast.Ident)
-		return ok && imports[id.Name] == "log/slog"
-	}
-	isPkg := func(e ast.Expr) bool {
-		id, ok := e.(*ast.Ident)
-		return ok && imports[id.Name] != ""
-	}
+// listedPkg is the part of `go list -json` output the guard reads.
+type listedPkg struct {
+	ImportPath, Export, Dir string
+	GoFiles, CgoFiles       []string
+	DepOnly                 bool
+}
 
+// goListExport lists the packages matching patterns plus their dependencies, with the
+// path of each one's compiler export data, so the guard can type-check against it.
+func goListExport(t *testing.T, root string, patterns ...string) []listedPkg {
+	t.Helper()
+	args := append([]string{"list", "-export", "-deps", "-json=ImportPath,Export,Dir,GoFiles,CgoFiles,DepOnly"}, patterns...)
+	cmd := exec.Command("go", args...)
+	cmd.Dir = root
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("go list: %v\n%s", err, stderr.String())
+	}
+	var pkgs []listedPkg
+	dec := json.NewDecoder(bytes.NewReader(out))
+	for dec.More() {
+		var p listedPkg
+		if err := dec.Decode(&p); err != nil {
+			t.Fatalf("decode go list output: %v", err)
+		}
+		pkgs = append(pkgs, p)
+	}
+	return pkgs
+}
+
+func newInfo() *types.Info {
+	return &types.Info{
+		Types: map[ast.Expr]types.TypeAndValue{},
+		Defs:  map[*ast.Ident]types.Object{},
+		Uses:  map[*ast.Ident]types.Object{},
+	}
+}
+
+// logKeys returns the distinct constant attribute keys a type-checked file passes to
+// log/slog, in source order. A key is read where slog reads one, by argument type:
+//   - in a log call's key/value arguments (from kvStart on), a string argument is a key
+//     and takes two slots, a slog.Attr takes one, and anything else takes one (slog logs
+//     it under !BADKEY);
+//   - the first argument of an attribute constructor (attrCtors), and slog.Group's pairs;
+//   - the Key of a slog.Attr composite literal, including one whose type is elided;
+//   - the elements of a []any slice spread into a log call (fields... or
+//     append(fields, ...)...), traced through every assignment to that same variable
+//     (by object identity, so a shadowing variable is a different one).
+//
+// Calls are matched by the function they resolve to, so a same-named function or method
+// of another package (http.Error, a builder's With) is not a log call.
+func logKeys(f *ast.File, info *types.Info) []keyHit {
 	seen := map[token.Pos]bool{}
 	var out []keyHit
 	addKey := func(e ast.Expr) {
-		lit, ok := e.(*ast.BasicLit)
-		if !ok || lit.Kind != token.STRING || seen[lit.Pos()] {
+		tv, ok := info.Types[e]
+		if !ok || tv.Value == nil || tv.Value.Kind() != constant.String || seen[e.Pos()] {
 			return
 		}
-		if key, err := strconv.Unquote(lit.Value); err == nil {
-			seen[lit.Pos()] = true
-			out = append(out, keyHit{lit.Pos(), key})
-		}
-	}
-	isAttrExpr := func(e ast.Expr) bool {
-		switch x := e.(type) {
-		case *ast.CallExpr:
-			sel, ok := x.Fun.(*ast.SelectorExpr)
-			return ok && isSlog(sel.X)
-		case *ast.CompositeLit:
-			sel, ok := x.Type.(*ast.SelectorExpr)
-			return ok && isSlog(sel.X) && sel.Sel.Name == "Attr"
-		}
-		return false
+		seen[e.Pos()] = true
+		out = append(out, keyHit{e.Pos(), constant.StringVal(tv.Value)})
 	}
 	attrLitKey := func(cl *ast.CompositeLit) {
 		for i, e := range cl.Elts {
@@ -215,124 +289,146 @@ func logKeys(f *ast.File) []keyHit {
 			}
 		}
 	}
+	objOf := func(id *ast.Ident) types.Object {
+		if o := info.Defs[id]; o != nil {
+			return o
+		}
+		return info.Uses[id]
+	}
 
-	walkFunc := func(body ast.Node) {
-		// sources: every expression assigned to a local identifier, so a spread can be
-		// traced back to the []any literal and appends that built it.
-		sources := map[string][]ast.Expr{}
-		ast.Inspect(body, func(n ast.Node) bool {
-			switch x := n.(type) {
-			case *ast.AssignStmt:
-				if len(x.Lhs) == len(x.Rhs) {
-					for i, l := range x.Lhs {
-						if id, ok := l.(*ast.Ident); ok {
-							sources[id.Name] = append(sources[id.Name], x.Rhs[i])
+	// sources: every expression assigned to each variable, so a spread can be traced back
+	// to the []any literal and the appends that built it.
+	sources := map[types.Object][]ast.Expr{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.AssignStmt:
+			if len(x.Lhs) == len(x.Rhs) {
+				for i, l := range x.Lhs {
+					if id, ok := l.(*ast.Ident); ok {
+						if o := objOf(id); o != nil {
+							sources[o] = append(sources[o], x.Rhs[i])
 						}
 					}
 				}
-			case *ast.ValueSpec:
-				if len(x.Names) == len(x.Values) {
-					for i, id := range x.Names {
-						sources[id.Name] = append(sources[id.Name], x.Values[i])
+			}
+		case *ast.ValueSpec:
+			if len(x.Names) == len(x.Values) {
+				for i, id := range x.Names {
+					if o := objOf(id); o != nil {
+						sources[o] = append(sources[o], x.Values[i])
 					}
 				}
 			}
-			return true
-		})
+		}
+		return true
+	})
 
-		var kvWalk func(args []ast.Expr, spreadLast bool, visiting map[string]bool)
-		var spread func(e ast.Expr, visiting map[string]bool)
-		spread = func(e ast.Expr, visiting map[string]bool) {
-			switch x := e.(type) {
-			case *ast.Ident:
-				if visiting[x.Name] {
-					return
-				}
-				visiting[x.Name] = true
-				for _, src := range sources[x.Name] {
-					spread(src, visiting)
-				}
-				delete(visiting, x.Name)
-			case *ast.CompositeLit:
-				if at, ok := x.Type.(*ast.ArrayType); ok && isAnyType(at.Elt) {
-					kvWalk(x.Elts, false, visiting)
-				}
-			case *ast.CallExpr:
-				if fn, ok := x.Fun.(*ast.Ident); ok && fn.Name == "append" && len(x.Args) > 0 {
+	var kvWalk func(args []ast.Expr, spreadLast bool, visiting map[types.Object]bool)
+	var spread func(e ast.Expr, visiting map[types.Object]bool)
+	spread = func(e ast.Expr, visiting map[types.Object]bool) {
+		switch x := ast.Unparen(e).(type) {
+		case *ast.Ident:
+			o := objOf(x)
+			if o == nil || visiting[o] {
+				return
+			}
+			visiting[o] = true
+			for _, src := range sources[o] {
+				spread(src, visiting)
+			}
+			delete(visiting, o)
+		case *ast.CompositeLit:
+			if isAnySlice(info.TypeOf(x)) {
+				kvWalk(x.Elts, false, visiting)
+			}
+		case *ast.CallExpr:
+			if fn, ok := ast.Unparen(x.Fun).(*ast.Ident); ok && len(x.Args) > 0 {
+				if b, ok := info.Uses[fn].(*types.Builtin); ok && b.Name() == "append" {
 					spread(x.Args[0], visiting)
 					kvWalk(x.Args[1:], x.Ellipsis.IsValid(), visiting)
 				}
 			}
 		}
-		kvWalk = func(args []ast.Expr, spreadLast bool, visiting map[string]bool) {
-			for i := 0; i < len(args); {
-				a := args[i]
-				if spreadLast && i == len(args)-1 {
-					spread(a, visiting)
-					return
-				}
-				if isAttrExpr(a) {
-					i++
-					continue
-				}
+	}
+	kvWalk = func(args []ast.Expr, spreadLast bool, visiting map[types.Object]bool) {
+		for i := 0; i < len(args); {
+			a := args[i]
+			if spreadLast && i == len(args)-1 {
+				spread(a, visiting)
+				return
+			}
+			if b, ok := info.TypeOf(a).Underlying().(*types.Basic); ok && b.Info()&types.IsString != 0 {
 				addKey(a)
 				i += 2
+				continue
+			}
+			i++ // a slog.Attr, or a !BADKEY value: one slot either way
+		}
+	}
+
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.CallExpr:
+			fn := slogFunc(x, info)
+			if fn == nil {
+				return true
+			}
+			name := fn.Name()
+			isMethod := fn.Type().(*types.Signature).Recv() != nil
+			if !isMethod && attrCtors[name] {
+				if len(x.Args) > 0 {
+					addKey(x.Args[0])
+				}
+				if name == "Group" && len(x.Args) > 1 {
+					kvWalk(x.Args[1:], x.Ellipsis.IsValid(), map[types.Object]bool{})
+				}
+			} else if start, ok := kvStart[name]; ok && len(x.Args) > start {
+				kvWalk(x.Args[start:], x.Ellipsis.IsValid(), map[types.Object]bool{})
+			}
+		case *ast.CompositeLit:
+			if isSlogAttr(info.TypeOf(x)) {
+				attrLitKey(x)
 			}
 		}
-
-		ast.Inspect(body, func(n ast.Node) bool {
-			switch x := n.(type) {
-			case *ast.CallExpr:
-				sel, ok := x.Fun.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				name := sel.Sel.Name
-				switch {
-				case isSlog(sel.X) && attrCtors[name]:
-					if len(x.Args) > 0 {
-						addKey(x.Args[0])
-					}
-					if name == "Group" && len(x.Args) > 1 {
-						kvWalk(x.Args[1:], x.Ellipsis.IsValid(), map[string]bool{})
-					}
-				case isSlog(sel.X) || !isPkg(sel.X):
-					if start, ok := kvStart[name]; ok && len(x.Args) > start {
-						kvWalk(x.Args[start:], x.Ellipsis.IsValid(), map[string]bool{})
-					}
-				}
-			case *ast.CompositeLit:
-				switch t := x.Type.(type) {
-				case *ast.SelectorExpr:
-					if isSlog(t.X) && t.Sel.Name == "Attr" {
-						attrLitKey(x)
-					}
-				case *ast.ArrayType:
-					if sel, ok := t.Elt.(*ast.SelectorExpr); ok && isSlog(sel.X) && sel.Sel.Name == "Attr" {
-						for _, e := range x.Elts {
-							if cl, ok := e.(*ast.CompositeLit); ok && cl.Type == nil {
-								attrLitKey(cl)
-							}
-						}
-					}
-				}
-			}
-			return true
-		})
-	}
-
-	for _, d := range f.Decls {
-		walkFunc(d)
-	}
+		return true
+	})
 	sort.Slice(out, func(i, j int) bool { return out[i].pos < out[j].pos })
 	return out
 }
 
-// isAnyType reports whether e spells the empty interface: any or interface{}.
-func isAnyType(e ast.Expr) bool {
-	if id, ok := e.(*ast.Ident); ok {
-		return id.Name == "any"
+// slogFunc returns the log/slog function or method call resolves to, or nil.
+func slogFunc(call *ast.CallExpr, info *types.Info) *types.Func {
+	var id *ast.Ident
+	switch fun := ast.Unparen(call.Fun).(type) {
+	case *ast.Ident:
+		id = fun
+	case *ast.SelectorExpr:
+		id = fun.Sel
+	default:
+		return nil
 	}
-	it, ok := e.(*ast.InterfaceType)
-	return ok && (it.Methods == nil || len(it.Methods.List) == 0)
+	fn, ok := info.Uses[id].(*types.Func)
+	if !ok || fn.Pkg() == nil || fn.Pkg().Path() != "log/slog" {
+		return nil
+	}
+	return fn
+}
+
+// isSlogAttr reports whether t is log/slog.Attr.
+func isSlogAttr(t types.Type) bool {
+	n, ok := t.(*types.Named)
+	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == "log/slog" && n.Obj().Name() == "Attr"
+}
+
+// isAnySlice reports whether t is a slice of the empty interface ([]any).
+func isAnySlice(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+	s, ok := t.Underlying().(*types.Slice)
+	if !ok {
+		return false
+	}
+	it, ok := s.Elem().Underlying().(*types.Interface)
+	return ok && it.Empty()
 }

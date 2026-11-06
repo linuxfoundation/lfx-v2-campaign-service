@@ -39,22 +39,32 @@ Why this option and not the other three #229 weighed:
 **One key, everywhere.** The spelling is `project_id`: not `project`,
 `projectID`, `projectId`, `project_uid`, `project_slug`, nor a hashed variant.
 When the decision was taken every non-test log site already used it (212
-distinct string-literal log keys under `internal/`, `cmd/` and `pkg/`, as counted by
+distinct constant log keys under `internal/`, `cmd/` and `pkg/`, as counted by
 `TestProjectIDLogKeyIsUniform`), so applying it
 needed no call-site change.
 
 **Pinned:** `TestProjectIDLogKeyIsUniform` (`pkg/log/project_id_key_test.go`)
-parses every non-test Go file under `internal/`, `cmd/` and `pkg/` and fails on
-any string-literal log attribute key that names the project under another
-spelling. It reads key positions only, as slog does: the pairs after a log
-call's message, the first argument of `slog.String`/`Int`/`Any`/`Group` and the
-like, the `Key` of a `slog.Attr` literal (also inside a `[]slog.Attr{{...}}`
-whose element type is elided), and the elements of a `[]any` slice spread into a
-log call (`fields...`, `append(fields, ...)...`), traced within the enclosing
-function. A message or value that reads "project" is not a key and passes.
-`TestLogKeys_ReadsKeyPositionsOnly` pins those rules. A floor on the number of
-`project_id` keys seen keeps the walk from passing vacuously. Only literal keys
-are seen, so keep project keys literal: a key held in a named constant is not.
+type-checks every non-test package under `internal/`, `cmd/` and `pkg/` (against
+`go list -export` data) and fails on any constant log attribute key that names
+the project under another spelling. It reads keys the way slog does, by argument
+type:
+
+- In a log call's arguments after the message, a string is a key and takes two
+  slots. A `slog.Attr`, whether built inline, held in a variable or returned by a
+  helper, takes one slot, and so does any other value.
+- It also reads the first argument of `slog.String`/`Int`/`Any`/`Group` and the
+  like.
+- It reads the `Key` of a `slog.Attr` literal, including one inside
+  `[]slog.Attr{{...}}`.
+- It follows a `[]any` slice spread into a log call (`fields...`,
+  `append(fields, ...)...`) through every assignment to that same variable. A
+  shadowing variable counts as a different variable.
+
+Calls are matched by the function they resolve to, so `http.Error` is not a log
+call. A message or value that reads "project" is not a key and passes. A key
+held in a named constant is checked. Only a key built at runtime is not.
+`TestLogKeys_ReadsKeyPositionsOnly` pins each rule. A floor on the number of
+`project_id` keys seen keeps the walk from passing vacuously.
 
 **For reviewers:** "`project_id` is logged" is not a finding on this repo; see
 `docs/reviews/knowledge-base/known-false-positives.md` § "Settled by decision".
