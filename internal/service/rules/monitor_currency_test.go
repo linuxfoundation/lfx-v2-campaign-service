@@ -106,3 +106,41 @@ func TestTwitterPlaceholderBudget_SizedInAccountCurrency(t *testing.T) {
 		}
 	}
 }
+
+// The helpers keep each rule's boundary in a non-USD currency: the placeholder budget is
+// INCLUSIVE and the high CPC EXCLUSIVE, at the USD value times the currency's units per dollar
+// (JPY's 147 keeps both products exact in float64).
+func TestMonitorMoneyHelpers_BoundaryInAccountCurrency(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		got  bool
+		want bool
+	}{
+		{"placeholder at 1 USD in JPY", isPlaceholderBudget(147, "JPY"), true},
+		{"placeholder just above 1 USD in JPY", isPlaceholderBudget(148, "JPY"), false},
+		{"CPC at 5 USD in JPY", isHighAvgCpc(735, "JPY"), false},
+		{"CPC just above 5 USD in JPY", isHighAvgCpc(736, "JPY"), true},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s = %v, want %v", tc.name, tc.got, tc.want)
+		}
+	}
+}
+
+// Every table entry is a well-formed ISO 4217 code with a positive figure: a mistyped key or a zero
+// would silently switch both rules off for that currency. The currencies #454 names are present.
+func TestMonitorUnitsPerUSD_Integrity(t *testing.T) {
+	for code, units := range monitorUnitsPerUSD {
+		if model.NormalizeCurrencyCode(code) != code {
+			t.Errorf("key %q is not an ISO 4217 code", code)
+		}
+		if !(units > 0) {
+			t.Errorf("%s units per USD = %v, want > 0", code, units)
+		}
+	}
+	for _, code := range []string{"USD", "EUR", "GBP", "JPY", "KWD", "BHD"} {
+		if _, ok := monitorUnitsPerUSD[code]; !ok {
+			t.Errorf("%s missing from monitorUnitsPerUSD", code)
+		}
+	}
+}

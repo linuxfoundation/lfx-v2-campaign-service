@@ -85,8 +85,9 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int, curren
 		// PacingUnknown; Google and Meta did not (Meta's own guard was dead code, never taken).
 		//
 		// The real signal for this campaign is not lost: the placeholder-budget rule in
-		// googleActionItems still fires (a zero budget is a placeholder in every currency), and says the accurate thing — that the budget is a
-		// placeholder — at HIGH rather than burying it in a pacing complaint at MED.
+		// googleActionItems still fires (a zero budget is a placeholder in every currency), and
+		// says the accurate thing — that the budget is a placeholder — at HIGH rather than
+		// burying it in a pacing complaint at MED.
 		expectedSpend := m.BudgetDay * float64(days)
 		if expectedSpend <= 0 {
 			row := unknownPacingRow(m)
