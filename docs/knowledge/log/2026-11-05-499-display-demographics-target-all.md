@@ -17,6 +17,12 @@ behind `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` (off), so nothing reached the 
   Google Ads UI stores checked and unchecked brackets. The same probe accepted positive
   `ageRange`/`gender`/`incomeRange`/`parentalStatus` criteria beside a negative `ageRange` in one
   `adGroupCriteria:mutate`.
+- **Probe before enabling the gate.** The probe covered positives in all four dimensions
+  beside ONE negative `ageRange`. It did not cover the full shape this code sends: complement
+  negatives in the gender, income and parental-status dimensions next to positives of the same
+  dimension. Run one validateOnly `adGroupCriteria:mutate` with a positive plus its complement
+  negatives in each of the four dimensions, and record the result here, before
+  `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` is turned on (argocd #2031).
 - `displayDemographics` is classified as ungated in the marketing-ops field list (#505), which
   crossed with #507 and left that test failing on main.
 - The `displayDemographics` gate check no longer shadows the dispatcher receiver.
