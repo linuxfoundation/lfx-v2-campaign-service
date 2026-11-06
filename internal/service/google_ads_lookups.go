@@ -47,6 +47,15 @@ type ConversionActionReader interface {
 	ListConversionActions(ctx context.Context, projectID string, platform model.Provider) (res *model.ConversionActions, called bool, err error)
 }
 
+// AudienceReader is an OPTIONAL dispatcher capability: list every usable audience entry of one
+// kind (#496) on the ad account a campaign create for the project would use.
+//
+// A successful call MUST return a non-nil result with a non-nil Audiences slice. called reports
+// whether the platform was actually contacted, as ConversionActionReader's does.
+type AudienceReader interface {
+	ListAudiences(ctx context.Context, projectID string, platform model.Provider, kind string) (res *model.AudienceResources, called bool, err error)
+}
+
 // ErrTargetingLookupUnsupported re-exports the domain sentinel, as the siblings in
 // orchestrator.go do.
 var ErrTargetingLookupUnsupported = domain.ErrTargetingLookupUnsupported
@@ -55,6 +64,7 @@ const (
 	opSuggestGeoTargets     = "suggest_geo_targets"
 	opListUserLists         = "list_user_lists"
 	opListConversionActions = "list_conversion_actions"
+	opListAudiences         = "list_audiences"
 )
 
 // ReadGeoTargetSuggestions runs a geo target search through the platform's dispatcher. A pure
@@ -160,7 +170,40 @@ func (o *Orchestrator) ReadConversionActions(ctx context.Context, projectID stri
 	return res, nil
 }
 
-// googleAdsGeoTargetLookup, googleAdsUserListLookup and googleAdsConversionActionLookup reuse
+// ReadAudiences lists every usable audience entry of one kind on the account a create for the
+// project uses, through the platform's dispatcher. A pure read; nothing is persisted.
+//
+// Like ReadConversionActions, and for the same reason, it is NOT refused on a shared-tenancy
+// platform: on Google Ads the answer holds every foundation's audiences, so the gateway admits
+// only global_marketing_ops of the project to this route (#496).
+func (o *Orchestrator) ReadAudiences(ctx context.Context, projectID string, platform model.Provider, kind string) (*model.AudienceResources, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrTargetingLookupUnsupported, platform)
+	}
+	r, ok := d.(AudienceReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrTargetingLookupUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	res, called, err := r.ListAudiences(callCtx, projectID, platform, kind)
+	// Recorded only when the platform was reached, as ReadConversionActions does.
+	if called {
+		o.recordUpstream(ctx, platform, opListAudiences, start, err)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if res == nil || res.Audiences == nil {
+		return nil, fmt.Errorf("%s audience reader returned a nil result with no error", platform)
+	}
+	return res, nil
+}
+
+// googleAdsGeoTargetLookup, googleAdsUserListLookup, googleAdsConversionActionLookup and
+// googleAdsAudienceLookup reuse
 // classifyDiscoveryError's connection-state arms under their own operation nouns, as the keyword
 // read does.
 var (
@@ -187,6 +230,14 @@ var (
 			"digits only is selected on the connection",
 		operation: "conversion action lookup",
 	}
+	googleAdsAudienceLookup = accountDiscovery{
+		provider:    model.ProviderGoogleAds,
+		displayName: "google ads",
+		notUsableRemedy: "check that it is active, that the stored credential is valid json with " +
+			"every field set, that login_customer_id is digits only, and that an account_id of " +
+			"digits only is selected on the connection",
+		operation: "audience lookup",
+	}
 )
 
 const (
@@ -197,6 +248,10 @@ const (
 	googleAdsGeoSuggestMax     = 50
 	googleAdsGeoSuggestDefault = 20
 	googleAdsUserListMax       = googleads.MaxUserListRows
+	// googleAdsAudienceMax is the cap the audiences description publishes, applied after the
+	// q filter; googleAdsAudienceQueryMaxLen mirrors the q MaxLength.
+	googleAdsAudienceMax         = 500
+	googleAdsAudienceQueryMaxLen = 100
 	// googleAdsGeoQueryMaxLen / googleAdsGeoTargetTypesMax mirror the payload's MaxLength.
 	googleAdsGeoQueryMaxLen    = 100
 	googleAdsGeoTargetTypesMax = 10
@@ -387,5 +442,65 @@ func (s *ConnectionService) ListGoogleAdsConversionActions(ctx context.Context, 
 		AccountID:             res.AccountID,
 		ConversionActions:     out,
 		ConversionActionCount: len(out),
+	}, nil
+}
+
+// ListGoogleAdsAudiences lists the custom audiences, combined audiences, Audience resources or
+// user interests on the Google Ads customer a create for this project uses, for the audience
+// pickers (#496).
+//
+// Resolution and tenancy are ListGoogleAdsConversionActions': the answer is account-wide on a
+// customer every foundation shares, which is why only the LF marketing team may call it (see
+// Orchestrator.ReadAudiences). type and q are checked before any credential is resolved.
+func (s *ConnectionService) ListGoogleAdsAudiences(ctx context.Context, p *conn.ListGoogleAdsAudiencesPayload) (*conn.GoogleAdsAudienceResources, error) {
+	if err := rejectSystemScope(p.ProjectID); err != nil {
+		return nil, err
+	}
+	// Mirrors the design Enum, Pattern and MaxLength for a caller that bypasses Goa.
+	kind, ok := googleads.ParseAudienceKind(p.Type)
+	if !ok {
+		return nil, &conn.BadRequestError{Code: "400", Message: "type must be one of custom_audience, combined_audience, audience, user_interest"}
+	}
+	needle := ""
+	if p.Q != nil {
+		needle = strings.ToLower(strings.TrimSpace(*p.Q))
+		if needle == "" || utf8.RuneCountInString(*p.Q) > googleAdsAudienceQueryMaxLen {
+			return nil, &conn.BadRequestError{Code: "400", Message: "q must be 1-100 characters and not blank"}
+		}
+	}
+	_, _, orch, err := s.resolveBackendWithOrch(googleAdsAudienceLookup.label())
+	if err != nil {
+		return nil, err
+	}
+	res, rerr := orch.ReadAudiences(ctx, p.ProjectID, model.ProviderGoogleAds, string(kind))
+	if rerr != nil {
+		return nil, s.classifyTargetingLookupError(ctx, p.ProjectID, googleAdsAudienceLookup, rerr)
+	}
+	out := make([]*conn.GoogleAdsAudienceResource, 0, min(len(res.Audiences), googleAdsAudienceMax))
+	truncated := false
+	for _, a := range res.Audiences {
+		if needle != "" && !strings.Contains(strings.ToLower(a.Name), needle) {
+			continue
+		}
+		if len(out) == googleAdsAudienceMax {
+			truncated = true
+			break
+		}
+		out = append(out, &conn.GoogleAdsAudienceResource{
+			ResourceName: a.ResourceName,
+			ID:           a.ID,
+			Name:         a.Name,
+			Type:         string(kind),
+			Subtype:      optionalString(a.Subtype),
+			Status:       optionalString(a.Status),
+			Description:  optionalString(a.Description),
+		})
+	}
+	return &conn.GoogleAdsAudienceResources{
+		AccountID:     res.AccountID,
+		Type:          string(kind),
+		Audiences:     out,
+		AudienceCount: len(out),
+		Truncated:     truncated,
 	}, nil
 }

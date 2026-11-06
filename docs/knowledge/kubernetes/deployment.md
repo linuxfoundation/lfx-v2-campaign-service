@@ -68,33 +68,35 @@ it opts a cluster in to the Display audience lists that name an account-owned se
 `googleAdsConfig.audienceSegments` on `display`, `customAudiences` and `customAffinities`, and
 since #475 the user-list exclusions `excludedAudienceSegments` and each `displayAdGroups`
 entry's `audienceSegments`, `customAudiences`, `customAffinities` and
-`excludedAudienceSegments`. Like the Demand Gen gate it is a per-deployment opt-in, and each
-segment is checked against the connected Google Ads account. Only exactly `"true"`
+`excludedAudienceSegments`. Like the Demand Gen gate it is a per-deployment opt-in, each
+segment is checked against the connected Google Ads account, and create-campaigns requires
+`global_marketing_ops` on the project for any of them, by the same NATS check. Only exactly `"true"`
 enables it; off, a create naming one is refused before anything upstream exists.
 `userInterests` (at either level), `excludedPlacements`, Search's `audienceSegments` and
-`displayAdGroups` entries without those lists are not gated. To enable it on a cluster, set
+`displayAdGroups` entries without those lists are not behind the flag; Search's
+`audienceSegments` still need `global_marketing_ops`. To enable it on a cluster, set
 `app.environment.GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED.value` to `"true"` in that environment's
 ArgoCD overlay.
 
 `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the same kind of gate, defaulting to `"false"`
 (#461): it opts a cluster in to `googleAdsConfig.performanceMaxAudienceSignal`, one existing
 Google Ads Audience attached to a Performance Max asset group as a signal. Like the Demand Gen
-gate it is a per-deployment opt-in, and the Audience is checked against the connected Google Ads
-account. Only exactly `"true"` enables it; off, a create naming one is refused before
+gate it is a per-deployment opt-in, the Audience is checked against the connected Google Ads
+account, and create-campaigns requires `global_marketing_ops` on the project for it. Only exactly `"true"` enables it; off, a create naming one is refused before
 anything upstream exists. Search themes and the Performance Max extensions are not gated.
 
 `GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED` is the same kind of gate, defaulting to `"false"`
 (#477): it opts a cluster in to `googleAdsConfig.sharedNegativeKeywordLists`, existing shared
 negative keyword lists attached to a Search campaign. Like the Demand Gen gate it is a
-per-deployment opt-in, and each shared list is checked against the connected Google Ads account.
-Only exactly `"true"` enables it; off, a create naming one, on any channel, is refused before
+per-deployment opt-in, each shared list is checked against the connected Google Ads account,
+and create-campaigns requires `global_marketing_ops` on the project for any. Only exactly `"true"` enables it; off, a create naming one, on any channel, is refused before
 anything upstream exists. `searchAssets` is not gated.
 
 `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` defaults to `"false"` too (#497), but gates something
 different: not an account resource, but inputs no live (persisted) create has exercised yet —
-`googleAdsConfig.observedDemographics` (not probed), and `googleAdsConfig.demandGenDemographics`
-(#498), whose create body a validateOnly probe accepted on 2026-11-05 but whose persisted create
-and read-back are not yet verified. Only exactly `"true"` enables it; off, a create naming it,
+`googleAdsConfig.observedDemographics` (#497), `googleAdsConfig.displayDemographics` (#499), and
+`googleAdsConfig.demandGenDemographics` (#498), whose create body a validateOnly probe accepted on
+2026-11-05 but whose persisted create and read-back are not yet verified. Only exactly `"true"` enables it; off, a create naming it,
 on any channel, is refused before anything upstream exists. Turn it on once the validateOnly probe
 in the field's docs passes.
 

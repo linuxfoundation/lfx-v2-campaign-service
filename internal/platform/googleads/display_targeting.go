@@ -210,8 +210,10 @@ func validateDisplayTargeting(kind, customerID string, in CampaignInput) (displa
 // come at the adGroupCriteria:mutate, after the budget, the campaign and the ad group
 // exist. A resource on another account is refused here, with the account it named.
 //
-// The connected Google Ads account (same customer id) is the boundary this check enforces;
-// per-foundation ownership (#468) was closed as won't do. The dispatch adapter keeps the
+// The connected Google Ads account (same customer id) is the boundary this check enforces.
+// That account is shared by every foundation, so create-campaigns also requires
+// global_marketing_ops on the project for any account-owned segment
+// (service.GoogleAdsMarketingOpsInputs). The dispatch adapter keeps the
 // account-owned kinds (user lists, custom audiences, custom affinities) behind a
 // per-deployment opt-in that is off by default (GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED, see
 // dispatch.googleAdsDisplayAudiencesEnabled) — the user-list exclusions and every
@@ -381,27 +383,35 @@ func displayAudienceStep(plan displayTargetingPlan) string {
 	return strings.Join(parts, "; ")
 }
 
-// displayAudienceTargetingSetting is the Display ad group's targetingSetting when it
-// carries audience criteria: the four demographic dimensions exactly as Google sets them
-// by default, then AUDIENCE with bidOnly false, so the audience criteria target rather
-// than observe. See createDisplayAudienceCriteria for why it is sent.
+// displayAdGroupTargetingSetting is the Display ad group's targetingSetting for the given
+// audience and demographic targeting, or nil when there is neither, so an ad group with
+// neither is the pre-#462 payload exactly. See createDisplayAudienceCriteria for why it is
+// sent.
 //
-// All five entries, in this order, rather than AUDIENCE alone: LFX-created Display ad
-// groups (no targetingSetting sent) read back exactly AGE_RANGE, GENDER, PARENTAL_STATUS
-// and INCOME_RANGE, each bidOnly true, and no AUDIENCE entry. Restating those four keeps
-// Google's default for the demographic dimensions instead of relying on how Google merges
-// a partial list. This exact list, with the four criteria, was accepted by a validateOnly
-// probe on 2026-11-03.
-func displayAudienceTargetingSetting() *targetingSetting {
-	return &targetingSetting{
-		TargetRestrictions: []targetRestriction{
-			{TargetingDimension: "AGE_RANGE", BidOnly: true},
-			{TargetingDimension: "GENDER", BidOnly: true},
-			{TargetingDimension: "PARENTAL_STATUS", BidOnly: true},
-			{TargetingDimension: "INCOME_RANGE", BidOnly: true},
-			{TargetingDimension: "AUDIENCE", BidOnly: false},
-		},
+// The four demographic dimensions are always restated, in this order, rather than only the
+// ones that changed: LFX-created Display ad groups (no targetingSetting sent) read back
+// exactly AGE_RANGE, GENDER, PARENTAL_STATUS and INCOME_RANGE, each bidOnly true, and no
+// AUDIENCE entry. Restating those four keeps Google's default for the demographic
+// dimensions instead of relying on how Google merges a partial list. Each is bidOnly true
+// unless the demographic targeting (#499) names a value in it; then it is bidOnly false, so
+// its positive criteria restrict reach. AUDIENCE follows, bidOnly false, only when there are
+// audience criteria, so they target rather than observe.
+//
+// With audiences and no demographic targeting this is exactly the five-entry list a
+// validateOnly probe accepted with the audience criteria on 2026-11-03. The #499 variants are
+// not yet probed.
+func displayAdGroupTargetingSetting(audiences bool, demographics adGroupDemographicTargetingPlan) *targetingSetting {
+	if !audiences && demographics.count() == 0 {
+		return nil
 	}
+	restrictions := make([]targetRestriction, 0, 5)
+	for _, dim := range []string{targetingDimensionAgeRange, targetingDimensionGender, targetingDimensionParentalStatus, targetingDimensionIncomeRange} {
+		restrictions = append(restrictions, targetRestriction{TargetingDimension: dim, BidOnly: !demographics.targets(dim)})
+	}
+	if audiences {
+		restrictions = append(restrictions, targetRestriction{TargetingDimension: "AUDIENCE", BidOnly: false})
+	}
+	return &targetingSetting{TargetRestrictions: restrictions}
 }
 
 // createDisplayAudienceCriteria attaches the plan's audience segments to a
@@ -418,7 +428,7 @@ func displayAudienceTargetingSetting() *targetingSetting {
 // keywords; its audiences are what the caller means to decide who sees the ad, which is
 // how the reference campaign uses them. So when any audience list is supplied,
 // CreateDisplayCampaign creates the ad group with a targetingSetting whose AUDIENCE entry
-// is bidOnly false (displayAudienceTargetingSetting, which also restates the four
+// is bidOnly false (displayAdGroupTargetingSetting, which also restates the four
 // demographic defaults) — the AUDIENCE setting the human-built reference campaign carries
 // explicitly, and accepted with these criteria by a validateOnly probe on 2026-11-03. It
 // is SENT rather than left to a default because an ad group created without it was read

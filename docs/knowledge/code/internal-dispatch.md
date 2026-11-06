@@ -1153,6 +1153,12 @@ Display, with no budget sent. None of them silences the "NO geo targeting" warni
 audience narrows WHO and a placement exclusion WHERE ON THE WEB, and neither bounds the
 geography the campaign spends in.
 
+`displayDemographics` (#499) is `googleAdsDisplayDemographicsConfig`, copied list by list by
+`googleAdsDisplayDemographics`; it names no account resource, so no audience gate applies,
+and the client refuses it off Display. Its request shape is unprobed, so dispatch refuses any
+non-empty list first, on any channel, unless `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` is
+exactly `"true"`, the same gate as `observedDemographics`.
+
 `displayAdGroups` and `excludedAudienceSegments` (#475) pass through the same way:
 `googleAdsDisplayAdGroups` maps each group's name, its creative through the same
 `googleAdsDisplayCreative` mapper, its four audience lists and its own
@@ -1195,9 +1201,10 @@ default, that ops turns on by setting it to exactly `"true"` in lfx-v2-argocd; i
 role check below is deployed. The client checks the Audience against the connected Google Ads account (same
 customer id). That account is shared by every foundation, and `campaign_manager` includes
 foundation executive directors, so `BriefService.CreateCampaigns` also requires
-`global_marketing_ops` on the project for any audience (`service.GoogleAdsDemandGenAudienceRequested`;
-`TestDemandGenAudienceDetectionAgreesWithTheCreateGate` pins the two detections together). The
-flag sits in the adapter so it also covers callers that reach `Dispatch` directly.
+`global_marketing_ops` on the project for any audience (`service.GoogleAdsMarketingOpsInputs`;
+`TestSharedAccountInputDetectionAgreesWithTheCreateGate` pins the two detections together, for
+this gate and the three below). The flag sits in the adapter so it also covers callers that
+reach `Dispatch` directly.
 
 `demandGenDemographics` (#498, `googleAdsDemandGenDemographicsConfig`) is mapped verbatim onto
 `CampaignInput.DemandGenDemographics` (`googleAdsDemandGenDemographics`) once two gates pass:
@@ -1206,7 +1213,7 @@ any `demandGenDemographics` object, `{}` included, needs
 `audienceSegments` list (`googleAdsDemandGenDemographicSegmentsSet`), which names existing
 user lists, also needs `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED`. The create path counts those
 same lists as an audience for the `global_marketing_ops` check
-(`service.GoogleAdsDemandGenAudienceRequested`, pinned by the same agreement test);
+(`service.GoogleAdsMarketingOpsInputs`, pinned by the same agreement test);
 demographics without user lists are not part of it, since the Audience is new and holds only
 Google's demographic brackets.
 
@@ -1223,7 +1230,9 @@ account-owned whether it targets or excludes. `TestGoogleAds_DisplayAudienceExcl
 pins each of the five fields against unset, `""`, `"false"`, `"TRUE"` and `" true"`;
 `..._GateOpensOnExactlyTrue` and `..._GateLeavesUngatedGroupInputsAlone` pin the two open
 paths.
-Search's `audienceSegments` are observation-only and predate it, so they are not gated.
+Search's `audienceSegments` are observation-only and predate it, so they are not behind the
+flag; they still name the shared account's user lists, so the create path's role check covers
+them (campaign level and each `adGroups` entry).
 `userInterests` are not gated either, at the campaign level or on a group: they are Google's
 own affinity and in-market categories, the same ids on every account. `excludedPlacements` are not gated: they are public domains, not
 account resources, and they only narrow where the campaign appears. Both gates refuse through
@@ -1253,6 +1262,21 @@ EXISTING shared set, which the client checks against the connected Google Ads ac
 other three, the gate is a per-deployment opt-in. `searchAssets` is not gated: its images, logo and business name
 are the caller's own content, created as new assets. `TestGoogleAds_SharedNegativeListsGate`
 and `TestGoogleAds_SharedNegativeListsGateLeavesSearchAssetsAlone` pin both halves.
+
+The account each of these four flags' inputs is checked against is shared by every foundation,
+and `campaign_manager` includes foundation executive directors, so the flags alone are not an
+authorization boundary. `BriefService.CreateCampaigns` requires `global_marketing_ops` on the
+path project for every field the four gates detect, plus Search's `audienceSegments` and `conversionActions`
+(`service.GoogleAdsMarketingOpsInputs`, one check per request, 403 naming the fields, 503 when
+the check cannot be made). The service cannot import this package, so it decodes the same field
+names itself. `TestSharedAccountInputDetectionAgreesWithTheCreateGate` compares its field list,
+over a fixed corpus, with one built from `googleAdsDisplayAudienceFieldsSet` and the same
+conditions `Dispatch` uses for the other gates. `TestEveryGoogleAdsConfigFieldIsClassifiedForTheMarketingOpsGate`
+walks `googleAdsConfig` and its three ad-group entry types by reflection: every JSON field must be
+listed as gated or deliberately ungated, so a new field fails CI until it is classified, and each
+gated field sent alone must be named by both detections. `conversionActions` is gated as well (owner's
+decision, 2026-11-05): it names existing conversion actions on the shared account and no flag
+guards it, so on any channel it needs `global_marketing_ops` at create.
 
 The client enforces the channel rules inside its own preflight,
 before its first mutate, and `Dispatch` validates unconditionally (including on the adoption

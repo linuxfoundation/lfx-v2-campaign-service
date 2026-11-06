@@ -1764,8 +1764,9 @@ device, which Google rejects as a criterion conflict only after the campaign
 exists.
 
 The accepted device vocabulary is MOBILE, DESKTOP and TABLET (`deviceTypes`), plus
-CONNECTED_TV on Demand Gen alone (`demandGenDeviceTypes`, #474; see "Demand Gen
-parity" below). `OTHER` is absent because it is a reporting bucket rather than
+CONNECTED_TV on Demand Gen (`demandGenDeviceTypes`, #474; see "Demand Gen
+parity" below) and Performance Max (`performanceMaxDeviceCriterionIDs`, #500; see
+"Performance Max device exclusions" below). `OTHER` is absent because it is a reporting bucket rather than
 something a campaign bids on, and TV screens are absent elsewhere because Google
 documents that device only for Display and Video campaigns — a sentence the Demand Gen
 probe contradicts, since it accepted CONNECTED_TV there, so that documentation is not a
@@ -1828,8 +1829,9 @@ Performance Max (as the criteria-side arm reads) silently under-refused on three
 channels. A modifier of exactly `0` is NOT refused: that is the -100% opt-out, a device
 EXCLUSION is honoured under automated bidding, and refusing it would be the
 over-refusal these guards exist to avoid. The separate Performance Max arm in
-`campaign_criteria.go` stays, and is about the CHANNEL: Performance Max takes no device
-criteria at all, not even the exclusion, so it refuses the whole list.
+`campaign_criteria.go` stays, and is about the CHANNEL: Google refuses a non-zero device
+modifier on Performance Max outright (`OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE`), so
+that arm refuses it whatever the strategy and accepts only the 0 exclusion (#500).
 
 **Ad extensions (`assets.go`).** Sitelinks, callouts and structured snippets are
 created as account-level `assets:mutate` operations and then LINKED to the
@@ -1995,8 +1997,8 @@ and were not probed separately.
   parental-status criterion on a Search ad group with `OPERATION_NOT_PERMITTED_FOR_CONTEXT`.
   Demand Gen, Video and Performance Max refuse both. An entry carrying any non-ASCII rune is
   refused before it is upper-cased, because Unicode case folding maps the dotless `ı` onto
-  `I`. Positive targeting demographic criteria are not added; observation on Search is
-  `ObservedDemographics` (#497), below.
+  `I`. Observation on Search is `ObservedDemographics` (#497) and positive targeting on
+  Display is `DisplayDemographics` (#499), both below.
 - `ObservedDemographics` (#497, SEARCH ONLY) names whole dimensions — `AGE_RANGE`, `GENDER`,
   `INCOME_RANGE` — to observe on every Search ad group. `validateObservedDemographics`
   (`campaign_criteria.go`) resolves it after both exclusion plans into an
@@ -2007,6 +2009,18 @@ and were not probed separately.
   excluded, `PARENTAL_STATUS` (refused on a Search ad group upstream), any other value, and
   any non-Search channel are refused before the budget. Built from the v23 field names;
   not yet probed.
+- `DisplayDemographics` (#499, DISPLAY ONLY) is positive demographic TARGETING on every
+  Display ad group. `validateDisplayDemographics` (`campaign_criteria.go`) resolves its four
+  lists with the exclusion vocabularies into an `adGroupDemographicTargetingPlan`, after both
+  exclusion plans, and refuses a value both targeted and excluded (naming both fields) and any
+  non-Display channel. `displayAdGroupTargetingSetting` (`display_targeting.go`) restates the
+  four demographic dimensions as before, each `bidOnly: false` when targeted, and appends
+  `AUDIENCE` only when the group has audiences; with neither it returns nil, so the pre-#462
+  payload is unchanged. The positive criteria ride in the group's exclusion mutate, after the
+  exclusions (`adGroupCriteriaSet.targeted`), and their ids land in
+  `AdGroupResult.DemographicTargetingCriteriaIDs` and
+  `CampaignResult.AdGroupDemographicTargetingCriteriaIDs`. Built from the v23 field names;
+  not yet probed.
 
 On Search all of a group's criteria share ONE atomic `adGroupCriteria:mutate`:
 `createAdGroupTargeting` now takes an `adGroupCriteriaSet` and sends keywords, audiences,
@@ -2014,10 +2028,11 @@ negative keywords, the exclusions, then the observed demographics (#497), splitt
 index-aligned results back by kind (`AdGroupResult.ObservedDemographicCriteriaIDs`,
 `CampaignResult.AdGroupObservedDemographicCriteriaIDs`).
 Positive criteria keep `status: ENABLED`; negative ones carry `negative: true` and no status.
-Display calls the same function with only the exclusions, right after its ad group is
-created and before the images. The ids land in `AdGroupResult.NegativeKeywordCriteriaIDs` and
-`DemographicCriteriaIDs`, and in `CampaignResult.AdGroupDemographicCriteriaIDs` (the first
-group's on Search). A failure follows the partial-result contract, and a 5xx, transport
+Display calls the same function with the exclusions and its #499 demographic targeting,
+right after its ad group is created and before the images. The ids land in
+`AdGroupResult.NegativeKeywordCriteriaIDs`, `DemographicCriteriaIDs` and
+`DemographicTargetingCriteriaIDs`, and in `CampaignResult.AdGroupDemographicCriteriaIDs` and
+`AdGroupDemographicTargetingCriteriaIDs` (the first group's). A failure follows the partial-result contract, and a 5xx, transport
 error or short response is UNCONFIRMED.
 
 **Search campaign assets and shared negative keyword lists (#477).** The live KubeCon NA
@@ -2057,8 +2072,9 @@ before the budget mutate, and refused on every channel but Search.
   `CampaignResult.SharedNegativeKeywordListIDs`; a result that does not name
   `<campaignId>~<sharedSetId>` for the operation at its index is UNCONFIRMED and keeps the
   ids matched before it. That check holds each list to the connected Google Ads account
-  (same customer id), which is the boundary; per-foundation ownership (#468) was closed as
-  won't do. The dispatch adapter refuses any non-empty `sharedNegativeKeywordLists`, on any
+  (same customer id), which every foundation shares, so create-campaigns also requires
+  `global_marketing_ops` on the project for any shared list
+  (`service.GoogleAdsMarketingOpsInputs`). The dispatch adapter refuses any non-empty `sharedNegativeKeywordLists`, on any
   channel and before the budget, unless `GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED` is exactly
   `"true"`: a per-deployment opt-in the chart sets to `"false"`, turned on in lfx-v2-argocd.
   `searchAssets` names no account resource and is not gated.
@@ -2263,7 +2279,7 @@ resource under another customer — the `validateConversionActions` check, for t
 reason. The connected Google Ads account (same customer id) is the boundary that check
 enforces. That account is shared by every foundation and `campaign_manager` includes
 foundation executive directors, so create-campaigns also requires `global_marketing_ops` on
-the project for any Demand Gen audience. The dispatch adapter refuses the
+the project for any Demand Gen audience (`service.GoogleAdsMarketingOpsInputs`). The dispatch adapter refuses the
 field — and, since #460, every `demandGenAdGroups[].audience` — unless
 `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`: a per-deployment opt-in the
 chart sets to `"false"`, turned on in lfx-v2-argocd (still off everywhere).
@@ -2796,6 +2812,15 @@ which is a fact about every row. **Creating** a conversion action is deliberatel
 not offered: it is half a measurement setup, and one created without its site tag
 reports as configured while recording nothing.
 
+`audiences.go` is the audience-picker read (#496), also strictly read-only:
+`ListAudiences(kind)` is one GAQL search on `custom_audience`, `combined_audience`,
+`audience` (CUSTOMER scope) or `user_interest` (AFFINITY and IN_MARKET), usable entries
+only, bounded at `MaxAudienceScanRows` (10000; more fails the read). It returns resource
+name, id, name, Google's subtype, status (none for `user_interest`) and description,
+sorted by name ignoring case; a row outside this customer's collection is dropped. Served
+as `GET /projects/{project_id}/google-ads/audiences` (see the Google Ads Targeting Lookups
+architecture concept).
+
 
 ## Performance Max campaign creation (LFXV2-2665)
 
@@ -2858,6 +2883,30 @@ REFUSED here because Performance Max does not offer them. Geo is attached at CAM
 level, as on Search, which is why proximity stays allowed on this channel; of the
 Search-only fields, only the sitelink, callout and structured-snippet extensions below are
 accepted.
+
+**Performance Max device exclusions (#500).** Google creates four device rows on every
+Performance Max campaign itself, `negative: false`, with the fixed platform criterion ids
+Google publishes in the codes-and-formats "Platforms" table: DESKTOP `~30000`, MOBILE
+`~30001`, TABLET `~30002`, CONNECTED_TV `~30004` (`performanceMaxDeviceCriterionIDs`,
+pinned by `TestPerformanceMaxDeviceCriterionIDs_AreGooglesPlatformIDs`). A device is
+excluded by setting `bidModifier: 0` on its existing row, the way the account's own
+UI-built campaigns store it. So `DeviceBidModifiers` on this channel take `0` only, for
+those four devices: `createCampaignTargetingCriteria` sends each as an UPDATE of
+`customers/{cid}/campaignCriteria/{campaignId}~{id}` with `updateMask: bid_modifier`
+(`criteriaPlan.devicesUpdateExisting`), in the same atomic Step 4 `campaignCriteria:mutate`
+as the language and schedule creates, after the campaign exists because the rows do not
+exist before it. The result check also insists each update's result names the row the
+request named. Refused before the budget: any modifier but 0 (a probe saw Google refuse 1.2
+with `OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE`; 1, which Google accepted, adjusts nothing
+and gets its own message) and excluding all four devices (Google's `validateOnly` accepts it,
+but the campaign could not serve). A Step 4 failure returns the PAUSED campaign with the
+error, under the usual partial-result contract, and names the missing kind "device
+exclusion" because Google's rows exist either way. validateOnly
+probes on 2026-11-05 against a paused LFX campaign accepted each single update, all four
+in one request, and a create plus an update in one request, and refused bidModifier 1.2.
+The rows do not wait for an asset group: 24410310689, created by this service and
+never given one, carries all four. Not verified live: that they exist the instant
+`campaigns:mutate` returns (`change_event` does not log Google's own rows).
 
 **`urlExpansionOptOut` is GONE; the control it carried moved.** This shell used to send
 `urlExpansionOptOut: true` so the campaign served the final URL it was given rather than
@@ -2960,7 +3009,8 @@ with Demand Gen's `demandGenAudienceRE`), and a name in another account is refus
 pass `canonicalCampaignID` — positive, base-10, no leading zero — the rule #459 set for
 `DemandGenAudience`, and a value that is only whitespace is refused rather than read as
 absent, as a blank `DemandGenAudience` is. The connected Google Ads account is the boundary
-that check enforces; per-foundation ownership (#468) was closed as won't do. The dispatch
+that check enforces; it is shared by every foundation, so create-campaigns also requires
+`global_marketing_ops` on the project for a signal (`service.GoogleAdsMarketingOpsInputs`). The dispatch
 adapter refuses any non-empty `performanceMaxAudienceSignal` unless
 `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is exactly `"true"`: a per-deployment opt-in the
 chart sets to `"false"`. The search themes (free text) and the
@@ -3154,7 +3204,9 @@ AUDIENCE `bidOnly: false`, together with the four criteria, was accepted.
   client's account — the account check `validateAudienceSegments` does not make. Another
   customer's list is not expected to be accepted (not probed); any refusal would come at the
   criteria mutate, after the ad group exists. The connected Google Ads account is the boundary
-  the check enforces; per-foundation ownership (#468) was closed as won't do. The dispatch
+  the check enforces; it is shared by every foundation, so create-campaigns also requires
+  `global_marketing_ops` on the project for every gated list, and for Search
+  `audienceSegments` (`service.GoogleAdsMarketingOpsInputs`). The dispatch
   adapter refuses Display user lists,
   custom audiences and custom affinities — and since #475 the user-list exclusions and every
   `DisplayAdGroups` entry's lists but user interests — unless
@@ -3177,13 +3229,13 @@ AUDIENCE `bidOnly: false`, together with the four criteria, was accepted.
 - **Targeting, not observation.** When any audience list is supplied, the ad group is created
   with `targetingSetting.targetRestrictions` = AGE_RANGE, GENDER, PARENTAL_STATUS and
   INCOME_RANGE `bidOnly: true`, then AUDIENCE `bidOnly: false`
-  (`displayAudienceTargetingSetting`). The AUDIENCE entry is the setting the human-built
+  (`displayAdGroupTargetingSetting`, which since #499 also marks a targeted demographic dimension bidOnly false). The AUDIENCE entry is the setting the human-built
   reference campaign carries explicitly; Search's ad group sends `bidOnly: true` to observe
   instead. It is sent, not left to a default, because a read of LFX-created Display ad groups
   (no setting sent) found exactly those four demographic entries, `bidOnly: true`, and no
   AUDIENCE restriction, so the default is not established. The four are restated unchanged so
   the create keeps Google's demographic default rather than relying on how Google merges a
-  partial list. With no audience input the
+  partial list. With neither audiences nor demographic targeting (#499) the
   ad-group payload is byte-identical to the pre-#462 one. `optimizedTargetingEnabled` is not
   sent: optimized targeting is left at Google's default and may widen reach beyond the named
   segments (not checked).
@@ -3234,7 +3286,7 @@ Display ad group (`{adGroup, userList:{userList}, negative:true}`) and on the ca
 - **Cascade.** `fetchDisplayGroupImages` fetches every group's images in ONE `fetchSlotImages`
   walk before the budget, so the wall-clock budget and the 64 MiB total span the campaign, and
   re-indexes each image to its own creative's slot. After the campaign criteria, per group: the
-  ad group (with `displayAudienceTargetingSetting` only when THAT group has audiences), #473's
+  ad group (with `displayAdGroupTargetingSetting` only when THAT group has audiences or demographic targeting applies), #473's
   income and parental-status exclusions (the campaign's `ExcludedIncomeRanges` /
   `ExcludedParentalStatuses`, applied to every group since #480's rebase onto #478), its
   audience criteria, then its exclusions as one atomic `adGroupCriteria:mutate` of negative
@@ -3245,8 +3297,8 @@ Display ad group (`{adGroup, userList:{userList}, negative:true}`) and on the ca
   so every criteria step still runs before any ad. Why a second pass: the ad is the only step
   that makes the campaign servable, so the campaign-level exclusions must land before any ad —
   creating each group's ad with its group would leave group 1 servable with no exclusions
-  applied if a later criteria step failed. A group with exclusions but no audiences sends no
-  targetingSetting — not probed; the setting governs positive criteria only. `negative` is
+  applied if a later criteria step failed. A group with exclusions but no audiences and no
+  demographic targeting sends no targetingSetting — not probed; the setting governs positive criteria only. `negative` is
   sent explicitly and no status is sent on either exclusion payload. The context is checked
   between groups in both passes.
 - **Result.** With the list, `AdGroups` holds one entry per group, appended BEFORE its mutate

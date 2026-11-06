@@ -210,6 +210,10 @@ type Client struct {
 	// to the list-google-ads-conversion-actions endpoint.
 	ListGoogleAdsConversionActionsDoer goahttp.Doer
 
+	// ListGoogleAdsAudiences Doer is the HTTP client used to make requests to the
+	// list-google-ads-audiences endpoint.
+	ListGoogleAdsAudiencesDoer goahttp.Doer
+
 	// GetMetaAdsAudience Doer is the HTTP client used to make requests to the
 	// get-meta-ads-audience endpoint.
 	GetMetaAdsAudienceDoer goahttp.Doer
@@ -391,6 +395,7 @@ func NewClient(
 		SuggestGoogleAdsGeoTargetsDoer:     doer,
 		ListGoogleAdsUserListsDoer:         doer,
 		ListGoogleAdsConversionActionsDoer: doer,
+		ListGoogleAdsAudiencesDoer:         doer,
 		GetMetaAdsAudienceDoer:             doer,
 		GetTwitterAdsAudienceDoer:          doer,
 		GetLinkedinAdsAudienceDoer:         doer,
@@ -1580,6 +1585,30 @@ func (c *Client) ListGoogleAdsConversionActions() goa.Endpoint {
 		resp, err := c.ListGoogleAdsConversionActionsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-google-ads-conversion-actions", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListGoogleAdsAudiences returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service list-google-ads-audiences server.
+func (c *Client) ListGoogleAdsAudiences() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListGoogleAdsAudiencesRequest(c.encoder)
+		decodeResponse = DecodeListGoogleAdsAudiencesResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListGoogleAdsAudiencesRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListGoogleAdsAudiencesDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-google-ads-audiences", err)
 		}
 		return decodeResponse(resp)
 	}

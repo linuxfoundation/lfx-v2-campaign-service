@@ -77,8 +77,10 @@ type adGroupCriterionDemandGenCreate struct {
 // criteria mutate, after the budget, the campaign and the ad group exist. This is the
 // check validateConversionActions makes for conversion actions, for the same reason.
 //
-// The connected Google Ads account (same customer id) is the boundary this check enforces;
-// per-foundation ownership (#468) was closed as won't do. The dispatch adapter keeps the
+// The connected Google Ads account (same customer id) is the boundary this check enforces.
+// That account is shared by every foundation, so create-campaigns also requires
+// global_marketing_ops on the project for any audience (service.GoogleAdsMarketingOpsInputs).
+// The dispatch adapter keeps the
 // field, and every DemandGenAdGroup.Audience (#460), behind a per-deployment opt-in that is
 // off by default (GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED, see
 // dispatch.googleAdsDemandGenAudienceEnabled).

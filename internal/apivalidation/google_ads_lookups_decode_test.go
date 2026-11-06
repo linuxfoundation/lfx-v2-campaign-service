@@ -96,3 +96,59 @@ func TestConversionActionsRoute_IsGetOnly(t *testing.T) {
 		t.Errorf("project_id = %q, want cncf", p.ProjectID)
 	}
 }
+
+// decodeAudiences runs a real audiences request through the generated HTTP decoder. routed
+// reports whether the handler was reached at all for method.
+func decodeAudiences(t *testing.T, method string, query url.Values) (routed bool, typ string, q *string, err error) {
+	t.Helper()
+	mux := goahttp.NewMuxer()
+	var got *http.Request
+	connserver.MountListGoogleAdsAudiencesHandler(mux, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got = r }))
+	req := httptest.NewRequest(method, "/projects/cncf/google-ads/audiences?"+query.Encode(), nil)
+	req.Header.Set("Authorization", "Bearer t")
+	mux.ServeHTTP(httptest.NewRecorder(), req)
+	if got == nil {
+		return false, "", nil, nil
+	}
+	p, derr := connserver.DecodeListGoogleAdsAudiencesRequest(mux, goahttp.RequestDecoder)(got)
+	if derr != nil {
+		return true, "", nil, derr
+	}
+	if p.ProjectID != "cncf" {
+		t.Errorf("project_id = %q, want cncf", p.ProjectID)
+	}
+	return true, p.Type, p.Q, nil
+}
+
+// The audience picker (#496) is mounted for GET only, so no write method reaches it.
+func TestAudiencesRoute_IsGetOnly(t *testing.T) {
+	for _, m := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		if routed, _, _, _ := decodeAudiences(t, m, url.Values{"type": {"audience"}}); routed {
+			t.Errorf("%s was routed, want GET only", m)
+		}
+	}
+	routed, typ, q, err := decodeAudiences(t, http.MethodGet, url.Values{"type": {"user_interest"}, "q": {strings.Repeat("東", 100)}})
+	if !routed || err != nil || typ != "user_interest" || q == nil || len([]rune(*q)) != 100 {
+		t.Fatalf("routed=%v err=%v type=%q q=%v, want a within-contract request decoded", routed, err, typ, q)
+	}
+	if _, _, q, err = decodeAudiences(t, http.MethodGet, url.Values{"type": {"audience"}}); err != nil || q != nil {
+		t.Errorf("an omitted q must decode as absent: q=%v err=%v", q, err)
+	}
+}
+
+func TestAudiencesDecoder_RefusesWhatTheServiceWouldRefuse(t *testing.T) {
+	cases := map[string]url.Values{
+		"no type":         {},
+		"unknown type":    {"type": {"user_list"}},
+		"case-folded":     {"type": {"Audience"}},
+		"blank q":         {"type": {"audience"}, "q": {"   "}},
+		"101-character q": {"type": {"audience"}, "q": {strings.Repeat("東", 101)}},
+	}
+	for name, v := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, _, _, err := decodeAudiences(t, http.MethodGet, v); err == nil {
+				t.Error("decoder accepted a request the contract forbids")
+			}
+		})
+	}
+}

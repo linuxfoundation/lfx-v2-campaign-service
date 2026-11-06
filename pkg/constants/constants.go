@@ -150,9 +150,8 @@ const (
 	// in lfx-v2-argocd. The Audience is checked against the connected Google Ads account (same
 	// customer id). That account is shared by every foundation and campaign_manager includes
 	// foundation executive directors, so create-campaigns also requires global_marketing_ops on
-	// the project for any Demand Gen audience (service.GoogleAdsDemandGenAudienceRequested). The
-	// Display, Performance Max and shared-list flags have no such check yet and assumed
-	// campaign_manager was the LF marketing team; keep them off until they do.
+	// the project for any Demand Gen audience (service.GoogleAdsMarketingOpsInputs). The Display,
+	// Performance Max and shared-list flags below share that check.
 	EnvGoogleAdsDemandGenAudienceEnabled = "GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED"
 
 	// EnvGoogleAdsDisplayAudiencesEnabled opts a deployment IN to the Display audience lists
@@ -163,8 +162,10 @@ const (
 	//
 	// A per-deployment opt-in, off by default, like EnvGoogleAdsDemandGenAudienceEnabled: ops
 	// turns it on by setting it to exactly "true" in lfx-v2-argocd. Each segment is checked
-	// against the connected Google Ads account (same customer id), which is the boundary;
-	// per-foundation ownership (#468) was closed as won't do. userInterests (Google's own
+	// against the connected Google Ads account (same customer id). That account is shared by
+	// every foundation and campaign_manager includes foundation executive directors, so
+	// create-campaigns also requires global_marketing_ops on the project for any of these
+	// segments (service.GoogleAdsMarketingOpsInputs). userInterests (Google's own
 	// affinity and in-market categories) and excludedPlacements (public domains) name no
 	// account resource and are not gated.
 	EnvGoogleAdsDisplayAudiencesEnabled = "GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED"
@@ -177,8 +178,9 @@ const (
 	//
 	// A per-deployment opt-in, off by default, like EnvGoogleAdsDemandGenAudienceEnabled: ops
 	// turns it on by setting it to exactly "true" in lfx-v2-argocd. The Audience is checked
-	// against the connected Google Ads account (same customer id), which is the boundary;
-	// per-foundation ownership (#468) was closed as won't do. Search themes (free text) and the
+	// against the connected Google Ads account (same customer id), which every foundation
+	// shares, so create-campaigns also requires global_marketing_ops on the project for it
+	// (service.GoogleAdsMarketingOpsInputs). Search themes (free text) and the
 	// extensions (text and the campaign's own URLs) name no account resource and are not gated.
 	EnvGoogleAdsPMaxAudienceSignalEnabled = "GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED"
 
@@ -190,16 +192,17 @@ const (
 	//
 	// A per-deployment opt-in, off by default, like EnvGoogleAdsDemandGenAudienceEnabled: ops
 	// turns it on by setting it to exactly "true" in lfx-v2-argocd. Each shared set is checked
-	// against the connected Google Ads account (same customer id), which is the boundary;
-	// per-foundation ownership (#468) was closed as won't do. searchAssets (the caller's own
+	// against the connected Google Ads account (same customer id), which every foundation
+	// shares, so create-campaigns also requires global_marketing_ops on the project for any
+	// shared list (service.GoogleAdsMarketingOpsInputs). searchAssets (the caller's own
 	// images and text, created as new assets) names no account resource and is not gated.
 	EnvGoogleAdsSharedNegativeListsEnabled = "GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED"
 
 	// EnvGoogleAdsDemographicTargetingEnabled opts a deployment IN to the Google Ads demographic
 	// inputs not yet exercised by a live (persisted) create: googleAdsConfig.observedDemographics
-	// (#497, not yet probed at all) and googleAdsConfig.demandGenDemographics (#498, whose create
-	// body a validateOnly probe accepted on 2026-11-05, while a persisted create and the read-back
-	// its reuse-by-name relies on are not yet verified). Only the exact value "true" enables
+	// (#497), displayDemographics (#499) and googleAdsConfig.demandGenDemographics (#498, whose
+	// create body a validateOnly probe accepted on 2026-11-05, while a persisted create and the
+	// read-back its reuse-by-name relies on are not yet verified). Only the exact value "true" enables
 	// it; unset or any other value fails closed, and a create naming one is refused before
 	// anything upstream exists.
 	//

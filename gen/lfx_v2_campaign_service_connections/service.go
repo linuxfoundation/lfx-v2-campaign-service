@@ -200,6 +200,30 @@ type Service interface {
 	// endpoint publishes. A pure read: the only upstream call is googleAds:search,
 	// and nothing is persisted.
 	ListGoogleAdsConversionActions(context.Context, *ListGoogleAdsConversionActionsPayload) (res *GoogleAdsConversionActions, err error)
+	// List the custom audiences, combined audiences, Audience resources or user
+	// interests (one type per call) on the Google Ads customer a Google create for
+	// this project uses, live from GAQL on custom_audience, combined_audience,
+	// audience or user_interest, for the audience pickers (#496). Only usable
+	// entries are listed: custom_audience, combined_audience and audience with
+	// status ENABLED; audience additionally with scope CUSTOMER (an
+	// ASSET_GROUP-scoped Audience belongs to one asset group); user_interest
+	// restricted to the AFFINITY and IN_MARKET taxonomies. q keeps entries whose
+	// name contains it, ignoring case. Sorted by name, capped at 500 after the q
+	// filter, with `truncated` set when more matched; the AFFINITY and IN_MARKET
+	// taxonomy is about a thousand entries, more than the cap, so a picker should
+	// search it with q; the user_interest list is cached for 6 hours per account,
+	// so repeated searches do not reach Google. More than 10000 entries of one
+	// type on the customer fails the read with 503. Credentials resolve as for a
+	// create: the project's own connection, or the shared LF system credential
+	// when it has none (or when the deployment forces the LF account). The Google
+	// Ads customer is shared by every foundation, so the response lists EVERY
+	// foundation's audiences, not only this project's; like
+	// list-google-ads-conversion-actions it is therefore gated on
+	// global_marketing_ops of {project_id} (the LF marketing team), not
+	// campaign_manager, which also admits a foundation's executive director. A
+	// pure read: the only upstream call is googleAds:search, and nothing is
+	// persisted.
+	ListGoogleAdsAudiences(context.Context, *ListGoogleAdsAudiencesPayload) (res *GoogleAdsAudienceResources, err error)
 	// Read Meta audience insights — age and gender (one combined breakdown) and
 	// placement (publisher_platform and platform_position) — for this project's
 	// own campaigns, live from the Meta Marketing API Insights edge of the
@@ -722,7 +746,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [76]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
+var MethodNames = [77]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -1347,6 +1371,50 @@ type GoogleAdsAudienceBucket struct {
 	Conversions float64
 }
 
+type GoogleAdsAudienceResource struct {
+	// customers/{customerId}/{customAudiences|combinedAudiences|audiences|userInterests}/{id},
+	// in exactly the form the create inputs accept: a custom_audience in
+	// googleAdsConfig.customAudiences (Display), an audience in demandGenAudience
+	// or performanceMaxAudienceSignal, a user_interest in userInterests (Display).
+	// No create input accepts a combined_audience today. The customer is the
+	// account a Google create for this project uses.
+	ResourceName string
+	// The entry's numeric id (user_interest_id for a user_interest)
+	ID string
+	// The entry's display name. Not an identifier.
+	Name string
+	// The kind that was read, echoing the type parameter
+	Type string
+	// Google's own classification, verbatim: custom_audience.type (AUTO, INTEREST,
+	// PURCHASE_INTENT, SEARCH) or user_interest.taxonomy_type (AFFINITY,
+	// IN_MARKET). Absent for combined_audience and audience, which have none.
+	Subtype *string
+	// Always ENABLED for custom_audience, combined_audience and audience: only
+	// enabled entries are listed. Absent for user_interest, which has no status in
+	// Google Ads.
+	Status *string
+	// The entry's description. Absent when Google sent none, and always for
+	// user_interest.
+	Description *string
+}
+
+// GoogleAdsAudienceResources is the result type of the
+// lfx-v2-campaign-service-connections service list-google-ads-audiences method.
+type GoogleAdsAudienceResources struct {
+	// The Google Ads customer the entries were read from: the account a Google
+	// create for this project uses
+	AccountID string
+	// The kind that was read
+	Type string
+	// Matching entries sorted by name (ignoring case), capped at 500 (see
+	// `truncated`)
+	Audiences []*GoogleAdsAudienceResource
+	// How many entries are in `audiences`
+	AudienceCount int
+	// True when more entries matched than were returned; narrow the search with q
+	Truncated bool
+}
+
 // GoogleAdsConnection is the result type of the
 // lfx-v2-campaign-service-connections service create-google-ads method.
 type GoogleAdsConnection struct {
@@ -1897,6 +1965,19 @@ type ListGoogleAdsAccountsPayload struct {
 // lfx-v2-campaign-service-connections service list-google-ads-accounts method.
 type ListGoogleAdsAccountsResult struct {
 	Accounts []*AccessibleAccount
+}
+
+// ListGoogleAdsAudiencesPayload is the payload type of the
+// lfx-v2-campaign-service-connections service list-google-ads-audiences method.
+type ListGoogleAdsAudiencesPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Which kind to list
+	Type string
+	// Optional case-insensitive name substring to keep
+	Q *string
 }
 
 // ListGoogleAdsConversionActionsPayload is the payload type of the

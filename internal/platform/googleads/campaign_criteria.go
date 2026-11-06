@@ -143,8 +143,9 @@ var adScheduleMinutes = map[int]string{
 	0: "ZERO", 15: "FIFTEEN", 30: "THIRTY", 45: "FORTY_FIVE",
 }
 
-// deviceTypes is the Device enum this client accepts on every channel but Demand Gen,
-// which takes demandGenDeviceTypes. Two of Google's values are absent here, for
+// deviceTypes is the Device enum this client accepts on every channel but Demand Gen and
+// Performance Max, which take demandGenDeviceTypes and performanceMaxDeviceTypes. Two of
+// Google's values are absent here, for
 // different reasons.
 //
 // OTHER is a reporting bucket rather than something a campaign bids on.
@@ -172,10 +173,11 @@ var adScheduleMinutes = map[int]string{
 // Closing it means running that validateOnly campaignCriteria:mutate for CONNECTED_TV
 // on a non-production DISPLAY and VIDEO campaign and admitting the device here for
 // those kinds alone — Search, which Google does not support it on, keeps refusing it.
-// Demand Gen is the one channel where that probe HAS been run (#474), and it contradicts
-// the quote above: Google accepted a CONNECTED_TV criterion on a Demand Gen campaign,
-// which the "Display and Video campaigns only" sentence says it would not. So that
-// documentation is not a reliable boundary in either direction; see demandGenDeviceTypes.
+// Demand Gen (#474) and Performance Max (#500) are the channels where that probe HAS been
+// run, and both contradict the quote above: Google accepted a CONNECTED_TV exclusion on
+// each, which the "Display and Video campaigns only" sentence says it would not. So that
+// documentation is not a reliable boundary in either direction; see demandGenDeviceTypes
+// and performanceMaxDeviceCriterionIDs.
 //
 // A device list is capped at len() of its channel's vocabulary: a longer list must
 // contain a duplicate, which Google rejects with a criterion conflict AFTER the
@@ -193,10 +195,43 @@ var demandGenDeviceTypes = map[string]struct{}{
 	"MOBILE": {}, "DESKTOP": {}, "TABLET": {}, "CONNECTED_TV": {},
 }
 
+// performanceMaxDeviceCriterionIDs is Performance Max's device vocabulary (#500), keyed
+// by Device enum to the criterion id of the row Google itself creates on every
+// Performance Max campaign. The ids are Google's fixed platform criterion ids, published
+// in the "Platforms" table of the Google Ads API codes and formats reference
+// (https://developers.google.com/google-ads/api/data/codes-formats#platforms): Desktop
+// 30000, HighEndMobile 30001, Tablet 30002, ConnectedTv 30004. A read-only query of
+// account 8666746580 on 2026-11-05 found exactly those four rows, `negative: false`, on
+// every Performance Max campaign, LFX-created ones included, and found device exclusions
+// stored as `bidModifier: 0` on them. That includes 24410310689, which this service
+// created through the API and which has no asset group, so the rows do not wait for one:
+// Step 4 runs before the asset group and still finds them.
+//
+// So on this channel a device entry does not CREATE a criterion: it UPDATES the row
+// `{campaignId}~{id}` with updateMask bid_modifier (createCampaignTargetingCriteria).
+// validateOnly probes on 2026-11-05 accepted that update with bidModifier 0 for each of
+// the four rows, singly, all four in one request, and alongside an ad-schedule create in
+// one request, and refused bidModifier 1.2 with OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE.
+var performanceMaxDeviceCriterionIDs = map[string]string{
+	"DESKTOP": "30000", "MOBILE": "30001", "TABLET": "30002", "CONNECTED_TV": "30004",
+}
+
+// performanceMaxDeviceTypes is the vocabulary view of performanceMaxDeviceCriterionIDs.
+var performanceMaxDeviceTypes = func() map[string]struct{} {
+	out := make(map[string]struct{}, len(performanceMaxDeviceCriterionIDs))
+	for device := range performanceMaxDeviceCriterionIDs {
+		out[device] = struct{}{}
+	}
+	return out
+}()
+
 // deviceTypesFor is the device vocabulary for a campaign kind.
 func deviceTypesFor(kind string) map[string]struct{} {
-	if kind == campaignKindDemandGen {
+	switch kind {
+	case campaignKindDemandGen:
 		return demandGenDeviceTypes
+	case campaignKindPerformanceMax:
+		return performanceMaxDeviceTypes
 	}
 	return deviceTypes
 }
@@ -295,8 +330,12 @@ type criteriaPlan struct {
 	scheduleMod []*float64
 	devices     []deviceInfo
 	deviceMod   []float64
-	ageRanges   []ageRangeInfo
-	genders     []genderInfo
+	// devicesUpdateExisting says the devices are sent as UPDATES of the device rows
+	// Google already created on the campaign, rather than as new criteria. Set for
+	// Performance Max alone (#500); see performanceMaxDeviceCriterionIDs.
+	devicesUpdateExisting bool
+	ageRanges             []ageRangeInfo
+	genders               []genderInfo
 }
 
 func (p criteriaPlan) empty() bool { return p.count() == 0 }
@@ -350,14 +389,24 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 	// Performance Max, so refusing a language there would be the over-refusal these
 	// guards exist to avoid — it would reject a campaign Google creates happily.
 	//
-	// Device BID MODIFIERS and campaign-level demographic exclusions are the half that
-	// is genuinely absent: Performance Max sets no device bid adjustments (the
-	// automated strategy owns the bid entirely), and this client attaches no demographic
-	// exclusion there. Demographics can reach Performance Max as dimensions of an
-	// Audience used as an asset group signal (#461), but a signal is a hint and not an
-	// exclusion, so it is no substitute. Both are refused, not dropped, so an operator
-	// never reads "campaign created" while an exclusion they asked for is nowhere
-	// upstream.
+	// DEVICES are taken in one shape only, the exclusion (#500). Google creates the four
+	// device rows on every Performance Max campaign itself, and the exclusion is a
+	// bidModifier of 0 on the existing row; see performanceMaxDeviceCriterionIDs for the
+	// ids and the probes. Any other modifier is refused here. A real adjustment is one
+	// Google refuses (a validateOnly probe refused 1.2 with
+	// OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE), and that refusal would land at the criteria
+	// mutate, after the budget and campaign exist. A 1, which Google accepted, adjusts
+	// nothing, so it is refused with its own reason rather than sent as a no-op. Excluding all four is refused too: Google's validateOnly accepted
+	// it, but a campaign excluded from every device cannot serve anywhere, and nobody
+	// building a paid campaign means that.
+	//
+	// Campaign-level demographic exclusions are the half that is genuinely absent: this
+	// client attaches no demographic exclusion on Performance Max. Demographics can reach
+	// it as dimensions of an Audience used as an asset group signal (#461), but a signal
+	// is a hint and not an exclusion, so it is no substitute. They are refused, not
+	// dropped, so an operator never reads "campaign created" while an exclusion they asked
+	// for is nowhere upstream.
+	//
 	// Video and Display both take the UN-NARROWED set — every one of the five kinds,
 	// exactly as Search does — and that is why the Demand Gen arm above names one channel
 	// rather than every non-Search one. A VIDEO or DISPLAY campaign carries LANGUAGE,
@@ -366,16 +415,25 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 	// their criteria step, so nothing accepted here is dropped. Widening the Demand Gen
 	// refusals to `!= Search` would have refused a campaign Google creates happily — the
 	// over-refusal these guards exist to avoid.
-	// This arm is about the CHANNEL, not about automated bidding — Performance Max takes
-	// no device criteria at all, not even the 0 exclusion, so it refuses the whole list.
-	// The adjustment-is-ignored-under-automated-bidding rule is a different rule with a
-	// different shape, it applies to Video, Display and an automated Search campaign too,
-	// and it lives in validateBiddingPlan where the strategy is actually known. Do not
-	// fold one into the other: widening this one to every automated channel would refuse
-	// device EXCLUSIONS that Google honours.
+	//
+	// The non-zero device refusal here is about the CHANNEL: Google refuses the operation
+	// on Performance Max whatever the strategy. The adjustment-is-ignored-under-automated-
+	// bidding rule is a different rule with a different shape, it applies to Video, Display
+	// and an automated Search campaign too, and it lives in validateBiddingPlan where the
+	// strategy is actually known. Do not fold one into the other.
 	if kind == campaignKindPerformanceMax {
-		if len(in.DeviceBidModifiers) > 0 {
-			return criteriaPlan{}, fmt.Errorf("google-ads: device bid modifiers are not supported on %s (its automated bidding owns the bid and sets no device adjustment); omit DeviceBidModifiers, or create a Search campaign to bid by device", kind)
+		excluded := make(map[string]struct{}, len(in.DeviceBidModifiers))
+		for i, d := range in.DeviceBidModifiers {
+			if d.BidModifier == 1 {
+				return criteriaPlan{}, fmt.Errorf("google-ads: device bid modifier %d is 1, which adjusts nothing, and %s takes only the device exclusion; omit the entry to leave the device as it is, or set it to 0 to exclude the device", i, kind)
+			}
+			if d.BidModifier != 0 {
+				return criteriaPlan{}, fmt.Errorf("google-ads: device bid modifier %d adjusts the bid by %v, which Google refuses on %s (OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE: Performance Max takes only the device exclusion); set it to 0 to exclude the device, or omit it", i, d.BidModifier, kind)
+			}
+			excluded[strings.ToUpper(strings.TrimSpace(d.Device))] = struct{}{}
+		}
+		if allPerformanceMaxDevicesExcluded(excluded) {
+			return criteriaPlan{}, fmt.Errorf("google-ads: device bid modifiers exclude every device (DESKTOP, MOBILE, TABLET and CONNECTED_TV) on %s, so the campaign could not serve anywhere; keep at least one device unexcluded", kind)
 		}
 		if len(in.ExcludedAgeRanges)+len(in.ExcludedGenders) > 0 {
 			return criteriaPlan{}, fmt.Errorf("google-ads: campaign-level demographic exclusions are not supported on %s (this client attaches no demographic exclusion there; an audience signal can carry demographics, but as a hint, not an exclusion); omit ExcludedAgeRanges and ExcludedGenders, or create a Search campaign to exclude demographics", kind)
@@ -403,6 +461,7 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 		return criteriaPlan{}, err
 	}
 	plan.devices, plan.deviceMod = devices, deviceMods
+	plan.devicesUpdateExisting = kind == campaignKindPerformanceMax && len(devices) > 0
 
 	ageRanges, err := validateExcludedAgeRanges(in.ExcludedAgeRanges)
 	if err != nil {
@@ -615,6 +674,18 @@ func sameBidModifier(a, b *float64) bool {
 	}
 }
 
+// allPerformanceMaxDevicesExcluded reports whether excluded names every device in
+// Performance Max's vocabulary. Entries outside it are ignored here: the vocabulary check
+// in validateDeviceBidModifiers refuses them with its own message.
+func allPerformanceMaxDevicesExcluded(excluded map[string]struct{}) bool {
+	for device := range performanceMaxDeviceCriterionIDs {
+		if _, ok := excluded[device]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // validateDeviceBidModifiers bounds the device list against the kind's vocabulary,
 // refusing a duplicate device: two criteria for the same device are a conflict Google
 // rejects AFTER the campaign exists, and the caller plainly meant one of the two values.
@@ -632,10 +703,10 @@ func validateDeviceBidModifiers(kind string, devices []DeviceBidModifier) ([]dev
 	for i, d := range devices {
 		device := strings.ToUpper(strings.TrimSpace(d.Device))
 		if _, ok := vocabulary[device]; !ok {
-			if kind == campaignKindDemandGen {
+			if kind == campaignKindDemandGen || kind == campaignKindPerformanceMax {
 				return nil, nil, fmt.Errorf("google-ads: device bid modifier %d device %q must be one of MOBILE, DESKTOP, TABLET, CONNECTED_TV on %s", i, d.Device, kind)
 			}
-			return nil, nil, fmt.Errorf("google-ads: device bid modifier %d device %q must be one of MOBILE, DESKTOP, TABLET on %s (this client sends CONNECTED_TV on Demand Gen only, the one channel where it has verified the device — see deviceTypes)", i, d.Device, kind)
+			return nil, nil, fmt.Errorf("google-ads: device bid modifier %d device %q must be one of MOBILE, DESKTOP, TABLET on %s (this client sends CONNECTED_TV on Demand Gen and Performance Max only, the channels where it has verified the device — see deviceTypes)", i, d.Device, kind)
 		}
 		if _, dup := seen[device]; dup {
 			return nil, nil, fmt.Errorf("google-ads: device %s appears more than once in the device bid modifiers — Google accepts one criterion per device, and the second value would be the one silently dropped", device)
@@ -688,7 +759,8 @@ func validateBidModifier(noun string, modifier float64, allowZero bool) error {
 // Exclusion-only is Google's shape, not a narrowing: campaign-level demographic
 // criteria are negative. Positive demographic criteria live on the ad group, where
 // this client sends them only for an observed Search dimension (ObservedDemographics,
-// #497), so a field named "ExcludedAgeRanges" cannot be mistaken for one that targets.
+// #497) and as Display targeting (DisplayDemographics, #499), so a field named
+// "ExcludedAgeRanges" cannot be mistaken for one that targets.
 func validateExcludedAgeRanges(ageRanges []string) ([]ageRangeInfo, error) {
 	if len(ageRanges) == 0 {
 		return nil, nil
@@ -1017,6 +1089,165 @@ func observedAllExcluded(dim, field string) error {
 	return fmt.Errorf("google-ads: observed demographic %s has every value excluded by %s, so there is nothing left to observe; drop %s from ObservedDemographics or exclude fewer values", dim, field, dim)
 }
 
+// DisplayDemographics is positive demographic TARGETING for a Display campaign (#499): each
+// non-empty list restricts every Display ad group to the values it names. The vocabulary is
+// the exclusion fields' own — ExcludedAgeRanges for ages, ExcludedGenders for genders,
+// ExcludedIncomeRanges for incomes, ExcludedParentalStatuses for parental status.
+type DisplayDemographics struct {
+	AgeRanges        []string
+	Genders          []string
+	IncomeRanges     []string
+	ParentalStatuses []string
+}
+
+func (d DisplayDemographics) empty() bool {
+	return len(d.AgeRanges)+len(d.Genders)+len(d.IncomeRanges)+len(d.ParentalStatuses) == 0
+}
+
+// genderTypeNames is genderTypes in the map[string]string form validateEnumExclusions takes,
+// built from it so targeting and exclusion can never accept different genders.
+var genderTypeNames = func() map[string]string {
+	m := make(map[string]string, len(genderTypes))
+	for g := range genderTypes {
+		m[g] = g
+	}
+	return m
+}()
+
+// adGroupDemographicTargetingPlan is the resolved DisplayDemographics intent (#499): one
+// POSITIVE, ENABLED ad-group criterion per targeted value. A dimension with any value here is
+// declared bidOnly false in the ad group's targetingSetting, so its criteria restrict reach;
+// see displayAdGroupTargetingSetting.
+type adGroupDemographicTargetingPlan struct {
+	ageRanges        []ageRangeInfo
+	genders          []genderInfo
+	incomeRanges     []incomeRangeInfo
+	parentalStatuses []parentalStatusInfo
+}
+
+func (p adGroupDemographicTargetingPlan) count() int {
+	return len(p.ageRanges) + len(p.genders) + len(p.incomeRanges) + len(p.parentalStatuses)
+}
+
+// targets reports whether the plan restricts the given TargetingDimension.
+func (p adGroupDemographicTargetingPlan) targets(dimension string) bool {
+	switch dimension {
+	case targetingDimensionAgeRange:
+		return len(p.ageRanges) > 0
+	case targetingDimensionGender:
+		return len(p.genders) > 0
+	case targetingDimensionIncomeRange:
+		return len(p.incomeRanges) > 0
+	case targetingDimensionParentalStatus:
+		return len(p.parentalStatuses) > 0
+	}
+	return false
+}
+
+// validateDisplayDemographics resolves CampaignInput.DisplayDemographics for the given KIND,
+// against the exclusions already resolved, so a refusal costs nothing upstream.
+//
+// DISPLAY ONLY. Search observes demographics rather than targeting them, Demand Gen takes
+// them inside its Audience, and Video and Performance Max do not take ad-group demographic
+// criteria from this client.
+//
+// The same value both targeted and excluded is REFUSED, naming both fields: the intent is
+// contradictory, whatever Google would do with the pair (not probed).
+// Excluding a different value of a targeted dimension is accepted. It is redundant, since the
+// targeting already leaves that value out, but it does not contradict anything.
+func validateDisplayDemographics(kind string, in DisplayDemographics, campaign criteriaPlan, adGroup adGroupDemographicPlan) (adGroupDemographicTargetingPlan, error) {
+	if in.empty() {
+		return adGroupDemographicTargetingPlan{}, nil
+	}
+	if kind != campaignKindDisplay {
+		return adGroupDemographicTargetingPlan{}, fmt.Errorf("google-ads: display demographic targeting is not supported on %s (this client targets demographics on the Display ad group only); omit DisplayDemographics, or create a Display campaign to target demographics", kind)
+	}
+	ages, err := validateEnumExclusions("targeted age range", "targeted age ranges", in.AgeRanges, ageRangeTypes,
+		"18-24, 25-34, 35-44, 45-54, 55-64, 65+ or UNDETERMINED (Google's AGE_RANGE_* enum names are accepted too)")
+	if err != nil {
+		return adGroupDemographicTargetingPlan{}, err
+	}
+	genders, err := validateEnumExclusions("targeted gender", "targeted genders", in.Genders, genderTypeNames, "MALE, FEMALE or UNDETERMINED")
+	if err != nil {
+		return adGroupDemographicTargetingPlan{}, err
+	}
+	incomes, err := validateEnumExclusions("targeted income range", "targeted income ranges", in.IncomeRanges, incomeRangeTypes,
+		"INCOME_RANGE_0_50, INCOME_RANGE_50_60, INCOME_RANGE_60_70, INCOME_RANGE_70_80, INCOME_RANGE_80_90, INCOME_RANGE_90_UP or UNDETERMINED")
+	if err != nil {
+		return adGroupDemographicTargetingPlan{}, err
+	}
+	parents, err := validateEnumExclusions("targeted parental status", "targeted parental statuses", in.ParentalStatuses, parentalStatusTypes, "PARENT, NOT_A_PARENT or UNDETERMINED")
+	if err != nil {
+		return adGroupDemographicTargetingPlan{}, err
+	}
+
+	var plan adGroupDemographicTargetingPlan
+	excluded := make(map[string]struct{})
+	for _, a := range campaign.ageRanges {
+		excluded[a.Type] = struct{}{}
+	}
+	for _, t := range ages {
+		if _, both := excluded[t]; both {
+			return adGroupDemographicTargetingPlan{}, targetedAndExcluded(t, "DisplayDemographics.AgeRanges", "ExcludedAgeRanges")
+		}
+		plan.ageRanges = append(plan.ageRanges, ageRangeInfo{Type: t})
+	}
+	excluded = make(map[string]struct{})
+	for _, g := range campaign.genders {
+		excluded[g.Type] = struct{}{}
+	}
+	for _, t := range genders {
+		if _, both := excluded[t]; both {
+			return adGroupDemographicTargetingPlan{}, targetedAndExcluded(t, "DisplayDemographics.Genders", "ExcludedGenders")
+		}
+		plan.genders = append(plan.genders, genderInfo{Type: t})
+	}
+	excluded = make(map[string]struct{})
+	for _, r := range adGroup.incomeRanges {
+		excluded[r.Type] = struct{}{}
+	}
+	for _, t := range incomes {
+		if _, both := excluded[t]; both {
+			return adGroupDemographicTargetingPlan{}, targetedAndExcluded(t, "DisplayDemographics.IncomeRanges", "ExcludedIncomeRanges")
+		}
+		plan.incomeRanges = append(plan.incomeRanges, incomeRangeInfo{Type: t})
+	}
+	excluded = make(map[string]struct{})
+	for _, s := range adGroup.parentalStatuses {
+		excluded[s.Type] = struct{}{}
+	}
+	for _, t := range parents {
+		if _, both := excluded[t]; both {
+			return adGroupDemographicTargetingPlan{}, targetedAndExcluded(t, "DisplayDemographics.ParentalStatuses", "ExcludedParentalStatuses")
+		}
+		plan.parentalStatuses = append(plan.parentalStatuses, parentalStatusInfo{Type: t})
+	}
+	return plan, nil
+}
+
+// targetedAndExcluded refuses one value named in a target list and its exclusion list.
+func targetedAndExcluded(value, targetField, excludeField string) error {
+	return fmt.Errorf("google-ads: %s is both targeted (%s) and excluded (%s); a value cannot be both, so remove it from one of the two", value, targetField, excludeField)
+}
+
+// displayDemographicTargetingStep names the targeted parts of the plan for the step list.
+func displayDemographicTargetingStep(plan adGroupDemographicTargetingPlan) string {
+	parts := make([]string, 0, 4)
+	if n := len(plan.ageRanges); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d age range(s)", n))
+	}
+	if n := len(plan.genders); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d gender(s)", n))
+	}
+	if n := len(plan.incomeRanges); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d income range(s)", n))
+	}
+	if n := len(plan.parentalStatuses); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d parental status(es)", n))
+	}
+	return strings.Join(parts, "; ")
+}
+
 // adGroupDemographicStep names the requested parts of the plan for the step list, as
 // criteriaStep does for the campaign-level set.
 func adGroupDemographicStep(plan adGroupDemographicPlan) string {
@@ -1067,7 +1298,13 @@ func criteriaFailureKinds(plan criteriaPlan) (kinds, exposure string) {
 		k, e = append(k, "schedule"), append(e, "around the clock")
 	}
 	if len(plan.devices) > 0 {
-		k, e = append(k, "device"), append(e, "on every device")
+		// On Performance Max the device rows exist whatever happens here (Google creates
+		// them), so what is missing after a failure is the exclusion, not the criterion.
+		label := "device"
+		if plan.devicesUpdateExisting {
+			label = "device exclusion"
+		}
+		k, e = append(k, label), append(e, "on every device")
 	}
 	if len(plan.ageRanges)+len(plan.genders) > 0 {
 		k, e = append(k, "demographic"), append(e, "to the demographics it was told to exclude")
@@ -1078,11 +1315,26 @@ func criteriaFailureKinds(plan criteriaPlan) (kinds, exposure string) {
 	return strings.Join(k, ""), strings.Join(e, "")
 }
 
+// campaignCriterionBidModifierUpdate is the update payload that sets the bid modifier of
+// an EXISTING campaign criterion, sent with updateMask bid_modifier. Performance Max's
+// device exclusions use it (#500). BidModifier is a pointer WITHOUT omitempty: the value
+// sent is the 0 exclusion, and a dropped field under a bid_modifier mask would clear the
+// modifier rather than set it.
+type campaignCriterionBidModifierUpdate struct {
+	ResourceName string   `json:"resourceName"`
+	BidModifier  *float64 `json:"bidModifier"`
+}
+
 // createCampaignTargetingCriteria attaches the campaign-level criteria in plan —
 // language, ad schedule, device and demographic — to a just-created campaign as a single
 // campaignCriteria:mutate. Search, Display, Video and Performance Max send what their
 // preflight admitted; Demand Gen sends only its ad schedules and devices (#474), its
-// languages going on the ad group. The failure text names only the kinds in plan
+// languages going on the ad group. On Performance Max the devices are UPDATES of the rows
+// Google created with the campaign (#500), in the same batch as the creates — a
+// validateOnly probe on 2026-11-05 accepted a create and a device update together in one
+// campaignCriteria:mutate — so the one-batch rule below holds for them too, and their ids
+// in the result are Google's fixed platform ids (30000…30004), not ids this call created.
+// The failure text names only the kinds in plan
 // (criteriaFailureKinds), so it never claims a criterion this call was not sending.
 //
 // ONE BATCH, and it must be. The four kinds are not independent settings that
@@ -1124,10 +1376,26 @@ func (c *Client) createCampaignTargetingCriteria(ctx context.Context, campaignRe
 			BidModifier: plan.scheduleMod[i],
 		}})
 	}
+	// updated is the resource name each device UPDATE names, by operation index, so the
+	// result check below can insist Google answered for the row this request named.
+	updated := make(map[int]string, len(plan.devices))
 	for i := range plan.devices {
 		// Taken by address so the zero opt-out is sent as an explicit 0 rather than
 		// omitted — see campaignCriterionCreate.BidModifier.
 		modifier := plan.deviceMod[i]
+		if plan.devicesUpdateExisting {
+			// Performance Max (#500): the device row already exists — Google creates all
+			// four with the campaign — so the exclusion is an update of that row, not a
+			// new criterion. The preflight admitted only devices with a criterion id, so
+			// the lookup cannot miss.
+			name := fmt.Sprintf("customers/%s/campaignCriteria/%s~%s", c.account.CustomerID, campaignID, performanceMaxDeviceCriterionIDs[plan.devices[i].Type])
+			updated[len(ops)] = name
+			ops = append(ops, mutateOperation{
+				Update:     campaignCriterionBidModifierUpdate{ResourceName: name, BidModifier: &modifier},
+				UpdateMask: "bid_modifier",
+			})
+			continue
+		}
 		ops = append(ops, mutateOperation{Create: campaignCriterionCreate{
 			Campaign:    campaignResource,
 			Device:      &plan.devices[i],
@@ -1174,6 +1442,9 @@ func (c *Client) createCampaignTargetingCriteria(ctx context.Context, campaignRe
 		}
 		if returnedCampaignID != campaignID {
 			return nil, fmt.Errorf("google-ads campaign targeting criteria UNCONFIRMED (campaign %s; campaignCriterion resource name %q reports a different campaign id %q — verify in Google Ads before retrying)", campaignID, r.ResourceName, returnedCampaignID)
+		}
+		if want, ok := updated[i]; ok && r.ResourceName != want {
+			return nil, fmt.Errorf("google-ads campaign targeting criteria UNCONFIRMED (campaign %s; the device update at index %d named %q but Google answered for %q — verify in Google Ads before retrying)", campaignID, i, want, r.ResourceName)
 		}
 		if dup := seen.repeat(critID, i); dup != "" {
 			return nil, fmt.Errorf("google-ads campaign targeting criteria UNCONFIRMED "+
