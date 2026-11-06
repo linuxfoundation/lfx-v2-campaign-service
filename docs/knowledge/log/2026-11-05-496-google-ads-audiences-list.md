@@ -14,6 +14,8 @@ instead of making an operator paste resource names.
 - `GoogleAdsDispatcher.ListAudiences` resolves the way `ListConversionActions` does. The shared
   resolution is now `createAccountClient`: the project's own connection, the LF fallback, and
   the forced-system redirect.
+- An explicit `?q=` is refused with the decoder's 400 rather than decoded as an omitted q
+  (`refuseEmptyQueryParam`, wired in `buildMux`; generated code is not edited).
 - The service validates `type` and `q`, filters by name ignoring case, then caps at 500 with
   `truncated`. Rows carry `subtype` (Google's custom audience type or taxonomy type) and omit
   `status` for `user_interest`, which has none. `list_audiences` is recorded only when Google

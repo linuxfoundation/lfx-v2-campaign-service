@@ -120,7 +120,10 @@ create form offer them in a picker instead of making an operator type them (self
 - Rows whose resource name is not `customers/{this customer}/{collection}/{canonical id}` are
   dropped (the create would refuse them). Sorted by name ignoring case, then resource name.
 - `q` (optional, 1-100 characters, not blank) keeps names containing it, ignoring case and
-  surrounding space; the service applies it, then caps at 500 with `truncated`. With 1008 user
+  surrounding space; the service applies it, then caps at 500 with `truncated`. An explicit
+  `?q=` is a 400 like a blank q: Goa decodes an empty optional query value as absent, so
+  `buildMux` wraps this handler in `refuseEmptyQueryParam` (`cmd/campaign-service`), which
+  hands the decoder a blank value for its Pattern to refuse. With 1008 user
   interests on the LF customer, a `user_interest` picker should search rather than browse.
 - **`user_interest` is cached** per account (`userInterestCache`: 6h TTL, 64 entries), so a
   typeahead does not run a full search per keystroke. It is consulted after credential
