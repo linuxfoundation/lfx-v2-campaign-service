@@ -45,7 +45,11 @@ const (
 //
 // The BFF's MED-vs-MEDIUM sort-key mismatch is NOT ported: items are ordered by the shared
 // priorityRank (linuxfoundation/lfx-self-serve#3018), as on the other three platforms.
-func EvaluateLinkedInMonitor(rows []model.AccountCampaignMetrics, days int, now time.Time) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
+//
+// currency is the ad account's ISO 4217 code as the read reported it (the campaign budgets'
+// currencyCode, see linkedin.Client.ListAccountCampaignsWithCurrency), or "". It sizes the
+// paused-with-real-budget rule in the account's own currency; see monitorUnitsPerUSD (#454).
+func EvaluateLinkedInMonitor(rows []model.AccountCampaignMetrics, days int, now time.Time, currency string) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 	out := make([]model.AccountMonitorRow, 0, len(rows))
 	items := make([]model.AccountMonitorActionItem, 0)
 
@@ -66,7 +70,7 @@ func EvaluateLinkedInMonitor(rows []model.AccountCampaignMetrics, days int, now 
 		if m.PacingUnknown || (m.TotalBudget <= 0 && m.BudgetDay <= 0) {
 			row := unknownPacingRow(m)
 			out = append(out, row)
-			items = append(items, linkedinActionItems(row.Metrics, 0, row.PacingLabel)...)
+			items = append(items, linkedinActionItems(row.Metrics, 0, row.PacingLabel, currency)...)
 			continue
 		}
 
@@ -74,9 +78,16 @@ func EvaluateLinkedInMonitor(rows []model.AccountCampaignMetrics, days int, now 
 		label := pacingLabelFor(pacingPct)
 		row := model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label}
 		out = append(out, row)
-		items = append(items, linkedinActionItems(m, pacingPct, label)...)
+		items = append(items, linkedinActionItems(m, pacingPct, label, currency)...)
 	}
 
+	// Only over the rows the money rule would have looked at — a measured PAUSED campaign with a
+	// budget. Unlike Google, Microsoft and X, LinkedIn's currency comes from the budgets
+	// themselves, so an account whose campaigns carry none reports no currency for a reason that
+	// skipped nothing; the item there would be noise.
+	if it, ok := moneyRulesSkippedItem(currency, "paused-with-real-budget check was skipped", linkedinPausedBudgeted(out)); ok {
+		items = append(items, it)
+	}
 	sortByPriority(items)
 	return out, items
 }
@@ -139,7 +150,18 @@ func linkedinPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) 
 	return 0
 }
 
-func linkedinActionItems(m model.AccountCampaignMetrics, pacingPct float64, label model.MonitorPacingLabel) []model.AccountMonitorActionItem {
+// linkedinPausedBudgeted is the subset of rows the paused-with-real-budget rule examines.
+func linkedinPausedBudgeted(rows []model.AccountMonitorRow) []model.AccountMonitorRow {
+	var out []model.AccountMonitorRow
+	for _, r := range rows {
+		if r.Metrics.Status == "PAUSED" && (r.Metrics.TotalBudget > 0 || r.Metrics.BudgetDay > 0) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func linkedinActionItems(m model.AccountCampaignMetrics, pacingPct float64, label model.MonitorPacingLabel, currency string) []model.AccountMonitorActionItem {
 	var items []model.AccountMonitorActionItem
 	add := func(priority model.MonitorPriority, issue, action string) {
 		items = append(items, model.AccountMonitorActionItem{
@@ -177,7 +199,10 @@ func linkedinActionItems(m model.AccountCampaignMetrics, pacingPct float64, labe
 			"Clicks without conversions",
 			"Audit LinkedIn Insight Tag on registration landing page")
 	}
-	if m.Status == "PAUSED" && (m.TotalBudget > 10 || m.BudgetDay > 1) {
+	// Sized in the account's currency (isRealBudget, #454): 10 lifetime or 1 a day in USD terms.
+	// Before, those were compared as dollars, so a ¥2/day JPY campaign counted as real budget
+	// and a KWD account's 1/day (about $3) did not.
+	if m.Status == "PAUSED" && isRealBudget(m.TotalBudget, m.BudgetDay, currency) {
 		add(model.MonitorPriorityLow,
 			"Campaign is PAUSED with real budget",
 			"Confirm intentional pause or activate")

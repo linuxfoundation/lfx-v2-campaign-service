@@ -105,6 +105,31 @@ func TestMonitorAccount_Currency(t *testing.T) {
 	})
 }
 
+// The LinkedIn monitor hands the read's currency to its rules (#547): a paused KWD campaign at
+// 1/day (about $3) carries real budget, which only an account-currency comparison sees.
+func TestMonitorLinkedinAdsAccount_RulesSizedInReadCurrency(t *testing.T) {
+	rows := []model.AccountCampaignMetrics{{PlatformCampaignID: "1", Name: "c", Status: "PAUSED", BudgetDay: 1}}
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	svc.SetOrchestrator(&Orchestrator{dispatchers: map[model.Provider]PlatformDispatcher{
+		model.ProviderLinkedInAds: &mockAccountMonitorReaderDispatcher{rows: rows, currency: "KWD"},
+	}})
+	got, err := svc.MonitorLinkedinAdsAccount(context.Background(),
+		&conn.MonitorLinkedinAdsAccountPayload{ProjectID: "p", AccountID: "123", Days: 30})
+	if err != nil {
+		t.Fatalf("MonitorLinkedinAdsAccount: %v", err)
+	}
+	found := false
+	for _, it := range got.ActionItems {
+		found = found || strings.Contains(it.Issue, "PAUSED with real budget")
+		if strings.Contains(it.Issue, " skipped") {
+			t.Errorf("unexpected skipped item %q: the read reported KWD", it.Issue)
+		}
+	}
+	if !found {
+		t.Errorf("no paused-with-real-budget item for a KWD 1/day paused campaign; items = %+v", got.ActionItems)
+	}
+}
+
 // The report-backed monitor reads the currency best-effort: present when the reader returns a
 // well-formed code; absent when it returns none, a malformed one, or fails — and a failure never
 // fails the monitor.
