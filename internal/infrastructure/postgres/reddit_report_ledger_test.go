@@ -18,7 +18,7 @@ import (
 // configured user, host and database; the ledger's errors reach a warning log, so they must not
 // carry any of the three (nor the password).
 func TestRedditReportLedger_ErrorsDoNotCarryTheDSN(t *testing.T) {
-	const dsn = "postgres://ledgeruser9:ledgerpass9@127.0.0.1:1/ledgerdb9?sslmode=disable&connect_timeout=1"
+	const dsn = "postgres://ledgeruser9:ledgerpass9@127.0.0.1:1/ledgerdb9?sslmode=disable&connect_timeout=1" // secretlint-disable-line -- intentional fake DSN, asserting the ledger's errors withhold it
 	p, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
 		t.Fatalf("pgxpool.New: %v", err)

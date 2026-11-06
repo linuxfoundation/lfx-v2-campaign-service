@@ -57,6 +57,9 @@ False positives are suppressed **per line**, with a
 - `internal/infrastructure/postgres/required_index_probe_redaction_test.go` — intentional
   fake DSN carrying a user, password, host and database, asserting the deparse probe's WARN
   withholds all four
+- `internal/infrastructure/postgres/reddit_report_ledger_test.go` — intentional fake DSN
+  carrying a user, password and database, asserting the Reddit report ledger's errors withhold
+  all three
 - `internal/dispatch/preflight_refusal_test.go` and `internal/service/dispatch_failure_test.go` —
   an intentional fake `ghp_` token, asserting `domain.CallerValue` withholds it from a
   dispatch failure message
