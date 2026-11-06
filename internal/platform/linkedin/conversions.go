@@ -1,0 +1,109 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package linkedin
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"slices"
+	"strings"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+)
+
+// Conversion association on create (#552). A conversion rule is associated with a campaign by a
+// Campaign Conversions record, created with a PUT on its compound key (Conversion Tracking ›
+// Campaign Conversions › Create a Campaign Conversion, li-lms-2026-10:
+// https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads-reporting/conversion-tracking):
+//
+//	PUT /rest/campaignConversions/(campaign:urn%3Ali%3AsponsoredCampaign%3A<c>,conversion:urn%3Alla%3AllaPartnerConversion%3A<v>)
+//	{"campaign":"urn:li:sponsoredCampaign:<c>","conversion":"urn:lla:llaPartnerConversion:<v>"} → 204
+//
+// A PUT on the key is idempotent, so a retry, or a campaign reused by name, re-associates safely.
+
+// MaxConversions bounds linkedInConfig.conversions. A local bound, not a documented LinkedIn
+// limit: an event campaign tracks a handful of rules.
+const MaxConversions = 20
+
+// ErrConversionsInvalid marks a conversions list refused by ValidateConversions.
+var ErrConversionsInvalid = errors.New("linkedin-ads: invalid conversions")
+
+// ValidateConversions checks linkedInConfig.conversions and returns its de-duplicated copy.
+// Each entry is a conversion rule id: a positive int64 without a leading zero (isPositiveLong,
+// the rule ValidateCampaignID uses). The URN form is refused rather than parsed, so there is one
+// accepted spelling. nil stays nil; an empty non-nil list is refused (omit the field instead).
+func ValidateConversions(ids []string) ([]string, error) {
+	if ids == nil {
+		return nil, nil
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("%w: the list is empty; omit conversions instead", ErrConversionsInvalid)
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !isPositiveLong(id) {
+			if strings.HasPrefix(id, "urn:") {
+				return nil, fmt.Errorf("%w: %s is a URN; send the conversion rule's numeric id", ErrConversionsInvalid, domain.CallerValue(id))
+			}
+			return nil, fmt.Errorf("%w: %s is not a conversion rule id (a positive integer without a leading zero)", ErrConversionsInvalid, domain.CallerValue(id))
+		}
+		if !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	if len(out) > MaxConversions {
+		return nil, fmt.Errorf("%w: %d conversions; at most %d", ErrConversionsInvalid, len(out), MaxConversions)
+	}
+	return out, nil
+}
+
+func conversionURN(id string) string { return "urn:lla:llaPartnerConversion:" + id }
+
+// associateConversion creates one Campaign Conversions record. Both ids have been validated
+// (campaignID by createSponsoredCampaign's trailingID, conversionID by ValidateConversions), so
+// the compound key is built from digits only.
+func (c *Client) associateConversion(ctx context.Context, campaignID, conversionID string) error {
+	campaign := "urn:li:sponsoredCampaign:" + campaignID
+	conversion := conversionURN(conversionID)
+	path := fmt.Sprintf("campaignConversions/(campaign:%s,conversion:%s)", encodeURNForPath(campaign), encodeURNForPath(conversion))
+	body := map[string]any{"campaign": campaign, "conversion": conversion}
+	_, err := c.doRequest(ctx, http.MethodPut, path, body, nil, nil, true)
+	return err
+}
+
+// associateConversions associates every id with the campaign, in order, and reports which
+// succeeded and which failed. A failure does not stop the others: the campaign is PAUSED, and
+// the caller reports a partial association as a degraded create rather than discarding a
+// campaign that exists. Each failure gets a step naming the id; no upstream text is copied.
+func (c *Client) associateConversions(ctx context.Context, campaignID string, ids []string) (associated, failed, steps []string) {
+	for _, id := range ids {
+		if err := c.associateConversion(ctx, campaignID, id); err != nil {
+			failed = append(failed, id)
+			outcome := "FAILED"
+			if IsOutcomeUnconfirmed(err) {
+				outcome = "UNCONFIRMED"
+			}
+			steps = append(steps, fmt.Sprintf("Conversion %s association with campaign %s %s (%s); associate it in Campaign Manager before activating", id, campaignID, outcome, associationFailureClass(err)))
+			continue
+		}
+		associated = append(associated, id)
+		steps = append(steps, fmt.Sprintf("Conversion %s associated with campaign %s", id, campaignID))
+	}
+	return associated, failed, steps
+}
+
+// associationFailureClass names a failed association without any upstream text: the HTTP
+// status when LinkedIn answered, else the transport class.
+func associationFailureClass(err error) string {
+	var ae *apiError
+	if errors.As(err, &ae) {
+		return fmt.Sprintf("LinkedIn answered %d", ae.StatusCode)
+	}
+	if errors.Is(err, ErrCredentialsExpired) {
+		return "the connection's credentials were refused"
+	}
+	return "LinkedIn could not be reached"
+}

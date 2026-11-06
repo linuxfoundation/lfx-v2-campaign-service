@@ -5406,7 +5406,19 @@ type CampaignCreateInputRequestBody struct {
 	// character, a non-numeric instagramUserId, and any of the three with a
 	// non-string JSON type (null counts as absent) are refused here with a 400,
 	// before any job exists. An absent instagramUserId is not refused, but Meta
-	// will not publish an Instagram placement without it.
+	// will not publish an Instagram placement without it. LINKEDIN CONVERSIONS
+	// (#552): linkedInConfig takes an optional `conversions` list of LinkedIn
+	// conversion rule ids (positive integers, at most 20, duplicates dropped).
+	// Once the campaign exists (created or reused by name) each is associated with
+	// it by a Campaign Conversions PUT; a failed association does not stop the
+	// create, and the campaign is then created_degraded with the id in the
+	// result's conversionsFailed and a step to associate it in Campaign Manager
+	// before activating. Refused with a 400 before any job exists: a URN instead
+	// of an id, a non-numeric or zero-padded id, an empty list, more than 20 ids,
+	// and any conversions while the deployment has not set
+	// LINKEDIN_ADS_CONVERSIONS_ENABLED. Conversion rules belong to the ad account,
+	// so conversions also require global_marketing_ops on the project (403; 503
+	// when the check cannot be made).
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

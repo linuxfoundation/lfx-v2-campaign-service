@@ -130,7 +130,10 @@ type Service interface {
 	// they do not, 503 when the check cannot be made (project lookup or
 	// authorization service unavailable). The gateway admits every
 	// campaign_manager, which includes foundation executive directors, and those
-	// resources belong to the Google Ads account every foundation shares. An
+	// resources belong to the Google Ads account every foundation shares. The same
+	// check, made once with the Google one, covers linkedInConfig.conversions
+	// (#552): conversion rules on the LinkedIn ad account, and the LF system
+	// account is the fallback connection of every project without its own. An
 	// invalid per-platform `bidding` object (see the config attribute) is also
 	// refused synchronously, with 400 "invalid campaign config:
 	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
@@ -1139,7 +1142,19 @@ type CampaignCreateInput struct {
 	// character, a non-numeric instagramUserId, and any of the three with a
 	// non-string JSON type (null counts as absent) are refused here with a 400,
 	// before any job exists. An absent instagramUserId is not refused, but Meta
-	// will not publish an Instagram placement without it.
+	// will not publish an Instagram placement without it. LINKEDIN CONVERSIONS
+	// (#552): linkedInConfig takes an optional `conversions` list of LinkedIn
+	// conversion rule ids (positive integers, at most 20, duplicates dropped).
+	// Once the campaign exists (created or reused by name) each is associated with
+	// it by a Campaign Conversions PUT; a failed association does not stop the
+	// create, and the campaign is then created_degraded with the id in the
+	// result's conversionsFailed and a step to associate it in Campaign Manager
+	// before activating. Refused with a 400 before any job exists: a URN instead
+	// of an id, a non-numeric or zero-padded id, an empty list, more than 20 ids,
+	// and any conversions while the deployment has not set
+	// LINKEDIN_ADS_CONVERSIONS_ENABLED. Conversion rules belong to the ad account,
+	// so conversions also require global_marketing_ops on the project (403; 503
+	// when the check cannot be made).
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

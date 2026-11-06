@@ -1,0 +1,225 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package linkedin
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+)
+
+func TestValidateConversions(t *testing.T) {
+	many := make([]string, MaxConversions+1)
+	for i := range many {
+		many[i] = strconv.Itoa(i + 1)
+	}
+	for _, tc := range []struct {
+		name string
+		in   []string
+		want string // "" accepted
+	}{
+		{"absent", nil, ""},
+		{"ids", []string{"104012", "107620"}, ""},
+		{"empty list", []string{}, "omit conversions"},
+		{"urn form", []string{"urn:lla:llaPartnerConversion:104012"}, "is a URN"},
+		{"not numeric", []string{"abc"}, "not a conversion rule id"},
+		{"leading zero", []string{"0104"}, "not a conversion rule id"},
+		{"zero", []string{"0"}, "not a conversion rule id"},
+		{"padded", []string{" 104"}, "not a conversion rule id"},
+		{"past int64", []string{"9223372036854775808"}, "not a conversion rule id"},
+		{"too many", many, "at most 20"},
+		{"duplicates fit the cap", append(append([]string{}, many[:MaxConversions]...), "1"), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ValidateConversions(tc.in)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrConversionsInvalid) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want a refusal containing %q, got %v", tc.want, err)
+			}
+		})
+	}
+	out, _ := ValidateConversions([]string{"7", "7", "8"})
+	if strings.Join(out, ",") != "7,8" {
+		t.Errorf("duplicates kept: %v", out)
+	}
+}
+
+type conversionServer struct {
+	mu       sync.Mutex
+	puts     []string // escaped paths
+	bodies   []map[string]any
+	failConv string // conversion id whose PUT answers failStatus
+	status   int
+	order    []string
+}
+
+func (s *conversionServer) handler(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "campaignConversions"):
+			if r.Method != http.MethodPut {
+				t.Errorf("campaignConversions %s, want PUT", r.Method)
+			}
+			s.order = append(s.order, "conversion")
+			s.puts = append(s.puts, r.URL.EscapedPath())
+			var b map[string]any
+			raw, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(raw, &b)
+			s.bodies = append(s.bodies, b)
+			if s.failConv != "" && strings.HasSuffix(r.URL.EscapedPath(), "%3A"+s.failConv+")") {
+				w.WriteHeader(s.status)
+				_, _ = io.WriteString(w, `{"status":400,"message":"secret upstream text"}`)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			s.order = append(s.order, "campaign")
+			w.Header().Set("x-restli-id", "urn:li:sponsoredCampaign:200")
+			_, _ = io.WriteString(w, `{}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			s.order = append(s.order, "post")
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+		default:
+			http.Error(w, "unexpected path "+r.URL.Path, http.StatusBadRequest)
+		}
+	}
+}
+
+// snapshot copies what the handler recorded, under the handler's lock.
+func (s *conversionServer) snapshot() (puts []string, bodies []map[string]any, order []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.puts...), append([]map[string]any(nil), s.bodies...), append([]string(nil), s.order...)
+}
+
+func conversionInput(ids ...string) CampaignInput {
+	return CampaignInput{
+		EventName: "KubeCon", RegistrationURL: "https://events.example.org/kubecon",
+		BudgetUSD: 100, StartDate: "2099-01-01", EndDate: "2099-02-01",
+		GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		TargetingProfile: "cloud-native",
+		Variants:         []CreativeVariant{{IntroText: "Join us — it's great", Headline: "KubeCon 2099"}},
+		Project:          "CNCF",
+		Conversions:      ids,
+	}
+}
+
+// TestCreateCampaign_AssociatesConversions pins the Campaign Conversions PUT: one per distinct id,
+// on the Rest.li compound key with both URNs percent-encoded, a body naming both URNs, after the
+// campaign and before the first dark post, with the split recorded on the result.
+func TestCreateCampaign_AssociatesConversions(t *testing.T) {
+	s := &conversionServer{}
+	srv := httptest.NewServer(s.handler(t))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	res, err := c.CreateCampaign(context.Background(), conversionInput("104012", "107620", "104012"))
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	puts, bodies, order := s.snapshot()
+	want := []string{
+		"/campaignConversions/(campaign:urn%3Ali%3AsponsoredCampaign%3A200,conversion:urn%3Alla%3AllaPartnerConversion%3A104012)",
+		"/campaignConversions/(campaign:urn%3Ali%3AsponsoredCampaign%3A200,conversion:urn%3Alla%3AllaPartnerConversion%3A107620)",
+	}
+	if strings.Join(puts, "\n") != strings.Join(want, "\n") {
+		t.Errorf("PUT paths:\n got %q\nwant %q", puts, want)
+	}
+	if len(bodies) != 2 || bodies[1]["campaign"] != "urn:li:sponsoredCampaign:200" || bodies[1]["conversion"] != "urn:lla:llaPartnerConversion:107620" {
+		t.Errorf("PUT bodies = %v", bodies)
+	}
+	if got := strings.Join(order, ","); got != "campaign,conversion,conversion,post" {
+		t.Errorf("order = %s, want the associations after the campaign and before the dark post", got)
+	}
+	if strings.Join(res.ConversionsAssociated, ",") != "104012,107620" || len(res.ConversionsFailed) != 0 {
+		t.Errorf("result split = %v / %v", res.ConversionsAssociated, res.ConversionsFailed)
+	}
+}
+
+// TestCreateCampaign_FailedConversionDoesNotStopTheCreate pins that a refused association is
+// recorded (failed list, a step naming the id and status, no upstream text) and the creatives are
+// still created.
+func TestCreateCampaign_FailedConversionDoesNotStopTheCreate(t *testing.T) {
+	s := &conversionServer{failConv: "107620", status: http.StatusBadRequest}
+	srv := httptest.NewServer(s.handler(t))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+
+	res, err := c.CreateCampaign(context.Background(), conversionInput("104012", "107620"))
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if strings.Join(res.ConversionsAssociated, ",") != "104012" || strings.Join(res.ConversionsFailed, ",") != "107620" {
+		t.Errorf("result split = %v / %v", res.ConversionsAssociated, res.ConversionsFailed)
+	}
+	if res.CreativeCount != 1 {
+		t.Errorf("creatives = %d, want the create to go on", res.CreativeCount)
+	}
+	steps := strings.Join(res.Steps, "\n")
+	if !strings.Contains(steps, "Conversion 107620 association with campaign 200 FAILED (LinkedIn answered 400)") {
+		t.Errorf("steps do not name the failure: %s", steps)
+	}
+	if strings.Contains(steps, "secret upstream text") {
+		t.Error("upstream text reached the steps")
+	}
+}
+
+func TestCreateCampaign_InvalidConversionsRefusedBeforeAnyRequest(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.CreateCampaign(context.Background(), conversionInput("urn:lla:llaPartnerConversion:1"))
+	if _, pre := domain.AsPreflightRefusal(err); !errors.Is(err, ErrConversionsInvalid) || !pre {
+		t.Fatalf("want a pre-flight ErrConversionsInvalid, got %v", err)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Errorf("%d requests before the refusal", n)
+	}
+}
+
+func TestCreateCampaign_NoConversionsSendsNoAssociation(t *testing.T) {
+	s := &conversionServer{}
+	srv := httptest.NewServer(s.handler(t))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	res, err := c.CreateCampaign(context.Background(), conversionInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	puts, _, _ := s.snapshot()
+	if len(puts) != 0 || res.ConversionsAssociated != nil || res.ConversionsFailed != nil {
+		t.Errorf("associations without conversions: %v %+v", puts, res)
+	}
+	b, _ := json.Marshal(res)
+	if strings.Contains(string(b), "conversions") {
+		t.Errorf("result blob carries empty conversion fields: %s", b)
+	}
+}
