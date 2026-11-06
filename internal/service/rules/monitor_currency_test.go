@@ -170,7 +170,7 @@ func TestMoneyRulesSkipped_IsVisible(t *testing.T) {
 	skipped := func(items []model.AccountMonitorActionItem) []model.AccountMonitorActionItem {
 		var out []model.AccountMonitorActionItem
 		for _, it := range items {
-			if strings.Contains(it.Issue, "checks were skipped") {
+			if strings.Contains(it.Issue, " skipped") {
 				out = append(out, it)
 			}
 		}
@@ -206,6 +206,39 @@ func TestMoneyRulesSkipped_IsVisible(t *testing.T) {
 					t.Errorf("skipped items = %+v, want one account-wide LOW item naming %q", got, tc.want)
 				}
 			})
+		}
+	}
+}
+
+// On Google and Microsoft a zero daily budget is still flagged in a currency that cannot be sized,
+// so the skipped item must not claim the placeholder check was skipped outright (#454 review).
+func TestMoneyRulesSkipped_NamesTheZeroBudgetException(t *testing.T) {
+	zeroBudget := model.AccountCampaignMetrics{PlatformCampaignID: "1", Name: "c", Status: "ENABLED", Impressions: 400, Clicks: 20, Ctr: 5}
+	_, items := EvaluateGoogleMonitor([]model.AccountCampaignMetrics{zeroBudget}, 7, "")
+	var placeholder, skipped bool
+	for _, it := range items {
+		placeholder = placeholder || strings.HasPrefix(it.Issue, "Daily budget is ")
+		if strings.Contains(it.Issue, " skipped") {
+			skipped = strings.Contains(it.Issue, "on non-zero amounts") && strings.Contains(it.Issue, "zero daily budget is still flagged")
+		}
+	}
+	if !placeholder || !skipped {
+		t.Errorf("placeholder=%v skipped-names-exception=%v, want both; items = %+v", placeholder, skipped, items)
+	}
+	ms := zeroBudget
+	ms.Status = "Active"
+	_, items = EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{ms}, 7, "")
+	found := false
+	for _, it := range items {
+		found = found || strings.Contains(it.Issue, "zero daily budget is still flagged")
+	}
+	if !found {
+		t.Errorf("microsoft skipped item does not name the zero-budget exception; items = %+v", items)
+	}
+	_, items = EvaluateTwitterMonitor([]model.AccountCampaignMetrics{xRow(func(m *model.AccountCampaignMetrics) { m.BudgetDay = 1 })}, &xFirstDay, &xLastDay, "")
+	for _, it := range items {
+		if strings.Contains(it.Issue, "still flagged") {
+			t.Errorf("X flags no zero budget, but its skipped item says so: %q", it.Issue)
 		}
 	}
 }

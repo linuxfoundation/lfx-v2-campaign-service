@@ -105,7 +105,7 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int, curren
 		items = append(items, googleActionItems(m, pacingPct, label, days, currency)...)
 	}
 
-	if it, ok := moneyRulesSkippedItem(currency, "placeholder-budget and high-CPC", out); ok {
+	if it, ok := moneyRulesSkippedItem(currency, moneyRulesSkippedGoogleMicrosoft, out); ok {
 		items = append(items, it)
 	}
 	sortByPriority(items)

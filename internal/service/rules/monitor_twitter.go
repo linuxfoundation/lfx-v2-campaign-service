@@ -95,7 +95,7 @@ func EvaluateTwitterMonitor(rows []model.AccountCampaignMetrics, windowStart, wi
 		items = append(items, twitterActionItems(m, pacingPct, label, win, hasWindow, currency)...)
 	}
 
-	if it, ok := moneyRulesSkippedItem(currency, "placeholder-budget", out); ok {
+	if it, ok := moneyRulesSkippedItem(currency, "placeholder-budget check was skipped", out); ok {
 		items = append(items, it)
 	}
 	sortByPriority(items)

@@ -112,7 +112,7 @@ func EvaluateMicrosoftMonitor(rows []model.AccountCampaignMetrics, days int, cur
 		items = append(items, microsoftActionItems(m, pacingPct, label, days, currency)...)
 	}
 
-	if it, ok := moneyRulesSkippedItem(currency, "placeholder-budget and high-CPC", out); ok {
+	if it, ok := moneyRulesSkippedItem(currency, moneyRulesSkippedGoogleMicrosoft, out); ok {
 		items = append(items, it)
 	}
 	sortByPriority(items)

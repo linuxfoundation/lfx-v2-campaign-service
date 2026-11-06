@@ -227,13 +227,19 @@ func isHighAvgCpc(avgCpc float64, currency string) bool {
 // run, so a caller can tell "no placeholder budget or expensive click" apart from "these could
 // not be checked" (#454 review). It is due when currency cannot be sized (absent, or not in
 // monitorUnitsPerUSD) and at least one returned row was measured — a row the rules would have
-// looked at. checks names the rules the platform runs, for the issue text. It never assumes USD
+// looked at. skipped is the issue text's subject, naming the rules the platform runs and what of
+// them still ran: on Google and Microsoft a zero daily budget is still flagged in any currency,
+// so the text must not say the placeholder check was skipped outright. It never assumes USD
 // in their place: that guess is the misfire the sizing removed.
 //
 // It goes on an absent currency as well as an unlisted one: on Microsoft and X the currency comes
 // from a best-effort side read that can time out, and on Google from every row carrying the same
 // customer.currency_code, so a USD account can reach here on one request and not the next.
-func moneyRulesSkippedItem(currency, checks string, rows []model.AccountMonitorRow) (model.AccountMonitorActionItem, bool) {
+// moneyRulesSkippedGoogleMicrosoft is moneyRulesSkippedItem's subject for Google and Microsoft,
+// which still flag a zero daily budget whatever the currency.
+const moneyRulesSkippedGoogleMicrosoft = "placeholder-budget and high-CPC checks on non-zero amounts were skipped (a zero daily budget is still flagged)"
+
+func moneyRulesSkippedItem(currency, skipped string, rows []model.AccountMonitorRow) (model.AccountMonitorActionItem, bool) {
 	if _, ok := accountThreshold(1, currency); ok {
 		return model.AccountMonitorActionItem{}, false
 	}
@@ -247,10 +253,10 @@ func moneyRulesSkippedItem(currency, checks string, rows []model.AccountMonitorR
 	if !measured {
 		return model.AccountMonitorActionItem{}, false
 	}
-	issue := fmt.Sprintf("The %s checks were skipped — the ad account's currency could not be read, so their thresholds cannot be sized", checks)
+	issue := fmt.Sprintf("The %s — the ad account's currency could not be read, so the thresholds cannot be sized", skipped)
 	action := "Reload the monitor to retry the currency read, or review those figures in the ad platform directly"
 	if currency != "" {
-		issue = fmt.Sprintf("The %s checks were skipped — the ad account's currency (%s) is not one this service sizes their thresholds in", checks, currency)
+		issue = fmt.Sprintf("The %s — the ad account's currency (%s) is not one this service sizes the thresholds in", skipped, currency)
 		action = "Review those figures in the ad platform directly"
 	}
 	return model.AccountMonitorActionItem{Priority: model.MonitorPriorityLow, Issue: issue, Action: action}, true
