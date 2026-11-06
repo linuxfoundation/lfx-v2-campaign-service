@@ -98,6 +98,15 @@ const marketingOpsRuleID = "rule:lfx:lfx-v2-campaign-service:marketing-ops-api"
 // TestConversionActionsIsAMarketingOpsRead pins that.
 const conversionActionsPath = "/projects/:projectId/google-ads/conversion-actions"
 
+// googleAudiencesPath is the Google audience list (#496: custom audiences, combined audiences,
+// Audience resources, user interests). It lists every foundation's audiences on the shared
+// customer, so it is ruled by marketing-ops-api only, and TestGoogleAudiencesIsAMarketingOpsRead
+// pins that.
+const googleAudiencesPath = "/projects/:projectId/google-ads/audiences"
+
+// marketingOpsPaths is every path the marketing-ops-api rule must hold, in order, and nothing else.
+var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath}
+
 // ruleBlock isolates one rendered Heimdall rule (from its `- id: "<id>"` line up to
 // the next `- id:` or EOF) so path/authorizer extraction is scoped to a SINGLE rule.
 func ruleBlock(t *testing.T, ruleset, ruleID string) string {
@@ -158,27 +167,73 @@ func rulePatterns(t *testing.T, ruleset, ruleID string) []string {
 }
 
 // TestConversionActionsIsAMarketingOpsRead pins WHERE the conversion-action list is ruled
-// (#458, #486): marketing-ops-api holds exactly the path, on GET only; project-api (the
+// (#458, #486): marketing-ops-api holds the path, on GET only; project-api (the
 // campaign_manager rule) does not; no other rule matches it; and the route forwards it. The LF
 // customer is shared, so the list names every foundation's actions, and campaign_manager
 // includes each project's executive_director (lfx-v2-helm model.fga). global_marketing_ops is
 // the LF marketing team alone, granted on every project, so no rule needs the ROOT project.
 func TestConversionActionsIsAMarketingOpsRead(t *testing.T) {
+	assertMarketingOpsRead(t, conversionActionsPath, "/projects/p1/google-ads/conversion-actions")
+}
+
+// TestGoogleAudiencesIsAMarketingOpsRead pins the same for the Google audience list (#496): it
+// lists every foundation's custom audiences, combined audiences and Audiences on the shared
+// customer, so a campaign_manager (executive_director included) must not reach it. The
+// singular google-ads/audience (the audience performance read of the project's own campaigns)
+// stays a project-api path and must not be swept along with it.
+func TestGoogleAudiencesIsAMarketingOpsRead(t *testing.T) {
+	assertMarketingOpsRead(t, googleAudiencesPath, "/projects/p1/google-ads/audiences")
+	ruleset := helmTemplate(t, "templates/ruleset.yaml")
+	const perf = "/projects/p1/google-ads/audience"
+	matched := false
+	for _, p := range rulePatterns(t, ruleset, projectAPIRuleID) {
+		if ruleMatcher(t, p).MatchString(perf) {
+			matched = true
+		}
+	}
+	if !matched {
+		t.Errorf("%s rule no longer matches %s, the campaign_manager audience performance read", projectAPIRuleID, perf)
+	}
+}
+
+// TestMarketingOpsRuleHoldsExactlyItsReads pins the marketing-ops-api rule's whole path set, so
+// a path added to it (taking it away from campaign_manager callers) or dropped from it (leaving
+// it unruled) fails here.
+func TestMarketingOpsRuleHoldsExactlyItsReads(t *testing.T) {
+	ruleset := helmTemplate(t, "templates/ruleset.yaml")
+	got := rulePatterns(t, ruleset, marketingOpsRuleID)
+	if strings.Join(got, ",") != strings.Join(marketingOpsPaths, ",") {
+		t.Errorf("%s rule must hold exactly %v, got %v", marketingOpsRuleID, marketingOpsPaths, got)
+	}
+}
+
+// assertMarketingOpsRead pins one marketing-ops read: marketing-ops-api holds pattern, on GET
+// only, with the global_marketing_ops authorizers; no project-api pattern matches path; the
+// pattern appears once in the rendered RuleSet; and the route forwards path.
+func assertMarketingOpsRead(t *testing.T, pattern, path string) {
+	t.Helper()
 	ruleset := helmTemplate(t, "templates/ruleset.yaml")
 	routeRe := extractRouteRegex(t, helmTemplate(t, "templates/httproute.yaml"))
-	const path = "/projects/p1/google-ads/conversion-actions"
 
 	assertMarketingOpsAuthz(t, ruleset)
-	if got := rulePatterns(t, ruleset, marketingOpsRuleID); len(got) != 1 || got[0] != conversionActionsPath {
-		t.Errorf("%s rule must hold exactly %s, got %v", marketingOpsRuleID, conversionActionsPath, got)
+	held := false
+	for _, p := range rulePatterns(t, ruleset, marketingOpsRuleID) {
+		if p == pattern {
+			held = true
+		}
+	}
+	if !held {
+		t.Errorf("%s rule must hold %s", marketingOpsRuleID, pattern)
 	}
 	for _, p := range rulePatterns(t, ruleset, projectAPIRuleID) {
 		if ruleMatcher(t, p).MatchString(path) {
 			t.Errorf("%s rule pattern %s matches %s; a campaign_manager (executive_director included) must not reach it", projectAPIRuleID, p, path)
 		}
 	}
-	if n := strings.Count(ruleset, conversionActionsPath); n != 1 {
-		t.Errorf("%s appears %d times in the rendered RuleSet, want once (marketing-ops-api only)", conversionActionsPath, n)
+	// Counted as a whole route line, so a sibling path that merely starts with this one
+	// (google-ads/audiences is not google-ads/audience) is not miscounted.
+	if n := strings.Count(ruleset, "- path: "+pattern+"\n"); n != 1 {
+		t.Errorf("%s appears %d times in the rendered RuleSet, want once (marketing-ops-api only)", pattern, n)
 	}
 	block := ruleBlock(t, ruleset, marketingOpsRuleID)
 	m, r := strings.Index(block, "methods:"), strings.Index(block, "routes:")
@@ -552,6 +607,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// The conversion-action picker (#458) is ruled at the base path only, and only for
 		// google-ads: no other provider serves it, and it is not a connection sub-path.
 		{"/projects/p1/google-ads/conversion-actions", true},
+		{"/projects/p1/google-ads/audiences", true},
+		{"/projects/p1/google-ads/audiences/x", false},
 		{"/projects/p1/google-ads/conversion-actions/x", false},
 		{"/projects/p1/microsoft-ads/conversion-actions", false},
 		{"/projects/p1/connection-google-ads/conversion-actions", false},

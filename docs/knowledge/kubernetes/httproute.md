@@ -15,11 +15,11 @@ See [charts/lfx-v2-campaign-service/templates/httproute.yaml](../../../charts/lf
 
 The service serves its API under `/projects/{projectId}/…` (the approved contract —
 every endpoint is nested under a project and gated on that project's
-`campaign_manager` relation, except the Google conversion-action list, gated on
+`campaign_manager` relation, except the Google conversion-action and audience lists, gated on
 `global_marketing_ops`).
 `project-service` owns `PathPrefix: /projects/`, and
 the token that distinguishes a campaign-service path (`connection-*`, `briefs`,
-`jobs`, `google-ads/keywords|audience|campaign-ref|geo-targets|user-lists|conversion-actions`, `microsoft-ads/keywords|audience|campaign-ref`, `(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience`, `reddit-ads/keywords`, `(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref`, `hubspot`,
+`jobs`, `google-ads/keywords|audience|audiences|campaign-ref|geo-targets|user-lists|conversion-actions`, `microsoft-ads/keywords|audience|campaign-ref`, `(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience`, `reddit-ads/keywords`, `(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref`, `hubspot`,
 `audience-builder`, `fetch-event-url`, `send-workflows`)
 sits *after* the variable `{projectId}` — which a `PathPrefix`/`Exact` match cannot
 reach past.
@@ -109,8 +109,8 @@ When `heimdall.enabled`, both rules attach the `heimdall-forward-body` middlewar
 (forwardAuth → Heimdall). **Invariant:** every path routed through that middleware
 MUST have a matching rule in [ruleset.md](ruleset.md) — a routed request with no
 matching Heimdall rule is rejected. The RuleSet's `project-api` rule covers every
-routed project-nested family except `google-ads/conversion-actions`, which its
-`marketing-ops-api` rule covers; its
+routed project-nested family except `google-ads/conversion-actions` and
+`google-ads/audiences`, which its `marketing-ops-api` rule covers; its
 `campaigns-placeholder` rule covers the reserved prefixes, so chart↔route parity holds.
 
 This parity is enforced by a Go test — `TestRouteRuleSetParity`
@@ -134,7 +134,7 @@ Path extraction is SCOPED to the two FGA-gated rule blocks, `project-api` and
 `marketing-ops-api` (not "any `/projects/` path in the RuleSet"), and
 `TestConversionActionsIsAMarketingOpsRead` pins that `google-ads/conversion-actions` is ruled
 by `marketing-ops-api` alone, on `global_marketing_ops`, and that no rule gates on the ROOT
-project. A
+project; `TestGoogleAudiencesIsAMarketingOpsRead` pins `google-ads/audiences` the same way. A
 separate `TestProjectAPIRuleEnforcesCampaignManager` asserts
 the `project-api` rule has two `openfga_check` authorizers on relation `campaign_manager`, each
 paired with the correct object: `project:{{- .Outputs.project_slug_resolver_contextualizer.uid -}}`

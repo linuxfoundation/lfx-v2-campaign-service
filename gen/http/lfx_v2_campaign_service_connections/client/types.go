@@ -870,6 +870,24 @@ type ListGoogleAdsConversionActionsResponseBody struct {
 	ConversionActionCount *int `form:"conversion_action_count,omitempty" json:"conversion_action_count,omitempty" xml:"conversion_action_count,omitempty"`
 }
 
+// ListGoogleAdsAudiencesResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-audiences"
+// endpoint HTTP response body.
+type ListGoogleAdsAudiencesResponseBody struct {
+	// The Google Ads customer the entries were read from: the account a Google
+	// create for this project uses
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The kind that was read
+	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
+	// Matching entries sorted by name (ignoring case), capped at 500 (see
+	// `truncated`)
+	Audiences []*GoogleAdsAudienceResourceResponseBody `form:"audiences,omitempty" json:"audiences,omitempty" xml:"audiences,omitempty"`
+	// How many entries are in `audiences`
+	AudienceCount *int `form:"audience_count,omitempty" json:"audience_count,omitempty" xml:"audience_count,omitempty"`
+	// True when more entries matched than were returned; narrow the search with q
+	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
+}
+
 // GetMetaAdsAudienceResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body.
@@ -4399,6 +4417,66 @@ type ListGoogleAdsConversionActionsUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListGoogleAdsAudiencesBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-audiences"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListGoogleAdsAudiencesBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsAudiencesServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-audiences"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListGoogleAdsAudiencesServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsAudiencesInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-audiences"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListGoogleAdsAudiencesInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsAudiencesNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-audiences"
+// endpoint HTTP response body for the "NotFound" error.
+type ListGoogleAdsAudiencesNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsAudiencesPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-audiences"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListGoogleAdsAudiencesPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListGoogleAdsAudiencesUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-audiences"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListGoogleAdsAudiencesUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMetaAdsAudienceBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -6424,6 +6502,35 @@ type GoogleAdsConversionActionResponseBody struct {
 	// Whether the action counts toward the account's Conversions column and so
 	// drives bidding by default. A secondary action is still selectable.
 	PrimaryForGoal *bool `form:"primary_for_goal,omitempty" json:"primary_for_goal,omitempty" xml:"primary_for_goal,omitempty"`
+}
+
+// GoogleAdsAudienceResourceResponseBody is used to define fields on response
+// body types.
+type GoogleAdsAudienceResourceResponseBody struct {
+	// customers/{customerId}/{customAudiences|combinedAudiences|audiences|userInterests}/{id},
+	// in exactly the form the create inputs accept: a custom_audience in
+	// googleAdsConfig.customAudiences (Display), an audience in demandGenAudience
+	// or performanceMaxAudienceSignal, a user_interest in userInterests (Display).
+	// No create input accepts a combined_audience today. The customer is the
+	// account a Google create for this project uses.
+	ResourceName *string `form:"resource_name,omitempty" json:"resource_name,omitempty" xml:"resource_name,omitempty"`
+	// The entry's numeric id (user_interest_id for a user_interest)
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// The entry's display name. Not an identifier.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// The kind that was read, echoing the type parameter
+	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
+	// Google's own classification, verbatim: custom_audience.type (AUTO, INTEREST,
+	// PURCHASE_INTENT, SEARCH) or user_interest.taxonomy_type (AFFINITY,
+	// IN_MARKET). Absent for combined_audience and audience, which have none.
+	Subtype *string `form:"subtype,omitempty" json:"subtype,omitempty" xml:"subtype,omitempty"`
+	// Always ENABLED for custom_audience, combined_audience and audience: only
+	// enabled entries are listed. Absent for user_interest, which has no status in
+	// Google Ads.
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// The entry's description. Absent when Google sent none, and always for
+	// user_interest.
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
 }
 
 // MetaAdsAudienceBucketResponseBody is used to define fields on response body
@@ -11847,6 +11954,101 @@ func NewListGoogleAdsConversionActionsUnauthorized(body *ListGoogleAdsConversion
 	return v
 }
 
+// NewListGoogleAdsAudiencesGoogleAdsAudienceResourcesOK builds a
+// "lfx-v2-campaign-service-connections" service "list-google-ads-audiences"
+// endpoint result from a HTTP "OK" response.
+func NewListGoogleAdsAudiencesGoogleAdsAudienceResourcesOK(body *ListGoogleAdsAudiencesResponseBody) *lfxv2campaignserviceconnections.GoogleAdsAudienceResources {
+	v := &lfxv2campaignserviceconnections.GoogleAdsAudienceResources{
+		AccountID:     *body.AccountID,
+		Type:          *body.Type,
+		AudienceCount: *body.AudienceCount,
+		Truncated:     *body.Truncated,
+	}
+	v.Audiences = make([]*lfxv2campaignserviceconnections.GoogleAdsAudienceResource, len(body.Audiences))
+	for i, val := range body.Audiences {
+		if val == nil {
+			v.Audiences[i] = nil
+			continue
+		}
+		v.Audiences[i] = unmarshalGoogleAdsAudienceResourceResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsAudienceResource(val)
+	}
+
+	return v
+}
+
+// NewListGoogleAdsAudiencesBadRequest builds a
+// lfx-v2-campaign-service-connections service list-google-ads-audiences
+// endpoint BadRequest error.
+func NewListGoogleAdsAudiencesBadRequest(body *ListGoogleAdsAudiencesBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListGoogleAdsAudiencesServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service list-google-ads-audiences
+// endpoint ServiceUnavailable error.
+func NewListGoogleAdsAudiencesServiceUnavailable(body *ListGoogleAdsAudiencesServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListGoogleAdsAudiencesInternalServerError builds a
+// lfx-v2-campaign-service-connections service list-google-ads-audiences
+// endpoint InternalServerError error.
+func NewListGoogleAdsAudiencesInternalServerError(body *ListGoogleAdsAudiencesInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListGoogleAdsAudiencesNotFound builds a
+// lfx-v2-campaign-service-connections service list-google-ads-audiences
+// endpoint NotFound error.
+func NewListGoogleAdsAudiencesNotFound(body *ListGoogleAdsAudiencesNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListGoogleAdsAudiencesPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service list-google-ads-audiences
+// endpoint PayloadTooLarge error.
+func NewListGoogleAdsAudiencesPayloadTooLarge(body *ListGoogleAdsAudiencesPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListGoogleAdsAudiencesUnauthorized builds a
+// lfx-v2-campaign-service-connections service list-google-ads-audiences
+// endpoint Unauthorized error.
+func NewListGoogleAdsAudiencesUnauthorized(body *ListGoogleAdsAudiencesUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetMetaAdsAudienceMetaAdsAudienceOK builds a
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint result from a HTTP "OK" response.
@@ -15477,6 +15679,39 @@ func ValidateListGoogleAdsConversionActionsResponseBody(body *ListGoogleAdsConve
 	for _, e := range body.ConversionActions {
 		if e != nil {
 			if err2 := validateGoogleAdsConversionActionResponseBody(e, "body.conversion_actions[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListGoogleAdsAudiencesResponseBody runs the validations defined on
+// ListGoogleAdsAudiencesResponseBody
+func ValidateListGoogleAdsAudiencesResponseBody(body *ListGoogleAdsAudiencesResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+	}
+	if body.Audiences == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("audiences", "body"))
+	}
+	if body.AudienceCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("audience_count", "body"))
+	}
+	if body.Truncated == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("truncated", "body"))
+	}
+	if body.Type != nil {
+		if !(*body.Type == "custom_audience" || *body.Type == "combined_audience" || *body.Type == "audience" || *body.Type == "user_interest") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"custom_audience", "combined_audience", "audience", "user_interest"}))
+		}
+	}
+	for _, e := range body.Audiences {
+		if e != nil {
+			if err2 := validateGoogleAdsAudienceResourceResponseBody(e, "body.audiences[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -20054,6 +20289,78 @@ func ValidateListGoogleAdsConversionActionsUnauthorizedResponseBody(body *ListGo
 	return
 }
 
+// ValidateListGoogleAdsAudiencesBadRequestResponseBody runs the validations
+// defined on ListGoogleAdsAudiencesBadRequestResponseBody
+func ValidateListGoogleAdsAudiencesBadRequestResponseBody(body *ListGoogleAdsAudiencesBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsAudiencesServiceUnavailableResponseBody runs the
+// validations defined on ListGoogleAdsAudiencesServiceUnavailableResponseBody
+func ValidateListGoogleAdsAudiencesServiceUnavailableResponseBody(body *ListGoogleAdsAudiencesServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsAudiencesInternalServerErrorResponseBody runs the
+// validations defined on ListGoogleAdsAudiencesInternalServerErrorResponseBody
+func ValidateListGoogleAdsAudiencesInternalServerErrorResponseBody(body *ListGoogleAdsAudiencesInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsAudiencesNotFoundResponseBody runs the validations
+// defined on ListGoogleAdsAudiencesNotFoundResponseBody
+func ValidateListGoogleAdsAudiencesNotFoundResponseBody(body *ListGoogleAdsAudiencesNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsAudiencesPayloadTooLargeResponseBody runs the
+// validations defined on ListGoogleAdsAudiencesPayloadTooLargeResponseBody
+func ValidateListGoogleAdsAudiencesPayloadTooLargeResponseBody(body *ListGoogleAdsAudiencesPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListGoogleAdsAudiencesUnauthorizedResponseBody runs the validations
+// defined on ListGoogleAdsAudiencesUnauthorizedResponseBody
+func ValidateListGoogleAdsAudiencesUnauthorizedResponseBody(body *ListGoogleAdsAudiencesUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMetaAdsAudienceBadRequestResponseBody runs the validations
 // defined on GetMetaAdsAudienceBadRequestResponseBody
 func ValidateGetMetaAdsAudienceBadRequestResponseBody(body *GetMetaAdsAudienceBadRequestResponseBody) (err error) {
@@ -22652,6 +22959,53 @@ func validateGoogleAdsConversionActionResponseBody(body *GoogleAdsConversionActi
 	}
 	if body.PrimaryForGoal == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("primary_for_goal", path))
+	}
+	return
+}
+
+// ValidateGoogleAdsAudienceResourceResponseBody runs the validations defined
+// on google-ads-audience-resource
+func ValidateGoogleAdsAudienceResourceResponseBody(body *GoogleAdsAudienceResourceResponseBody) (err error) {
+	if body.ResourceName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource_name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+	}
+	if body.Type != nil {
+		if !(*body.Type == "custom_audience" || *body.Type == "combined_audience" || *body.Type == "audience" || *body.Type == "user_interest") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"custom_audience", "combined_audience", "audience", "user_interest"}))
+		}
+	}
+	return
+}
+
+// validateGoogleAdsAudienceResourceResponseBody checks
+// google-ads-audience-resource and reports errors using the path supplied by
+// its caller
+func validateGoogleAdsAudienceResourceResponseBody(body *GoogleAdsAudienceResourceResponseBody, path string) (err error) {
+	if body.ResourceName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource_name", path))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", path))
+	}
+	if body.Type != nil {
+		if !(*body.Type == "custom_audience" || *body.Type == "combined_audience" || *body.Type == "audience" || *body.Type == "user_interest") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".type", *body.Type, []any{"custom_audience", "combined_audience", "audience", "user_interest"}))
+		}
 	}
 	return
 }
