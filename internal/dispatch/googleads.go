@@ -294,7 +294,10 @@ type googleAdsConfig struct {
 	// audience-grouped Demand Gen ad group — see DemandGenAudience.
 	//
 	// On "display" refused outright unless GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED is "true" —
-	// see googleAdsDisplayAudiencesEnabled. Search's observation-only use is not gated.
+	// see googleAdsDisplayAudiencesEnabled. Search's observation-only use is not behind that
+	// flag, but on every channel the create path requires global_marketing_ops for any
+	// audienceSegments, here and on each adGroups entry, because they name the shared
+	// account's user lists (service.GoogleAdsMarketingOpsInputs).
 	AudienceSegments []string `json:"audienceSegments"`
 	// DemandGenAudience is ONE existing Google Ads Audience resource name,
 	// `customers/<this account>/audiences/<id>`, attached to the Demand Gen ad group
@@ -627,8 +630,8 @@ type googleAdsConfig struct {
 // Google Ads account (same customer id). That account is shared by every foundation, and
 // campaign_manager, which the gateway checks, includes each foundation's executive directors, so
 // the create path (BriefService.CreateCampaigns) also requires global_marketing_ops on the
-// project for any audience — see service.GoogleAdsDemandGenAudienceRequested, which this gate
-// and that one agree on. Off, no caller can attach an Audience at all.
+// project for any audience — see service.GoogleAdsMarketingOpsInputs, which this gate and that
+// one agree on. Off, no caller can attach an Audience at all.
 func googleAdsDemandGenAudienceEnabled() bool {
 	return os.Getenv(constants.EnvGoogleAdsDemandGenAudienceEnabled) == "true"
 }
@@ -663,7 +666,10 @@ func googleAdsDemandGenAdGroupAudiencesSet(cfg googleAdsConfig) string {
 // (excludedAudienceSegments, on the campaign and on a displayAdGroups entry) and the same three
 // lists on each displayAdGroups entry. Read per call, like googleAdsDemandGenAudienceEnabled,
 // and a per-deployment opt-in like it; the client checks each segment against the connected
-// Google Ads account.
+// Google Ads account. That account is shared by every foundation, so, as for Demand Gen
+// audiences, the create path also requires global_marketing_ops on the project for every field
+// googleAdsDisplayAudienceFieldsSet names (service.GoogleAdsMarketingOpsInputs; dispatch's tests
+// pin the agreement), which is what makes the flag safe to turn on.
 //
 // Two inputs are deliberately outside it, at both levels. userInterests name Google's own
 // affinity and in-market categories, the same ids on every account. And excludedPlacements are
@@ -675,7 +681,9 @@ func googleAdsDisplayAudiencesEnabled() bool {
 // googleAdsPMaxAudienceSignalEnabled reports whether this deployment opted in to
 // googleAdsConfig.performanceMaxAudienceSignal (#461). Read per call, like
 // googleAdsDemandGenAudienceEnabled, and a per-deployment opt-in like it; the client checks the
-// Audience against the connected Google Ads account.
+// Audience against the connected Google Ads account. That account is shared by every foundation,
+// so the create path also requires global_marketing_ops on the project for any signal
+// (service.GoogleAdsMarketingOpsInputs).
 //
 // The rest of #461 is deliberately outside it. performanceMaxSearchThemes are free text, and
 // the sitelinks, callouts and structured snippets it admits on Performance Max are text and
@@ -688,7 +696,9 @@ func googleAdsPMaxAudienceSignalEnabled() bool {
 // googleAdsSharedNegativeListsEnabled reports whether this deployment opted in to
 // googleAdsConfig.sharedNegativeKeywordLists (#477). Read per call, like
 // googleAdsDemandGenAudienceEnabled, and a per-deployment opt-in like it: a shared list names an
-// EXISTING sharedSet, which the client checks against the connected Google Ads account.
+// EXISTING sharedSet, which the client checks against the connected Google Ads account. That
+// account is shared by every foundation, so the create path also requires global_marketing_ops
+// on the project for any shared list (service.GoogleAdsMarketingOpsInputs).
 //
 // searchAssets, the rest of #477, is deliberately outside it: its images and business name are
 // the caller's own content, created as new assets in this campaign, so they name no existing

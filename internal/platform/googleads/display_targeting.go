@@ -210,8 +210,10 @@ func validateDisplayTargeting(kind, customerID string, in CampaignInput) (displa
 // come at the adGroupCriteria:mutate, after the budget, the campaign and the ad group
 // exist. A resource on another account is refused here, with the account it named.
 //
-// The connected Google Ads account (same customer id) is the boundary this check enforces;
-// per-foundation ownership (#468) was closed as won't do. The dispatch adapter keeps the
+// The connected Google Ads account (same customer id) is the boundary this check enforces.
+// That account is shared by every foundation, so create-campaigns also requires
+// global_marketing_ops on the project for any account-owned segment
+// (service.GoogleAdsMarketingOpsInputs). The dispatch adapter keeps the
 // account-owned kinds (user lists, custom audiences, custom affinities) behind a
 // per-deployment opt-in that is off by default (GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED, see
 // dispatch.googleAdsDisplayAudiencesEnabled) — the user-list exclusions and every

@@ -753,10 +753,11 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 	if err := refuseUnsupportedBidding(platforms, config); err != nil {
 		return nil, err
 	}
-	// Demand Gen audiences need the narrower global_marketing_ops role, which the gateway cannot
-	// check because the input is in the body. Before PreflightCreate, so a refused caller costs
-	// no upstream read.
-	if err := s.requireMarketingOpsForAudiences(ctx, p.ProjectID, platforms, config); err != nil {
+	// Google Ads inputs that name a resource on the shared account (audiences, user lists,
+	// custom segments, shared sets) need the narrower global_marketing_ops role, which the
+	// gateway cannot check because the input is in the body. Before PreflightCreate, so a
+	// refused caller costs no upstream read.
+	if err := s.requireMarketingOpsForSharedAccountInputs(ctx, p.ProjectID, platforms, config); err != nil {
 		return nil, err
 	}
 	// Refuse a request that can never produce what it asks for BEFORE the job exists. Dispatch

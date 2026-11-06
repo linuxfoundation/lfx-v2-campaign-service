@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -27,41 +28,68 @@ func (f *fakeMarketingOps) IsGlobalMarketingOps(_ context.Context, projectSlug, 
 	return f.allow, f.err
 }
 
-func TestGoogleAdsDemandGenAudienceRequested(t *testing.T) {
+func TestGoogleAdsMarketingOpsInputs(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		config string
-		want   bool
+		want   []string
 	}{
-		{"empty", ``, false},
-		{"no google config", `{"microsoftConfig":{"budget":5}}`, false},
-		{"google config without audience", `{"googleAdsConfig":{"channel":"demand-gen"}}`, false},
-		{"campaign audience", `{"googleAdsConfig":{"demandGenAudience":"customers/1/audiences/2"}}`, true},
-		{"whitespace audience counts", `{"googleAdsConfig":{"demandGenAudience":" "}}`, true},
-		{"group audience", `{"googleAdsConfig":{"demandGenAdGroups":[{"name":"a"},{"name":"b","audience":"customers/1/audiences/3"}]}}`, true},
-		{"groups without audience", `{"googleAdsConfig":{"demandGenAdGroups":[{"name":"a"}]}}`, false},
+		{"empty", ``, nil},
+		{"no google config", `{"microsoftConfig":{"budget":5}}`, nil},
+		{"google config without gated input", `{"googleAdsConfig":{"channel":"display","userInterests":["customers/1/userInterests/2"],"excludedPlacements":["example.com"],"performanceMaxSearchThemes":["k8s"]}}`, nil},
+		{"campaign audience", `{"googleAdsConfig":{"demandGenAudience":"customers/1/audiences/2"}}`, []string{"demandGenAudience"}},
+		{"whitespace audience counts", `{"googleAdsConfig":{"demandGenAudience":" "}}`, []string{"demandGenAudience"}},
+		{"group audience", `{"googleAdsConfig":{"demandGenAdGroups":[{"name":"a"},{"name":"b","audience":"customers/1/audiences/3"}]}}`, []string{"demandGenAdGroups entry 2 audience"}},
+		{"groups without audience", `{"googleAdsConfig":{"demandGenAdGroups":[{"name":"a"}]}}`, nil},
+		{"display lists", `{"googleAdsConfig":{"channel":"display","audienceSegments":["customers/1/userLists/2"],"customAudiences":["x"],"customAffinities":["y"],"excludedAudienceSegments":["z"]}}`,
+			[]string{"audienceSegments", "customAudiences", "customAffinities", "excludedAudienceSegments"}},
+		{"empty lists do not count", `{"googleAdsConfig":{"customAudiences":[],"sharedNegativeKeywordLists":[]}}`, nil},
+		{"a list of blanks counts", `{"googleAdsConfig":{"customAffinities":[""]}}`, []string{"customAffinities"}},
+		{"display group lists", `{"googleAdsConfig":{"displayAdGroups":[{"name":"a","userInterests":["u"]},{"name":"b","audienceSegments":["s"],"customAudiences":["c"],"customAffinities":["f"],"excludedAudienceSegments":["e"]}]}}`,
+			[]string{"displayAdGroups entry 2 audienceSegments", "displayAdGroups entry 2 customAudiences",
+				"displayAdGroups entry 2 customAffinities", "displayAdGroups entry 2 excludedAudienceSegments"}},
+		{"pmax signal", `{"googleAdsConfig":{"channel":"performance-max","performanceMaxAudienceSignal":"123"}}`, []string{"performanceMaxAudienceSignal"}},
+		{"whitespace signal counts", `{"googleAdsConfig":{"performanceMaxAudienceSignal":"\t"}}`, []string{"performanceMaxAudienceSignal"}},
+		{"shared negative lists", `{"googleAdsConfig":{"channel":"search","sharedNegativeKeywordLists":["customers/1/sharedSets/2"]}}`, []string{"sharedNegativeKeywordLists"}},
+		// Search observation: not behind the Display flag, but it names the shared account's user lists.
+		{"search audience segments", `{"googleAdsConfig":{"channel":"search","audienceSegments":["customers/1/userLists/2"]}}`, []string{"audienceSegments"}},
+		{"search ad group audience segments", `{"googleAdsConfig":{"channel":"search","adGroups":[{"name":"a"},{"name":"b","audienceSegments":["customers/1/userLists/2"]}]}}`, []string{"adGroups entry 2 audienceSegments"}},
+		{"several, in config order", `{"googleAdsConfig":{"sharedNegativeKeywordLists":["s"],"performanceMaxAudienceSignal":"1","demandGenAudience":"a","customAudiences":["c"]}}`,
+			[]string{"demandGenAudience", "customAudiences", "performanceMaxAudienceSignal", "sharedNegativeKeywordLists"}},
 		// encoding/json matches field names case-insensitively, and so does the dispatcher's decode.
-		{"case variant key", `{"googleAdsConfig":{"DemandGenAudience":"customers/1/audiences/2"}}`, true},
-		// A type error elsewhere in the object does not hide an audience decoded before it.
-		{"audience before a type error", `{"googleAdsConfig":{"demandGenAudience":"customers/1/audiences/2","demandGenAdGroups":"x"}}`, true},
-		{"malformed envelope", `{`, false},
+		{"case variant key", `{"googleAdsConfig":{"DemandGenAudience":"customers/1/audiences/2","SharedNegativeKeywordLists":["s"]}}`, []string{"demandGenAudience", "sharedNegativeKeywordLists"}},
+		// A type error elsewhere in the object does not hide an input decoded around it.
+		{"inputs around a type error", `{"googleAdsConfig":{"demandGenAudience":"customers/1/audiences/2","demandGenAdGroups":"x","sharedNegativeKeywordLists":["s"]}}`, []string{"demandGenAudience", "sharedNegativeKeywordLists"}},
+		{"envelope key is exact", `{"GoogleAdsConfig":{"demandGenAudience":"customers/1/audiences/2"}}`, nil},
+		{"malformed envelope", `{`, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := GoogleAdsDemandGenAudienceRequested(json.RawMessage(tc.config)); got != tc.want {
-				t.Fatalf("GoogleAdsDemandGenAudienceRequested(%s) = %v, want %v", tc.config, got, tc.want)
+			if got := GoogleAdsMarketingOpsInputs(json.RawMessage(tc.config)); !slices.Equal(got, tc.want) {
+				t.Fatalf("GoogleAdsMarketingOpsInputs(%s) = %q, want %q", tc.config, got, tc.want)
 			}
 		})
 	}
 }
 
-// TestBriefService_CreateCampaigns_DemandGenAudienceNeedsMarketingOps drives the gate through
+// TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps drives the gate through
 // CreateCampaigns: a refusal arrives before any job exists, and a grant creates the job.
-func TestBriefService_CreateCampaigns_DemandGenAudienceNeedsMarketingOps(t *testing.T) {
+func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *testing.T) {
 	audience := map[string]any{"googleAdsConfig": map[string]any{
 		"channel": "demand-gen", "demandGenAudience": "customers/1/audiences/2"}}
 	groupAudience := map[string]any{"googleAdsConfig": map[string]any{
 		"channel": "demand-gen", "demandGenAdGroups": []any{map[string]any{"name": "g", "audience": " "}}}}
 	noAudience := map[string]any{"googleAdsConfig": map[string]any{"channel": "demand-gen"}}
+	display := map[string]any{"googleAdsConfig": map[string]any{
+		"channel": "display", "displayAdGroups": []any{map[string]any{"name": "g", "customAudiences": []any{"customers/1/customAudiences/2"}}}}}
+	pmax := map[string]any{"googleAdsConfig": map[string]any{
+		"channel": "performance-max", "performanceMaxAudienceSignal": "customers/1/audiences/2"}}
+	sharedLists := map[string]any{"googleAdsConfig": map[string]any{
+		"channel": "search", "sharedNegativeKeywordLists": []any{"customers/1/sharedSets/2"}}}
+	searchObservation := map[string]any{"googleAdsConfig": map[string]any{
+		"channel": "search", "audienceSegments": []any{"customers/1/userLists/2"}}}
+	several := map[string]any{"googleAdsConfig": map[string]any{
+		"channel": "search", "audienceSegments": []any{"customers/1/userLists/2"},
+		"sharedNegativeKeywordLists": []any{"customers/1/sharedSets/2"}}}
 
 	for _, tc := range []struct {
 		name      string
@@ -71,18 +99,27 @@ func TestBriefService_CreateCampaigns_DemandGenAudienceNeedsMarketingOps(t *test
 		actor     *model.Actor
 		wantErr   string // "", "403" or "503"
 		wantCalls int
+		wantNamed string // for a 403: the fields the message must name; "" skips the check
 	}{
-		{"marketing ops may", []string{"google-ads"}, audience, &fakeMarketingOps{allow: true}, testActor, "", 1},
-		{"an executive director may not", []string{"google-ads"}, audience, &fakeMarketingOps{}, testActor, "403", 1},
-		{"a group audience is checked", []string{"google-ads"}, groupAudience, &fakeMarketingOps{}, testActor, "403", 1},
+		{"marketing ops may", []string{"google-ads"}, audience, &fakeMarketingOps{allow: true}, testActor, "", 1, ""},
+		{"an executive director may not", []string{"google-ads"}, audience, &fakeMarketingOps{}, testActor, "403", 1, "demandGenAudience"},
+		{"a group audience is checked", []string{"google-ads"}, groupAudience, &fakeMarketingOps{}, testActor, "403", 1, "demandGenAdGroups entry 1 audience"},
+		{"a display group list is checked", []string{"google-ads"}, display, &fakeMarketingOps{}, testActor, "403", 1, "displayAdGroups entry 1 customAudiences"},
+		{"a pmax audience signal is checked", []string{"google-ads"}, pmax, &fakeMarketingOps{}, testActor, "403", 1, "performanceMaxAudienceSignal"},
+		{"shared negative lists are checked", []string{"google-ads"}, sharedLists, &fakeMarketingOps{}, testActor, "403", 1, "sharedNegativeKeywordLists"},
+		{"search observation segments are checked", []string{"google-ads"}, searchObservation, &fakeMarketingOps{}, testActor, "403", 1, "audienceSegments"},
+		{"several inputs, one check, all named", []string{"google-ads"}, several, &fakeMarketingOps{}, testActor, "403", 1, "audienceSegments, sharedNegativeKeywordLists"},
+		{"marketing ops may send several", []string{"google-ads", "microsoft-ads"}, several, &fakeMarketingOps{allow: true}, testActor, "", 1, ""},
+		{"a failed check on a pmax signal is unavailable", []string{"google-ads"}, pmax,
+			&fakeMarketingOps{allow: true, err: errors.New("nats: timeout")}, testActor, "503", 1, ""},
 		{"a failed check is unavailable, not a grant", []string{"google-ads"}, audience,
-			&fakeMarketingOps{allow: true, err: errors.New("nats: timeout")}, testActor, "503", 1},
-		{"no checker is unavailable", []string{"google-ads"}, audience, nil, testActor, "503", 0},
-		{"no actor is unavailable", []string{"google-ads"}, audience, &fakeMarketingOps{allow: true}, nil, "503", 0},
-		{"no audience is not checked", []string{"google-ads"}, noAudience, &fakeMarketingOps{}, testActor, "", 0},
+			&fakeMarketingOps{allow: true, err: errors.New("nats: timeout")}, testActor, "503", 1, ""},
+		{"no checker is unavailable", []string{"google-ads"}, audience, nil, testActor, "503", 0, ""},
+		{"no actor is unavailable", []string{"google-ads"}, audience, &fakeMarketingOps{allow: true}, nil, "503", 0, ""},
+		{"no audience is not checked", []string{"google-ads"}, noAudience, &fakeMarketingOps{}, testActor, "", 0, ""},
 		// googleAdsConfig is read only by the google-ads dispatcher, so another platform's create
 		// carrying it is not checked.
-		{"another platform is not checked", []string{"microsoft-ads"}, audience, &fakeMarketingOps{}, testActor, "", 0},
+		{"another platform is not checked", []string{"microsoft-ads"}, audience, &fakeMarketingOps{}, testActor, "", 0, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, jobs, _ := approvedPaidBriefService(t)
@@ -106,6 +143,9 @@ func TestBriefService_CreateCampaigns_DemandGenAudienceNeedsMarketingOps(t *test
 				var forbidden *briefs.ForbiddenError
 				if !errors.As(err, &forbidden) || !strings.Contains(forbidden.Message, "global_marketing_ops") {
 					t.Fatalf("CreateCampaigns = %T (%v), want a 403 naming global_marketing_ops", err, err)
+				}
+				if tc.wantNamed != "" && !strings.HasSuffix(forbidden.Message, ": "+tc.wantNamed) {
+					t.Fatalf("403 message = %q, want it to name exactly %q", forbidden.Message, tc.wantNamed)
 				}
 			case "503":
 				var unavailable *briefs.ConnServiceUnavailableError
@@ -157,8 +197,9 @@ func TestForbiddenErrorExampleMatchesService(t *testing.T) {
 				for name, s := range schemas {
 					if strings.HasPrefix(name, "ForbiddenError") || strings.HasSuffix(name, "ForbiddenError") {
 						found = append(found, name)
-						if got := s.Properties.Message.Example; got != demandGenAudienceForbiddenMessage {
-							t.Errorf("%s message example = %q, want %q", name, got, demandGenAudienceForbiddenMessage)
+						want := marketingOpsForbiddenMessage([]string{"demandGenAudience"})
+						if got := s.Properties.Message.Example; got != want {
+							t.Errorf("%s message example = %q, want %q", name, got, want)
 						}
 					}
 				}
