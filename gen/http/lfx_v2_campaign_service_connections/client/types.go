@@ -6771,14 +6771,19 @@ type GoogleAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
-	// currency (costInLocalCurrency), the currency its budgets are in; absent when
-	// the campaigns' budgets disagree about the currency, in which case those
-	// campaigns' pacing is unknown. On Meta, absent for a currency whose
-	// minor-unit scale this service does not know (its budgets are left
-	// unconverted), or when the insights rows' currency is not the ad account's.
-	// On Microsoft Ads, absent for a code in Microsoft's value set that is
-	// withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+	// The placeholder-budget and high-CPC action items are sized in this currency,
+	// and neither fires on an amount in a currency the service cannot size (absent
+	// included), except that a zero daily budget is still a placeholder on Google
+	// Ads and Microsoft Ads. On Google Ads it is customer.currency_code from the
+	// same campaign read; absent when the rows carry none or disagree. On LinkedIn
+	// Ads spend is read in the account's own currency (costInLocalCurrency), the
+	// currency its budgets are in; absent when the campaigns' budgets disagree
+	// about the currency, in which case those campaigns' pacing is unknown. On
+	// Meta, absent for a currency whose minor-unit scale this service does not
+	// know (its budgets are left unconverted), or when the insights rows' currency
+	// is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's
+	// value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is
+	// ambiguous.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
@@ -6948,14 +6953,19 @@ type LinkedinAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
-	// currency (costInLocalCurrency), the currency its budgets are in; absent when
-	// the campaigns' budgets disagree about the currency, in which case those
-	// campaigns' pacing is unknown. On Meta, absent for a currency whose
-	// minor-unit scale this service does not know (its budgets are left
-	// unconverted), or when the insights rows' currency is not the ad account's.
-	// On Microsoft Ads, absent for a code in Microsoft's value set that is
-	// withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+	// The placeholder-budget and high-CPC action items are sized in this currency,
+	// and neither fires on an amount in a currency the service cannot size (absent
+	// included), except that a zero daily budget is still a placeholder on Google
+	// Ads and Microsoft Ads. On Google Ads it is customer.currency_code from the
+	// same campaign read; absent when the rows carry none or disagree. On LinkedIn
+	// Ads spend is read in the account's own currency (costInLocalCurrency), the
+	// currency its budgets are in; absent when the campaigns' budgets disagree
+	// about the currency, in which case those campaigns' pacing is unknown. On
+	// Meta, absent for a currency whose minor-unit scale this service does not
+	// know (its budgets are left unconverted), or when the insights rows' currency
+	// is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's
+	// value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is
+	// ambiguous.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
@@ -7007,14 +7017,19 @@ type MetaAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
-	// currency (costInLocalCurrency), the currency its budgets are in; absent when
-	// the campaigns' budgets disagree about the currency, in which case those
-	// campaigns' pacing is unknown. On Meta, absent for a currency whose
-	// minor-unit scale this service does not know (its budgets are left
-	// unconverted), or when the insights rows' currency is not the ad account's.
-	// On Microsoft Ads, absent for a code in Microsoft's value set that is
-	// withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+	// The placeholder-budget and high-CPC action items are sized in this currency,
+	// and neither fires on an amount in a currency the service cannot size (absent
+	// included), except that a zero daily budget is still a placeholder on Google
+	// Ads and Microsoft Ads. On Google Ads it is customer.currency_code from the
+	// same campaign read; absent when the rows carry none or disagree. On LinkedIn
+	// Ads spend is read in the account's own currency (costInLocalCurrency), the
+	// currency its budgets are in; absent when the campaigns' budgets disagree
+	// about the currency, in which case those campaigns' pacing is unknown. On
+	// Meta, absent for a currency whose minor-unit scale this service does not
+	// know (its budgets are left unconverted), or when the insights rows' currency
+	// is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's
+	// value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is
+	// ambiguous.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
@@ -7066,14 +7081,19 @@ type RedditAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
-	// currency (costInLocalCurrency), the currency its budgets are in; absent when
-	// the campaigns' budgets disagree about the currency, in which case those
-	// campaigns' pacing is unknown. On Meta, absent for a currency whose
-	// minor-unit scale this service does not know (its budgets are left
-	// unconverted), or when the insights rows' currency is not the ad account's.
-	// On Microsoft Ads, absent for a code in Microsoft's value set that is
-	// withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+	// The placeholder-budget and high-CPC action items are sized in this currency,
+	// and neither fires on an amount in a currency the service cannot size (absent
+	// included), except that a zero daily budget is still a placeholder on Google
+	// Ads and Microsoft Ads. On Google Ads it is customer.currency_code from the
+	// same campaign read; absent when the rows carry none or disagree. On LinkedIn
+	// Ads spend is read in the account's own currency (costInLocalCurrency), the
+	// currency its budgets are in; absent when the campaigns' budgets disagree
+	// about the currency, in which case those campaigns' pacing is unknown. On
+	// Meta, absent for a currency whose minor-unit scale this service does not
+	// know (its budgets are left unconverted), or when the insights rows' currency
+	// is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's
+	// value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is
+	// ambiguous.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
@@ -7125,14 +7145,19 @@ type MicrosoftAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
-	// currency (costInLocalCurrency), the currency its budgets are in; absent when
-	// the campaigns' budgets disagree about the currency, in which case those
-	// campaigns' pacing is unknown. On Meta, absent for a currency whose
-	// minor-unit scale this service does not know (its budgets are left
-	// unconverted), or when the insights rows' currency is not the ad account's.
-	// On Microsoft Ads, absent for a code in Microsoft's value set that is
-	// withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+	// The placeholder-budget and high-CPC action items are sized in this currency,
+	// and neither fires on an amount in a currency the service cannot size (absent
+	// included), except that a zero daily budget is still a placeholder on Google
+	// Ads and Microsoft Ads. On Google Ads it is customer.currency_code from the
+	// same campaign read; absent when the rows carry none or disagree. On LinkedIn
+	// Ads spend is read in the account's own currency (costInLocalCurrency), the
+	// currency its budgets are in; absent when the campaigns' budgets disagree
+	// about the currency, in which case those campaigns' pacing is unknown. On
+	// Meta, absent for a currency whose minor-unit scale this service does not
+	// know (its budgets are left unconverted), or when the insights rows' currency
+	// is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's
+	// value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is
+	// ambiguous.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
@@ -7184,14 +7209,19 @@ type TwitterAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
-	// currency (costInLocalCurrency), the currency its budgets are in; absent when
-	// the campaigns' budgets disagree about the currency, in which case those
-	// campaigns' pacing is unknown. On Meta, absent for a currency whose
-	// minor-unit scale this service does not know (its budgets are left
-	// unconverted), or when the insights rows' currency is not the ad account's.
-	// On Microsoft Ads, absent for a code in Microsoft's value set that is
-	// withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+	// The placeholder-budget and high-CPC action items are sized in this currency,
+	// and neither fires on an amount in a currency the service cannot size (absent
+	// included), except that a zero daily budget is still a placeholder on Google
+	// Ads and Microsoft Ads. On Google Ads it is customer.currency_code from the
+	// same campaign read; absent when the rows carry none or disagree. On LinkedIn
+	// Ads spend is read in the account's own currency (costInLocalCurrency), the
+	// currency its budgets are in; absent when the campaigns' budgets disagree
+	// about the currency, in which case those campaigns' pacing is unknown. On
+	// Meta, absent for a currency whose minor-unit scale this service does not
+	// know (its budgets are left unconverted), or when the insights rows' currency
+	// is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's
+	// value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is
+	// ambiguous.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 

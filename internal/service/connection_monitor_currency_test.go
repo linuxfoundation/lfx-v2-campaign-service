@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,7 +57,7 @@ func currencyOf(got *conn.AccountMonitor) string {
 }
 
 // A live-read platform's currency reaches the response when well-formed and is absent otherwise;
-// a dispatcher with only AccountMetricsReader (Google Ads) never sets it.
+// a dispatcher with only AccountMetricsReader never sets it.
 func TestMonitorAccount_Currency(t *testing.T) {
 	rows := []model.AccountCampaignMetrics{{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE", BudgetDay: 50, Spend: 50, Impressions: 100, Clicks: 5}}
 	for _, tc := range []struct {
@@ -200,5 +201,92 @@ func TestMonitorReportedAccount_SlowCurrencyReadIsBounded(t *testing.T) {
 	}
 	if elapsed > accountCurrencyReadTimeout+2*time.Second || elapsed >= accountsCallTimeout {
 		t.Errorf("took %v, want about accountCurrencyReadTimeout (%v), far inside the %v call budget", elapsed, accountCurrencyReadTimeout, accountsCallTimeout)
+	}
+}
+
+// The read's currency reaches the Google and Microsoft rule engines, which size the money rules in
+// it (#454). Each case also runs the same rows in USD, where the item fires, so a currency that
+// stopped reaching the rules would fail here.
+func TestMonitorAccount_MoneyRulesUseTheReadsCurrency(t *testing.T) {
+	has := func(got *conn.AccountMonitor, prefix string) bool {
+		for _, it := range got.ActionItems {
+			if strings.HasPrefix(it.Issue, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("google high CPC", func(t *testing.T) {
+		one := 1.0
+		// 6 per click: high in USD, about $0.04 in JPY.
+		rows := []model.AccountCampaignMetrics{{PlatformCampaignID: "1", Name: "c", Status: "ENABLED", IsSearchChannel: true,
+			BudgetDay: 5000, Spend: 120, Impressions: 400, Clicks: 20, Ctr: 5, Conversions: &one}}
+		for _, tc := range []struct {
+			currency string
+			want     bool
+		}{{"USD", true}, {"JPY", false}} {
+			svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+			svc.SetOrchestrator(&Orchestrator{dispatchers: map[model.Provider]PlatformDispatcher{
+				model.ProviderGoogleAds: &mockAccountMonitorReaderDispatcher{rows: rows, currency: tc.currency},
+			}})
+			got, err := svc.MonitorGoogleAdsAccount(context.Background(),
+				&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: "a", Days: 30})
+			if err != nil {
+				t.Fatalf("MonitorGoogleAdsAccount: %v", err)
+			}
+			if c := currencyOf(got); c != tc.currency {
+				t.Errorf("currency = %s, want %s", c, tc.currency)
+			}
+			if h := has(got, "Avg CPC is "); h != tc.want {
+				t.Errorf("%s: high-CPC item = %v, want %v; items = %+v", tc.currency, h, tc.want, got.ActionItems)
+			}
+		}
+	})
+
+	// The report-backed monitors: Microsoft and X share the placeholder-budget rule.
+	for _, pl := range []struct {
+		provider model.Provider
+		active   string
+		monitor  func(*ConnectionService) (*conn.AccountMonitor, error)
+	}{
+		{model.ProviderMicrosoftAds, "Active", func(svc *ConnectionService) (*conn.AccountMonitor, error) {
+			return svc.MonitorMicrosoftAdsAccount(context.Background(),
+				&conn.MonitorMicrosoftAdsAccountPayload{ProjectID: "p", AccountID: "123", Days: 7})
+		}},
+		{model.ProviderTwitterAds, "ACTIVE", func(svc *ConnectionService) (*conn.AccountMonitor, error) {
+			return svc.MonitorTwitterAdsAccount(context.Background(),
+				&conn.MonitorTwitterAdsAccountPayload{ProjectID: "p", AccountID: "18ce54d4x5t", Days: 7})
+		}},
+	} {
+		t.Run(string(pl.provider)+" placeholder budget", func(t *testing.T) {
+			// 1/day: a placeholder in USD, about $3 in KWD.
+			for _, tc := range []struct {
+				currency string
+				want     bool
+			}{{"USD", true}, {"KWD", false}} {
+				reader := &currencyReportReader{fakeReportReader: &fakeReportReader{
+					campaigns: []model.AccountCampaignMetrics{{PlatformCampaignID: "1", Name: "a", Status: pl.active, BudgetDay: 1}},
+					submitID:  "r-next",
+				}, currency: tc.currency}
+				store := &fakeReportStore{snap: &model.AccountReportSnapshot{Ready: &model.ReadyAccountReport{
+					AsOf:        time.Date(2026, 10, 5, 14, 30, 0, 0, time.UTC),
+					WindowStart: time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC),
+					WindowEnd:   time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC),
+					Rows:        []model.AccountReportRow{{PlatformCampaignID: "1", Spend: 7, Impressions: 1000, Clicks: 30}},
+				}}}
+				o := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{pl.provider: reader})
+				o.SetAccountReportStore(store)
+				svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+				svc.SetOrchestrator(o)
+				got, err := pl.monitor(svc)
+				if err != nil {
+					t.Fatalf("monitor: %v", err)
+				}
+				if p := has(got, "Daily budget is "); p != tc.want {
+					t.Errorf("%s: placeholder-budget item = %v, want %v; items = %+v", tc.currency, p, tc.want, got.ActionItems)
+				}
+			}
+		})
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -2755,6 +2756,20 @@ func (d *GoogleAdsDispatcher) ProbeConnection(ctx context.Context, projectID str
 // method; Reddit needs none, because its dispatcher already scopes accountID to the resolved
 // connection's own single account rather than building an account-agnostic client.
 func (d *GoogleAdsDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
+	read, err := d.ReadAccountMonitor(ctx, projectID, platform, accountID, days)
+	if err != nil {
+		return nil, err
+	}
+	return read.Rows, nil
+}
+
+var _ service.AccountMonitorReader = (*GoogleAdsDispatcher)(nil)
+
+// ReadAccountMonitor implements service.AccountMonitorReader: ListAccountCampaignMetrics' read
+// (the body of both, with every guard described above), plus the ad account's currency from the
+// same GAQL read — customer.currency_code rides on every campaign row, so no extra call (#454).
+// See googleAdsAccountCurrency for when the currency is "".
+func (d *GoogleAdsDispatcher) ReadAccountMonitor(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) (*model.AccountMonitorRead, error) {
 	// Validated up front, before any credential is resolved: this is defense-in-depth for a
 	// non-HTTP caller that bypasses Goa — an ordinary HTTP request already gets refused by the
 	// design attribute's own Pattern (see design/connection.go) before this method ever runs.
@@ -2796,7 +2811,24 @@ func (d *GoogleAdsDispatcher) ListAccountCampaignMetrics(ctx context.Context, pr
 			CampaignURL: buildGoogleAdsCampaignURL(r.CampaignID),
 		})
 	}
-	return out, nil
+	return &model.AccountMonitorRead{Rows: out, Currency: googleAdsAccountCurrency(rows)}, nil
+}
+
+// googleAdsAccountCurrency is the account's currency from the campaign rows' customer.currency_code:
+// the one well-formed ISO 4217 code every row carries, or "" when there are no rows, when any row
+// carries none or a malformed one, or when two rows disagree. Every row is read from one
+// customer, so a disagreement means the answer cannot be trusted rather than that the account
+// has two currencies.
+func googleAdsAccountCurrency(rows []googleads.AccountCampaignRow) string {
+	currency := ""
+	for i, r := range rows {
+		code := model.NormalizeCurrencyCode(r.CurrencyCode)
+		if code == "" || (i > 0 && code != currency) {
+			return ""
+		}
+		currency = code
+	}
+	return currency
 }
 
 // buildGoogleAdsCampaignURL ports the BFF's buildGoogleAdsUrl(campaignId): a direct link to

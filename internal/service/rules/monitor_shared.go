@@ -155,3 +155,70 @@ func sortByPriority(items []model.AccountMonitorActionItem) {
 // the currency code, so a "$" would call a EUR, INR or yen amount dollars. The text names the
 // unit instead.
 func accountMoney(v float64) string { return fmt.Sprintf("%.2f in account currency", v) }
+
+// The two monitor thresholds that are amounts of money, written in US dollars. Every other
+// monitor threshold is a percentage or a count, which no currency changes.
+const (
+	// placeholderBudgetMaxUSD is the daily budget (INCLUSIVE) at or below which an active
+	// campaign is treated as carrying a placeholder: about a dollar a day buys too few clicks to
+	// read anything from.
+	placeholderBudgetMaxUSD = 1.0
+	// highAvgCpcUSD is the average CPC (EXCLUSIVE) above which clicks are too expensive for an
+	// event/awareness campaign.
+	highAvgCpcUSD = 5.0
+)
+
+// monitorUnitsPerUSD is roughly how many units of each currency one US dollar is worth, used only
+// to size placeholderBudgetMaxUSD and highAvgCpcUSD in the ad account's own currency (#454).
+// Before it, both were compared with the account-currency amount as if it were dollars, so a
+// JPY account tripped the high-CPC rule on a ¥50 click and a KWD account's 1/day budget (about
+// $3) was flagged as a placeholder.
+//
+// These are magnitudes, not rates: no amount is converted or shown with them, and the two rules
+// they size are heuristics whose USD values are themselves round numbers. Rounded mid-2026
+// values; an entry needs revisiting only when its currency moves by a large fraction, which is
+// why currencies with persistently high inflation (ARS, TRY, NGN, EGP and the like) are left
+// out rather than given a figure that would go stale.
+//
+// A currency missing from this table, or an account whose currency was not reported (""), has
+// no size for either rule, so neither fires on an amount there — see isPlaceholderBudget and
+// isHighAvgCpc. A threshold that cannot be sized is not guessed at in dollars: that guess is
+// exactly the misfire this table exists to remove.
+var monitorUnitsPerUSD = map[string]float64{
+	"USD": 1, "PAB": 1,
+	"EUR": 0.87, "GBP": 0.75, "CHF": 0.8, "CAD": 1.38, "AUD": 1.53, "NZD": 1.7,
+	"SEK": 9.6, "NOK": 10.1, "DKK": 6.4, "PLN": 3.7, "CZK": 21, "HUF": 345, "RON": 4.4,
+	"ILS": 3.4, "ZAR": 17.8,
+	"JPY": 147, "KRW": 1390, "CNY": 7.15, "HKD": 7.8, "TWD": 30, "SGD": 1.29, "INR": 87,
+	"THB": 32.5, "MYR": 4.25, "PHP": 57, "IDR": 16300, "VND": 26000,
+	"MXN": 18.7, "BRL": 5.5, "CLP": 950, "COP": 4000, "PEN": 3.6,
+	"AED": 3.6725, "SAR": 3.75, "QAR": 3.64, "KWD": 0.307, "BHD": 0.376, "OMR": 0.3845, "JOD": 0.709,
+}
+
+// accountThreshold sizes a USD-denominated threshold in currency, the ad account's ISO 4217 code.
+// ok is false when the currency has no entry in monitorUnitsPerUSD, "" included.
+func accountThreshold(usd float64, currency string) (threshold float64, ok bool) {
+	units, ok := monitorUnitsPerUSD[currency]
+	if !ok {
+		return 0, false
+	}
+	return usd * units, true
+}
+
+// isPlaceholderBudget reports whether a daily budget in currency is a placeholder: at or below
+// placeholderBudgetMaxUSD sized in that currency. A budget of zero or less is a placeholder in
+// every currency, so it is one even when the currency cannot be sized.
+func isPlaceholderBudget(budgetDay float64, currency string) bool {
+	if budgetDay <= 0 {
+		return true
+	}
+	limit, ok := accountThreshold(placeholderBudgetMaxUSD, currency)
+	return ok && budgetDay <= limit
+}
+
+// isHighAvgCpc reports whether an average CPC in currency is above highAvgCpcUSD sized in that
+// currency. It is never high in a currency that cannot be sized.
+func isHighAvgCpc(avgCpc float64, currency string) bool {
+	limit, ok := accountThreshold(highAvgCpcUSD, currency)
+	return ok && avgCpc > limit
+}
