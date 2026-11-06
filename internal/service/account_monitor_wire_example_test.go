@@ -65,8 +65,8 @@ var accountMonitorExamplePlatforms = map[string]accountMonitorExamplePlatform{
 		activeStatus: "ENABLED", campaignURL: true, searchChannel: true, conversions: true, currency: true,
 	},
 	"monitor-linkedin-ads-account": {
-		evaluate: func(rows []model.AccountCampaignMetrics, days int, _ map[string]any) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem, error) {
-			r, i := rules.EvaluateLinkedInMonitor(rows, days, accountMonitorExampleNow)
+		evaluate: func(rows []model.AccountCampaignMetrics, days int, ex map[string]any) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem, error) {
+			r, i := rules.EvaluateLinkedInMonitor(rows, days, accountMonitorExampleNow, exampleCurrency(ex))
 			return r, i, nil
 		},
 		activeStatus: "ACTIVE", flightDates: true, totalBudget: true, conversions: true, currency: true,

@@ -683,7 +683,7 @@ type versionGuardedJobRepo struct {
 	store *fakeBriefRepo
 }
 
-func (r *versionGuardedJobRepo) CreateJobForApprovedBrief(_ context.Context, briefID string, expectedVersion int64) (*model.CampaignJob, error) {
+func (r *versionGuardedJobRepo) CreateJobForApprovedBrief(_ context.Context, _, briefID string, expectedVersion int64) (*model.CampaignJob, error) {
 	// Re-verify approval atomically with the create, mirroring the real repo's
 	// SELECT ... FOR UPDATE re-check inside the job-insert transaction: any
 	// concurrent replace/archive that bumped the version or changed the status

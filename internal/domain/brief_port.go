@@ -454,8 +454,9 @@ type JobRepository interface {
 	// concurrent replace/archive of that row — a lone guarded INSERT ... WHERE
 	// EXISTS would NOT, because under READ COMMITTED its snapshot can miss a mutation
 	// that commits just before the statement runs (see the implementation for the
-	// full isolation reasoning).
-	CreateJobForApprovedBrief(ctx context.Context, briefID string, expectedVersion int64) (*model.CampaignJob, error)
+	// full isolation reasoning). The lock is keyed on (briefID, projectID), so a brief
+	// owned by another project is refused with ErrStaleApproval.
+	CreateJobForApprovedBrief(ctx context.Context, projectID, briefID string, expectedVersion int64) (*model.CampaignJob, error)
 	// GetJob returns a job by id, or ErrNotFound.
 	GetJob(ctx context.Context, projectID, id string) (*model.CampaignJob, error)
 	// UpdateJobStatus sets a job's status (any JobStatus, e.g. running or a
