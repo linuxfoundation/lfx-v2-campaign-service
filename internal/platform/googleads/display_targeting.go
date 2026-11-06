@@ -383,35 +383,33 @@ func displayAudienceStep(plan displayTargetingPlan) string {
 	return strings.Join(parts, "; ")
 }
 
-// displayAdGroupTargetingSetting is the Display ad group's targetingSetting for the given
-// audience and demographic targeting, or nil when there is neither, so an ad group with
-// neither is the pre-#462 payload exactly. See createDisplayAudienceCriteria for why it is
-// sent.
+// displayAdGroupTargetingSetting is the Display ad group's targetingSetting when it carries
+// audience criteria, or nil when it does not, so an ad group without them is the pre-#462
+// payload exactly. See createDisplayAudienceCriteria for why it is sent.
 //
-// The four demographic dimensions are always restated, in this order, rather than only the
-// ones that changed: LFX-created Display ad groups (no targetingSetting sent) read back
-// exactly AGE_RANGE, GENDER, PARENTAL_STATUS and INCOME_RANGE, each bidOnly true, and no
-// AUDIENCE entry. Restating those four keeps Google's default for the demographic
-// dimensions instead of relying on how Google merges a partial list. Each is bidOnly true
-// unless the demographic targeting (#499) names a value in it; then it is bidOnly false, so
-// its positive criteria restrict reach. AUDIENCE follows, bidOnly false, only when there are
-// audience criteria, so they target rather than observe.
+// The four demographic dimensions exactly as Google sets them by default, then AUDIENCE with
+// bidOnly false, so the audience criteria target rather than observe. All five entries, in this
+// order, rather than AUDIENCE alone: LFX-created Display ad groups (no targetingSetting sent)
+// read back exactly AGE_RANGE, GENDER, PARENTAL_STATUS and INCOME_RANGE, each bidOnly true, and
+// no AUDIENCE entry. Restating those four keeps Google's default for the demographic dimensions
+// instead of relying on how Google merges a partial list. This exact list, with the four
+// criteria, was accepted by a validateOnly probe on 2026-11-03.
 //
-// With audiences and no demographic targeting this is exactly the five-entry list a
-// validateOnly probe accepted with the audience criteria on 2026-11-03. The #499 variants are
-// not yet probed.
-func displayAdGroupTargetingSetting(audiences bool, demographics adGroupDemographicTargetingPlan) *targetingSetting {
-	if !audiences && demographics.count() == 0 {
+// The demographic dimensions are NEVER sent bidOnly false, whatever DisplayDemographics holds:
+// Google refuses that (TARGETING_SETTING_DEMOGRAPHIC_CRITERION_TYPE_GROUPS_MUST_BE_SET_TO_TARGET_ALL,
+// validateOnly probe 2026-11-05). Demographic targeting narrows through negative criteria
+// instead; see adGroupDemographicTargetingPlan.
+func displayAdGroupTargetingSetting(audiences bool) *targetingSetting {
+	if !audiences {
 		return nil
 	}
-	restrictions := make([]targetRestriction, 0, 5)
-	for _, dim := range []string{targetingDimensionAgeRange, targetingDimensionGender, targetingDimensionParentalStatus, targetingDimensionIncomeRange} {
-		restrictions = append(restrictions, targetRestriction{TargetingDimension: dim, BidOnly: !demographics.targets(dim)})
-	}
-	if audiences {
-		restrictions = append(restrictions, targetRestriction{TargetingDimension: "AUDIENCE", BidOnly: false})
-	}
-	return &targetingSetting{TargetRestrictions: restrictions}
+	return &targetingSetting{TargetRestrictions: []targetRestriction{
+		{TargetingDimension: targetingDimensionAgeRange, BidOnly: true},
+		{TargetingDimension: targetingDimensionGender, BidOnly: true},
+		{TargetingDimension: targetingDimensionParentalStatus, BidOnly: true},
+		{TargetingDimension: targetingDimensionIncomeRange, BidOnly: true},
+		{TargetingDimension: "AUDIENCE", BidOnly: false},
+	}}
 }
 
 // createDisplayAudienceCriteria attaches the plan's audience segments to a

@@ -1114,34 +1114,39 @@ var genderTypeNames = func() map[string]string {
 	return m
 }()
 
-// adGroupDemographicTargetingPlan is the resolved DisplayDemographics intent (#499): one
-// POSITIVE, ENABLED ad-group criterion per targeted value. A dimension with any value here is
-// declared bidOnly false in the ad group's targetingSetting, so its criteria restrict reach;
-// see displayAdGroupTargetingSetting.
+// allParentalStatuses is every ParentalStatusType value, in Google's enum order, for the
+// complement a targeted parental-status dimension excludes.
+var allParentalStatuses = []string{"PARENT", "NOT_A_PARENT", "UNDETERMINED"}
+
+// adGroupDemographicTargetingPlan is the resolved DisplayDemographics intent (#499), in the
+// shape Google stores a "target only these" demographic on a Display ad group: one POSITIVE,
+// ENABLED ad-group criterion per targeted value, and one NEGATIVE criterion for every other
+// value of each targeted dimension (the "unchecked" brackets in the Google Ads UI).
+//
+// The negatives are what narrow reach. A validateOnly probe on 2026-11-05 (v23, paused LFX
+// Display ad group 204064966271) refused a targetingSetting that set any demographic dimension
+// bidOnly false (TARGETING_SETTING_DEMOGRAPHIC_CRITERION_TYPE_GROUPS_MUST_BE_SET_TO_TARGET_ALL),
+// so every demographic dimension targets all, and a positive criterion alone does not exclude
+// the others. The same probe accepted positive ageRange/gender/incomeRange/parentalStatus
+// criteria beside a negative ageRange in one adGroupCriteria:mutate.
 type adGroupDemographicTargetingPlan struct {
 	ageRanges        []ageRangeInfo
 	genders          []genderInfo
 	incomeRanges     []incomeRangeInfo
 	parentalStatuses []parentalStatusInfo
+	// The complement negatives, less any value an exclusion list already excludes.
+	negAgeRanges        []ageRangeInfo
+	negGenders          []genderInfo
+	negIncomeRanges     []incomeRangeInfo
+	negParentalStatuses []parentalStatusInfo
 }
 
-func (p adGroupDemographicTargetingPlan) count() int {
+func (p adGroupDemographicTargetingPlan) positives() int {
 	return len(p.ageRanges) + len(p.genders) + len(p.incomeRanges) + len(p.parentalStatuses)
 }
 
-// targets reports whether the plan restricts the given TargetingDimension.
-func (p adGroupDemographicTargetingPlan) targets(dimension string) bool {
-	switch dimension {
-	case targetingDimensionAgeRange:
-		return len(p.ageRanges) > 0
-	case targetingDimensionGender:
-		return len(p.genders) > 0
-	case targetingDimensionIncomeRange:
-		return len(p.incomeRanges) > 0
-	case targetingDimensionParentalStatus:
-		return len(p.parentalStatuses) > 0
-	}
-	return false
+func (p adGroupDemographicTargetingPlan) count() int {
+	return p.positives() + len(p.negAgeRanges) + len(p.negGenders) + len(p.negIncomeRanges) + len(p.negParentalStatuses)
 }
 
 // validateDisplayDemographics resolves CampaignInput.DisplayDemographics for the given KIND,
@@ -1192,6 +1197,11 @@ func validateDisplayDemographics(kind string, in DisplayDemographics, campaign c
 		}
 		plan.ageRanges = append(plan.ageRanges, ageRangeInfo{Type: t})
 	}
+	if len(ages) > 0 {
+		for _, t := range remainingValues(allAgeRanges, union(excluded, ages)) {
+			plan.negAgeRanges = append(plan.negAgeRanges, ageRangeInfo{Type: t})
+		}
+	}
 	excluded = make(map[string]struct{})
 	for _, g := range campaign.genders {
 		excluded[g.Type] = struct{}{}
@@ -1201,6 +1211,11 @@ func validateDisplayDemographics(kind string, in DisplayDemographics, campaign c
 			return adGroupDemographicTargetingPlan{}, targetedAndExcluded(t, "DisplayDemographics.Genders", "ExcludedGenders")
 		}
 		plan.genders = append(plan.genders, genderInfo{Type: t})
+	}
+	if len(genders) > 0 {
+		for _, t := range remainingValues(allGenders, union(excluded, genders)) {
+			plan.negGenders = append(plan.negGenders, genderInfo{Type: t})
+		}
 	}
 	excluded = make(map[string]struct{})
 	for _, r := range adGroup.incomeRanges {
@@ -1212,6 +1227,11 @@ func validateDisplayDemographics(kind string, in DisplayDemographics, campaign c
 		}
 		plan.incomeRanges = append(plan.incomeRanges, incomeRangeInfo{Type: t})
 	}
+	if len(incomes) > 0 {
+		for _, t := range remainingValues(allIncomeRanges, union(excluded, incomes)) {
+			plan.negIncomeRanges = append(plan.negIncomeRanges, incomeRangeInfo{Type: t})
+		}
+	}
 	excluded = make(map[string]struct{})
 	for _, s := range adGroup.parentalStatuses {
 		excluded[s.Type] = struct{}{}
@@ -1222,7 +1242,25 @@ func validateDisplayDemographics(kind string, in DisplayDemographics, campaign c
 		}
 		plan.parentalStatuses = append(plan.parentalStatuses, parentalStatusInfo{Type: t})
 	}
+	if len(parents) > 0 {
+		for _, t := range remainingValues(allParentalStatuses, union(excluded, parents)) {
+			plan.negParentalStatuses = append(plan.negParentalStatuses, parentalStatusInfo{Type: t})
+		}
+	}
 	return plan, nil
+}
+
+// union is excluded plus values, as a new set: the values a complement must leave out
+// (already excluded, or targeted).
+func union(excluded map[string]struct{}, values []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(excluded)+len(values))
+	for k := range excluded {
+		out[k] = struct{}{}
+	}
+	for _, v := range values {
+		out[v] = struct{}{}
+	}
+	return out
 }
 
 // targetedAndExcluded refuses one value named in a target list and its exclusion list.
@@ -1230,9 +1268,10 @@ func targetedAndExcluded(value, targetField, excludeField string) error {
 	return fmt.Errorf("google-ads: %s is both targeted (%s) and excluded (%s); a value cannot be both, so remove it from one of the two", value, targetField, excludeField)
 }
 
-// displayDemographicTargetingStep names the targeted parts of the plan for the step list.
+// displayDemographicTargetingStep names the targeted parts of the plan for the step list,
+// then how many other values were excluded to narrow to them.
 func displayDemographicTargetingStep(plan adGroupDemographicTargetingPlan) string {
-	parts := make([]string, 0, 4)
+	parts := make([]string, 0, 5)
 	if n := len(plan.ageRanges); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d age range(s)", n))
 	}
@@ -1244,6 +1283,9 @@ func displayDemographicTargetingStep(plan adGroupDemographicTargetingPlan) strin
 	}
 	if n := len(plan.parentalStatuses); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d parental status(es)", n))
+	}
+	if n := plan.count() - plan.positives(); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d other value(s) excluded", n))
 	}
 	return strings.Join(parts, "; ")
 }

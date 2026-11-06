@@ -131,7 +131,7 @@ var sharedAccountGatedFields = map[string]bool{
 // sharedAccountUngatedFields are every other googleAdsConfig JSON path, each deliberately
 // outside the check. Most name no existing account resource: the caller's own text, URLs,
 // images, bids and dates, Google's own reference data (geo targets, languages, userInterests,
-// the fixed demographic dimensions of observedDemographics), or public domains
+// the fixed demographic brackets of observedDemographics and displayDemographics), or public domains
 // (excludedPlacements).
 var sharedAccountUngatedFields = map[string]bool{
 	"budget": true, "channel": true, "headlines": true, "descriptions": true, "path1": true,
@@ -146,7 +146,8 @@ var sharedAccountUngatedFields = map[string]bool{
 	"demandGenVideoCreative": true, "demandGenAds": true, "performanceMaxCreative": true,
 	"performanceMaxSearchThemes": true, "videoCreative": true, "displayCreative": true,
 	"searchAssets": true, "adoptExisting": true, "observedDemographics": true,
-	"adGroups[].name": true, "adGroups[].cpcBid": true, "adGroups[].keywords": true,
+	"displayDemographics": true,
+	"adGroups[].name":     true, "adGroups[].cpcBid": true, "adGroups[].keywords": true,
 	"adGroups[].ads": true, "adGroups[].negativeKeywords": true,
 	"displayAdGroups[].name": true, "displayAdGroups[].creative": true,
 	"displayAdGroups[].userInterests": true,
