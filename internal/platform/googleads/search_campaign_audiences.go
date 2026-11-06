@@ -80,7 +80,7 @@ func validateCampaignAudienceSegments(kind, customerID string, in CampaignInput)
 	// real cap is on the DISTINCT lists, checked after the dedupe below, so duplicates that
 	// collapse to maxAudienceSegments or fewer are accepted.
 	if len(in.CampaignAudienceSegments) > 4*maxAudienceSegments {
-		return nil, fmt.Errorf("google-ads: at most %d %s entries are supported, got %d", maxAudienceSegments, field, len(in.CampaignAudienceSegments))
+		return nil, fmt.Errorf("google-ads: at most %d %s entries (%d distinct) are supported, got %d", 4*maxAudienceSegments, field, maxAudienceSegments, len(in.CampaignAudienceSegments))
 	}
 	seen := make(map[string]struct{}, len(in.CampaignAudienceSegments))
 	out := make([]string, 0, len(in.CampaignAudienceSegments))

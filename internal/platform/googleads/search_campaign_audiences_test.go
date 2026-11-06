@@ -187,7 +187,7 @@ func TestValidateCampaignInputKind_CampaignAudienceSegmentsRefusals(t *testing.T
 		}, ""},
 		{"raw input far over the cap", CampaignKindSearch, func(in *CampaignInput) {
 			in.CampaignAudienceSegments = make([]string, 4*maxAudienceSegments+1)
-		}, "at most 20 CampaignAudienceSegments entries are supported, got 81"},
+		}, "at most 80 CampaignAudienceSegments entries (20 distinct) are supported, got 81"},
 		{"empty entry", CampaignKindSearch, func(in *CampaignInput) { in.CampaignAudienceSegments = []string{" "} }, "CampaignAudienceSegments entry must not be empty"},
 		{"malformed", CampaignKindSearch, func(in *CampaignInput) { in.CampaignAudienceSegments = []string{"userLists/1"} }, "is not a customers/{customerId}/userLists/{id} user list resource name"},
 		{"custom audience", CampaignKindSearch, func(in *CampaignInput) {
