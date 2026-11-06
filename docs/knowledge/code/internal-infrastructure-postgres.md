@@ -531,6 +531,39 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `TestLiveClaimWritesLabelsOnlyOnInsert` and `TestLiveCampaignLabelChecksMatchTheModel` (under
   `dbtest/`), and by the scan-order tests in `campaign_repo_test.go`.
 
+- `000056` — composite tenant foreign key on `campaigns` (#534): ADDS
+  `campaigns_brief_project_fkey`, `(brief_id, project_id) -> campaign_briefs (id, project_id)`,
+  the shape `000007`, `000028` and `000033` gave audiences, creative assets and wizard sessions
+  (the referenced `UNIQUE (id, project_id)` is `000007`'s). `000002`'s id-only
+  `campaigns_brief_id_fkey` is deliberately KEPT, redundant: dropping it needs ACCESS EXCLUSIVE on
+  `campaigns` (blocking reads) and an ADD -> DROP lock upgrade that can deadlock, while the ADD
+  alone takes SHARE ROW EXCLUSIVE on both tables (writes wait, reads never do). Every writer
+  already paired the two columns: the dispatch claim and upsert stamp `brief.ProjectID`/`brief.ID`
+  from the loaded brief, and the adopt INSERT runs under `lockAdoptBriefQuery`.
+  - **Mismatched rows: fails loudly, never repairs.** A `DO` block raises with the count. The
+    schema rolls back but golang-migrate leaves version 56 DIRTY (it records the version before
+    running the file; `runMigrations` surfaces `ErrDirty`, which startup treats as permanent), so
+    no later boot retries it. Recovery: resolve the rows by hand, `migrate force 55`, restart.
+    Pre-deploy, `SELECT count(*) FROM campaigns c JOIN campaign_briefs b ON b.id = c.brief_id
+    WHERE b.project_id <> c.project_id` must be 0.
+  - **Lock waits and deadlocks are retried.** The ADD runs in a loop: each attempt waits at most
+    2s (`lock_timeout`); on `55P03` or `40P01` its subtransaction rolls back (releasing its locks
+    and queue place) and sleeps 1s, so queued writes drain. A caught failure does not dirty the
+    version. Failed attempts are bounded at 15 (about 45s of lock waiting), inside the chart's
+    ~90s startupProbe budget, because a pod killed mid-migration would dirty it anyway. That bound
+    covers lock ACQUISITION only: the successful attempt then holds SHARE ROW EXCLUSIVE on both
+    tables while it validates every existing `campaigns` row, and that scan and the precheck have
+    no time limit of their own (they scale with the table, which is small). If every attempt fails it
+    raises (dirty): end the blocking transaction, `migrate force 55`, restart.
+  - The down drops the composite key only and always applies. `campaign_jobs` is NOT included: it
+    has no `project_id` column, so a composite key there needs a new column plus a backfill; its
+    tenant scope stays `GetJob`'s JOIN through `campaign_briefs`.
+  - Pinned by `TestLiveMigration000056RefusesAMismatchedCampaign`,
+    `TestLiveMigration000056AddsTheCompositeFK`,
+    `TestLiveMigration000056WaitsOutABusyTableWithoutBlockingIt`,
+    `TestLiveMigration000056RetriesADeadlock` and
+    `TestLiveListCampaignsForBriefExcludesAnotherProject`.
+
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
 
 `campaign_jobs` is append-only — nothing else in the service deletes a row — so it
@@ -1443,8 +1476,9 @@ the brief, re-reads the CURRENT committed status and version, and refuses with
 `ErrStaleApproval` unless both still match — closing the approve→dispatch TOCTOU race in which
 a `ReplaceBrief` (back to `'draft'`, version+1) or `ArchiveBrief` commits between the
 approver's read and the dispatch. What it protects is real ad spend, and none of it is
-observable against a fake, which satisfies the check by construction. The live test drives the
-draft, stale-version, withdrawn-approval and absent-brief arms; each is revert-verified, and
+observable against a fake, which satisfies the check by construction. The lock is keyed on `(id, project_id)` (`lockApprovedBriefForJobQuery`, #534), so another
+project naming the brief is refused with `ErrStaleApproval` even at the approved version. The
+live test drives the draft, cross-project, stale-version, withdrawn-approval and absent-brief arms; each is revert-verified, and
 the status and version halves of the guard are pinned independently.
 
 **`FailStuckJobs` is table-wide, and that makes it a hazard to its neighbours.** It carries no
@@ -2003,10 +2037,12 @@ second pooled connection beside the claim. Every other caller's handling is unch
 own rows: a raise for the confirmed rollback, and a slow commit under a short deadline for the
 lost acknowledgement.
 
-That transaction's OPENING statement is `lockBriefRowByIDQuery` on the parent brief,
-unconditionally — the same ROW lock `lockBriefForAssetWriteQuery` takes, keyed on `brief_id` alone
-because `campaigns`' FK is on `id` alone and a `project_id` predicate could match nothing, take no
-lock and report no error; the result is scanned, and a miss is `ErrNotFound`.
+That transaction's OPENING statement is `lockBriefRowForReplaceQuery` on the parent brief,
+unconditionally — the same ROW lock `lockBriefForAssetWriteQuery` takes, with the same
+`(id, project_id)` predicate (#534). Until 000056 it was keyed on `brief_id` alone, because
+`campaigns`' FK was on `id` alone and a `project_id` predicate could then match nothing on a row
+whose columns disagreed; the composite tenant FK 000056 adds rules that row out. The result is
+scanned, and a miss is `ErrNotFound`.
 `ReplaceCampaign` writes every mutable column — `config_snapshot` included — so
 every one of its callers rewrites the snapshot whether or not it meant to change it, and the
 statement cannot tell the two apart; the hazard belongs to the method, not to any one caller.

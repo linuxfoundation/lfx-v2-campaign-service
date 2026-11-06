@@ -105,8 +105,8 @@ func TestLiveUpsertCampaignPersistsProvenance(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			briefID := insertBrief(ctx, t, pool)
 			projectID := dbtest.UniqueID(t, "project")
+			briefID := insertBrief(ctx, t, pool, projectID)
 
 			// indexPayload is nil: the outbox co-commit has its own tests, and passing nil keeps
 			// this test's diagnostic about provenance alone.
@@ -187,8 +187,8 @@ func TestLiveUpsertDoesNotRecomputeProvenanceOnUpdate(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			briefID := insertBrief(ctx, t, pool)
 			projectID := dbtest.UniqueID(t, "project")
+			briefID := insertBrief(ctx, t, pool, projectID)
 			name := dbtest.UniqueID(t, "campaign")
 			upstream := dbtest.UniqueID(t, "upstream")
 			// Both writes carry the SAME job id: the conflict arm updates only the row this

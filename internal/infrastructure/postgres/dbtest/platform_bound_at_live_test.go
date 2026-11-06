@@ -28,8 +28,8 @@ func TestLiveClaimThenUpsertStampsPlatformBoundAt(t *testing.T) {
 	ctx := context.Background()
 	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
 
-	briefID := insertBrief(ctx, t, pool)
 	projectID := dbtest.UniqueID(t, "project")
+	briefID := insertBrief(ctx, t, pool, projectID)
 	jobID := uuid.NewString()
 
 	claimed, _, err := repo.ClaimCampaignDispatch(ctx, projectID, briefID,
