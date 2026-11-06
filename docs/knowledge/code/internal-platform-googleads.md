@@ -1720,6 +1720,15 @@ far more than 30 places. The 2026-08-13 incident is the standing precedent: a ca
 the product's own callers exceed by default refuses creates Google would have
 accepted.
 
+`maxGeoTargets` rose again, from 60 to 500 (#515). The live KubeCon NA 2026 Demand
+Gen YouTube campaign targets 63 locations (50 US state-level ids and 13 Canadian
+provinces and territories), and a DMA-level US campaign needs about 210. The
+one-mutate rule holds at the cap: 500 inclusions, 500 exclusions and 20 radius
+targets in one `campaignCriteria:mutate` (Search), and 500 + 500 in one
+`adGroupCriteria:mutate` (Demand Gen ad group), passed validateOnly probes on
+2026-11-06. `TestResolveGeoList_CapIsFiveHundredPerList` and the two
+`FullGeoListsStayInOneMutate` tests pin both.
+
 **Language, schedule, device and demographic criteria
 (`campaign_criteria.go`).** Four more campaign-level criterion kinds, all built by
 `validateCriteriaPlan` and posted in ONE `campaignCriteria:mutate` separate from
