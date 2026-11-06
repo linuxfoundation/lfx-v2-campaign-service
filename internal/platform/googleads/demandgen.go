@@ -152,9 +152,11 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	steps := []string{}
 
 	// The demographic Audience (#498), the last step before the budget, after the image
-	// fetch so a bad image costs no Audience either. Every failure returns (nil, err): no
-	// budget or campaign exists, and an Audience it may have left is found by name and
-	// reused on the retry (ensureDemandGenDemographicAudience).
+	// fetch so a bad image costs no Audience either. No budget or campaign exists yet. A
+	// definite failure returns (nil, err): nothing was created. A create that may have landed
+	// (5xx, timeout, an unusable 2xx) returns a partial naming the planned Audience
+	// (DemandGenDemographicAudienceName), so the claim is kept and a retry reuses it by name
+	// (ensureDemandGenDemographicAudience).
 	var demographicAudience, demographicAudienceName string
 	if pf.demandGenDemographics != nil {
 		demographicAudienceName = pf.demandGenDemographics.create.Name
