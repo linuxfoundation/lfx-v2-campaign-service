@@ -23,6 +23,13 @@
 -- campaign_jobs is deliberately NOT included: it has no project_id column, so a composite key
 -- there needs a new column and a backfill, which this migration does not do. Its tenant scope
 -- stays the JOIN through campaign_briefs (see JobRepo.GetJob).
+-- BOUNDED LOCK WAIT. ADD CONSTRAINT takes SHARE ROW EXCLUSIVE on campaigns and campaign_briefs and
+-- the DROP takes ACCESS EXCLUSIVE on campaigns, all held to COMMIT. Queued behind one long
+-- transaction, either would stall every brief and campaign read the N-1 pods serve during the
+-- rollout. SET LOCAL scopes the timeout to this file's implicit transaction: a timeout aborts it
+-- cleanly at 000055, and the next boot retries.
+SET LOCAL lock_timeout = '5s';
+
 DO $$
 DECLARE
     mismatched BIGINT;

@@ -538,7 +538,8 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   dispatch claim and upsert stamp `brief.ProjectID`/`brief.ID` from the loaded brief, and the
   adopt INSERT runs under `lockAdoptBriefQuery`. The up FAILS LOUDLY on any existing row whose
   `project_id` differs from its brief's (a `DO` block raises with the count) and never rewrites
-  data; pre-deploy, `SELECT count(*) FROM campaigns c JOIN campaign_briefs b ON b.id = c.brief_id
+  data. It sets `SET LOCAL lock_timeout = '5s'` so its table locks never queue indefinitely behind
+  a long transaction (a timeout aborts cleanly at `000055`). Pre-deploy, `SELECT count(*) FROM campaigns c JOIN campaign_briefs b ON b.id = c.brief_id
   WHERE b.project_id <> c.project_id` must be 0. The down restores the id-only key and always
   applies. `campaign_jobs` is NOT included: it has no `project_id` column, so a composite key
   there needs a new column plus a backfill; its tenant scope stays `GetJob`'s JOIN through
