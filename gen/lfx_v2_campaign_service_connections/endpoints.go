@@ -64,6 +64,7 @@ type Endpoints struct {
 	SuggestGoogleAdsGeoTargets     goa.Endpoint
 	ListGoogleAdsUserLists         goa.Endpoint
 	ListGoogleAdsConversionActions goa.Endpoint
+	ListGoogleAdsAudiences         goa.Endpoint
 	GetMetaAdsAudience             goa.Endpoint
 	GetTwitterAdsAudience          goa.Endpoint
 	GetLinkedinAdsAudience         goa.Endpoint
@@ -148,6 +149,7 @@ func NewEndpoints(s Service) *Endpoints {
 		SuggestGoogleAdsGeoTargets:     NewSuggestGoogleAdsGeoTargetsEndpoint(s, a.JWTAuth),
 		ListGoogleAdsUserLists:         NewListGoogleAdsUserListsEndpoint(s, a.JWTAuth),
 		ListGoogleAdsConversionActions: NewListGoogleAdsConversionActionsEndpoint(s, a.JWTAuth),
+		ListGoogleAdsAudiences:         NewListGoogleAdsAudiencesEndpoint(s, a.JWTAuth),
 		GetMetaAdsAudience:             NewGetMetaAdsAudienceEndpoint(s, a.JWTAuth),
 		GetTwitterAdsAudience:          NewGetTwitterAdsAudienceEndpoint(s, a.JWTAuth),
 		GetLinkedinAdsAudience:         NewGetLinkedinAdsAudienceEndpoint(s, a.JWTAuth),
@@ -230,6 +232,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.SuggestGoogleAdsGeoTargets = m(e.SuggestGoogleAdsGeoTargets)
 	e.ListGoogleAdsUserLists = m(e.ListGoogleAdsUserLists)
 	e.ListGoogleAdsConversionActions = m(e.ListGoogleAdsConversionActions)
+	e.ListGoogleAdsAudiences = m(e.ListGoogleAdsAudiences)
 	e.GetMetaAdsAudience = m(e.GetMetaAdsAudience)
 	e.GetTwitterAdsAudience = m(e.GetTwitterAdsAudience)
 	e.GetLinkedinAdsAudience = m(e.GetLinkedinAdsAudience)
@@ -1380,6 +1383,30 @@ func NewListGoogleAdsConversionActionsEndpoint(s Service, authJWTFn security.Aut
 			return nil, err
 		}
 		return s.ListGoogleAdsConversionActions(ctx, p)
+	}
+}
+
+// NewListGoogleAdsAudiencesEndpoint returns an endpoint function that calls
+// the method "list-google-ads-audiences" of service
+// "lfx-v2-campaign-service-connections".
+func NewListGoogleAdsAudiencesEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListGoogleAdsAudiencesPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListGoogleAdsAudiences(ctx, p)
 	}
 }
 
