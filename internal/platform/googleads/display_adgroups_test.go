@@ -416,7 +416,7 @@ func TestCreateDisplayCampaign_TwoAdGroups(t *testing.T) {
 	groups := rig.sent("adGroups:mutate")
 	for i, name := range []string{"Retargeting", "Prospecting"} {
 		sameJSON(t, groups[i], `{"operations":[{"create":{"name":"`+displayGroupBase+` | `+name+`",`+
-			`"campaign":"customers/1234567890/campaigns/222","status":"ENABLED","type":"DISPLAY_STANDARD",`+setting+`}}]}`)
+			`"campaign":"customers/1234567890/campaigns/222","status":"PAUSED","type":"DISPLAY_STANDARD",`+setting+`}}]}`)
 	}
 	criteria := rig.sent("adGroupCriteria:mutate")
 	sameJSON(t, criteria[0], `{"operations":[
@@ -588,7 +588,7 @@ func TestCreateDisplayCampaign_TargetingSettingPerGroup(t *testing.T) {
 		t.Errorf("group 1 has audiences and must carry the targetingSetting: %s", groups[0])
 	}
 	sameJSON(t, groups[1], `{"operations":[{"create":{"name":"`+displayGroupBase+` | Prospecting",`+
-		`"campaign":"customers/1234567890/campaigns/222","status":"ENABLED","type":"DISPLAY_STANDARD"}}]}`)
+		`"campaign":"customers/1234567890/campaigns/222","status":"PAUSED","type":"DISPLAY_STANDARD"}}]}`)
 	if got := len(rig.sent("adGroupCriteria:mutate")); got != 2 {
 		t.Errorf("adGroupCriteria mutates = %d, want group 1's audiences and group 2's exclusion", got)
 	}
@@ -612,7 +612,7 @@ func TestCreateDisplayCampaign_SingleGroupCampaignExclusion(t *testing.T) {
 		{"create":{"campaign":"customers/1234567890/campaigns/222","negative":true,"userList":{"userList":"customers/1234567890/userLists/70"}}},
 		{"create":{"campaign":"customers/1234567890/campaigns/222","negative":true,"userList":{"userList":"customers/1234567890/userLists/71"}}}]}`)
 	sameJSON(t, rig.sent("adGroups:mutate")[0], `{"operations":[{"create":{"name":"`+displayGroupBase+`",`+
-		`"campaign":"customers/1234567890/campaigns/222","status":"ENABLED","type":"DISPLAY_STANDARD"}}]}`)
+		`"campaign":"customers/1234567890/campaigns/222","status":"PAUSED","type":"DISPLAY_STANDARD"}}]}`)
 	if strings.Join(res.ExcludedAudienceCriteriaIDs, ",") != "710,711" || len(res.AdGroups) != 0 || res.AdID != "555" {
 		t.Errorf("res = %+v", res)
 	}

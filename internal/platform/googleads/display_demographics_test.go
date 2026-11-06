@@ -36,12 +36,12 @@ func TestCreateDisplayCampaign_DemographicTargetingOnEveryGroup(t *testing.T) {
 		t.Fatalf("got %d ad group creates, want 2", len(groups))
 	}
 	sameJSON(t, groups[0], `{"operations":[{"create":{"name":"`+displayGroupBase+` | Retargeting",`+
-		`"campaign":"customers/1234567890/campaigns/222","status":"ENABLED","type":"DISPLAY_STANDARD",`+
+		`"campaign":"customers/1234567890/campaigns/222","status":"PAUSED","type":"DISPLAY_STANDARD",`+
 		`"targetingSetting":{"targetRestrictions":[{"targetingDimension":"AGE_RANGE","bidOnly":true},`+
 		`{"targetingDimension":"GENDER","bidOnly":true},{"targetingDimension":"PARENTAL_STATUS","bidOnly":true},`+
 		`{"targetingDimension":"INCOME_RANGE","bidOnly":true},{"targetingDimension":"AUDIENCE","bidOnly":false}]}}}]}`)
 	sameJSON(t, groups[1], `{"operations":[{"create":{"name":"`+displayGroupBase+` | Prospecting",`+
-		`"campaign":"customers/1234567890/campaigns/222","status":"ENABLED","type":"DISPLAY_STANDARD"}}]}`)
+		`"campaign":"customers/1234567890/campaigns/222","status":"PAUSED","type":"DISPLAY_STANDARD"}}]}`)
 
 	criteria := rig.sent("adGroupCriteria:mutate")
 	// Group 1: demographics, then its audiences. Group 2: demographics only (its exclusion

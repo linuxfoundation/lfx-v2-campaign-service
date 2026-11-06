@@ -345,14 +345,17 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 		}
 
 		// The ad group, typed DISPLAY_STANDARD so the ad below is a shape it
-		// accepts. ENABLED, as on Demand Gen and Video — Search is the only channel here
-		// that pauses its ad group, and the campaign is PAUSED regardless, so nothing
-		// serves either way.
+		// accepts. PAUSED, as on every channel here (#535). The ad below is PAUSED too, which
+		// alone keeps a new campaign dark; the PAUSED ad group is an additional safeguard,
+		// so serving outside this service's toggle takes enabling every level in the Google
+		// Ads UI, as on Search. Activation goes through
+		// GoogleAdsDispatcher.ToggleStatus, whose cascade enables every recorded ad group and
+		// ad before the campaign.
 		adGroupName := g.name
 		adGroupCreateVal := displayAdGroupCreate{
 			Name:     adGroupName,
 			Campaign: campaignResource,
-			Status:   "ENABLED",
+			Status:   StatusPaused,
 			Type:     adGroupTypeDisplayStandard,
 		}
 		// Audience criteria are attached as TARGETING (#462), which this setting declares;

@@ -425,12 +425,14 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		}
 		tag := demandGenGroupStep(multi, g.name)
 
-		// Step 3: the ad group. Demand Gen ad groups take no explicit type.
+		// Step 3: the ad group. Demand Gen ad groups take no explicit type. PAUSED, as on
+		// every channel here (#535); ToggleStatus's activate cascade enables it, and its
+		// ads, before the campaign.
 		adGroupName := g.name
 		adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: demandGenAdGroupCreate{
 			Name:     adGroupName,
 			Campaign: campaignResource,
-			Status:   "ENABLED",
+			Status:   StatusPaused,
 		}}}}
 		// The result carries the deterministic ad-group NAME on every failure arm below. A
 		// partial without it tells a reconciler an ad group may exist but not what to look
