@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -194,6 +195,29 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 			slog.Info("m", fields...)
 			fields = append(fields, "projectID", id)
 			_ = fields`, []string{"a"}},
+		{"an alias of the slice is followed", `fields := []any{"projectID", id}
+			copied := fields
+			fields = append(copied, "err", e)
+			slog.Info("m", fields...)`, []string{"projectID", "err"}},
+		{"appends in one branch run in sequence", `fields := []any{"event", "x"}
+			if c {
+				fields = append(fields, "kind")
+				fields = append(fields, "project")
+			}
+			slog.Info("m", fields...)`, []string{"event", "kind"}},
+		{"a switch clause's appends join the other paths", `fields := []any{"a", 1}
+			switch {
+			case c:
+				fields = append(fields, "projectID", id)
+			default:
+				fields = append(fields, "b", 2)
+			}
+			slog.Info("m", fields...)`, []string{"a", "projectID", "b"}},
+		{"a log call inside a closure sees the state where the closure is", `fields := []any{"a", 1}
+			func() {
+				fields = append(fields, "projectID", id)
+				slog.Info("m", fields...)
+			}()`, []string{"a", "projectID"}},
 		{"interface conversion is looked through", `slog.Info("m", any("project_id"), "project")`, []string{"project_id"}},
 		{"elided slog.Attr in a slice", `slog.LogAttrs(ctx, lvl, "m", []slog.Attr{{Key: "projectID", Value: slog.AnyValue(v)}}...)`, []string{"projectID"}},
 		{"explicit slog.Attr", `_ = slog.Attr{Key: "project", Value: slog.AnyValue(v)}`, []string{"project"}},
@@ -327,155 +351,272 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 		return info.Uses[id]
 	}
 
-	// parents maps every node to its parent, so an assignment can be placed relative to
-	// the log call it feeds.
-	parents := map[ast.Node]ast.Node{}
-	var stack []ast.Node
-	ast.Inspect(f, func(n ast.Node) bool {
-		if n == nil {
-			stack = stack[:len(stack)-1]
-			return true
-		}
-		if len(stack) > 0 {
-			parents[n] = stack[len(stack)-1]
-		}
-		stack = append(stack, n)
-		return true
-	})
-	// dominates reports whether stmt sits directly in a statement list that encloses at,
-	// so it runs on every path to at (straight-line code; an assignment in a nested
-	// branch does not). It is what makes a reassignment replace the earlier contents.
-	dominates := func(stmt, at ast.Node) bool {
-		var list ast.Node
-		for n := parents[stmt]; n != nil; n = parents[n] {
-			switch n.(type) {
-			case *ast.BlockStmt, *ast.CaseClause, *ast.CommClause:
-				list = n
-			}
-			if list != nil {
-				break
-			}
-		}
-		for n := at; n != nil; n = parents[n] {
-			if n == list {
-				return true
-			}
-		}
-		return false
-	}
-
-	// sources: every assignment to each variable, in source order, so a spread can be
-	// traced back to the []any literals and appends that built it.
-	type source struct {
-		stmt ast.Node
-		rhs  ast.Expr
-	}
-	sources := map[types.Object][]source{}
-	ast.Inspect(f, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.AssignStmt:
-			if len(x.Lhs) == len(x.Rhs) {
-				for i, l := range x.Lhs {
-					if id, ok := l.(*ast.Ident); ok {
-						if o := objOf(id); o != nil {
-							sources[o] = append(sources[o], source{x, x.Rhs[i]})
-						}
-					}
-				}
-			}
-		case *ast.ValueSpec:
-			if len(x.Names) == len(x.Values) {
-				for i, id := range x.Names {
-					if o := objOf(id); o != nil {
-						sources[o] = append(sources[o], source{x, x.Values[i]})
-					}
-				}
-			}
-		}
-		return true
-	})
-
-	// maxAlternatives bounds the sequences one spread can expand to; past it the extra
-	// alternatives are dropped rather than letting a long chain of branches explode.
+	// Spread slices are resolved by interpreting the statements of the enclosing function
+	// up to the log call: every []any variable maps to the sequences it may hold there.
+	// Statements run in order; an if, switch or select runs each branch from the state on
+	// entry and joins the branch exits (plus the entry state when no branch need run); a
+	// loop body runs zero or one times. Assignments through other variables (aliases) are
+	// followed because every []any variable is tracked.
 	const maxAlternatives = 1024
-	cartesian := func(as, bs [][]ast.Expr) [][]ast.Expr {
-		var out [][]ast.Expr
-		for _, a := range as {
-			for _, b := range bs {
+	type seqs = [][]ast.Expr
+	type state = map[types.Object]seqs
+	cartesian := func(as, bs seqs) seqs {
+		var out seqs
+		for _, x := range as {
+			for _, y := range bs {
 				if len(out) == maxAlternatives {
 					return out
 				}
-				out = append(out, append(append([]ast.Expr{}, a...), b...))
+				out = append(out, append(append([]ast.Expr{}, x...), y...))
+			}
+		}
+		return out
+	}
+	clone := func(st state) state {
+		out := make(state, len(st))
+		for k, v := range st {
+			out[k] = v
+		}
+		return out
+	}
+	join := func(sts ...state) state {
+		out := state{}
+		seen := map[types.Object]map[string]bool{}
+		for _, st := range sts {
+			for o, alts := range st {
+				if seen[o] == nil {
+					seen[o] = map[string]bool{}
+				}
+				for _, alt := range alts {
+					var key strings.Builder
+					for _, e := range alt {
+						key.WriteString(strconv.Itoa(int(e.Pos())) + ",")
+					}
+					if !seen[o][key.String()] && len(out[o]) < maxAlternatives {
+						seen[o][key.String()] = true
+						out[o] = append(out[o], alt)
+					}
+				}
+			}
+		}
+		// A variable assigned on only some paths may still hold its earlier value (or
+		// nothing) on the others.
+		for o := range out {
+			for _, st := range sts {
+				if _, ok := st[o]; !ok {
+					out[o] = append(out[o], nil)
+					break
+				}
 			}
 		}
 		return out
 	}
 
-	// flatten resolves an argument list whose last element may be a spread into every
-	// sequence slog could see at node at. The whole sequence is resolved before anything
-	// is classified, so a pair that straddles a slice and its append is paired as slog
-	// pairs it, and every alternative a branch can produce is kept.
-	var flatten func(args []ast.Expr, spreadLast bool, at ast.Node, visiting map[types.Object]bool) [][]ast.Expr
-	var flattenSlice func(e ast.Expr, at ast.Node, visiting map[types.Object]bool) [][]ast.Expr
-	flatten = func(args []ast.Expr, spreadLast bool, at ast.Node, visiting map[types.Object]bool) [][]ast.Expr {
+	var evalSlice func(e ast.Expr, st state) seqs
+	evalArgs := func(args []ast.Expr, spreadLast bool, st state) seqs {
 		if !spreadLast || len(args) == 0 {
-			return [][]ast.Expr{args}
+			return seqs{args}
 		}
-		return cartesian([][]ast.Expr{args[:len(args)-1]}, flattenSlice(args[len(args)-1], at, visiting))
+		return cartesian(seqs{args[:len(args)-1]}, evalSlice(args[len(args)-1], st))
 	}
-	// selfAppend reports whether e is append(o, ...), returning the call.
-	selfAppend := func(e ast.Expr, o types.Object) (*ast.CallExpr, bool) {
-		c, ok := ast.Unparen(e).(*ast.CallExpr)
-		if !ok || len(c.Args) == 0 || !isAppend(c, info) {
-			return nil, false
-		}
-		id, ok := ast.Unparen(c.Args[0]).(*ast.Ident)
-		return c, ok && objOf(id) == o
-	}
-	flattenSlice = func(e ast.Expr, at ast.Node, visiting map[types.Object]bool) [][]ast.Expr {
+	evalSlice = func(e ast.Expr, st state) seqs {
 		switch x := ast.Unparen(e).(type) {
 		case *ast.Ident:
-			o := objOf(x)
-			if o == nil || visiting[o] {
-				return [][]ast.Expr{nil}
+			if alts, ok := st[objOf(x)]; ok {
+				return alts
 			}
-			visiting[o] = true
-			defer delete(visiting, o)
-			// Replay the assignments that precede at, in source order. One that dominates
-			// at replaces (or, for an append, extends) every version so far; one in a
-			// nested branch adds the result as an alternative beside them.
-			versions := [][]ast.Expr{nil} // a parameter, or declared without a value
-			for _, src := range sources[o] {
-				if src.stmt.Pos() >= at.Pos() {
-					continue
-				}
-				var next [][]ast.Expr
-				if c, ok := selfAppend(src.rhs, o); ok {
-					next = cartesian(versions, flatten(c.Args[1:], c.Ellipsis.IsValid(), src.stmt, visiting))
-				} else {
-					next = flattenSlice(src.rhs, src.stmt, visiting)
-				}
-				if dominates(src.stmt, at) {
-					versions = next
-				} else {
-					versions = append(versions, next...)
-					if len(versions) > maxAlternatives {
-						versions = versions[:maxAlternatives]
-					}
-				}
-			}
-			return versions
 		case *ast.CompositeLit:
 			if isAnySlice(info.TypeOf(x)) {
-				return [][]ast.Expr{x.Elts}
+				return seqs{x.Elts}
 			}
 		case *ast.CallExpr:
 			if isAppend(x, info) && len(x.Args) > 0 {
-				return cartesian(flattenSlice(x.Args[0], at, visiting), flatten(x.Args[1:], x.Ellipsis.IsValid(), at, visiting))
+				return cartesian(evalSlice(x.Args[0], st), evalArgs(x.Args[1:], x.Ellipsis.IsValid(), st))
 			}
 		}
-		return [][]ast.Expr{nil}
+		return seqs{nil} // a parameter, a call result, or anything else not traced
 	}
+
+	assign := func(lhs []ast.Expr, rhs []ast.Expr, st state) {
+		if len(lhs) != len(rhs) {
+			return
+		}
+		vals := make([]seqs, len(rhs))
+		for i, r := range rhs {
+			vals[i] = evalSlice(r, st)
+		}
+		for i, l := range lhs {
+			if id, ok := l.(*ast.Ident); ok {
+				if o := objOf(id); o != nil && isAnySlice(o.Type()) {
+					st[o] = vals[i]
+				}
+			}
+		}
+	}
+	var exec func(s ast.Stmt, st state) state
+	execList := func(list []ast.Stmt, st state) state {
+		for _, s := range list {
+			st = exec(s, st)
+		}
+		return st
+	}
+	exec = func(s ast.Stmt, st state) state {
+		switch x := s.(type) {
+		case *ast.AssignStmt:
+			assign(x.Lhs, x.Rhs, st)
+		case *ast.DeclStmt:
+			if gd, ok := x.Decl.(*ast.GenDecl); ok {
+				for _, sp := range gd.Specs {
+					if vs, ok := sp.(*ast.ValueSpec); ok {
+						lhs := make([]ast.Expr, len(vs.Names))
+						for i, n := range vs.Names {
+							lhs[i] = n
+						}
+						assign(lhs, vs.Values, st)
+					}
+				}
+			}
+		case *ast.BlockStmt:
+			return execList(x.List, st)
+		case *ast.LabeledStmt:
+			return exec(x.Stmt, st)
+		case *ast.IfStmt:
+			if x.Init != nil {
+				st = exec(x.Init, st)
+			}
+			thenSt := execList(x.Body.List, clone(st))
+			elseSt := clone(st)
+			if x.Else != nil {
+				elseSt = exec(x.Else, elseSt)
+			}
+			return join(thenSt, elseSt)
+		case *ast.ForStmt:
+			return join(st, execList(x.Body.List, clone(st)))
+		case *ast.RangeStmt:
+			return join(st, execList(x.Body.List, clone(st)))
+		case *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt:
+			var body *ast.BlockStmt
+			switch y := x.(type) {
+			case *ast.SwitchStmt:
+				if y.Init != nil {
+					st = exec(y.Init, st)
+				}
+				body = y.Body
+			case *ast.TypeSwitchStmt:
+				if y.Init != nil {
+					st = exec(y.Init, st)
+				}
+				body = y.Body
+			case *ast.SelectStmt:
+				body = y.Body
+			}
+			exits := []state{}
+			hasDefault := false
+			for _, c := range body.List {
+				switch cc := c.(type) {
+				case *ast.CaseClause:
+					hasDefault = hasDefault || cc.List == nil
+					exits = append(exits, execList(cc.Body, clone(st)))
+				case *ast.CommClause:
+					hasDefault = true // a select always runs one clause
+					exits = append(exits, execList(cc.Body, clone(st)))
+				}
+			}
+			if !hasDefault {
+				exits = append(exits, st)
+			}
+			return join(exits...)
+		}
+		return st
+	}
+	contains := func(n, target ast.Node) bool {
+		return n != nil && n.Pos() <= target.Pos() && target.End() <= n.End()
+	}
+	// stateAt returns the state on entry to target, descending only into the statements
+	// on the path to it.
+	var stateAt func(list []ast.Stmt, st state, target ast.Node) state
+	stateAt = func(list []ast.Stmt, st state, target ast.Node) state {
+		for _, s := range list {
+			if !contains(s, target) {
+				st = exec(s, st)
+				continue
+			}
+			switch x := s.(type) {
+			case *ast.BlockStmt:
+				return stateAt(x.List, st, target)
+			case *ast.LabeledStmt:
+				return stateAt([]ast.Stmt{x.Stmt}, st, target)
+			case *ast.IfStmt:
+				if x.Init != nil && !contains(x.Init, target) {
+					st = exec(x.Init, st)
+				}
+				if contains(x.Body, target) {
+					return stateAt(x.Body.List, st, target)
+				}
+				if contains(x.Else, target) {
+					return stateAt([]ast.Stmt{x.Else}, st, target)
+				}
+			case *ast.ForStmt:
+				if contains(x.Body, target) {
+					return stateAt(x.Body.List, join(st, execList(x.Body.List, clone(st))), target)
+				}
+			case *ast.RangeStmt:
+				if contains(x.Body, target) {
+					return stateAt(x.Body.List, join(st, execList(x.Body.List, clone(st))), target)
+				}
+			case *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt:
+				var init ast.Stmt
+				var body *ast.BlockStmt
+				switch y := x.(type) {
+				case *ast.SwitchStmt:
+					init, body = y.Init, y.Body
+				case *ast.TypeSwitchStmt:
+					init, body = y.Init, y.Body
+				case *ast.SelectStmt:
+					body = y.Body
+				}
+				if init != nil && !contains(init, target) {
+					st = exec(init, st)
+				}
+				for _, c := range body.List {
+					switch cc := c.(type) {
+					case *ast.CaseClause:
+						if contains(cc, target) {
+							return stateAt(cc.Body, st, target)
+						}
+					case *ast.CommClause:
+						if contains(cc, target) {
+							return stateAt(cc.Body, st, target)
+						}
+					}
+				}
+			}
+			// The target is in this statement itself, or in a closure inside it, which
+			// sees the state as it is here.
+			var lit *ast.FuncLit
+			ast.Inspect(s, func(n ast.Node) bool {
+				if fl, ok := n.(*ast.FuncLit); ok && contains(fl, target) {
+					lit = fl
+				}
+				return lit == nil
+			})
+			if lit != nil {
+				return stateAt(lit.Body.List, st, target)
+			}
+			return st
+		}
+		return st
+	}
+	// enclosing returns the statement list of the top-level function containing n.
+	enclosing := func(n ast.Node) []ast.Stmt {
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Body != nil && contains(fd.Body, n) {
+				return fd.Body.List
+			}
+		}
+		return nil
+	}
+
 	// classify pairs one flattened sequence as slog does: a string is a key and takes two
 	// slots; a slog.Attr, or any other value (logged under !BADKEY), takes one. An explicit
 	// conversion to an interface (any("k")) is looked through, because slog classifies
@@ -492,7 +633,11 @@ func logKeys(f *ast.File, info *types.Info) []keyHit {
 		}
 	}
 	kvWalk := func(call *ast.CallExpr, args []ast.Expr) {
-		for _, seq := range flatten(args, call.Ellipsis.IsValid(), call, map[types.Object]bool{}) {
+		st := state{}
+		if call.Ellipsis.IsValid() {
+			st = stateAt(enclosing(call), st, call)
+		}
+		for _, seq := range evalArgs(args, call.Ellipsis.IsValid(), st) {
 			classify(seq)
 		}
 	}

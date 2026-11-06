@@ -60,15 +60,18 @@ type:
   `append(fields, ...)...`) through every assignment to that same variable. A
   shadowing variable counts as a different variable.
 
-A spread sequence is resolved in full before it is paired, so a pair split
-across a slice and its `append` is paired as slog pairs it. The trace replays
-the assignments that precede the call, and is path-aware:
+A spread is resolved by interpreting the enclosing function's statements up to
+the log call. Every `[]any` variable is tracked, so an alias is followed.
 
-- An assignment in a block that encloses the call replaces or extends what came
-  before.
-- One in a nested branch adds an alternative instead, and every alternative is
-  checked.
-- An append after the call is not part of it. An explicit
+- Statements run in order.
+- An `if`, `switch` or `select` runs each branch in sequence from its entry
+  state and joins the exits.
+- A loop body runs zero or one times.
+- A log call inside a closure sees the state where the closure sits.
+
+Each resulting sequence is resolved in full before it is paired, so a pair split
+across a slice and its `append` is paired as slog pairs it, and every
+alternative is checked. An explicit
 `any("k")` conversion is looked through, because slog classifies the dynamic
 value. Calls are matched by the function they resolve to, so `http.Error` is
 not a log call. A message or value that reads "project" is not a key and

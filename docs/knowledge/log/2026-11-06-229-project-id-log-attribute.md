@@ -20,20 +20,21 @@ clear, as `"project_id"`.
     (inline, a variable or a helper's result) or any other value takes one.
   - It follows `[]any` slices spread into a log call by variable identity. It resolves the
     whole spread sequence before pairing, so a pair split across a slice and its `append` is
-    read correctly. The trace is path-aware. A reassignment or append that encloses the call
-    replaces or extends the slice. One in a nested branch adds an alternative, and every
-    alternative is checked.
+    read correctly. The slice is traced by interpreting the enclosing function's statements
+    up to the call. Branches run in sequence and their exits are joined, loops run zero or
+    one times, and aliases are followed. Every resulting alternative is checked.
   - It looks through `any("k")` conversions, and reads elided `[]slog.Attr` elements and
     named-constant keys.
   - It does not see keys that reach slog through another function's parameter (a `...any`
     wrapper, a slice parameter). The repo has no such wrapper, and the logging-conventions
     page states the limit.
   - It matches calls by the function they resolve to, so `http.Error` is not one.
-  - `TestLogKeys_ReadsKeyPositionsOnly` pins each rule. Both tests were reworked over four
+  - `TestLogKeys_ReadsKeyPositionsOnly` pins each rule. Both tests were reworked over five
     PR #539 review rounds. Messages and values were first read as keys. Then spread slices,
     shadowed variables and Attr-valued arguments were missed. Then pairs split across an
     append, and interface conversions, were mis-paired. Then conditional reassignments
-    were dropped, and appends were attached to a replaced slice.
+    were dropped, and appends were attached to a replaced slice. Then an alias was lost, and
+    appends within one branch were treated as independent.
 - Mutation-checked:
   - Renaming one key to `projectID` in `internal/service/connection.go`, or the spread-slice
     key in `internal/service/meta_ad_sets.go`, fails the guard.
@@ -41,9 +42,9 @@ clear, as `"project_id"`.
   - Each of these fails `TestLogKeys_ReadsKeyPositionsOnly`: reading every argument as a key,
     giving an Attr two slots, dropping spread resolution, keying slice sources by name,
     ignoring elided `slog.Attr` elements, matching any package's function, pairing a slice and
-    its appends separately, dropping the conversion unwrap, treating every assignment as
-    dominating (or none), keeping only the first alternative, and counting appends after
-    the call.
+    its appends separately, dropping the conversion unwrap, running a branch's statements as
+    independent choices, not tracking aliases, dropping the not-taken path, keeping only the
+    first switch clause or the first alternative, and not descending into a closure.
 - The decision is written down in `docs/knowledge/architecture/logging-conventions.md` (new)
   and under "Settled by decision" in `docs/reviews/knowledge-base/known-false-positives.md`, so
   a reviewer does not raise it again.
