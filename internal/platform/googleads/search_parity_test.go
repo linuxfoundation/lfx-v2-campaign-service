@@ -121,9 +121,9 @@ func newParityClient(t *testing.T, s *parityServer) *Client {
 	t.Cleanup(tokenSrv.Close)
 	apiSrv := httptest.NewServer(s.handler(t))
 	t.Cleanup(apiSrv.Close)
-	return NewClient(testCreds(), testAccount(),
+	return noExistingCampaign(NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
-		withRetryBaseDelay(time.Millisecond))
+		withRetryBaseDelay(time.Millisecond)))
 }
 
 // createOps decodes a mutate body into its create payloads, in order.

@@ -27,7 +27,9 @@ import (
 const (
 	gaSearchImageAssetID = "55555555-5555-4555-8555-555555555555"
 	gaSearchLogoAssetID  = "66666666-6666-4666-8666-666666666666"
-	gaSharedSet          = "customers/1234567890/sharedSets/501"
+	// gaSearchLandscapeAssetID is a stored 1.91:1 image for searchAssets.landscapeAdImages.
+	gaSearchLandscapeAssetID = "77777777-7777-4777-8777-777777777777"
+	gaSharedSet              = "customers/1234567890/sharedSets/501"
 )
 
 // lastSegment is the text after the final "/" of a resource name.
@@ -112,6 +114,10 @@ func searchAssetLibrary(t *testing.T) *gaAssetLibrary {
 		assets: map[string]*model.CreativeAsset{
 			gaSearchImageAssetID: png(gaSearchImageAssetID, 300),
 			gaSearchLogoAssetID:  png(gaSearchLogoAssetID, 128),
+			gaSearchLandscapeAssetID: {
+				ID: gaSearchLandscapeAssetID, MimeType: model.MimeTypePNG,
+				Bytes: msTestPNG(t, 600, 314),
+			},
 		},
 	}
 }
@@ -127,6 +133,7 @@ func TestGoogleAds_SearchAssetsAndSharedListsReachTheCascade(t *testing.T) {
 		"budget": 50,
 		"searchAssets": map[string]any{
 			"adImages":           []any{map[string]any{"imageAssetId": gaSearchImageAssetID}},
+			"landscapeAdImages":  []any{map[string]any{"imageAssetId": gaSearchLandscapeAssetID}},
 			"businessLogoImages": []any{map[string]any{"imageAssetId": gaSearchLogoAssetID}},
 			"businessName":       "Linux Foundation",
 		},
@@ -147,7 +154,10 @@ func TestGoogleAds_SearchAssetsAndSharedListsReachTheCascade(t *testing.T) {
 		t.Fatalf("got %d googleAds:mutate calls, want 1", len(googleAds))
 	}
 	body := string(googleAds[0])
-	stored := map[string]string{"ad image": gaSearchImageAssetID, "logo": gaSearchLogoAssetID}
+	stored := map[string]string{
+		"ad image": gaSearchImageAssetID, "landscape ad image": gaSearchLandscapeAssetID,
+		"logo": gaSearchLogoAssetID,
+	}
 	for name, id := range stored {
 		if !strings.Contains(body, base64.StdEncoding.EncodeToString(store.assets[id].Bytes)) {
 			t.Errorf("the %s's stored bytes are not in the googleAds:mutate body", name)
@@ -156,8 +166,12 @@ func TestGoogleAds_SearchAssetsAndSharedListsReachTheCascade(t *testing.T) {
 			t.Errorf("the %s's asset id was sent to Google verbatim", name)
 		}
 	}
+	// Both ad image shapes link under the one AD_IMAGE field type (#538).
+	if n := strings.Count(body, `"fieldType":"AD_IMAGE"`); n != 2 {
+		t.Errorf("googleAds:mutate body carries %d AD_IMAGE links, want 2 (square and landscape)", n)
+	}
 	for _, want := range []string{
-		`"fieldType":"AD_IMAGE"`, `"fieldType":"BUSINESS_LOGO"`,
+		`"fieldType":"BUSINESS_LOGO"`,
 		`"fieldType":"BUSINESS_NAME"`, `"text":"Linux Foundation"`,
 	} {
 		if !strings.Contains(body, want) {
@@ -219,12 +233,13 @@ func TestGoogleAds_SearchAssetFieldsAreRefusedBeforeAnyCreate(t *testing.T) {
 	}
 }
 
-// Both image lists are enumerated, so a stored-asset entry in either resolves — and the
+// All three image lists are enumerated, so a stored-asset entry in any of them resolves — and the
 // enumeration hands the resolver the config's own slices, so the canonical id is written back.
 func TestGoogleAdsCreativeSlots_EnumeratesTheSearchAssets(t *testing.T) {
 	braced := "{" + strings.ToUpper(gaSearchImageAssetID) + "}"
 	cfg := &googleAdsConfig{SearchAssets: &googleAdsSearchAssetsConfig{
 		AdImages:           googleAdsImageRefs{{ImageAssetID: braced}},
+		LandscapeAdImages:  googleAdsImageRefs{{ImageAssetID: gaSearchLandscapeAssetID}},
 		BusinessLogoImages: googleAdsImageRefs{{ImageAssetID: gaSearchLogoAssetID}},
 	}}
 	slots := googleAdsCreativeSlots(cfg)
@@ -232,12 +247,13 @@ func TestGoogleAdsCreativeSlots_EnumeratesTheSearchAssets(t *testing.T) {
 	for _, s := range slots {
 		labels = append(labels, s.label)
 	}
-	wantLabels := []string{"search adImages", "search businessLogoImages"}
+	wantLabels := []string{"search adImages", "search landscapeAdImages", "search businessLogoImages"}
 	if !reflect.DeepEqual(labels, wantLabels) {
 		t.Fatalf("slots = %v, want %v", labels, wantLabels)
 	}
 	if slots[0].refs != &cfg.SearchAssets.AdImages ||
-		slots[1].refs != &cfg.SearchAssets.BusinessLogoImages {
+		slots[1].refs != &cfg.SearchAssets.LandscapeAdImages ||
+		slots[2].refs != &cfg.SearchAssets.BusinessLogoImages {
 		t.Error("the slots do not address the config's own lists")
 	}
 
@@ -248,7 +264,7 @@ func TestGoogleAdsCreativeSlots_EnumeratesTheSearchAssets(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 	defer release()
-	for _, id := range []string{gaSearchImageAssetID, gaSearchLogoAssetID} {
+	for _, id := range []string{gaSearchImageAssetID, gaSearchLandscapeAssetID, gaSearchLogoAssetID} {
 		if _, ok := resolved[googleAdsImageRefScheme+id]; !ok {
 			t.Errorf("stored asset %s was not resolved", id)
 		}
@@ -265,11 +281,13 @@ func TestGoogleAdsCreativeSlots_EnumeratesTheSearchAssets(t *testing.T) {
 func TestGoogleAdsSearchAssets_MapsEachFieldAndNilIsZero(t *testing.T) {
 	got := googleAdsSearchAssets(&googleAdsSearchAssetsConfig{
 		AdImages:           googleAdsImageRefsFromURLs([]string{"a"}),
+		LandscapeAdImages:  googleAdsImageRefsFromURLs([]string{"w"}),
 		BusinessLogoImages: googleAdsImageRefsFromURLs([]string{"l"}),
 		BusinessName:       "LF",
 	})
 	want := googleads.SearchCampaignAssets{
-		AdImages: []string{"a"}, BusinessLogoImages: []string{"l"}, BusinessName: "LF",
+		AdImages: []string{"a"}, LandscapeAdImages: []string{"w"},
+		BusinessLogoImages: []string{"l"}, BusinessName: "LF",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("mapped = %+v, want %+v", got, want)
@@ -280,11 +298,12 @@ func TestGoogleAdsSearchAssets_MapsEachFieldAndNilIsZero(t *testing.T) {
 	}
 }
 
-// Both image lists are sanitized, on a deep copy, and a config carrying ONLY the Search assets
+// All three image lists are sanitized, on a deep copy, and a config carrying ONLY the Search assets
 // does not take the early return.
 func TestGoogleAdsSnapshotConfig_SanitizesTheSearchAssets(t *testing.T) {
 	assets := &googleAdsSearchAssetsConfig{
-		AdImages: googleAdsImageRefsFromURLs([]string{signedCreativeURL}),
+		AdImages:          googleAdsImageRefsFromURLs([]string{signedCreativeURL}),
+		LandscapeAdImages: googleAdsImageRefsFromURLs([]string{"https://cdn.example.org/w.png?sig=wide-secret"}),
 		BusinessLogoImages: googleAdsImageRefs{
 			{URL: "https://cdn.example.org/l.png?sig=logo-secret"},
 			{ImageAssetID: gaSearchLogoAssetID},
@@ -300,6 +319,7 @@ func TestGoogleAdsSnapshotConfig_SanitizesTheSearchAssets(t *testing.T) {
 	}
 	for name, got := range map[string]string{
 		"adImages":           snapshot.SearchAssets.AdImages[0].URL,
+		"landscapeAdImages":  snapshot.SearchAssets.LandscapeAdImages[0].URL,
 		"businessLogoImages": snapshot.SearchAssets.BusinessLogoImages[0].URL,
 	} {
 		if strings.Contains(got, "secret") || strings.Contains(got, "s3cr3t") {

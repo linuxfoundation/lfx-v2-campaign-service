@@ -1029,12 +1029,12 @@ verbatim. Its type check (#548) is the client's: `CreateCampaign` reads every na
 and status before the budget and returns `(nil, err)`. The adapter's ordinary not-created wrap
 therefore releases the claim. A refusal reaches the job verbatim (a `PreflightRefusal`), and a
 failed read reaches it through `DispatchFailureMessage`'s upstream-status arm.
-`TestGoogleAds_SharedListTypeCheckJobMessages` pins both. `searchAssets` is `googleAdsSearchAssetsConfig`: `adImages` and
-`businessLogoImages` are `googleAdsImageRefs`, so each entry is a URL or an
-`{"imageAssetId": …}` object. Both lists are enumerated by `googleAdsCreativeSlots` (as
-`search adImages` and `search businessLogoImages`), beside every other Google image slot, so
-stored assets resolve and are budgeted with the rest.
-`googleAdsSnapshotConfig` sanitizes both lists on a deep copy and names `SearchAssets` in its
+`TestGoogleAds_SharedListTypeCheckJobMessages` pins both. `searchAssets` is `googleAdsSearchAssetsConfig`: `adImages`, `landscapeAdImages`
+(#538) and `businessLogoImages` are `googleAdsImageRefs`, so each entry is a URL or an
+`{"imageAssetId": …}` object. All three lists are enumerated by `googleAdsCreativeSlots` (as
+`search adImages`, `search landscapeAdImages` and `search businessLogoImages`), beside every
+other Google image slot, so stored assets resolve and are budgeted with the rest.
+`googleAdsSnapshotConfig` sanitizes all three lists on a deep copy and names `SearchAssets` in its
 early return. `googleAdsSearchAssets` maps nil to the zero value.
 
 Two details of those mappers are load-bearing. Each returns **nil** for an empty input, as

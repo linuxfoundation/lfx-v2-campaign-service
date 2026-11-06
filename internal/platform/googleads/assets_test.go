@@ -44,9 +44,9 @@ func newAssetClient(t *testing.T, assetsH, campaignAssetsH http.HandlerFunc) *Cl
 		}
 	}))
 	t.Cleanup(apiSrv.Close)
-	return NewClient(testCreds(), testAccount(),
+	return noExistingCampaign(NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
-		withRetryBaseDelay(time.Millisecond))
+		withRetryBaseDelay(time.Millisecond)))
 }
 
 func assetName(i int) string {
@@ -741,9 +741,9 @@ func TestCreateCampaign_BadExtensionsFailBeforeAnyMutate(t *testing.T) {
 				w.WriteHeader(http.StatusInternalServerError)
 			}))
 			t.Cleanup(apiSrv.Close)
-			c := NewClient(testCreds(), testAccount(),
+			c := noExistingCampaign(NewClient(testCreds(), testAccount(),
 				WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
-				withRetryBaseDelay(time.Millisecond))
+				withRetryBaseDelay(time.Millisecond)))
 
 			in := sampleInput()
 			mutate(&in)
