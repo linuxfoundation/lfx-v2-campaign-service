@@ -628,7 +628,8 @@ type googleAdsConfig struct {
 	// each non-empty list restricts the ad to the values it names, in the exclusion fields'
 	// vocabulary. DISPLAY ONLY, and a value may not also be in its excluded* list. It names
 	// no account resource, so no audience gate applies. Its request shape passed a validateOnly
-	// probe (#509) but no live create has exercised it, so it is refused outright unless GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED is "true" (see
+	// probe (#509) but no live create has exercised it, so it is refused outright unless
+	// GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED is "true" (see
 	// googleAdsDemographicTargetingEnabled). The other refusals are the client's preflight's;
 	// see googleads.validateDisplayDemographics.
 	DisplayDemographics *googleAdsDisplayDemographicsConfig `json:"displayDemographics"`
@@ -953,8 +954,9 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 			constants.EnvGoogleAdsSharedNegativeListsEnabled,
 			"sharedNegativeKeywordLists")
 	}
-	// The demographic inputs no live create has exercised yet (#497), on the same terms: any non-empty list, on any
-	// channel, so the refusal never depends on the client's own validation of the values.
+	// The demographic inputs no live create has exercised yet (#497), on the same terms: any
+	// non-empty list, on any channel, so the refusal never depends on the client's own
+	// validation of the values.
 	if len(cfg.ObservedDemographics) > 0 && !googleAdsDemographicTargetingEnabled() {
 		return nil, googleAdsInputDisabled("observedDemographics is",
 			constants.EnvGoogleAdsDemographicTargetingEnabled, "observedDemographics")

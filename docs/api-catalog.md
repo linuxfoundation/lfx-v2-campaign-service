@@ -1668,7 +1668,7 @@ observedDemographics?:          — OPTIONAL, SEARCH ONLY (#497). Puts whole dem
                                   no such campaign has been created live yet. The field stays
                                   REFUSED before any request unless the deployment sets
                                   GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED to exactly `"true"`
-                                  (off by default; lfx-v2-argocd turns it on).
+                                  (off by default until lfx-v2-argocd turns it on).
 sitelinks?:                     — OPTIONAL sitelink extensions (LFXV2-2665): extra links shown under the
   {text, description1?,           ad. `text` ≤25 runes, required and unique within the list.
    description2?, finalUrl}       `description1`/`description2` are ≤35 runes each and ALL-OR-NOTHING —
