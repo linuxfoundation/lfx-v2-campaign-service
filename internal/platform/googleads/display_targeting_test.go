@@ -282,19 +282,19 @@ func TestCreateDisplayCampaign_RefusesBadTargetingBeforeAnyRequest(t *testing.T)
 	}{
 		"foreign user list": {
 			func(in *CampaignInput) { in.AudienceSegments = []string{"customers/9999999999/userLists/11"} },
-			"is on customer \"9999999999\", not this campaign's account 1234567890",
+			"is on customer \"9999999999\", not this campaign's account \"1234567890\"",
 		},
 		"foreign custom audience": {
 			func(in *CampaignInput) { in.CustomAudiences = []string{"customers/9999999999/customAudiences/22"} },
-			"is on customer \"9999999999\", not this campaign's account 1234567890",
+			"is on customer \"9999999999\", not this campaign's account \"1234567890\"",
 		},
 		"foreign custom affinity": {
 			func(in *CampaignInput) { in.CustomAffinities = []string{"customers/9999999999/customInterests/33"} },
-			"is on customer \"9999999999\", not this campaign's account 1234567890",
+			"is on customer \"9999999999\", not this campaign's account \"1234567890\"",
 		},
 		"foreign user interest": {
 			func(in *CampaignInput) { in.UserInterests = []string{"customers/9999999999/userInterests/44"} },
-			"is on customer \"9999999999\", not this campaign's account 1234567890",
+			"is on customer \"9999999999\", not this campaign's account \"1234567890\"",
 		},
 		"an Audience resource": {
 			func(in *CampaignInput) { in.AudienceSegments = []string{"customers/1234567890/audiences/55"} },

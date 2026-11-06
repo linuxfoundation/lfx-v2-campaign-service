@@ -52,8 +52,10 @@ func (e *PreflightRefusal) Error() string { return e.msg }
 // Unwrap returns the refusal's cause, if it wraps one.
 func (e *PreflightRefusal) Unwrap() error { return e.cause }
 
-// OperatorMessage is the text that may be surfaced to an operator. It is Error() under a name
-// that says why a caller is reading it.
+// OperatorMessage is the text that may be surfaced to an operator. For a refusal built by
+// WrapQuotedPreflightRefusal it is e.operator, set there to quotedCallerValues(err.Error()):
+// the wrapped text with every quoted caller value re-rendered through CallerValue, which differs
+// from Error(). For every other constructor e.operator is unset and it is Error() itself.
 func (e *PreflightRefusal) OperatorMessage() string {
 	if e.operator != "" {
 		return e.operator

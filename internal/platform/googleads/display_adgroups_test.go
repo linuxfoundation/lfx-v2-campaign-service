@@ -232,7 +232,7 @@ func TestValidateDisplayAdGroups_Refusals(t *testing.T) {
 			g := group("A")
 			g.AudienceSegments = []string{"customers/9999999999/userLists/11"}
 			withGroups(g)(in)
-		}, "is on customer \"9999999999\", not this campaign's account 1234567890"},
+		}, "is on customer \"9999999999\", not this campaign's account \"1234567890\""},
 		"foreign group user interest": {campaignKindDisplay, func(in *CampaignInput) {
 			g := group("A")
 			g.UserInterests = []string{"customers/9999999999/userInterests/44"}

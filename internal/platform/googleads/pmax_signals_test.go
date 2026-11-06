@@ -79,7 +79,7 @@ func TestValidatePerformanceMaxSignals_RefusesBadInput(t *testing.T) {
 		"theme over 80":     {themes: []string{strings.Repeat("k", maxSearchThemeRunes+1)}, want: "81 characters, exceeding the 80 limit"},
 		"duplicate theme":   {themes: []string{"KubeCon", "kubecon "}, want: `"kubecon" is listed more than once`},
 		"too many themes":   {themes: tooMany, want: "at most 50 search themes, got 51"},
-		"foreign audience":  {audience: "customers/9999999999/audiences/5", want: "belongs to customer \"9999999999\", not the campaign's account 1234567890"},
+		"foreign audience":  {audience: "customers/9999999999/audiences/5", want: "belongs to customer \"9999999999\", not the campaign's account \"1234567890\""},
 		"user list":         {audience: "customers/1234567890/userLists/5", want: notAnAudience},
 		"non-numeric id":    {audience: "customers/1234567890/audiences/abc", want: notAnAudience},
 		"two audiences":     {audience: "5,6", want: notAnAudience},

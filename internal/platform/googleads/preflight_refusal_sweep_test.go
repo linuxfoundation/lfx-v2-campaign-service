@@ -163,3 +163,89 @@ func TestPreflightCampaignKind_NoCallerTextReachesTheOperatorMessage(t *testing.
 		t.Fatalf("only %d sentinel inputs were refused; the sweep is not reaching the validators", refusals)
 	}
 }
+
+// sweepStoredDigits is a mis-stored connection account id: digits only, so validateAccountIDs
+// passes it (it checks the alphabet, not the length), but an opaque 40-digit run CallerValue
+// withholds once quoted (#511). It differs from sweepOwnerDigits so a refusal that echoes the
+// caller's owner id cannot pass for one that echoes the connection's own.
+const sweepStoredDigits = "5115115115115115115115115115115115115115"
+
+// sweepForeignSites names each of the eight foreign-account refusals by the channel whose
+// sweep reaches it and the text after the account it formats, so the sweep below can prove it
+// reached every one of them. The channel is part of the key because two sites share a tail: the
+// Demand Gen demographics user list and the Search audience segment (#528 review).
+var sweepForeignSites = []struct{ kind, tail string }{
+	{campaignKindSearch, "a conversion action cannot be shared across accounts"},
+	{campaignKindDemandGen, "Google refuses another customer's Audience on this account's ad group"},
+	{campaignKindDemandGen, "name a user list on the campaign's own account"},
+	{campaignKindDemandGen, "name a custom audience on the campaign's own account"},
+	{campaignKindDisplay, "name a resource on the campaign's own account"},
+	{campaignKindPerformanceMax, "an audience cannot be shared across accounts"},
+	{campaignKindSearch, "a shared set cannot be attached across accounts"},
+	{campaignKindSearch, "name a user list on the campaign's own account"},
+}
+
+// TestPreflightCampaignKind_StoredAccountIDIsQuotedInForeignAccountRefusals puts an ordinary
+// resource name, on an ordinary account, into every caller string slot of each channel's input,
+// one slot at a time, against a connection whose STORED account id is a 40-digit run. Each
+// resource is foreign to that connection, so every foreign-account refusal fires, and none may
+// show the stored id: it is formatted %q, so the operator message withholds it (#511). The
+// connection's id is not caller input, but nothing caps its length before a refusal echoes it.
+func TestPreflightCampaignKind_StoredAccountIDIsQuotedInForeignAccountRefusals(t *testing.T) {
+	c := &Client{account: AccountConfig{CustomerID: sweepStoredDigits, Label: "Test"}}
+	if err := c.validateAccountIDs(); err != nil {
+		t.Fatalf("validateAccountIDs refused the stored id, so it cannot reach a refusal: %v", err)
+	}
+	values := []string{
+		"customers/1234567890/conversionActions/1",
+		"customers/1234567890/audiences/1",
+		"customers/1234567890/userLists/1",
+		"customers/1234567890/customAudiences/1",
+		"customers/1234567890/sharedSets/1",
+	}
+	bases := []struct {
+		kind string
+		in   func() CampaignInput
+	}{
+		{campaignKindSearch, sampleInput},
+		{campaignKindDemandGen, demandGenInput},
+		{campaignKindPerformanceMax, func() CampaignInput { return pmaxInput(fullPMaxCreative()) }},
+		{campaignKindDisplay, func() CampaignInput { return displayCreativeInput(fullDisplayCreative()) }},
+		{campaignKindVideo, sampleInput},
+	}
+	reached := map[struct{ kind, tail string }]bool{}
+	for _, b := range bases {
+		total := 0
+		probe := b.in()
+		sweepSetNth(reflect.ValueOf(&probe).Elem(), -1, &total, "", 0)
+		for n := 0; n < total; n++ {
+			for _, value := range values {
+				in := b.in()
+				seen := 0
+				sweepSetNth(reflect.ValueOf(&in).Elem(), n, &seen, value, 0)
+				_, err := c.preflightCampaignKind(b.kind, in)
+				if err == nil {
+					continue
+				}
+				msg, ok := domain.AsPreflightRefusal(err)
+				if !ok {
+					continue
+				}
+				for _, site := range sweepForeignSites {
+					if site.kind == b.kind && strings.Contains(msg, site.tail) {
+						reached[site] = true
+					}
+				}
+				if strings.Contains(msg, sweepStoredDigits) {
+					t.Errorf("%s slot %d with %q: the operator message shows the stored account id: %s", b.kind, n, value, msg)
+				}
+			}
+		}
+	}
+	// The sweep proves nothing about a refusal it never reaches.
+	for _, site := range sweepForeignSites {
+		if !reached[site] {
+			t.Errorf("no %s input reached the foreign-account refusal ending %q", site.kind, site.tail)
+		}
+	}
+}

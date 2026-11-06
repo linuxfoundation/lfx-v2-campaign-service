@@ -198,7 +198,7 @@ func TestGoogleAds_BadBiddingConfigIsPreCreate(t *testing.T) {
 		},
 		"conversion action of another account": {
 			`{"googleAdsConfig":{"budget":50,"conversionActions":["customers/9999999999/conversionActions/123456789"]}}`,
-			`belongs to customer "9999999999", not the campaign's account 1234567890`,
+			`belongs to customer "9999999999", not the campaign's account "1234567890"`,
 		},
 		"target out of range": {
 			`{"googleAdsConfig":{"budget":50,"biddingStrategy":"target-roas","targetRoas":5000}}`,

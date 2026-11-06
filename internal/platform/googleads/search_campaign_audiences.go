@@ -97,7 +97,7 @@ func validateCampaignAudienceSegments(kind, customerID string, in CampaignInput)
 			return nil, fmt.Errorf("google-ads: %s entry %q is not a user list; a Search campaign observes user lists only, customers/{customerId}/userLists/{id} (Google refuses a custom audience as a Search campaign criterion)", field, capForError(name))
 		}
 		if parts[1] != customerID {
-			return nil, fmt.Errorf("google-ads: %s entry %q is on customer %q, not this campaign's account %s; name a user list on the campaign's own account", field, capForError(name), parts[1], customerID)
+			return nil, fmt.Errorf("google-ads: %s entry %q is on customer %q, not this campaign's account %q; name a user list on the campaign's own account", field, capForError(name), parts[1], customerID)
 		}
 		if canonicalCampaignID(parts[3]) == "" {
 			return nil, fmt.Errorf("google-ads: %s entry %q has the id %q, which is not the canonical base-10 spelling of a positive id (no leading zeros); write the id as Google returns it", field, capForError(name), parts[3])
