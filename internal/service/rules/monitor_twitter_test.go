@@ -123,7 +123,7 @@ func TestEvaluateTwitterMonitor_EveningInAccountTimezone(t *testing.T) {
 			m.BudgetDay = 10
 			m.Impressions, m.Clicks = 0, 0
 			m.StartDate = "2026-10-06"
-		})}, &first, &last)
+		})}, &first, &last, "USD")
 		if hasItem(items, model.MonitorPriorityHigh, "delivered nothing") {
 			t.Errorf("items = %+v, want no zero-delivery HIGH for a flight that starts after the report's last local day", items)
 		}
@@ -135,7 +135,7 @@ func TestEvaluateTwitterMonitor_EveningInAccountTimezone(t *testing.T) {
 			m.BudgetDay = 10
 			m.Spend = 10
 			m.StartDate = "2026-10-05"
-		})}, &first, &last)
+		})}, &first, &last, "USD")
 		if rows[0].PacingPct != 100 || rows[0].Metrics.PacingUnknown {
 			t.Errorf("row = %+v, want 100%% of one local day's budget", rows[0])
 		}
@@ -143,7 +143,7 @@ func TestEvaluateTwitterMonitor_EveningInAccountTimezone(t *testing.T) {
 		rows, _ = EvaluateTwitterMonitor([]model.AccountCampaignMetrics{xRow(func(m *model.AccountCampaignMetrics) {
 			m.BudgetDay = 10
 			m.Spend = 70
-		})}, &first, &last)
+		})}, &first, &last, "USD")
 		if rows[0].PacingPct != 100 {
 			t.Errorf("row = %+v, want 100%% of seven local days", rows[0])
 		}
@@ -167,7 +167,7 @@ func TestEvaluateTwitterMonitor_NoWindowSkipsWindowRules(t *testing.T) {
 					m.Status = "PAUSED"
 					m.BudgetDay = 10
 				}),
-			}, bounds[0], bounds[1])
+			}, bounds[0], bounds[1], "USD")
 			for _, r := range rows {
 				if !r.Metrics.PacingUnknown {
 					t.Errorf("row %s paced without a window: %+v", r.Metrics.PlatformCampaignID, r)
@@ -185,7 +185,7 @@ func TestEvaluateTwitterMonitor_NoWindowSkipsWindowRules(t *testing.T) {
 
 func xItems(t *testing.T, rows ...model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 	t.Helper()
-	return EvaluateTwitterMonitor(rows, &xFirstDay, &xLastDay)
+	return EvaluateTwitterMonitor(rows, &xFirstDay, &xLastDay, "USD")
 }
 
 func hasItem(items []model.AccountMonitorActionItem, p model.MonitorPriority, substr string) bool {
@@ -305,7 +305,7 @@ func TestEvaluateTwitterMonitor_FlightRangesNotEnvelope(t *testing.T) {
 				gap(m)
 				budget(m)
 				m.Impressions, m.Clicks = 0, 0
-			})}, &first, &last)
+			})}, &first, &last, "USD")
 			if hasItem(items, model.MonitorPriorityHigh, "delivered nothing") {
 				t.Errorf("items = %+v, want no zero-delivery HIGH for a window between line items", items)
 			}
