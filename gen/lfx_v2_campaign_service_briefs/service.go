@@ -118,17 +118,19 @@ type Service interface {
 	// or excludedAudienceSegments, on the campaign or on any displayAdGroups
 	// entry; audienceSegments on any adGroups entry; performanceMaxAudienceSignal;
 	// sharedNegativeKeywordLists; conversionActions,
-	// demandGenDemographics.audienceSegments; any non-empty value, whitespace
+	// demandGenDemographics.audienceSegments,
+	// demandGenDemographics.customAudiences; any non-empty value, whitespace
 	// included, on any channel, Search audienceSegments included;
-	// demandGenDemographics without audienceSegments is not gated, as its Audience
-	// is new and names no existing account resource) requires the caller to hold
-	// global_marketing_ops on this project, checked once per request before any
-	// job exists: 403 naming the gated fields when they do not, 503 when the check
-	// cannot be made (project lookup or authorization service unavailable). The
-	// gateway admits every campaign_manager, which includes foundation executive
-	// directors, and those resources belong to the Google Ads account every
-	// foundation shares. An invalid per-platform `bidding` object (see the config
-	// attribute) is also refused synchronously, with 400 "invalid campaign config:
+	// demandGenDemographics without audienceSegments or customAudiences is not
+	// gated, as its Audience is new and names no existing account resource)
+	// requires the caller to hold global_marketing_ops on this project, checked
+	// once per request before any job exists: 403 naming the gated fields when
+	// they do not, 503 when the check cannot be made (project lookup or
+	// authorization service unavailable). The gateway admits every
+	// campaign_manager, which includes foundation executive directors, and those
+	// resources belong to the Google Ads account every foundation shares. An
+	// invalid per-platform `bidding` object (see the config attribute) is also
+	// refused synchronously, with 400 "invalid campaign config:
 	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
 	// Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc)
 	// and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are

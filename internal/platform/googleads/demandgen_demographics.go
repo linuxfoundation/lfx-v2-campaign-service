@@ -37,6 +37,10 @@ import (
 // 8666746580): all four demographic dimensions together, the same plus an audienceSegments
 // dimension holding a user list, an age segment with no maxAge (65+), two non-adjacent age
 // segments, and a temporary Audience attached to a Demand Gen ad group in the same request.
+// #516 added custom audiences to the audienceSegments dimension; a 2026-11-06 validateOnly
+// probe accepted the exact bodies this file sends: age 25-54 with three user lists and a custom
+// audience (the live High Intent Audience's shape), a custom audience alone, and the first of
+// those attached by temporary id to a Demand Gen ad group.
 // The same probes refused, and so this file refuses before anything upstream:
 //   - UNDETERMINED as a list VALUE (INVALID_ENUM_VALUE): it is the dimension's
 //     includeUndetermined flag instead;
@@ -64,10 +68,15 @@ type DemandGenDemographics struct {
 	// Optional. They name account resources, so the dispatch adapter and the create
 	// service gate them as they gate DemandGenAudience.
 	AudienceSegments []string
+	// CustomAudiences are EXISTING custom audiences on this campaign's own account
+	// (customers/<id>/customAudiences/<id>), put in the same audienceSegments dimension as
+	// AudienceSegments, after them (#516). The live "CNCF - KubeCon NA - High Intent" Audience
+	// holds its custom-intent segment that way. Optional, and gated as AudienceSegments is.
+	CustomAudiences []string
 }
 
 func (d *DemandGenDemographics) empty() bool {
-	return d == nil || len(d.AgeRanges)+len(d.Genders)+len(d.IncomeRanges)+len(d.ParentalStatuses)+len(d.AudienceSegments) == 0
+	return d == nil || len(d.AgeRanges)+len(d.Genders)+len(d.IncomeRanges)+len(d.ParentalStatuses)+len(d.AudienceSegments)+len(d.CustomAudiences) == 0
 }
 
 // The Audience wire shapes, Google's AudienceDimension one-of. Exactly one arm is set per
@@ -111,9 +120,11 @@ type audienceSegmentsDimension struct {
 	Segments []audienceSegment `json:"segments"`
 }
 
-// audienceSegment is AudienceSegment with only the userList arm this client sends.
+// audienceSegment is AudienceSegment with the two arms this client sends: userList and
+// customAudience (#516). Exactly one is set.
 type audienceSegment struct {
-	UserList *userListInfo `json:"userList,omitempty"`
+	UserList       *userListInfo       `json:"userList,omitempty"`
+	CustomAudience *customAudienceInfo `json:"customAudience,omitempty"`
 }
 
 // audienceCreate is the audiences:mutate create payload.
@@ -173,7 +184,7 @@ func validateDemandGenDemographics(kind, customerID, campaignName string, in Cam
 		return nil, fmt.Errorf("google-ads: Demand Gen demographics are not supported on %s (this client builds them into the Audience of a Demand Gen ad group only); omit DemandGenDemographics; %s", kind, demographicFieldsHint(kind))
 	}
 	if d.empty() {
-		return nil, fmt.Errorf("google-ads: DemandGenDemographics is set but empty; set at least one of AgeRanges, Genders, IncomeRanges, ParentalStatuses or AudienceSegments, or omit it")
+		return nil, fmt.Errorf("google-ads: DemandGenDemographics is set but empty; set at least one of AgeRanges, Genders, IncomeRanges, ParentalStatuses, AudienceSegments or CustomAudiences, or omit it")
 	}
 	// One Audience per ad group, and an existing Audience is not edited, so the
 	// demographics cannot be merged into one the caller names.
@@ -229,15 +240,30 @@ func validateDemandGenDemographics(kind, customerID, campaignName string, in Cam
 	if err != nil {
 		return nil, err
 	}
-	if len(lists) > 0 {
-		// Sorted, so the same lists in another order are the same Audience.
+	customs, err := validateDemographicCustomAudiences(customerID, d.CustomAudiences)
+	if err != nil {
+		return nil, err
+	}
+	if len(lists)+len(customs) > 0 {
+		// One audienceSegments dimension: the user lists, then the custom audiences (#516),
+		// each sorted, so the same segments in another order are the same Audience. A plan with
+		// user lists only sends the same bytes as before #516, so its name hash is unchanged.
 		slices.Sort(lists)
-		segs := make([]audienceSegment, 0, len(lists))
+		slices.Sort(customs)
+		segs := make([]audienceSegment, 0, len(lists)+len(customs))
 		for _, l := range lists {
 			segs = append(segs, audienceSegment{UserList: &userListInfo{UserList: l}})
 		}
+		for _, ca := range customs {
+			segs = append(segs, audienceSegment{CustomAudience: &customAudienceInfo{CustomAudience: ca}})
+		}
 		dims = append(dims, audienceDimension{AudienceSegments: &audienceSegmentsDimension{Segments: segs}})
-		summary = append(summary, fmt.Sprintf("%d user list(s)", len(lists)))
+		if len(lists) > 0 {
+			summary = append(summary, fmt.Sprintf("%d user list(s)", len(lists)))
+		}
+		if len(customs) > 0 {
+			summary = append(summary, fmt.Sprintf("%d custom audience(s)", len(customs)))
+		}
 	}
 
 	return &demandGenDemographicPlan{
@@ -345,6 +371,9 @@ func validateDemographicUserLists(customerID string, names []string) ([]string, 
 		if len(parts) == 4 && parts[0] == "customers" && parts[2] == "audiences" {
 			return nil, fmt.Errorf("google-ads: DemandGenDemographics.AudienceSegments entry %q is an Audience, which cannot go inside another Audience; name its user lists here, or set DemandGenAudience to it and omit DemandGenDemographics", capForError(name))
 		}
+		if len(parts) == 4 && parts[0] == "customers" && parts[2] == "customAudiences" {
+			return nil, fmt.Errorf("google-ads: DemandGenDemographics.AudienceSegments entry %q is a custom audience; AudienceSegments takes user lists only, so move it to DemandGenDemographics.CustomAudiences", capForError(name))
+		}
 		if len(parts) != 4 || parts[0] != "customers" || parts[2] != "userLists" || !numericID(parts[1]) || !numericID(parts[3]) {
 			return nil, fmt.Errorf("google-ads: DemandGenDemographics.AudienceSegments entry %q is not a customers/<id>/userLists/<id> user list resource name", capForError(name))
 		}
@@ -353,6 +382,56 @@ func validateDemographicUserLists(customerID string, names []string) ([]string, 
 		}
 		if canonicalCampaignID(parts[3]) == "" {
 			return nil, fmt.Errorf("google-ads: DemandGenDemographics.AudienceSegments entry %q has the id %q, which is not the canonical base-10 spelling of a positive id (no leading zeros)", capForError(name), parts[3])
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out, nil
+}
+
+// validateDemographicCustomAudiences checks DemandGenDemographics.CustomAudiences (#516): full
+// customers/<this account>/customAudiences/<id> names, canonical ids, deduplicated, at most
+// maxAudienceSegments. A resource of another kind is refused with the field it belongs in, or,
+// for the kinds an Audience cannot hold, with why: Google refuses a legacy customInterests
+// resource inside an Audience (RESOURCE_NAME_MALFORMED, validateOnly probe 2026-11-06).
+func validateDemographicCustomAudiences(customerID string, names []string) ([]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	if len(names) > maxAudienceSegments {
+		return nil, fmt.Errorf("google-ads: at most %d DemandGenDemographics.CustomAudiences entries are supported, got %d", maxAudienceSegments, len(names))
+	}
+	seen := make(map[string]struct{}, len(names))
+	out := make([]string, 0, len(names))
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			return nil, fmt.Errorf("google-ads: DemandGenDemographics.CustomAudiences entry must not be empty")
+		}
+		parts := strings.Split(name, "/")
+		if len(parts) == 4 && parts[0] == "customers" {
+			switch parts[2] {
+			case "userLists":
+				return nil, fmt.Errorf("google-ads: DemandGenDemographics.CustomAudiences entry %q is a user list; move it to DemandGenDemographics.AudienceSegments", capForError(name))
+			case "audiences":
+				return nil, fmt.Errorf("google-ads: DemandGenDemographics.CustomAudiences entry %q is an Audience, which cannot go inside another Audience; name its custom audiences here, or set DemandGenAudience to it and omit DemandGenDemographics", capForError(name))
+			case "customInterests":
+				return nil, fmt.Errorf("google-ads: DemandGenDemographics.CustomAudiences entry %q is a legacy custom interest, which Google refuses inside an Audience; name a customers/<id>/customAudiences/<id> custom audience instead", capForError(name))
+			case "userInterests":
+				return nil, fmt.Errorf("google-ads: DemandGenDemographics.CustomAudiences entry %q is a user interest, not a custom audience; name a customers/<id>/customAudiences/<id> custom audience", capForError(name))
+			}
+		}
+		if len(parts) != 4 || parts[0] != "customers" || parts[2] != "customAudiences" || !numericID(parts[1]) || !numericID(parts[3]) {
+			return nil, fmt.Errorf("google-ads: DemandGenDemographics.CustomAudiences entry %q is not a customers/<id>/customAudiences/<id> custom audience resource name", capForError(name))
+		}
+		if parts[1] != customerID {
+			return nil, fmt.Errorf("google-ads: DemandGenDemographics.CustomAudiences entry %q is on customer %q, not this campaign's account %s; name a custom audience on the campaign's own account", capForError(name), parts[1], customerID)
+		}
+		if canonicalCampaignID(parts[3]) == "" {
+			return nil, fmt.Errorf("google-ads: DemandGenDemographics.CustomAudiences entry %q has the id %q, which is not the canonical base-10 spelling of a positive id (no leading zeros)", capForError(name), parts[3])
 		}
 		if _, dup := seen[name]; dup {
 			continue
@@ -481,7 +560,8 @@ func (c *Client) demographicAudienceNamed(ctx context.Context, plan *demandGenDe
 // sets, because how Google orders a persisted Audience on read-back has not been verified
 // live (only validateOnly creates were probed). A false includeUndetermined that Google omits
 // decodes as false. Every planned dimension carries exactly one arm, so a returned dimension
-// or segment of a kind this client never sends (a custom audience, say) differs.
+// or segment of a kind this client never sends (a user interest, say) differs: it decodes
+// with no arm set, which no planned segment matches.
 func sameAudienceDimensions(got []json.RawMessage, want []audienceDimension) bool {
 	if len(got) != len(want) {
 		return false
@@ -535,11 +615,16 @@ func sortedCopy(in []string) []string {
 	return out
 }
 
+// segmentKey orders segments for comparison. The two arms' resource names never collide
+// (userLists vs customAudiences), and an armless segment sorts first.
 func segmentKey(s audienceSegment) string {
-	if s.UserList == nil {
-		return ""
+	switch {
+	case s.UserList != nil:
+		return s.UserList.UserList
+	case s.CustomAudience != nil:
+		return s.CustomAudience.CustomAudience
 	}
-	return s.UserList.UserList
+	return ""
 }
 
 // demographicAudienceStep is the step line for the Audience.

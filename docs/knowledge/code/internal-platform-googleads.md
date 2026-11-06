@@ -2509,7 +2509,13 @@ references.
 
 **Demographics inside the Audience (#498).** `CampaignInput.DemandGenDemographics`
 (`demandgen_demographics.go`) takes age ranges, genders, income ranges and parental statuses
-in the `excluded*` vocabularies, plus optional user lists on this account.
+in the `excluded*` vocabularies, plus optional user lists and (#516) custom audiences on this
+account. Both go in ONE `audienceSegments` dimension, user lists then custom audiences, each
+sorted (`validateDemographicCustomAudiences` refuses a user list, Audience, legacy
+`customInterests` resource, user interest, another customer's or a non-canonical id; a custom
+audience in `AudienceSegments` is refused toward `CustomAudiences`). A user-list-only plan
+sends the bytes it sent before #516, so its name hash and retry reuse are unchanged, and the
+reuse comparison keys segments by either arm's resource name.
 `validateDemandGenDemographics` runs in `preflightCampaignKind` and builds an `audienceCreate`:
 one `AudienceDimension` per non-empty list, values in enum order, `UNDETERMINED` as the
 dimension's `includeUndetermined` (Google refuses it as a value, `INVALID_ENUM_VALUE`, and
