@@ -5,7 +5,10 @@ package dbtest_test
 
 import (
 	"context"
+	"errors"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
@@ -117,8 +120,9 @@ func TestLiveListCampaignsForBriefOrdersAndExcludesDeleted(t *testing.T) {
 }
 
 // The project_id predicate is load-bearing and must be revert-binding in SQL, not just in a
-// fake: campaigns carries no foreign key on project_id, so a row can name this brief under a
-// different project and only the WHERE clause keeps it out of another tenant's read.
+// fake. Since 000056 campaigns carries the composite tenant FK (brief_id, project_id), so a row
+// can no longer name this brief under a different project (asserted below), and the predicate is
+// pinned the other way round: another project asking for THIS brief's campaigns must get none.
 func TestLiveListCampaignsForBriefExcludesAnotherProject(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
@@ -140,29 +144,34 @@ func TestLiveListCampaignsForBriefExcludesAnotherProject(t *testing.T) {
 		}
 	})
 
-	// Two campaigns under the SAME brief id, different projects. Distinct platforms so the
-	// (brief_id, platform, variant) unique index admits both.
-	for _, row := range []struct{ project, platform string }{
-		{"cncf", string(model.ProviderGoogleAds)},
-		{"some-other-foundation", string(model.ProviderMetaAds)},
-	} {
-		if _, err := pool.Exec(ctx, `
-			INSERT INTO campaigns (project_id, brief_id, platform, variant, campaign_name, status)
-			VALUES ($1, $2, $3, $4, 'n/a', 'created')`,
-			row.project, briefID, row.platform, model.VariantDefault); err != nil {
-			t.Fatalf("seed campaign for %s: %v", row.project, err)
-		}
+	const seed = `INSERT INTO campaigns (project_id, brief_id, platform, variant, campaign_name, status)
+		VALUES ($1, $2, $3, $4, 'n/a', 'created')`
+	if _, err := pool.Exec(ctx, seed, "cncf", briefID, string(model.ProviderGoogleAds), model.VariantDefault); err != nil {
+		t.Fatalf("seed campaign for cncf: %v", err)
+	}
+	// The brief's own project is the only one a campaign under it may name.
+	_, err := pool.Exec(ctx, seed, "some-other-foundation", briefID, string(model.ProviderMetaAds), model.VariantDefault)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
+		t.Fatalf("seeding a campaign under cncf's brief for another project = %v, want a 23503 "+
+			"foreign-key violation from the composite tenant key (000056)", err)
 	}
 
 	got, err := repo.ListCampaignsForBrief(ctx, "cncf", briefID)
 	if err != nil {
 		t.Fatalf("ListCampaignsForBrief: %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("got %d campaigns, want 1 — the other project's row must be excluded", len(got))
+	if len(got) != 1 || got[0].Platform != model.ProviderGoogleAds {
+		t.Fatalf("got %d campaigns, want cncf's one google-ads row", len(got))
 	}
-	if got[0].Platform != model.ProviderGoogleAds {
-		t.Errorf("returned %s; the meta row belongs to another project", got[0].Platform)
+
+	other, err := repo.ListCampaignsForBrief(ctx, "some-other-foundation", briefID)
+	if err != nil {
+		t.Fatalf("ListCampaignsForBrief for another project: %v", err)
+	}
+	if len(other) != 0 {
+		t.Errorf("another project read %d of cncf's campaigns by naming its brief id; the "+
+			"project_id predicate must exclude them", len(other))
 	}
 }
 
