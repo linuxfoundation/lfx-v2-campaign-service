@@ -1370,8 +1370,8 @@ func helmNotes(t *testing.T, sets ...string) string {
 //
 // So every case must render the Deployment — carrying the requested spec.replicas, since a guard
 // that clamped the count instead of failing would still be a guard — and NOTES.txt (rendered by
-// helmNotes) must carry the warning exactly when the EFFECTIVE flag is on (set through either env input, or sourced where the
-// template cannot see it) with more than one replica.
+// helmNotes) must carry the warning exactly when the EFFECTIVE flag is on (set through either
+// env input, or sourced where the template cannot see it) with more than one replica.
 func TestDeploymentWarnsOnXStatsJobsWithMultipleReplicas(t *testing.T) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
@@ -1446,8 +1446,8 @@ func TestDeploymentWarnsOnXStatsJobsWithMultipleReplicas(t *testing.T) {
 // would both pass. (The X stats-job check is a NOTES.txt warning for a different reason: not
 // because multi-replica is correct for X, but because a render refusal blocks ArgoCD outright.
 // While its flag is on, X accepts the non-owner 503s described below; see
-// TestDeploymentWarnsOnXStatsJobsWithMultipleReplicas.) The real fix was a shared ledger keyed by ad account in Postgres (#380, now in
-// place), not a refusal to deploy. Note the two shortcuts
+// TestDeploymentWarnsOnXStatsJobsWithMultipleReplicas.) The real fix was a shared ledger keyed
+// by ad account in Postgres (#380, now in place), not a refusal to deploy. Note the two shortcuts
 // that look like fixes and are not — a lease as the X stats jobs use makes non-owner pods refuse,
 // which is intolerable on a user-facing monitor endpoint, and dividing the 45 by the replica
 // count leaves less than the 24 one audience read already needs.
