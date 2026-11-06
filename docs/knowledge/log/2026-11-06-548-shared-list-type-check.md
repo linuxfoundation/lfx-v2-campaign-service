@@ -15,8 +15,8 @@
   - not `ENABLED`,
   - absent from the account.
 
-  The refusal names the list and its set id (shown in the job result) and its type,
-  taken from a fixed vocabulary and never echoed. It quotes the stored account id, as #528 does.
+  The refusal names the list and its set id (only the set id is shown in the job result) and,
+  for a set of another known type, that type, taken from a fixed vocabulary and never echoed. It quotes the stored account id, as #528 does.
 - **Fail closed.** A read that fails fails the create before any write, with the upstream status
   kept for the "answered HTTP n before anything was created" mapping. So do rows that do not
   decode, name a set not asked for, or repeat one. No list means no read.
