@@ -2277,7 +2277,7 @@ func buildPromotedObject(objective, pageID, pixelID string) (map[string]any, err
 		if !numericIDRE.MatchString(trimmed) {
 			return nil, fmt.Errorf("pixelID %s is malformed for %s objective: Meta Pixel IDs are numeric strings", domain.CallerValue(trimmed), domain.CallerValue(objective))
 		}
-		return map[string]any{"pixel_id": trimmed, "custom_event_type": "PURCHASE"}, nil
+		return map[string]any{"pixel_id": trimmed, "custom_event_type": DefaultConversionEvent}, nil
 	default:
 		return nil, nil
 	}

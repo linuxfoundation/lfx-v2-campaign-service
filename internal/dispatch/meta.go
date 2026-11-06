@@ -1253,6 +1253,8 @@ func metaRunStatus(status string) (string, error) {
 // code passes through unchanged.
 //
 // Kept verbatim: Objective (refused by the client unless it names a known objective),
+// CallToAction and ConversionEvent (#550: refused unless allow-listed, so only their casing can
+// differ from what was sent),
 // InstagramUserID (refused unless numeric), Variants[].ImageAssetID (a stored asset key),
 // numbers, flags and dates. ImageBytes and
 // ImageMIME are json:"-" and never reach the snapshot.
