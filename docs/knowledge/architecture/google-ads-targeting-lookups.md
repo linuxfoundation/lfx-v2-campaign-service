@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Google Ads Targeting Lookups"
-description: "Four read-only pickers for the Google Ads create form: a geo target constant search (SuggestGeoTargetConstants, by name or postal code, returning the numeric id geoTargets accepts, readable through the LF system credential because it is public reference data), a user-list read (GAQL on user_list, returning the resource name audienceSegments accepts, own connection only, and refused with 409 on a shared-tenancy platform such as Google Ads because the read is account-wide and no user list is recorded per project), and a conversion-action read (GAQL on conversion_action, ENABLED only, resolved as a create resolves; it lists every foundation's actions on the shared customer, so the gateway admits only global_marketing_ops, the LF marketing team, not campaign_manager, which also includes foundation executive directors), and an audience read (GAQL on custom_audience, combined_audience, audience or user_interest, one type per call, usable entries only, optional name search, resolved and gated like the conversion-action read)."
+description: "Four read-only pickers for the Google Ads create form: a geo target constant search (SuggestGeoTargetConstants, by name or postal code, returning the numeric id geoTargets accepts, readable through the LF system credential because it is public reference data), a user-list read (GAQL on user_list, returning the resource name audienceSegments accepts, own connection only, and refused with 409 on a shared-tenancy platform such as Google Ads because the read is account-wide and no user list is recorded per project), a conversion-action read (GAQL on conversion_action, ENABLED only, resolved as a create resolves; it lists every foundation's actions on the shared customer, so the gateway admits only global_marketing_ops, the LF marketing team, not campaign_manager, which also includes foundation executive directors), and an audience read (GAQL on custom_audience, combined_audience, audience or user_interest, one type per call, usable entries only, optional name search, resolved like the conversion-action read but gated on campaign_manager, because foundation executive directors get every audience feature)."
 resource: "internal/service/google_ads_lookups.go"
 ---
 
@@ -126,11 +126,13 @@ create form offer them in a picker instead of making an operator type them (self
   typeahead does not run a full search per keystroke. It is consulted after credential
   resolution, a hit reports `called=false` (no `list_audiences` metric) and returns a copy. The
   account kinds are not cached, so a just-created audience is offered at once.
-- **Resolution and tenancy: the conversion-action read's.** `createAccountClient` (shared with
+- **Resolution: the conversion-action read's.** `createAccountClient` (shared with
   `ListConversionActions`) resolves as a create does, so the resource names are on the account
-  the create uses. The answer is account-wide on the shared customer (every foundation's custom
-  audiences and Audiences), so the route is in the `marketing-ops-api` rule
-  (`global_marketing_ops`), not `project-api`. GET only.
+  the create uses.
+- **A `campaign_manager` read.** The answer is account-wide on the shared customer (every
+  foundation's custom audiences and Audiences), but foundation executive directors get every
+  audience feature (owner decision, 2026-11-05), so the route is in `project-api`, not
+  `marketing-ops-api`. It was first built on `marketing-ops-api` and moved before merge.
 - The singular `google-ads/audience` is a different endpoint: the `campaign_manager` audience
   performance read of the project's own campaigns.
 
@@ -138,7 +140,7 @@ create form offer them in a picker instead of making an operator type them (self
 
 - Authorization: the gateway's check on `project:{projectId}` (`ruleset.yaml`):
   `campaign_manager` for the geo and user-list reads, `global_marketing_ops` for the
-  conversion-action and audience reads;
+  conversion-action read, `campaign_manager` for the audience read;
   JWT verified in the service, the reserved `system:linuxfoundation` scope
   refused with 404 (`rejectSystemScope`).
 - Errors: `classifyDiscoveryError` arms under each read's own operation noun, plus

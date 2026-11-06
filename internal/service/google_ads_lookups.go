@@ -173,9 +173,10 @@ func (o *Orchestrator) ReadConversionActions(ctx context.Context, projectID stri
 // ReadAudiences lists every usable audience entry of one kind on the account a create for the
 // project uses, through the platform's dispatcher. A pure read; nothing is persisted.
 //
-// Like ReadConversionActions, and for the same reason, it is NOT refused on a shared-tenancy
-// platform: on Google Ads the answer holds every foundation's audiences, so the gateway admits
-// only global_marketing_ops of the project to this route (#496).
+// Like ReadConversionActions it is NOT refused on a shared-tenancy platform, although on
+// Google Ads the answer holds every foundation's audiences. The gateway admits campaign_manager
+// of the project, executive directors included: foundation EDs get every audience feature
+// (owner decision, 2026-11-05, #496).
 func (o *Orchestrator) ReadAudiences(ctx context.Context, projectID string, platform model.Provider, kind string) (*model.AudienceResources, error) {
 	d, ok := o.dispatchers[platform]
 	if !ok {
@@ -449,8 +450,8 @@ func (s *ConnectionService) ListGoogleAdsConversionActions(ctx context.Context, 
 // user interests on the Google Ads customer a create for this project uses, for the audience
 // pickers (#496).
 //
-// Resolution and tenancy are ListGoogleAdsConversionActions': the answer is account-wide on a
-// customer every foundation shares, which is why only the LF marketing team may call it (see
+// Resolution is ListGoogleAdsConversionActions': as a create resolves. The answer is account-wide
+// on a customer every foundation shares; the gateway admits campaign_manager (see
 // Orchestrator.ReadAudiences). type and q are checked before any credential is resolved.
 func (s *ConnectionService) ListGoogleAdsAudiences(ctx context.Context, p *conn.ListGoogleAdsAudiencesPayload) (*conn.GoogleAdsAudienceResources, error) {
 	if err := rejectSystemScope(p.ProjectID); err != nil {
