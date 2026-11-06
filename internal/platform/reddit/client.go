@@ -337,8 +337,9 @@ type Client struct {
 	// WithCallerScopedTokenRefresh.
 	callerScopedRefresh bool
 
-	// reportBudgets is the reporting-attempt ledger this client spends from; nil means the
-	// process-wide defaultReportBudgets (report_budget.go). Set only by tests.
+	// reportBudgets is the reporting-attempt ledger this client spends from; nil means
+	// defaultReportBudgets (report_budget.go), an unbound shared ledger that refuses every report.
+	// Set by WithReportBudgets: dispatch.RedditDispatcher's shared ledger, or a test's.
 	reportBudgets *ReportBudgets
 }
 
@@ -1346,7 +1347,8 @@ func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, pa
 		req.Header.Set("User-Agent", redditUserAgent)
 
 		// A reporting-operation attempt — every page, every 429 retry — takes a slot in the ad
-		// account's process-wide reporting budget (report_budget.go) and is not sent without one.
+		// account's reporting budget, shared by every replica (report_budget.go), and is not sent
+		// without one — nor when the shared ledger cannot be asked (fail closed).
 		// It is taken HERE, after the token refresh and the request build and immediately before
 		// the send, so an attempt that fails before it could be sent spends no slot. Nothing has
 		// been sent when this fails. Taken before the per-attempt deadline starts, so a wait for

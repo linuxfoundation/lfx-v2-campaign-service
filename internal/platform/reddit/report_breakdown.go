@@ -29,8 +29,8 @@ const (
 	// per breakdown (see readBreakdownReports for why), so the audience read is at most 8 × 3 = 24
 	// reports — exactly the insight sub-budget (reportBudgetInsights) — and the keyword read 8. It
 	// does NOT bound the requests sent: a report may span pages and a 429 is retried, and each of
-	// those attempts is its own request. What bounds the requests is the ad account's process-wide
-	// reporting budget (report_budget.go), from which every attempt — of these reads, the metrics
+	// those attempts is its own request. What bounds the requests is the ad account's reporting budget,
+	// shared by every replica (report_budget.go), from which every attempt — of these reads, the metrics
 	// read and the account monitor alike — takes a slot before it is sent.
 	MaxReportCampaigns = 8
 	// reportBreakdownConcurrency bounds the reports in flight at once, below the monitor's own 5.

@@ -54,7 +54,7 @@ const (
 	// (401/403, or a refused token refresh).
 	MonitorFailureAuth MonitorFailureClass = "auth"
 	// MonitorFailureThrottle: the platform rate-limited the read (429 after the client's own
-	// bounded retry).
+	// bounded retry), or — Reddit — this service's own reporting budget refused it unsent.
 	MonitorFailureThrottle MonitorFailureClass = "throttle"
 	// MonitorFailureUpstream5xx: the platform could not answer (a 5xx, or its token endpoint
 	// unavailable).

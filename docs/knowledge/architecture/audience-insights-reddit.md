@@ -51,9 +51,9 @@ blocks are Reddit's own.
   `ErrAudienceScopeTooLarge` (409), refused before any request. At most 3 reports in flight, each
   walking at most 10 pages, inside the orchestrator's 20s `metricsCallTimeout`. The campaign cap
   bounds REPORTS, not requests: a report can span pages and a 429 is retried.
-- **A process-wide reporting budget bounds the requests** (`internal/platform/reddit/report_budget.go`).
-  Per ad account, over a sliding 60 s window, every attempt at the reports operation by any client
-  in the process — this read, the campaign metrics read, the account monitor; every page and every
+- **A reporting budget shared by every replica bounds the requests** (`internal/platform/reddit/report_budget.go`,
+  ledger in Postgres since #380). Per ad account, over a sliding 60 s window, every attempt at the
+  reports operation by any client on any replica — this read, the campaign metrics read, the account monitor; every page and every
   429 retry — takes a slot before it is sent: at most 45 in all (of Reddit's 60; the rest is
   headroom for Ads Manager and other tools), and at most 24 for this read (its context is marked
   `withInsightsReports`), so the metrics read and monitor always keep 21. An attempt waits for a slot
@@ -64,14 +64,15 @@ blocks are Reddit's own.
   (before the first and after each wait), so a failed refresh or a cancelled caller costs nothing.
   A pre-send dial failure (DNS, connection refused, no route — `isPreSendDialError`) is proven
   unsent, so the client hands its slot back (`ReportBudgets.reserve`'s release); any other send
-  error may have reached Reddit and keeps its slot. The ledger is PER PROCESS: with several
-  replicas the account-wide figure multiplies, and the ungated Reddit account monitor spends it
-  too, so N replicas each carry a separate 45 against an ad account's 60. That is a CEILING
-  reachable by concurrent user traffic, not a sustained rate — every path that spends the budget
-  is driven by an inbound request and nothing polls them — and the chart does NOT refuse multiple
-  replicas over it; production runs three (see [Deployment](../kubernetes/deployment.md), which
-  records why an earlier render-time guard was wrong and must not return). A shared ledger — a
-  token bucket keyed by ad account in Postgres — is what lifts the ceiling itself.
+  error may have reached Reddit and keeps its slot. The ledger is SHARED (#380): slots are rows in
+  `reddit_report_slots`, counted and inserted under a per-account transaction advisory lock on
+  the database's clock (`postgres.RedditReportLedger`), so the 45 and the 24 hold account-wide
+  however many replicas run (production runs three). It fails closed: when Postgres cannot be
+  asked the attempt is refused (`ErrReportBudgetUnavailable`) and the read fails whole (503), never
+  sent unbudgeted. It is a sliding window of slots rather than a refilling token bucket, because a
+  bucket of 45 refilled at 45 a minute admits up to 90 inside one 60 s window. See
+  [Deployment](../kubernetes/deployment.md) for why the earlier render-time replica guard was
+  wrong and must not return.
 - **Identical concurrent reads share one upstream read** (`internal/dispatch/reddit_report_guard.go`):
   keyed by account, window, UTC day and the sorted campaign set, single-flight with leader-context
   re-lead (as the X audience guard), and a successful result reused for 60 s. Failures are never

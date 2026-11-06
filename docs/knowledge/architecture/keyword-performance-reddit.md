@@ -36,21 +36,19 @@ From Reddit's published Ads API v3 OpenAPI document (read as described in
   `ErrKeywordReportScopeTooLarge` / `ErrKeywordReportScopeInvalid`.
 - **One report per campaign** (8 at most), for the audience read's reason: the single-term
   `campaign:id==<id>` filter is the only verified form. The cap bounds reports, not requests;
-  every request attempt — each page, each 429 retry — takes a slot in the ad account's per-process
-  reporting budget (`report_budget.go`), and this read's attempts count against the same 24-slot
+  every request attempt — each page, each 429 retry — takes a slot in the ad account's reporting
+  budget, shared by every replica in Postgres (#380) (`report_budget.go`), and this read's attempts count against the same 24-slot
   insight allowance as the audience read (both go through `readBreakdownReports`, which marks its
   context `withInsightsReports`). The slot is taken in the client's shared send path
   (`requestWithThrottleRetryCounted`): after the token refresh and the request build, immediately
   before the send, so an attempt that is never sent (cancelled context, failed refresh) spends
   none, and a pre-send dial failure (DNS, connection refused) hands its slot back. No slot before
-  the deadline: the read fails whole (503). The ledger is per process, and the ungated account
-  monitor spends the same budget, so N replicas each carry a separate 45 against an ad account's
-  60. That is a CEILING reachable by concurrent user traffic, not a sustained rate — every path
-  that spends the budget is driven by an inbound request and nothing polls them — and the chart
-  does NOT refuse multiple replicas over it; production runs three. See
-  [Deployment](../kubernetes/deployment.md) for why an earlier render-time guard was wrong and
-  must not return, and `internal/platform/reddit/report_budget.go` for the shared-ledger fix that
-  lifts the ceiling itself.
+  the deadline: the read fails whole (503). The ledger is shared by every replica (Postgres,
+  `postgres.RedditReportLedger`), and the ungated account monitor spends the same budget, so the
+  45 holds account-wide at any replica count (production runs three); a ledger Postgres cannot
+  answer for refuses the attempt — the read fails whole (503), nothing sent. See
+  [Deployment](../kubernetes/deployment.md) for why an earlier render-time replica guard was wrong
+  and must not return.
 - **Strict provenance**, as the audience read (the same `redditScopeForAccount`): a campaign that
   records no creating account is refused (409, re-dispatch), one created under another account is
   refused (409, reconcile), and a scope with BOTH is `ErrCampaignProvenanceMixed` joined with both

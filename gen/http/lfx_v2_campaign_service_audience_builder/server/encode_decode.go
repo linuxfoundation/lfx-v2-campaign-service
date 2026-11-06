@@ -2603,6 +2603,12 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceQaSuppressionCheckToAudie
 	} else {
 		res.Findings = []*AudienceQaFindingResponseBody{}
 	}
+	if v.UnverifiedListIds != nil {
+		res.UnverifiedListIds = make([]string, len(v.UnverifiedListIds))
+		for i, val := range v.UnverifiedListIds {
+			res.UnverifiedListIds[i] = val
+		}
+	}
 
 	return res
 }

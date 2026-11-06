@@ -181,3 +181,9 @@ includes (`TestShutdownBudgetComposes`). See [internal/infrastructure/postgres](
 (`SetKeywordTargetingWriteLock`), so its whole-targeting keyword writes serialize per ad group
 across replicas. It opens nothing of its own and needs no `Close`: each held lock rides a pooled
 connection the write releases.
+
+`bindRedditReportLedger` (both wiring paths, next to `bindKeywordTargetingWriteLock`) binds a
+`postgres.RedditReportLedger` on the pool into the Reddit dispatcher (`SetRedditReportLedger`),
+so every Reddit report attempt on any replica spends from one account-wide 45-a-minute budget
+(#380). Until it runs — the degraded no-database start included — the dispatcher's budget refuses
+every report (fail closed). It opens nothing of its own and needs no `Close`.

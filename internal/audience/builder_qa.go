@@ -605,7 +605,14 @@ func FilterSignature(f ListFilter, nameByID map[string]string) string {
 
 // CheckSignalMapping asks whether this list selects on something the contact
 // actually did.
-func CheckSignalMapping(filters []ListFilter, nameByID map[string]string) Check {
+//
+// unreadable holds the ids of referenced lists whose names could not be READ (a
+// throttle, a 401/403, a 5xx -- not a 404). Their names are missing evidence, so when
+// no engagement signal is found and an inclusion references one, the answer is NEEDS
+// VERIFY naming those ids: the name may be the very signal this check looks for, and
+// the generic "could not classify" would send the operator to review filters that
+// are fine instead of the read that failed (#399).
+func CheckSignalMapping(filters []ListFilter, nameByID map[string]string, unreadable map[string]bool) Check {
 	// Exclusions are dropped before anything is inspected. A NOT_IN_LIST reference
 	// says what the list keeps OUT, so it can never establish an inclusion signal
 	// — but its signature is non-empty and non-firmographic, so counting it would
@@ -631,6 +638,14 @@ func CheckSignalMapping(filters []ListFilter, nameByID map[string]string) Check 
 			Severity: SeverityMedium,
 			Message:  "List has no inclusion conditions to inspect (static/manual membership) — the signal can't be inferred from filters alone.",
 			Fix:      "Confirm manually whether membership was added based on a real engagement action.",
+		}}}
+	}
+
+	if ids := unreadableInclusions(filters, unreadable); len(ids) > 0 {
+		return Check{Verdict: VerdictNeedsVerify, Findings: []Finding{{
+			Severity: SeverityMedium,
+			Message:  fmt.Sprintf("Could not read the name of referenced list(s) %s from HubSpot, so whether this list selects on an engagement or opt-in signal could not be verified.", strings.Join(ids, ", ")),
+			Fix:      "Re-run the QA once HubSpot answers for these lists, or confirm in HubSpot what they select on before sending.",
 		}}}
 	}
 
@@ -663,12 +678,36 @@ func CheckSignalMapping(filters []ListFilter, nameByID map[string]string) Check 
 	}}}
 }
 
+// unreadableInclusions are the ids of the lists the filters INCLUDE (any operator but
+// NOT_IN_LIST, matching CheckSignalMapping's own drop) whose names could not be read,
+// de-duplicated in first-seen order.
+func unreadableInclusions(filters []ListFilter, unreadable map[string]bool) []string {
+	if len(unreadable) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(unreadable))
+	for _, f := range filters {
+		if strings.ToUpper(strings.TrimSpace(f.Operator)) == "NOT_IN_LIST" {
+			continue
+		}
+		if id := f.ListIDString(); id != "" && unreadable[id] {
+			ids = append(ids, id)
+		}
+	}
+	return UniqueIDs(ids)
+}
+
 // SuppressionCheck adds which consent suppressions were actually found, so the UI
 // can show the two that matter as applied/not rather than only as findings.
+//
+// UnverifiedListIDs are exclusions whose names (or, for a wrapper, whose covered
+// lists) could not be read. While it is non-empty a false Applied flag means "not
+// verified", not "absent": the suppression may be one of those lists.
 type SuppressionCheck struct {
 	Check
-	AppliedGDPR   bool
-	AppliedOptOut bool
+	AppliedGDPR       bool
+	AppliedOptOut     bool
+	UnverifiedListIDs []string
 }
 
 // CheckSuppression asks whether the consent suppressions are actually applied,
@@ -684,7 +723,17 @@ type SuppressionCheck struct {
 // CASL suppression list under any name — confirmed against the live portal. The
 // check cannot ask for one to be applied, so it asks for a human confirmation
 // instead of inventing a remediation the operator cannot perform.
-func CheckSuppression(exclusionNames []string, targetsEU, targetsCA bool) SuppressionCheck {
+//
+// unverifiedIDs are exclusions whose names could not be read (#399). Every finding
+// below that asserts a suppression is ABSENT is withheld while any exist, and one
+// finding naming them and what could not be verified is raised instead: an unreadable
+// name is missing evidence, and "No GDPR suppression list found" would send an operator
+// to re-apply a GDPR suppression that may already be applied. It stays CRITICAL when an
+// EU audience's GDPR suppression is the thing unverified -- fail closed: a throttled
+// read must not soften an EU send that may have no GDPR suppression at all -- and is a
+// HIGH (NEEDS VERIFY) otherwise. A suppression that WAS read is still credited, so a
+// readable GDPR list plus an unreadable sibling reports GDPR applied.
+func CheckSuppression(exclusionNames, unverifiedIDs []string, targetsEU, targetsCA bool) SuppressionCheck {
 	gdpr, optOut, anySuppression := false, false, false
 	for _, name := range exclusionNames {
 		if containsAny(name, gdprHints) {
@@ -699,6 +748,39 @@ func CheckSuppression(exclusionNames []string, targetsEU, targetsCA bool) Suppre
 	}
 
 	findings := make([]Finding, 0, 3)
+	unverified := UniqueIDs(unverifiedIDs)
+
+	if len(unverified) > 0 {
+		// The same conditions as the absence findings below, each now unprovable.
+		what := make([]string, 0, 3)
+		if !gdpr && (targetsEU || len(exclusionNames) == 0) {
+			what = append(what, "GDPR")
+		}
+		if !optOut {
+			what = append(what, "Global Opt-Out")
+		}
+		if targetsCA && !anySuppression {
+			what = append(what, "CASL-relevant")
+		}
+		if len(what) > 0 {
+			severity, blocks := SeverityHigh, ""
+			if targetsEU && !gdpr {
+				severity, blocks = SeverityCritical, " This audience targets the EU, so the send stays blocked until a GDPR suppression is verified."
+			}
+			findings = append(findings, Finding{
+				Severity: severity,
+				Message: fmt.Sprintf("Could not read excluded list(s) %s from HubSpot, so %s suppression could not be verified. This is not evidence the suppression is missing.%s",
+					strings.Join(unverified, ", "), strings.Join(what, " and "), blocks),
+				Fix: "Re-run the QA once HubSpot answers for these lists, or confirm in HubSpot that they are the expected suppression lists before sending.",
+			})
+		}
+		return SuppressionCheck{
+			Check:             Check{Verdict: VerdictFromFindings(findings), Findings: findings},
+			AppliedGDPR:       gdpr,
+			AppliedOptOut:     optOut,
+			UnverifiedListIDs: unverified,
+		}
+	}
 
 	switch {
 	case targetsEU && !gdpr:
@@ -1148,10 +1230,24 @@ type ExclusionCheck struct {
 // sendTime counts suppression lists that are applied when the email is sent rather
 // than baked into the list — the builder's design for custom lists and for lists
 // attached without a composed master. They exclude the same contacts, so they count.
-func CheckExclusionCompleteness(filters []ListFilter, sendTime int) ExclusionCheck {
+//
+// unverifiedSendTime are send-time suppression ids whose read failed with anything but a
+// 404 (#399). They are never counted, but while any exist "zero exclusions" is not
+// established, so the FAIL becomes a NEEDS VERIFY naming them.
+func CheckExclusionCompleteness(filters []ListFilter, sendTime int, unverifiedSendTime []string) ExclusionCheck {
 	count := len(ReferencedListIDs(filters, "NOT_IN_LIST")) + sendTime
 	if count > 0 {
 		return ExclusionCheck{Check: Check{Verdict: VerdictPass, Findings: []Finding{}}, ExclusionCount: count, SendTimeCount: sendTime}
+	}
+	if unverified := UniqueIDs(unverifiedSendTime); len(unverified) > 0 {
+		return ExclusionCheck{
+			Check: Check{Verdict: VerdictNeedsVerify, Findings: []Finding{{
+				Severity: SeverityHigh,
+				Message:  fmt.Sprintf("Could not read send-time suppression list(s) %s from HubSpot, so whether this send applies any exclusion could not be verified.", strings.Join(unverified, ", ")),
+				Fix:      "Re-run the QA once HubSpot answers for these lists, or confirm in HubSpot that they are contact suppression lists before sending.",
+			}}},
+			ExclusionCount: 0,
+		}
 	}
 	return ExclusionCheck{
 		Check: Check{Verdict: VerdictFail, Findings: []Finding{{

@@ -3301,6 +3301,12 @@ func unmarshalAudienceQaSuppressionCheckResponseBodyToLfxv2campaignserviceaudien
 		}
 		res.Findings[i] = unmarshalAudienceQaFindingResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceQaFinding(val)
 	}
+	if v.UnverifiedListIds != nil {
+		res.UnverifiedListIds = make([]string, len(v.UnverifiedListIds))
+		for i, val := range v.UnverifiedListIds {
+			res.UnverifiedListIds[i] = val
+		}
+	}
 
 	return res
 }
