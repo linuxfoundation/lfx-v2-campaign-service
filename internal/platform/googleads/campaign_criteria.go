@@ -757,9 +757,9 @@ func validateBidModifier(noun string, modifier float64, allowZero bool) error {
 // EXCLUSION lists.
 //
 // Exclusion-only is Google's shape, not a narrowing: campaign-level demographic
-// criteria are negative. Positive demographic targeting lives on the ad group,
-// which this client does not expose, so a field named "ExcludedAgeRanges" cannot
-// be mistaken for one that targets.
+// criteria are negative. Positive demographic criteria live on the ad group, where
+// this client sends them only for an observed Search dimension (ObservedDemographics,
+// #497), so a field named "ExcludedAgeRanges" cannot be mistaken for one that targets.
 func validateExcludedAgeRanges(ageRanges []string) ([]ageRangeInfo, error) {
 	if len(ageRanges) == 0 {
 		return nil, nil
@@ -936,6 +936,156 @@ func hasNonASCII(s string) bool {
 		}
 	}
 	return false
+}
+
+// Every value of each demographic dimension, in Google's enum order, for the dimensions an
+// observation covers whole (#497). UNDETERMINED is a value like any other: the UI's
+// observation list carries it, and leaving it out would drop the users Google could not
+// classify from the report.
+var (
+	allAgeRanges = []string{
+		"AGE_RANGE_18_24", "AGE_RANGE_25_34", "AGE_RANGE_35_44", "AGE_RANGE_45_54",
+		"AGE_RANGE_55_64", "AGE_RANGE_65_UP", "AGE_RANGE_UNDETERMINED",
+	}
+	allGenders      = []string{"MALE", "FEMALE", "UNDETERMINED"}
+	allIncomeRanges = []string{
+		"INCOME_RANGE_0_50", "INCOME_RANGE_50_60", "INCOME_RANGE_60_70", "INCOME_RANGE_70_80",
+		"INCOME_RANGE_80_90", "INCOME_RANGE_90_UP", "INCOME_RANGE_UNDETERMINED",
+	}
+)
+
+// maxObservedDemographicEntries bounds the ObservedDemographics list. Three distinct values
+// exist; the slack tolerates a caller that repeats one, which is collapsed.
+const maxObservedDemographicEntries = 6
+
+// Google's TargetingDimension names for the demographic dimensions.
+const (
+	targetingDimensionAgeRange       = "AGE_RANGE"
+	targetingDimensionGender         = "GENDER"
+	targetingDimensionIncomeRange    = "INCOME_RANGE"
+	targetingDimensionParentalStatus = "PARENTAL_STATUS"
+)
+
+// adGroupObservationPlan is the resolved ObservedDemographics intent (#497): the dimensions
+// a Search ad group declares bidOnly in its targetingSetting, and one POSITIVE criterion per
+// value of each that is not excluded. Positive and ENABLED, unlike the exclusions above, so a
+// value of an observed dimension is reported and can take a bid adjustment without the
+// dimension restricting who sees the ad.
+type adGroupObservationPlan struct {
+	dimensions   []string
+	ageRanges    []ageRangeInfo
+	genders      []genderInfo
+	incomeRanges []incomeRangeInfo
+}
+
+func (p adGroupObservationPlan) count() int {
+	return len(p.ageRanges) + len(p.genders) + len(p.incomeRanges)
+}
+
+// restrictions is the targetingSetting entry per observed dimension, each bidOnly true.
+func (p adGroupObservationPlan) restrictions() []targetRestriction {
+	out := make([]targetRestriction, 0, len(p.dimensions))
+	for _, d := range p.dimensions {
+		out = append(out, targetRestriction{TargetingDimension: d, BidOnly: true})
+	}
+	return out
+}
+
+// validateObservedDemographics resolves CampaignInput.ObservedDemographics for the given
+// KIND against the exclusions already resolved, so a refusal costs nothing upstream.
+//
+// SEARCH ONLY. Observation is the Search ad group's shape: keywords decide reach, and a
+// demographic is reported and bid on, which is the reason AudienceSegments are bidOnly
+// there too. PARENTAL_STATUS is refused on Search because the 2026-11-03 probe got
+// OPERATION_NOT_PERMITTED_FOR_CONTEXT for a parental-status criterion on a Search ad group;
+// sending it would fail at the criteria mutate, after the campaign exists.
+//
+// An exclusion in the same dimension keeps working: the observed criteria are every value
+// of the dimension EXCEPT the excluded ones (age and gender from the campaign-level
+// exclusions, income from the ad-group ones), so no value is sent both positive and
+// negative. A dimension whose every value is excluded is refused, because the caller asked
+// to observe a dimension the campaign cannot serve at all.
+func validateObservedDemographics(kind string, values []string, campaign criteriaPlan, adGroup adGroupDemographicPlan) (adGroupObservationPlan, error) {
+	if len(values) == 0 {
+		return adGroupObservationPlan{}, nil
+	}
+	if kind != campaignKindSearch {
+		return adGroupObservationPlan{}, fmt.Errorf("google-ads: observed demographics are not supported on %s (this client puts demographics in observation mode on the Search ad group only); omit ObservedDemographics, or create a Search campaign to observe demographics", kind)
+	}
+	// A length guard only: three distinct values exist, and any other is refused below. The
+	// cap bounds a list padded with repeats.
+	if len(values) > maxObservedDemographicEntries {
+		return adGroupObservationPlan{}, fmt.Errorf("google-ads: at most %d observed demographic entries are supported, got %d (only AGE_RANGE, GENDER and INCOME_RANGE are distinct values)", maxObservedDemographicEntries, len(values))
+	}
+	excludedAges := make(map[string]struct{}, len(campaign.ageRanges))
+	for _, a := range campaign.ageRanges {
+		excludedAges[a.Type] = struct{}{}
+	}
+	excludedGenders := make(map[string]struct{}, len(campaign.genders))
+	for _, g := range campaign.genders {
+		excludedGenders[g.Type] = struct{}{}
+	}
+	excludedIncomes := make(map[string]struct{}, len(adGroup.incomeRanges))
+	for _, r := range adGroup.incomeRanges {
+		excludedIncomes[r.Type] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(values))
+	var plan adGroupObservationPlan
+	for _, v := range values {
+		dim := ""
+		if !hasNonASCII(v) {
+			dim = strings.ToUpper(strings.TrimSpace(v))
+		}
+		if _, dup := seen[dim]; dup {
+			continue
+		}
+		switch dim {
+		case targetingDimensionAgeRange:
+			for _, t := range remainingValues(allAgeRanges, excludedAges) {
+				plan.ageRanges = append(plan.ageRanges, ageRangeInfo{Type: t})
+			}
+			if len(plan.ageRanges) == 0 {
+				return adGroupObservationPlan{}, observedAllExcluded(dim, "ExcludedAgeRanges")
+			}
+		case targetingDimensionGender:
+			for _, t := range remainingValues(allGenders, excludedGenders) {
+				plan.genders = append(plan.genders, genderInfo{Type: t})
+			}
+			if len(plan.genders) == 0 {
+				return adGroupObservationPlan{}, observedAllExcluded(dim, "ExcludedGenders")
+			}
+		case targetingDimensionIncomeRange:
+			for _, t := range remainingValues(allIncomeRanges, excludedIncomes) {
+				plan.incomeRanges = append(plan.incomeRanges, incomeRangeInfo{Type: t})
+			}
+			if len(plan.incomeRanges) == 0 {
+				return adGroupObservationPlan{}, observedAllExcluded(dim, "ExcludedIncomeRanges")
+			}
+		case targetingDimensionParentalStatus:
+			return adGroupObservationPlan{}, fmt.Errorf("google-ads: observed demographic %s is not supported on %s (Google refuses a parental-status criterion on a Search ad group with OPERATION_NOT_PERMITTED_FOR_CONTEXT); omit it from ObservedDemographics", dim, kind)
+		default:
+			return adGroupObservationPlan{}, fmt.Errorf("google-ads: observed demographic %q must be one of AGE_RANGE, GENDER or INCOME_RANGE", v)
+		}
+		seen[dim] = struct{}{}
+		plan.dimensions = append(plan.dimensions, dim)
+	}
+	return plan, nil
+}
+
+// remainingValues is all, in order, less every value in excluded.
+func remainingValues(all []string, excluded map[string]struct{}) []string {
+	out := make([]string, 0, len(all))
+	for _, v := range all {
+		if _, ok := excluded[v]; !ok {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// observedAllExcluded refuses observing a dimension whose every value is excluded.
+func observedAllExcluded(dim, field string) error {
+	return fmt.Errorf("google-ads: observed demographic %s has every value excluded by %s, so there is nothing left to observe; drop %s from ObservedDemographics or exclude fewer values", dim, field, dim)
 }
 
 // adGroupDemographicStep names the requested parts of the plan for the step list, as

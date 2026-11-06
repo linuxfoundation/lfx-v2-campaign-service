@@ -16,13 +16,15 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// mockLookupDispatcher implements the three create-form lookup capabilities.
+// mockLookupDispatcher implements the four create-form lookup capabilities.
 type mockLookupDispatcher struct {
 	geo        []model.GeoTargetSuggestion
 	notCalled  bool // SuggestGeoTargets and ListConversionActions report Google was not reached
 	lists      *model.AudienceUserLists
 	actions    *model.ConversionActions
+	audiences  *model.AudienceResources
 	err        error
+	gotKind    string
 	gotQuery   model.GeoTargetQuery
 	gotAccount string
 	calls      int
@@ -47,6 +49,12 @@ func (m *mockLookupDispatcher) ListUserLists(_ context.Context, _ string, _ mode
 func (m *mockLookupDispatcher) ListConversionActions(context.Context, string, model.Provider) (*model.ConversionActions, bool, error) {
 	m.calls++
 	return m.actions, !m.notCalled, m.err
+}
+
+func (m *mockLookupDispatcher) ListAudiences(_ context.Context, _ string, _ model.Provider, kind string) (*model.AudienceResources, bool, error) {
+	m.calls++
+	m.gotKind = kind
+	return m.audiences, !m.notCalled, m.err
 }
 
 func lookupService(d PlatformDispatcher) *ConnectionService {
@@ -137,7 +145,8 @@ func TestGoogleAdsLookups_RejectTheReservedSystemScope(t *testing.T) {
 	_, gerr := svc.SuggestGoogleAdsGeoTargets(context.Background(), &conn.SuggestGoogleAdsGeoTargetsPayload{ProjectID: model.SystemProjectID, Q: "Austin"})
 	_, lerr := svc.ListGoogleAdsUserLists(context.Background(), &conn.ListGoogleAdsUserListsPayload{ProjectID: model.SystemProjectID})
 	_, cerr := svc.ListGoogleAdsConversionActions(context.Background(), &conn.ListGoogleAdsConversionActionsPayload{ProjectID: model.SystemProjectID})
-	for name, err := range map[string]error{"geo": gerr, "user lists": lerr, "conversion actions": cerr} {
+	_, aerr := svc.ListGoogleAdsAudiences(context.Background(), &conn.ListGoogleAdsAudiencesPayload{ProjectID: model.SystemProjectID, Type: "audience"})
+	for name, err := range map[string]error{"geo": gerr, "user lists": lerr, "conversion actions": cerr, "audiences": aerr} {
 		var nf *conn.NotFoundError
 		if !errors.As(err, &nf) {
 			t.Errorf("%s: err = %T %v, want 404", name, err, err)
@@ -164,7 +173,8 @@ func TestGoogleAdsLookups_ErrorMapping(t *testing.T) {
 			_, gerr := lookupService(d).SuggestGoogleAdsGeoTargets(context.Background(), &conn.SuggestGoogleAdsGeoTargetsPayload{ProjectID: "cncf", Q: "Austin"})
 			_, lerr := lookupService(d).ListGoogleAdsUserLists(context.Background(), &conn.ListGoogleAdsUserListsPayload{ProjectID: "cncf"})
 			_, cerr := lookupService(d).ListGoogleAdsConversionActions(context.Background(), &conn.ListGoogleAdsConversionActionsPayload{ProjectID: "cncf"})
-			for name, err := range map[string]error{"geo": gerr, "user lists": lerr, "conversion actions": cerr} {
+			_, aerr := lookupService(d).ListGoogleAdsAudiences(context.Background(), &conn.ListGoogleAdsAudiencesPayload{ProjectID: "cncf", Type: "custom_audience"})
+			for name, err := range map[string]error{"geo": gerr, "user lists": lerr, "conversion actions": cerr, "audiences": aerr} {
 				if got := errCode(err); got != tc.want {
 					t.Errorf("%s: code = %q (%T %v), want %s", name, got, err, err, tc.want)
 				}
@@ -198,8 +208,9 @@ func TestGoogleAdsLookups_UnsupportedDispatcherIs400(t *testing.T) {
 	_, gerr := svc.SuggestGoogleAdsGeoTargets(context.Background(), &conn.SuggestGoogleAdsGeoTargetsPayload{ProjectID: "cncf", Q: "Austin"})
 	_, lerr := svc.ListGoogleAdsUserLists(context.Background(), &conn.ListGoogleAdsUserListsPayload{ProjectID: "cncf"})
 	_, cerr := svc.ListGoogleAdsConversionActions(context.Background(), &conn.ListGoogleAdsConversionActionsPayload{ProjectID: "cncf"})
-	if errCode(gerr) != "400" || errCode(lerr) != "400" || errCode(cerr) != "400" {
-		t.Errorf("geo=%v lists=%v conversion actions=%v, want 400 for all three", gerr, lerr, cerr)
+	_, aerr := svc.ListGoogleAdsAudiences(context.Background(), &conn.ListGoogleAdsAudiencesPayload{ProjectID: "cncf", Type: "audience"})
+	if errCode(gerr) != "400" || errCode(lerr) != "400" || errCode(cerr) != "400" || errCode(aerr) != "400" {
+		t.Errorf("geo=%v lists=%v conversion actions=%v audiences=%v, want 400 for all four", gerr, lerr, cerr, aerr)
 	}
 }
 
@@ -420,6 +431,172 @@ func TestReadConversionActions_RecordsOnlyCallsThatReachedGoogle(t *testing.T) {
 			o := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: tc.d})
 			o.SetMetrics(rec)
 			_, _ = o.ReadConversionActions(context.Background(), "cncf", model.ProviderGoogleAds)
+			if got := len(rec.upstreamCalls()); got != tc.want {
+				t.Errorf("%d upstream calls recorded, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// Every field maps through, the kind is passed down and echoed on the envelope and each row,
+// and an empty subtype, status or description is omitted rather than sent as "".
+func TestListGoogleAdsAudiences_MapsEveryField(t *testing.T) {
+	d := &mockLookupDispatcher{audiences: &model.AudienceResources{AccountID: "8666746580", Kind: "user_interest", Audiences: []model.AudienceResource{
+		{ResourceName: "customers/8666746580/userInterests/80276", ID: "80276", Name: "Software", Subtype: "IN_MARKET"},
+	}}}
+	res, err := lookupService(d).ListGoogleAdsAudiences(context.Background(), &conn.ListGoogleAdsAudiencesPayload{ProjectID: "cncf", Type: "user_interest"})
+	if err != nil {
+		t.Fatalf("ListGoogleAdsAudiences: %v", err)
+	}
+	if d.gotKind != "user_interest" {
+		t.Errorf("kind passed down = %q, want user_interest", d.gotKind)
+	}
+	if res.AccountID != "8666746580" || res.Type != "user_interest" || res.AudienceCount != 1 || res.Truncated {
+		t.Fatalf("res = %+v", res)
+	}
+	b, _ := json.Marshal(res.Audiences[0])
+	const want = `{"ResourceName":"customers/8666746580/userInterests/80276","ID":"80276","Name":"Software","Type":"user_interest","Subtype":"IN_MARKET","Status":null,"Description":null}`
+	if string(b) != want {
+		t.Errorf("row = %s\nwant  %s", b, want)
+	}
+
+	d = &mockLookupDispatcher{audiences: &model.AudienceResources{AccountID: "8666746580", Kind: "custom_audience", Audiences: []model.AudienceResource{
+		{ResourceName: "customers/8666746580/customAudiences/1", ID: "1", Name: "KubeCon", Subtype: "SEARCH", Status: "ENABLED", Description: "d"},
+	}}}
+	res, err = lookupService(d).ListGoogleAdsAudiences(context.Background(), &conn.ListGoogleAdsAudiencesPayload{ProjectID: "cncf", Type: "custom_audience"})
+	if err != nil {
+		t.Fatalf("ListGoogleAdsAudiences: %v", err)
+	}
+	a := res.Audiences[0]
+	if a.Status == nil || *a.Status != "ENABLED" || a.Description == nil || *a.Description != "d" || a.Subtype == nil || *a.Subtype != "SEARCH" || a.Type != "custom_audience" {
+		t.Errorf("row = %+v, want status, description and subtype mapped", a)
+	}
+}
+
+// q keeps names containing it, ignoring case and surrounding space, and the 500 cap applies
+// after the filter, with truncated reporting what was cut.
+func TestListGoogleAdsAudiences_FiltersByNameThenCaps(t *testing.T) {
+	rows := make([]model.AudienceResource, 0, googleAdsAudienceMax+3)
+	for i := 0; i < googleAdsAudienceMax+1; i++ {
+		rows = append(rows, model.AudienceResource{ResourceName: fmt.Sprintf("customers/1/audiences/%d", i+1), ID: fmt.Sprint(i + 1), Name: fmt.Sprintf("CNCF KubeCon %04d", i)})
+	}
+	rows = append(rows, model.AudienceResource{ResourceName: "customers/1/audiences/9001", ID: "9001", Name: "Open Source Summit"})
+	d := &mockLookupDispatcher{audiences: &model.AudienceResources{AccountID: "1", Kind: "audience", Audiences: rows}}
+
+	res, err := lookupService(d).ListGoogleAdsAudiences(context.Background(), &conn.ListGoogleAdsAudiencesPayload{ProjectID: "cncf", Type: "audience", Q: strp("  open SOURCE ")})
+	if err != nil {
+		t.Fatalf("ListGoogleAdsAudiences: %v", err)
+	}
+	if res.AudienceCount != 1 || res.Audiences[0].ID != "9001" || res.Truncated {
+		t.Errorf("q filter: count=%d truncated=%v first=%+v, want only the Open Source Summit row", res.AudienceCount, res.Truncated, res.Audiences)
+	}
+
+	res, err = lookupService(d).ListGoogleAdsAudiences(context.Background(), &conn.ListGoogleAdsAudiencesPayload{ProjectID: "cncf", Type: "audience", Q: strp("kubecon")})
+	if err != nil {
+		t.Fatalf("ListGoogleAdsAudiences: %v", err)
+	}
+	if res.AudienceCount != googleAdsAudienceMax || len(res.Audiences) != googleAdsAudienceMax || !res.Truncated {
+		t.Errorf("cap: count=%d truncated=%v, want %d and truncated", res.AudienceCount, res.Truncated, googleAdsAudienceMax)
+	}
+
+	res, err = lookupService(d).ListGoogleAdsAudiences(context.Background(), &conn.ListGoogleAdsAudiencesPayload{ProjectID: "cncf", Type: "audience", Q: strp("summit")})
+	if err != nil || res.AudienceCount != 1 || res.Truncated {
+		t.Errorf("a match past the cap position must still be found: err=%v res=%+v", err, res)
+	}
+}
+
+// An account with no entry of the kind is an empty array, not null.
+func TestListGoogleAdsAudiences_EmptyIsAnEmptyArray(t *testing.T) {
+	d := &mockLookupDispatcher{audiences: &model.AudienceResources{AccountID: "1", Kind: "combined_audience", Audiences: []model.AudienceResource{}}}
+	res, err := lookupService(d).ListGoogleAdsAudiences(context.Background(), &conn.ListGoogleAdsAudiencesPayload{ProjectID: "cncf", Type: "combined_audience"})
+	if err != nil {
+		t.Fatalf("ListGoogleAdsAudiences: %v", err)
+	}
+	b, _ := json.Marshal(res.Audiences)
+	if string(b) != "[]" || res.AudienceCount != 0 || res.Truncated {
+		t.Errorf("audiences = %s count=%d truncated=%v, want [] 0 false", b, res.AudienceCount, res.Truncated)
+	}
+}
+
+// A bad type or q is a 400 before any dispatcher call.
+func TestListGoogleAdsAudiences_RejectsBadInputBeforeAnyUpstreamCall(t *testing.T) {
+	cases := map[string]*conn.ListGoogleAdsAudiencesPayload{
+		"empty type":       {ProjectID: "cncf", Type: ""},
+		"unknown type":     {ProjectID: "cncf", Type: "user_list"},
+		"case-folded type": {ProjectID: "cncf", Type: "Custom_Audience"},
+		"blank q":          {ProjectID: "cncf", Type: "audience", Q: strp("   ")},
+		"empty q":          {ProjectID: "cncf", Type: "audience", Q: strp("")},
+		"q over 100 chars": {ProjectID: "cncf", Type: "audience", Q: strp(strings.Repeat("a", 101))},
+	}
+	for name, p := range cases {
+		t.Run(name, func(t *testing.T) {
+			d := &mockLookupDispatcher{audiences: &model.AudienceResources{Audiences: []model.AudienceResource{}}}
+			_, err := lookupService(d).ListGoogleAdsAudiences(context.Background(), p)
+			if errCode(err) != "400" {
+				t.Fatalf("err = %T %v, want 400", err, err)
+			}
+			if d.calls != 0 {
+				t.Error("the dispatcher was called for a request refused locally")
+			}
+		})
+	}
+	// 100 multi-byte characters are within the limit.
+	d := &mockLookupDispatcher{audiences: &model.AudienceResources{Audiences: []model.AudienceResource{}}}
+	if _, err := lookupService(d).ListGoogleAdsAudiences(context.Background(), &conn.ListGoogleAdsAudiencesPayload{ProjectID: "cncf", Type: "audience", Q: strp(strings.Repeat("東", 100))}); err != nil || d.calls != 1 {
+		t.Errorf("err=%v calls=%d; a 100-character q must reach the dispatcher", err, d.calls)
+	}
+}
+
+// Like the conversion-action read, the audience read is NOT refused on a shared-tenancy
+// platform (#496); the gateway admits only global_marketing_ops (charts parity_test.go).
+func TestListGoogleAdsAudiences_SharedTenancyIsNotRefused(t *testing.T) {
+	d := &sharedTenancyLookupDispatcher{mockLookupDispatcher{audiences: &model.AudienceResources{
+		AccountID: "1", Kind: "audience", Audiences: []model.AudienceResource{{ResourceName: "customers/1/audiences/2", ID: "2", Name: "x"}},
+	}}}
+	res, err := lookupService(d).ListGoogleAdsAudiences(context.Background(), &conn.ListGoogleAdsAudiencesPayload{ProjectID: "cncf", Type: "audience"})
+	if err != nil || d.calls != 1 || res.AudienceCount != 1 {
+		t.Errorf("err=%v calls=%d, want the shared account's audiences", err, d.calls)
+	}
+}
+
+// The platform's more-than-10000-rows refusal is an unclassified upstream error, published as
+// 503 in the design description; pinned so a new classifier arm cannot change it silently.
+func TestListGoogleAdsAudiences_ScanOverflowIs503(t *testing.T) {
+	d := &mockLookupDispatcher{err: errors.New("list user_interest: account 1 returned more than the 10000 rows this read scans")}
+	_, err := lookupService(d).ListGoogleAdsAudiences(context.Background(), &conn.ListGoogleAdsAudiencesPayload{ProjectID: "cncf", Type: "user_interest"})
+	if errCode(err) != "503" {
+		t.Errorf("err = %T %v, want 503", err, err)
+	}
+}
+
+func TestReadAudiences_NilResultIsAnError(t *testing.T) {
+	for name, res := range map[string]*model.AudienceResources{"nil result": nil, "nil audiences": {AccountID: "1"}} {
+		o := &Orchestrator{dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: &mockLookupDispatcher{audiences: res}}}
+		if _, err := o.ReadAudiences(context.Background(), "cncf", model.ProviderGoogleAds, "audience"); err == nil {
+			t.Errorf("%s: must not be reported as an empty answer", name)
+		}
+	}
+}
+
+// Only an audience read that reached Google is recorded, as for the conversion-action read.
+func TestReadAudiences_RecordsOnlyCallsThatReachedGoogle(t *testing.T) {
+	empty := &model.AudienceResources{AccountID: "1234567890", Kind: "audience", Audiences: []model.AudienceResource{}}
+	cases := []struct {
+		name string
+		d    *mockLookupDispatcher
+		want int
+	}{
+		{"no connection", &mockLookupDispatcher{err: domain.ErrNotFound, notCalled: true}, 0},
+		{"unusable connection", &mockLookupDispatcher{err: fmt.Errorf("%w: x", domain.ErrConnectionNotUsable), notCalled: true}, 0},
+		{"success", &mockLookupDispatcher{audiences: empty}, 1},
+		{"upstream failure", &mockLookupDispatcher{err: errors.New("google 500")}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingMetrics{}
+			o := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: tc.d})
+			o.SetMetrics(rec)
+			_, _ = o.ReadAudiences(context.Background(), "cncf", model.ProviderGoogleAds, "audience")
 			if got := len(rec.upstreamCalls()); got != tc.want {
 				t.Errorf("%d upstream calls recorded, want %d", got, tc.want)
 			}

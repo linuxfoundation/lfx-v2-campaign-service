@@ -129,6 +129,10 @@ type adGroupPlan struct {
 	ads              []adPlan
 	negativeKeywords []Keyword
 	demographics     adGroupDemographicPlan
+	// observed is the Search observation-mode plan (#497), copied onto every group like
+	// demographics: its dimensions go in the ad group's targetingSetting, its criteria in
+	// the group's criteria mutate.
+	observed adGroupObservationPlan
 }
 
 // criteria is everything this group's adGroupCriteria:mutate carries.
@@ -138,6 +142,7 @@ func (p adGroupPlan) criteria() adGroupCriteriaSet {
 		audienceSegments: p.audienceSegments,
 		negativeKeywords: p.negativeKeywords,
 		demographics:     p.demographics,
+		observed:         p.observed,
 	}
 }
 

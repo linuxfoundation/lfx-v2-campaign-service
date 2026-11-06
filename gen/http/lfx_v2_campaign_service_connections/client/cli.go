@@ -1892,6 +1892,62 @@ func BuildListGoogleAdsConversionActionsPayload(lfxV2CampaignServiceConnectionsL
 	return v, nil
 }
 
+// BuildListGoogleAdsAudiencesPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-google-ads-audiences endpoint from
+// CLI flags.
+func BuildListGoogleAdsAudiencesPayload(lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesProjectID *string, lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesType *string, lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesQ *string, lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesBearerToken *string) (*lfxv2campaignserviceconnections.ListGoogleAdsAudiencesPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesProjectID
+	}
+	var type_ string
+	{
+		if lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesType == nil {
+			return nil, fmt.Errorf("missing required flag --type")
+		}
+		type_ = *lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesType
+		if !(type_ == "custom_audience" || type_ == "combined_audience" || type_ == "audience" || type_ == "user_interest") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("type", type_, []any{"custom_audience", "combined_audience", "audience", "user_interest"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var q *string
+	{
+		if lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesQ != nil {
+			q = lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesQ
+			err = goa.MergeErrors(err, goa.ValidatePattern("q", *lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesQ, "\\S"))
+			if utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesQ) < 1 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("q", *lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesQ, utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesQ), 1, true))
+			}
+			if utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesQ) > 100 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("q", *lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesQ, utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesQ), 100, false))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListGoogleAdsAudiencesBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListGoogleAdsAudiencesPayload{}
+	v.ProjectID = projectID
+	v.Type = type_
+	v.Q = q
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildGetMetaAdsAudiencePayload builds the payload for the
 // lfx-v2-campaign-service-connections get-meta-ads-audience endpoint from CLI
 // flags.
