@@ -6876,15 +6876,17 @@ type GoogleAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// The placeholder-budget and high-CPC action items are sized in this currency,
-	// and neither fires on an amount in a currency the service cannot size (absent
-	// included), except that a zero daily budget is still a placeholder on Google
-	// Ads and Microsoft Ads; the response then carries one account-wide LOW action
-	// item (no campaign_id) saying those checks were skipped. On Google Ads it is
-	// customer.currency_code from the same campaign read; absent when the rows
-	// carry none or disagree. On LinkedIn Ads spend is read in the account's own
-	// currency (costInLocalCurrency), the currency its budgets are in; absent when
-	// the campaigns' budgets disagree about the currency, in which case those
+	// The placeholder-budget, high-CPC and (LinkedIn Ads) paused-with-real-budget
+	// action items are sized in this currency, and none fires on an amount in a
+	// currency the service cannot size (absent included), except that a zero daily
+	// budget is still a placeholder on Google Ads and Microsoft Ads; the response
+	// then carries one account-wide LOW action item (no campaign_id) saying those
+	// checks were skipped (on LinkedIn Ads only when a paused campaign with a
+	// budget was there to check). On Google Ads it is customer.currency_code from
+	// the same campaign read; absent when the rows carry none or disagree. On
+	// LinkedIn Ads spend is read in the account's own currency
+	// (costInLocalCurrency), the currency its budgets are in; absent when the
+	// campaigns' budgets disagree about the currency, in which case those
 	// campaigns' pacing is unknown. On Meta, absent for a currency whose
 	// minor-unit scale this service does not know (its budgets are left
 	// unconverted), or when the insights rows' currency is not the ad account's.
@@ -7059,15 +7061,17 @@ type LinkedinAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// The placeholder-budget and high-CPC action items are sized in this currency,
-	// and neither fires on an amount in a currency the service cannot size (absent
-	// included), except that a zero daily budget is still a placeholder on Google
-	// Ads and Microsoft Ads; the response then carries one account-wide LOW action
-	// item (no campaign_id) saying those checks were skipped. On Google Ads it is
-	// customer.currency_code from the same campaign read; absent when the rows
-	// carry none or disagree. On LinkedIn Ads spend is read in the account's own
-	// currency (costInLocalCurrency), the currency its budgets are in; absent when
-	// the campaigns' budgets disagree about the currency, in which case those
+	// The placeholder-budget, high-CPC and (LinkedIn Ads) paused-with-real-budget
+	// action items are sized in this currency, and none fires on an amount in a
+	// currency the service cannot size (absent included), except that a zero daily
+	// budget is still a placeholder on Google Ads and Microsoft Ads; the response
+	// then carries one account-wide LOW action item (no campaign_id) saying those
+	// checks were skipped (on LinkedIn Ads only when a paused campaign with a
+	// budget was there to check). On Google Ads it is customer.currency_code from
+	// the same campaign read; absent when the rows carry none or disagree. On
+	// LinkedIn Ads spend is read in the account's own currency
+	// (costInLocalCurrency), the currency its budgets are in; absent when the
+	// campaigns' budgets disagree about the currency, in which case those
 	// campaigns' pacing is unknown. On Meta, absent for a currency whose
 	// minor-unit scale this service does not know (its budgets are left
 	// unconverted), or when the insights rows' currency is not the ad account's.
@@ -7124,15 +7128,17 @@ type MetaAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// The placeholder-budget and high-CPC action items are sized in this currency,
-	// and neither fires on an amount in a currency the service cannot size (absent
-	// included), except that a zero daily budget is still a placeholder on Google
-	// Ads and Microsoft Ads; the response then carries one account-wide LOW action
-	// item (no campaign_id) saying those checks were skipped. On Google Ads it is
-	// customer.currency_code from the same campaign read; absent when the rows
-	// carry none or disagree. On LinkedIn Ads spend is read in the account's own
-	// currency (costInLocalCurrency), the currency its budgets are in; absent when
-	// the campaigns' budgets disagree about the currency, in which case those
+	// The placeholder-budget, high-CPC and (LinkedIn Ads) paused-with-real-budget
+	// action items are sized in this currency, and none fires on an amount in a
+	// currency the service cannot size (absent included), except that a zero daily
+	// budget is still a placeholder on Google Ads and Microsoft Ads; the response
+	// then carries one account-wide LOW action item (no campaign_id) saying those
+	// checks were skipped (on LinkedIn Ads only when a paused campaign with a
+	// budget was there to check). On Google Ads it is customer.currency_code from
+	// the same campaign read; absent when the rows carry none or disagree. On
+	// LinkedIn Ads spend is read in the account's own currency
+	// (costInLocalCurrency), the currency its budgets are in; absent when the
+	// campaigns' budgets disagree about the currency, in which case those
 	// campaigns' pacing is unknown. On Meta, absent for a currency whose
 	// minor-unit scale this service does not know (its budgets are left
 	// unconverted), or when the insights rows' currency is not the ad account's.
@@ -7189,15 +7195,17 @@ type RedditAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// The placeholder-budget and high-CPC action items are sized in this currency,
-	// and neither fires on an amount in a currency the service cannot size (absent
-	// included), except that a zero daily budget is still a placeholder on Google
-	// Ads and Microsoft Ads; the response then carries one account-wide LOW action
-	// item (no campaign_id) saying those checks were skipped. On Google Ads it is
-	// customer.currency_code from the same campaign read; absent when the rows
-	// carry none or disagree. On LinkedIn Ads spend is read in the account's own
-	// currency (costInLocalCurrency), the currency its budgets are in; absent when
-	// the campaigns' budgets disagree about the currency, in which case those
+	// The placeholder-budget, high-CPC and (LinkedIn Ads) paused-with-real-budget
+	// action items are sized in this currency, and none fires on an amount in a
+	// currency the service cannot size (absent included), except that a zero daily
+	// budget is still a placeholder on Google Ads and Microsoft Ads; the response
+	// then carries one account-wide LOW action item (no campaign_id) saying those
+	// checks were skipped (on LinkedIn Ads only when a paused campaign with a
+	// budget was there to check). On Google Ads it is customer.currency_code from
+	// the same campaign read; absent when the rows carry none or disagree. On
+	// LinkedIn Ads spend is read in the account's own currency
+	// (costInLocalCurrency), the currency its budgets are in; absent when the
+	// campaigns' budgets disagree about the currency, in which case those
 	// campaigns' pacing is unknown. On Meta, absent for a currency whose
 	// minor-unit scale this service does not know (its budgets are left
 	// unconverted), or when the insights rows' currency is not the ad account's.
@@ -7254,15 +7262,17 @@ type MicrosoftAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// The placeholder-budget and high-CPC action items are sized in this currency,
-	// and neither fires on an amount in a currency the service cannot size (absent
-	// included), except that a zero daily budget is still a placeholder on Google
-	// Ads and Microsoft Ads; the response then carries one account-wide LOW action
-	// item (no campaign_id) saying those checks were skipped. On Google Ads it is
-	// customer.currency_code from the same campaign read; absent when the rows
-	// carry none or disagree. On LinkedIn Ads spend is read in the account's own
-	// currency (costInLocalCurrency), the currency its budgets are in; absent when
-	// the campaigns' budgets disagree about the currency, in which case those
+	// The placeholder-budget, high-CPC and (LinkedIn Ads) paused-with-real-budget
+	// action items are sized in this currency, and none fires on an amount in a
+	// currency the service cannot size (absent included), except that a zero daily
+	// budget is still a placeholder on Google Ads and Microsoft Ads; the response
+	// then carries one account-wide LOW action item (no campaign_id) saying those
+	// checks were skipped (on LinkedIn Ads only when a paused campaign with a
+	// budget was there to check). On Google Ads it is customer.currency_code from
+	// the same campaign read; absent when the rows carry none or disagree. On
+	// LinkedIn Ads spend is read in the account's own currency
+	// (costInLocalCurrency), the currency its budgets are in; absent when the
+	// campaigns' budgets disagree about the currency, in which case those
 	// campaigns' pacing is unknown. On Meta, absent for a currency whose
 	// minor-unit scale this service does not know (its budgets are left
 	// unconverted), or when the insights rows' currency is not the ad account's.
@@ -7319,15 +7329,17 @@ type TwitterAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// The placeholder-budget and high-CPC action items are sized in this currency,
-	// and neither fires on an amount in a currency the service cannot size (absent
-	// included), except that a zero daily budget is still a placeholder on Google
-	// Ads and Microsoft Ads; the response then carries one account-wide LOW action
-	// item (no campaign_id) saying those checks were skipped. On Google Ads it is
-	// customer.currency_code from the same campaign read; absent when the rows
-	// carry none or disagree. On LinkedIn Ads spend is read in the account's own
-	// currency (costInLocalCurrency), the currency its budgets are in; absent when
-	// the campaigns' budgets disagree about the currency, in which case those
+	// The placeholder-budget, high-CPC and (LinkedIn Ads) paused-with-real-budget
+	// action items are sized in this currency, and none fires on an amount in a
+	// currency the service cannot size (absent included), except that a zero daily
+	// budget is still a placeholder on Google Ads and Microsoft Ads; the response
+	// then carries one account-wide LOW action item (no campaign_id) saying those
+	// checks were skipped (on LinkedIn Ads only when a paused campaign with a
+	// budget was there to check). On Google Ads it is customer.currency_code from
+	// the same campaign read; absent when the rows carry none or disagree. On
+	// LinkedIn Ads spend is read in the account's own currency
+	// (costInLocalCurrency), the currency its budgets are in; absent when the
+	// campaigns' budgets disagree about the currency, in which case those
 	// campaigns' pacing is unknown. On Meta, absent for a currency whose
 	// minor-unit scale this service does not know (its budgets are left
 	// unconverted), or when the insights rows' currency is not the ad account's.

@@ -35,7 +35,7 @@ const (
 func TestLiveClaimAndReleaseRoundTrip(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
-	briefID := insertBrief(ctx, t, pool)
+	briefID := insertBrief(ctx, t, pool, "tlf")
 
 	if _, err := pool.Exec(ctx, liveClaimSQL, "tlf", briefID, "00000000-0000-4000-8000-0000000000a1", "google-ads", "demand-gen", nil); err != nil {
 		t.Fatalf("claim: %v", err)
@@ -62,7 +62,7 @@ func TestLiveClaimAndReleaseRoundTrip(t *testing.T) {
 func TestLiveReleaseDoesNotTouchAnotherVariantsClaim(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
-	briefID := insertBrief(ctx, t, pool)
+	briefID := insertBrief(ctx, t, pool, "tlf")
 
 	for _, v := range []string{"default", "demand-gen"} {
 		if _, err := pool.Exec(ctx, liveClaimSQL, "tlf", briefID, "00000000-0000-4000-8000-0000000000a1", "google-ads", v, nil); err != nil {

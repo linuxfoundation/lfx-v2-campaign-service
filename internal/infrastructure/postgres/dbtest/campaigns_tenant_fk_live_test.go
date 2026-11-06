@@ -1,0 +1,406 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package dbtest_test
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/dbtest"
+)
+
+// campaignBriefFKs reports which of the two brief foreign keys campaigns carries: 000002's
+// id-only key and 000056's composite tenant key.
+func campaignBriefFKs(ctx context.Context, t *testing.T, conn *pgx.Conn) (idOnly, composite bool) {
+	t.Helper()
+	if err := conn.QueryRow(ctx, `
+		SELECT
+		  EXISTS (SELECT 1 FROM pg_constraint
+		           WHERE conrelid = 'campaigns'::regclass AND contype = 'f'
+		             AND conname = 'campaigns_brief_id_fkey'),
+		  EXISTS (SELECT 1 FROM pg_constraint
+		           WHERE conrelid = 'campaigns'::regclass AND contype = 'f'
+		             AND conname = 'campaigns_brief_project_fkey')`).Scan(&idOnly, &composite); err != nil {
+		t.Fatalf("read campaigns' foreign keys: %v", err)
+	}
+	return idOnly, composite
+}
+
+// seedBriefAndCampaign writes one brief owned by briefProject and one campaign under it naming
+// campaignProject, straight through SQL so the migration under test sees exactly these rows.
+func seedBriefAndCampaign(ctx context.Context, t *testing.T, conn *pgx.Conn, briefProject, campaignProject, slug string) (briefID, campaignID string) {
+	t.Helper()
+	if err := conn.QueryRow(ctx,
+		`INSERT INTO campaign_briefs (project_id, program_type, event_slug)
+		 VALUES ($1, 'events', $2) RETURNING id::text`, briefProject, slug).Scan(&briefID); err != nil {
+		t.Fatalf("seed brief: %v", err)
+	}
+	if err := conn.QueryRow(ctx,
+		`INSERT INTO campaigns (project_id, brief_id, platform, campaign_name, status)
+		 VALUES ($1, $2, 'google-ads', 'n/a', 'created') RETURNING id::text`,
+		campaignProject, briefID).Scan(&campaignID); err != nil {
+		t.Fatalf("seed campaign: %v", err)
+	}
+	return briefID, campaignID
+}
+
+// waitForQueuedLock blocks until some backend in this database is waiting, ungranted, for
+// SHARE ROW EXCLUSIVE on relation — 000056's ADD CONSTRAINT queued on it — so a test can act at a
+// point where the migration is provably blocked rather than after a guessed sleep.
+func waitForQueuedLock(ctx context.Context, t *testing.T, conn *pgx.Conn, relation string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		var queued bool
+		if err := conn.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM pg_locks l
+			  WHERE l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+			    AND l.relation = $1::regclass
+			    AND l.mode = 'ShareRowExclusiveLock' AND NOT l.granted)`, relation).Scan(&queued); err != nil {
+			t.Fatalf("read pg_locks: %v", err)
+		}
+		if queued {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("000056 never queued for SHARE ROW EXCLUSIVE on %s within 30s", relation)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestLiveMigration000056RefusesAMismatchedCampaign pins the "fail loudly, never repair" half of
+// 000056. A campaigns row whose project_id differs from its brief's is a tenant-boundary question
+// a person has to answer, so the migration must abort — with its own legible message — and leave
+// the row, and the id-only FK, exactly as they were.
+func TestLiveMigration000056RefusesAMismatchedCampaign(t *testing.T) {
+	_ = dbtest.Pool(t)
+	ctx := context.Background()
+
+	dsn := freshDatabase(ctx, t)
+	m := newMigrator(t, dsn)
+	if err := m.Migrate(55); err != nil {
+		t.Fatalf("migrate to 55: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect to the scratch database: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	// One consistent row beside the bad one, so the check is shown to count mismatches rather
+	// than rows.
+	seedBriefAndCampaign(ctx, t, conn, "p-owner", "p-owner", "s-ok")
+	_, badID := seedBriefAndCampaign(ctx, t, conn, "p-owner", "p-intruder", "s-bad")
+
+	merr := m.Migrate(56)
+	if merr == nil {
+		t.Fatal("000056 applied over a campaign whose project_id differs from its brief's; it must " +
+			"refuse rather than validate or rewrite the row")
+	}
+	if msg := dbtest.SafeDSNErrFor(dsn, merr); !strings.Contains(msg, "000056: 1 campaigns row(s)") {
+		t.Errorf("000056 failed with %q, want its own pre-check naming the one mismatched row", msg)
+	}
+	// Release the failed migrator's advisory lock before reading the schema (see
+	// TestLiveMigration000030RefusesToDropALiveEmailBrief for why a separate connection is used).
+	if _, cerr := m.Close(); cerr != nil {
+		t.Fatalf("close the migrator after the refused migration: %v", cerr)
+	}
+
+	idOnly, composite := campaignBriefFKs(ctx, t, conn)
+	if !idOnly || composite {
+		t.Errorf("after the refused migration: id-only FK = %v, composite FK = %v; want the "+
+			"000055 schema untouched (true, false)", idOnly, composite)
+	}
+	var project string
+	if err := conn.QueryRow(ctx, `SELECT project_id FROM campaigns WHERE id = $1`, badID).Scan(&project); err != nil {
+		t.Fatalf("read the mismatched row back: %v", err)
+	}
+	if project != "p-intruder" {
+		t.Errorf("the mismatched row's project_id is now %q; the migration must never rewrite data", project)
+	}
+}
+
+// TestLiveMigration000056AddsTheCompositeFK pins the other half: over consistent rows 000056
+// applies, adds the composite key beside the (now redundant) id-only one, and from then on
+// refuses a campaign that names a brief under another project.
+func TestLiveMigration000056AddsTheCompositeFK(t *testing.T) {
+	_ = dbtest.Pool(t)
+	ctx := context.Background()
+
+	dsn := freshDatabase(ctx, t)
+	m := newMigrator(t, dsn)
+	if err := m.Migrate(55); err != nil {
+		t.Fatalf("migrate to 55: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect to the scratch database: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	briefID, _ := seedBriefAndCampaign(ctx, t, conn, "p-owner", "p-owner", "s-ok")
+
+	if err := m.Migrate(56); err != nil {
+		t.Fatalf("migrate to 56 over consistent rows: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+	idOnly, composite := campaignBriefFKs(ctx, t, conn)
+	if !idOnly || !composite {
+		t.Errorf("after 000056: id-only FK = %v, composite FK = %v; want (true, true) -- the "+
+			"id-only key is deliberately kept (dropping it needs ACCESS EXCLUSIVE)", idOnly, composite)
+	}
+
+	_, err = conn.Exec(ctx,
+		`INSERT INTO campaigns (project_id, brief_id, platform, campaign_name, status)
+		 VALUES ('p-intruder', $1, 'meta-ads', 'n/a', 'created')`, briefID)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
+		t.Errorf("a campaign naming p-owner's brief under p-intruder = %v, want a 23503 "+
+			"foreign-key violation", err)
+	}
+}
+
+// TestLiveReplaceCampaignBriefLockIsProjectScoped pins lockBriefRowForReplaceQuery's project_id
+// term. Another project's ReplaceCampaign naming this brief must neither take nor WAIT FOR the
+// brief's row lock: it is refused at once with ErrNotFound. With the lock keyed on id alone it
+// would queue behind whoever holds the brief, which is what the held lock below makes visible —
+// the replace would run into its deadline instead of returning ErrNotFound.
+func TestLiveReplaceCampaignBriefLockIsProjectScoped(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
+
+	projectID := dbtest.UniqueID(t, "project")
+	briefID := insertBrief(ctx, t, pool, projectID)
+	var (
+		id      string
+		version int64
+	)
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO campaigns (project_id, brief_id, platform, campaign_name, status)
+		VALUES ($1, $2, 'google-ads', $3, 'created') RETURNING id, version`,
+		projectID, briefID, dbtest.UniqueID(t, "campaign")).Scan(&id, &version); err != nil {
+		t.Fatalf("seed a campaign: %v", err)
+	}
+	loaded, err := repo.GetCampaign(ctx, projectID, briefID, id)
+	if err != nil {
+		t.Fatalf("GetCampaign: %v", err)
+	}
+
+	holder, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin the lock holder: %v", err)
+	}
+	defer func() { _ = holder.Rollback(ctx) }()
+	if _, err := holder.Exec(ctx, `SELECT 1 FROM campaign_briefs WHERE id = $1 FOR UPDATE`, briefID); err != nil {
+		t.Fatalf("hold the brief's row lock: %v", err)
+	}
+
+	foreign := *loaded
+	foreign.ProjectID = dbtest.UniqueID(t, "other-project")
+	foreign.CampaignName = "cross-project rename"
+	rctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	_, rerr := repo.ReplaceCampaign(rctx, &foreign, version, domain.CampaignLockToken{}, nil)
+	if !errors.Is(rerr, domain.ErrNotFound) {
+		t.Fatalf("ReplaceCampaign from another project = %v, want domain.ErrNotFound without "+
+			"waiting on the brief's row lock: the lock is not project-scoped", rerr)
+	}
+
+	if err := holder.Rollback(ctx); err != nil {
+		t.Fatalf("release the brief's row lock: %v", err)
+	}
+	after, err := repo.GetCampaign(ctx, projectID, briefID, id)
+	if err != nil {
+		t.Fatalf("GetCampaign after the refused replace: %v", err)
+	}
+	if after.Version != version || after.CampaignName != loaded.CampaignName {
+		t.Errorf("the refused replace changed the row (version %d -> %d, name %q -> %q)",
+			version, after.Version, loaded.CampaignName, after.CampaignName)
+	}
+
+	// The owner's own replace still takes the lock and writes.
+	loaded.CampaignName = loaded.CampaignName + "-renamed"
+	if _, err := repo.ReplaceCampaign(ctx, loaded, version, domain.CampaignLockToken{}, nil); err != nil {
+		t.Fatalf("the owning project's ReplaceCampaign: %v", err)
+	}
+}
+
+// TestLiveMigration000056WaitsOutABusyTableWithoutBlockingIt pins 000056's lock-retry loop. A
+// transaction holding a conflicting lock on campaigns (here ROW EXCLUSIVE, what any INSERT or
+// UPDATE takes) for longer than one attempt's 2s lock_timeout must neither fail the migration —
+// a failure would leave version 56 dirty and need `migrate force 55` — nor hold a queued lock
+// request for the whole wait: an INSERT issued while the migration is waiting has to get through
+// before the blocker lets go, which it can only do once an attempt gives up its place in the queue.
+func TestLiveMigration000056WaitsOutABusyTableWithoutBlockingIt(t *testing.T) {
+	_ = dbtest.Pool(t)
+	ctx := context.Background()
+
+	dsn := freshDatabase(ctx, t)
+	m := newMigrator(t, dsn)
+	if err := m.Migrate(55); err != nil {
+		t.Fatalf("migrate to 55: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+
+	connect := func() *pgx.Conn {
+		t.Helper()
+		c, err := pgx.Connect(ctx, dsn)
+		if err != nil {
+			t.Fatalf("connect to the scratch database: %s", dbtest.SafeDSNErrFor(dsn, err))
+		}
+		t.Cleanup(func() { _ = c.Close(context.Background()) })
+		return c
+	}
+	conn, blocker, writer := connect(), connect(), connect()
+	briefID, _ := seedBriefAndCampaign(ctx, t, conn, "p-owner", "p-owner", "s-ok")
+
+	const hold = 5 * time.Second
+	btx, err := blocker.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin the blocker: %v", err)
+	}
+	if _, err := btx.Exec(ctx, `LOCK TABLE campaigns IN ROW EXCLUSIVE MODE`); err != nil {
+		t.Fatalf("take the blocking lock: %v", err)
+	}
+	released := make(chan time.Time, 1)
+	go func() {
+		time.Sleep(hold)
+		_ = btx.Rollback(context.Background())
+		released <- time.Now()
+	}()
+
+	migrated := make(chan error, 1)
+	go func() { migrated <- m.Migrate(56) }()
+
+	// Write only once the ADD is provably queued behind the blocker: the INSERT then queues
+	// behind the ADD, and gets through only if an attempt times out and leaves the queue.
+	waitForQueuedLock(ctx, t, conn, "campaigns")
+	if _, err := writer.Exec(ctx,
+		`INSERT INTO campaigns (project_id, brief_id, platform, campaign_name, status)
+		 VALUES ('p-owner', $1, 'meta-ads', 'n/a', 'created')`, briefID); err != nil {
+		t.Fatalf("insert while 000056 waits: %v", err)
+	}
+	wrote := time.Now()
+
+	merr := <-migrated
+	releasedAt := <-released
+	if merr != nil {
+		t.Fatalf("000056 failed while a transaction held campaigns for %s: %s — a lock wait must "+
+			"be retried, not fail the migration and leave version 56 dirty", hold, dbtest.SafeDSNErrFor(dsn, merr))
+	}
+	if !wrote.Before(releasedAt) {
+		t.Errorf("an INSERT issued while 000056 waited completed only after the blocker released "+
+			"(%s after it): the migration's lock request queued traffic for the whole wait",
+			wrote.Sub(releasedAt))
+	}
+
+	if _, cerr := m.Close(); cerr != nil {
+		t.Fatalf("close the migrator: %v", cerr)
+	}
+	var (
+		version int
+		dirty   bool
+	)
+	if err := conn.QueryRow(ctx, `SELECT version, dirty FROM public.schema_migrations LIMIT 1`).Scan(&version, &dirty); err != nil {
+		t.Fatalf("read the migration version: %v", err)
+	}
+	if version != 56 || dirty {
+		t.Errorf("after the wait: version = %d dirty = %v, want 56 and clean", version, dirty)
+	}
+	if _, composite := campaignBriefFKs(ctx, t, conn); !composite {
+		t.Error("after the wait: the composite FK is missing")
+	}
+}
+
+// TestLiveMigration000056RetriesADeadlock pins the deadlock arm of 000056's retry loop. A
+// transaction that updates a brief and then writes a campaign takes ROW EXCLUSIVE on
+// campaign_briefs, then on campaigns. The ADD takes SHARE ROW EXCLUSIVE on campaigns, then on
+// campaign_briefs: the opposite order. Interleaved, the two deadlock, and because the migration
+// started waiting first its deadlock_timeout expires first, so PostgreSQL aborts the migration's
+// attempt (40P01). That must be retried, not leave version 56 dirty, and the application
+// transaction must commit.
+func TestLiveMigration000056RetriesADeadlock(t *testing.T) {
+	_ = dbtest.Pool(t)
+	ctx := context.Background()
+
+	dsn := freshDatabase(ctx, t)
+	m := newMigrator(t, dsn)
+	if err := m.Migrate(55); err != nil {
+		t.Fatalf("migrate to 55: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+
+	connect := func() *pgx.Conn {
+		t.Helper()
+		c, err := pgx.Connect(ctx, dsn)
+		if err != nil {
+			t.Fatalf("connect to the scratch database: %s", dbtest.SafeDSNErrFor(dsn, err))
+		}
+		t.Cleanup(func() { _ = c.Close(context.Background()) })
+		return c
+	}
+	conn, app := connect(), connect()
+	briefID, _ := seedBriefAndCampaign(ctx, t, conn, "p-owner", "p-owner", "s-ok")
+
+	atx, err := app.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin the application transaction: %v", err)
+	}
+	defer func() { _ = atx.Rollback(context.Background()) }()
+	if _, err := atx.Exec(ctx, `UPDATE campaign_briefs SET updated_at = now() WHERE id = $1`, briefID); err != nil {
+		t.Fatalf("update the brief: %v", err)
+	}
+
+	migrated := make(chan error, 1)
+	go func() { migrated <- m.Migrate(56) }()
+
+	// Close the cycle only once the ADD provably holds campaigns and is queued on
+	// campaign_briefs. The INSERT must then block (it needs campaigns) until PostgreSQL breaks the
+	// cycle; the elapsed time below proves the two really overlapped.
+	waitForQueuedLock(ctx, t, conn, "campaign_briefs")
+	insertStart := time.Now()
+	if _, err := atx.Exec(ctx,
+		`INSERT INTO campaigns (project_id, brief_id, platform, campaign_name, status)
+		 VALUES ('p-owner', $1, 'meta-ads', 'n/a', 'created')`, briefID); err != nil {
+		t.Fatalf("the application's campaign write was the deadlock victim (%v); the migration, "+
+			"which waited first, should have been", err)
+	}
+	if blocked := time.Since(insertStart); blocked < 300*time.Millisecond {
+		t.Fatalf("the application's INSERT returned after %s without waiting on the migration: "+
+			"no deadlock formed, so this run proves nothing about the retry", blocked)
+	}
+	if err := atx.Commit(ctx); err != nil {
+		t.Fatalf("commit the application transaction: %v", err)
+	}
+
+	if merr := <-migrated; merr != nil {
+		t.Fatalf("000056 failed after a deadlock: %s — a 40P01 must be retried, not fail the "+
+			"migration and leave version 56 dirty", dbtest.SafeDSNErrFor(dsn, merr))
+	}
+	if _, cerr := m.Close(); cerr != nil {
+		t.Fatalf("close the migrator: %v", cerr)
+	}
+	var (
+		version int
+		dirty   bool
+	)
+	if err := conn.QueryRow(ctx, `SELECT version, dirty FROM public.schema_migrations LIMIT 1`).Scan(&version, &dirty); err != nil {
+		t.Fatalf("read the migration version: %v", err)
+	}
+	if version != 56 || dirty {
+		t.Errorf("after the deadlock: version = %d dirty = %v, want 56 and clean", version, dirty)
+	}
+	if _, composite := campaignBriefFKs(ctx, t, conn); !composite {
+		t.Error("after the deadlock: the composite FK is missing")
+	}
+}

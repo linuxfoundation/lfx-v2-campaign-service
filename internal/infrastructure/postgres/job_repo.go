@@ -47,6 +47,10 @@ func (r *JobRepo) CreateJob(ctx context.Context, briefID string) (*model.Campaig
 	return j, nil
 }
 
+// lockApprovedBriefForJobQuery is CreateJobForApprovedBrief's brief row lock, scoped to the
+// caller's project like lockAdoptBriefQuery (#165 follow-up, #534).
+const lockApprovedBriefForJobQuery = `SELECT status, version FROM campaign_briefs WHERE id = $1 AND project_id = $2 FOR UPDATE`
+
 // CreateJobForApprovedBrief inserts a queued job only if the brief is still
 // approved at expectedVersion, closing the approve→dispatch TOCTOU race described
 // on the port: a concurrent ReplaceBrief (resets to 'draft', version+1) or
@@ -77,7 +81,11 @@ func (r *JobRepo) CreateJob(ctx context.Context, briefID string) (*model.Campaig
 // version, which is correct). The check-then-insert is therefore atomic with
 // respect to brief mutations. Returns domain.ErrStaleApproval when the locked row
 // fails the status/version check (mapped to 409).
-func (r *JobRepo) CreateJobForApprovedBrief(ctx context.Context, briefID string, expectedVersion int64) (*model.CampaignJob, error) {
+//
+// The lock is keyed on (id, project_id), not id alone (lockApprovedBriefForJobQuery): a
+// brief owned by another project takes no lock and reads as absent, so the job is
+// refused as stale even if a future caller skipped the project-scoped brief read.
+func (r *JobRepo) CreateJobForApprovedBrief(ctx context.Context, projectID, briefID string, expectedVersion int64) (*model.CampaignJob, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("create job for approved brief: begin tx: %w", err)
@@ -94,11 +102,10 @@ func (r *JobRepo) CreateJobForApprovedBrief(ctx context.Context, briefID string,
 		status  string
 		version int64
 	)
-	lockQ := `SELECT status, version FROM campaign_briefs WHERE id = $1 FOR UPDATE`
-	if serr := tx.QueryRow(ctx, lockQ, briefID).Scan(&status, &version); serr != nil {
+	if serr := tx.QueryRow(ctx, lockApprovedBriefForJobQuery, briefID, projectID).Scan(&status, &version); serr != nil {
 		if errors.Is(serr, pgx.ErrNoRows) {
-			// The brief does not exist at all; treat it as a stale approval (there is
-			// nothing approved at expectedVersion to dispatch from).
+			// The brief does not exist, or belongs to another project; treat it as a
+			// stale approval (there is nothing approved at expectedVersion to dispatch from).
 			return nil, domain.ErrStaleApproval
 		}
 		return nil, fmt.Errorf("create job for approved brief: lock brief: %w", serr)
