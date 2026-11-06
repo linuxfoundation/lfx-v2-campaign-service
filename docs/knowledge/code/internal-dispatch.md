@@ -1020,8 +1020,9 @@ an off-channel value is refused there for the create and the adoption path alike
 `observedDemographics` (#497) is passed through the same way; the client refuses it off
 Search. Dispatch refuses any non-empty list first, on any channel, unless
 `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` is exactly `"true"`
-(`googleAdsDemographicTargetingEnabled`): its request shape is not yet probed, and a wrong
-guess would fail after the budget and campaign exist.
+(`googleAdsDemographicTargetingEnabled`). Its request shape passed validateOnly probes on
+2026-11-06 (#497), but no live create has exercised it yet, and a wrong guess would fail after
+the budget and campaign exist, so the gate stays off until lfx-v2-argocd turns it on.
 
 The #477 fields follow the same rule. `sharedNegativeKeywordLists` is passed through
 verbatim. `searchAssets` is `googleAdsSearchAssetsConfig`: `adImages` and
@@ -1205,6 +1206,12 @@ foundation executive directors, so `BriefService.CreateCampaigns` also requires
 `TestSharedAccountInputDetectionAgreesWithTheCreateGate` pins the two detections together, for
 this gate and the three below). The flag sits in the adapter so it also covers callers that
 reach `Dispatch` directly.
+
+`campaignAudienceSegments` (#513) is mapped verbatim onto `CampaignInput.CampaignAudienceSegments`;
+the client refuses it off Search and checks each list against the account. It has no
+deployment flag, but it names the shared account's user lists, so the create path counts it for
+the `global_marketing_ops` check (`service.GoogleAdsMarketingOpsInputs`, pinned by the same
+agreement test).
 
 `demandGenDemographics` (#498, `googleAdsDemandGenDemographicsConfig`) is mapped verbatim onto
 `CampaignInput.DemandGenDemographics` (`googleAdsDemandGenDemographics`) once two gates pass:

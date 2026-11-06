@@ -42,6 +42,9 @@ func dispatcherSharedAccountInputs(cfg googleAdsConfig) []string {
 			set = append(set, "adGroups entry "+strconv.Itoa(i+1)+" audienceSegments")
 		}
 	}
+	if len(cfg.CampaignAudienceSegments) > 0 {
+		set = append(set, "campaignAudienceSegments")
+	}
 	if cfg.PerformanceMaxAudienceSignal != "" {
 		set = append(set, "performanceMaxAudienceSignal")
 	}
@@ -143,6 +146,7 @@ var sharedAccountGatedFields = map[string]bool{
 	"conversionActions":                          true,
 	"demandGenDemographics.audienceSegments":     true,
 	"demandGenDemographics.customAudiences":      true,
+	"campaignAudienceSegments":                   true,
 }
 
 // sharedAccountUngatedFields are every other googleAdsConfig JSON path, each deliberately

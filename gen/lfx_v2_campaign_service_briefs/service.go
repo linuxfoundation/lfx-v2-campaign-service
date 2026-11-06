@@ -116,7 +116,8 @@ type Service interface {
 	// the Google Ads account (demandGenAudience or an audience on any
 	// demandGenAdGroups entry; audienceSegments, customAudiences, customAffinities
 	// or excludedAudienceSegments, on the campaign or on any displayAdGroups
-	// entry; audienceSegments on any adGroups entry; performanceMaxAudienceSignal;
+	// entry; audienceSegments on any adGroups entry; campaignAudienceSegments
+	// (Search campaign-level observed user lists); performanceMaxAudienceSignal;
 	// sharedNegativeKeywordLists; conversionActions,
 	// demandGenDemographics.audienceSegments,
 	// demandGenDemographics.customAudiences; any non-empty value, whitespace

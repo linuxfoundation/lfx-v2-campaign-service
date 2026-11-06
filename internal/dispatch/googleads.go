@@ -299,6 +299,14 @@ type googleAdsConfig struct {
 	// audienceSegments, here and on each adGroups entry, because they name the shared
 	// account's user lists (service.GoogleAdsMarketingOpsInputs).
 	AudienceSegments []string `json:"audienceSegments"`
+	// CampaignAudienceSegments are EXISTING user lists observed at the Search CAMPAIGN level
+	// (#513), as campaign criteria under the campaign's targetingSetting AUDIENCE bidOnly, so
+	// they cover every ad group. SEARCH ONLY, and refused beside audienceSegments or any
+	// adGroups entry's audienceSegments. No deployment flag (every shape passed a validateOnly
+	// probe), but they name the shared account's user lists, so the create path requires
+	// global_marketing_ops (service.GoogleAdsMarketingOpsInputs). See
+	// googleads.CampaignInput.CampaignAudienceSegments.
+	CampaignAudienceSegments []string `json:"campaignAudienceSegments"`
 	// DemandGenAudience is ONE existing Google Ads Audience resource name,
 	// `customers/<this account>/audiences/<id>`, attached to the Demand Gen ad group
 	// (#459). DEMAND GEN ONLY, refused on every other channel. Named after its channel
@@ -627,8 +635,9 @@ type googleAdsConfig struct {
 	// DisplayDemographics is positive demographic TARGETING on every Display ad group (#499):
 	// each non-empty list restricts the ad to the values it names, in the exclusion fields'
 	// vocabulary. DISPLAY ONLY, and a value may not also be in its excluded* list. It names
-	// no account resource, so no audience gate applies, but its request shape is unprobed, so
-	// it is refused outright unless GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED is "true" (see
+	// no account resource, so no audience gate applies. Its request shape passed a validateOnly
+	// probe (#509) but no live create has exercised it, so it is refused outright unless
+	// GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED is "true" (see
 	// googleAdsDemographicTargetingEnabled). The other refusals are the client's preflight's;
 	// see googleads.validateDisplayDemographics.
 	DisplayDemographics *googleAdsDisplayDemographicsConfig `json:"displayDemographics"`
@@ -788,10 +797,11 @@ func googleAdsSharedNegativeListsEnabled() bool {
 
 // googleAdsDemographicTargetingEnabled reports whether this deployment opted in to the
 // demographic inputs not yet exercised by a live create: observedDemographics (#497),
-// displayDemographics (#499) and demandGenDemographics (#498, create body probed validateOnly;
-// a persisted create and its read-back not yet verified).
-// Read per call, like the gates above. Unlike them it names no account resource; it keeps an
-// unverified shape off the shared account until a validateOnly probe has passed. See
+// displayDemographics (#499) and demandGenDemographics (#498). Each request shape passed a
+// validateOnly probe (#497, #509, #510); a persisted create, and #498's read-back, are not yet
+// verified. Read per call, like the gates above. Unlike them it names no account resource; it
+// keeps shapes no live create has exercised off the shared account until an operator turns it
+// on in lfx-v2-argocd. See
 // constants.EnvGoogleAdsDemographicTargetingEnabled.
 func googleAdsDemographicTargetingEnabled() bool {
 	return os.Getenv(constants.EnvGoogleAdsDemographicTargetingEnabled) == "true"
@@ -966,8 +976,9 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 			constants.EnvGoogleAdsSharedNegativeListsEnabled,
 			"sharedNegativeKeywordLists")
 	}
-	// The unprobed demographic inputs (#497), on the same terms: any non-empty list, on any
-	// channel, so the refusal never depends on the client's own validation of the values.
+	// The demographic inputs no live create has exercised yet (#497), on the same terms: any
+	// non-empty list, on any channel, so the refusal never depends on the client's own
+	// validation of the values.
 	if len(cfg.ObservedDemographics) > 0 && !googleAdsDemographicTargetingEnabled() {
 		return nil, googleAdsInputDisabled("observedDemographics is",
 			constants.EnvGoogleAdsDemographicTargetingEnabled, "observedDemographics")
@@ -1103,6 +1114,9 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		UserInterests:            cfg.UserInterests,
 		ExcludedPlacements:       cfg.ExcludedPlacements,
 		ExcludedAudienceSegments: cfg.ExcludedAudienceSegments,
+		// Passed through verbatim: the client's preflight refuses them off Search and checks
+		// each against the account (#513).
+		CampaignAudienceSegments: cfg.CampaignAudienceSegments,
 		SearchAssets:             googleAdsSearchAssets(cfg.SearchAssets),
 		// Passed through verbatim: the shape, account and channel checks are the client's
 		// preflight, before its first mutate.
