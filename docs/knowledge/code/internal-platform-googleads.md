@@ -2339,7 +2339,8 @@ the project for any Demand Gen audience (`service.GoogleAdsMarketingOpsInputs`).
 field — and, since #460, every `demandGenAdGroups[].audience` — unless
 `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`: a per-deployment opt-in the
 chart sets to `"false"`, turned on in lfx-v2-argocd (still off everywhere).
-This client never creates the Audience. `AudienceSegments` stays refused on
+This client never creates that Audience (the one it creates is `DemandGenDemographics`'s,
+below). `AudienceSegments` stays refused on
 Demand Gen, now with a message that says why (audience-grouped) and names
 `DemandGenAudience`; Performance Max and Video keep the generic reason (audience criteria
 attach only on the Search and Display cascades), and Display accepts them as targeting
@@ -2502,8 +2503,40 @@ answers first.
 **Demographics stay refused**, with a message that says where they go: Google refuses age,
 gender, income and parental criteria on the audience-grouped Demand Gen ad group
 (`CANNOT_ADD_AUDIENCE_SEGMENT_CRITERION_WHEN_AUDIENCE_GROUPED_IS_SET`), and the campaign
-level was not probed, so `ExcludedAgeRanges`/`ExcludedGenders` belong inside the Audience
-that `DemandGenAudience` or a group's `Audience` references.
+level was not probed, so `ExcludedAgeRanges`/`ExcludedGenders` belong inside an Audience:
+the one `DemandGenDemographics` builds, or one `DemandGenAudience` or a group's `Audience`
+references.
+
+**Demographics inside the Audience (#498).** `CampaignInput.DemandGenDemographics`
+(`demandgen_demographics.go`) takes age ranges, genders, income ranges and parental statuses
+in the `excluded*` vocabularies, plus optional user lists on this account.
+`validateDemandGenDemographics` runs in `preflightCampaignKind` and builds an `audienceCreate`:
+one `AudienceDimension` per non-empty list, values in enum order, `UNDETERMINED` as the
+dimension's `includeUndetermined` (Google refuses it as a value, `INVALID_ENUM_VALUE`, and
+refuses the flag on a dimension with no value, `DIMENSION_INVALID`, so a list of only
+`UNDETERMINED` is refused), and adjacent age brackets merged into one `AgeSegment` (the live
+KubeCon NA 2026 Audience stores 25-54 that way). It refuses the field off Demand Gen, an
+empty object, and the field beside `DemandGenAudience` or any group `Audience` (one Audience
+per ad group, and an existing one is never edited). The name is
+`<campaign name> | Demographics <16 hex of SHA-256(campaign name, dimensions)>`, with the
+campaign part shortened to fit Google's 255-character limit (TOO_LONG at 256).
+`CreateDemandGenCampaign` calls `ensureDemandGenDemographicAudience` after the image fetch and
+before the budget: `audiences:mutate`; on a definite `NAME_ALREADY_IN_USE` it reads the
+Audience by exact name (`demographicAudienceNamed`) and reuses it only when it is this
+account's, ENABLED, CUSTOMER-scoped, without exclusions, and holds the planned dimensions
+(compared order-insensitively, since Google's read-back order is not verified live). A
+definite failure returns `(nil, err)`, since nothing was created; a create that may have
+landed returns a partial naming the planned Audience (UNCONFIRMED), and a budget refusal
+after the Audience returns `namePartial()`, which names it. The cascade then attaches the resource name to
+every group through `createDemandGenAdGroupTargeting`, exactly as a `DemandGenAudience`.
+Result: `CampaignResult.DemandGenDemographicAudience` and `DemandGenDemographicAudienceName`
+(the planned name; on every partial too, the UNCONFIRMED one included). `CreateOutcome` never
+reports `budget_name_taken` ("nothing new was created") for a partial carrying the Audience;
+it falls through to `create_unconfirmed`. A lost claim keeps both in `reconcileRef`. And a
+`Demographic Audience created|reused: …` step. Every create body shape was accepted by a
+validateOnly probe on 2026-11-05, including a temporary Audience attached to a Demand Gen ad
+group; a persisted create and its read-back are not yet verified, which is why
+`GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` still gates it.
 
 **Sitelinks.** `validateAssetPlan` admits `Sitelinks` on Demand Gen and refuses every other
 extension type there (callouts and snippets were not probed). The cascade calls the Search

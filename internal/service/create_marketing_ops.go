@@ -47,6 +47,8 @@ func (s *BriefService) marketingOpsChecker() MarketingOpsChecker {
 //     entry;
 //   - performanceMaxAudienceSignal (#461);
 //   - sharedNegativeKeywordLists (#477);
+//   - demandGenDemographics.audienceSegments (#498), existing user lists put in the demographic
+//     Audience (demographics without them are not gated);
 //   - conversionActions (#436), on every channel: existing conversion actions, and the
 //     account-level custom conversion goal the client creates or reuses for them;
 //   - audienceSegments on Search, at the campaign level and on each adGroups entry. Search
@@ -102,6 +104,9 @@ func GoogleAdsMarketingOpsInputs(config json.RawMessage) []string {
 		PerformanceMaxAudienceSignal string          `json:"performanceMaxAudienceSignal"`
 		SharedNegativeKeywordLists   []string        `json:"sharedNegativeKeywordLists"`
 		ConversionActions            []string        `json:"conversionActions"`
+		DemandGenDemographics        *struct {
+			AudienceSegments []string `json:"audienceSegments"`
+		} `json:"demandGenDemographics"`
 	}
 	_ = json.Unmarshal(raw, &cfg) // see above: a partial decode is still inspected
 
@@ -146,6 +151,12 @@ func GoogleAdsMarketingOpsInputs(config json.RawMessage) []string {
 	}
 	if len(cfg.ConversionActions) > 0 {
 		set = append(set, "conversionActions")
+	}
+	// #498: the user lists put in the demographic Audience. demandGenDemographics without them
+	// is not gated: that Audience is created fresh and holds only Google's demographic brackets,
+	// so it names no existing account resource.
+	if cfg.DemandGenDemographics != nil && len(cfg.DemandGenDemographics.AudienceSegments) > 0 {
+		set = append(set, "demandGenDemographics.audienceSegments")
 	}
 	return set
 }

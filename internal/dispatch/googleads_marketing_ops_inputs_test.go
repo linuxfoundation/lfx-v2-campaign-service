@@ -51,6 +51,9 @@ func dispatcherSharedAccountInputs(cfg googleAdsConfig) []string {
 	if len(cfg.ConversionActions) > 0 {
 		set = append(set, "conversionActions")
 	}
+	if googleAdsDemandGenDemographicSegmentsSet(cfg) {
+		set = append(set, "demandGenDemographics.audienceSegments")
+	}
 	return set
 }
 
@@ -90,6 +93,14 @@ func TestSharedAccountInputDetectionAgreesWithTheCreateGate(t *testing.T) {
 		`{"googleAdsConfig":{"channel":"demand-gen","conversionActions":["123"],"demandGenAudience":"a"}}`,
 		`{"googleAdsConfig":{"conversionActions":[]}}`,
 		`{"googleAdsConfig":{"observedDemographics":["AGE_RANGE"]}}`,
+		// #498: the demographic Audience counts only when it names existing user lists.
+		`{"googleAdsConfig":{"demandGenDemographics":{"ageRanges":["25-34"]}}}`,
+		`{"googleAdsConfig":{"demandGenDemographics":{}}}`,
+		`{"googleAdsConfig":{"demandGenDemographics":null}}`,
+		`{"googleAdsConfig":{"demandGenDemographics":{"audienceSegments":[]}}}`,
+		`{"googleAdsConfig":{"demandGenDemographics":{"audienceSegments":["customers/1/userLists/2"]}}}`,
+		`{"googleAdsConfig":{"demandGenDemographics":{"audienceSegments":[""]}}}`,
+		`{"googleAdsConfig":{"demandGenDemographics":{"AudienceSegments":["customers/1/userLists/2"]}}}`,
 		`{"microsoftConfig":{"budget":5}}`,
 		`{"GoogleAdsConfig":{"demandGenAudience":"customers/1/audiences/2"}}`,
 	} {
@@ -126,6 +137,7 @@ var sharedAccountGatedFields = map[string]bool{
 	"performanceMaxAudienceSignal":               true,
 	"sharedNegativeKeywordLists":                 true,
 	"conversionActions":                          true,
+	"demandGenDemographics.audienceSegments":     true,
 }
 
 // sharedAccountUngatedFields are every other googleAdsConfig JSON path, each deliberately
@@ -145,8 +157,15 @@ var sharedAccountUngatedFields = map[string]bool{
 	"promotions": true, "prices": true, "leadForms": true, "demandGenCreative": true,
 	"demandGenVideoCreative": true, "demandGenAds": true, "performanceMaxCreative": true,
 	"performanceMaxSearchThemes": true, "videoCreative": true, "displayCreative": true,
-	"searchAssets": true, "adoptExisting": true, "observedDemographics": true, "displayDemographics": true,
-	"adGroups[].name": true, "adGroups[].cpcBid": true, "adGroups[].keywords": true,
+	"searchAssets": true, "adoptExisting": true, "observedDemographics": true,
+	// Google's fixed demographic brackets (#499, #498); demandGenDemographics' user lists are
+	// gated above.
+	"displayDemographics":                    true,
+	"demandGenDemographics.ageRanges":        true,
+	"demandGenDemographics.genders":          true,
+	"demandGenDemographics.incomeRanges":     true,
+	"demandGenDemographics.parentalStatuses": true,
+	"adGroups[].name":                        true, "adGroups[].cpcBid": true, "adGroups[].keywords": true,
 	"adGroups[].ads": true, "adGroups[].negativeKeywords": true,
 	"displayAdGroups[].name": true, "displayAdGroups[].creative": true,
 	"displayAdGroups[].userInterests": true,
@@ -169,6 +188,12 @@ func googleAdsConfigFieldPaths() map[string]reflect.Type {
 			}
 			if prefix == "" && groups[name] {
 				walk(name+"[].", f.Type.Elem())
+				continue
+			}
+			// demandGenDemographics (#498) mixes gated and ungated lists, so its fields are
+			// classified one by one.
+			if prefix == "" && name == "demandGenDemographics" {
+				walk(name+".", f.Type.Elem())
 				continue
 			}
 			paths[prefix+name] = f.Type
@@ -215,6 +240,9 @@ func TestEveryGoogleAdsConfigFieldIsClassifiedForTheMarketingOpsGate(t *testing.
 		if group, sub, ok := strings.Cut(p, "[]."); ok {
 			field = group
 			value = []any{map[string]any{sub: value}}
+		} else if group, sub, ok := strings.Cut(p, "."); ok {
+			field = group
+			value = map[string]any{sub: value}
 		}
 		cfg[field] = value
 		raw, err := json.Marshal(map[string]any{"googleAdsConfig": cfg})

@@ -59,6 +59,13 @@ func TestGoogleAdsMarketingOpsInputs(t *testing.T) {
 		{"a blank conversion action counts", `{"googleAdsConfig":{"conversionActions":[""]}}`, []string{"conversionActions"}},
 		{"no conversion actions", `{"googleAdsConfig":{"conversionActions":[]}}`, nil},
 		{"observed demographics are not gated", `{"googleAdsConfig":{"observedDemographics":["AGE_RANGE"]}}`, nil},
+		// #498: the demographic Audience is new, so only the user lists put in it are gated.
+		{"demand gen demographics alone are not gated", `{"googleAdsConfig":{"demandGenDemographics":{"ageRanges":["25-34"],"genders":["MALE"]}}}`, nil},
+		{"empty demand gen demographics", `{"googleAdsConfig":{"demandGenDemographics":{"audienceSegments":[]}}}`, nil},
+		{"demand gen demographic user lists", `{"googleAdsConfig":{"demandGenDemographics":{"ageRanges":["25-34"],"audienceSegments":["customers/1/userLists/2"]}}}`,
+			[]string{"demandGenDemographics.audienceSegments"}},
+		{"a blank demographic user list counts", `{"googleAdsConfig":{"demandGenDemographics":{"audienceSegments":[""]}}}`,
+			[]string{"demandGenDemographics.audienceSegments"}},
 		{"several, in config order", `{"googleAdsConfig":{"sharedNegativeKeywordLists":["s"],"performanceMaxAudienceSignal":"1","demandGenAudience":"a","customAudiences":["c"]}}`,
 			[]string{"demandGenAudience", "customAudiences", "performanceMaxAudienceSignal", "sharedNegativeKeywordLists"}},
 		// encoding/json matches field names case-insensitively, and so does the dispatcher's decode.

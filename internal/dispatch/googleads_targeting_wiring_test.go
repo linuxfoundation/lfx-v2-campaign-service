@@ -46,6 +46,7 @@ type targetingCapture struct {
 	campaignAssets   []byte
 	googleAdsMutates [][]byte
 	sharedSets       [][]byte
+	audiences        [][]byte
 	sawBudget        bool
 }
 
@@ -173,6 +174,10 @@ func targetingServers(t *testing.T) ([]googleads.Option, *targetingCapture) {
 				return
 			}
 			_, _ = io.WriteString(w, out)
+		case strings.HasSuffix(r.URL.Path, "/audiences:mutate"):
+			// The Demand Gen demographic Audience (#498).
+			cap.add(&cap.audiences, body)
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/audiences/777"}]}`)
 		default:
 			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
 		}
