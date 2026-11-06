@@ -23,7 +23,8 @@ func TestGoogleAds_DemandGenDemographicsReachTheAudienceAndTheAdGroup(t *testing
 	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
 	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"demand-gen","demandGenDemographics":{` +
 		`"ageRanges":["25-34"],"genders":["FEMALE"],"incomeRanges":["INCOME_RANGE_90_UP"],` +
-		`"parentalStatuses":["PARENT"],"audienceSegments":["customers/1234567890/userLists/55"]}}}`)
+		`"parentalStatuses":["PARENT"],"audienceSegments":["customers/1234567890/userLists/55"],` +
+		`"customAudiences":["customers/1234567890/customAudiences/66"]}}}`)
 
 	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg); err != nil {
 		t.Fatalf("Dispatch: %v", err)
@@ -40,7 +41,8 @@ func TestGoogleAds_DemandGenDemographicsReachTheAudienceAndTheAdGroup(t *testing
 		`{"gender":{"genders":["FEMALE"],"includeUndetermined":false}}`,
 		`{"householdIncome":{"incomeRanges":["INCOME_RANGE_90_UP"],"includeUndetermined":false}}`,
 		`{"parentalStatus":{"parentalStatuses":["PARENT"],"includeUndetermined":false}}`,
-		`{"audienceSegments":{"segments":[{"userList":{"userList":"customers/1234567890/userLists/55"}}]}}`,
+		`{"audienceSegments":{"segments":[{"userList":{"userList":"customers/1234567890/userLists/55"}},` +
+			`{"customAudience":{"customAudience":"customers/1234567890/customAudiences/66"}}]}}`,
 	} {
 		if !strings.Contains(string(audiences[0]), want) {
 			t.Errorf("audience create = %s, want it to carry %s", audiences[0], want)
@@ -137,5 +139,29 @@ func assertNothingCreated(t *testing.T, cap *targetingCapture, camp *model.Campa
 	}
 	if len(cap.audiences) > 0 {
 		t.Error("the refusal must happen BEFORE the Audience create")
+	}
+}
+
+// #516: custom audiences in the Audience are account resources too, so they need
+// GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED on their own, and the refusal names every gated list set.
+func TestGoogleAds_DemandGenDemographicCustomAudiencesNeedTheAudienceGate(t *testing.T) {
+	for name, tc := range map[string]struct{ demographics, want string }{
+		"custom audiences alone": {`{"customAudiences":["customers/1234567890/customAudiences/66"]}`,
+			"demandGenDemographics.customAudiences is disabled on this deployment (" + constants.EnvGoogleAdsDemandGenAudienceEnabled},
+		"both lists": {`{"audienceSegments":["customers/1234567890/userLists/55"],"customAudiences":["customers/1234567890/customAudiences/66"]}`,
+			"demandGenDemographics.audienceSegments and demandGenDemographics.customAudiences are disabled on this deployment ("},
+	} {
+		t.Run(name, func(t *testing.T) {
+			setGateEnv(t, constants.EnvGoogleAdsDemographicTargetingEnabled, "true")
+			setGateEnv(t, constants.EnvGoogleAdsDemandGenAudienceEnabled, "false")
+			opts, cap := targetingServers(t)
+			d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+			cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"demand-gen","demandGenDemographics":` + tc.demographics + `}}`)
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want the gate refusal containing %q", err, tc.want)
+			}
+			assertNothingCreated(t, cap, camp)
+		})
 	}
 }

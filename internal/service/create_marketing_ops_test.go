@@ -66,6 +66,11 @@ func TestGoogleAdsMarketingOpsInputs(t *testing.T) {
 			[]string{"demandGenDemographics.audienceSegments"}},
 		{"a blank demographic user list counts", `{"googleAdsConfig":{"demandGenDemographics":{"audienceSegments":[""]}}}`,
 			[]string{"demandGenDemographics.audienceSegments"}},
+		{"demand gen demographic custom audiences", `{"googleAdsConfig":{"demandGenDemographics":{"customAudiences":["customers/1/customAudiences/2"]}}}`,
+			[]string{"demandGenDemographics.customAudiences"}},
+		{"empty demographic custom audiences", `{"googleAdsConfig":{"demandGenDemographics":{"customAudiences":[]}}}`, nil},
+		{"demographic user lists and custom audiences", `{"googleAdsConfig":{"demandGenDemographics":{"audienceSegments":["a"],"customAudiences":[" "]}}}`,
+			[]string{"demandGenDemographics.audienceSegments", "demandGenDemographics.customAudiences"}},
 		{"several, in config order", `{"googleAdsConfig":{"sharedNegativeKeywordLists":["s"],"performanceMaxAudienceSignal":"1","demandGenAudience":"a","customAudiences":["c"]}}`,
 			[]string{"demandGenAudience", "customAudiences", "performanceMaxAudienceSignal", "sharedNegativeKeywordLists"}},
 		// encoding/json matches field names case-insensitively, and so does the dispatcher's decode.

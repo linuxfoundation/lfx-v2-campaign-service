@@ -54,9 +54,7 @@ func dispatcherSharedAccountInputs(cfg googleAdsConfig) []string {
 	if len(cfg.ConversionActions) > 0 {
 		set = append(set, "conversionActions")
 	}
-	if googleAdsDemandGenDemographicSegmentsSet(cfg) {
-		set = append(set, "demandGenDemographics.audienceSegments")
-	}
+	set = append(set, googleAdsDemandGenDemographicSegmentsSet(cfg)...)
 	return set
 }
 
@@ -104,6 +102,12 @@ func TestSharedAccountInputDetectionAgreesWithTheCreateGate(t *testing.T) {
 		`{"googleAdsConfig":{"demandGenDemographics":{"audienceSegments":["customers/1/userLists/2"]}}}`,
 		`{"googleAdsConfig":{"demandGenDemographics":{"audienceSegments":[""]}}}`,
 		`{"googleAdsConfig":{"demandGenDemographics":{"AudienceSegments":["customers/1/userLists/2"]}}}`,
+		// #516: its custom audiences count on the same terms, alone or beside user lists.
+		`{"googleAdsConfig":{"demandGenDemographics":{"customAudiences":["customers/1/customAudiences/2"]}}}`,
+		`{"googleAdsConfig":{"demandGenDemographics":{"customAudiences":[]}}}`,
+		`{"googleAdsConfig":{"demandGenDemographics":{"customAudiences":[" "]}}}`,
+		`{"googleAdsConfig":{"demandGenDemographics":{"CustomAudiences":["x"]}}}`,
+		`{"googleAdsConfig":{"demandGenDemographics":{"ageRanges":["25-34"],"audienceSegments":["a"],"customAudiences":["b"]}}}`,
 		`{"microsoftConfig":{"budget":5}}`,
 		`{"GoogleAdsConfig":{"demandGenAudience":"customers/1/audiences/2"}}`,
 	} {
@@ -141,6 +145,7 @@ var sharedAccountGatedFields = map[string]bool{
 	"sharedNegativeKeywordLists":                 true,
 	"conversionActions":                          true,
 	"demandGenDemographics.audienceSegments":     true,
+	"demandGenDemographics.customAudiences":      true,
 	"campaignAudienceSegments":                   true,
 }
 

@@ -670,6 +670,7 @@ type googleAdsDemandGenDemographicsConfig struct {
 	IncomeRanges     []string `json:"incomeRanges"`
 	ParentalStatuses []string `json:"parentalStatuses"`
 	AudienceSegments []string `json:"audienceSegments"`
+	CustomAudiences  []string `json:"customAudiences"`
 }
 
 // googleAdsDemandGenDemographics maps the config verbatim; every refusal is the client's.
@@ -683,15 +684,28 @@ func googleAdsDemandGenDemographics(in *googleAdsDemandGenDemographicsConfig) *g
 		IncomeRanges:     in.IncomeRanges,
 		ParentalStatuses: in.ParentalStatuses,
 		AudienceSegments: in.AudienceSegments,
+		CustomAudiences:  in.CustomAudiences,
 	}
 }
 
-// googleAdsDemandGenDemographicSegmentsSet reports whether demandGenDemographics names any
-// existing user list (#498): any non-empty audienceSegments list, whatever its entries hold.
-// Those lists are account resources, so they share demandGenAudience's deployment gate and,
-// on the create path, its global_marketing_ops check (service.GoogleAdsMarketingOpsInputs).
-func googleAdsDemandGenDemographicSegmentsSet(cfg googleAdsConfig) bool {
-	return cfg.DemandGenDemographics != nil && len(cfg.DemandGenDemographics.AudienceSegments) > 0
+// googleAdsDemandGenDemographicSegmentsSet names the demandGenDemographics lists that name
+// existing account resources, in config order: a non-empty audienceSegments (#498, user lists)
+// and a non-empty customAudiences (#516), whatever their entries hold. Those are account
+// resources, so they share demandGenAudience's deployment gate and, on the create path, its
+// global_marketing_ops check (service.GoogleAdsMarketingOpsInputs).
+func googleAdsDemandGenDemographicSegmentsSet(cfg googleAdsConfig) []string {
+	d := cfg.DemandGenDemographics
+	if d == nil {
+		return nil
+	}
+	var set []string
+	if len(d.AudienceSegments) > 0 {
+		set = append(set, "demandGenDemographics.audienceSegments")
+	}
+	if len(d.CustomAudiences) > 0 {
+		set = append(set, "demandGenDemographics.customAudiences")
+	}
+	return set
 }
 
 // googleAdsDemandGenAudienceEnabled reports whether this deployment opted in to
@@ -982,13 +996,17 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return nil, googleAdsInputDisabled("demandGenDemographics is",
 			constants.EnvGoogleAdsDemographicTargetingEnabled, "demandGenDemographics")
 	}
-	// Its user lists are existing account resources, so they also sit behind the Demand Gen
-	// audience gate, as demandGenAudience does: any non-empty list, whatever it holds. The
-	// create service's global_marketing_ops check (service.GoogleAdsMarketingOpsInputs)
-	// counts the same lists.
-	if googleAdsDemandGenDemographicSegmentsSet(cfg) && !googleAdsDemandGenAudienceEnabled() {
-		return nil, googleAdsInputDisabled("demandGenDemographics.audienceSegments is",
-			constants.EnvGoogleAdsDemandGenAudienceEnabled, "demandGenDemographics.audienceSegments")
+	// Its user lists and custom audiences are existing account resources, so they also sit
+	// behind the Demand Gen audience gate, as demandGenAudience does: any non-empty list,
+	// whatever it holds. The create service's global_marketing_ops check
+	// (service.GoogleAdsMarketingOpsInputs) counts the same lists.
+	if set := googleAdsDemandGenDemographicSegmentsSet(cfg); len(set) > 0 && !googleAdsDemandGenAudienceEnabled() {
+		verb := " is"
+		if len(set) > 1 {
+			verb = " are"
+		}
+		return nil, googleAdsInputDisabled(strings.Join(set, " and ")+verb,
+			constants.EnvGoogleAdsDemandGenAudienceEnabled, strings.Join(set, " and "))
 	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {

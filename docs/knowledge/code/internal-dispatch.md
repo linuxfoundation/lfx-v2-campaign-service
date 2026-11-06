@@ -1217,11 +1217,12 @@ agreement test).
 `CampaignInput.DemandGenDemographics` (`googleAdsDemandGenDemographics`) once two gates pass:
 any `demandGenDemographics` object, `{}` included, needs
 `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED` exactly `"true"`, and a non-empty
-`audienceSegments` list (`googleAdsDemandGenDemographicSegmentsSet`), which names existing
-user lists, also needs `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED`. The create path counts those
+`audienceSegments` or (#516) `customAudiences` list (`googleAdsDemandGenDemographicSegmentsSet`,
+which names the lists set so the refusal names each), which name existing user lists and
+custom audiences, also needs `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED`. The create path counts those
 same lists as an audience for the `global_marketing_ops` check
 (`service.GoogleAdsMarketingOpsInputs`, pinned by the same agreement test);
-demographics without user lists are not part of it, since the Audience is new and holds only
+demographics without user lists or custom audiences are not part of it, since the Audience is new and holds only
 Google's demographic brackets.
 
 `GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED` is the same gate for #462's account-owned Display

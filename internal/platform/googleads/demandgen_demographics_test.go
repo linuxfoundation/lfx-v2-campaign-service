@@ -177,7 +177,36 @@ func TestValidateDemandGenDemographics_Refusals(t *testing.T) {
 		}, "is an Audience, which cannot go inside another Audience"},
 		"a custom audience": {func(in *CampaignInput) {
 			in.DemandGenDemographics.AudienceSegments = []string{"customers/1234567890/customAudiences/1"}
+		}, "move it to DemandGenDemographics.CustomAudiences"},
+		"a user interest among the lists": {func(in *CampaignInput) {
+			in.DemandGenDemographics.AudienceSegments = []string{"customers/1234567890/userInterests/1"}
 		}, "is not a customers/<id>/userLists/<id>"},
+		// #516: DemandGenDemographics.CustomAudiences.
+		"a user list among the custom audiences": {func(in *CampaignInput) {
+			in.DemandGenDemographics.CustomAudiences = []string{"customers/1234567890/userLists/1"}
+		}, "is a user list; move it to DemandGenDemographics.AudienceSegments"},
+		"an Audience among the custom audiences": {func(in *CampaignInput) {
+			in.DemandGenDemographics.CustomAudiences = []string{testDemandGenAudience}
+		}, "CustomAudiences entry \"" + testDemandGenAudience + "\" is an Audience"},
+		"a legacy custom interest": {func(in *CampaignInput) {
+			in.DemandGenDemographics.CustomAudiences = []string{"customers/1234567890/customInterests/2808384"}
+		}, "is a legacy custom interest, which Google refuses inside an Audience"},
+		"a user interest among the custom audiences": {func(in *CampaignInput) {
+			in.DemandGenDemographics.CustomAudiences = []string{"customers/1234567890/userInterests/80432"}
+		}, "is a user interest, not a custom audience"},
+		"a malformed custom audience": {func(in *CampaignInput) {
+			in.DemandGenDemographics.CustomAudiences = []string{"customAudiences/1"}
+		}, "is not a customers/<id>/customAudiences/<id>"},
+		"another account's custom audience": {func(in *CampaignInput) {
+			in.DemandGenDemographics.CustomAudiences = []string{"customers/9999999999/customAudiences/1"}
+		}, `CustomAudiences entry "customers/9999999999/customAudiences/1" is on customer "9999999999"`},
+		"leading-zero custom audience id": {func(in *CampaignInput) {
+			in.DemandGenDemographics.CustomAudiences = []string{"customers/1234567890/customAudiences/07"}
+		}, "CustomAudiences entry \"customers/1234567890/customAudiences/07\" has the id \"07\""},
+		"blank custom audience": {func(in *CampaignInput) { in.DemandGenDemographics.CustomAudiences = []string{"\t"} }, "CustomAudiences entry must not be empty"},
+		"too many custom audiences": {func(in *CampaignInput) {
+			in.DemandGenDemographics.CustomAudiences = make([]string, maxAudienceSegments+1)
+		}, "at most 20 DemandGenDemographics.CustomAudiences"},
 		"leading-zero id": {func(in *CampaignInput) {
 			in.DemandGenDemographics.AudienceSegments = []string{"customers/1234567890/userLists/0123"}
 		}, "not the canonical base-10 spelling"},
@@ -562,5 +591,105 @@ func TestCreateDemandGenCampaign_BudgetNameTakenAfterTheAudienceIsNotNothingCrea
 	res.DemandGenDemographicAudience = ""
 	if outcome, _ := CreateOutcome(res, err); outcome != domain.CreateOutcomeBudgetNameTaken {
 		t.Errorf("CreateOutcome without an Audience = %q, want budget_name_taken", outcome)
+	}
+}
+
+// #516: custom audiences go in the SAME audienceSegments dimension as the user lists, after
+// them, each sorted and deduplicated, and count in the summary. A custom audience alone is a
+// complete Audience. The live High Intent Audience holds age 25-54, three user lists and one
+// custom audience in exactly this shape.
+func TestValidateDemandGenDemographics_CustomAudiences(t *testing.T) {
+	const ca1, ca2 = "customers/1234567890/customAudiences/776852670", "customers/1234567890/customAudiences/12"
+	in := demandGenInput()
+	in.DemandGenDemographics = &DemandGenDemographics{
+		AgeRanges:        []string{"25-34", "35-44", "45-54", "UNDETERMINED"},
+		AudienceSegments: []string{"customers/1234567890/userLists/9", "customers/1234567890/userLists/1"},
+		CustomAudiences:  []string{" " + ca1 + " ", ca2, ca1},
+	}
+	p, err := validateDemandGenDemographics(campaignKindDemandGen, "1234567890", "C", in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(p.create.Dimensions)
+	jsonEqual(t, body, `[
+		{"age":{"ageRanges":[{"minAge":25,"maxAge":54}],"includeUndetermined":true}},
+		{"audienceSegments":{"segments":[
+			{"userList":{"userList":"customers/1234567890/userLists/1"}},
+			{"userList":{"userList":"customers/1234567890/userLists/9"}},
+			{"customAudience":{"customAudience":"`+ca2+`"}},
+			{"customAudience":{"customAudience":"`+ca1+`"}}]}}]`)
+	if want := "3 age range(s), 2 user list(s), 2 custom audience(s)"; p.summary != want {
+		t.Errorf("summary = %q, want %q", p.summary, want)
+	}
+
+	// Alone, with no demographics and no user lists.
+	in.DemandGenDemographics = &DemandGenDemographics{CustomAudiences: []string{ca1}}
+	q, err := validateDemandGenDemographics(campaignKindDemandGen, "1234567890", "C", in)
+	if err != nil {
+		t.Fatalf("custom audiences alone must be accepted: %v", err)
+	}
+	body, _ = json.Marshal(q.create.Dimensions)
+	jsonEqual(t, body, `[{"audienceSegments":{"segments":[{"customAudience":{"customAudience":"`+ca1+`"}}]}}]`)
+	if q.summary != "1 custom audience(s)" {
+		t.Errorf("summary = %q", q.summary)
+	}
+
+	// The custom audiences are part of the name hash: adding one is another Audience, and the
+	// same set in another order is the same one.
+	in.DemandGenDemographics = &DemandGenDemographics{AgeRanges: []string{"25-34"}}
+	base, _ := validateDemandGenDemographics(campaignKindDemandGen, "1234567890", "C", in)
+	in.DemandGenDemographics.CustomAudiences = []string{ca1, ca2}
+	with, _ := validateDemandGenDemographics(campaignKindDemandGen, "1234567890", "C", in)
+	in.DemandGenDemographics.CustomAudiences = []string{ca2, ca1}
+	reordered, _ := validateDemandGenDemographics(campaignKindDemandGen, "1234567890", "C", in)
+	if base.create.Name == with.create.Name {
+		t.Error("adding custom audiences must change the Audience name")
+	}
+	if with.create.Name != reordered.create.Name {
+		t.Errorf("reordered custom audiences got another name: %q vs %q", with.create.Name, reordered.create.Name)
+	}
+}
+
+// The pre-#516 name hash of a user-list-only plan is unchanged, so a retry of a create that
+// started before this change still reuses its Audience.
+func TestDemographicAudienceName_UserListPlanUnchangedByCustomAudiences(t *testing.T) {
+	c := &Client{account: AccountConfig{CustomerID: "1234567890"}}
+	pf, err := c.preflightCampaignKind(campaignKindDemandGen, demographicsInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pf.demandGenDemographics.create.Name != demandGenDemographicsName {
+		t.Errorf("name = %q, want the pinned %q", pf.demandGenDemographics.create.Name, demandGenDemographicsName)
+	}
+}
+
+// Reuse reads the Audience back: a stored custom-audience segment must match the planned one,
+// and an Audience lacking it, holding a different one, or holding a segment of a kind this
+// client never sends must not.
+func TestSameAudienceDimensions_CustomAudiences(t *testing.T) {
+	const ca, ca2 = "customers/1234567890/customAudiences/776852670", "customers/1234567890/customAudiences/3"
+	in := demandGenInput()
+	in.DemandGenDemographics = &DemandGenDemographics{
+		AudienceSegments: []string{"customers/1234567890/userLists/1"},
+		CustomAudiences:  []string{ca, ca2},
+	}
+	p, err := validateDemandGenDemographics(campaignKindDemandGen, "1234567890", "C", in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		got  string
+		same bool
+	}{
+		"same, reordered":              {`{"audienceSegments":{"segments":[{"customAudience":{"customAudience":"` + ca + `"}},{"userList":{"userList":"customers/1234567890/userLists/1"}},{"customAudience":{"customAudience":"` + ca2 + `"}}]}}`, true},
+		"custom audience missing":      {`{"audienceSegments":{"segments":[{"userList":{"userList":"customers/1234567890/userLists/1"}},{"customAudience":{"customAudience":"` + ca2 + `"}}]}}`, false},
+		"another custom audience":      {`{"audienceSegments":{"segments":[{"customAudience":{"customAudience":"customers/1234567890/customAudiences/2"}},{"userList":{"userList":"customers/1234567890/userLists/1"}},{"customAudience":{"customAudience":"` + ca2 + `"}}]}}`, false},
+		"a user interest in its place": {`{"audienceSegments":{"segments":[{"userInterest":{"userInterestCategory":"customers/1234567890/userInterests/1"}},{"userList":{"userList":"customers/1234567890/userLists/1"}},{"customAudience":{"customAudience":"` + ca2 + `"}}]}}`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := sameAudienceDimensions([]json.RawMessage{json.RawMessage(tc.got)}, p.create.Dimensions); got != tc.same {
+				t.Errorf("sameAudienceDimensions = %v, want %v", got, tc.same)
+			}
+		})
 	}
 }
