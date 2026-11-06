@@ -954,7 +954,7 @@ demandGenDemographics?:         — OPTIONAL, DEMAND GEN ONLY (#498). Demographi
    incomeRanges?,                 every Demand Gen ad group (the single one, or each
    parentalStatuses?,             `demandGenAdGroups` entry) references with its `audience` criterion.
    audienceSegments?,             Each list uses its `excluded*` counterpart's vocabulary
-                                  (`ageRanges` 18-24 … 65+; `genders` MALE/FEMALE; `incomeRanges`
+   customAudiences?}              (`ageRanges` 18-24 … 65+; `genders` MALE/FEMALE; `incomeRanges`
                                   INCOME_RANGE_0_50 … INCOME_RANGE_90_UP; `parentalStatuses` PARENT /
                                   NOT_A_PARENT), case-insensitive and deduped, at most 20 entries each.
                                   `UNDETERMINED` adds the users Google could not classify and needs a
