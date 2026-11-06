@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"slices"
+	"strconv"
+	"strings"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -21,7 +23,7 @@ type MarketingOpsChecker interface {
 }
 
 // SetMarketingOpsChecker injects the checker; the container calls it. Nil (no NATS configured)
-// leaves the gated inputs refused with 503, never admitted.
+// leaves the gated inputs (GoogleAdsMarketingOpsInputs) refused with 503, never admitted.
 func (s *BriefService) SetMarketingOpsChecker(c MarketingOpsChecker) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -34,93 +36,177 @@ func (s *BriefService) marketingOpsChecker() MarketingOpsChecker {
 	return s.marketingOps
 }
 
-// GoogleAdsDemandGenAudienceRequested reports whether config's googleAdsConfig names an
-// existing Google Ads Audience: demandGenAudience, or the audience of any demandGenAdGroups
-// entry. Any non-empty value counts, whitespace included, exactly as the dispatcher's
-// GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED gate counts it, so the two cannot disagree about
-// whether a request carries an audience. It decodes the envelope the way the dispatcher's
-// unmarshalPlatformConfig does (exact envelope key, then encoding/json into the same field
-// names and types), and dispatch's tests pin the agreement.
+// GoogleAdsMarketingOpsInputs names, in config order, the googleAdsConfig inputs this config
+// sets that name an EXISTING audience, user list, custom segment, shared negative keyword list or
+// conversion action on the connected Google Ads account, which every foundation shares, so that
+// only global_marketing_ops may send them:
 //
-// A config that fails to decode still reports any audience the decoder populated before the
-// error. When none was populated the dispatcher's own decode fails on the same field types,
-// so the job fails before anything is created and nothing is admitted.
-func GoogleAdsDemandGenAudienceRequested(config json.RawMessage) bool {
+//   - demandGenAudience and each demandGenAdGroups entry's audience (#459, #460);
+//   - the Display audience lists (#462, #475): audienceSegments, customAudiences,
+//     customAffinities and excludedAudienceSegments, on the campaign and on each displayAdGroups
+//     entry;
+//   - performanceMaxAudienceSignal (#461);
+//   - sharedNegativeKeywordLists (#477);
+//   - conversionActions (#436), on every channel: existing conversion actions, and the
+//     account-level custom conversion goal the client creates or reuses for them;
+//   - audienceSegments on Search, at the campaign level and on each adGroups entry. Search
+//     attaches them as observation-only user-list criteria and they predate every deployment
+//     flag, but they still name the shared account's user lists.
+//
+// dispatch's TestEveryGoogleAdsConfigFieldIsClassifiedForTheMarketingOpsGate requires every
+// googleAdsConfig field to be classified as gated or not.
+//
+// Group entries are named by 1-based position ("displayAdGroups entry 2 customAudiences").
+// Every name is service-derived, so a message built from them carries no caller value.
+//
+// Any non-empty value or list counts, whitespace included and whatever its entries hold, on any
+// channel, exactly as the dispatcher's deployment gates count them (googleAdsDisplayAudiencesEnabled
+// and its siblings), so the two cannot disagree about whether a request carries one; the
+// campaign-level audienceSegments count on every channel, a superset of the Display gate. It
+// decodes the envelope the way the dispatcher's unmarshalPlatformConfig does (exact envelope key,
+// then encoding/json into the same field names and types), and dispatch's tests pin the
+// agreement with the dispatcher's gates.
+//
+// A config that fails to decode still reports any input the decoder populated: encoding/json
+// skips a mistyped field and decodes the rest. When a gated field itself is mistyped the
+// dispatcher's own decode fails on the same type, so the job fails before anything is created
+// and nothing is admitted.
+func GoogleAdsMarketingOpsInputs(config json.RawMessage) []string {
 	if len(config) == 0 {
-		return false
+		return nil
 	}
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(config, &envelope); err != nil {
-		return false
+		return nil
 	}
 	raw, ok := envelope["googleAdsConfig"]
 	if !ok || len(raw) == 0 {
-		return false
+		return nil
+	}
+	type audienceLists struct {
+		AudienceSegments         []string `json:"audienceSegments"`
+		CustomAudiences          []string `json:"customAudiences"`
+		CustomAffinities         []string `json:"customAffinities"`
+		ExcludedAudienceSegments []string `json:"excludedAudienceSegments"`
 	}
 	var cfg struct {
+		audienceLists
 		DemandGenAudience string `json:"demandGenAudience"`
 		DemandGenAdGroups []struct {
 			Audience string `json:"audience"`
 		} `json:"demandGenAdGroups"`
+		AdGroups []struct {
+			AudienceSegments []string `json:"audienceSegments"`
+		} `json:"adGroups"`
+		DisplayAdGroups              []audienceLists `json:"displayAdGroups"`
+		PerformanceMaxAudienceSignal string          `json:"performanceMaxAudienceSignal"`
+		SharedNegativeKeywordLists   []string        `json:"sharedNegativeKeywordLists"`
+		ConversionActions            []string        `json:"conversionActions"`
 	}
 	_ = json.Unmarshal(raw, &cfg) // see above: a partial decode is still inspected
-	if cfg.DemandGenAudience != "" {
-		return true
-	}
-	for _, g := range cfg.DemandGenAdGroups {
-		if g.Audience != "" {
-			return true
+
+	var set []string
+	lists := func(prefix string, l audienceLists) {
+		for _, f := range []struct {
+			name string
+			list []string
+		}{
+			{"audienceSegments", l.AudienceSegments},
+			{"customAudiences", l.CustomAudiences},
+			{"customAffinities", l.CustomAffinities},
+			{"excludedAudienceSegments", l.ExcludedAudienceSegments},
+		} {
+			if len(f.list) > 0 {
+				set = append(set, prefix+f.name)
+			}
 		}
 	}
-	return false
+	if cfg.DemandGenAudience != "" {
+		set = append(set, "demandGenAudience")
+	}
+	for i, g := range cfg.DemandGenAdGroups {
+		if g.Audience != "" {
+			set = append(set, "demandGenAdGroups entry "+strconv.Itoa(i+1)+" audience")
+		}
+	}
+	lists("", cfg.audienceLists)
+	for i, g := range cfg.AdGroups {
+		if len(g.AudienceSegments) > 0 {
+			set = append(set, "adGroups entry "+strconv.Itoa(i+1)+" audienceSegments")
+		}
+	}
+	for i, g := range cfg.DisplayAdGroups {
+		lists("displayAdGroups entry "+strconv.Itoa(i+1)+" ", g)
+	}
+	if cfg.PerformanceMaxAudienceSignal != "" {
+		set = append(set, "performanceMaxAudienceSignal")
+	}
+	if len(cfg.SharedNegativeKeywordLists) > 0 {
+		set = append(set, "sharedNegativeKeywordLists")
+	}
+	if len(cfg.ConversionActions) > 0 {
+		set = append(set, "conversionActions")
+	}
+	return set
 }
 
-// demandGenAudienceForbiddenMessage is the 403 sentence. Service-authored: it names the input
-// and the relation, never a caller value.
-const demandGenAudienceForbiddenMessage = "Demand Gen audiences (googleAdsConfig.demandGenAudience and each " +
-	"demandGenAdGroups audience) require the global_marketing_ops role on this project"
+// marketingOpsForbiddenMessage is the 403 sentence for the gated fields. Service-authored: it
+// names the inputs (service-derived, see GoogleAdsMarketingOpsInputs) and the relation, never a
+// caller value.
+func marketingOpsForbiddenMessage(fields []string) string {
+	return "googleAdsConfig inputs that name a resource on the shared Google Ads account require " +
+		"the global_marketing_ops role on this project: " + strings.Join(fields, ", ")
+}
 
-// requireMarketingOpsForAudiences refuses a google-ads create that names a Demand Gen Audience
-// unless the caller holds global_marketing_ops on the path project.
+// requireMarketingOpsForSharedAccountInputs refuses a google-ads create that sets any
+// GoogleAdsMarketingOpsInputs field unless the caller holds global_marketing_ops on the path
+// project. One check per request, however many fields are set.
 //
 // The gateway admits every campaign_manager to create-campaigns, and campaign_manager is
 // `executive_director or global_marketing_ops` (lfx-v2-helm model.fga): it includes each
-// foundation's executive directors. An Audience is a resource of the Google Ads account every
-// foundation shares, so a campaign_manager check alone would let one foundation's ED target
-// audiences built for another. The gateway cannot narrow this itself because the input is in
-// the body, not the route, so the check is made here, on the same relation the
-// marketing-ops-api gateway rule uses for the conversion-actions read (#486).
+// foundation's executive directors. Audiences, user lists, custom segments, shared sets and conversion
+// actions are resources of the Google Ads account every foundation shares, so a campaign_manager check alone
+// would let one foundation's ED target or reuse resources built for another. The gateway cannot
+// narrow this itself because the inputs are in the body, not the route, so the check is made
+// here, on the same relation the marketing-ops-api gateway rule uses for the conversion-actions
+// read (#486).
 //
 // Fail closed: no checker, no actor, or a check that could not be completed answers 503, and
 // only a definite grant admits the request.
-func (s *BriefService) requireMarketingOpsForAudiences(ctx context.Context, projectSlug string, platforms []model.Provider, config json.RawMessage) error {
-	if !slices.Contains(platforms, model.ProviderGoogleAds) || !GoogleAdsDemandGenAudienceRequested(config) {
+func (s *BriefService) requireMarketingOpsForSharedAccountInputs(ctx context.Context, projectSlug string, platforms []model.Provider, config json.RawMessage) error {
+	if !slices.Contains(platforms, model.ProviderGoogleAds) {
 		return nil
 	}
+	fields := GoogleAdsMarketingOpsInputs(config)
+	if len(fields) == 0 {
+		return nil
+	}
+	named := strings.Join(fields, ", ")
 	unavailable := &briefs.ConnServiceUnavailableError{Code: "503",
-		Message: "could not verify the global_marketing_ops role that Demand Gen audiences require; retry, or omit the audience"}
+		Message: "could not verify the global_marketing_ops role that these googleAdsConfig inputs require (" +
+			named + "); retry, or omit them"}
 	checker := s.marketingOpsChecker()
 	if checker == nil {
-		slog.ErrorContext(ctx, "refusing a Demand Gen audience: no marketing-ops checker is configured (NATS_URL empty?)",
-			"project_id", projectSlug)
+		slog.ErrorContext(ctx, "refusing shared-account Google Ads inputs: no marketing-ops checker is configured (NATS_URL empty?)",
+			"project_id", projectSlug, "fields", named)
 		return unavailable
 	}
 	actor := actorFromCtx(ctx)
 	if actor == nil || actor.Username == "" {
-		slog.ErrorContext(ctx, "refusing a Demand Gen audience: the request carries no authenticated username",
-			"project_id", projectSlug)
+		slog.ErrorContext(ctx, "refusing shared-account Google Ads inputs: the request carries no authenticated username",
+			"project_id", projectSlug, "fields", named)
 		return unavailable
 	}
 	ok, err := checker.IsGlobalMarketingOps(ctx, projectSlug, actor.Username)
 	if err != nil {
-		slog.ErrorContext(ctx, "refusing a Demand Gen audience: the global_marketing_ops check failed",
-			"project_id", projectSlug, "error", err)
+		slog.ErrorContext(ctx, "refusing shared-account Google Ads inputs: the global_marketing_ops check failed",
+			"project_id", projectSlug, "fields", named, "error", err)
 		return unavailable
 	}
 	if !ok {
-		slog.WarnContext(ctx, "refused a Demand Gen audience from a caller without global_marketing_ops",
-			"project_id", projectSlug)
-		return &briefs.ForbiddenError{Code: "403", Message: demandGenAudienceForbiddenMessage}
+		slog.WarnContext(ctx, "refused shared-account Google Ads inputs from a caller without global_marketing_ops",
+			"project_id", projectSlug, "fields", named)
+		return &briefs.ForbiddenError{Code: "403", Message: marketingOpsForbiddenMessage(fields)}
 	}
 	return nil
 }

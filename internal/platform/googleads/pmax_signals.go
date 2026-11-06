@@ -82,7 +82,8 @@ func (p performanceMaxSignalPlan) count() int {
 // told which one collapsed, and the refusal names it before anything is paid for.
 //
 // The audience check enforces the connected Google Ads account (same customer id), which
-// is the boundary; per-foundation ownership (#468) was closed as won't do. The dispatch
+// every foundation shares, so create-campaigns also requires global_marketing_ops on the
+// project for a signal (service.GoogleAdsMarketingOpsInputs). The dispatch
 // adapter keeps the audience signal behind a per-deployment opt-in that is off by default
 // (GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED, see dispatch.googleAdsPMaxAudienceSignalEnabled).
 // The search themes are free text and are not gated.

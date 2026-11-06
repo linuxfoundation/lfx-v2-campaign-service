@@ -268,12 +268,13 @@ var AccountMonitorScopeConflictError = Type("account-monitor-scope-conflict-erro
 // narrower global_marketing_ops relation itself for the inputs that name resources on a
 // Google Ads account shared across foundations.
 //
-// The message example is the exact sentence the service returns
-// (internal/service demandGenAudienceForbiddenMessage); design does not import internal, so it
-// is copied, and TestForbiddenErrorExampleMatchesService pins the two together.
+// The message example is the exact sentence the service returns for a request whose only gated
+// input is demandGenAudience (internal/service marketingOpsForbiddenMessage, which lists every
+// gated field the request set); design does not import internal, so it is copied, and
+// TestForbiddenErrorExampleMatchesService pins the two together.
 var ForbiddenError = Type("forbidden-error", func() {
-	errorAttrs("403", "Demand Gen audiences (googleAdsConfig.demandGenAudience and each "+
-		"demandGenAdGroups audience) require the global_marketing_ops role on this project")
+	errorAttrs("403", "googleAdsConfig inputs that name a resource on the shared Google Ads account "+
+		"require the global_marketing_ops role on this project: demandGenAudience")
 })
 
 var PreconditionFailedError = Type("precondition-failed-error", func() {
