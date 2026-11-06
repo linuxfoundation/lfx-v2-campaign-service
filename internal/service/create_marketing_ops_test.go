@@ -71,6 +71,10 @@ func TestGoogleAdsMarketingOpsInputs(t *testing.T) {
 		{"empty demographic custom audiences", `{"googleAdsConfig":{"demandGenDemographics":{"customAudiences":[]}}}`, nil},
 		{"demographic user lists and custom audiences", `{"googleAdsConfig":{"demandGenDemographics":{"audienceSegments":["a"],"customAudiences":[" "]}}}`,
 			[]string{"demandGenDemographics.audienceSegments", "demandGenDemographics.customAudiences"}},
+		// #518: each demandGenAdGroups entry's own demographics, by 1-based position.
+		{"group demographics alone are not gated", `{"googleAdsConfig":{"demandGenAdGroups":[{"name":"a","demographics":{"ageRanges":["25-34"]}}]}}`, nil},
+		{"group demographic user lists and custom audiences", `{"googleAdsConfig":{"demandGenAdGroups":[{"name":"a"},{"name":"b","demographics":{"audienceSegments":["a"],"customAudiences":[" "]}}]}}`,
+			[]string{"demandGenAdGroups entry 2 demographics.audienceSegments", "demandGenAdGroups entry 2 demographics.customAudiences"}},
 		{"several, in config order", `{"googleAdsConfig":{"sharedNegativeKeywordLists":["s"],"performanceMaxAudienceSignal":"1","demandGenAudience":"a","customAudiences":["c"]}}`,
 			[]string{"demandGenAudience", "customAudiences", "performanceMaxAudienceSignal", "sharedNegativeKeywordLists"}},
 		// encoding/json matches field names case-insensitively, and so does the dispatcher's decode.

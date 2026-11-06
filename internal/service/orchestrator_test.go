@@ -4349,3 +4349,25 @@ func TestReconcileRefKeepsTheDemandGenDemographicAudience(t *testing.T) {
 		t.Errorf("steps must not be copied: %v", ref)
 	}
 }
+
+// #518: each Demand Gen ad group's own demographic Audience is kept too, by resource and by
+// planned name, including the UNCONFIRMED entry that has only the name.
+func TestReconcileRefKeepsEachAdGroupDemographicAudience(t *testing.T) {
+	blob, _ := json.Marshal(map[string]any{
+		"campaignName": "LFX | DemandGen Campaign | tlf | x",
+		"demandGenAdGroupAudiences": []map[string]string{
+			{"adGroupName": "x | A", "demographicAudience": "customers/1/audiences/901", "demographicAudienceName": "LFX | x | A | Demographics 1"},
+			{"adGroupName": "x | B", "demographicAudienceName": "LFX | x | B | Demographics 2"},
+		},
+	})
+	ref, _ := reconcileRef(&model.Campaign{Result: blob})
+	for k, want := range map[string]string{
+		"demandGenAdGroupAudiences[0].demographicAudience":     "customers/1/audiences/901",
+		"demandGenAdGroupAudiences[0].demographicAudienceName": "LFX | x | A | Demographics 1",
+		"demandGenAdGroupAudiences[1].demographicAudienceName": "LFX | x | B | Demographics 2",
+	} {
+		if ref[k] != want {
+			t.Errorf("ref[%q] = %v, want %q (ref %v)", k, ref[k], want, ref)
+		}
+	}
+}
