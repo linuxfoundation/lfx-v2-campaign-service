@@ -2072,8 +2072,9 @@ before the budget mutate, and refused on every channel but Search.
   `CampaignResult.SharedNegativeKeywordListIDs`; a result that does not name
   `<campaignId>~<sharedSetId>` for the operation at its index is UNCONFIRMED and keeps the
   ids matched before it. That check holds each list to the connected Google Ads account
-  (same customer id), which is the boundary; per-foundation ownership (#468) was closed as
-  won't do. The dispatch adapter refuses any non-empty `sharedNegativeKeywordLists`, on any
+  (same customer id), which every foundation shares, so create-campaigns also requires
+  `global_marketing_ops` on the project for any shared list
+  (`service.GoogleAdsMarketingOpsInputs`). The dispatch adapter refuses any non-empty `sharedNegativeKeywordLists`, on any
   channel and before the budget, unless `GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED` is exactly
   `"true"`: a per-deployment opt-in the chart sets to `"false"`, turned on in lfx-v2-argocd.
   `searchAssets` names no account resource and is not gated.
@@ -2278,7 +2279,7 @@ resource under another customer — the `validateConversionActions` check, for t
 reason. The connected Google Ads account (same customer id) is the boundary that check
 enforces. That account is shared by every foundation and `campaign_manager` includes
 foundation executive directors, so create-campaigns also requires `global_marketing_ops` on
-the project for any Demand Gen audience. The dispatch adapter refuses the
+the project for any Demand Gen audience (`service.GoogleAdsMarketingOpsInputs`). The dispatch adapter refuses the
 field — and, since #460, every `demandGenAdGroups[].audience` — unless
 `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is exactly `"true"`: a per-deployment opt-in the
 chart sets to `"false"`, turned on in lfx-v2-argocd (still off everywhere).
@@ -2978,7 +2979,8 @@ with Demand Gen's `demandGenAudienceRE`), and a name in another account is refus
 pass `canonicalCampaignID` — positive, base-10, no leading zero — the rule #459 set for
 `DemandGenAudience`, and a value that is only whitespace is refused rather than read as
 absent, as a blank `DemandGenAudience` is. The connected Google Ads account is the boundary
-that check enforces; per-foundation ownership (#468) was closed as won't do. The dispatch
+that check enforces; it is shared by every foundation, so create-campaigns also requires
+`global_marketing_ops` on the project for a signal (`service.GoogleAdsMarketingOpsInputs`). The dispatch
 adapter refuses any non-empty `performanceMaxAudienceSignal` unless
 `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is exactly `"true"`: a per-deployment opt-in the
 chart sets to `"false"`. The search themes (free text) and the
@@ -3172,7 +3174,9 @@ AUDIENCE `bidOnly: false`, together with the four criteria, was accepted.
   client's account — the account check `validateAudienceSegments` does not make. Another
   customer's list is not expected to be accepted (not probed); any refusal would come at the
   criteria mutate, after the ad group exists. The connected Google Ads account is the boundary
-  the check enforces; per-foundation ownership (#468) was closed as won't do. The dispatch
+  the check enforces; it is shared by every foundation, so create-campaigns also requires
+  `global_marketing_ops` on the project for every gated list, and for Search
+  `audienceSegments` (`service.GoogleAdsMarketingOpsInputs`). The dispatch
   adapter refuses Display user lists,
   custom audiences and custom affinities — and since #475 the user-list exclusions and every
   `DisplayAdGroups` entry's lists but user interests — unless

@@ -346,13 +346,15 @@ app:
     # excludedAudienceSegments. A per-deployment opt-in, off by default, like
     # GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED; set it to exactly "true" in
     # lfx-v2-argocd to turn it on. The service checks each segment against the
-    # connected Google Ads account (same customer id), which is the boundary;
-    # per-foundation ownership (#468) was closed as won't do. While off, a
-    # create naming one is refused before anything upstream exists.
-    # userInterests (Google's own categories, at either level),
+    # connected Google Ads account (same customer id), which every foundation
+    # shares, so create-campaigns also requires global_marketing_ops on the
+    # project for any of these fields (checked over NATS; 403 without it).
+    # While off, a create naming one is refused before anything upstream
+    # exists. userInterests (Google's own categories, at either level),
     # excludedPlacements (public domains), Search's observation-only
     # audienceSegments and displayAdGroups entries without those lists are
-    # unaffected. Any value other than "true" is treated as off, so a typo
+    # not behind this flag (Search audienceSegments still need
+    # global_marketing_ops). Any value other than "true" is treated as off, so a typo
     # fails closed.
     GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED:
       value: "false"
@@ -362,8 +364,9 @@ app:
     # asset group as a signal. A per-deployment opt-in, off by default, like
     # GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED; set it to exactly "true" in
     # lfx-v2-argocd to turn it on. The service checks the Audience against the
-    # connected Google Ads account (same customer id), which is the boundary;
-    # per-foundation ownership (#468) was closed as won't do.
+    # connected Google Ads account (same customer id), which every foundation
+    # shares, so create-campaigns also requires global_marketing_ops on the
+    # project for a signal (checked over NATS; 403 without it).
     # While off, a create naming one is refused before anything upstream
     # exists. Search themes and the Performance Max sitelinks, callouts and
     # structured snippets are unaffected. Any value other than "true" is
@@ -376,9 +379,10 @@ app:
     # a Search campaign. A per-deployment opt-in, off by default, like
     # GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED; set it to exactly "true" in
     # lfx-v2-argocd to turn it on. The service checks each shared set against
-    # the connected Google Ads account (same customer id), which is the
-    # boundary; per-foundation ownership (#468) was closed as won't do. While
-    # off, a create naming one is refused before anything upstream exists.
+    # the connected Google Ads account (same customer id), which every
+    # foundation shares, so create-campaigns also requires global_marketing_ops
+    # on the project for any shared list (checked over NATS; 403 without it).
+    # While off, a create naming one is refused before anything upstream exists.
     # searchAssets (images, logo, business name) is unaffected. Any value
     # other than "true" is treated as off, so a typo fails closed.
     GOOGLE_ADS_SHARED_NEGATIVE_LISTS_ENABLED:
