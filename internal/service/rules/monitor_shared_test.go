@@ -89,7 +89,7 @@ func TestBudgetlessCampaignIsPacingUnknown_AllPlatforms(t *testing.T) {
 			return EvaluateMetaMonitor(withMetaWindow(r, 10, now))
 		}},
 		{"linkedin", "ACTIVE", func(r []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
-			return EvaluateLinkedInMonitor(r, 10, now)
+			return EvaluateLinkedInMonitor(r, 10, now, "USD")
 		}},
 		{"reddit", "ACTIVE", func(r []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return EvaluateRedditMonitor(r, 10, now)

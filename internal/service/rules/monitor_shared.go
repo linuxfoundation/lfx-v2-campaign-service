@@ -156,13 +156,17 @@ func sortByPriority(items []model.AccountMonitorActionItem) {
 // unit instead.
 func accountMoney(v float64) string { return fmt.Sprintf("%.2f in account currency", v) }
 
-// The two monitor thresholds that are amounts of money, written in US dollars. Every other
-// monitor threshold is a percentage or a count, which no currency changes.
+// The monitor thresholds that are amounts of money, written in US dollars. Every other monitor
+// threshold is a percentage or a count, which no currency changes.
 const (
 	// placeholderBudgetMaxUSD is the daily budget (INCLUSIVE) at or below which an active
 	// campaign is treated as carrying a placeholder: about a dollar a day buys too few clicks to
-	// read anything from.
+	// read anything from. LinkedIn's paused-campaign rule reads the same line from the other
+	// side: a daily budget above it is a real one (isRealBudget).
 	placeholderBudgetMaxUSD = 1.0
+	// pausedRealTotalBudgetMinUSD is the lifetime budget (EXCLUSIVE) above which a paused
+	// LinkedIn campaign is treated as carrying real money worth flagging.
+	pausedRealTotalBudgetMinUSD = 10.0
 	// highAvgCpcUSD is the average CPC (EXCLUSIVE) above which clicks are too expensive for an
 	// event/awareness campaign.
 	highAvgCpcUSD = 5.0
@@ -242,8 +246,23 @@ func isPlaceholderBudget(budgetDay float64, currency string) bool {
 // currency, both compared at the currency's minor unit — the precision the item prints it at. It
 // is never high in a currency that cannot be sized.
 func isHighAvgCpc(avgCpc float64, currency string) bool {
-	limit, ok := accountThreshold(highAvgCpcUSD, currency)
-	return ok && moneyAt(avgCpc, currency) > limit
+	return aboveAccountThreshold(avgCpc, highAvgCpcUSD, currency)
+}
+
+// isRealBudget reports whether a paused campaign's budget in currency is real money: a lifetime
+// budget above pausedRealTotalBudgetMinUSD, or a daily budget above placeholderBudgetMaxUSD, each
+// sized in that currency and compared at its minor unit. It is never real in a currency that
+// cannot be sized: guessing dollars there is the misfire #454 removed.
+func isRealBudget(totalBudget, budgetDay float64, currency string) bool {
+	return aboveAccountThreshold(totalBudget, pausedRealTotalBudgetMinUSD, currency) ||
+		aboveAccountThreshold(budgetDay, placeholderBudgetMaxUSD, currency)
+}
+
+// aboveAccountThreshold reports whether amount, in currency, is above usd sized in that currency,
+// both compared at the currency's minor unit. False when the currency cannot be sized.
+func aboveAccountThreshold(amount, usd float64, currency string) bool {
+	limit, ok := accountThreshold(usd, currency)
+	return ok && moneyAt(amount, currency) > limit
 }
 
 // moneyRulesSkippedGoogleMicrosoft is moneyRulesSkippedItem's subject for Google and Microsoft,
