@@ -982,7 +982,9 @@ demandGenDemographics?:         — OPTIONAL, DEMAND GEN ONLY (#498). Demographi
                                   if it fails; a create that may have landed (5xx, timeout, unusable
                                   2xx) returns a partial result naming the planned Audience, and a
                                   budget failure after it names the Audience too.
-                                  Result: `demandGenDemographicAudience` (the resource name), a step
+                                  Result: `demandGenDemographicAudience` (the resource name),
+                                  `demandGenDemographicAudienceName` (its planned name, set even
+                                  when the create is UNCONFIRMED), a step
                                   saying created or reused, and each ad group's
                                   `audienceCriteriaIds`.
 

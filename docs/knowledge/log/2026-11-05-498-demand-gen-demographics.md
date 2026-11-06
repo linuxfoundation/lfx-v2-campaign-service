@@ -39,3 +39,9 @@ Probes run on 2026-11-05 against account 8666746580 at v23, validateOnly, with n
 
 Not verified: a persisted (non-validateOnly) create and its GAQL read-back, which the reuse
 comparison relies on. That is why the field stays behind `GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED`.
+
+Review follow-up (#510):
+- The Demand Gen exclusion refusal now says to list the values to TARGET, which are the complement of the excluded ones.
+- A partial carrying the Audience is never reported as `budget_name_taken`.
+- New result field `demandGenDemographicAudienceName` records the planned name, including on an UNCONFIRMED create.
+- `reconcileRef` keeps `demandGenDemographicAudience` on a lost claim.

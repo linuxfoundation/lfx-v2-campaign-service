@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // fullDemographics is every dimension, in a scrambled order and mixed case, with repeats.
@@ -227,8 +229,8 @@ func TestPreflightRefusesDemandGenExclusionsPointingAtDemographics(t *testing.T)
 	in := demographicsInput()
 	in.ExcludedAgeRanges = []string{"18-24"}
 	_, err := c.preflightCampaignKind(campaignKindDemandGen, in)
-	if err == nil || !strings.Contains(err.Error(), "DemandGenDemographics") {
-		t.Fatalf("err = %v, want the exclusion refusal naming DemandGenDemographics", err)
+	if err == nil || !strings.Contains(err.Error(), "DemandGenDemographics") || !strings.Contains(err.Error(), "to TARGET (every value except the excluded ones)") {
+		t.Fatalf("err = %v, want the exclusion refusal pointing at the complement in DemandGenDemographics", err)
 	}
 	in = demographicsInput()
 	in.ExcludedIncomeRanges = []string{"INCOME_RANGE_0_50"}
@@ -272,7 +274,7 @@ func TestCreateDemandGenCampaign_CreatesAndAttachesTheDemographicAudience(t *tes
 	if strings.Join(res.AudienceCriteriaIDs, ",") != "800" {
 		t.Errorf("AudienceCriteriaIDs = %v, want [800]", res.AudienceCriteriaIDs)
 	}
-	want := "Demographic Audience created: " + testDemographicAudience + " (3 age range(s), 2 gender(s), 2 income range(s), 1 parental status(es), 1 user list(s)), attached to every Demand Gen ad group"
+	want := "Demographic Audience created: " + testDemographicAudience + " (3 age range(s), 2 gender(s), 2 income range(s), 1 parental status(es), 1 user list(s)), to be attached to every Demand Gen ad group"
 	if res.Steps[0] != want {
 		t.Errorf("first step = %q, want %q", res.Steps[0], want)
 	}
@@ -309,7 +311,7 @@ func TestCreateDemandGenCampaign_DemographicAudienceOnEveryAdGroup(t *testing.T)
 // audienceRow is the GAQL row Google returns for the Audience fullDemographics creates.
 func audienceRow(status, dimensions string) string {
 	return `{"results":[{"audience":{"resourceName":"` + testDemographicAudience + `","name":"` + demandGenDemographicsName +
-		`","status":"` + status + `","dimensions":` + dimensions + `}}]}`
+		`","status":"` + status + `","scope":"CUSTOMER","dimensions":` + dimensions + `}}]}`
 }
 
 // A retry lands on NAME_ALREADY_IN_USE: the Audience is looked up read-only by the exact name
@@ -354,7 +356,8 @@ func TestCreateDemandGenCampaign_DemographicAudienceFailuresCreateNothingElse(t 
 	extraArm := strings.Replace(wantFullDimensions, `{"userList":{"userList":"customers/1234567890/userLists/123"}}`,
 		`{"userList":{"userList":"customers/1234567890/userLists/123"}},{"customAudience":{"customAudience":"customers/1234567890/customAudiences/9"}}`, 1)
 	withExclusion := strings.Replace(audienceRow("ENABLED", wantFullDimensions), `"dimensions":`, `"exclusionDimension":{"exclusions":[{"userList":{"userList":"customers/1234567890/userLists/5"}}]},"dimensions":`, 1)
-	otherScope := strings.Replace(audienceRow("ENABLED", wantFullDimensions), `"status":"ENABLED"`, `"status":"ENABLED","scope":"ASSET_GROUP"`, 1)
+	otherScope := strings.Replace(audienceRow("ENABLED", wantFullDimensions), `"scope":"CUSTOMER"`, `"scope":"ASSET_GROUP"`, 1)
+	noScope := strings.Replace(audienceRow("ENABLED", wantFullDimensions), `"scope":"CUSTOMER",`, ``, 1)
 	for name, tc := range map[string]struct {
 		overrides map[string]func(int, []byte, http.ResponseWriter)
 		wantSub   string
@@ -369,7 +372,10 @@ func TestCreateDemandGenCampaign_DemographicAudienceFailuresCreateNothingElse(t 
 		}, "carries exclusions this client never set"},
 		"name in use, another scope": {map[string]func(int, []byte, http.ResponseWriter){
 			"audiences:mutate": nameInUse, "googleAds:search": rows(otherScope),
-		}, "has scope ASSET_GROUP, not CUSTOMER"},
+		}, `has scope "ASSET_GROUP", not CUSTOMER`},
+		"name in use, scope missing": {map[string]func(int, []byte, http.ResponseWriter){
+			"audiences:mutate": nameInUse, "googleAds:search": rows(noScope),
+		}, `has scope "", not CUSTOMER`},
 		"name in use, edited since": {map[string]func(int, []byte, http.ResponseWriter){
 			"audiences:mutate": nameInUse, "googleAds:search": rows(audienceRow("ENABLED", edited)),
 		}, "differ from the planned ones"},
@@ -432,7 +438,8 @@ func TestCreateDemandGenCampaign_UnconfirmedDemographicAudienceIsAPartial(t *tes
 			if err == nil || !strings.Contains(err.Error(), "creation UNCONFIRMED") {
 				t.Fatalf("err = %v, want UNCONFIRMED", err)
 			}
-			if res == nil || res.CampaignBudgetID != "" || len(res.Steps) != 1 || !strings.Contains(res.Steps[0], demandGenDemographicsName) {
+			if res == nil || res.CampaignBudgetID != "" || len(res.Steps) != 1 || !strings.Contains(res.Steps[0], demandGenDemographicsName) ||
+				res.DemandGenDemographicAudienceName != demandGenDemographicsName {
 				t.Fatalf("result = %+v, want a partial naming the planned Audience", res)
 			}
 			if outcome, ok := CreateOutcome(res, err); !ok || outcome == "" {
@@ -524,5 +531,36 @@ func TestDemandGenDemographicsRefusalHintIsAccepted(t *testing.T) {
 				t.Errorf("err = %v, want the hint %q", err, hint)
 			}
 		})
+	}
+}
+
+// The Audience was created, then the budget hit DUPLICATE_NAME and its reuse lookup failed. The
+// outcome must not be budget_name_taken ("nothing new was created"): this attempt created the
+// Audience, which the partial names by resource and by planned name.
+func TestCreateDemandGenCampaign_BudgetNameTakenAfterTheAudienceIsNotNothingCreated(t *testing.T) {
+	_, c, _ := newDGRig(t, nil, map[string]func(int, []byte, http.ResponseWriter){
+		"audiences:mutate": audienceCreated,
+		"campaignBudgets:mutate": func(_ int, _ []byte, w http.ResponseWriter) {
+			gaqlError(http.StatusBadRequest, "campaignBudgetError", "DUPLICATE_NAME")(w, nil)
+		},
+		"googleAds:search": func(_ int, _ []byte, w http.ResponseWriter) {
+			gaqlError(http.StatusBadRequest, "requestError", "INVALID_INPUT")(w, nil)
+		},
+	})
+	res, err := c.CreateDemandGenCampaign(context.Background(), demographicsInput())
+	if err == nil || res == nil {
+		t.Fatalf("res, err = %+v, %v; want a partial and an error", res, err)
+	}
+	if res.DemandGenDemographicAudience != testDemographicAudience || res.DemandGenDemographicAudienceName != demandGenDemographicsName {
+		t.Errorf("partial = %+v, want the Audience named", res)
+	}
+	outcome, ok := CreateOutcome(res, err)
+	if !ok || outcome == domain.CreateOutcomeBudgetNameTaken {
+		t.Errorf("CreateOutcome = %q, %v; must not claim nothing new was created", outcome, ok)
+	}
+	// Without the Audience the same refusal is still budget_name_taken.
+	res.DemandGenDemographicAudience = ""
+	if outcome, _ := CreateOutcome(res, err); outcome != domain.CreateOutcomeBudgetNameTaken {
+		t.Errorf("CreateOutcome without an Audience = %q, want budget_name_taken", outcome)
 	}
 }

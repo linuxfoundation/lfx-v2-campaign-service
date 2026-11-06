@@ -155,8 +155,9 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	// fetch so a bad image costs no Audience either. Every failure returns (nil, err): no
 	// budget or campaign exists, and an Audience it may have left is found by name and
 	// reused on the retry (ensureDemandGenDemographicAudience).
-	var demographicAudience string
+	var demographicAudience, demographicAudienceName string
 	if pf.demandGenDemographics != nil {
+		demographicAudienceName = pf.demandGenDemographics.create.Name
 		resource, how, unconfirmed, audErr := c.ensureDemandGenDemographicAudience(ctx, pf.demandGenDemographics)
 		if audErr != nil {
 			if !unconfirmed {
@@ -167,7 +168,8 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 			return &CampaignResult{
 				Platform: platformGoogleAds, AccountLabel: c.account.Label, CustomerID: c.account.CustomerID,
 				CampaignName: campaignName, CampaignBudgetName: budgetName,
-				Steps: append(steps, fmt.Sprintf("Demographic Audience UNCONFIRMED: %q may exist; nothing else was created", pf.demandGenDemographics.create.Name)),
+				DemandGenDemographicAudienceName: demographicAudienceName,
+				Steps:                            append(steps, fmt.Sprintf("Demographic Audience UNCONFIRMED: %q may exist; nothing else was created", pf.demandGenDemographics.create.Name)),
 			}, audErr
 		}
 		demographicAudience = resource
@@ -188,7 +190,8 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 			CampaignBudgetName: budgetName,
 			Steps:              steps,
 			// The Audience exists before the budget, so every partial names it.
-			DemandGenDemographicAudience: demographicAudience,
+			DemandGenDemographicAudience:     demographicAudience,
+			DemandGenDemographicAudienceName: demographicAudienceName,
 		}
 	}
 

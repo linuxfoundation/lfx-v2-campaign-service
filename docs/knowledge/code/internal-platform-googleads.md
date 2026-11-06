@@ -2473,7 +2473,10 @@ definite failure returns `(nil, err)`, since nothing was created; a create that 
 landed returns a partial naming the planned Audience (UNCONFIRMED), and a budget refusal
 after the Audience returns `namePartial()`, which names it. The cascade then attaches the resource name to
 every group through `createDemandGenAdGroupTargeting`, exactly as a `DemandGenAudience`.
-Result: `CampaignResult.DemandGenDemographicAudience` (on every partial too) and a
+Result: `CampaignResult.DemandGenDemographicAudience` and `DemandGenDemographicAudienceName`
+(the planned name; on every partial too, the UNCONFIRMED one included). `CreateOutcome` never
+reports `budget_name_taken` ("nothing new was created") for a partial carrying the Audience;
+it falls through to `create_unconfirmed`. A lost claim keeps both in `reconcileRef`. And a
 `Demographic Audience created|reused: …` step. Every create body shape was accepted by a
 validateOnly probe on 2026-11-05, including a temporary Audience attached to a Demand Gen ad
 group; a persisted create and its read-back are not yet verified, which is why

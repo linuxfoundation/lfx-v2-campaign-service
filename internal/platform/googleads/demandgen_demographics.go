@@ -464,8 +464,8 @@ func (c *Client) demographicAudienceNamed(ctx context.Context, plan *demandGenDe
 	if a.Status != audienceStatusEnabled {
 		return "", fmt.Errorf("the Audience %s is %s, not ENABLED; rename it in Google Ads, or change the demographics", a.ResourceName, a.Status)
 	}
-	if a.Scope != "" && a.Scope != audienceScopeCustomer {
-		return "", fmt.Errorf("the Audience %s has scope %s, not CUSTOMER, and is left as it is; rename it in Google Ads, or change the demographics", a.ResourceName, a.Scope)
+	if a.Scope != audienceScopeCustomer {
+		return "", fmt.Errorf("the Audience %s has scope %q, not CUSTOMER, and is left as it is; rename it in Google Ads, or change the demographics", a.ResourceName, a.Scope)
 	}
 	if ex := bytes.TrimSpace(a.ExclusionDimension); len(ex) > 0 && !bytes.Equal(ex, []byte("null")) && !bytes.Equal(ex, []byte("{}")) {
 		return "", fmt.Errorf("the Audience %s carries exclusions this client never set and is left as it is; rename it in Google Ads, or change the demographics", a.ResourceName)
@@ -544,5 +544,5 @@ func segmentKey(s audienceSegment) string {
 
 // demographicAudienceStep is the step line for the Audience.
 func demographicAudienceStep(how, resource string, plan *demandGenDemographicPlan) string {
-	return fmt.Sprintf("Demographic Audience %s: %s (%s), attached to every Demand Gen ad group", how, resource, plan.summary)
+	return fmt.Sprintf("Demographic Audience %s: %s (%s), to be attached to every Demand Gen ad group", how, resource, plan.summary)
 }

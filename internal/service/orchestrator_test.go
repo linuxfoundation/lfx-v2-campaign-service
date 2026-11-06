@@ -4319,3 +4319,33 @@ func TestReconcileRefKeepsXMediaKeyButNoOtherKeyFields(t *testing.T) {
 		t.Errorf("reconcile %s carries a non-identifier key field or URL", dump)
 	}
 }
+
+// A Google Ads Demand Gen partial (#498) keeps its demographic Audience on a lost claim: the
+// resource name when the Audience was created, and the planned name when the create is
+// UNCONFIRMED and no budget or campaign exists.
+func TestReconcileRefKeepsTheDemandGenDemographicAudience(t *testing.T) {
+	created, _ := json.Marshal(map[string]any{
+		"campaignName":                     "LFX | DemandGen Campaign | tlf | x",
+		"campaignBudgetName":               "LFX | DemandGen Campaign | tlf | x",
+		"demandGenDemographicAudience":     "customers/1/audiences/777",
+		"demandGenDemographicAudienceName": "LFX | DemandGen Campaign | tlf | x | Demographics f339a2ebe4b8c46f",
+		"steps":                            []string{"Demographic Audience created"},
+	})
+	ref, _ := reconcileRef(&model.Campaign{Result: created})
+	if ref["demandGenDemographicAudience"] != "customers/1/audiences/777" ||
+		ref["demandGenDemographicAudienceName"] != "LFX | DemandGen Campaign | tlf | x | Demographics f339a2ebe4b8c46f" {
+		t.Errorf("created partial lost its Audience: %v", ref)
+	}
+	unconfirmed, _ := json.Marshal(map[string]any{
+		"campaignName":                     "LFX | DemandGen Campaign | tlf | x",
+		"demandGenDemographicAudienceName": "LFX | DemandGen Campaign | tlf | x | Demographics f339a2ebe4b8c46f",
+		"steps":                            []string{"Demographic Audience UNCONFIRMED"},
+	})
+	ref, _ = reconcileRef(&model.Campaign{Result: unconfirmed})
+	if ref["demandGenDemographicAudienceName"] != "LFX | DemandGen Campaign | tlf | x | Demographics f339a2ebe4b8c46f" {
+		t.Errorf("unconfirmed partial lost the planned Audience name: %v", ref)
+	}
+	if _, ok := ref["steps"]; ok {
+		t.Errorf("steps must not be copied: %v", ref)
+	}
+}

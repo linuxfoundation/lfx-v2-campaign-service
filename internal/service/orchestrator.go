@@ -2409,8 +2409,10 @@ var reconcileIdentifierSuffixes = []string{"ids", "urns", "names", "id", "urn", 
 // media_key of an image uploaded BEFORE the campaign POST, so on X's name-only partial it is
 // the only handle on that library entry. A "key" suffix is deliberately NOT a rule: it would
 // admit credential-shaped fields (apiKey, tokenKey). Every dispatcher's partial-result struct
-// was checked when this list was written; this is the only such handle today.
-var reconcileIdentifierExactKeys = map[string]bool{"mediakey": true}
+// was checked when this list was written.
+// Google Ads' demandGenDemographicAudience (#498) is the resource name of an Audience created
+// BEFORE the budget, the handle to it on a partial that may carry no campaign at all.
+var reconcileIdentifierExactKeys = map[string]bool{"mediakey": true, "demandgendemographicaudience": true}
 
 func isReconcileIdentifierKey(k string) bool {
 	lk := strings.ToLower(k)

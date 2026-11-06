@@ -659,6 +659,10 @@ type CampaignResult struct {
 	// budget. Set on every partial past that step, so a reconciler can find it; each Demand
 	// Gen ad group's AudienceCriteriaIDs hold its attachment. A step line says which.
 	DemandGenDemographicAudience string `json:"demandGenDemographicAudience,omitempty"`
+	// DemandGenDemographicAudienceName is the planned Audience's deterministic name, set on
+	// every result once the Audience step has run, including the UNCONFIRMED partial whose
+	// Audience may exist without a resource name. It is the key to find that Audience by.
+	DemandGenDemographicAudienceName string `json:"demandGenDemographicAudienceName,omitempty"`
 	// GeoCriterionIDs are the location criteria created for CampaignInput.GeoTargets
 	// (LFXV2-3283).
 	//
