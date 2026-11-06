@@ -944,15 +944,16 @@ child-cascade contract:
   (#535).** Search, Display (each `displayAdGroups[]` entry), Demand Gen (each
   `demandGenAdGroups[]` entry) and the retained Video cascade all create the ad group PAUSED,
   and Performance Max creates its asset group PAUSED. Before #535 Display, Demand Gen and
-  Video created theirs ENABLED, for no stated reason beyond copying one another; a live
-  Display ad group read back ENABLED under its PAUSED campaign, so enabling that campaign in
-  the Google Ads UI would have started it serving at once while a Search campaign would not.
-  The decision: ad groups do NOT stay ENABLED under a PAUSED campaign. The service's enable
+  Video created theirs ENABLED, for no stated reason beyond copying one another, and a live
+  Display ad group read back ENABLED under its PAUSED campaign. The ADS were PAUSED on every
+  channel then as now, so enabling only the campaign never started a freshly created campaign
+  serving; the PAUSED ad group is an additional safeguard, and makes the tree uniform with
+  Search: an ENABLED ad group meant that once someone had enabled the ad (in the Google Ads
+  UI, say), enabling the campaign alone was enough to spend. The decision: ad groups do NOT stay ENABLED under a PAUSED campaign. The service's enable
   path already enables them — ACTIVATE flips every recorded ad group and ad (or the asset
   group) before the campaign — so no caller relies on an ENABLED ad group, and a campaign
-  activated through this service serves exactly as before. Enabling only the campaign in the
-  Google Ads UI now leaves it dark until its ad group and ad are enabled too, which is the
-  Search behaviour and the safer failure. Pinned by
+  activated through this service serves exactly as before. Serving outside this service now
+  takes enabling all three levels in the Google Ads UI, which is the Search behaviour. Pinned by
   `TestToggleStatus_ActivateEnablesTheAdGroupsTheCreatePathPaused`.
 
 - **What "fully provisioned" means is CHANNEL-SPECIFIC**, because the five channels this
@@ -3261,9 +3262,9 @@ copy. Counts are 1–5 videos, 1–5 headlines, 1–5 long headlines and 1–5 d
 required; call-to-action texts are **0–5, and absent is not empty**: an omitted list means
 Google supplies its own default, while an empty one would mean no text at all. The AD is
 created PAUSED, and so is the AD GROUP — as on every channel since #535, which found a live
-Display ad group reading back ENABLED under its PAUSED campaign. A tree that starts wholly
-PAUSED cannot begin serving because someone enabled the campaign in the Google Ads UI; the
-activation path is `GoogleAdsDispatcher.ToggleStatus`, whose cascade enables every recorded ad
+Display ad group reading back ENABLED under its PAUSED campaign. The PAUSED ad was already
+enough to keep a new campaign dark; the PAUSED ad group is an additional safeguard, so serving
+outside this service takes enabling every level, as on Search. The activation path is `GoogleAdsDispatcher.ToggleStatus`, whose cascade enables every recorded ad
 group and ad BEFORE the campaign (see "Status toggling (GA-3c)"). Both ids are reported even when the
 ad create fails, under the partial-result contract.
 

@@ -199,8 +199,8 @@ func TestCreateDisplayCampaign_HappyPath(t *testing.T) {
 		t.Errorf("ad group type = %v, want %q", adGroup["type"], adGroupTypeDisplayStandard)
 	}
 	// PAUSED, as on every channel (#535 — a live Display ad group read back ENABLED under
-	// a PAUSED campaign): enabling the campaign outside this service's toggle must not
-	// start the ad group serving.
+	// a PAUSED campaign). The ad is PAUSED as well; this is the additional ad-group-level
+	// safeguard Search already had.
 	if adGroup["status"] != StatusPaused {
 		t.Errorf("ad group status = %v, want %s", adGroup["status"], StatusPaused)
 	}

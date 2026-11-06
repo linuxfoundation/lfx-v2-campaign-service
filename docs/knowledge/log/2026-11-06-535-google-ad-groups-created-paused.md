@@ -20,8 +20,11 @@ Video cascade created theirs ENABLED. All of them now send `status: PAUSED` (`St
   every recorded ad group and ad (or the PMax asset group) BEFORE the campaign, on every
   channel, and `googleAdsActivationGate` refuses a campaign with no recorded ad group. No code
   reads an ad group's status or filters GAQL on `ad_group.status`. So a campaign activated
-  through this service serves as before. A campaign enabled only in the Google Ads UI now stays
-  dark until its ad group and ad are enabled too, which is how Search already behaved.
+  through this service serves as before.
+- **What it changes outside the service:** the ADS were already created PAUSED on every channel,
+  so enabling only the campaign never started a new campaign serving. The PAUSED ad group is an
+  additional safeguard: before, once someone had enabled the ad in the Google Ads UI, enabling
+  the campaign alone was enough to spend; now every level must be enabled, as on Search.
 - **Tests:** the per-channel create tests now expect PAUSED, and
   `TestToggleStatus_ActivateEnablesTheAdGroupsTheCreatePathPaused` pins
   adGroups → adGroupAds → campaigns with ENABLED on Demand Gen, Display and Video. Mutation-checked:

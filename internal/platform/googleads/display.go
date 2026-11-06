@@ -345,9 +345,10 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 		}
 
 		// The ad group, typed DISPLAY_STANDARD so the ad below is a shape it
-		// accepts. PAUSED, as on every channel here (#535): the whole tree starts dark, so
-		// enabling the campaign anywhere other than this service's toggle — the Google Ads
-		// UI included — cannot start this ad group serving. Activation goes through
+		// accepts. PAUSED, as on every channel here (#535). The ad below is PAUSED too, which
+		// alone keeps a new campaign dark; the PAUSED ad group is an additional safeguard,
+		// so serving outside this service's toggle takes enabling every level in the Google
+		// Ads UI, as on Search. Activation goes through
 		// GoogleAdsDispatcher.ToggleStatus, whose cascade enables every recorded ad group and
 		// ad before the campaign.
 		adGroupName := g.name

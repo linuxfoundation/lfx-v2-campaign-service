@@ -206,8 +206,8 @@ func TestCreateVideoCampaign_HappyPath(t *testing.T) {
 	if got := videoAdGroup["type"]; got != adGroupTypeVideoResponsive {
 		t.Errorf("ad group type = %v, want %q", got, adGroupTypeVideoResponsive)
 	}
-	// PAUSED, as on every channel (#535): enabling the campaign outside this service's
-	// toggle must not start the ad group serving.
+	// PAUSED, as on every channel (#535): an additional safeguard on top of the PAUSED ad,
+	// as Search already had.
 	if got := videoAdGroup["status"]; got != StatusPaused {
 		t.Errorf("ad group status = %v, want %s", got, StatusPaused)
 	}
