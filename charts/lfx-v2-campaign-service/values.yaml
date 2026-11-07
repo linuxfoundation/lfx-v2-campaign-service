@@ -319,6 +319,18 @@ app:
     REDDIT_KEYWORD_TARGETING_WRITES_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to redditConfig.conversionEvent (#549): the
+    # pixel event (SIGN_UP, LEAD, PURCHASE, ...) a conversions campaign
+    # optimizes toward, sent as the campaign's and ad group's
+    # optimization_goal instead of the default PURCHASE. Default off: no live
+    # create has confirmed Reddit accepts a goal other than PURCHASE on a
+    # CONVERSIONS campaign under budget optimization. While off, a create that
+    # sets the field is refused with a 400 before any job exists; one that
+    # omits it is unaffected. Not role-gated: it names no account resource.
+    # Any value other than "true" is treated as off, so a typo fails closed.
+    REDDIT_CONVERSION_EVENT_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to Reddit custom audiences (#549): the create
     # inputs redditConfig.customAudienceIds / excludedCustomAudienceIds and the
     # picker read reddit-ads/custom-audiences. Built from Reddit's public v3
