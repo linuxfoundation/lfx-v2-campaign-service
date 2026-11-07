@@ -2940,6 +2940,39 @@ imageAssetId?: string            — The id of a creative asset uploaded to THIS
                                   dispatch of the same image to the same account finds that
                                   library entry by name and uploads nothing. The result records
                                   `MediaKey`.
+geoTargets?: string[]            — Country targeting (#564). ISO 3166-1 alpha-2 codes, trimmed,
+                                  uppercased and de-duplicated; at most 50. Before anything is
+                                  created each code is resolved with X's
+                                  `GET targeting_criteria/locations?location_type=COUNTRIES&country_code=XX`,
+                                  which must answer exactly one country-level entry; the line item
+                                  this create makes then gets one `LOCATION` / `EQ` criterion per
+                                  country (`POST accounts/:id/targeting_criteria`). Omitted, the
+                                  line item has no location criterion and serves worldwide, as
+                                  before.
+languages?: string[]             — Language targeting (#564). X language values (e.g. `en`, `ja`),
+                                  trimmed, lowercased and de-duplicated, 2-8 letters or hyphens; at
+                                  most 20. Checked against X's `GET targeting_criteria/languages`
+                                  before anything is created, then sent as `LANGUAGE` / `EQ`
+                                  criteria. Omitted, no language criterion.
+                                  For BOTH lists: OFF unless TWITTER_CREATE_TARGETING_ENABLED is
+                                  exactly "true" — while off, a config setting either is refused
+                                  with a synchronous 400 naming the flag. A value that is not an
+                                  array of strings (null reads as absent), a blank or malformed
+                                  entry, or a list over its cap is a synchronous 400
+                                  `invalid campaign config: twitterConfig.<field>: …`. A country or
+                                  language X does not offer, or a lookup that cannot be read, fails
+                                  the job before anything is created. The criteria are POSTed one
+                                  at a time after the line item and BEFORE the promoted tweet; if
+                                  one fails, the create stops there (no tweet is authored or
+                                  promoted) and the job reports the PAUSED campaign and line item
+                                  with how many criteria were applied — enable nothing until the
+                                  targeting is completed in X Ads Manager (an ambiguous failure is
+                                  worded UNCONFIRMED). A retry that REUSES the line item by name
+                                  reads its live criteria and posts only the missing ones before
+                                  the tweet, so it finishes a targeting that stopped part-way; if
+                                  that read fails the create stops before the tweet (the row is
+                                  `created_degraded`, as every reuse is). Not role-gated: a
+                                  country or language names no account resource.
 ```
 
 Connection prerequisites (from the X connection, not this config): the OAuth1 4-tuple (consumer
