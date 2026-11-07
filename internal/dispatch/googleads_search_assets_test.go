@@ -454,3 +454,56 @@ func TestGoogleAds_SharedNegativeListsGateLeavesSearchAssetsAlone(t *testing.T) 
 		t.Errorf("googleAds:mutate bodies = %s, want the business name", cap.googleAdsMutates)
 	}
 }
+
+// The shared set type check (#548) from the outside: a list that is not a negative keyword
+// list reaches the job as the client's own sentence, naming the set's id and type, and a read
+// Google declines to answer reaches it as "answered HTTP n before anything was created". Both
+// are not-created, so the claim is released, and nothing is written.
+func TestGoogleAds_SharedListTypeCheckJobMessages(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		want   []string
+	}{
+		{name: "negative placements set", status: 200,
+			body: `{"results":[{"sharedSet":{"resourceName":"` + gaSharedSet +
+				`","type":"NEGATIVE_PLACEMENTS","status":"ENABLED"}}]}`,
+			want: []string{`(shared set "501") is a shared set of type NEGATIVE_PLACEMENTS, ` +
+				`not NEGATIVE_KEYWORDS`, "omit it"}},
+		{name: "set not in the account", status: 200, body: `{"results":[]}`,
+			want: []string{`(shared set "501") was not found in account "1234567890"`}},
+		{name: "read unavailable", status: 503, body: `{"error":{"code":14}}`,
+			want: []string{"answered HTTP 503 before anything was created",
+				"nothing was created"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setGateEnv(t, constants.EnvGoogleAdsSharedNegativeListsEnabled, "true")
+			opts, cap := targetingServers(t)
+			cap.sharedSetReply = func() (int, string) { return tc.status, tc.body }
+			conn := fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}
+			d := NewGoogleAdsDispatcher(conn, identityEncryptor{}, opts...)
+			cfg := sharedListsConfig(t, "search", []string{gaSharedSet}, nil)
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+			if err == nil || camp != nil {
+				t.Fatalf("camp = %+v, err = %v; want a not-created refusal", camp, err)
+			}
+			var pce *preCreateError
+			if !errors.As(err, &pce) {
+				t.Errorf("error = %v, want a not-created error so the claim is released", err)
+			}
+			got := service.DispatchFailureMessage(model.ProviderGoogleAds, err, true)
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("job message = %q, want it to contain %q", got, want)
+				}
+			}
+			cap.mu.Lock()
+			defer cap.mu.Unlock()
+			if cap.sawBudget || len(cap.campaigns) != 0 || len(cap.sharedSets) != 0 {
+				t.Error("the refusal must happen BEFORE any write")
+			}
+		})
+	}
+}

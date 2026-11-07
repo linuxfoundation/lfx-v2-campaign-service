@@ -26,10 +26,15 @@ package googleads
 // <campaignId>~<sharedSetId> results in operation order, the positional check passed, and GAQL
 // read back both campaign_shared_set rows ENABLED, along with the sets' BROAD, PHRASE and EXACT
 // keyword criteria. A shared set of another type is NOT refused by Google. validateOnly on the
-// same day accepted a NEGATIVE_PLACEMENTS and a BRANDS set on a Search campaign. This client does
-// not refuse one either, because a resource name says nothing about its set's type and checking
-// it would need a read this preflight does not make. No such set has been attached for real, so
-// its effect on a Search campaign is unobserved.
+// same day accepted a NEGATIVE_PLACEMENTS and a BRANDS set on a Search campaign. No such set has
+// been attached for real, so its effect on a Search campaign is unobserved.
+//
+// So this client refuses one itself (#548, owner decision 2026-11-06). A resource name says
+// nothing about its set's type, so the Search create reads shared_set.type and .status for every
+// named list in ONE read-only GAQL query on the connection's account, before the budget mutate
+// (checkSharedNegativeKeywordListTypes). A set that is not NEGATIVE_KEYWORDS, is not ENABLED, or
+// is not in the account is refused there, naming it. A read that fails, or answers with rows
+// that cannot be trusted, stops the create too: the lists are never attached unchecked.
 
 import (
 	"context"
@@ -38,6 +43,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // maxSharedNegativeKeywordLists bounds the list. It is a payload bound, not a probed Google
@@ -110,6 +117,129 @@ func validateSharedNegativeKeywordLists(kind, customerID string, lists []string)
 		out = append(out, name)
 	}
 	return out, nil
+}
+
+// The SharedSetTypeEnum and SharedSetStatusEnum values (v23) the type check names. Only
+// sharedSetTypeNegativeKeywords is accepted; the others are named in the refusal so the operator
+// knows which list they picked. A value outside this vocabulary is upstream text and is never
+// echoed: the refusal says the type is not recognised instead.
+const (
+	sharedSetTypeNegativeKeywords = "NEGATIVE_KEYWORDS"
+	sharedSetStatusEnabled        = "ENABLED"
+	sharedSetStatusRemoved        = "REMOVED"
+)
+
+// sharedSetTypesNamed are the other SharedSetTypeEnum values a refusal may name verbatim.
+var sharedSetTypesNamed = map[string]bool{
+	"NEGATIVE_PLACEMENTS":             true,
+	"ACCOUNT_LEVEL_NEGATIVE_KEYWORDS": true,
+	"BRANDS":                          true,
+	"WEBPAGES":                        true,
+}
+
+// sharedSetRow is one row of checkSharedNegativeKeywordListTypes' query.
+type sharedSetRow struct {
+	SharedSet struct {
+		ResourceName string `json:"resourceName"`
+		Type         string `json:"type"`
+		Status       string `json:"status"`
+	} `json:"sharedSet"`
+}
+
+// checkSharedNegativeKeywordListTypes reads every validated list's type and status in ONE GAQL
+// query on the connection's account and refuses, before any write, a list that is not an
+// ENABLED NEGATIVE_KEYWORDS shared set of that account (#548). lists is
+// validateSharedNegativeKeywordLists' output: trimmed, de-duplicated, canonical, and every one
+// already in this account, so each is safe to interpolate as a GAQL string literal.
+//
+// Outcomes:
+//
+//   - a refusal of the caller's input (a wrong type, a set not ENABLED, no row for a set) is a
+//     domain.PreflightRefusal naming the list and its id: a read made it, and no
+//     write has been sent;
+//   - a read that failed is returned as it is, so the dispatch layer's mapping reports the
+//     status (a 5xx or 429 as "answered HTTP n before anything was created") and the claim is
+//     released;
+//   - rows that cannot be trusted (undecodable, not requested, repeated) fail the create the
+//     same way, as a plain error: the answer is not one a list can be attached on.
+func (c *Client) checkSharedNegativeKeywordListTypes(ctx context.Context, lists []string) error {
+	if len(lists) == 0 {
+		return nil
+	}
+	literals := make([]string, len(lists))
+	position := make(map[string]int, len(lists))
+	for i, name := range lists {
+		literals[i] = "'" + name + "'"
+		position[name] = i
+	}
+	query := "SELECT shared_set.resource_name, shared_set.type, shared_set.status FROM shared_set " +
+		"WHERE shared_set.resource_name IN (" + strings.Join(literals, ", ") + ")"
+	rows, err := c.gaqlSearch(ctx, query)
+	if err != nil {
+		return fmt.Errorf("google-ads shared negative keyword lists could not be checked "+
+			"(the shared set read failed; nothing was created): %w", err)
+	}
+	found := make([]*sharedSetRow, len(lists))
+	for _, raw := range rows {
+		var row sharedSetRow
+		if uErr := json.Unmarshal(raw, &row); uErr != nil {
+			return fmt.Errorf("google-ads shared negative keyword lists could not be checked "+
+				"(a shared set row did not decode; nothing was created): %w", uErr)
+		}
+		i, ok := position[row.SharedSet.ResourceName]
+		if !ok {
+			return fmt.Errorf("google-ads shared negative keyword lists could not be checked " +
+				"(the read returned a shared set that was not asked for; nothing was created)")
+		}
+		if found[i] != nil {
+			return fmt.Errorf("google-ads shared negative keyword lists could not be checked "+
+				"(the read returned shared set %q twice; nothing was created)", resourceID(lists[i]))
+		}
+		found[i] = &row
+	}
+	for i, name := range lists {
+		if err := sharedSetRefusal(c.account.CustomerID, name, found[i]); err != nil {
+			return domain.WrapQuotedPreflightRefusal(err)
+		}
+	}
+	return nil
+}
+
+// sharedSetRefusal is the refusal for the named list, or nil when row is an ENABLED NEGATIVE_KEYWORDS
+// set. Every caller value and the stored account id are quoted (%q), as the foreign-account
+// refusals quote theirs (#528); the type and status are named only from this file's fixed
+// vocabulary, never echoed from the response.
+func sharedSetRefusal(customerID, name string, row *sharedSetRow) error {
+	id := resourceID(name)
+	if row == nil {
+		return fmt.Errorf("google-ads: shared negative keyword list %q (shared set %q) was not "+
+			"found in account %q; name an existing negative keyword list of that account, or omit "+
+			"it", name, id, customerID)
+	}
+	switch t := row.SharedSet.Type; {
+	case t == sharedSetTypeNegativeKeywords:
+	case sharedSetTypesNamed[t]:
+		return fmt.Errorf("google-ads: shared negative keyword list %q (shared set %q) is a shared "+
+			"set of type %s, not %s; sharedNegativeKeywordLists attaches only negative keyword lists, "+
+			"so omit it", name, id, t, sharedSetTypeNegativeKeywords)
+	default:
+		return fmt.Errorf("google-ads: shared negative keyword list %q (shared set %q) is a "+
+			"shared set of a type this client does not recognise, not %s; "+
+			"sharedNegativeKeywordLists attaches only negative keyword lists, so omit it",
+			name, id, sharedSetTypeNegativeKeywords)
+	}
+	switch s := row.SharedSet.Status; s {
+	case sharedSetStatusEnabled:
+		return nil
+	case sharedSetStatusRemoved:
+		return fmt.Errorf("google-ads: shared negative keyword list %q (shared set %q) is %s in "+
+			"account %q; name an ENABLED negative keyword list, or omit it",
+			name, id, sharedSetStatusRemoved, customerID)
+	default:
+		return fmt.Errorf("google-ads: shared negative keyword list %q (shared set %q) is not "+
+			"ENABLED in account %q; name an ENABLED negative keyword list, or omit it",
+			name, id, customerID)
+	}
 }
 
 // campaignSharedSetCreate is a CampaignSharedSet create: the campaign and the shared set it
