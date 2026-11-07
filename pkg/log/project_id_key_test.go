@@ -43,7 +43,7 @@ var projectKeyVariant = regexp.MustCompile(`(?i)^proj(ect)?[_-]?(id|uid|uuid|slu
 var kvStart = map[string]int{
 	"Debug": 1, "Info": 1, "Warn": 1, "Error": 1,
 	"DebugContext": 2, "InfoContext": 2, "WarnContext": 2, "ErrorContext": 2,
-	"Log": 3, "With": 0,
+	"Log": 3, "With": 0, "Add": 0, // Record.Add(args ...any)
 }
 
 // attrCtors are the log/slog functions whose first argument is an attribute key (a group's
@@ -113,10 +113,10 @@ func TestProjectIDLogKeyIsUniform(t *testing.T) {
 		}
 		idx := buildIndex(files, info)
 		for _, f := range files {
-			hits, over := logKeys(f, info, idx)
-			if over {
-				t.Errorf("%s: a log call's spread slice cannot be fully traced (more than %d paths, or a goto or an in-place []any element write in its function); simplify how the slice is built",
-					fset.Position(f.Package).Filename, 1024)
+			hits, untraceable := logKeys(f, info, idx)
+			for _, pos := range untraceable {
+				t.Errorf("%s: this log call's arguments cannot be fully traced (see logKeys for what is not modelled); build its fields more simply",
+					fset.Position(pos))
 			}
 			for _, h := range hits {
 				switch {
@@ -258,7 +258,7 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 				fields = append(fields, "ok")
 				fallthrough
 			default:
-				fields = append(fields, "projectID", id)
+				fields = append(fields, "projectID", 1)
 			}
 			slog.Info("m", fields...)`, []string{"kind", "projectID"}},
 		{"a call in the clause after a fallthrough sees its paths", `fields := []any{"kind"}
@@ -267,7 +267,7 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 				fields = append(fields, "ok")
 				fallthrough
 			default:
-				slog.Info("m", append(fields, "projectID", id)...)
+				slog.Info("m", append(fields, "projectID", 1)...)
 			}`, []string{"kind", "projectID"}},
 		{"a labelled break leaves the outer loop", `fields := []any{"a", 1}
 		Outer:
@@ -308,6 +308,24 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 		{"an aliased slog.Attr literal", `slog.LogAttrs(ctx, lvl, "m", Attr{Key: "projectID", Value: slog.IntValue(1)})`, []string{"projectID"}},
 		{"a helper's result binds this call's arguments only", `_ = passthrough([]any{"project", 1})
 			slog.Info("m", passthrough([]any{"project_id", 1})...)`, []string{"project_id"}},
+		{"Record.Add pairs its arguments", `var r slog.Record
+			r.Add("projectID", id)`, []string{"projectID"}},
+		{"a loop appending only Attrs is traced", `attrs := []any{"a", 1}
+			for range 2 {
+				attrs = append(attrs, slog.Int("projectID", 1))
+			}
+			slog.Info("m", attrs...)`, []string{"a", "projectID"}},
+		{"a slice created in a loop body is traced", `for range 2 {
+				f := []any{"projectID", id}
+				f = append(f, "k", 1)
+				slog.Info("m", f...)
+			}`, []string{"projectID", "k"}},
+		{"a stored closure that captures no slice is traced", `g := func() { slog.Info("m", helperFields(c)...) }
+			g()`, []string{"step", "projectID"}},
+		{"an immediately invoked closure is traced", `fields := []any{"projectID", id}
+			func() {
+				slog.Info("m", fields...)
+			}()`, []string{"projectID"}},
 		{"a full reslice is the slice", `fields := []any{"projectID", id}
 			slog.Info("m", fields[:]...)`, []string{"projectID"}},
 		{"a constant reslice keeps its window", `fields := []any{"x", 1, "projectID", id}
@@ -386,7 +404,7 @@ func f() {
 			}
 			var got []string
 			hits, over := logKeys(f, info, buildIndex([]*ast.File{f}, info))
-			if over {
+			if len(over) > 0 {
 				t.Fatalf("spread could not be fully traced")
 			}
 			for _, h := range hits {
@@ -454,7 +472,7 @@ func newInfo() *types.Info {
 //
 // Calls are matched by the function they resolve to, so a same-named function or method
 // of another package (http.Error, a builder's With) is not a log call.
-func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
+func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, []token.Pos) {
 	decls := idx.decls
 	seen := map[token.Pos]bool{}
 	var out []keyHit
@@ -1098,14 +1116,31 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
 				i += 2
 				continue
 			}
+			// A value of an empty interface type (any) may hold a string at run time and so
+			// be a key: its pairing is unknown. An interface with methods (error, ...)
+			// cannot hold a string.
+			if it, ok := types.Unalias(t).Underlying().(*types.Interface); ok && it.Empty() {
+				overflow = true
+				return
+			}
 			i++
 		}
 	}
+	var untraceableAt []token.Pos
 	kvWalk := func(call *ast.CallExpr, args []ast.Expr) {
+		was := overflow
+		overflow = false
+		defer func() {
+			if overflow {
+				untraceableAt = append(untraceableAt, call.Pos())
+			}
+			overflow = overflow || was
+		}()
 		ps := []path{{}}
 		if call.Ellipsis.IsValid() {
 			fd := enclosingDecl(call)
-			if fd == nil || hasGoto(fd.Body.List) || sharesAnyBacking(fd.Body.List, info) {
+			if fd == nil || hasGoto(fd.Body.List) || sharesAnyBacking(fd.Body.List, info) ||
+				inDeferredClosure(fd, call, info) {
 				overflow = true
 				return
 			}
@@ -1151,7 +1186,10 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
 		return true
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].pos < out[j].pos })
-	return out, overflow
+	if overflow && untraceableAt == nil {
+		untraceableAt = []token.Pos{f.Package}
+	}
+	return out, untraceableAt
 }
 
 // hasGoto reports whether a function body contains a goto statement.
@@ -1230,6 +1268,10 @@ func sharesAnyBacking(body []ast.Stmt, info *types.Info) bool {
 				if isAnySlice(info.TypeOf(x.X)) && (x.High != nil || x.Slice3) {
 					found = true
 				}
+			case *ast.ForStmt:
+				found = found || loopAppendsPairs(x.Body, info)
+			case *ast.RangeStmt:
+				found = found || loopAppendsPairs(x.Body, info)
 			case *ast.CallExpr:
 				if fn, ok := ast.Unparen(x.Fun).(*ast.Ident); ok && len(x.Args) > 0 {
 					if b, ok := info.Uses[fn].(*types.Builtin); ok && (b.Name() == "copy" || b.Name() == "clear") &&
@@ -1405,6 +1447,90 @@ func constInt(e ast.Expr, info *types.Info) (int, bool) {
 	return int(v), ok
 }
 
+// loopAppendsPairs reports whether a loop body appends anything but slog.Attr values to a
+// []any declared outside the loop, so that it carries over between iterations. The
+// interpreter runs a loop body zero or one times; repeated appends of keys or values to a
+// carried slice can change key/value pairing on later iterations, while appended Attrs
+// cannot, and a slice created inside the body starts afresh each time.
+func loopAppendsPairs(body *ast.BlockStmt, info *types.Info) bool {
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		c, ok := n.(*ast.CallExpr)
+		if !ok || !isBuiltin(c, info, "append") || len(c.Args) == 0 || !isAnySlice(info.TypeOf(c.Args[0])) {
+			return !found
+		}
+		if id, ok := ast.Unparen(c.Args[0]).(*ast.Ident); ok {
+			if o := info.Uses[id]; o != nil && body.Pos() <= o.Pos() && o.Pos() < body.End() {
+				return !found // declared in the body: fresh on every iteration
+			}
+		}
+		if c.Ellipsis.IsValid() {
+			found = true // a spread's element types are not known here
+			return false
+		}
+		for _, a := range c.Args[1:] {
+			if !isSlogAttr(info.TypeOf(a)) {
+				found = true
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+// inDeferredClosure reports whether call sits in a function literal, inside fd, that is
+// not invoked where it is written (deferred, started with go, or stored and called
+// later) and that reads a []any captured from outside it. Such a closure reads its
+// captured slices when it runs, not where it is written.
+func inDeferredClosure(fd *ast.FuncDecl, call *ast.CallExpr, info *types.Info) bool {
+	var lit *ast.FuncLit
+	var visit func(n ast.Node, immediate bool)
+	visit = func(n ast.Node, immediate bool) {
+		ast.Inspect(n, func(m ast.Node) bool {
+			if lit != nil {
+				return false
+			}
+			switch x := m.(type) {
+			case *ast.DeferStmt:
+				visit(x.Call, false)
+				return false
+			case *ast.GoStmt:
+				visit(x.Call, false)
+				return false
+			case *ast.CallExpr:
+				if fl, ok := ast.Unparen(x.Fun).(*ast.FuncLit); ok && immediate {
+					visit(fl.Body, true) // func() { ... }(): runs right here
+					for _, a := range x.Args {
+						visit(a, true)
+					}
+					return false
+				}
+			case *ast.FuncLit:
+				if x.Pos() <= call.Pos() && call.End() <= x.End() {
+					lit = x // stored, passed or deferred: runs later
+				}
+				return false
+			}
+			return true
+		})
+	}
+	visit(fd.Body, true)
+	if lit == nil {
+		return false
+	}
+	captured := false
+	ast.Inspect(lit.Body, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok {
+			if o, ok := info.Uses[id].(*types.Var); ok && isAnySlice(o.Type()) &&
+				(o.Pos() < lit.Pos() || o.Pos() >= lit.End()) {
+				captured = true
+			}
+		}
+		return !captured
+	})
+	return captured
+}
+
 // endsInFallthrough reports whether a case clause body ends in a fallthrough statement.
 func endsInFallthrough(body []ast.Stmt) bool {
 	if len(body) == 0 {
@@ -1500,7 +1626,7 @@ func TestLogKeys_PathOverflowIsReported(t *testing.T) {
 	if _, err := (&types.Config{Importer: importer.Default()}).Check("p", fset, []*ast.File{f}, info); err != nil {
 		t.Fatalf("type-check: %v", err)
 	}
-	if _, over := logKeys(f, info, buildIndex([]*ast.File{f}, info)); !over {
+	if _, over := logKeys(f, info, buildIndex([]*ast.File{f}, info)); len(over) == 0 {
 		t.Fatal("2048 paths did not report an overflow")
 	}
 }
@@ -1511,19 +1637,24 @@ func TestLogKeys_PathOverflowIsReported(t *testing.T) {
 // instead of being checked as it was before, or read as empty.
 func TestLogKeys_UnmodelledSlicesAreReportedUntraceable(t *testing.T) {
 	for name, stmt := range map[string]string{
-		"index assignment":            `fields[0] = "projectID"`,
-		"copy":                        `copy(fields, []any{"projectID"})`,
-		"clear":                       `clear(fields)`,
-		"multi-value call":            `fields, _ = mk()`,
-		"call result":                 `fields = mk1()`,
-		"variable reslice":            `fields = fields[n:]`,
-		"indexed literal with a gap":  `fields = []any{0: "kind", 2: id}`,
-		"package-level slice":         `fields = pkgFields`,
-		"alias assignment":            "copied := fields\n_ = copied",
-		"append stored elsewhere":     "g := append(fields, \"x\", 1)\n_ = g",
-		"reslice with an upper bound": "prefix := fields[:1]\n_ = prefix",
-		"range variable":              "for _, g := range groups {\nfields = g\n}",
-		"function used as a value":    "g := logWith\ng(fields)",
+		"index assignment":                `fields[0] = "projectID"`,
+		"copy":                            `copy(fields, []any{"projectID"})`,
+		"clear":                           `clear(fields)`,
+		"multi-value call":                `fields, _ = mk()`,
+		"call result":                     `fields = mk1()`,
+		"variable reslice":                `fields = fields[n:]`,
+		"indexed literal with a gap":      `fields = []any{0: "kind", 2: id}`,
+		"package-level slice":             `fields = pkgFields`,
+		"alias assignment":                "copied := fields\n_ = copied",
+		"append stored elsewhere":         "g := append(fields, \"x\", 1)\n_ = g",
+		"reslice with an upper bound":     "prefix := fields[:1]\n_ = prefix",
+		"loop appending pairs":            "for range 2 {\nfields = append(fields, \"projectID\")\n}",
+		"deferred closure":                "defer func() { slog.Info(\"d\", fields...) }()",
+		"go closure":                      "go func() { slog.Info(\"g\", fields...) }()",
+		"stored closure":                  "g := func() { slog.Info(\"s\", fields...) }\ng()",
+		"interface value in key position": "var k any = \"event\"\nslog.Info(\"i\", k, \"project_id\", \"projectID\", 7)",
+		"range variable":                  "for _, g := range groups {\nfields = g\n}",
+		"function used as a value":        "g := logWith\ng(fields)",
 	} {
 		t.Run(name, func(t *testing.T) {
 			src := "package p\nimport \"log/slog\"\nvar (\nid any\nn int\nmk func() ([]any, error)\nmk1 func() []any\ngroups [][]any\n)\nvar pkgFields = []any{\"projectID\", 1}\nfunc logWith(fields []any) { slog.Info(\"m\", fields...) }\nfunc f() {\nfields := []any{\"kind\", id}\n" +
@@ -1537,7 +1668,7 @@ func TestLogKeys_UnmodelledSlicesAreReportedUntraceable(t *testing.T) {
 			if _, err := (&types.Config{Importer: importer.Default()}).Check("p", fset, []*ast.File{f}, info); err != nil {
 				t.Fatalf("type-check: %v", err)
 			}
-			if _, over := logKeys(f, info, buildIndex([]*ast.File{f}, info)); !over {
+			if _, over := logKeys(f, info, buildIndex([]*ast.File{f}, info)); len(over) == 0 {
 				t.Fatal("an in-place element write was not reported as untraceable")
 			}
 		})
@@ -1574,7 +1705,7 @@ L:
 	if _, err := (&types.Config{Importer: importer.Default()}).Check("p", fset, []*ast.File{f}, info); err != nil {
 		t.Fatalf("type-check: %v", err)
 	}
-	if _, over := logKeys(f, info, buildIndex([]*ast.File{f}, info)); !over {
+	if _, over := logKeys(f, info, buildIndex([]*ast.File{f}, info)); len(over) == 0 {
 		t.Fatal("a spread in a function with a goto was not reported as untraceable")
 	}
 }

@@ -87,6 +87,17 @@ stay together.
   back to its own base (`x = append(x, ...)`), is fine.
 - A same-package helper's result is read with the helper's `[]any` parameters
   bound from that call's own arguments.
+- A loop body runs zero or one times, so a loop that appends keys or values
+  (anything but `slog.Attr`) to a slice declared outside it is untraceable:
+  later iterations could change the pairing. A slice created inside the body,
+  or Attr-only appends such as the account monitor's `byClass`, are traced.
+- A log call in a closure that is deferred, started with `go`, or stored and
+  called later is untraceable when it reads a `[]any` captured from outside the
+  closure, because it runs with the slice's later contents. An immediately
+  invoked `func() { ... }()` is traced.
+- An argument of an empty interface type (`any`) in a key position may hold a
+  string at run time, so its pairing is unknown and it is untraceable.
+  `Record.Add` pairs its arguments like `With`.
 - slog's key test is the built-in `string`: a defined string type (`type label
   string`) is a `!BADKEY` value, while an alias of `string`, or of `slog.Attr`,
   is the type itself.

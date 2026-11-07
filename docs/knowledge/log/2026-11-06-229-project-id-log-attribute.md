@@ -61,7 +61,8 @@ clear, as `"project_id"`.
     element writes were ignored, a reslice or a method expression's receiver hid keys, and
     parameters, package-level slices and zero-value declarations were mis-read. Then shared
     backing arrays, defined string types, aliased `slog.Attr` and per-call helper results were
-    handled.
+    handled. Then `Record.Add`, pairing-changing loop appends, deferred or stored closures
+    over captured slices, and `any` values in key positions.
 - Mutation-checked:
   - Renaming one key to `projectID` in `internal/service/connection.go`, or the spread-slice
     key in `internal/service/meta_ad_sets.go`, fails the guard.
