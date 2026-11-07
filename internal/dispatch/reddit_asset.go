@@ -94,6 +94,10 @@ func (d *RedditDispatcher) PreflightCreate(_ context.Context, _ string, _ model.
 	if err := checkBiddingShape(config, "redditConfig"); err != nil {
 		return err
 	}
+	// A wrong-typed exclusion list is a synchronous 400 too (#549).
+	if err := checkRedditExclusionsShape(config); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can past a type
 	// error, so the bid plan runs even when an unrelated field is broken — an invalid bidding is
 	// always the synchronous 400. The asset checks keep their old scope: they run only on a config
@@ -101,6 +105,12 @@ func (d *RedditDispatcher) PreflightCreate(_ context.Context, _ string, _ model.
 	var cfg redditConfig
 	decodeErr := unmarshalPlatformConfig(config, "redditConfig", &cfg)
 	if _, err := redditBidPlan(cfg); err != nil {
+		return err
+	}
+	// The exclusions' gate and rules run on the best-effort decode too, like the bid plan: an
+	// unrelated mistyped field must not turn a gated or invalid exclusion list into an accepted
+	// job. checkRedditExclusionsShape above already refused a mistyped list, so the lists decoded.
+	if err := checkRedditTargetingExclusions(cfg); err != nil {
 		return err
 	}
 	if decodeErr != nil {

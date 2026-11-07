@@ -236,6 +236,16 @@ openssl rand -base64 32
   exercised against a live ad account. The read
   (`GET .../keyword-targeting`) is not gated. The chart sets it to
   `"false"`.
+- `REDDIT_TARGETING_EXCLUSIONS_ENABLED` (default unset, i.e. OFF) — opts
+  a deployment IN to `redditConfig.excludedSubreddits` and
+  `redditConfig.excludedGeoTargets` (#549), sent at create time as the ad
+  group's `excluded_communities` and `excluded_geolocations`. Only the
+  exact value `true` enables them; anything else fails closed, and a
+  create naming either is refused with a 400 before any job exists. It
+  names no account resource; it keeps a shape no live create has sent
+  off the shared ad account. The chart sets it to `"false"`
+  (`app.environment.REDDIT_TARGETING_EXCLUSIONS_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once a live create confirms it.
 - `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.demandGenAudience`, one
   existing Google Ads Audience on a Demand Gen ad group (#459). Only the

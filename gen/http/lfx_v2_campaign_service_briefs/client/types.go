@@ -5349,29 +5349,27 @@ type CampaignCreateInputRequestBody struct {
 	// creates an objectiveType WEBSITE_VISIT campaign bidding MAX_CLICK with
 	// costType CPM (decision 2026-10-13: automatic LinkedIn campaigns optimise for
 	// clicks because MAX_CONVERSION, the only automated target of
-	// WEBSITE_CONVERSION, needs a conversion association, which this service
-	// creates only when linkedInConfig.conversions is supplied (#552); automatic
-	// still targets MAX_CLICK); LinkedIn manual keeps objectiveType
-	// WEBSITE_CONVERSION. `manual` requires `bidAmount`, the starting max
-	// cost-per-click bid in the ad account's own currency (LinkedIn: USD), greater
-	// than zero, at most 1,000,000 and a whole number of micro-units; it creates
-	// the campaign in the shape update-campaign-bid accepts. Per platform, a
-	// manual bid must also be: Microsoft within 0.01–1,000 (a legacy
-	// microsoftConfig.cpcBid without `bidding` still means a manual bid at that
-	// amount; with `bidding` it must be omitted or equal bidAmount); Meta at most
-	// two decimals, a whole minor unit of the account currency (checked against
-	// the currency at dispatch), and only for the traffic or leads objective;
-	// Reddit only for the traffic objective; LinkedIn whole cents; X at most the
-	// campaign's daily budget (X does not accept a line item bid above it). Keys
-	// are exact: `bidding`, `strategy` and `bidAmount`; a case variant (`Bidding`,
-	// `Strategy`) or an unknown key inside `bidding` is refused. `automatic` with
-	// a `bidAmount`, an unknown strategy, a wrong JSON type, an explicit null or
-	// empty value (only an ABSENT field defaults: `"strategy": null` or `""`,
-	// `"bidAmount": null` and `"bidding": null` are refused), or a bid breaking
-	// these rules is refused synchronously with 400 "invalid campaign config:
-	// <configKey>.bidding: ..." before any job exists. googleAdsConfig.bidding is
-	// refused with 400: Google Ads takes its strategy from
-	// googleAdsConfig.biddingStrategy and a manual bid from
+	// WEBSITE_CONVERSION, needs a conversion association this service doesn't
+	// create); LinkedIn manual keeps objectiveType WEBSITE_CONVERSION. `manual`
+	// requires `bidAmount`, the starting max cost-per-click bid in the ad
+	// account's own currency (LinkedIn: USD), greater than zero, at most 1,000,000
+	// and a whole number of micro-units; it creates the campaign in the shape
+	// update-campaign-bid accepts. Per platform, a manual bid must also be:
+	// Microsoft within 0.01–1,000 (a legacy microsoftConfig.cpcBid without
+	// `bidding` still means a manual bid at that amount; with `bidding` it must be
+	// omitted or equal bidAmount); Meta at most two decimals, a whole minor unit
+	// of the account currency (checked against the currency at dispatch), and only
+	// for the traffic or leads objective; Reddit only for the traffic objective;
+	// LinkedIn whole cents; X at most the campaign's daily budget (X does not
+	// accept a line item bid above it). Keys are exact: `bidding`, `strategy` and
+	// `bidAmount`; a case variant (`Bidding`, `Strategy`) or an unknown key inside
+	// `bidding` is refused. `automatic` with a `bidAmount`, an unknown strategy, a
+	// wrong JSON type, an explicit null or empty value (only an ABSENT field
+	// defaults: `"strategy": null` or `""`, `"bidAmount": null` and `"bidding":
+	// null` are refused), or a bid breaking these rules is refused synchronously
+	// with 400 "invalid campaign config: <configKey>.bidding: ..." before any job
+	// exists. googleAdsConfig.bidding is refused with 400: Google Ads takes its
+	// strategy from googleAdsConfig.biddingStrategy and a manual bid from
 	// googleAdsConfig.cpcBid. GOOGLE ADS CPC BID: googleAdsConfig.cpcBid is the ad
 	// group's manual max cost-per-click bid, sent as cpcBidMicros, in whole units
 	// of the ad account's own currency (no FX conversion, like the budget). Search
@@ -5408,21 +5406,21 @@ type CampaignCreateInputRequestBody struct {
 	// character, a non-numeric instagramUserId, and any of the three with a
 	// non-string JSON type (null counts as absent) are refused here with a 400,
 	// before any job exists. An absent instagramUserId is not refused, but Meta
-	// will not publish an Instagram placement without it. LINKEDIN CONVERSIONS
-	// (#552): linkedInConfig takes an optional `conversions` list of LinkedIn
-	// conversion rule ids as numeric strings, e.g. ["104012"] (at most 20,
-	// duplicates dropped). Once the campaign exists (created or reused by name)
-	// each is associated with it by a Campaign Conversions PUT; a failed
-	// association does not stop the create, and the campaign is then
-	// created_degraded with the id in the result's conversionsFailed and a step to
-	// associate it in Campaign Manager (before activating a campaign this run
-	// created PAUSED; a campaign reused by name keeps its own status and may
-	// already be serving). Refused with a 400 before any job exists: an entry that
-	// is not a JSON string, a URN instead of an id, a non-numeric or zero-padded
-	// id, an empty list, more than 20 ids, and any conversions while the
-	// deployment has not set LINKEDIN_ADS_CONVERSIONS_ENABLED. Conversion rules
-	// belong to the ad account, so conversions also require global_marketing_ops
-	// on the project (403; 503 when the check cannot be made).
+	// will not publish an Instagram placement without it. REDDIT EXCLUSIONS
+	// (#549): redditConfig takes `excludedSubreddits` (subreddit names, an
+	// optional r/ prefix stripped, each 2-21 letters, digits or underscores, at
+	// most 100, case-insensitive duplicates dropped) and `excludedGeoTargets` (ISO
+	// 3166-1 alpha-2 country codes, at most 50, uppercased and de-duplicated),
+	// sent as the ad group's targeting.excluded_communities and
+	// targeting.excluded_geolocations on every ad-group attempt (the retry that
+	// drops rejected communities and interests keeps them). A name also in
+	// `subreddits`, or a code also targeted (geoTargets, or the US default when
+	// geoTargets is empty), is refused. Both are OFF unless
+	// REDDIT_TARGETING_EXCLUSIONS_ENABLED is exactly "true" on the deployment. A
+	// blank or invalid entry, an overlap, a list over its cap, a value that is not
+	// an array of strings (null reads as absent), or either list while the flag is
+	// off, is refused with 400 "invalid campaign config: redditConfig.<field>:
+	// ..." before any job exists.
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
