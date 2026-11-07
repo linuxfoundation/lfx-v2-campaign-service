@@ -156,6 +156,8 @@ func TestLookupsFailRatherThanTruncate(t *testing.T) {
 		{"unusable id", map[int]string{0: `{"elements":[{"id":"abc","name":"x"}]}`}, "unusable id", nil},
 		{"too many", all, "more than 1000", ErrLookupTooLarge},
 		{"no elements", map[int]string{0: `{}`}, "missing elements field", nil},
+		{"short page with a next page token", map[int]string{0: `{"elements":[` + segmentEl(1, "a", "BULK", "READY") + `],"metadata":{"nextPageToken":"abc"}}`}, "advertises a next page token", nil},
+		{"empty page with a next page token", map[int]string{0: `{"elements":[],"metadata":{"nextPageToken":"abc"}}`}, "advertises a next page token", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &lookupServer{path: "/adSegments", pages: tc.pages}

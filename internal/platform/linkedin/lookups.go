@@ -81,8 +81,9 @@ type ConversionRule struct {
 func (r ConversionRule) URN() string { return "urn:lla:llaPartnerConversion:" + r.ID }
 
 // offsetWalk pages one finder by start/count and hands each element to visit. It stops on a
-// short page, and fails on a repeated first id (start ignored), an element without a usable id,
-// an element naming another account, or more than MaxLookupRows elements.
+// short page with no advertised next page token, and fails on a short page that carries one, a
+// repeated first id (start ignored), an element without a usable id, an element naming another
+// account, or more than MaxLookupRows elements.
 func (c *Client) offsetWalk(ctx context.Context, path, what string, params func(start int) map[string]string, accountID string, visit func(el responseElement, id string)) error {
 	wantAccount := accountURN(accountID)
 	seen := make(map[string]struct{})
@@ -122,6 +123,13 @@ func (c *Client) offsetWalk(ctx context.Context, path, what string, params func(
 			visit(el, id)
 		}
 		if len(page) < lookupPageSize {
+			// A short page ends an offset walk only when LinkedIn does not also advertise a
+			// continuation: a non-empty metadata.nextPageToken says more results exist, and this
+			// walk pages by start/count, not by cursor, so returning here would hand back a
+			// partial list as the whole of it.
+			if resp.Metadata != nil && strings.TrimSpace(resp.Metadata.NextPageToken) != "" {
+				return fmt.Errorf("list linkedin %s: a short page at start=%d advertises a next page token; the list may be incomplete", what, start)
+			}
 			return nil
 		}
 	}

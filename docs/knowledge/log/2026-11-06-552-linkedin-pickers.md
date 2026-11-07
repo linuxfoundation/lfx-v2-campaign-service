@@ -12,7 +12,8 @@
 - Gated on `global_marketing_ops` by the `marketing-ops-api` gateway rule; the route regex and
   the parity tests carry both paths.
 - `offsetWalk` pages the finders 100 at a time and fails rather than truncating (repeat page,
-  another account's element, unusable id, more than 1000 entries).
+  another account's element, unusable id, more than 1000 entries, a short page that still
+  advertises a `nextPageToken`).
 
 Built from the LinkedIn Marketing API docs (li-lms-2026-10). The offset paging is not yet probed
 live.
