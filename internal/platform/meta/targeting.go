@@ -105,7 +105,7 @@ func NormalizeAudienceTargeting(t *AudienceTargeting) (*AudienceTargeting, error
 	}
 	for _, id := range out.ExcludedCustomAudiences {
 		if included[id] {
-			return nil, targetingInvalid("custom audience %s is in both customAudiences and excludedCustomAudiences", id)
+			return nil, targetingInvalid("custom audience %s is in both customAudiences and excludedCustomAudiences", domain.CallerValue(id))
 		}
 	}
 	if out.AdvantageAudience != nil && *out.AdvantageAudience {
@@ -239,17 +239,17 @@ func (c *Client) checkCustomAudiences(ctx context.Context, accountID string, t *
 		for _, id := range list.ids {
 			raw, err := c.getChecked(ctx, "/"+id+"?fields="+customAudienceFields)
 			if err != nil {
-				return fmt.Errorf("meta targeting: %s audience %s could not be read, so nothing was created: %w", list.field, id, err)
+				return fmt.Errorf("meta targeting: %s audience %s could not be read, so nothing was created: %w", list.field, domain.CallerValue(id), err)
 			}
 			var owner customAudienceOwner
 			if err := json.Unmarshal(raw, &owner); err != nil {
-				return fmt.Errorf("meta targeting: %s audience %s read was not a custom audience, so nothing was created: %w", list.field, id, err)
+				return fmt.Errorf("meta targeting: %s audience %s read was not a custom audience, so nothing was created: %w", list.field, domain.CallerValue(id), err)
 			}
 			if !statusTokenRE.MatchString(owner.Subtype) {
-				return domain.PreflightRefusalf("meta targeting: %s id %s is not a custom audience (the read reported no audience subtype); nothing was created", list.field, id)
+				return domain.PreflightRefusalf("meta targeting: %s id %s is not a custom audience (the read reported no audience subtype); nothing was created", list.field, domain.CallerValue(id))
 			}
 			if owner.ID != id || !sameMetaAccount(owner.AccountID, accountID) {
-				return domain.PreflightRefusalf("meta targeting: %s audience %s is not a custom audience of the connected ad account %s; nothing was created", list.field, id, accountID)
+				return domain.PreflightRefusalf("meta targeting: %s audience %s is not a custom audience of the connected ad account %s; nothing was created", list.field, domain.CallerValue(id), accountID)
 			}
 		}
 	}
