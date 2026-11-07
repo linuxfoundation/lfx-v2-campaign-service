@@ -71,11 +71,49 @@ type metaConfig struct {
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
 	// (LOWEST_COST_WITHOUT_CAP, unchanged); manual creates a link-click bid cap — see metaBidPlan.
 	Bidding *biddingConfig `json:"bidding,omitempty"`
+	// CallToAction is the button on every ad (#550), meta.NormalizeCallToAction's allow-list;
+	// empty keeps LEARN_MORE. Refused while META_CALL_TO_ACTION_ENABLED is not "true".
+	CallToAction string `json:"callToAction"`
+	// ConversionEvent is the conversions objective's custom_event_type (#550),
+	// meta.NormalizeConversionEvent's allow-list; empty keeps PURCHASE. Refused on any other
+	// objective, and while META_CONVERSION_EVENT_ENABLED is not "true".
+	ConversionEvent string `json:"conversionEvent"`
 	// Targeting is the optional audience targeting (#550): age, gender, custom audiences to include
 	// and exclude, and the Advantage+ audience flag. Refused while META_AUDIENCE_TARGETING_ENABLED is
 	// not "true" (metaTargetingEnabled); validated by meta.NormalizeAudienceTargeting. Null or absent
 	// targets as before.
 	Targeting *meta.AudienceTargeting `json:"targeting,omitempty"`
+}
+
+// metaCreativeOptionDisabled refuses a creative option this deployment has not opted in to. It
+// wraps domain.ErrCreateConfigInvalid (a 400 before any job exists) and is a PreflightRefusal (the
+// job reports it verbatim).
+func metaCreativeOptionDisabled(field, env string) error {
+	return domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig.%s is disabled on this deployment (%s is not \"true\"); omit %s, or ask an operator to set %s to \"true\"",
+		domain.ErrCreateConfigInvalid, field, env, field, env))
+}
+
+// checkMetaCreativeOptions refuses a callToAction or conversionEvent the create cannot send (#550):
+// either one while its deployment flag is off — read per call, and only the exact value "true"
+// enables it — and otherwise a value the client's allow-lists refuse. A blank value is absent.
+func checkMetaCreativeOptions(cfg metaConfig) error {
+	if strings.TrimSpace(cfg.CallToAction) != "" {
+		if os.Getenv(constants.EnvMetaCallToActionEnabled) != "true" {
+			return metaCreativeOptionDisabled("callToAction", constants.EnvMetaCallToActionEnabled)
+		}
+		if _, err := meta.NormalizeCallToAction(cfg.CallToAction); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(cfg.ConversionEvent) != "" {
+		if os.Getenv(constants.EnvMetaConversionEventEnabled) != "true" {
+			return metaCreativeOptionDisabled("conversionEvent", constants.EnvMetaConversionEventEnabled)
+		}
+		if _, err := meta.NormalizeConversionEvent(cfg.Objective, cfg.ConversionEvent); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // metaTargetingEnabled reports whether this deployment opted in to metaConfig.targeting (#550).
@@ -706,6 +744,10 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	if err := checkMetaPublishIdentity(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The call-to-action and conversion event gates and allow-lists (#550), before any request.
+	if err := checkMetaCreativeOptions(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	// The audience targeting gate and its shape (#550), before any Meta request. The client
 	// normalizes it again and reads each custom audience before the first write.
 	if err := checkMetaTargeting(cfg.Targeting); err != nil {
@@ -794,6 +836,10 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		// stays pristine for campaignFromMeta's snapshot and degraded-count check.
 		Variants: variants,
 		BidCap:   plan.amount,
+		// The button and the conversion event as the caller sent them; the client normalizes them
+		// (#550). Gated above.
+		CallToAction:    cfg.CallToAction,
+		ConversionEvent: cfg.ConversionEvent,
 		// The audience targeting as the caller sent it; the client normalizes it (#550).
 		Targeting: cfg.Targeting,
 
@@ -1241,6 +1287,8 @@ func metaRunStatus(status string) (string, error) {
 // code passes through unchanged.
 //
 // Kept verbatim: Objective (refused by the client unless it names a known objective),
+// CallToAction and ConversionEvent (#550: refused unless allow-listed, so only their casing can
+// differ from what was sent),
 // InstagramUserID (refused unless numeric), Variants[].ImageAssetID (a stored asset key),
 // numbers, flags and dates. ImageBytes and
 // ImageMIME are json:"-" and never reach the snapshot.
@@ -1571,7 +1619,7 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 	}
 	// A wrong-typed identity field would decode to "" below and pass as absent, so it is refused
 	// on its raw JSON type first (PR #414 review).
-	if err := checkMetaIdentityShape(config); err != nil {
+	if err := checkMetaStringFieldShape(config); err != nil {
 		return err
 	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
@@ -1590,6 +1638,11 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 	if err := checkMetaPublishIdentity(cfg); err != nil {
 		return err
 	}
+	// The call-to-action and conversion event (#550). A wrong-typed one is refused on its type by
+	// checkMetaStringFieldShape above, so it is never read here as absent.
+	if err := checkMetaCreativeOptions(cfg); err != nil {
+		return err
+	}
 	// The audience targeting (#550): a wrong-typed block would decode to nil above and pass as
 	// absent, so it is decoded on its own first and a type error is a 400 too.
 	t, err := decodeMetaTargeting(config)
@@ -1601,6 +1654,10 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 	}
 	return domain.ErrPreflightNotApplicable
 }
+
+// metaStringConfigKeys are the string fields checkMetaStringFieldShape type-checks: the publish identity,
+// and since #550 the call-to-action and conversion event, which would otherwise read as absent.
+var metaStringConfigKeys = []string{"instagramUserId", "dsaBeneficiary", "dsaPayor", "callToAction", "conversionEvent"}
 
 // decodeMetaTargeting decodes metaConfig.targeting on its own, so a wrong-typed block (or a
 // wrong-typed field in it) is a synchronous refusal rather than an absent block — PreflightCreate's
@@ -1647,16 +1704,13 @@ func decodeMetaTargeting(config json.RawMessage) (*meta.AudienceTargeting, error
 	return t, nil
 }
 
-// metaIdentityKeys are the publish-identity fields checkMetaIdentityShape type-checks.
-var metaIdentityKeys = []string{"instagramUserId", "dsaBeneficiary", "dsaPayor"}
-
-// checkMetaIdentityShape refuses a metaConfig whose instagramUserId, dsaBeneficiary or dsaPayor is
-// present with a non-string JSON type (null is absent, as encoding/json reads it). PreflightCreate
+// checkMetaStringFieldShape refuses a metaConfig whose instagramUserId, dsaBeneficiary, dsaPayor,
+// callToAction or conversionEvent is present with a non-string JSON type (null is absent, as encoding/json reads it). PreflightCreate
 // decodes best-effort and ignores type errors, so without this `"instagramUserId": true` or
 // `"dsaBeneficiary": 1` on an EU target would read as absent and fail open into a 202 — then fail
 // the job on Dispatch's strict decode. Keys are matched case-insensitively, as encoding/json
 // matches them. A config that is not an object envelope is left to Dispatch.
-func checkMetaIdentityShape(config json.RawMessage) error {
+func checkMetaStringFieldShape(config json.RawMessage) error {
 	if len(config) == 0 {
 		return nil
 	}
@@ -1674,7 +1728,7 @@ func checkMetaIdentityShape(config json.RawMessage) error {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		for _, want := range metaIdentityKeys {
+		for _, want := range metaStringConfigKeys {
 			if !strings.EqualFold(k, want) {
 				continue
 			}

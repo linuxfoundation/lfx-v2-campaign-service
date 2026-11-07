@@ -2277,7 +2277,7 @@ func buildPromotedObject(objective, pageID, pixelID string) (map[string]any, err
 		if !numericIDRE.MatchString(trimmed) {
 			return nil, fmt.Errorf("pixelID %s is malformed for %s objective: Meta Pixel IDs are numeric strings", domain.CallerValue(trimmed), domain.CallerValue(objective))
 		}
-		return map[string]any{"pixel_id": trimmed, "custom_event_type": "PURCHASE"}, nil
+		return map[string]any{"pixel_id": trimmed, "custom_event_type": DefaultConversionEvent}, nil
 	default:
 		return nil, nil
 	}
@@ -2842,6 +2842,15 @@ type CampaignInput struct {
 	// of the currency's minor units, refused rather than rounded. Both are checked before the first
 	// mutating call.
 	BidCap float64
+	// CallToAction is the button on every variant's ad (metaConfig.callToAction, #550): one of
+	// NormalizeCallToAction's allow-list, empty meaning DefaultCallToAction (LEARN_MORE, the only
+	// button before #550). Refused before any request when not in the list.
+	CallToAction string
+	// ConversionEvent is the promoted object's custom_event_type for the conversions objective
+	// (metaConfig.conversionEvent, #550): one of NormalizeConversionEvent's allow-list, empty meaning
+	// DefaultConversionEvent (PURCHASE, the only event before #550). Refused before any request on
+	// any other objective or when not in the list.
+	ConversionEvent string
 	// Targeting is the optional audience targeting (metaConfig.targeting, #550): age, gender,
 	// custom audiences to include and exclude, and the Advantage+ audience flag. Nil or zero adds
 	// nothing to the ad set's targeting. It is validated (NormalizeAudienceTargeting) before any
@@ -2913,6 +2922,13 @@ type CampaignResult struct {
 	// dispatcher records the strategy and starting bid only when this is true. Set only on the
 	// successful result.
 	BidApplied bool
+	// ConversionEvent is the promoted object's custom_event_type on the ad set THIS run created
+	// (#550): the conversions objective's event (PURCHASE unless metaConfig.conversionEvent chose
+	// another), "" on any other objective. Like BidApplied it is set only when this run created the
+	// ad set — a reused ad set keeps whatever event it was created with — so a reader of the
+	// persisted result (the conversions metrics read, gap 6) never filters on an event the live ad
+	// set does not optimize for. Set only on the successful result.
+	ConversionEvent string `json:",omitempty"`
 	// Ads carries one entry per SUCCESSFULLY-created ad (so len(Ads) == AdCount), in
 	// variant order, each with its ad/creative ids and the image_hash attached to its
 	// creative. A per-variant failure contributes a Steps line, not an Ads entry.
@@ -3163,6 +3179,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	promotedObject, err := buildPromotedObject(objective, c.account.PageID, in.PixelID)
 	if err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
+	}
+	// The call-to-action button and the conversion event (#550), both checked here with the rest
+	// of the deterministic inputs, before any request.
+	if in.CallToAction, err = NormalizeCallToAction(in.CallToAction); err != nil {
+		return nil, err
+	}
+	conversionEvent, err := NormalizeConversionEvent(objective, in.ConversionEvent)
+	if err != nil {
+		return nil, err
+	}
+	if conversionEvent != "" && promotedObject != nil {
+		promotedObject["custom_event_type"] = conversionEvent
 	}
 	audience, err := NormalizeAudienceTargeting(in.Targeting)
 	if err != nil {
@@ -3840,6 +3868,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// failure return an identically-shaped result.
 	r := partialResult()
 	r.BidApplied = adSetCreated
+	if ev, _ := promotedObject["custom_event_type"].(string); adSetCreated {
+		r.ConversionEvent = ev
+	}
 	return r, nil
 }
 
@@ -3861,13 +3892,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 // differs from this one ONLY in this spec (video_data / child_attachments in place
 // of link_data), so a new format lands as a sibling builder selected here by the
 // resolved asset's kind, leaving createVariantAd's creative/ad POST flow untouched.
-func objectStorySpec(pageID, utmURL string, variant AdVariant, imageHash string) map[string]any {
+func objectStorySpec(pageID, utmURL string, variant AdVariant, imageHash, callToAction string) map[string]any {
+	if callToAction == "" {
+		callToAction = DefaultCallToAction
+	}
 	linkData := map[string]any{
 		"link":    utmURL,
 		"message": variant.PrimaryText,
 		"name":    variant.Headline,
 		"call_to_action": map[string]any{
-			"type":  "LEARN_MORE",
+			"type":  callToAction,
 			"value": map[string]any{"link": utmURL},
 		},
 	}
@@ -4439,7 +4473,7 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 
 	creativeBody := map[string]any{
 		"name":              fmt.Sprintf("%s - Variant %d", in.EventName, i+1),
-		"object_story_spec": objectStorySpec(c.account.PageID, utmURL, variant, imageHash),
+		"object_story_spec": objectStorySpec(c.account.PageID, utmURL, variant, imageHash, in.CallToAction),
 	}
 	// Bind the Instagram identity so an ad set requesting an Instagram placement (the
 	// default includes Instagram Feed) is publishable. Without it Meta flags "Please add
