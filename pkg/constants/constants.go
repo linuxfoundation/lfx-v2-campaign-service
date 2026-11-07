@@ -108,6 +108,18 @@ const (
 	// default flips and this constant goes away.
 	EnvMicrosoftMetricsEnabled = "MICROSOFT_METRICS_ENABLED"
 
+	// EnvMicrosoftAdCopyEnabled opts a deployment IN to microsoftConfig.headlines, descriptions,
+	// path1 and path2 (#563), the caller copy of the responsive search ad sent instead of the
+	// auto-composed copy. Only the exact value "true" enables them; unset or any other value fails
+	// closed, and a create naming any of them is refused with a 400 before any job exists (and
+	// again at dispatch, before anything upstream).
+	//
+	// It names no account resource: it keeps an UNVERIFIED request shape (built from the v13
+	// ResponsiveSearchAd reference; no live create has sent caller copy or Path1/Path2) off the
+	// shared ad account until a live create confirms it. Turn it on per environment, in
+	// lfx-v2-argocd.
+	EnvMicrosoftAdCopyEnabled = "MICROSOFT_AD_COPY_ENABLED"
+
 	// EnvRedditKeywordTargetingWritesEnabled opts a deployment IN to BOTH Reddit ad-group targeting
 	// writes (LFXV2-2665): REMOVING keywords (remove-keyword-targeting) and ADDING negative keywords
 	// to excluded_keywords (add-negative-keywords) — the same whole-targeting PATCH, so one switch.

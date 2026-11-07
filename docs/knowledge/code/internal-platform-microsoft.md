@@ -1464,3 +1464,30 @@ keeps its existing scheme.
 the ad group (the bid); a reused campaign — found by name or by the duplicate-name self-heal — or a
 reused ad group sets it false and adds the step "Warning: bid NOT applied to reused campaign|ad group
 <id>; its existing bidding is unchanged".
+
+## Caller ad copy and display paths (`ad_copy.go`, #563)
+
+`CampaignInput.Headlines` / `Descriptions` have always been accepted leniently (an empty entry is
+skipped and a short list is padded by `composeAdCopy`). Since #563 the dispatcher forwards
+`microsoftConfig.headlines` / `descriptions` / `path1` / `path2`, and holds them first to the
+STRICT caller rules in the exported `ValidateCallerAdCopy`: a supplied list must have 3–15
+headlines / 2–4 descriptions, an empty or whitespace-only entry is refused rather than skipped
+(a placeholder beside approved copy is worse than a refusal), and `checkAdCopyList`'s width-aware
+caps, control-character and case-insensitive-uniqueness rules apply. Each refusal is an
+`*AdCopyError` naming the request field, which the dispatcher turns into the synchronous 400.
+
+`CampaignInput.Path1` / `Path2` are sent on the ResponsiveSearchAd as `Path1` / `Path2`
+(`omitempty`, so an ad without paths sends the pre-#563 body). `validatePaths` runs in the
+`CreateCampaign` prologue, before any request: one segment each (no `/`), trimmed, a letter or
+digit, at most 15 characters (7 with a double-width character), and Path2 only with Path1 — the
+v13 ResponsiveSearchAd element rules. The display-URL check that already held the final URL's
+host to 67 characters (33 wide) now measures `displayURL(host, Path1, Path2)` — the host plus
+`/Path1/Path2`, separators counted, the conservative reading of "the domain portion of the URL in
+combination with the path 1 and path 2 strings cannot exceed 67 characters" — and refuses an
+overflow as a `PreflightRefusal` with nothing created.
+
+A responsive search ad REUSED by its final URL on a retry keeps the copy it was created with (as a
+reused ad group keeps its bid); when the caller sent copy the result carries the step "Warning:
+caller ad copy NOT applied to reused ad <id>". The whole input is behind
+`MICROSOFT_AD_COPY_ENABLED` in the dispatcher (`internal/dispatch/microsoft_ad_copy.go`), off by
+default: no live create has sent caller copy or Path1/Path2.

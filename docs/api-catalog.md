@@ -744,7 +744,27 @@ startDate?: string              — OPTIONAL flight start, YYYY-MM-DD (the `meta
 endDate?: string                — OPTIONAL flight end, YYYY-MM-DD, sent as the ad group's EndDate.
                                   Must be after startDate, or after today when startDate is
                                   omitted. Omitted, the ad group runs until stopped.
+headlines?: string[]            — OPTIONAL caller copy of the responsive search ad (#563): 3-15
+                                  headlines, each at most 30 characters (15 with a double-width
+                                  character), sent as the RSA's Headlines TextAssets in order.
+                                  Omitted, headlines are auto-composed from the event name.
+descriptions?: string[]         — OPTIONAL, 2-4 descriptions, each at most 90 characters (45 with a
+                                  double-width character). Omitted, auto-composed.
+path1?: string                  — OPTIONAL display-URL path segment, at most 15 characters (7 with a
+                                  double-width character), no "/", sent as the RSA's Path1.
+path2?: string                  — OPTIONAL second segment, same rules, sent as Path2; requires path1.
 ```
+
+**Caller ad copy (#563).** `headlines`, `descriptions`, `path1` and `path2` replace the
+auto-composed copy; each list may be sent without the other. Every entry is trimmed and must
+contain a letter or digit and no control character; case-insensitive repeats are refused; an
+empty entry is refused rather than padded with a placeholder. The registration URL's host plus
+`/path1/path2` must fit Microsoft's 67-character display-URL limit (33 with a double-width
+character); that one is checked at dispatch (it needs the brief's URL), before anything is created.
+A retry that reuses the ad by its final URL keeps that ad's copy and records a warning step. All
+four are off unless `MICROSOFT_AD_COPY_ENABLED` is exactly `"true"`: off, or for a wrong JSON type
+or any rule above, the create is refused **synchronously** with `400 invalid campaign config:
+microsoftConfig.<field>: …` before any job exists. Not role-gated.
 
 Omitting both dates creates the campaign exactly as before they existed. Either date may be sent
 alone. An invalid date fails the platform job BEFORE anything is created (claim released), the

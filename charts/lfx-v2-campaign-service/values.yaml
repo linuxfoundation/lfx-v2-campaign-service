@@ -307,6 +307,18 @@ app:
     MICROSOFT_METRICS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to microsoftConfig.headlines, descriptions,
+    # path1 and path2 (#563), the caller copy of the Microsoft responsive
+    # search ad, sent instead of the auto-composed copy. Default off: the
+    # shape is built from the v13 ResponsiveSearchAd reference and no live
+    # create has sent caller copy or Path1/Path2. It names no account
+    # resource; it keeps an unverified shape off the shared ad account. While
+    # off, a create naming any of the four is refused with a 400 before any
+    # job exists. Any value other than "true" is treated as off, so a typo
+    # fails closed.
+    MICROSOFT_AD_COPY_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to BOTH Reddit ad-group targeting writes
     # (LFXV2-2665): removing keywords (remove-keyword-targeting) and adding
     # negative keywords to excluded_keywords (add-negative-keywords) — enabling

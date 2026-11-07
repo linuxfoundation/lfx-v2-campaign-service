@@ -5420,7 +5420,22 @@ type CampaignCreateInputRequestBody struct {
 	// blank or invalid entry, an overlap, a list over its cap, a value that is not
 	// an array of strings (null reads as absent), or either list while the flag is
 	// off, is refused with 400 "invalid campaign config: redditConfig.<field>:
-	// ..." before any job exists.
+	// ..." before any job exists. MICROSOFT AD COPY (#563): microsoftConfig takes
+	// `headlines` (3-15), `descriptions` (2-4), `path1` and `path2`, sent on the
+	// responsive search ad instead of the copy auto-composed from the event name.
+	// Each headline is at most 30 characters and each description at most 90 (15
+	// and 45 when it contains a double-width character such as CJK or emoji);
+	// every entry must contain a letter or digit and no control character, and
+	// case-insensitive repeats are refused. A path is one segment of at most 15
+	// characters (7 with a double-width character), without '/', and path2
+	// requires path1; the registration URL's host plus /path1/path2 must fit 67
+	// characters (33 with a double-width character), checked at dispatch before
+	// anything is created. Either list may be omitted, and that side is
+	// auto-composed. An ad reused on a retry keeps its existing copy. All four are
+	// OFF unless MICROSOFT_AD_COPY_ENABLED is exactly "true" on the deployment. A
+	// wrong JSON type (null reads as absent), a rule breach, or any of them while
+	// the flag is off, is refused with 400 "invalid campaign config:
+	// microsoftConfig.<field>: ..." before any job exists.
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
