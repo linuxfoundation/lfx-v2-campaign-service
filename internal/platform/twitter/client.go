@@ -1013,6 +1013,13 @@ func isPreSendDialError(err error) bool {
 	return false
 }
 
+// ErrCreateTargetingIncomplete marks a CreateCampaign that stopped at the create-time targeting
+// criteria (#564): the campaign and line item exist, but the line item's targeting was not
+// applied, not confirmed or only partly applied, and nothing was authored or promoted. The partial
+// result's Steps say which, in this client's own words; the marker lets the dispatcher classify
+// the failure without reading the error's text, which can carry an upstream body.
+var ErrCreateTargetingIncomplete = errors.New("twitter: the line item's create-time targeting is incomplete")
+
 // createOutcomeAmbiguous reports whether a failed MUTATING request MAY have been
 // applied by X despite the error — i.e. the request plausibly reached the server
 // and its outcome is unknowable. Callers on the create path use it to decide
@@ -3899,8 +3906,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// half-changed. Not PAUSED, or a status that cannot be read, is for an operator.
 			status, serr := c.lineItemEntityStatus(ctx, lineItemID)
 			if serr != nil {
-				return partialResult(), fmt.Errorf("x targeting not confirmed (%s, %s; its status could not be read, so its targeting was not changed and nothing was authored or promoted): verify the line item in X Ads Manager: %w",
-					campaignStatus(), lineItemStatus(), serr)
+				steps = append(steps, fmt.Sprintf("Targeting NOT applied to reused line item %s: its status could not be read, so its targeting was not changed and nothing was authored or promoted; verify the line item in X Ads Manager", lineItemID))
+				return partialResult(), fmt.Errorf("x targeting not confirmed (%s, %s; its status could not be read, so its targeting was not changed and nothing was authored or promoted): verify the line item in X Ads Manager: %w: %w",
+					campaignStatus(), lineItemStatus(), ErrCreateTargetingIncomplete, serr)
 			}
 			if status != "PAUSED" {
 				// X's status is upstream text: only a value from X's documented set is named.
@@ -3909,13 +3917,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				case "ACTIVE", "DRAFT", "DELETED":
 					shown = status
 				}
-				return partialResult(), fmt.Errorf("x targeting not applied (%s, %s; it is %s, not PAUSED, so its targeting was not changed and nothing was authored or promoted): reconcile the line item's targeting in X Ads Manager",
-					campaignStatus(), lineItemStatus(), shown)
+				steps = append(steps, fmt.Sprintf("Targeting NOT applied to reused line item %s: it is %s, not PAUSED, so its targeting was not changed and nothing was authored or promoted; reconcile its targeting in X Ads Manager", lineItemID, shown))
+				return partialResult(), fmt.Errorf("x targeting not applied (%s, %s; it is %s, not PAUSED, so its targeting was not changed and nothing was authored or promoted): reconcile the line item's targeting in X Ads Manager: %w",
+					campaignStatus(), lineItemStatus(), shown, ErrCreateTargetingIncomplete)
 			}
 			live, lerr := c.ListLineItemTargetingCriteria(ctx, lineItemID)
 			if lerr != nil {
-				return partialResult(), fmt.Errorf("x targeting not confirmed (%s, %s; its existing targeting criteria could not be read, so nothing was authored or promoted): verify the line item's targeting in X Ads Manager before retrying: %w",
-					campaignStatus(), lineItemStatus(), lerr)
+				steps = append(steps, fmt.Sprintf("Targeting NOT confirmed on reused line item %s: its existing targeting criteria could not be read, so nothing was authored or promoted; verify its targeting in X Ads Manager before retrying", lineItemID))
+				return partialResult(), fmt.Errorf("x targeting not confirmed (%s, %s; its existing targeting criteria could not be read, so nothing was authored or promoted): verify the line item's targeting in X Ads Manager before retrying: %w: %w",
+					campaignStatus(), lineItemStatus(), ErrCreateTargetingIncomplete, lerr)
 			}
 			pending = missingCriteria(criteria, live)
 			if have := len(criteria) - len(pending); have > 0 {
@@ -3928,8 +3938,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				if createOutcomeAmbiguous(err) {
 					state = "UNCONFIRMED (it may have been applied)"
 				}
-				return partialResult(), fmt.Errorf("x targeting incomplete (%s, %s; %d of %d criteria applied, %s %s): do not enable the line item until its targeting is completed in X Ads Manager: %w",
-					campaignStatus(), lineItemStatus(), len(criteria)-len(pending)+i, len(criteria), cr.label, state, err)
+				applied := len(criteria) - len(pending) + i
+				steps = append(steps, fmt.Sprintf("Targeting INCOMPLETE on line item %s: %d of %d criteria applied, %s %s; nothing was authored or promoted. Do not enable the line item until its targeting is completed in X Ads Manager", lineItemID, applied, len(criteria), cr.label, state))
+				return partialResult(), fmt.Errorf("x targeting incomplete (%s, %s; %d of %d criteria applied, %s %s): do not enable the line item until its targeting is completed in X Ads Manager: %w: %w",
+					campaignStatus(), lineItemStatus(), applied, len(criteria), cr.label, state, ErrCreateTargetingIncomplete, err)
 			}
 			steps = append(steps, fmt.Sprintf("Targeting added to line item %s: %s", lineItemID, cr.label))
 		}

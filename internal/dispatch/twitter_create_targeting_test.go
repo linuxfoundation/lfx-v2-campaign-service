@@ -17,6 +17,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -138,5 +139,85 @@ func TestTwitterCreateTargeting_DispatchNamesAMistypedList(t *testing.T) {
 	}
 	if n := calls.Load(); n != 0 {
 		t.Errorf("%d X calls; want 0", n)
+	}
+}
+
+// A criterion that fails part-way (#567 review) reaches the job as a classified, upstream-text-free
+// message, and the partial Result carries the targeting specifics (applied count, failed criterion,
+// do-not-enable warning) as a step, since DispatchFailureMessage never echoes the error's text.
+func TestTwitterCreateTargeting_CriterionFailureReachesTheJobClassified(t *testing.T) {
+	t.Setenv(constants.EnvTwitterCreateTargetingEnabled, "true")
+	const upstream = "UPSTREAM-BODY-MARKER"
+	var promoted atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/12/targeting_criteria/locations":
+			_, _ = w.Write([]byte(`{"data":[{"country_code":"US","location_type":"COUNTRIES","targeting_type":"LOCATION","targeting_value":"loc-us"}],"next_cursor":null}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/12/targeting_criteria/languages":
+			_, _ = w.Write([]byte(`{"data":[{"targeting_type":"LANGUAGE","targeting_value":"en"}],"next_cursor":null}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case strings.HasSuffix(r.URL.Path, "/targeting_criteria"):
+			if q.Get("targeting_type") == "LANGUAGE" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"errors":[{"message":"` + upstream + `"}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"id":"tc1","line_item_id":"` + q.Get("line_item_id") + `","targeting_type":"` + q.Get("targeting_type") + `","targeting_value":"` + q.Get("targeting_value") + `"}}`))
+		case strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case strings.HasSuffix(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			promoted.Add(1)
+			_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	d := NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+		twitter.WithBaseURL(srv.URL), twitter.WithWriteDelay(0))
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, twitterTargetingCfg(`,"geoTargets":["US"],"languages":["en"]`))
+	if err == nil || camp == nil {
+		t.Fatalf("Dispatch = (%v, %v), want a partial and an error", camp, err)
+	}
+	if !errors.Is(err, twitter.ErrCreateTargetingIncomplete) {
+		t.Errorf("err does not carry ErrCreateTargetingIncomplete: %v", err)
+	}
+	if n := promoted.Load(); n != 0 {
+		t.Errorf("%d promoted_tweets calls after a targeting failure; want 0", n)
+	}
+
+	msg := service.DispatchFailureMessage(model.ProviderTwitterAds, err, false)
+	if !strings.Contains(msg, "created the campaign but could not confirm its setup finished") {
+		t.Errorf("job message = %q, want the setup-incomplete wording", msg)
+	}
+	if strings.Contains(msg, upstream) {
+		t.Errorf("job message carries upstream text: %q", msg)
+	}
+
+	var blob struct {
+		LineItemID string   `json:"line_item_id"`
+		Steps      []string `json:"steps"`
+	}
+	if jerr := json.Unmarshal(camp.Result, &blob); jerr != nil {
+		t.Fatalf("Result: %v", jerr)
+	}
+	last := ""
+	if len(blob.Steps) > 0 {
+		last = blob.Steps[len(blob.Steps)-1]
+	}
+	for _, want := range []string{"Targeting INCOMPLETE on line item li1", "1 of 2 criteria applied", "language en failed", "Do not enable the line item"} {
+		if !strings.Contains(last, want) {
+			t.Errorf("last step = %q, want it to contain %q", last, want)
+		}
+	}
+	if strings.Contains(strings.Join(blob.Steps, "\n"), upstream) {
+		t.Errorf("steps carry upstream text: %v", blob.Steps)
 	}
 }

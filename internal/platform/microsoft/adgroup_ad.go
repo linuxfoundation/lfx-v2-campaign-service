@@ -96,7 +96,8 @@ const (
 
 	// maxDisplayDomainRunes bounds the ad's DISPLAY domain, which Microsoft derives from the
 	// FinalUrls hostname. Microsoft caps the displayed URL (domain plus optional Path1/Path2)
-	// at 67 characters; the RSA build sets no Path1/Path2, so the whole budget is the hostname.
+	// at 67 characters; with no Path1/Path2 the whole budget is the hostname, and with them
+	// CreateCampaign measures displayURL(host, Path1, Path2) against the same cap (#563).
 	// A hostname longer than this passes the 2,048-char FinalUrls check but is rejected only at
 	// AddAds — after the campaign/ad group exist — so it is validated up front alongside the
 	// FinalUrls length to keep a bad host from orphaning a PAUSED campaign.
@@ -212,7 +213,11 @@ type msResponsiveSearchAd struct {
 	Headlines    []msAssetLink `json:"Headlines"`
 	Descriptions []msAssetLink `json:"Descriptions"`
 	FinalUrls    []string      `json:"FinalUrls"`
-	Status       string        `json:"Status"`
+	// Path1/Path2 are the optional display-URL segments (#563), omitted when empty so an ad
+	// without them sends exactly the body it always did.
+	Path1  string `json:"Path1,omitempty"`
+	Path2  string `json:"Path2,omitempty"`
+	Status string `json:"Status"`
 }
 
 // createAdsRequest is the POST /Ads body. The v13 AddAds operation REQUIRES AdGroupId
@@ -401,7 +406,7 @@ func (c *Client) createAdGroupAndAd(
 	headlines, descriptions := composeAdCopy(in)
 	finalURL := buildAdFinalURL(in)
 
-	adID, existed, err := c.findOrCreateResponsiveSearchAd(ctx, adGroupID, headlines, descriptions, finalURL)
+	adID, existed, err := c.findOrCreateResponsiveSearchAd(ctx, adGroupID, headlines, descriptions, in.Path1, in.Path2, finalURL)
 	if err != nil {
 		// Same ordered classification as the ad group (ambiguous transport/errNoID first, so a
 		// mid-flight ctx-cancel stays UNCONFIRMED; a bare context error from the lookup is a
@@ -420,6 +425,11 @@ func (c *Client) createAdGroupAndAd(
 	adExisted := existed
 	if existed {
 		*steps = append(*steps, fmt.Sprintf("Ad already exists (%s) with the same destination (not re-created)", adID))
+		// A reused ad keeps the copy it was created with, as a reused ad group keeps its bid:
+		// say so when the caller sent copy, so nobody reads the result as "this copy is live".
+		if len(in.Headlines) > 0 || len(in.Descriptions) > 0 || in.Path1 != "" {
+			*steps = append(*steps, fmt.Sprintf("Warning: caller ad copy NOT applied to reused ad %s; edit it in Microsoft Advertising if it differs", adID))
+		}
 	} else {
 		*steps = append(*steps, fmt.Sprintf("Ad created: %s (PAUSED, ResponsiveSearch)", adID))
 	}
@@ -842,7 +852,7 @@ func finishObject(dec *json.Decoder) error {
 // platform clients, concurrent dispatch for one campaign brief is serialized upstream by
 // the orchestrator's claim contract (a single in-flight dispatch per campaign), so this
 // path is never entered concurrently for the same destination.
-func (c *Client) findOrCreateResponsiveSearchAd(ctx context.Context, adGroupID string, headlines, descriptions []string, finalURL string) (id string, existed bool, err error) {
+func (c *Client) findOrCreateResponsiveSearchAd(ctx context.Context, adGroupID string, headlines, descriptions []string, path1, path2, finalURL string) (id string, existed bool, err error) {
 	if existingID, ferr := c.findAdByFinalURL(ctx, adGroupID, finalURL); ferr != nil {
 		return "", false, unconfirmedLookupErr(ctx, ferr)
 	} else if existingID != "" {
@@ -855,6 +865,8 @@ func (c *Client) findOrCreateResponsiveSearchAd(ctx context.Context, adGroupID s
 			Headlines:    textAssetLinks(headlines),
 			Descriptions: textAssetLinks(descriptions),
 			FinalUrls:    []string{finalURL},
+			Path1:        path1,
+			Path2:        path2,
 			Status:       adStatusPaused,
 		}},
 	}

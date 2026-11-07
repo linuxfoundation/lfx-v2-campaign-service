@@ -1596,6 +1596,13 @@ how many criteria were applied, and says not to enable the line item until its t
 completed. An ambiguous failure (429, 5xx, transport) is worded UNCONFIRMED. The single-create
 example omits `operator_type`, so an absent one reads as EQ.
 
+Because the job message never carries the error's text (`service.DispatchFailureMessage`), every
+targeting stop also appends a step to the partial result, in this client's own words: the applied
+count, the failed criterion's label and state, and the do-not-enable warning (or, on a reused line
+item, why its targeting was not changed). The error wraps `ErrCreateTargetingIncomplete`, which the
+dispatcher maps to `domain.CreateOutcomeCampaignCreatedSetupIncomplete`, so the job reads "created
+the campaign but could not confirm its setup finished" instead of the generic unconfirmed sentence.
+
 A partial create is RETAINED by the orchestrator. Repeating the API request does not re-dispatch
 it; the request answers "reconciliation required". The client-level REUSE path below is therefore
 reached only when a create finds a same-name line item another way, for example after an operator

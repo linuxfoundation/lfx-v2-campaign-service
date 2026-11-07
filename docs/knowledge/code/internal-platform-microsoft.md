@@ -1024,6 +1024,13 @@ decoded with `encoding/json` and no `identityjson` check. Tests in `keyword_leve
 `_InvalidInputSendsNothing`, `_ZeroCollectionCodeIsAbsent`, `_EntityCodeWithAnIDFallsThrough` and
 `_AlreadyExistsIsMatchedStrictly`. The dispatcher's are in `internal/dispatch/microsoft_keywords_test.go`.
 
+**Also at create (#563).** `AddCampaignNegativeKeywords` is also called by the create path,
+right after a confirmed `CreateCampaign`, for `microsoftConfig.negativeKeywords` (see
+[internal/dispatch](internal-dispatch.md), "Microsoft negative keywords at create"). The
+dispatcher records its positional outcomes on `CampaignResult.NegativeKeywords`, which is why
+`NegativeKeywordOutcome` carries camelCase JSON tags (`text`, `matchType`, `outcome`,
+`negativeKeywordId`, `errorCode`). `CreateCampaign` itself never sets the field.
+
 ## Ad-group max CPC bid read + write (LFXV2-2665)
 
 `bid.go` backs `MicrosoftDispatcher.WriteBid`. The bid lives on the AD GROUP (`AdGroup.CpcBid`,
@@ -1447,6 +1454,30 @@ is not mistaken for an ambiguous mutation. `CampaignResult.ImageMediaID`/`ImageA
 are set by the dispatcher, never by `CreateCampaign`. See
 [Microsoft Creative Image Assets](../architecture/microsoft-creative-assets.md).
 
+## Campaign sitelink and callout extensions (#563)
+
+`AttachCampaignTextExtensions` (`text_extensions.go`) attaches caller sitelinks and callouts to a
+campaign this client created, as campaign-level `SitelinkAdExtension` and `CalloutAdExtension`
+entries. `ValidateTextExtensions` (also run by the dispatcher's preflight and Dispatch, behind
+`MICROSOFT_AD_EXTENSIONS_ENABLED`) holds the v13 limits: sitelinks 1–20, text 25 with a
+description and 35 without, both descriptions or neither at 35 each, an absolute http/https
+`FinalUrls` entry of at most 2,048 characters (code points) with no userinfo, its control
+characters checked before the trim; callouts 2–20 at 25 each. Any double-width
+character switches a field to the reduced limits (11/15, 15, 12), applied conservatively as the
+RSA caps are. Every refusal is a `*TextExtensionError` naming the `microsoftConfig` field.
+
+Per type: one `AdExtensionsAssociations/Query` filtered to that type (`findCampaignExtension`,
+the image lookup generalised by type) — an extension of the type already on the campaign skips
+the type, and a failed lookup adds nothing of it. Then, per extension, one `AdExtensions` add
+(classified by `adExtensionIdentity`) and one `AdExtensionsAssociations/Set`
+(`associateCampaignExtension`, now shared with the image attach). One item per call keeps every
+response on the single-item Index-0 classifiers. A failure never stops the run: each extension
+is counted `Failed` or `Unconfirmed` and named in `Steps`, and `Degraded()` tells the dispatcher
+to mark the campaign `created_degraded`. So does `CalloutsBelowMinimum`: fewer than two callouts
+on the campaign, after this run or as a retry's lookup counted them (`findCampaignExtension`
+returns the count), serve none. `CampaignResult.SitelinkAdExtensionIDs` /
+`CalloutAdExtensionIDs` are set by the dispatcher. Not verified live.
+
 ## Create-time campaign bid strategy (`CampaignInput.BiddingScheme`, LFXV2-2665)
 
 `BiddingScheme` sets the CAMPAIGN's `BiddingScheme` (`msBiddingScheme`, `{"Type": ...}`) on the
@@ -1464,3 +1495,38 @@ keeps its existing scheme.
 the ad group (the bid); a reused campaign — found by name or by the duplicate-name self-heal — or a
 reused ad group sets it false and adds the step "Warning: bid NOT applied to reused campaign|ad group
 <id>; its existing bidding is unchanged".
+
+## Caller ad copy and display paths (`ad_copy.go`, #563)
+
+`CampaignInput.Headlines` / `Descriptions` have always been accepted leniently (an empty entry is
+skipped and a short list is padded by `composeAdCopy`). Since #563 the dispatcher forwards
+`microsoftConfig.headlines` / `descriptions` / `path1` / `path2`, and holds them first to the
+STRICT caller rules in the exported `ValidateCallerAdCopy`: a supplied list must have 3–15
+headlines / 2–4 descriptions, an empty or whitespace-only entry is refused rather than skipped
+(a placeholder beside approved copy is worse than a refusal), and `checkAdCopyList`'s width-aware
+caps, control-character and case-insensitive-uniqueness rules apply. Each refusal is an
+`*AdCopyError` naming the request field, which the dispatcher turns into the synchronous 400.
+
+`CampaignInput.Path1` / `Path2` are sent on the ResponsiveSearchAd as `Path1` / `Path2`
+(`omitempty`, so an ad without paths sends the pre-#563 body). `validatePaths` runs in the
+`CreateCampaign` prologue, before any request: one segment each (no `/`), trimmed, a letter or
+digit, at most 15 characters (7 with a double-width character), and Path2 only with Path1 — the
+v13 ResponsiveSearchAd element rules. The display-URL check that already held the final URL's
+host to 67 characters (33 wide) now measures `displayURL(host, Path1, Path2)` — the host plus
+`/Path1/Path2`, separators counted, the conservative reading of "the domain portion of the URL in
+combination with the path 1 and path 2 strings cannot exceed 67 characters" — and refuses an
+overflow as a `PreflightRefusal` with nothing created.
+
+A responsive search ad REUSED by its final URL on a retry keeps the copy it was created with (as a
+reused ad group keeps its bid); when the caller sent copy the result carries the step "Warning:
+caller ad copy NOT applied to reused ad <id>". The whole input is behind
+`MICROSOFT_AD_COPY_ENABLED` in the dispatcher (`internal/dispatch/microsoft_ad_copy.go`), off by
+default: no live create has sent caller copy or Path1/Path2.
+
+**Withheld error codes (#565 review).** `indexedErrorItem.code()` and `meaningfulCode` pass every
+code through `outputCode`: a value that is not code-shaped (`[A-Za-z0-9_.-]+`, i.e. a symbolic
+name or a number) is replaced by `withheldErrorCode`. The codes reach persisted steps, the
+positional outcomes and logs, and they come from the response body, so a URL or token there is
+never passed on. Classification (`isNegativeKeywordAlreadyExists`, `isError`, the entity-level
+"was there a code") still reads the raw values, and the replacement is non-empty, so an entity
+refusal stays definite and an item stays FAILED.

@@ -67,7 +67,13 @@ type redditConfig struct {
 	ImageAssetID      string `json:"imageAssetId"`
 	CallToAction      string `json:"callToAction"`
 	ConversionPixelID string `json:"conversionPixelId"`
-	VideoGoal         string `json:"videoGoal"`
+	// ConversionEvent is the pixel event a conversions campaign optimizes toward (#549); empty
+	// keeps PURCHASE. Gated by REDDIT_CONVERSION_EVENT_ENABLED and validated, synchronously, by
+	// checkRedditConversionEvent (reddit_conversion_event.go).
+	// omitempty: an omitted event must stay ABSENT in the persisted ConfigSnapshot, because the
+	// validator refuses an explicit "" and a stored snapshot must replay as a valid config.
+	ConversionEvent string `json:"conversionEvent,omitempty"`
+	VideoGoal       string `json:"videoGoal"`
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
 	// (BIDLESS, unchanged); manual creates a MANUAL_BIDDING CPC campaign — see redditBidPlan.
 	Bidding *biddingConfig `json:"bidding,omitempty"`
@@ -240,6 +246,12 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	}
 	var cfg redditConfig
 	if err := unmarshalPlatformConfig(config, "redditConfig", &cfg); err != nil {
+		// A wrong-typed conversionEvent also fails this decode; report it by its own field-specific
+		// refusal (checkRedditConversionEvent reads the raw key) rather than as the generic decode
+		// failure, exactly as PreflightCreate would have.
+		if cerr := checkRedditConversionEvent(config, cfg); cerr != nil {
+			return nil, notCreated(cerr)
+		}
 		return nil, notCreated(err)
 	}
 	// The bidding choice, validated before any upstream call (PreflightCreate normally refused a
@@ -271,6 +283,11 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 			plan.stamp(camp)
 		}
 	}()
+	// The conversion event, checked again here for any path that skipped PreflightCreate: the
+	// deployment gate, the exact key and a string value, and the value against the objective.
+	if err := checkRedditConversionEvent(config, cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -337,6 +354,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		ImageURLSource:     imageURLSource,
 		CallToAction:       cfg.CallToAction,
 		ConversionPixelID:  cfg.ConversionPixelID,
+		ConversionEvent:    cfg.ConversionEvent,
 		VideoGoal:          cfg.VideoGoal,
 		ManualCPCBid:       plan.amount,
 

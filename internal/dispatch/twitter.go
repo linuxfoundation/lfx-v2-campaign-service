@@ -413,7 +413,14 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		if result == nil {
 			return nil, notCreated(fmt.Errorf("twitter campaign creation failed before any upstream create: %w", cerr))
 		}
-		return campaignFromTwitter(ctx, result, cfg), fmt.Errorf("twitter campaign creation UNCONFIRMED: %w", cerr)
+		werr := fmt.Errorf("twitter campaign creation UNCONFIRMED: %w", cerr)
+		if errors.Is(cerr, twitter.ErrCreateTargetingIncomplete) {
+			// The campaign and line item exist and only the create-time targeting (#564) did
+			// not finish: say so in the job message, by token rather than the error's text.
+			// The specifics (applied count, failed criterion) are in the partial's Steps.
+			werr = withCreateOutcome(werr, domain.CreateOutcomeCampaignCreatedSetupIncomplete)
+		}
+		return campaignFromTwitter(ctx, result, cfg), werr
 	}
 	// A nil-error success is DEGRADED — persisted as `created_degraded`, not clean
 	// `created` — in any of these shapes, all of which mean the campaign exists but is

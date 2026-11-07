@@ -439,36 +439,47 @@ func (c *Client) AttachCampaignImage(ctx context.Context, campaignID string, in 
 	r.Steps = append(r.Steps, fmt.Sprintf("Image extension created: %s", r.AdExtensionID))
 
 	// 4. Associate with the campaign.
-	body, err = c.doRequest(ctx, http.MethodPost, "AdExtensionsAssociations/Set", setAdExtensionsAssociationsRequest{
-		AccountId:                           account,
-		AdExtensionIdToEntityIdAssociations: []adExtensionIDToEntityID{{AdExtensionId: json.Number(r.AdExtensionID), EntityId: campaign}},
-		AssociationType:                     associationTypeCampaign,
-	}, false)
-	if err == nil {
-		var resp setAdExtensionsAssociationsResponse
-		switch uerr := decodeTrusted(body, &resp); {
-		case uerr != nil:
-			// A 2xx we cannot read: the association may have committed.
-			err = fmt.Errorf("decode AdExtensionsAssociations/Set response (%v): %w", uerr, errNoID)
-		case !resp.sawPartialErrors:
-			// A 2xx that never said whether the item failed: not a confirmation.
-			err = fmt.Errorf("AdExtensionsAssociations/Set response omitted PartialErrors: %w", errNoID)
-		case resp.PartialErrors.rejectsOurItem():
-			err = fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
-		case resp.PartialErrors.AnyErrors:
-			// Coded, but not (only) about index 0 — the one item sent: a contradictory 2xx.
-			err = fmt.Errorf("AdExtensionsAssociations/Set PartialErrors name an item other than the one sent (codes on other or unindexed items: %s): %w", resp.PartialErrors.foreignCodes(), errNoID)
-		case len(resp.PartialErrors.Items) > 0 || resp.PartialErrors.Truncated:
-			// Present but malformed (`[null]`, `[{}]`): entries that carry no code neither confirm
-			// nor reject, so it is not the empty-error success — mirrors putUpdateOutcome.
-			err = fmt.Errorf("AdExtensionsAssociations/Set PartialErrors present but carried no error codes: %w", errNoID)
-		}
-	}
-	if err != nil {
+	if err := c.associateCampaignExtension(ctx, account, campaign, r.AdExtensionID); err != nil {
 		return r, classifyImageStep("microsoft-ads image extension: campaign association", err)
 	}
 	r.Steps = append(r.Steps, fmt.Sprintf("Image extension associated with campaign %s", campaignID))
 	return r, nil
+}
+
+// associateCampaignExtension associates ONE ad extension with ONE campaign
+// (SetAdExtensionsAssociations, AssociationType "Campaign") and classifies the 2xx exactly as
+// the image attach always has: a PartialError at Index 0 alone is a definite rejection
+// (errPartialFailure); an unreadable body, an omitted PartialErrors, a code naming another
+// item, or uncoded entries are errNoID (UNCONFIRMED). Shared by the image and text extensions
+// (text_extensions.go) so the two cannot classify the same response differently.
+func (c *Client) associateCampaignExtension(ctx context.Context, account, campaign json.Number, extensionID string) error {
+	body, err := c.doRequest(ctx, http.MethodPost, "AdExtensionsAssociations/Set", setAdExtensionsAssociationsRequest{
+		AccountId:                           account,
+		AdExtensionIdToEntityIdAssociations: []adExtensionIDToEntityID{{AdExtensionId: json.Number(extensionID), EntityId: campaign}},
+		AssociationType:                     associationTypeCampaign,
+	}, false)
+	if err != nil {
+		return err
+	}
+	var resp setAdExtensionsAssociationsResponse
+	switch uerr := decodeTrusted(body, &resp); {
+	case uerr != nil:
+		// A 2xx we cannot read: the association may have committed.
+		return fmt.Errorf("decode AdExtensionsAssociations/Set response (%v): %w", uerr, errNoID)
+	case !resp.sawPartialErrors:
+		// A 2xx that never said whether the item failed: not a confirmation.
+		return fmt.Errorf("AdExtensionsAssociations/Set response omitted PartialErrors: %w", errNoID)
+	case resp.PartialErrors.rejectsOurItem():
+		return fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
+	case resp.PartialErrors.AnyErrors:
+		// Coded, but not (only) about index 0 — the one item sent: a contradictory 2xx.
+		return fmt.Errorf("AdExtensionsAssociations/Set PartialErrors name an item other than the one sent (codes on other or unindexed items: %s): %w", resp.PartialErrors.foreignCodes(), errNoID)
+	case len(resp.PartialErrors.Items) > 0 || resp.PartialErrors.Truncated:
+		// Present but malformed (`[null]`, `[{}]`): entries that carry no code neither confirm
+		// nor reject, so it is not the empty-error success — mirrors putUpdateOutcome.
+		return fmt.Errorf("AdExtensionsAssociations/Set PartialErrors present but carried no error codes: %w", errNoID)
+	}
+	return nil
 }
 
 // findCampaignImageExtension returns the id of an ImageAdExtension already associated with
@@ -482,24 +493,33 @@ func (c *Client) AttachCampaignImage(ctx context.Context, campaignID string, in 
 // refuses to upload — rather than being skipped or accepted: the request asked about exactly one
 // campaign, so a response that answers about something else is not an answer to trust either way.
 func (c *Client) findCampaignImageExtension(ctx context.Context, account, campaign json.Number) (string, error) {
+	id, _, err := c.findCampaignExtension(ctx, account, campaign, adExtensionTypeImage, "an image")
+	return id, err
+}
+
+// findCampaignExtension is findCampaignImageExtension for any one AdExtensionType: the id of the
+// first extension of extType already associated with the campaign and how many are, or ("", 0)
+// when the one collection answering for it holds none. label names the type in errors ("an
+// image", "a sitelink").
+func (c *Client) findCampaignExtension(ctx context.Context, account, campaign json.Number, extType, label string) (string, int, error) {
 	body, err := c.doRequest(ctx, http.MethodPost, "AdExtensionsAssociations/Query", adExtensionAssociationsQuery{
 		AccountId:       account,
-		AdExtensionType: adExtensionTypeImage,
+		AdExtensionType: extType,
 		AssociationType: associationTypeCampaign,
 		EntityIds:       []json.Number{campaign},
 	}, true)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	var resp adExtensionAssociationsQueryResponse
 	if uerr := decodeTrusted(body, &resp); uerr != nil {
-		return "", fmt.Errorf("decode AdExtensionsAssociations/Query response (%v): %w", uerr, errNoID)
+		return "", 0, fmt.Errorf("decode AdExtensionsAssociations/Query response (%v): %w", uerr, errNoID)
 	}
 	if resp.PartialErrors.AnyErrors {
-		return "", fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
+		return "", 0, fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
 	}
 	if !resp.sawCollection {
-		return "", fmt.Errorf("AdExtensionsAssociations/Query response omitted AdExtensionAssociationCollection: %w", errNoID)
+		return "", 0, fmt.Errorf("AdExtensionsAssociations/Query response omitted AdExtensionAssociationCollection: %w", errNoID)
 	}
 	// "For each entity identifier specified in the request, an AdExtensionAssociationCollection is
 	// returned", and exactly one id is sent — so exactly one collection answers for this campaign.
@@ -507,13 +527,13 @@ func (c *Client) findCampaignImageExtension(ctx context.Context, account, campai
 	// neither may read as "no image extension". The only "no image extension" answers are INSIDE
 	// the one collection: a null slot, or a null or empty AdExtensionAssociations.
 	if n := len(resp.AdExtensionAssociationCollection); n != 1 {
-		return "", fmt.Errorf("AdExtensionsAssociations/Query returned %d collections for 1 requested campaign: %w", n, errNoID)
+		return "", 0, fmt.Errorf("AdExtensionsAssociations/Query returned %d collections for 1 requested campaign: %w", n, errNoID)
 	}
 	// EVERY image association is validated before any is trusted: returning at the first valid
 	// one would leave a later misattributed or unusable entry unchecked, and a mixed response
 	// would then read as AlreadyAttached. The first valid id is kept and returned only once the
 	// whole response has passed.
-	found := ""
+	found, count := "", 0
 	for _, coll := range resp.AdExtensionAssociationCollection {
 		if coll == nil {
 			continue
@@ -522,24 +542,25 @@ func (c *Client) findCampaignImageExtension(ctx context.Context, account, campai
 			if a == nil || a.AdExtension == nil {
 				continue
 			}
-			// Filtered to ImageAdExtension by the request; an explicit other Type is skipped
+			// Filtered to extType by the request; an explicit other Type is skipped
 			// defensively, while a missing Type is trusted to the filter.
-			if a.AdExtension.Type != "" && a.AdExtension.Type != adExtensionTypeImage {
+			if a.AdExtension.Type != "" && a.AdExtension.Type != extType {
 				continue
 			}
 			if a.AssociationType != associationTypeCampaign || numberID(a.EntityId) != campaign.String() {
-				return "", fmt.Errorf("an image extension association was returned for an entity other than campaign %s: %w", campaign, errNoID)
+				return "", 0, fmt.Errorf("%s extension association was returned for an entity other than campaign %s: %w", label, campaign, errNoID)
 			}
 			id := numberID(a.AdExtension.Id)
 			if id == "" {
-				return "", fmt.Errorf("an image extension is associated with the campaign but its id is unusable: %w", errNoID)
+				return "", 0, fmt.Errorf("%s extension is associated with the campaign but its id is unusable: %w", label, errNoID)
 			}
 			if found == "" {
 				found = id
 			}
+			count++
 		}
 	}
-	return found, nil
+	return found, count, nil
 }
 
 // adExtensionIdentity extracts the created extension id from an AddAdExtensions 200 body,
