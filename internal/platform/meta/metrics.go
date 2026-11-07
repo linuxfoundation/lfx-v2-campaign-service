@@ -249,8 +249,22 @@ func (c *Client) getCampaignMetrics(ctx context.Context, campaignID string, wind
 	}
 	path := "/" + id + "/insights?fields=" + fields + "&date_preset=" + preset
 	var resp insightsResponse
-	if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
-		return nil, fmt.Errorf("get campaign metrics: %w", err)
+	if actionType == "" {
+		if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+			return nil, fmt.Errorf("get campaign metrics: %w", err)
+		}
+	} else {
+		// The conversions read decodes only a body identityjson accepted (getChecked): a
+		// duplicated key such as "value":"7","value":"0", or a repeated action_type or actions
+		// key (case variants included), is resolved last-wins by encoding/json and could turn a
+		// conversion count into a published zero.
+		raw, err := c.getChecked(ctx, path)
+		if err != nil {
+			return nil, fmt.Errorf("get campaign metrics: %w", err)
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return nil, fmt.Errorf("get campaign metrics: %w", &transportError{Method: http.MethodGet, Path: path, Err: errors.New("the response is not an insights object")})
+		}
 	}
 	if resp.Data == nil {
 		// 2xx with no `data` field at all: the body is malformed and cannot establish

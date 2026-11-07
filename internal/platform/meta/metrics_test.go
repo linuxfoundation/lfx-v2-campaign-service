@@ -451,6 +451,9 @@ func TestGetCampaignMetricsWithConversions(t *testing.T) {
 		{"blank action_type", `{"data":[{"actions":[{"action_type":" ","value":"7"}]}]}`, 0, "no readable action_type"},
 		{"numeric action_type", `{"data":[{"actions":[{"action_type":5,"value":"7"}]}]}`, 0, "no readable action_type"},
 		{"entry not an object", `{"data":[{"actions":["x"]}]}`, 0, "entry 1 is not an object"},
+		{"duplicate value key", `{"data":[{"actions":[{"action_type":"offsite_conversion.fb_pixel_lead","value":"7","value":"0"}]}]}`, 0, "cannot be trusted"},
+		{"duplicate action_type key", `{"data":[{"actions":[{"action_type":"offsite_conversion.fb_pixel_lead","ACTION_TYPE":"link_click","value":"7"}]}]}`, 0, "cannot be trusted"},
+		{"duplicate actions key", `{"data":[{"actions":[{"action_type":"offsite_conversion.fb_pixel_lead","value":"7"}],"Actions":[]}]}`, 0, "cannot be trusted"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex

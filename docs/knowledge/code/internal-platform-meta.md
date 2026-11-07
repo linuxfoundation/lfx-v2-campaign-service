@@ -1123,7 +1123,9 @@ first (`GetAdSetState`). See [Meta Ad Read Under an Ad Set](../architecture/meta
 ## Conversions in the metrics read (`metrics.go`, #550 gap 6)
 
 `GetCampaignMetricsWithConversions` is `GetCampaignMetrics` with `actions` added to the Insights
-`fields`. It reports, in `Conversions`, the `value` (Meta's default attribution window) of the ONE
+`fields`. Its body is decoded only after `identityjson` accepts it (`getChecked`), so a duplicated
+key (a second `value`, `action_type` or `actions`, case variants included) fails the read instead
+of being resolved last-wins into a false zero. It reports, in `Conversions`, the `value` (Meta's default attribution window) of the ONE
 entry whose `action_type` is the one asked for. `ConversionActionType` maps a recorded
 `custom_event_type` to that action type, using Meta's Ads Action Stats reference:
 - PURCHASE: `offsite_conversion.fb_pixel_purchase`
