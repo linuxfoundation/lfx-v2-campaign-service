@@ -307,6 +307,18 @@ app:
     MICROSOFT_METRICS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to microsoftConfig.headlines, descriptions,
+    # path1 and path2 (#563), the caller copy of the Microsoft responsive
+    # search ad, sent instead of the auto-composed copy. Default off: the
+    # shape is built from the v13 ResponsiveSearchAd reference and no live
+    # create has sent caller copy or Path1/Path2. It names no account
+    # resource; it keeps an unverified shape off the shared ad account. While
+    # off, a create naming any of the four is refused with a 400 before any
+    # job exists. Any value other than "true" is treated as off, so a typo
+    # fails closed.
+    MICROSOFT_AD_COPY_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to microsoftConfig.negativeKeywords (#563):
     # campaign-level negative keywords attached right after a Microsoft
     # Advertising campaign is created, through the AddNegativeKeywordsToEntities
@@ -365,6 +377,27 @@ app:
     # is refused with a 400 before any job exists. Any value other than "true"
     # is treated as off, so a typo fails closed.
     REDDIT_TARGETING_EXCLUSIONS_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to twitterConfig.geoTargets and
+    # twitterConfig.languages (#564), sent at create time as LOCATION and
+    # LANGUAGE targeting criteria on the new X line item. Default off: the
+    # shape is built from X's published v12 reference and no live create has
+    # sent it. It names no account resource; it keeps an unverified shape off
+    # the shared ad account. While off, a create naming either list is refused
+    # with a 400 before any job exists. Any value other than "true" is treated
+    # as off, so a typo fails closed.
+    TWITTER_CREATE_TARGETING_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to microsoftConfig.sitelinks and
+    # microsoftConfig.callouts (#563), created at create time as sitelink and
+    # callout ad extensions associated with the new Search campaign. Default
+    # off: the shape is built from the v13 Campaign Management reference and no
+    # live create has sent it. It names no account resource. While off, a
+    # create naming either list is refused with a 400 before any job exists.
+    # Any value other than "true" is treated as off, so a typo fails closed.
+    MICROSOFT_AD_EXTENSIONS_ENABLED:
       value: "false"
 
     # Opts this deployment IN to googleAdsConfig.demandGenAudience (#459): one
@@ -472,6 +505,16 @@ app:
     # naming one is refused before anything upstream exists. Any value other than
     # "true" is treated as off, so a typo fails closed.
     GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to linkedInConfig.conversions (#552): conversion
+    # rule ids associated with the campaign through a Campaign Conversions PUT
+    # once it exists. The PUT has not been exercised against a live LinkedIn
+    # account. The ids also require global_marketing_ops on the project. Set it
+    # to exactly "true" in lfx-v2-argocd once the probe in the PR passes. While
+    # off, a create naming conversions is refused before a job exists. Any value
+    # other than "true" is treated as off, so a typo fails closed.
+    LINKEDIN_ADS_CONVERSIONS_ENABLED:
       value: "false"
 
     # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR

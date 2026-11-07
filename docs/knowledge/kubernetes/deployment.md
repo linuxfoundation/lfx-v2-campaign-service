@@ -113,6 +113,11 @@ different: not an account resource, but inputs no live (persisted) create has ex
 on any channel, is refused before anything upstream exists. Turn it on once the validateOnly probe
 in the field's docs passes.
 
+`LINKEDIN_ADS_CONVERSIONS_ENABLED` defaults to `"false"` (#552) and is the same kind of gate for
+LinkedIn: `linkedInConfig.conversions` sends a Campaign Conversions PUT that has not been exercised
+against a live LinkedIn account. Only exactly `"true"` enables it; off, a create naming it is
+refused with a 400 before a job exists. The ids additionally require `global_marketing_ops`.
+
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
 default `1841232183`: the LF Research survey-promo workflow a survey send series
 (`send-workflows`) is copied from when a request names none. That id exists only in the LF

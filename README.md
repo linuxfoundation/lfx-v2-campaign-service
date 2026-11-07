@@ -268,6 +268,26 @@ openssl rand -base64 32
   off the shared ad account. The chart sets it to `"false"`
   (`app.environment.REDDIT_TARGETING_EXCLUSIONS_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once a live create confirms it.
+- `TWITTER_CREATE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `twitterConfig.geoTargets` and `twitterConfig.languages`
+  (#564), country and language targeting criteria added to the line item
+  an X create makes. Only the exact value `true` enables them; anything
+  else fails closed, and a create naming either is refused with a 400
+  before any job exists. It names no account resource; it keeps a shape no
+  live create has sent off the shared ad account. The chart sets it to
+  `"false"` (`app.environment.TWITTER_CREATE_TARGETING_ENABLED.value`);
+  enable it per-environment in the ArgoCD overlay once a live create
+  confirms it.
+- `MICROSOFT_AD_EXTENSIONS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `microsoftConfig.sitelinks` and `microsoftConfig.callouts`
+  (#563), created at create time as `SitelinkAdExtension` and
+  `CalloutAdExtension` entries associated with the new Search campaign. Only
+  the exact value `true` enables them; anything else fails closed, and a
+  create naming either is refused with a 400 before any job exists. It names
+  no account resource; it keeps a shape no live create has sent off the
+  shared ad account. The chart sets it to `"false"`
+  (`app.environment.MICROSOFT_AD_EXTENSIONS_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once a live create confirms it.
 - `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.demandGenAudience`, one
   existing Google Ads Audience on a Demand Gen ad group (#459). Only the
@@ -374,6 +394,14 @@ openssl rand -base64 32
   sets it to `"false"`
   (`app.environment.GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED.value`);
   enable it per-environment in the ArgoCD overlay once the probe passes.
+- `LINKEDIN_ADS_CONVERSIONS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `linkedInConfig.conversions` (#552), conversion rule ids
+  associated with the campaign through Campaign Conversions once it exists.
+  Only the exact value `true` enables it; anything else fails closed, and a
+  create naming it is refused with a 400 before a job exists. The ids also
+  require `global_marketing_ops`. The chart sets it to `"false"`
+  (`app.environment.LINKEDIN_ADS_CONVERSIONS_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once the probe passes.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code
@@ -394,6 +422,16 @@ openssl rand -base64 32
   to `"false"` (`charts/lfx-v2-campaign-service/values.yaml`); flip it
   only after the contract is verified against a live Microsoft ad
   account.
+- `MICROSOFT_AD_COPY_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `microsoftConfig.headlines`, `descriptions`, `path1`
+  and `path2` (#563), the caller copy of the responsive search ad sent
+  instead of the auto-composed copy. Only the exact value `true` enables
+  them; anything else fails closed, and a create naming any of them is
+  refused with a 400 before any job exists. It names no account
+  resource; it keeps a shape no live create has sent off the shared ad
+  account. The chart sets it to `"false"`
+  (`app.environment.MICROSOFT_AD_COPY_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once a live create confirms it.
 
 - `MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED` (default unset, i.e.
   OFF) — opts a deployment IN to `microsoftConfig.negativeKeywords`

@@ -65,6 +65,11 @@ type twitterConfig struct {
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
 	// (the line item bids AUTO, unchanged); manual creates a MAX bid charged per link click.
 	Bidding *biddingConfig `json:"bidding,omitempty"`
+	// GeoTargets (ISO 3166-1 alpha-2 country codes) and Languages (X language values) target the
+	// new line item (#564, twitter_create_targeting.go). Behind TWITTER_CREATE_TARGETING_ENABLED;
+	// omitted, the line item carries no criterion of that type, as before.
+	GeoTargets []string `json:"geoTargets,omitempty"`
+	Languages  []string `json:"languages,omitempty"`
 }
 
 // twitterBidPlan resolves twitterConfig's bidding choice. Every X campaign here is WEBSITE_CLICKS,
@@ -97,6 +102,10 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 	if err := checkBiddingShape(config, "twitterConfig"); err != nil {
 		return err
 	}
+	// A mistyped geoTargets / languages is a synchronous 400 too (#564).
+	if err := checkTwitterTargetingShape(config); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
@@ -105,6 +114,9 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 	var cfg twitterConfig
 	_ = unmarshalPlatformConfig(config, "twitterConfig", &cfg)
 	if _, err := twitterBidPlan(cfg); err != nil {
+		return err
+	}
+	if _, _, err := checkTwitterCreateTargeting(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -246,6 +258,10 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		return nil, notCreated(domain.PreflightRefusalf("twitter connection for project %s is missing funding instrument id", domain.CallerValue(brief.ProjectID)))
 	}
 
+	// A mistyped geoTargets / languages gets its own message rather than the generic decode error.
+	if err := checkTwitterTargetingShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg twitterConfig
 	if err := unmarshalPlatformConfig(config, "twitterConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -255,6 +271,13 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		return nil, notCreated(err)
 	}
 	plan, err := twitterBidPlan(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	// The create-time targeting gate and rules (#564), again here: a job enqueued before the flag
+	// was turned off, or by a caller that skipped preflight, must not reach X. (The shape check
+	// runs before the decode above.)
+	geoTargets, languages, err := checkTwitterCreateTargeting(cfg)
 	if err != nil {
 		return nil, notCreated(err)
 	}
@@ -368,6 +391,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		StageToken: stageToken,
 		Tactic:     tacticToken,
 		SlotToken:  model.SlotNameToken(model.DispatchSlotVersion(ctx)),
+
+		GeoTargets: geoTargets,
+		Languages:  languages,
 	}
 
 	// Built through the client cache, so concurrent dispatches for this account share ONE
@@ -387,7 +413,14 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		if result == nil {
 			return nil, notCreated(fmt.Errorf("twitter campaign creation failed before any upstream create: %w", cerr))
 		}
-		return campaignFromTwitter(ctx, result, cfg), fmt.Errorf("twitter campaign creation UNCONFIRMED: %w", cerr)
+		werr := fmt.Errorf("twitter campaign creation UNCONFIRMED: %w", cerr)
+		if errors.Is(cerr, twitter.ErrCreateTargetingIncomplete) {
+			// The campaign and line item exist and only the create-time targeting (#564) did
+			// not finish: say so in the job message, by token rather than the error's text.
+			// The specifics (applied count, failed criterion) are in the partial's Steps.
+			werr = withCreateOutcome(werr, domain.CreateOutcomeCampaignCreatedSetupIncomplete)
+		}
+		return campaignFromTwitter(ctx, result, cfg), werr
 	}
 	// A nil-error success is DEGRADED — persisted as `created_degraded`, not clean
 	// `created` — in any of these shapes, all of which mean the campaign exists but is

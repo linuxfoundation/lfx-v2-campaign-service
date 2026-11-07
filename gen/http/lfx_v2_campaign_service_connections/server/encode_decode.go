@@ -8373,6 +8373,285 @@ func EncodeGetLinkedinAdsAudienceError(encoder func(context.Context, http.Respon
 	}
 }
 
+// EncodeListLinkedinAdsAudiencesResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// list-linkedin-ads-audiences endpoint.
+func EncodeListLinkedinAdsAudiencesResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.LinkedinAdsAudienceSegments)
+		enc := encoder(ctx, w)
+		body := NewListLinkedinAdsAudiencesResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeListLinkedinAdsAudiencesRequest returns a decoder for requests sent to
+// the lfx-v2-campaign-service-connections list-linkedin-ads-audiences endpoint.
+func DecodeListLinkedinAdsAudiencesRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload, error) {
+		var payload *lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload
+		var (
+			projectID   string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		payload = NewListLinkedinAdsAudiencesPayload(projectID, bearerToken)
+		if payload.BearerToken != nil {
+			cred := *payload.BearerToken
+			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred = cred[index+1:]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeListLinkedinAdsAudiencesError returns an encoder for errors returned
+// by the list-linkedin-ads-audiences lfx-v2-campaign-service-connections
+// endpoint.
+func EncodeListLinkedinAdsAudiencesError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListLinkedinAdsAudiencesBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListLinkedinAdsAudiencesServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListLinkedinAdsAudiencesInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListLinkedinAdsAudiencesNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListLinkedinAdsAudiencesPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListLinkedinAdsAudiencesUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeListLinkedinAdsConversionsResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// list-linkedin-ads-conversions endpoint.
+func EncodeListLinkedinAdsConversionsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.LinkedinAdsConversionRules)
+		enc := encoder(ctx, w)
+		body := NewListLinkedinAdsConversionsResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeListLinkedinAdsConversionsRequest returns a decoder for requests sent
+// to the lfx-v2-campaign-service-connections list-linkedin-ads-conversions
+// endpoint.
+func DecodeListLinkedinAdsConversionsRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload, error) {
+		var payload *lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload
+		var (
+			projectID   string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		payload = NewListLinkedinAdsConversionsPayload(projectID, bearerToken)
+		if payload.BearerToken != nil {
+			cred := *payload.BearerToken
+			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred = cred[index+1:]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeListLinkedinAdsConversionsError returns an encoder for errors returned
+// by the list-linkedin-ads-conversions lfx-v2-campaign-service-connections
+// endpoint.
+func EncodeListLinkedinAdsConversionsError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListLinkedinAdsConversionsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListLinkedinAdsConversionsServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListLinkedinAdsConversionsInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListLinkedinAdsConversionsNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListLinkedinAdsConversionsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListLinkedinAdsConversionsUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeGetMicrosoftAdsKeywordsResponse returns an encoder for responses
 // returned by the lfx-v2-campaign-service-connections
 // get-microsoft-ads-keywords endpoint.
@@ -12722,6 +13001,38 @@ func marshalLfxv2campaignserviceconnectionsLinkedinAdsAudienceBucketToLinkedinAd
 		Clicks:      v.Clicks,
 		CostMicros:  v.CostMicros,
 		Ctr:         v.Ctr,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceconnectionsLinkedinAdsAudienceSegmentToLinkedinAdsAudienceSegmentResponseBody
+// builds a value of type *LinkedinAdsAudienceSegmentResponseBody from a value
+// of type *lfxv2campaignserviceconnections.LinkedinAdsAudienceSegment.
+func marshalLfxv2campaignserviceconnectionsLinkedinAdsAudienceSegmentToLinkedinAdsAudienceSegmentResponseBody(v *lfxv2campaignserviceconnections.LinkedinAdsAudienceSegment) *LinkedinAdsAudienceSegmentResponseBody {
+	res := &LinkedinAdsAudienceSegmentResponseBody{
+		ID:                     v.ID,
+		Urn:                    v.Urn,
+		Name:                   v.Name,
+		Type:                   v.Type,
+		Status:                 v.Status,
+		Facet:                  v.Facet,
+		ApproximateMemberCount: v.ApproximateMemberCount,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceconnectionsLinkedinAdsConversionRuleToLinkedinAdsConversionRuleResponseBody
+// builds a value of type *LinkedinAdsConversionRuleResponseBody from a value
+// of type *lfxv2campaignserviceconnections.LinkedinAdsConversionRule.
+func marshalLfxv2campaignserviceconnectionsLinkedinAdsConversionRuleToLinkedinAdsConversionRuleResponseBody(v *lfxv2campaignserviceconnections.LinkedinAdsConversionRule) *LinkedinAdsConversionRuleResponseBody {
+	res := &LinkedinAdsConversionRuleResponseBody{
+		ID:      v.ID,
+		Urn:     v.Urn,
+		Name:    v.Name,
+		Type:    v.Type,
+		Enabled: v.Enabled,
 	}
 
 	return res
