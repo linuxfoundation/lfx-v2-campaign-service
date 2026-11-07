@@ -73,9 +73,14 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    `google-ads/conversion-actions`, `google-ads/audiences`, `google-ads/user-lists`,
    `linkedin-ads/audiences` and `linkedin-ads/conversions`, ruled by `marketing-ops-api` below.
 4. **`marketing-ops-api`** — `GET /projects/:projectId/google-ads/conversion-actions` (#458),
-   `GET /projects/:projectId/google-ads/audiences` (#496) and
-   `GET /projects/:projectId/google-ads/user-lists` only. They list every foundation's
-   conversion actions, audiences and user lists on the shared Google Ads customer, and
+   `GET /projects/:projectId/google-ads/audiences` (#496),
+   `GET /projects/:projectId/google-ads/user-lists`,
+   `GET /projects/:projectId/linkedin-ads/audiences` and
+   `GET /projects/:projectId/linkedin-ads/conversions` (#552) only. The Google three list every
+   foundation's conversion actions, audiences and user lists on the shared Google Ads customer;
+   the LinkedIn two read the account a LinkedIn create uses, which is the LF system account for
+   every project without its own connection, so they can list other foundations' segments and
+   conversion rules. In both cases
    `campaign_manager` includes the project's `executive_director`, a foundation-scoped role
    (lfx-v2-helm `model.fga`). So it runs the same slug/UUID branches as `project-api`, on
    relation `global_marketing_ops`: the LF marketing team, granted on every project, so no ROOT

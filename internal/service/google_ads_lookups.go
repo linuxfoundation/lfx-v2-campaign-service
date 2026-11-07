@@ -40,8 +40,9 @@ type UserListReader interface {
 	ListUserLists(ctx context.Context, projectID string, platform model.Provider, accountID string) (res *model.AudienceUserLists, called bool, err error)
 }
 
-// ConversionActionReader is an OPTIONAL dispatcher capability: list the enabled conversion
-// actions on the ad account a campaign create for the project would use.
+// ConversionActionReader is an OPTIONAL dispatcher capability: list the conversion actions on
+// the ad account a campaign create for the project would use (Google lists only enabled ones;
+// LinkedIn lists every conversion rule with its status, #552).
 //
 // A successful call MUST return a non-nil result with a non-nil Actions slice. called reports
 // whether the platform was actually contacted, as GeoTargetSuggester's does: false for a local

@@ -5561,5 +5561,7 @@ sent; a real Meta 4xx/5xx whose body carries a secret query; a real Reddit token
 **LinkedIn picker lookups (#552).** `LinkedInDispatcher` implements `service.AudienceReader` (kind
 `ad_segment` only; any other kind is `ErrTargetingLookupUnsupported` before any request) and
 `service.ConversionActionReader`, through `createLookupClient`: the CREATE path's resolution
-(`creds.resolve`), so the ids are on the account the create uses. A malformed bound account and a
-credential defect are the connection's (`linkedInLookupError`); anything else is the platform's.
+(`creds.resolve`), so the ids are on the account the create uses. A malformed bound account is
+refused there with `ErrConnectionNotUsable` before any request (so it is not recorded as an
+upstream call); a credential defect is the connection's (`linkedInLookupError`); anything else is
+the platform's.

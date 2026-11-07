@@ -194,14 +194,6 @@ func TestConversionActionsIsAMarketingOpsRead(t *testing.T) {
 // customer, so a campaign_manager (executive_director included) must not reach it. The
 // singular google-ads/audience (the audience performance read of the project's own campaigns)
 // stays a project-api path and must not be swept along with it.
-// TestLinkedInPickersAreMarketingOpsReads pins the same for the LinkedIn ad-segment and
-// conversion-rule pickers (#552). The singular linkedin-ads/audience (the demographics read of
-// the project's own campaigns) stays a project-api path.
-func TestLinkedInPickersAreMarketingOpsReads(t *testing.T) {
-	assertMarketingOpsRead(t, linkedInAudiencesPath, "/projects/p1/linkedin-ads/audiences")
-	assertMarketingOpsRead(t, linkedInConversionsPath, "/projects/p1/linkedin-ads/conversions")
-}
-
 func TestGoogleAudiencesIsAMarketingOpsRead(t *testing.T) {
 	assertMarketingOpsRead(t, googleAudiencesPath, "/projects/p1/google-ads/audiences")
 	ruleset := helmTemplate(t, "templates/ruleset.yaml")
@@ -215,6 +207,14 @@ func TestGoogleAudiencesIsAMarketingOpsRead(t *testing.T) {
 	if !matched {
 		t.Errorf("%s rule no longer matches %s, the campaign_manager audience performance read", projectAPIRuleID, perf)
 	}
+}
+
+// TestLinkedInPickersAreMarketingOpsReads pins the same for the LinkedIn ad-segment and
+// conversion-rule pickers (#552). The singular linkedin-ads/audience (the demographics read of
+// the project's own campaigns) stays a project-api path.
+func TestLinkedInPickersAreMarketingOpsReads(t *testing.T) {
+	assertMarketingOpsRead(t, linkedInAudiencesPath, "/projects/p1/linkedin-ads/audiences")
+	assertMarketingOpsRead(t, linkedInConversionsPath, "/projects/p1/linkedin-ads/conversions")
 }
 
 // TestUserListsIsAMarketingOpsRead pins the same for the Google user-list read: on the shared

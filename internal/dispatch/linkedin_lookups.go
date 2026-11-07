@@ -5,7 +5,6 @@ package dispatch
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -28,17 +27,19 @@ func (d *LinkedInDispatcher) createLookupClient(ctx context.Context, projectID s
 		return nil, nil, "", err
 	}
 	accountID := strings.TrimSpace(res.accountID)
+	// A malformed bound account is stored connection configuration the operator must repair, and
+	// it is refused here, before any request, so the read is not recorded as an upstream call.
+	if err := linkedin.ValidateAccountID(accountID); err != nil {
+		return nil, nil, "", res.systemScoped(fmt.Errorf("linkedin picker lookup: %w: %w", domain.ErrConnectionNotUsable, err))
+	}
 	return res, d.cachedLinkedInClient(projectID, platform, res, creds, accountID), accountID, nil
 }
 
 // linkedInLookupError classifies a picker lookup failure the way the other LinkedIn reads do: a
-// malformed bound account and a credential defect are the connection's, everything else is the
-// platform's (503 upstream).
+// credential defect is the connection's, everything else is the platform's (503 upstream). A
+// malformed bound account never gets here: createLookupClient refuses it first.
 func linkedInLookupError(op string, res *resolved, err error) error {
-	switch {
-	case errors.Is(err, linkedin.ErrInvalidAccountID):
-		return res.systemScoped(fmt.Errorf("%s: %w: %w", op, domain.ErrConnectionNotUsable, err))
-	case linkedinConnectionDefect(err):
+	if linkedinConnectionDefect(err) {
 		return res.systemScoped(linkedinExpiry(err))
 	}
 	return fmt.Errorf("%s: %w", op, err)
