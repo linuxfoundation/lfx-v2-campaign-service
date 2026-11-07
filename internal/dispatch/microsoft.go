@@ -101,6 +101,16 @@ type microsoftConfig struct {
 	// it and runs until stopped — exactly the behaviour before these fields existed.
 	StartDate string `json:"startDate"` // YYYY-MM-DD
 	EndDate   string `json:"endDate"`   // YYYY-MM-DD
+	// Headlines, Descriptions, Path1 and Path2 are the OPTIONAL caller copy of the responsive
+	// search ad (#563), sent instead of the auto-composed copy: 3–15 headlines, 2–4 descriptions,
+	// and the two display-URL path segments. Refused unless MICROSOFT_AD_COPY_ENABLED is "true";
+	// the gate and type check are in microsoft_ad_copy.go, the rules are
+	// microsoft.ValidateCallerAdCopy's (internal/platform/microsoft/ad_copy.go). Omitted, the ad is
+	// auto-composed from the event name, exactly as before these fields existed.
+	Headlines    []string `json:"headlines"`
+	Descriptions []string `json:"descriptions"`
+	Path1        string   `json:"path1"`
+	Path2        string   `json:"path2"`
 	// Sitelinks and Callouts are OPTIONAL campaign-level SitelinkAdExtension and
 	// CalloutAdExtension entries (#563), behind MICROSOFT_AD_EXTENSIONS_ENABLED
 	// (microsoft_text_extensions.go). Validated before anything is created; attached only to a
@@ -194,6 +204,11 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return nil, notCreated(err)
 	}
 
+	// A wrong-typed caller ad copy field (#563) is refused as the config-invalid refusal
+	// PreflightCreate gives, not left to the generic decode error below.
+	if err := checkMicrosoftAdCopyShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg microsoftConfig
 	if err := unmarshalPlatformConfig(config, "microsoftConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -205,6 +220,12 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	}
 	plan, err := microsoftBidPlan(cfg)
 	if err != nil {
+		return nil, notCreated(err)
+	}
+	// Caller ad copy (#563): gated and validated BEFORE any upstream call (PreflightCreate has
+	// normally refused a bad or gated one already, as a 400). The type check ran before the
+	// decode, above.
+	if err := checkMicrosoftAdCopy(cfg); err != nil {
 		return nil, notCreated(err)
 	}
 	// Create-time negatives (#563): gated and validated BEFORE any upstream call, exactly as
@@ -263,6 +284,10 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		GeoTargets:      cfg.GeoTargets,
 		StartDate:       cfg.StartDate,
 		EndDate:         cfg.EndDate,
+		Headlines:       cfg.Headlines,
+		Descriptions:    cfg.Descriptions,
+		Path1:           cfg.Path1,
+		Path2:           cfg.Path2,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: Microsoft
 		// enforces case-insensitive campaign-name uniqueness, so a retry composes the SAME name
 		// and the client's find-first lookup cleanly REUSES the existing campaign
@@ -338,15 +363,23 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 }
 
 // PreflightCreate refuses, before the create job exists, a microsoftConfig whose bidding cannot be
-// created as asked (see microsoftBidPlan), or whose negativeKeywords are gated off or break their
-// rules (#563, checkMicrosoftNegativeKeywords). It never calls Microsoft, so every other outcome is
-// ErrPreflightNotApplicable; a config that does not decode is left to Dispatch (except a wrong-typed
-// `bidding` or `negativeKeywords`, refused here by checkBiddingShape and
-// checkMicrosoftNegativeKeywordsShape), which reports it as the job failure, as Reddit's pre-check
-// does.
+// created as asked (see microsoftBidPlan), whose caller ad copy (#563: headlines, descriptions,
+// path1, path2) is wrong-typed, gated off by MICROSOFT_AD_COPY_ENABLED or breaks
+// microsoft.ValidateCallerAdCopy, whose sitelinks or callouts are gated off or break their rules
+// (#563, checkMicrosoftTextExtensions), or whose negativeKeywords are gated off or break their
+// rules (#563, checkMicrosoftNegativeKeywords). It never calls Microsoft, so every other outcome
+// is ErrPreflightNotApplicable; a config that does not decode is left to Dispatch (except a
+// wrong-typed `bidding`, copy field, `sitelinks`, `callouts` or `negativeKeywords`, refused here
+// by checkBiddingShape, checkMicrosoftAdCopyShape, checkMicrosoftTextExtensionsShape and
+// checkMicrosoftNegativeKeywordsShape), which reports it as the job failure, as Reddit's
+// pre-check does.
 func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
 	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
 	if err := checkBiddingShape(config, "microsoftConfig"); err != nil {
+		return err
+	}
+	// So is a wrong-typed caller ad copy field (#563).
+	if err := checkMicrosoftAdCopyShape(config); err != nil {
 		return err
 	}
 	// So is a wrong-typed sitelinks or callouts (#563).
@@ -361,10 +394,15 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
 	// not decode is its zero value, which no plan rule reads as a refusal. The decode error itself
-	// stays "not applicable" — only bidding is promised as a synchronous 400.
+	// stays "not applicable" — only bidding, the caller ad copy, sitelinks/callouts and
+	// negativeKeywords are promised as synchronous 400s.
 	var cfg microsoftConfig
 	_ = unmarshalPlatformConfig(config, "microsoftConfig", &cfg)
 	if _, err := microsoftBidPlan(cfg); err != nil {
+		return err
+	}
+	// Caller ad copy (#563): the deployment gate and microsoft.ValidateCallerAdCopy, as a 400.
+	if err := checkMicrosoftAdCopy(cfg); err != nil {
 		return err
 	}
 	if err := checkMicrosoftTextExtensions(cfg); err != nil {
@@ -499,6 +537,12 @@ func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
 	// ImageAltText is caller free text like TimeZone. ImageAssetID needs no reduction: by the
 	// time a snapshot is written resolveMicrosoftImage has replaced it with the canonical uuid.
 	snapshot.ImageAltText = sanitizeSnapshotText(cfg.ImageAltText)
+	// The caller ad copy (#563) is caller free text bound for the same unencrypted column, so it
+	// is reduced the same way. Both slices are REALLOCATED before they are rewritten.
+	snapshot.Headlines = sanitizeSnapshotTexts(cfg.Headlines)
+	snapshot.Descriptions = sanitizeSnapshotTexts(cfg.Descriptions)
+	snapshot.Path1 = sanitizeSnapshotText(cfg.Path1)
+	snapshot.Path2 = sanitizeSnapshotText(cfg.Path2)
 	if cfg.Keywords != nil {
 		snapshot.Keywords = make([]microsoftKeywordConfig, len(cfg.Keywords))
 		copy(snapshot.Keywords, cfg.Keywords)

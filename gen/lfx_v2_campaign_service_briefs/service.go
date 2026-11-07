@@ -117,7 +117,9 @@ type Service interface {
 	// that breaks its rules, or is sent while MICROSOFT_AD_EXTENSIONS_ENABLED is
 	// off (#563). So is a microsoftConfig.negativeKeywords list that breaks its
 	// rules or is sent while MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is off
-	// (see the config attribute). GOOGLE ADS SHARED-ACCOUNT INPUTS: a
+	// (see the config attribute). So is a microsoftConfig.headlines, descriptions,
+	// path1 or path2 that breaks its rules or is sent while
+	// MICROSOFT_AD_COPY_ENABLED is off. GOOGLE ADS SHARED-ACCOUNT INPUTS: a
 	// googleAdsConfig that sets any input naming an existing audience, user list,
 	// custom segment, shared negative keyword list or conversion action on the
 	// Google Ads account (demandGenAudience or an audience on any
@@ -1232,32 +1234,48 @@ type CampaignCreateInput struct {
 	// blank or invalid entry, an overlap, a list over its cap, a value that is not
 	// an array of strings (null reads as absent), or either list while the flag is
 	// off, is refused with 400 "invalid campaign config: redditConfig.<field>:
-	// ..." before any job exists. MICROSOFT SITELINKS AND CALLOUTS (#563):
-	// microsoftConfig takes `sitelinks` ([{text, description1?, description2?,
-	// finalUrl}], 1-20) and `callouts` (strings, 2-20), created after the campaign
-	// is confirmed as SitelinkAdExtension and CalloutAdExtension entries
-	// (AddAdExtensions) and associated with it (SetAdExtensionsAssociations,
-	// Campaign level), one extension per call. A sitelink's text is required, at
-	// most 25 characters when a description is set and 35 otherwise; description1
-	// and description2 are set together or not at all, at most 35 each; finalUrl
-	// is an absolute http or https URL of at most 2,048 characters with no user
-	// credentials, sent as given. A callout is 1-25 characters. Text holding any
-	// double-width character (CJK, emoji) is held to Microsoft's reduced limits:
-	// sitelink text 11 with a description and 15 without, a description 15, a
-	// callout 12. Values are trimmed; a control character, or a repeated sitelink
-	// text or callout (case-insensitive), is refused. A campaign that already has
-	// an extension of a type (a retry that reused it) gets none of that type
-	// added; if it is left with fewer than 2 callouts, which Microsoft never
-	// serves, it is marked created_degraded. An extension that is not, or may not
-	// be, attached marks the campaign created_degraded with a step saying which;
-	// it never fails the job. Both are OFF unless MICROSOFT_AD_EXTENSIONS_ENABLED
-	// is exactly "true" on the deployment. A rule breach, a wrong JSON type (null
-	// reads as absent), or either list while the flag is off, is refused with 400
-	// "invalid campaign config: microsoftConfig.<field>: ..." before any job
-	// exists. MICROSOFT NEGATIVE KEYWORDS (#563): microsoftConfig takes
-	// `negativeKeywords`, [{"text": string, "matchType": "Exact" | "Phrase"}],
-	// attached as CAMPAIGN-level negatives (AddNegativeKeywordsToEntities,
-	// EntityType Campaign) right after the campaign is created, under the rules of
+	// ..." before any job exists. MICROSOFT AD COPY (#563): microsoftConfig takes
+	// `headlines` (3-15), `descriptions` (2-4), `path1` and `path2`, sent on the
+	// responsive search ad instead of the copy auto-composed from the event name.
+	// Each headline is at most 30 characters and each description at most 90 (15
+	// and 45 when it contains a double-width character such as CJK or emoji);
+	// every entry must contain a letter or digit and no control character, and
+	// case-insensitive repeats are refused. A path is one segment of at most 15
+	// characters (7 with a double-width character), without '/', and path2
+	// requires path1; the registration URL's host plus /path1/path2 must fit 67
+	// characters (33 with a double-width character), checked at dispatch before
+	// anything is created. Either list may be omitted, and that side is
+	// auto-composed. An ad reused on a retry keeps its existing copy. All four are
+	// OFF unless MICROSOFT_AD_COPY_ENABLED is exactly "true" on the deployment. A
+	// wrong JSON type (null reads as absent), a rule breach, or any of them while
+	// the flag is off, is refused with 400 "invalid campaign config:
+	// microsoftConfig.<field>: ..." before any job exists. MICROSOFT SITELINKS AND
+	// CALLOUTS (#563): microsoftConfig takes `sitelinks` ([{text, description1?,
+	// description2?, finalUrl}], 1-20) and `callouts` (strings, 2-20), created
+	// after the campaign is confirmed as SitelinkAdExtension and
+	// CalloutAdExtension entries (AddAdExtensions) and associated with it
+	// (SetAdExtensionsAssociations, Campaign level), one extension per call. A
+	// sitelink's text is required, at most 25 characters when a description is set
+	// and 35 otherwise; description1 and description2 are set together or not at
+	// all, at most 35 each; finalUrl is an absolute http or https URL of at most
+	// 2,048 characters with no user credentials, sent as given. A callout is 1-25
+	// characters. Text holding any double-width character (CJK, emoji) is held to
+	// Microsoft's reduced limits: sitelink text 11 with a description and 15
+	// without, a description 15, a callout 12. Values are trimmed; a control
+	// character, or a repeated sitelink text or callout (case-insensitive), is
+	// refused. A campaign that already has an extension of a type (a retry that
+	// reused it) gets none of that type added; if it is left with fewer than 2
+	// callouts, which Microsoft never serves, it is marked created_degraded. An
+	// extension that is not, or may not be, attached marks the campaign
+	// created_degraded with a step saying which; it never fails the job. Both are
+	// OFF unless MICROSOFT_AD_EXTENSIONS_ENABLED is exactly "true" on the
+	// deployment. A rule breach, a wrong JSON type (null reads as absent), or
+	// either list while the flag is off, is refused with 400 "invalid campaign
+	// config: microsoftConfig.<field>: ..." before any job exists. MICROSOFT
+	// NEGATIVE KEYWORDS (#563): microsoftConfig takes `negativeKeywords`,
+	// [{"text": string, "matchType": "Exact" | "Phrase"}], attached as
+	// CAMPAIGN-level negatives (AddNegativeKeywordsToEntities, EntityType
+	// Campaign) right after the campaign is created, under the rules of
 	// add-negative-keywords: 1-60 entries, match type Exact or Phrase in any
 	// casing (Broad is refused), text whitespace-collapsed, at most 100
 	// characters, letters, digits, spaces and & ' - . only with no two punctuation

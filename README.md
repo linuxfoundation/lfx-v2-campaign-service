@@ -412,6 +412,16 @@ openssl rand -base64 32
   to `"false"` (`charts/lfx-v2-campaign-service/values.yaml`); flip it
   only after the contract is verified against a live Microsoft ad
   account.
+- `MICROSOFT_AD_COPY_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `microsoftConfig.headlines`, `descriptions`, `path1`
+  and `path2` (#563), the caller copy of the responsive search ad sent
+  instead of the auto-composed copy. Only the exact value `true` enables
+  them; anything else fails closed, and a create naming any of them is
+  refused with a 400 before any job exists. It names no account
+  resource; it keeps a shape no live create has sent off the shared ad
+  account. The chart sets it to `"false"`
+  (`app.environment.MICROSOFT_AD_COPY_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once a live create confirms it.
 
 - `MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED` (default unset, i.e.
   OFF) — opts a deployment IN to `microsoftConfig.negativeKeywords`
