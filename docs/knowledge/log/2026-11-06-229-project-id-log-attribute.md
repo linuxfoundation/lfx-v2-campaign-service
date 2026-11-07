@@ -40,7 +40,8 @@ clear, as `"project_id"`.
   - It looks through `any("k")` conversions, and reads elided `[]slog.Attr` elements,
     named-constant keys, and group names (`slog.Group`, `slog.GroupAttrs`,
     `Logger.WithGroup`).
-  - A parameter of an unexported, directly called function is read from every call site, so
+  - A parameter of an unexported, directly called function is read from every call site
+    (each call binding all its `[]any` parameters together), so
     `logFields` handed to `answerUnconfirmedAdSetWrite` and a `...any` logging wrapper are
     checked. A parameter of an exported or value-used function, and a package-level slice,
     are untraceable. A `var fields []any` declaration is empty.

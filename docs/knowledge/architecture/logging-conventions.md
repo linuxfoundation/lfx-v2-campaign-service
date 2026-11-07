@@ -101,7 +101,8 @@ passes. A key held in a named constant is checked.
 **Across function boundaries:**
 
 - A parameter of an unexported function whose every use is a direct call is
-  read from all its call sites. An example is `logFields` in
+  read from all its call sites. Each call binds all of the function's `[]any`
+  parameters together, so arguments from different calls never mix. An example is `logFields` in
   `internal/service/meta_ad_sets.go`, handed to `answerUnconfirmedAdSetWrite`.
   A final `...any` parameter takes each call's trailing arguments, so a logging
   wrapper such as `func warnf(args ...any)` is checked at its callers.

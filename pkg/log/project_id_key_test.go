@@ -304,6 +304,8 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 			slog.Info("m", fields...)`, []string{"project_id"}},
 		{"a parameter is read from its call sites", `logWith([]any{"projectID", id})
 			logWith([]any{"kind", 1})`, []string{"projectID", "kind"}},
+		{"parameters bound from one call stay together", `logPair([]any{"project_id"}, []any{"project"})
+			logPair([]any{"event", "x"}, []any{"kind", 1})`, []string{"project_id", "event", "kind"}},
 		{"a variadic wrapper's arguments are read from its call sites", `warnf("projectID", id)`, []string{"projectID"}},
 		{"a full reslice is the slice", `fields := []any{"projectID", id}
 			slog.Info("m", fields[:]...)`, []string{"projectID"}},
@@ -356,6 +358,7 @@ var (
 const keyConst = "projectID"
 func logWith(fields []any) { slog.Info("w", fields...) }
 func warnf(args ...any)      { slog.Warn("w", args...) }
+func logPair(head, tail []any) { slog.Info("w", append(head, tail...)...) }
 func helperFields(c bool) []any {
 	attrs := []any{"step", 1}
 	if c {
@@ -551,9 +554,10 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
 	// calleeResults is defined below, once pathsAt exists: the []any sequences a
 	// same-package function can return.
 	var calleeResults func(fn *types.Func) seqs
-	// paramValues is defined below too: the []any sequences a parameter can hold, from
-	// every call site of its function, or nil when those call sites are not all known.
-	var paramValues func(v *types.Var) seqs
+	// entryPaths is defined below too: the paths on entry to a function, with its []any
+	// parameters bound from each call site together.
+	var entryPaths func(fd *ast.FuncDecl) []path
+	var enclosingDecl func(n ast.Node) *ast.FuncDecl
 
 	// evalSlice returns the sequences a []any expression can hold on path p. It is one
 	// sequence except where a call to a same-package function can return several.
@@ -574,13 +578,8 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
 			if !isAnySlice(info.TypeOf(x)) {
 				return seqs{nil}
 			}
-			if v, ok := o.(*types.Var); ok {
-				if alts := paramValues(v); alts != nil {
-					return alts
-				}
-			}
-			// Not assigned on this path and not a parameter whose callers are all known: a
-			// package-level variable, a range variable, ... Its contents are not modelled.
+			// Not assigned on this path: a package-level variable, a range variable, or a
+			// parameter whose call sites are not all known. Its contents are not modelled.
 			return seqs{{untraced}}
 		case *ast.CompositeLit:
 			if isAnySlice(info.TypeOf(x)) {
@@ -917,12 +916,12 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
 		return ps
 	}
 	// enclosing returns the statement list of the top-level function containing n.
-	// enclosing returns the statement list of the package-level function containing n,
-	// in any of the package's files.
-	enclosing := func(n ast.Node) []ast.Stmt {
+	// enclosingDecl returns the package-level function containing n, in any of the
+	// package's files.
+	enclosingDecl = func(n ast.Node) *ast.FuncDecl {
 		for _, fd := range decls {
 			if fd.Body != nil && contains(fd.Body, n) {
-				return fd.Body.List
+				return fd
 			}
 		}
 		return nil
@@ -961,7 +960,7 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
 				out = append(out, []ast.Expr{untraced}) // a bare or multi-value return
 				return true
 			}
-			for _, p := range pathsAt(fd.Body.List, []path{{}}, ret) {
+			for _, p := range pathsAt(fd.Body.List, entryPaths(fd), ret) {
 				out = append(out, evalSlice(ret.Results[0], p)...)
 			}
 			return true
@@ -973,53 +972,86 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
 		return out
 	}
 
-	paramMemo := map[*types.Var]seqs{}
-	paramBusy := map[*types.Var]bool{}
-	paramValues = func(v *types.Var) seqs {
-		pp, ok := idx.params[v]
+	// entryPaths seeds a function's []any parameters. For an unexported function whose
+	// every use is a direct call, each call site contributes the paths that bind ALL its
+	// []any parameters from that one call, so arguments from different calls never mix;
+	// a final ...any parameter takes the call's trailing arguments; a function never called
+	// gets empty parameters. Otherwise (exported, used as a value, recursive) the
+	// parameters stay unbound, and spreading one is untraceable.
+	entryMemo := map[*ast.FuncDecl][]path{}
+	entryBusy := map[*ast.FuncDecl]bool{}
+	entryPaths = func(fd *ast.FuncDecl) []path {
+		unbound := []path{{}}
+		fn, ok := info.Defs[fd.Name].(*types.Func)
 		if !ok {
-			return nil
+			return unbound
 		}
-		fn := pp.fn
-		// Only an unexported function whose every use is a direct call has all its call
-		// sites in view. An exported one, or one used as a value, may be called elsewhere.
-		if fn.Exported() || idx.valueUse[fn] {
-			return nil
-		}
-		if alts, ok := paramMemo[v]; ok {
-			return alts
-		}
-		if paramBusy[v] {
-			return seqs{{untraced}}
-		}
-		paramBusy[v] = true
-		defer delete(paramBusy, v)
-		var out seqs
-		for _, call := range idx.calls[fn] {
-			body := enclosing(call)
-			if body == nil || hasGoto(body) || writesAnyElements(body, info) {
-				out = append(out, []ast.Expr{untraced})
-				continue
+		sig := fn.Type().(*types.Signature)
+		var anyParams []int
+		for i := 0; i < sig.Params().Len(); i++ {
+			if isAnySlice(sig.Params().At(i).Type()) {
+				anyParams = append(anyParams, i)
 			}
+		}
+		if len(anyParams) == 0 || fn.Exported() || idx.valueUse[fn] || entryBusy[fd] {
+			return unbound
+		}
+		if ps, ok := entryMemo[fd]; ok {
+			return ps
+		}
+		entryBusy[fd] = true
+		defer delete(entryBusy, fd)
+		var out []path
+		for _, call := range idx.calls[fn] {
+			cfd := enclosingDecl(call)
 			args := call.Args
 			if isMethodExpr(call, info) && len(args) > 0 {
 				args = args[1:]
 			}
-			for _, cp := range pathsAt(body, []path{{}}, call) {
-				switch {
-				case pp.variadic && pp.index <= len(args):
-					out = append(out, evalArgs(args[pp.index:], call.Ellipsis.IsValid(), cp)...)
-				case pp.index < len(args):
-					out = append(out, evalSlice(args[pp.index], cp)...)
-				default:
-					out = append(out, []ast.Expr{untraced})
+			var callerPaths []path
+			if cfd != nil && !hasGoto(cfd.Body.List) && !writesAnyElements(cfd.Body.List, info) {
+				callerPaths = pathsAt(cfd.Body.List, entryPaths(cfd), call)
+			}
+			for _, cp := range callerPaths {
+				next := []path{{}}
+				for _, i := range anyParams {
+					var vals seqs
+					switch {
+					case sig.Variadic() && i == sig.Params().Len()-1 && i <= len(args):
+						vals = evalArgs(args[i:], call.Ellipsis.IsValid(), cp)
+					case i < len(args):
+						vals = evalSlice(args[i], cp)
+					default:
+						vals = seqs{{untraced}}
+					}
+					var split []path
+					for _, np := range next {
+						for _, v := range vals {
+							c := clonePath(np)
+							c[sig.Params().At(i)] = v
+							split = append(split, c)
+						}
+					}
+					next = split
 				}
+				out = union(out, next)
+			}
+			if cfd == nil || len(callerPaths) == 0 {
+				// A call site the guard cannot replay: its arguments are unknown.
+				p := path{}
+				for _, i := range anyParams {
+					p[sig.Params().At(i)] = []ast.Expr{untraced}
+				}
+				out = union(out, []path{p})
 			}
 		}
 		if out == nil {
-			out = seqs{nil} // never called: nothing reaches the log
+			out = []path{{}} // never called: no argument ever reaches it
+			for _, i := range anyParams {
+				out[0][sig.Params().At(i)] = nil
+			}
 		}
-		paramMemo[v] = out
+		entryMemo[fd] = out
 		return out
 	}
 
@@ -1054,12 +1086,12 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
 	kvWalk := func(call *ast.CallExpr, args []ast.Expr) {
 		ps := []path{{}}
 		if call.Ellipsis.IsValid() {
-			body := enclosing(call)
-			if hasGoto(body) || writesAnyElements(body, info) {
+			fd := enclosingDecl(call)
+			if fd == nil || hasGoto(fd.Body.List) || writesAnyElements(fd.Body.List, info) {
 				overflow = true
 				return
 			}
-			ps = pathsAt(body, ps, call)
+			ps = pathsAt(fd.Body.List, entryPaths(fd), call)
 		}
 		for _, p := range ps {
 			for _, seq := range evalArgs(args, call.Ellipsis.IsValid(), p) {
