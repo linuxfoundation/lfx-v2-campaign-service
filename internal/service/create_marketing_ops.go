@@ -188,6 +188,51 @@ func GoogleAdsMarketingOpsInputs(config json.RawMessage) []string {
 	return set
 }
 
+// RedditMarketingOpsInputs names, in config order, the redditConfig inputs this config sets that
+// name an EXISTING custom audience on the connected Reddit ad account (#549):
+// customAudienceIds and excludedCustomAudienceIds. That account is the LF one every foundation
+// shares, so only global_marketing_ops may send them, exactly as for the Google inputs above.
+//
+// Any non-empty list counts, whatever its entries hold, as the dispatcher's own gate
+// (dispatch.checkRedditCustomAudiences) counts them. It decodes the envelope the way the
+// dispatcher's unmarshalPlatformConfig does (exact envelope key, then encoding/json into the same
+// field names and types, so a case variant of a field counts too), and dispatch's
+// TestEveryRedditConfigFieldIsClassifiedForTheMarketingOpsGate requires every redditConfig field
+// to be classified as gated or not.
+func RedditMarketingOpsInputs(config json.RawMessage) []string {
+	if len(config) == 0 {
+		return nil
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(config, &envelope); err != nil {
+		return nil
+	}
+	raw, ok := envelope["redditConfig"]
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	var cfg struct {
+		CustomAudienceIDs         []string `json:"customAudienceIds"`
+		ExcludedCustomAudienceIDs []string `json:"excludedCustomAudienceIds"`
+	}
+	_ = json.Unmarshal(raw, &cfg) // a partial decode is still inspected, as for Google
+	var set []string
+	if len(cfg.CustomAudienceIDs) > 0 {
+		set = append(set, "customAudienceIds")
+	}
+	if len(cfg.ExcludedCustomAudienceIDs) > 0 {
+		set = append(set, "excludedCustomAudienceIds")
+	}
+	return set
+}
+
+// redditMarketingOpsForbiddenMessage is the 403 sentence for the gated Reddit fields, built like
+// marketingOpsForbiddenMessage.
+func redditMarketingOpsForbiddenMessage(fields []string) string {
+	return "redditConfig inputs that name a resource on the shared Reddit Ads account require " +
+		"the global_marketing_ops role on this project: " + strings.Join(fields, ", ")
+}
+
 // marketingOpsForbiddenMessage is the 403 sentence for the gated fields. Service-authored: it
 // names the inputs (service-derived, see GoogleAdsMarketingOpsInputs) and the relation, never a
 // caller value.
@@ -196,14 +241,67 @@ func marketingOpsForbiddenMessage(fields []string) string {
 		"the global_marketing_ops role on this project: " + strings.Join(fields, ", ")
 }
 
-// requireMarketingOpsForSharedAccountInputs refuses a google-ads create that sets any
-// GoogleAdsMarketingOpsInputs field unless the caller holds global_marketing_ops on the path
-// project. One check per request, however many fields are set.
+// MetaMarketingOpsInputs names, in config order, the metaConfig inputs this config sets that name
+// an EXISTING custom audience of the connected Meta ad account (#550): targeting.customAudiences
+// and targeting.excludedCustomAudiences. That ad account is shared by every foundation, as the
+// Google Ads account is, so only global_marketing_ops may send them. Age, gender and
+// advantageAudience name no account resource and are not gated.
+//
+// Any non-empty list counts, whatever its entries hold, exactly as GoogleAdsMarketingOpsInputs
+// counts, and the envelope is decoded the way the dispatcher's unmarshalPlatformConfig decodes it.
+// dispatch's TestEveryMetaTargetingFieldIsClassifiedForTheMarketingOpsGate requires every
+// metaConfig.targeting field to be classified as gated or not.
+func MetaMarketingOpsInputs(config json.RawMessage) []string {
+	if len(config) == 0 {
+		return nil
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(config, &envelope); err != nil {
+		return nil
+	}
+	raw, ok := envelope["metaConfig"]
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	var cfg struct {
+		Targeting *struct {
+			CustomAudiences         []string `json:"customAudiences"`
+			ExcludedCustomAudiences []string `json:"excludedCustomAudiences"`
+		} `json:"targeting"`
+	}
+	_ = json.Unmarshal(raw, &cfg) // a partial decode is still inspected, as for Google
+	if cfg.Targeting == nil {
+		return nil
+	}
+	var set []string
+	if len(cfg.Targeting.CustomAudiences) > 0 {
+		set = append(set, "targeting.customAudiences")
+	}
+	if len(cfg.Targeting.ExcludedCustomAudiences) > 0 {
+		set = append(set, "targeting.excludedCustomAudiences")
+	}
+	return set
+}
+
+// metaMarketingOpsForbiddenMessage is the 403 sentence for the gated metaConfig fields, worded as
+// marketingOpsForbiddenMessage is for Google. Service-authored: it names service-derived inputs only.
+func metaMarketingOpsForbiddenMessage(fields []string) string {
+	return "metaConfig inputs that name a resource on the shared Meta ad account require " +
+		"the global_marketing_ops role on this project: " + strings.Join(fields, ", ")
+}
+
+// requireMarketingOpsForSharedAccountInputs refuses a google-ads, meta-ads or reddit-ads create that
+// sets any GoogleAdsMarketingOpsInputs, MetaMarketingOpsInputs or RedditMarketingOpsInputs (#549)
+// field (each counted only when its platform is selected, since only that platform's dispatcher
+// reads it) unless the caller holds global_marketing_ops on the path project. One check per
+// request, however many fields and platforms are set; the 403 names every gated field, each
+// platform's in its own sentence.
 //
 // The gateway admits every campaign_manager to create-campaigns, and campaign_manager is
 // `executive_director or global_marketing_ops` (lfx-v2-helm model.fga): it includes each
 // foundation's executive directors. Audiences, user lists, custom segments, shared sets and conversion
-// actions are resources of the Google Ads account every foundation shares, so a campaign_manager check alone
+// actions are resources of the Google Ads account every foundation shares — and custom audiences
+// of the Meta ad account every foundation shares — so a campaign_manager check alone
 // would let one foundation's ED target or reuse resources built for another. The gateway cannot
 // narrow this itself because the inputs are in the body, not the route, so the check is made
 // here, on the same relation the marketing-ops-api gateway rule uses for the conversion-actions
@@ -212,39 +310,62 @@ func marketingOpsForbiddenMessage(fields []string) string {
 // Fail closed: no checker, no actor, or a check that could not be completed answers 503, and
 // only a definite grant admits the request.
 func (s *BriefService) requireMarketingOpsForSharedAccountInputs(ctx context.Context, projectSlug string, platforms []model.Provider, config json.RawMessage) error {
-	if !slices.Contains(platforms, model.ProviderGoogleAds) {
+	var googleFields, metaFields, redditFields []string
+	if slices.Contains(platforms, model.ProviderGoogleAds) {
+		googleFields = GoogleAdsMarketingOpsInputs(config)
+	}
+	if slices.Contains(platforms, model.ProviderMetaAds) {
+		metaFields = MetaMarketingOpsInputs(config)
+	}
+	if slices.Contains(platforms, model.ProviderRedditAds) {
+		redditFields = RedditMarketingOpsInputs(config)
+	}
+	if len(googleFields) == 0 && len(metaFields) == 0 && len(redditFields) == 0 {
 		return nil
 	}
-	fields := GoogleAdsMarketingOpsInputs(config)
-	if len(fields) == 0 {
-		return nil
+	var configKeys, sentences []string
+	var all []string
+	if len(googleFields) > 0 {
+		configKeys = append(configKeys, "googleAdsConfig")
+		sentences = append(sentences, marketingOpsForbiddenMessage(googleFields))
+		all = append(all, googleFields...)
 	}
-	named := strings.Join(fields, ", ")
+	if len(metaFields) > 0 {
+		configKeys = append(configKeys, "metaConfig")
+		sentences = append(sentences, metaMarketingOpsForbiddenMessage(metaFields))
+		all = append(all, metaFields...)
+	}
+	if len(redditFields) > 0 {
+		configKeys = append(configKeys, "redditConfig")
+		sentences = append(sentences, redditMarketingOpsForbiddenMessage(redditFields))
+		all = append(all, redditFields...)
+	}
+	named := strings.Join(all, ", ")
 	unavailable := &briefs.ConnServiceUnavailableError{Code: "503",
-		Message: "could not verify the global_marketing_ops role that these googleAdsConfig inputs require (" +
-			named + "); retry, or omit them"}
+		Message: "could not verify the global_marketing_ops role that these " + strings.Join(configKeys, " and ") +
+			" inputs require (" + named + "); retry, or omit them"}
 	checker := s.marketingOpsChecker()
 	if checker == nil {
-		slog.ErrorContext(ctx, "refusing shared-account Google Ads inputs: no marketing-ops checker is configured (NATS_URL empty?)",
+		slog.ErrorContext(ctx, "refusing shared-account inputs: no marketing-ops checker is configured (NATS_URL empty?)",
 			"project_id", projectSlug, "fields", named)
 		return unavailable
 	}
 	actor := actorFromCtx(ctx)
 	if actor == nil || actor.Username == "" {
-		slog.ErrorContext(ctx, "refusing shared-account Google Ads inputs: the request carries no authenticated username",
+		slog.ErrorContext(ctx, "refusing shared-account inputs: the request carries no authenticated username",
 			"project_id", projectSlug, "fields", named)
 		return unavailable
 	}
 	ok, err := checker.IsGlobalMarketingOps(ctx, projectSlug, actor.Username)
 	if err != nil {
-		slog.ErrorContext(ctx, "refusing shared-account Google Ads inputs: the global_marketing_ops check failed",
+		slog.ErrorContext(ctx, "refusing shared-account inputs: the global_marketing_ops check failed",
 			"project_id", projectSlug, "fields", named, "error", err)
 		return unavailable
 	}
 	if !ok {
-		slog.WarnContext(ctx, "refused shared-account Google Ads inputs from a caller without global_marketing_ops",
+		slog.WarnContext(ctx, "refused shared-account inputs from a caller without global_marketing_ops",
 			"project_id", projectSlug, "fields", named)
-		return &briefs.ForbiddenError{Code: "403", Message: marketingOpsForbiddenMessage(fields)}
+		return &briefs.ForbiddenError{Code: "403", Message: strings.Join(sentences, "; ")}
 	}
 	return nil
 }

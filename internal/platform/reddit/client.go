@@ -454,10 +454,16 @@ type CampaignInput struct {
 	Subreddits      []string
 	Interests       []string
 	Keywords        []string
-	Variants        []AdVariant
-	Project         string
-	Objective       string // one of: awareness, traffic, conversions, video_views
-	PostURL         string
+	// ExcludedSubreddits and ExcludedGeoTargets are the ad group's excluded_communities and
+	// excluded_geolocations (#549), normalized and refused by NormalizeTargetingExclusions before
+	// any upstream call. Both are sent on EVERY ad-group attempt: the communities/interests retry
+	// never drops a brand-safety exclusion.
+	ExcludedSubreddits []string
+	ExcludedGeoTargets []string
+	Variants           []AdVariant
+	Project            string
+	Objective          string // one of: awareness, traffic, conversions, video_views
+	PostURL            string
 	// ImageURL, when set and PostURL is empty, makes CreateCampaign AUTHOR a
 	// promoted ("dark") image post from this URL before creating the campaign and
 	// attach it as the ad's creative — so a caller can go brief->servable ad
@@ -530,6 +536,15 @@ type CampaignInput struct {
 	StageToken string
 	Tactic     string
 	SlotToken  string
+	// CustomAudienceIDs and ExcludedCustomAudienceIDs are custom audiences on the ad account to
+	// target and to exclude (#549): retargeting (a pixel or engagement audience) and suppression
+	// (a customer list of registrants). Sent as targeting.custom_audience_ids and
+	// targeting.excluded_custom_audience_ids on EVERY ad-group attempt: the communities/interests
+	// retry never drops them, because a retargeting campaign that silently loses its audience
+	// would serve to everyone. Checked with ValidateCustomAudienceIDs before any upstream call.
+	// The dispatcher admits them only behind REDDIT_CUSTOM_AUDIENCES_ENABLED.
+	CustomAudienceIDs         []string
+	ExcludedCustomAudienceIDs []string
 }
 
 // ManualCPCBidSupported reports whether a campaign with this objective can be created with a
@@ -1812,6 +1827,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.PreflightRefusalf("reddit requires a conversion pixel id and none is configured: add it to this project's Reddit connection (Reddit Ads → Events Manager lists the account's pixel)")
 	}
 
+	// Custom audiences, before any mutating call: a bad list would otherwise fail the ad-group
+	// create after the campaign exists, orphaning it.
+	if msg := ValidateCustomAudienceIDs(in.CustomAudienceIDs, in.ExcludedCustomAudienceIDs); msg != "" {
+		return nil, domain.PreflightRefusalf("%s", msg)
+	}
+
 	var validatedPostID string
 	if in.PostURL != "" {
 		id, err := extractRedditPostID(in.PostURL)
@@ -1916,6 +1937,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	if len(geos) == 0 {
 		geos = []string{"US"}
+	}
+
+	// The exclusions (#549), refused before any mutating call with the same rule set the
+	// dispatcher's PreflightCreate applies, so a value that slipped past it still creates nothing.
+	exclusions, err := NormalizeTargetingExclusions(in.Subreddits, in.GeoTargets, in.ExcludedSubreddits, in.ExcludedGeoTargets)
+	if err != nil {
+		return nil, domain.PreflightRefusalf("%s", err.Error())
 	}
 
 	// Compose BOTH names (campaign + ad group) and validate their lengths. The per-field
@@ -2266,6 +2294,25 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if len(in.Keywords) > 0 {
 		baseTargeting["keywords"] = in.Keywords
 	}
+	// Custom audiences go in baseTargeting, the retry payload, so the communities/interests retry
+	// keeps them: dropping a retargeting audience would widen the campaign to everyone, and
+	// dropping a suppression list would serve to the people it exists to exclude.
+	if len(in.CustomAudienceIDs) > 0 {
+		baseTargeting["custom_audience_ids"] = in.CustomAudienceIDs
+	}
+	if len(in.ExcludedCustomAudienceIDs) > 0 {
+		baseTargeting["excluded_custom_audience_ids"] = in.ExcludedCustomAudienceIDs
+	}
+	// Exclusions live in baseTargeting, the payload of BOTH attempts, so the retry that drops
+	// rejected communities and interests can never widen the campaign into a community or country
+	// the operator excluded. A Reddit refusal of an exclusion fails the ad group instead (a
+	// definite 4xx, campaign left PAUSED), like any other ad-group rejection.
+	if len(exclusions.Communities) > 0 {
+		baseTargeting["excluded_communities"] = exclusions.Communities
+	}
+	if len(exclusions.Geolocations) > 0 {
+		baseTargeting["excluded_geolocations"] = exclusions.Geolocations
+	}
 	// in.Interests is deliberately NOT set here: baseTargeting is the RETRY payload, and the
 	// retry exists to drop the dimensions Reddit rejected. Interests are added to
 	// optionalTargeting below, alongside communities.
@@ -2435,6 +2482,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		surviving = append(surviving, fmt.Sprintf("%d interests", len(in.Interests)))
 	}
 	surviving = append(surviving, fmt.Sprintf("%d keywords", len(in.Keywords)), fmt.Sprintf("%d geos", len(geos)))
+	if n := len(in.CustomAudienceIDs); n > 0 {
+		surviving = append(surviving, fmt.Sprintf("%d custom audiences", n))
+	}
+	if n := len(in.ExcludedCustomAudienceIDs); n > 0 {
+		surviving = append(surviving, fmt.Sprintf("%d excluded custom audiences", n))
+	}
+	if n := len(exclusions.Communities); n > 0 {
+		surviving = append(surviving, fmt.Sprintf("%d excluded communities", n))
+	}
+	if n := len(exclusions.Geolocations); n > 0 {
+		surviving = append(surviving, fmt.Sprintf("%d excluded geos", n))
+	}
 	steps = append(steps, "Targeting: "+strings.Join(surviving, ", "))
 
 	// Report each dropped dimension by its ACTUAL reason. Merging them into one

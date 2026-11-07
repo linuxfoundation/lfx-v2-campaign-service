@@ -3641,7 +3641,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: create-campaigns lfx-v2-campaign-service-briefs
-            description: 'Create campaigns across the selected platforms (async -> job). Besides the request-shape 400s (an unknown or duplicate platform, new_version on a platform that does not support it, and the like), two dispatch-time rules are refused synchronously, before any job exists. (1) An email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients'' time zones, which HubSpot does not allow together: 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. (2) A Reddit config that names a stored creative asset it cannot use, decided from the config alone: redditConfig.imageAssetId together with imageUrl or postUrl, an imageAssetId that is not a UUID, or imageAssetId while signed creative-asset URLs are not configured (''stored creative assets are not enabled for Reddit; supply imageUrl''): 400 with that message. GOOGLE ADS SHARED-ACCOUNT INPUTS: a googleAdsConfig that sets any input naming an existing audience, user list, custom segment, shared negative keyword list or conversion action on the Google Ads account (demandGenAudience or an audience on any demandGenAdGroups entry; audienceSegments, customAudiences, customAffinities or excludedAudienceSegments, on the campaign or on any displayAdGroups entry; audienceSegments on any adGroups entry; campaignAudienceSegments (Search campaign-level observed user lists); performanceMaxAudienceSignal; sharedNegativeKeywordLists; conversionActions, demandGenDemographics.audienceSegments, demandGenDemographics.customAudiences, and the same two lists in any demandGenAdGroups entry''s demographics; any non-empty value, whitespace included, on any channel, Search audienceSegments included; demandGenDemographics without audienceSegments or customAudiences is not gated, as its Audience is new and names no existing account resource) requires the caller to hold global_marketing_ops on this project, checked once per request before any job exists: 403 naming the gated fields when they do not, 503 when the check cannot be made (project lookup or authorization service unavailable). The gateway admits every campaign_manager, which includes foundation executive directors, and those resources belong to the Google Ads account every foundation shares. An invalid per-platform `bidding` object (see the config attribute) is also refused synchronously, with 400 "invalid campaign config: <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc) and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are immediately eligible for the bid lever, and eligibility follows the platform''s current strategy. Every other dispatch failure, including an imageAssetId that does not exist for this brief, still arrives later, as the job''s own result.'
+            description: 'Create campaigns across the selected platforms (async -> job). Besides the request-shape 400s (an unknown or duplicate platform, new_version on a platform that does not support it, and the like), two dispatch-time rules are refused synchronously, before any job exists. (1) An email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients'' time zones, which HubSpot does not allow together: 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. (2) A Reddit config that names a stored creative asset it cannot use, decided from the config alone: redditConfig.imageAssetId together with imageUrl or postUrl, an imageAssetId that is not a UUID, or imageAssetId while signed creative-asset URLs are not configured (''stored creative assets are not enabled for Reddit; supply imageUrl''): 400 with that message. A redditConfig.excludedSubreddits or excludedGeoTargets that breaks its rules, or is sent while REDDIT_TARGETING_EXCLUSIONS_ENABLED is off, is also a synchronous 400 (see the config attribute). GOOGLE ADS SHARED-ACCOUNT INPUTS: a googleAdsConfig that sets any input naming an existing audience, user list, custom segment, shared negative keyword list or conversion action on the Google Ads account (demandGenAudience or an audience on any demandGenAdGroups entry; audienceSegments, customAudiences, customAffinities or excludedAudienceSegments, on the campaign or on any displayAdGroups entry; audienceSegments on any adGroups entry; campaignAudienceSegments (Search campaign-level observed user lists); performanceMaxAudienceSignal; sharedNegativeKeywordLists; conversionActions, demandGenDemographics.audienceSegments, demandGenDemographics.customAudiences, and the same two lists in any demandGenAdGroups entry''s demographics; any non-empty value, whitespace included, on any channel, Search audienceSegments included; demandGenDemographics without audienceSegments or customAudiences is not gated, as its Audience is new and names no existing account resource) requires the caller to hold global_marketing_ops on this project, checked once per request before any job exists: 403 naming the gated fields when they do not, 503 when the check cannot be made (project lookup or authorization service unavailable). The gateway admits every campaign_manager, which includes foundation executive directors, and those resources belong to the Google Ads account every foundation shares. REDDIT SHARED-ACCOUNT INPUTS (#549): a redditConfig that sets customAudienceIds or excludedCustomAudienceIds (any non-empty list) on a create that selects reddit-ads requires global_marketing_ops on this project in the same single check, with the same 403 and 503; the custom audiences belong to the LF Reddit ad account every foundation shares. When both platforms'' inputs are refused, the 403 names each platform''s fields in its own sentence. A Reddit custom audience list is also refused synchronously with 400 "invalid campaign config: redditConfig.<field>: ..." when it is not an array of strings, when an id is not 1-64 letters, digits or underscores, repeats, or is in both lists, when a list holds more than 100 ids, and when REDDIT_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. META SHARED-ACCOUNT INPUTS: likewise a metaConfig.targeting that sets customAudiences or excludedCustomAudiences (any non-empty list) names custom audiences of the Meta ad account every foundation shares and requires global_marketing_ops on this project (403 naming them, 503 when the check cannot be made); age, gender and advantageAudience are not gated. An invalid metaConfig.targeting, or any targeting block while META_AUDIENCE_TARGETING_ENABLED is not "true" on the deployment, is a synchronous 400 "invalid campaign config: metaConfig.targeting...". An invalid per-platform `bidding` object (see the config attribute) is also refused synchronously, with 400 "invalid campaign config: <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc) and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are immediately eligible for the bid lever, and eligibility follows the platform''s current strategy. Every other dispatch failure, including an imageAssetId that does not exist for this brief, still arrives later, as the job''s own result. That includes a Search googleAdsConfig.sharedNegativeKeywordLists entry that is not an ENABLED NEGATIVE_KEYWORDS shared set of the connected Google Ads account (#548). One read-only GAQL query reads every named list''s shared_set.type and status before anything is created. A NEGATIVE_PLACEMENTS, BRANDS or other set, a REMOVED set or a set not in the account is refused in the job''s Google Ads error, which names the set id and, for a set of another known type, that type. A read that fails stops the create too, with nothing created.'
             operationId: lfx-v2-campaign-service-briefs#create-campaigns
             parameters:
                 - name: project_id
@@ -17495,6 +17495,105 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/reddit-ads/custom-audiences:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-reddit-ads-custom-audiences lfx-v2-campaign-service-connections
+            description: 'List the custom audiences on the Reddit ad account a Reddit create for this project uses, live from Reddit Ads API v3 GET /ad_accounts/{ad_account_id}/custom_audiences, for picking redditConfig.customAudienceIds and excludedCustomAudienceIds (#549). Follows Reddit''s pagination for at most 10 pages; `truncated` is set when more remained. Sorted by name, ignoring case. Credentials resolve as for a create: the project''s own Reddit connection, or the LF system account when the deployment forces it. The Reddit ad account is shared by every foundation, so the response lists EVERY foundation''s audiences; like list-google-ads-audiences it is therefore gated on global_marketing_ops of {project_id} (the LF marketing team), not campaign_manager, which also admits a foundation''s executive director. Disabled (400 not supported) unless REDDIT_CUSTOM_AUDIENCES_ENABLED is "true": the read is built from Reddit''s public OpenAPI document and has not been exercised against a live ad account. An answer this service cannot believe (no data list, an unusable or repeated id) is 503 with nothing partial. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#list-reddit-ads-custom-audiences
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/RedditAdsCustomAudiences'
+                            example:
+                                account_id: t2_gv9wtbfa
+                                audience_count: 1
+                                audiences:
+                                    - id: "67547345732543"
+                                      name: KubeCon NA site visitors 30d
+                                      size_lower: 1000
+                                      size_upper: 5000
+                                      status: VALID
+                                      type: PIXEL_RETARGETING
+                                truncated: false
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/reddit-ads/keywords:
         get:
             tags:
@@ -21160,7 +21259,7 @@ components:
             type: object
             properties:
                 config:
-                    description: 'Per-platform campaign configuration: an object keyed by platform config name (microsoftConfig, metaConfig, redditConfig, twitterConfig, linkedInConfig, googleAdsConfig, hubspotConfig) plus the top-level hsToken. BIDDING (LFXV2-2665): microsoftConfig, metaConfig, redditConfig, twitterConfig and linkedInConfig each accept an optional `bidding` object, {"strategy": "automatic" | "manual", "bidAmount": number}. Omitted means automatic (Microsoft MaxClicks; Meta LOWEST_COST_WITHOUT_CAP; Reddit BIDLESS; X AUTO). DEFAULT CHANGES: a Microsoft campaign created with no bidding and no cpcBid used to get Microsoft''s EnhancedCpc default and is now MaxClicks, so update-campaign-bid answers 409 for it; a LinkedIn campaign created with no bidding is now WEBSITE_VISIT / MAX_CLICK / CPM with a Traffic name segment. Manual-created campaigns are immediately eligible for the bid lever; eligibility follows the platform''s current strategy. LinkedIn automatic creates an objectiveType WEBSITE_VISIT campaign bidding MAX_CLICK with costType CPM (decision 2026-10-13: automatic LinkedIn campaigns optimise for clicks because MAX_CONVERSION, the only automated target of WEBSITE_CONVERSION, needs a conversion association this service doesn''t create); LinkedIn manual keeps objectiveType WEBSITE_CONVERSION. `manual` requires `bidAmount`, the starting max cost-per-click bid in the ad account''s own currency (LinkedIn: USD), greater than zero, at most 1,000,000 and a whole number of micro-units; it creates the campaign in the shape update-campaign-bid accepts. Per platform, a manual bid must also be: Microsoft within 0.01–1,000 (a legacy microsoftConfig.cpcBid without `bidding` still means a manual bid at that amount; with `bidding` it must be omitted or equal bidAmount); Meta at most two decimals, a whole minor unit of the account currency (checked against the currency at dispatch), and only for the traffic or leads objective; Reddit only for the traffic objective; LinkedIn whole cents; X at most the campaign''s daily budget (X does not accept a line item bid above it). Keys are exact: `bidding`, `strategy` and `bidAmount`; a case variant (`Bidding`, `Strategy`) or an unknown key inside `bidding` is refused. `automatic` with a `bidAmount`, an unknown strategy, a wrong JSON type, an explicit null or empty value (only an ABSENT field defaults: `"strategy": null` or `""`, `"bidAmount": null` and `"bidding": null` are refused), or a bid breaking these rules is refused synchronously with 400 "invalid campaign config: <configKey>.bidding: ..." before any job exists. googleAdsConfig.bidding is refused with 400: Google Ads takes its strategy from googleAdsConfig.biddingStrategy and a manual bid from googleAdsConfig.cpcBid. GOOGLE ADS CPC BID: googleAdsConfig.cpcBid is the ad group''s manual max cost-per-click bid, sent as cpcBidMicros, in whole units of the ad account''s own currency (no FX conversion, like the budget). Search only, under the manual-cpc strategy (Search''s default); it is refused on any other channel or strategy. Accepted range 0.01 to 100,000 inclusive; NaN, Inf or a value outside it fails the job before any Google Ads request. Omitted or 0 keeps the previous behaviour: no bid is sent, and the ad group inherits whatever Google derives. FLIGHT DATES: metaConfig (required) and microsoftConfig (optional) take `startDate` and `endDate` as YYYY-MM-DD strings that must be real calendar dates, with the start not before today and the end after the start. For metaConfig today is the UTC calendar day. For microsoftConfig it is the calendar day at UTC-12, with or without timeZone, so only a date already past in every time zone is refused up front; Microsoft reads the dates in the campaign''s time zone and remains the final judge. Microsoft Advertising sets them on the campaign''s AD GROUP (AdGroup.StartDate/EndDate), each independently optional: an omitted startDate leaves Microsoft''s default (eligible from today, so an endDate alone must be after today) and an omitted endDate runs until stopped; omitting both creates the campaign exactly as before. An invalid Microsoft date fails the platform job before anything is created, as an invalid Meta date does. Microsoft dates are recorded on the campaign row only when this run created the ad group that carries them; a retry that reuses an existing ad group leaves its schedule unchanged and records no dates. META LAUNCH READINESS: metaConfig takes `instagramUserId` (the numeric Instagram account id, IGSID, bound to each ad creative as `instagram_user_id` when an Instagram placement is enabled — the default placements include Instagram Feed) and `dsaBeneficiary` / `dsaPayor` (the EU Digital Services Act advertiser and payer, set on the ad set as `dsa_beneficiary` / `dsa_payor`). Supply both disclosures or neither; when geoTargets include any EU or EEA country (the 27 member states, Åland, France''s outermost regions, Iceland, Liechtenstein and Norway) both are required, because Meta will not publish an EU-targeted ad set without them. A missing or one-sided pair, a disclosure over 256 characters or with a control, line-separator or bidi character, a non-numeric instagramUserId, and any of the three with a non-string JSON type (null counts as absent) are refused here with a 400, before any job exists. An absent instagramUserId is not refused, but Meta will not publish an Instagram placement without it. REDDIT CONVERSION EVENT (#549): redditConfig.conversionEvent names the pixel event a conversions campaign optimizes toward, sent as the campaign''s and the ad group''s optimization_goal: PURCHASE, SIGN_UP, LEAD, PAGE_VISIT, VIEW_CONTENT, ADD_TO_CART, ADD_TO_WISHLIST or SEARCH, case-insensitive. Omitted means PURCHASE, as before. It is accepted only with objective conversions (also the default when objective is omitted) and only while the deployment sets REDDIT_CONVERSION_EVENT_ENABLED to "true". An unknown value, another objective, an explicit null, an empty or non-string value, a case variant of the key, or the field while the flag is off is refused synchronously with 400 "invalid campaign config: redditConfig.conversionEvent: ..." before any job exists.'
+                    description: 'Per-platform campaign configuration: an object keyed by platform config name (microsoftConfig, metaConfig, redditConfig, twitterConfig, linkedInConfig, googleAdsConfig, hubspotConfig) plus the top-level hsToken. BIDDING (LFXV2-2665): microsoftConfig, metaConfig, redditConfig, twitterConfig and linkedInConfig each accept an optional `bidding` object, {"strategy": "automatic" | "manual", "bidAmount": number}. Omitted means automatic (Microsoft MaxClicks; Meta LOWEST_COST_WITHOUT_CAP; Reddit BIDLESS; X AUTO). DEFAULT CHANGES: a Microsoft campaign created with no bidding and no cpcBid used to get Microsoft''s EnhancedCpc default and is now MaxClicks, so update-campaign-bid answers 409 for it; a LinkedIn campaign created with no bidding is now WEBSITE_VISIT / MAX_CLICK / CPM with a Traffic name segment. Manual-created campaigns are immediately eligible for the bid lever; eligibility follows the platform''s current strategy. LinkedIn automatic creates an objectiveType WEBSITE_VISIT campaign bidding MAX_CLICK with costType CPM (decision 2026-10-13: automatic LinkedIn campaigns optimise for clicks because MAX_CONVERSION, the only automated target of WEBSITE_CONVERSION, needs a conversion association this service doesn''t create); LinkedIn manual keeps objectiveType WEBSITE_CONVERSION. `manual` requires `bidAmount`, the starting max cost-per-click bid in the ad account''s own currency (LinkedIn: USD), greater than zero, at most 1,000,000 and a whole number of micro-units; it creates the campaign in the shape update-campaign-bid accepts. Per platform, a manual bid must also be: Microsoft within 0.01–1,000 (a legacy microsoftConfig.cpcBid without `bidding` still means a manual bid at that amount; with `bidding` it must be omitted or equal bidAmount); Meta at most two decimals, a whole minor unit of the account currency (checked against the currency at dispatch), and only for the traffic or leads objective; Reddit only for the traffic objective; LinkedIn whole cents; X at most the campaign''s daily budget (X does not accept a line item bid above it). REDDIT CUSTOM AUDIENCES (#549): redditConfig takes `customAudienceIds` and `excludedCustomAudienceIds`, arrays of Reddit custom audience ids (list-reddit-ads-custom-audiences offers them) to target and to exclude, sent as the ad group''s targeting.custom_audience_ids and targeting.excluded_custom_audience_ids on every ad-group attempt, including the retry that drops communities and interests. Each id is 1-64 letters, digits or underscores, sent exactly as given; at most 100 per list; no id twice and none in both lists. Off unless REDDIT_CUSTOM_AUDIENCES_ENABLED is "true" (built from Reddit''s public OpenAPI document, not yet exercised live), and only for global_marketing_ops (see create-campaigns). Keys are exact: `bidding`, `strategy` and `bidAmount`; a case variant (`Bidding`, `Strategy`) or an unknown key inside `bidding` is refused. `automatic` with a `bidAmount`, an unknown strategy, a wrong JSON type, an explicit null or empty value (only an ABSENT field defaults: `"strategy": null` or `""`, `"bidAmount": null` and `"bidding": null` are refused), or a bid breaking these rules is refused synchronously with 400 "invalid campaign config: <configKey>.bidding: ..." before any job exists. googleAdsConfig.bidding is refused with 400: Google Ads takes its strategy from googleAdsConfig.biddingStrategy and a manual bid from googleAdsConfig.cpcBid. GOOGLE ADS CPC BID: googleAdsConfig.cpcBid is the ad group''s manual max cost-per-click bid, sent as cpcBidMicros, in whole units of the ad account''s own currency (no FX conversion, like the budget). Search only, under the manual-cpc strategy (Search''s default); it is refused on any other channel or strategy. Accepted range 0.01 to 100,000 inclusive; NaN, Inf or a value outside it fails the job before any Google Ads request. Omitted or 0 keeps the previous behaviour: no bid is sent, and the ad group inherits whatever Google derives. FLIGHT DATES: metaConfig (required) and microsoftConfig (optional) take `startDate` and `endDate` as YYYY-MM-DD strings that must be real calendar dates, with the start not before today and the end after the start. For metaConfig today is the UTC calendar day. For microsoftConfig it is the calendar day at UTC-12, with or without timeZone, so only a date already past in every time zone is refused up front; Microsoft reads the dates in the campaign''s time zone and remains the final judge. Microsoft Advertising sets them on the campaign''s AD GROUP (AdGroup.StartDate/EndDate), each independently optional: an omitted startDate leaves Microsoft''s default (eligible from today, so an endDate alone must be after today) and an omitted endDate runs until stopped; omitting both creates the campaign exactly as before. An invalid Microsoft date fails the platform job before anything is created, as an invalid Meta date does. Microsoft dates are recorded on the campaign row only when this run created the ad group that carries them; a retry that reuses an existing ad group leaves its schedule unchanged and records no dates. META LAUNCH READINESS: metaConfig takes `instagramUserId` (the numeric Instagram account id, IGSID, bound to each ad creative as `instagram_user_id` when an Instagram placement is enabled — the default placements include Instagram Feed) and `dsaBeneficiary` / `dsaPayor` (the EU Digital Services Act advertiser and payer, set on the ad set as `dsa_beneficiary` / `dsa_payor`). Supply both disclosures or neither; when geoTargets include any EU or EEA country (the 27 member states, Åland, France''s outermost regions, Iceland, Liechtenstein and Norway) both are required, because Meta will not publish an EU-targeted ad set without them. A missing or one-sided pair, a disclosure over 256 characters or with a control, line-separator or bidi character, a non-numeric instagramUserId, and any of the three with a non-string JSON type (null counts as absent) are refused here with a 400, before any job exists. An absent instagramUserId is not refused, but Meta will not publish an Instagram placement without it. REDDIT CONVERSION EVENT (#549): redditConfig.conversionEvent names the pixel event a conversions campaign optimizes toward, sent as the campaign''s and the ad group''s optimization_goal: PURCHASE, SIGN_UP, LEAD, PAGE_VISIT, VIEW_CONTENT, ADD_TO_CART, ADD_TO_WISHLIST or SEARCH, case-insensitive. Omitted means PURCHASE, as before. It is accepted only with objective conversions (also the default when objective is omitted) and only while the deployment sets REDDIT_CONVERSION_EVENT_ENABLED to "true". An unknown value, another objective, an explicit null, an empty or non-string value, a case variant of the key, or the field while the flag is off is refused synchronously with 400 "invalid campaign config: redditConfig.conversionEvent: ..." before any job exists. REDDIT EXCLUSIONS (#549): redditConfig takes `excludedSubreddits` (subreddit names, an optional r/ prefix stripped, each 2-21 letters, digits or underscores, at most 100, case-insensitive duplicates dropped) and `excludedGeoTargets` (ISO 3166-1 alpha-2 country codes, at most 50, uppercased and de-duplicated), sent as the ad group''s targeting.excluded_communities and targeting.excluded_geolocations on every ad-group attempt (the retry that drops rejected communities and interests keeps them). A name also in `subreddits`, or a code also targeted (geoTargets, or the US default when geoTargets is empty), is refused. Both are OFF unless REDDIT_TARGETING_EXCLUSIONS_ENABLED is exactly "true" on the deployment. A blank or invalid entry, an overlap, a list over its cap, a value that is not an array of strings (null reads as absent), or either list while the flag is off, is refused with 400 "invalid campaign config: redditConfig.<field>: ..." before any job exists.'
                     example:
                         hsToken: hs-abc123
                         metaConfig:
@@ -27567,6 +27666,92 @@ components:
                 - client_id
                 - client_secret
                 - refresh_token
+        RedditAdsCustomAudience:
+            type: object
+            properties:
+                id:
+                    type: string
+                    description: The audience id, in exactly the form redditConfig.customAudienceIds and excludedCustomAudienceIds accept. Send it as-is.
+                    example: "67547345732543"
+                    pattern: ^[A-Za-z0-9_]{1,64}$
+                name:
+                    type: string
+                    description: The audience's display name. Not an identifier; may be empty.
+                    example: KubeCon NA site visitors 30d
+                size_lower:
+                    type: integer
+                    description: Reddit's lower bound on the matched users. Absent when Reddit sent none, which is not a size of 0.
+                    example: 1000
+                    format: int64
+                size_upper:
+                    type: integer
+                    description: Reddit's upper bound on the matched users. Absent when Reddit sent none.
+                    example: 5000
+                    format: int64
+                status:
+                    type: string
+                    description: Reddit's processing status, verbatim (VALID, SUCCESSFUL, PENDING, EXPIRED, NOT_ENOUGH_MATCHES_ERROR and so on); may be empty. Every audience is listed whatever its status, so a picker can show why one is not usable yet.
+                    example: VALID
+                type:
+                    type: string
+                    description: Reddit's audience type, verbatim (CUSTOMER_LIST, LOOKALIKE, ENGAGEMENT_RETARGETING, PIXEL_RETARGETING, THIRD_PARTY or IN_MARKET); may be empty.
+                    example: PIXEL_RETARGETING
+            example:
+                id: "67547345732543"
+                name: KubeCon NA site visitors 30d
+                size_lower: 1000
+                size_upper: 5000
+                status: VALID
+                type: PIXEL_RETARGETING
+            required:
+                - id
+                - name
+                - type
+                - status
+        RedditAdsCustomAudiences:
+            type: object
+            properties:
+                account_id:
+                    type: string
+                    description: 'The Reddit ad account the audiences were read from: the account a Reddit create for this project uses'
+                    example: t2_gv9wtbfa
+                audience_count:
+                    type: integer
+                    description: How many audiences are in `audiences`
+                    example: 1
+                    format: int64
+                audiences:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/RedditAdsCustomAudience'
+                    description: The account's custom audiences, sorted by name (ignoring case), then id
+                    example:
+                        - id: "67547345732543"
+                          name: KubeCon NA site visitors 30d
+                          size_lower: 1000
+                          size_upper: 5000
+                          status: VALID
+                          type: PIXEL_RETARGETING
+                truncated:
+                    type: boolean
+                    description: True when Reddit still had more pages after the 10 this read follows; the list is then incomplete
+                    example: false
+            example:
+                account_id: t2_gv9wtbfa
+                audience_count: 1
+                audiences:
+                    - id: "67547345732543"
+                      name: KubeCon NA site visitors 30d
+                      size_lower: 1000
+                      size_upper: 5000
+                      status: VALID
+                      type: PIXEL_RETARGETING
+                truncated: false
+            required:
+                - account_id
+                - audiences
+                - audience_count
+                - truncated
         RedditAdsKeyword:
             type: object
             properties:

@@ -331,6 +331,31 @@ app:
     REDDIT_CONVERSION_EVENT_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to Reddit custom audiences (#549): the create
+    # inputs redditConfig.customAudienceIds / excludedCustomAudienceIds and the
+    # picker read reddit-ads/custom-audiences. Built from Reddit's public v3
+    # OpenAPI document and NOT exercised against a live ad account; ops turns
+    # it on by setting it to exactly "true" in lfx-v2-argocd after a live
+    # create confirms it. While off, a create naming an audience is refused
+    # with 400 before any job exists and the read answers 400. The audiences
+    # live on the ad account every foundation shares, so create-campaigns also
+    # requires global_marketing_ops for them (403 without it) and the read is
+    # in the gateway's marketing-ops-api rule. Any value other than "true" is
+    # treated as off, so a typo fails closed.
+    REDDIT_CUSTOM_AUDIENCES_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to redditConfig.excludedSubreddits and
+    # redditConfig.excludedGeoTargets (#549), sent at create time as the ad
+    # group's excluded_communities and excluded_geolocations. Default off: the
+    # shape is built from Reddit's published v3 targeting schema and no live
+    # create has sent it. It names no account resource; it keeps an unverified
+    # shape off the shared ad account. While off, a create naming either list
+    # is refused with a 400 before any job exists. Any value other than "true"
+    # is treated as off, so a typo fails closed.
+    REDDIT_TARGETING_EXCLUSIONS_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.demandGenAudience (#459): one
     # existing Google Ads Audience on a Demand Gen ad group. The same flag
     # gates each googleAdsConfig.demandGenAdGroups[].audience (#460), the same
@@ -367,6 +392,20 @@ app:
     # global_marketing_ops). Any value other than "true" is treated as off, so a typo
     # fails closed.
     GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to metaConfig.targeting (#550): age, gender,
+    # custom audiences to include and exclude, and the Advantage+ audience
+    # flag on the Meta ad set. A per-deployment opt-in, off by default, because
+    # the payloads were built from Meta's docs and are not yet live-verified;
+    # set it to exactly "true" in lfx-v2-argocd to turn it on. Each custom
+    # audience is read and must belong to the connected Meta ad account before
+    # anything is created. That account is shared by every foundation, so
+    # create-campaigns also requires global_marketing_ops on the project for the
+    # audience lists (checked over NATS; 403 without it). While off, a create
+    # carrying a targeting block is refused with a 400 before any job exists.
+    # Any value other than "true" is treated as off, so a typo fails closed.
+    META_AUDIENCE_TARGETING_ENABLED:
       value: "false"
 
     # Opts this deployment IN to googleAdsConfig.performanceMaxAudienceSignal

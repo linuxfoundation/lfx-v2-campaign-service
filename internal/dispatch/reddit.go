@@ -40,16 +40,21 @@ type redditCreds struct {
 // The brief supplies event identity (name/slug/project/registration URL); this
 // supplies the Reddit-specific campaign shape.
 type redditConfig struct {
-	BudgetUSD  float64            `json:"budgetUsd"`
-	StartDate  string             `json:"startDate"` // YYYY-MM-DD
-	EndDate    string             `json:"endDate"`   // YYYY-MM-DD
-	Objective  string             `json:"objective"` // awareness|traffic|conversions|video_views
-	GeoTargets []string           `json:"geoTargets"`
-	Subreddits []string           `json:"subreddits"`
-	Interests  []string           `json:"interests"`
-	Keywords   []string           `json:"keywords"`
-	Variants   []reddit.AdVariant `json:"variants"`
-	PostURL    string             `json:"postUrl"`
+	BudgetUSD  float64  `json:"budgetUsd"`
+	StartDate  string   `json:"startDate"` // YYYY-MM-DD
+	EndDate    string   `json:"endDate"`   // YYYY-MM-DD
+	Objective  string   `json:"objective"` // awareness|traffic|conversions|video_views
+	GeoTargets []string `json:"geoTargets"`
+	Subreddits []string `json:"subreddits"`
+	Interests  []string `json:"interests"`
+	Keywords   []string `json:"keywords"`
+	// ExcludedSubreddits and ExcludedGeoTargets are the ad group's excluded_communities and
+	// excluded_geolocations (#549), behind REDDIT_TARGETING_EXCLUSIONS_ENABLED
+	// (reddit_targeting_exclusions.go).
+	ExcludedSubreddits []string           `json:"excludedSubreddits"`
+	ExcludedGeoTargets []string           `json:"excludedGeoTargets"`
+	Variants           []reddit.AdVariant `json:"variants"`
+	PostURL            string             `json:"postUrl"`
 	// ImageURL, when set and PostURL is empty, makes the client AUTHOR a promoted
 	// image post itself (brief->servable ad without a hand-made post). CallToAction
 	// is that post's button label (defaults to "Learn More"). Both are ignored when
@@ -72,6 +77,12 @@ type redditConfig struct {
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
 	// (BIDLESS, unchanged); manual creates a MANUAL_BIDDING CPC campaign — see redditBidPlan.
 	Bidding *biddingConfig `json:"bidding,omitempty"`
+	// CustomAudienceIDs / ExcludedCustomAudienceIDs are custom audiences on the ad account to
+	// target and to exclude (#549, reddit_custom_audiences.go). Admitted only behind
+	// REDDIT_CUSTOM_AUDIENCES_ENABLED, and only from global_marketing_ops
+	// (service.RedditMarketingOpsInputs), because the audiences belong to the shared ad account.
+	CustomAudienceIDs         []string `json:"customAudienceIds"`
+	ExcludedCustomAudienceIDs []string `json:"excludedCustomAudienceIds"`
 }
 
 // redditBidPlan resolves redditConfig's bidding choice. Manual bidding creates campaign and ad
@@ -227,6 +238,12 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		return nil, notCreated(err)
 	}
 
+	// A mistyped custom audience list fails the decode below as a plain decoding error; check
+	// its type on the raw config first so a path that skipped PreflightCreate still reports the
+	// field-specific refusal (#549).
+	if err := checkRedditCustomAudienceShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg redditConfig
 	if err := unmarshalPlatformConfig(config, "redditConfig", &cfg); err != nil {
 		// A wrong-typed conversionEvent also fails this decode; report it by its own field-specific
@@ -244,6 +261,17 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	}
 	plan, err := redditBidPlan(cfg)
 	if err != nil {
+		return nil, notCreated(err)
+	}
+	// Custom audiences (#549): the deployment gate and the id rules, before any Reddit call
+	// (PreflightCreate normally refused a bad list already, as a 400). Their type was checked on
+	// the raw config above, before the decode.
+	if err := checkRedditCustomAudiences(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// The exclusions' deployment gate and rules, re-checked here for any path that skipped
+	// PreflightCreate (which normally refused a bad or gated one as a synchronous 400).
+	if err := checkRedditTargetingExclusions(cfg); err != nil {
 		return nil, notCreated(err)
 	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
@@ -309,24 +337,29 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		// never from caller-controlled brief JSON — the Project name segment is the
 		// data pipeline's attribution join key (docs/api-catalog.md), so it must be
 		// the canonical LFX slug, not free text.
-		Project:           brief.ProjectID,
-		BudgetUSD:         cfg.BudgetUSD,
-		StartDate:         cfg.StartDate,
-		EndDate:           cfg.EndDate,
-		Objective:         cfg.Objective,
-		GeoTargets:        cfg.GeoTargets,
-		Subreddits:        cfg.Subreddits,
-		Interests:         cfg.Interests,
-		Keywords:          cfg.Keywords,
-		Variants:          cfg.Variants,
-		PostURL:           cfg.PostURL,
-		ImageURL:          cfg.ImageURL,
-		ImageURLSource:    imageURLSource,
-		CallToAction:      cfg.CallToAction,
-		ConversionPixelID: cfg.ConversionPixelID,
-		ConversionEvent:   cfg.ConversionEvent,
-		VideoGoal:         cfg.VideoGoal,
-		ManualCPCBid:      plan.amount,
+		Project:            brief.ProjectID,
+		BudgetUSD:          cfg.BudgetUSD,
+		StartDate:          cfg.StartDate,
+		EndDate:            cfg.EndDate,
+		Objective:          cfg.Objective,
+		GeoTargets:         cfg.GeoTargets,
+		Subreddits:         cfg.Subreddits,
+		Interests:          cfg.Interests,
+		Keywords:           cfg.Keywords,
+		ExcludedSubreddits: cfg.ExcludedSubreddits,
+		ExcludedGeoTargets: cfg.ExcludedGeoTargets,
+		Variants:           cfg.Variants,
+		PostURL:            cfg.PostURL,
+		ImageURL:           cfg.ImageURL,
+		ImageURLSource:     imageURLSource,
+		CallToAction:       cfg.CallToAction,
+		ConversionPixelID:  cfg.ConversionPixelID,
+		ConversionEvent:    cfg.ConversionEvent,
+		VideoGoal:          cfg.VideoGoal,
+		ManualCPCBid:       plan.amount,
+
+		CustomAudienceIDs:         cfg.CustomAudienceIDs,
+		ExcludedCustomAudienceIDs: cfg.ExcludedCustomAudienceIDs,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-3): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of

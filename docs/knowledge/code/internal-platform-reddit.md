@@ -942,6 +942,29 @@ cases synchronously (`checkRedditConversionEvent`) and keeps the field behind
 `REDDIT_CONVERSION_EVENT_ENABLED`, which is off until a live create confirms that Reddit accepts
 a non-PURCHASE goal on a CONVERSIONS CBO campaign.
 
+## Create-time targeting exclusions (`targeting_exclusions.go`, #549)
+
+`CampaignInput.ExcludedSubreddits` and `ExcludedGeoTargets` become the ad group's
+`targeting.excluded_communities` (subreddit NAMES, like `communities`) and
+`targeting.excluded_geolocations` (ISO alpha-2), the field names of `components_schema_targeting`
+in Reddit's published v3 OpenAPI document. `NormalizeTargetingExclusions` is the one rule set:
+`r/` stripped, blanks and malformed names (`[A-Za-z0-9_]{2,21}`) refused, case-insensitive
+duplicates dropped, codes checked against the same `iso3166Alpha2` set as `geoTargets`, caps of
+100 and 50, and an exclusion that is also targeted refused, including the `US` default when
+`geoTargets` is empty. `CreateCampaign` applies it before any request, and refuses a breach as a
+`domain.PreflightRefusal`. The dispatcher applies it in `PreflightCreate` so a breach is a
+synchronous 400, and returns the refused field structurally (`ExclusionError.Field`).
+
+Both go in `baseTargeting`, the payload of BOTH ad-group attempts. The retry that drops rejected
+communities and interests exists to rescue the ad group, and rescuing it by widening into a
+community or country the operator excluded would trade an orphan for a brand-safety breach.
+If Reddit refuses an exclusion, the ad group fails like any other definite 4xx and the campaign is
+left PAUSED with a partial result. Pinned by `TestCreateCampaign_RetryKeepsExclusions`.
+
+The dispatcher keeps both behind `REDDIT_TARGETING_EXCLUSIONS_ENABLED` (default off): no live
+create has sent either field. What Reddit answers for an excluded community that does not exist
+is unknown, so it is not part of the communities-fallback match.
+
 ## Campaign name (multi-campaign cs-3)
 
 `buildRedditCampaignName` composes the data pipeline's 8-segment name, `Events | <event> |
@@ -955,3 +978,18 @@ looks a campaign up by name, so a second campaign is never bound to the first. P
 `TestBuildRedditCampaignName_LabelTokens` and
 `TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest`; see the dispatch concept for the
 dispatcher side.
+
+## Custom audiences (`custom_audiences.go`, #549)
+
+`CampaignInput.CustomAudienceIDs` / `ExcludedCustomAudienceIDs` go into `baseTargeting` as
+`custom_audience_ids` / `excluded_custom_audience_ids`, so the communities/interests fallback
+retry keeps them, and the "Targeting:" step counts them. `ValidateCustomAudienceIDs` (ids of the
+account-id charset, at most 64 characters, at most 100 per list, no repeats, none in both lists)
+runs before the account-verify GET. `ListCustomAudiences` reads
+`GET /ad_accounts/{id}/custom_audiences` through `walkPagesCapped` with a 10-page cap; reaching
+the cap returns what was read with `truncated` true rather than failing, unlike account
+discovery, because the picker says so. A missing or non-list `data`, an unusable or repeated id,
+or more than 5000 audiences is `ErrCustomAudiencesMalformed`. Both shapes come from Reddit's
+public v3 OpenAPI document and are unverified live; the dispatcher gates them on
+`REDDIT_CUSTOM_AUDIENCES_ENABLED`. See
+[Reddit Custom Audiences](../architecture/reddit-custom-audiences.md).

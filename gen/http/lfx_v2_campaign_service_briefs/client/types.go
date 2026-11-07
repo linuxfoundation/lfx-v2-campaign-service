@@ -5361,7 +5361,17 @@ type CampaignCreateInputRequestBody struct {
 	// of the account currency (checked against the currency at dispatch), and only
 	// for the traffic or leads objective; Reddit only for the traffic objective;
 	// LinkedIn whole cents; X at most the campaign's daily budget (X does not
-	// accept a line item bid above it). Keys are exact: `bidding`, `strategy` and
+	// accept a line item bid above it). REDDIT CUSTOM AUDIENCES (#549):
+	// redditConfig takes `customAudienceIds` and `excludedCustomAudienceIds`,
+	// arrays of Reddit custom audience ids (list-reddit-ads-custom-audiences
+	// offers them) to target and to exclude, sent as the ad group's
+	// targeting.custom_audience_ids and targeting.excluded_custom_audience_ids on
+	// every ad-group attempt, including the retry that drops communities and
+	// interests. Each id is 1-64 letters, digits or underscores, sent exactly as
+	// given; at most 100 per list; no id twice and none in both lists. Off unless
+	// REDDIT_CUSTOM_AUDIENCES_ENABLED is "true" (built from Reddit's public
+	// OpenAPI document, not yet exercised live), and only for global_marketing_ops
+	// (see create-campaigns). Keys are exact: `bidding`, `strategy` and
 	// `bidAmount`; a case variant (`Bidding`, `Strategy`) or an unknown key inside
 	// `bidding` is refused. `automatic` with a `bidAmount`, an unknown strategy, a
 	// wrong JSON type, an explicit null or empty value (only an ABSENT field
@@ -5417,7 +5427,20 @@ type CampaignCreateInputRequestBody struct {
 	// objective, an explicit null, an empty or non-string value, a case variant of
 	// the key, or the field while the flag is off is refused synchronously with
 	// 400 "invalid campaign config: redditConfig.conversionEvent: ..." before any
-	// job exists.
+	// job exists. REDDIT EXCLUSIONS (#549): redditConfig takes
+	// `excludedSubreddits` (subreddit names, an optional r/ prefix stripped, each
+	// 2-21 letters, digits or underscores, at most 100, case-insensitive
+	// duplicates dropped) and `excludedGeoTargets` (ISO 3166-1 alpha-2 country
+	// codes, at most 50, uppercased and de-duplicated), sent as the ad group's
+	// targeting.excluded_communities and targeting.excluded_geolocations on every
+	// ad-group attempt (the retry that drops rejected communities and interests
+	// keeps them). A name also in `subreddits`, or a code also targeted
+	// (geoTargets, or the US default when geoTargets is empty), is refused. Both
+	// are OFF unless REDDIT_TARGETING_EXCLUSIONS_ENABLED is exactly "true" on the
+	// deployment. A blank or invalid entry, an overlap, a list over its cap, a
+	// value that is not an array of strings (null reads as absent), or either list
+	// while the flag is off, is refused with 400 "invalid campaign config:
+	// redditConfig.<field>: ..." before any job exists.
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

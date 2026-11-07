@@ -110,14 +110,17 @@ type Service interface {
 	// alone: redditConfig.imageAssetId together with imageUrl or postUrl, an
 	// imageAssetId that is not a UUID, or imageAssetId while signed creative-asset
 	// URLs are not configured ('stored creative assets are not enabled for Reddit;
-	// supply imageUrl'): 400 with that message. GOOGLE ADS SHARED-ACCOUNT INPUTS:
-	// a googleAdsConfig that sets any input naming an existing audience, user
-	// list, custom segment, shared negative keyword list or conversion action on
-	// the Google Ads account (demandGenAudience or an audience on any
-	// demandGenAdGroups entry; audienceSegments, customAudiences, customAffinities
-	// or excludedAudienceSegments, on the campaign or on any displayAdGroups
-	// entry; audienceSegments on any adGroups entry; campaignAudienceSegments
-	// (Search campaign-level observed user lists); performanceMaxAudienceSignal;
+	// supply imageUrl'): 400 with that message. A redditConfig.excludedSubreddits
+	// or excludedGeoTargets that breaks its rules, or is sent while
+	// REDDIT_TARGETING_EXCLUSIONS_ENABLED is off, is also a synchronous 400 (see
+	// the config attribute). GOOGLE ADS SHARED-ACCOUNT INPUTS: a googleAdsConfig
+	// that sets any input naming an existing audience, user list, custom segment,
+	// shared negative keyword list or conversion action on the Google Ads account
+	// (demandGenAudience or an audience on any demandGenAdGroups entry;
+	// audienceSegments, customAudiences, customAffinities or
+	// excludedAudienceSegments, on the campaign or on any displayAdGroups entry;
+	// audienceSegments on any adGroups entry; campaignAudienceSegments (Search
+	// campaign-level observed user lists); performanceMaxAudienceSignal;
 	// sharedNegativeKeywordLists; conversionActions,
 	// demandGenDemographics.audienceSegments,
 	// demandGenDemographics.customAudiences, and the same two lists in any
@@ -130,7 +133,26 @@ type Service interface {
 	// they do not, 503 when the check cannot be made (project lookup or
 	// authorization service unavailable). The gateway admits every
 	// campaign_manager, which includes foundation executive directors, and those
-	// resources belong to the Google Ads account every foundation shares. An
+	// resources belong to the Google Ads account every foundation shares. REDDIT
+	// SHARED-ACCOUNT INPUTS (#549): a redditConfig that sets customAudienceIds or
+	// excludedCustomAudienceIds (any non-empty list) on a create that selects
+	// reddit-ads requires global_marketing_ops on this project in the same single
+	// check, with the same 403 and 503; the custom audiences belong to the LF
+	// Reddit ad account every foundation shares. When both platforms' inputs are
+	// refused, the 403 names each platform's fields in its own sentence. A Reddit
+	// custom audience list is also refused synchronously with 400 "invalid
+	// campaign config: redditConfig.<field>: ..." when it is not an array of
+	// strings, when an id is not 1-64 letters, digits or underscores, repeats, or
+	// is in both lists, when a list holds more than 100 ids, and when
+	// REDDIT_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. META
+	// SHARED-ACCOUNT INPUTS: likewise a metaConfig.targeting that sets
+	// customAudiences or excludedCustomAudiences (any non-empty list) names custom
+	// audiences of the Meta ad account every foundation shares and requires
+	// global_marketing_ops on this project (403 naming them, 503 when the check
+	// cannot be made); age, gender and advantageAudience are not gated. An invalid
+	// metaConfig.targeting, or any targeting block while
+	// META_AUDIENCE_TARGETING_ENABLED is not "true" on the deployment, is a
+	// synchronous 400 "invalid campaign config: metaConfig.targeting...". An
 	// invalid per-platform `bidding` object (see the config attribute) is also
 	// refused synchronously, with 400 "invalid campaign config:
 	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
@@ -139,7 +161,14 @@ type Service interface {
 	// immediately eligible for the bid lever, and eligibility follows the
 	// platform's current strategy. Every other dispatch failure, including an
 	// imageAssetId that does not exist for this brief, still arrives later, as the
-	// job's own result.
+	// job's own result. That includes a Search
+	// googleAdsConfig.sharedNegativeKeywordLists entry that is not an ENABLED
+	// NEGATIVE_KEYWORDS shared set of the connected Google Ads account (#548). One
+	// read-only GAQL query reads every named list's shared_set.type and status
+	// before anything is created. A NEGATIVE_PLACEMENTS, BRANDS or other set, a
+	// REMOVED set or a set not in the account is refused in the job's Google Ads
+	// error, which names the set id and, for a set of another known type, that
+	// type. A read that fails stops the create too, with nothing created.
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Create ONE HubSpot workflow that sends an already-staged series of emails,
 	// and return it DISABLED. Each brief named in brief_ids must already have a
@@ -1094,7 +1123,17 @@ type CampaignCreateInput struct {
 	// of the account currency (checked against the currency at dispatch), and only
 	// for the traffic or leads objective; Reddit only for the traffic objective;
 	// LinkedIn whole cents; X at most the campaign's daily budget (X does not
-	// accept a line item bid above it). Keys are exact: `bidding`, `strategy` and
+	// accept a line item bid above it). REDDIT CUSTOM AUDIENCES (#549):
+	// redditConfig takes `customAudienceIds` and `excludedCustomAudienceIds`,
+	// arrays of Reddit custom audience ids (list-reddit-ads-custom-audiences
+	// offers them) to target and to exclude, sent as the ad group's
+	// targeting.custom_audience_ids and targeting.excluded_custom_audience_ids on
+	// every ad-group attempt, including the retry that drops communities and
+	// interests. Each id is 1-64 letters, digits or underscores, sent exactly as
+	// given; at most 100 per list; no id twice and none in both lists. Off unless
+	// REDDIT_CUSTOM_AUDIENCES_ENABLED is "true" (built from Reddit's public
+	// OpenAPI document, not yet exercised live), and only for global_marketing_ops
+	// (see create-campaigns). Keys are exact: `bidding`, `strategy` and
 	// `bidAmount`; a case variant (`Bidding`, `Strategy`) or an unknown key inside
 	// `bidding` is refused. `automatic` with a `bidAmount`, an unknown strategy, a
 	// wrong JSON type, an explicit null or empty value (only an ABSENT field
@@ -1150,7 +1189,20 @@ type CampaignCreateInput struct {
 	// objective, an explicit null, an empty or non-string value, a case variant of
 	// the key, or the field while the flag is off is refused synchronously with
 	// 400 "invalid campaign config: redditConfig.conversionEvent: ..." before any
-	// job exists.
+	// job exists. REDDIT EXCLUSIONS (#549): redditConfig takes
+	// `excludedSubreddits` (subreddit names, an optional r/ prefix stripped, each
+	// 2-21 letters, digits or underscores, at most 100, case-insensitive
+	// duplicates dropped) and `excludedGeoTargets` (ISO 3166-1 alpha-2 country
+	// codes, at most 50, uppercased and de-duplicated), sent as the ad group's
+	// targeting.excluded_communities and targeting.excluded_geolocations on every
+	// ad-group attempt (the retry that drops rejected communities and interests
+	// keeps them). A name also in `subreddits`, or a code also targeted
+	// (geoTargets, or the US default when geoTargets is empty), is refused. Both
+	// are OFF unless REDDIT_TARGETING_EXCLUSIONS_ENABLED is exactly "true" on the
+	// deployment. A blank or invalid entry, an overlap, a list over its cap, a
+	// value that is not an array of strings (null reads as absent), or either list
+	// while the flag is off, is refused with 400 "invalid campaign config:
+	// redditConfig.<field>: ..." before any job exists.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

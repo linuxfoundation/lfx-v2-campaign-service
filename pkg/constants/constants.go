@@ -135,6 +135,34 @@ const (
 	// the gate is removed and this constant goes away.
 	EnvRedditConversionEventEnabled = "REDDIT_CONVERSION_EVENT_ENABLED"
 
+	// EnvRedditCustomAudiencesEnabled opts a deployment IN to Reddit custom audiences (#549): the
+	// create inputs redditConfig.customAudienceIds / excludedCustomAudienceIds (sent as the ad
+	// group's targeting.custom_audience_ids / excluded_custom_audience_ids) and the picker read
+	// list-reddit-ads-custom-audiences (GET /ad_accounts/{id}/custom_audiences). Only the exact
+	// value "true" enables them; unset or any other value fails closed: a create that sets either
+	// list is refused with 400 before any job exists, and the read answers 400 "not supported",
+	// the shape the gates above use.
+	//
+	// Both shapes come from Reddit's public v3 OpenAPI document and have NOT been exercised against
+	// a live ad account. Turn it on in lfx-v2-argocd only after a live create confirms Reddit
+	// accepts the targeting members and the list answers in the documented envelope. Independent
+	// of it, an audience names a resource of the LF ad account every foundation shares, so the
+	// create inputs also require global_marketing_ops (service.RedditMarketingOpsInputs) and the
+	// read sits in the gateway's marketing-ops-api rule.
+	EnvRedditCustomAudiencesEnabled = "REDDIT_CUSTOM_AUDIENCES_ENABLED"
+
+	// EnvRedditTargetingExclusionsEnabled opts a deployment IN to redditConfig.excludedSubreddits and
+	// redditConfig.excludedGeoTargets (#549), sent at create time as the ad group's
+	// excluded_communities and excluded_geolocations. Only the exact value "true" enables them; unset
+	// or any other value fails closed, and a create naming either is refused with a 400 before any
+	// job exists (and again at dispatch, before anything upstream).
+	//
+	// Like EnvGoogleAdsDemographicTargetingEnabled it names no account resource: it keeps an
+	// UNVERIFIED request shape (built from Reddit's published v3 OpenAPI schema; no live create has
+	// sent either field) off the shared ad account until a live create confirms it. Turn it on per
+	// environment, in lfx-v2-argocd.
+	EnvRedditTargetingExclusionsEnabled = "REDDIT_TARGETING_EXCLUSIONS_ENABLED"
+
 	// EnvTwitterMetricsEnabled opts a deployment IN to the two X (Twitter) Ads features built on
 	// X's asynchronous stats-jobs API: the ACCOUNT MONITOR
 	// (GET /projects/{project_id}/connection-twitter-ads/account-monitor) and the AUDIENCE READ
@@ -180,6 +208,20 @@ const (
 	// affinity and in-market categories) and excludedPlacements (public domains) name no
 	// account resource and are not gated.
 	EnvGoogleAdsDisplayAudiencesEnabled = "GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED"
+
+	// EnvMetaAudienceTargetingEnabled opts a deployment IN to metaConfig.targeting (#550): age,
+	// gender, custom audiences to include and exclude, and the Advantage+ audience flag on the ad
+	// set. Only the exact value "true" enables it; unset or any other value fails closed, and a
+	// create carrying a targeting block is refused before any job exists (and again in the job,
+	// before any Meta request).
+	//
+	// A per-deployment opt-in, off by default, because the payloads were built from Meta's docs and
+	// not yet verified against a live ad account. Each custom audience is read and must belong to
+	// the connected ad account before anything is created. That account is shared by every
+	// foundation, so create-campaigns also requires global_marketing_ops on the project for the
+	// audience lists (service.MetaMarketingOpsInputs); age, gender and advantageAudience are not
+	// gated.
+	EnvMetaAudienceTargetingEnabled = "META_AUDIENCE_TARGETING_ENABLED"
 
 	// EnvGoogleAdsPMaxAudienceSignalEnabled opts a deployment IN to
 	// googleAdsConfig.performanceMaxAudienceSignal (#461): one existing Google Ads Audience
