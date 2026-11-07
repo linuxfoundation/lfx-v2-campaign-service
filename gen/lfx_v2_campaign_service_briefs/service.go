@@ -1232,24 +1232,45 @@ type CampaignCreateInput struct {
 	// blank or invalid entry, an overlap, a list over its cap, a value that is not
 	// an array of strings (null reads as absent), or either list while the flag is
 	// off, is refused with 400 "invalid campaign config: redditConfig.<field>:
-	// ..." before any job exists. MICROSOFT NEGATIVE KEYWORDS (#563):
-	// microsoftConfig takes `negativeKeywords`, [{"text": string, "matchType":
-	// "Exact" | "Phrase"}], attached as CAMPAIGN-level negatives
-	// (AddNegativeKeywordsToEntities, EntityType Campaign) right after the
-	// campaign is created, under the rules of add-negative-keywords: 1-60 entries,
-	// match type Exact or Phrase in any casing (Broad is refused), text
-	// whitespace-collapsed, at most 100 characters, letters, digits, spaces and &
-	// ' - . only with no two punctuation characters adjacent, and no (text, match
-	// type) pair twice. Each keyword's outcome (APPLIED, ALREADY_PRESENT, FAILED
-	// or UNCONFIRMED) is recorded in the campaign result as negativeKeywords; a
-	// FAILED or UNCONFIRMED keyword, or a failed call, leaves the campaign
-	// created_degraded with a step naming it and never fails the job. Repeating
-	// the create does not re-attach them, because a created or created_degraded
-	// campaign is returned without another dispatch: fix a shortfall with
-	// add-negative-keywords. Only a dispatch that reuses an existing campaign by
-	// name (one whose earlier attempt was never confirmed) re-sends the list, and
-	// gets ALREADY_PRESENT for the ones already there. OFF unless
-	// MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is exactly "true" on the
+	// ..." before any job exists. MICROSOFT SITELINKS AND CALLOUTS (#563):
+	// microsoftConfig takes `sitelinks` ([{text, description1?, description2?,
+	// finalUrl}], 1-20) and `callouts` (strings, 2-20), created after the campaign
+	// is confirmed as SitelinkAdExtension and CalloutAdExtension entries
+	// (AddAdExtensions) and associated with it (SetAdExtensionsAssociations,
+	// Campaign level), one extension per call. A sitelink's text is required, at
+	// most 25 characters when a description is set and 35 otherwise; description1
+	// and description2 are set together or not at all, at most 35 each; finalUrl
+	// is an absolute http or https URL of at most 2,048 characters with no user
+	// credentials, sent as given. A callout is 1-25 characters. Text holding any
+	// double-width character (CJK, emoji) is held to Microsoft's reduced limits:
+	// sitelink text 11 with a description and 15 without, a description 15, a
+	// callout 12. Values are trimmed; a control character, or a repeated sitelink
+	// text or callout (case-insensitive), is refused. A campaign that already has
+	// an extension of a type (a retry that reused it) gets none of that type
+	// added; if it is left with fewer than 2 callouts, which Microsoft never
+	// serves, it is marked created_degraded. An extension that is not, or may not
+	// be, attached marks the campaign created_degraded with a step saying which;
+	// it never fails the job. Both are OFF unless MICROSOFT_AD_EXTENSIONS_ENABLED
+	// is exactly "true" on the deployment. A rule breach, a wrong JSON type (null
+	// reads as absent), or either list while the flag is off, is refused with 400
+	// "invalid campaign config: microsoftConfig.<field>: ..." before any job
+	// exists. MICROSOFT NEGATIVE KEYWORDS (#563): microsoftConfig takes
+	// `negativeKeywords`, [{"text": string, "matchType": "Exact" | "Phrase"}],
+	// attached as CAMPAIGN-level negatives (AddNegativeKeywordsToEntities,
+	// EntityType Campaign) right after the campaign is created, under the rules of
+	// add-negative-keywords: 1-60 entries, match type Exact or Phrase in any
+	// casing (Broad is refused), text whitespace-collapsed, at most 100
+	// characters, letters, digits, spaces and & ' - . only with no two punctuation
+	// characters adjacent, and no (text, match type) pair twice. Each keyword's
+	// outcome (APPLIED, ALREADY_PRESENT, FAILED or UNCONFIRMED) is recorded in the
+	// campaign result as negativeKeywords; a FAILED or UNCONFIRMED keyword, or a
+	// failed call, leaves the campaign created_degraded with a step naming it and
+	// never fails the job. Repeating the create does not re-attach them, because a
+	// created or created_degraded campaign is returned without another dispatch:
+	// fix a shortfall with add-negative-keywords. Only a dispatch that reuses an
+	// existing campaign by name (one whose earlier attempt was never confirmed)
+	// re-sends the list, and gets ALREADY_PRESENT for the ones already there. OFF
+	// unless MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is exactly "true" on the
 	// deployment. A rule breach, a value that is not an array of {text, matchType}
 	// objects (null reads as absent), or a non-empty list while the flag is off,
 	// is refused with 400 "invalid campaign config:
