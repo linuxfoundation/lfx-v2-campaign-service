@@ -604,6 +604,29 @@ interests?: string[]            — Interest targeting. Reddit wants opaque inte
                                   produce human labels, so these are commonly dropped with a warning
                                   (label->ID resolution tracked in LFXV2-3261).
 keywords?: string[]             — Keyword targeting attached to the ad group.
+excludedSubreddits?: string[]   — OPTIONAL brand-safety exclusions (#549), sent as the ad group's
+                                  `targeting.excluded_communities`, by NAME like `subreddits` (an
+                                  optional 'r/' prefix stripped, case-insensitive duplicates dropped,
+                                  first spelling kept). Each name must be 2–21 letters, digits or
+                                  underscores; a blank entry, a malformed name, a name also in
+                                  `subreddits`, or more than 100 entries is refused. Sent on EVERY
+                                  ad-group attempt: the retry that drops rejected communities and
+                                  interests keeps the exclusions, so a Reddit refusal of one fails
+                                  the ad group (campaign left PAUSED) rather than silently widening
+                                  the campaign. OFF unless REDDIT_TARGETING_EXCLUSIONS_ENABLED is
+                                  exactly "true".
+excludedGeoTargets?: string[]   — OPTIONAL ISO 3166-1 alpha-2 country codes to exclude (#549), sent as
+                                  `targeting.excluded_geolocations` (uppercased, de-duplicated). A
+                                  blank entry, an unassigned code, a code also targeted (`geoTargets`,
+                                  or the 'US' default when it is empty), or more than 50 entries is
+                                  refused. Same flag and same every-attempt rule as
+                                  `excludedSubreddits`. Both lists are checked synchronously: a rule
+                                  breach, a value that is not an array of strings (null reads as
+                                  absent), or either list while the flag is off is a **400**
+                                  "invalid campaign config: redditConfig.<field>: ..." before any job
+                                  exists, and is re-checked at dispatch before any Reddit call.
+                                  Built from Reddit's published v3 targeting schema; no live create
+                                  has sent either field yet.
 variants?: [{headline, body}]   — Ad copy variants. When no `postUrl`/`imageUrl` drives an ad, one
                                   "ready" instruction per variant is emitted (headline + display UTM
                                   URL) for manual ad creation. On the author-a-post path the FIRST
