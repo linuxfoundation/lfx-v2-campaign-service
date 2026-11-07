@@ -989,6 +989,9 @@ type ListLinkedinAdsAudiencesResponseBody struct {
 	Audiences []*LinkedinAdsAudienceSegmentResponseBody `form:"audiences" json:"audiences" xml:"audiences"`
 	// How many segments are in `audiences`
 	AudienceCount int `form:"audience_count" json:"audience_count" xml:"audience_count"`
+	// Always false: the read never truncates (more than 1000 segments fails it
+	// with 503). Kept for shape parity with the Google audience picker.
+	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
 }
 
 // ListLinkedinAdsConversionsResponseBody is the type of the
@@ -8537,6 +8540,7 @@ func NewListLinkedinAdsAudiencesResponseBody(res *lfxv2campaignserviceconnection
 	body := &ListLinkedinAdsAudiencesResponseBody{
 		AccountID:     res.AccountID,
 		AudienceCount: res.AudienceCount,
+		Truncated:     res.Truncated,
 	}
 	if res.Audiences != nil {
 		body.Audiences = make([]*LinkedinAdsAudienceSegmentResponseBody, len(res.Audiences))

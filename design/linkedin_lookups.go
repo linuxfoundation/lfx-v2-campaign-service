@@ -42,7 +42,8 @@ var LinkedInAdsAudienceSegments = Type("linkedin-ads-audience-segments", func() 
 	Attribute("account_id", String, "The LinkedIn ad account the segments were read from: the account a LinkedIn create for this project uses", func() { Example("512345678") })
 	Attribute("audiences", ArrayOf(LinkedInAdsAudienceSegment), "The account's targetable segments, sorted by name (ignoring case)")
 	Attribute("audience_count", Int, "How many segments are in `audiences`", func() { Example(1) })
-	Required("account_id", "audiences", "audience_count")
+	Attribute("truncated", Boolean, "Always false: the read never truncates (more than 1000 segments fails it with 503). Kept for shape parity with the Google audience picker.", func() { Example(false) })
+	Required("account_id", "audiences", "audience_count", "truncated")
 })
 
 // LinkedInAdsConversionRule is one conversion rule of the conversion picker read.

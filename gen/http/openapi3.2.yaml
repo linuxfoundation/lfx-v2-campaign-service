@@ -16535,6 +16535,7 @@ paths:
                                       status: READY
                                       type: RETARGETING
                                       urn: urn:li:adSegment:16182906
+                                truncated: false
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -25739,6 +25740,10 @@ components:
                           status: READY
                           type: RETARGETING
                           urn: urn:li:adSegment:16182906
+                truncated:
+                    type: boolean
+                    description: 'Always false: the read never truncates (more than 1000 segments fails it with 503). Kept for shape parity with the Google audience picker.'
+                    example: false
             example:
                 account_id: "512345678"
                 audience_count: 1
@@ -25757,10 +25762,12 @@ components:
                       status: READY
                       type: RETARGETING
                       urn: urn:li:adSegment:16182906
+                truncated: false
             required:
                 - account_id
                 - audiences
                 - audience_count
+                - truncated
         LinkedinAdsConnection:
             type: object
             properties:

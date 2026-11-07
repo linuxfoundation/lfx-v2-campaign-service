@@ -62,7 +62,8 @@ func (s *ConnectionService) ListLinkedinAdsAudiences(ctx context.Context, p *con
 		}
 		out = append(out, seg)
 	}
-	return &conn.LinkedinAdsAudienceSegments{AccountID: res.AccountID, Audiences: out, AudienceCount: len(out)}, nil
+	// Truncated is always false: offsetWalk fails a read rather than truncating it.
+	return &conn.LinkedinAdsAudienceSegments{AccountID: res.AccountID, Audiences: out, AudienceCount: len(out), Truncated: false}, nil
 }
 
 // ListLinkedinAdsConversions lists the conversion rules on the LinkedIn ad account a create for

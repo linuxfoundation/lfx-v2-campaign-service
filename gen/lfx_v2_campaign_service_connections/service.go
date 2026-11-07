@@ -2004,6 +2004,9 @@ type LinkedinAdsAudienceSegments struct {
 	Audiences []*LinkedinAdsAudienceSegment
 	// How many segments are in `audiences`
 	AudienceCount int
+	// Always false: the read never truncates (more than 1000 segments fails it
+	// with 503). Kept for shape parity with the Google audience picker.
+	Truncated bool
 }
 
 // LinkedinAdsConnection is the result type of the

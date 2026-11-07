@@ -989,6 +989,9 @@ type ListLinkedinAdsAudiencesResponseBody struct {
 	Audiences []*LinkedinAdsAudienceSegmentResponseBody `form:"audiences,omitempty" json:"audiences,omitempty" xml:"audiences,omitempty"`
 	// How many segments are in `audiences`
 	AudienceCount *int `form:"audience_count,omitempty" json:"audience_count,omitempty" xml:"audience_count,omitempty"`
+	// Always false: the read never truncates (more than 1000 segments fails it
+	// with 503). Kept for shape parity with the Google audience picker.
+	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
 }
 
 // ListLinkedinAdsConversionsResponseBody is the type of the
@@ -12800,6 +12803,7 @@ func NewListLinkedinAdsAudiencesLinkedinAdsAudienceSegmentsOK(body *ListLinkedin
 	v := &lfxv2campaignserviceconnections.LinkedinAdsAudienceSegments{
 		AccountID:     *body.AccountID,
 		AudienceCount: *body.AudienceCount,
+		Truncated:     *body.Truncated,
 	}
 	v.Audiences = make([]*lfxv2campaignserviceconnections.LinkedinAdsAudienceSegment, len(body.Audiences))
 	for i, val := range body.Audiences {
@@ -16459,6 +16463,9 @@ func ValidateListLinkedinAdsAudiencesResponseBody(body *ListLinkedinAdsAudiences
 	}
 	if body.AudienceCount == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("audience_count", "body"))
+	}
+	if body.Truncated == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("truncated", "body"))
 	}
 	for _, e := range body.Audiences {
 		if e != nil {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -81,6 +82,9 @@ func TestListLinkedinAdsLookups_EmptyIsAnEmptyArray(t *testing.T) {
 	c, err := svc.ListLinkedinAdsConversions(context.Background(), &conn.ListLinkedinAdsConversionsPayload{ProjectID: "cncf"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if whole, _ := json.Marshal(a); !strings.Contains(string(whole), `"Truncated":false`) {
+		t.Errorf("the audience read must carry truncated=false: %s", whole)
 	}
 	ab, _ := json.Marshal(a.Audiences)
 	cb, _ := json.Marshal(c.Conversions)
