@@ -9,13 +9,16 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 )
 
 type mockMetaAudienceDispatcher struct {
+	deadline  time.Time
 	res       *model.MetaCustomAudiences
 	err       error
 	notCalled bool
@@ -26,8 +29,9 @@ func (m *mockMetaAudienceDispatcher) Dispatch(context.Context, *model.CampaignBr
 	return nil, nil
 }
 
-func (m *mockMetaAudienceDispatcher) ListMetaCustomAudiences(context.Context, string, model.Provider) (*model.MetaCustomAudiences, bool, error) {
+func (m *mockMetaAudienceDispatcher) ListMetaCustomAudiences(ctx context.Context, _ string, _ model.Provider) (*model.MetaCustomAudiences, bool, error) {
 	m.calls++
+	m.deadline, _ = ctx.Deadline()
 	return m.res, !m.notCalled, m.err
 }
 
@@ -122,15 +126,21 @@ func TestListMetaCustomAudiences_ClassifiesFailures(t *testing.T) {
 		{"no connection", domain.ErrNotFound, "404"},
 		{"unusable", fmt.Errorf("%w: no ad account", domain.ErrConnectionNotUsable), "400"},
 		{"upstream", errors.New("meta: 500"), "503"},
+		{"more audiences than the read publishes", fmt.Errorf("list: %w", meta.ErrCustomAudienceListTooLarge), "503"},
+		{"the LF system row is unusable", fmt.Errorf("%w: no ad account", domain.ErrSystemConnectionNotUsable), "500"},
+		{"credentials fail to decrypt", domain.ErrCredentialDecryptionFailed, "500"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d := &mockMetaAudienceDispatcher{err: tc.err, notCalled: tc.want != "503"}
+			d := &mockMetaAudienceDispatcher{err: tc.err, notCalled: tc.want == "404" || tc.want == "400"}
 			_, err := metaLookupService(d).ListMetaCustomAudiences(context.Background(), &conn.ListMetaCustomAudiencesPayload{ProjectID: "cncf"})
 			var got string
 			var nf *conn.NotFoundError
 			var bad *conn.BadRequestError
 			var su *conn.ConnServiceUnavailableError
+			var ise *conn.InternalServerError
 			switch {
+			case errors.As(err, &ise):
+				got = ise.Code
 			case errors.As(err, &nf):
 				got = nf.Code
 			case errors.As(err, &bad):
@@ -153,5 +163,21 @@ func TestListMetaCustomAudiences_UnsupportedPlatform(t *testing.T) {
 	var bad *conn.BadRequestError
 	if !errors.As(err, &bad) {
 		t.Fatalf("err = %T %v, want a 400", err, err)
+	}
+}
+
+// The read gets its own budget, longer than accountsCallTimeout, for its paged walk.
+func TestReadMetaCustomAudiences_HasItsOwnTimeout(t *testing.T) {
+	d := &mockMetaAudienceDispatcher{res: &model.MetaCustomAudiences{AccountID: "act_1", Audiences: []model.MetaCustomAudience{}}}
+	o := &Orchestrator{dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderMetaAds: d}}
+	before := time.Now()
+	if _, err := o.ReadMetaCustomAudiences(context.Background(), "cncf", model.ProviderMetaAds); err != nil {
+		t.Fatalf("ReadMetaCustomAudiences: %v", err)
+	}
+	if lo, hi := before.Add(metaCustomAudiencesCallTimeout), time.Now().Add(metaCustomAudiencesCallTimeout); d.deadline.Before(lo) || d.deadline.After(hi) {
+		t.Fatalf("deadline %v not within [%v, %v]", d.deadline, lo, hi)
+	}
+	if metaCustomAudiencesCallTimeout <= accountsCallTimeout {
+		t.Fatalf("metaCustomAudiencesCallTimeout %v must exceed accountsCallTimeout %v", metaCustomAudiencesCallTimeout, accountsCallTimeout)
 	}
 }

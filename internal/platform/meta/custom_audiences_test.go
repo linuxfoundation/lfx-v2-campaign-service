@@ -92,6 +92,7 @@ func TestListCustomAudiences_RefusesAPartialOrForeignList(t *testing.T) {
 		{"next without cursor", []string{`{"data":[],"paging":{"next":"x"}}`}},
 		{"repeated cursor", []string{`{"data":[],"paging":{"cursors":{"after":"C"},"next":"x"}}`, `{"data":[],"paging":{"cursors":{"after":"C"},"next":"x"}}`}},
 		{"negative count", []string{`{"data":[{"id":"111","name":"n","subtype":"CUSTOM","account_id":"777","approximate_count_lower_bound":-1}]}`}},
+		{"oversized name", []string{`{"data":[{"id":"111","name":"` + strings.Repeat("x", maxCustomAudienceTextBytes+1) + `","subtype":"CUSTOM","account_id":"777"}]}`}},
 		{"duplicated key", []string{`{"data":[{"id":"111","name":"n","subtype":"CUSTOM","account_id":"777","account_id":"888"}]}`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

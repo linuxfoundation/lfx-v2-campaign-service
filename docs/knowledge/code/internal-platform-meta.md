@@ -1047,7 +1047,7 @@ reads its audiences from. The service filters by `q`, sorts by name and caps at 
 because the LF Meta ad account is shared by every foundation. Not verified live: the edge's field
 names and default population.
 
-
+## Ads under an ad set (`ads.go`, decision D7 first step)
 
 `ListAdSetAds(ctx, adSetID, campaignID, accountID, window)` is read-only: `GET /{ad_set}/ads`
 (fields include `creative{id,name}` and the parent ids `adset_id`, `campaign_id`, `account_id`,

@@ -215,6 +215,12 @@ func (o *Orchestrator) ReadAudiences(ctx context.Context, projectID string, plat
 	return res, nil
 }
 
+// metaCustomAudiencesCallTimeout bounds the custom-audience read. It is longer than
+// accountsCallTimeout because the walk may make up to 20 sequential Graph calls (the client's page
+// bound) and each row asks for Meta's approximate audience size, which Meta computes per audience;
+// 20 seconds would leave about a second per page on the largest accounts this read admits.
+const metaCustomAudiencesCallTimeout = 45 * time.Second
+
 // ReadMetaCustomAudiences lists every custom audience of the Meta ad account a create for the
 // project uses (#550), through the platform's dispatcher. A pure read; nothing is persisted.
 //
@@ -230,7 +236,7 @@ func (o *Orchestrator) ReadMetaCustomAudiences(ctx context.Context, projectID st
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTargetingLookupUnsupported, platform)
 	}
-	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	callCtx, cancel := context.WithTimeout(ctx, metaCustomAudiencesCallTimeout)
 	defer cancel()
 	start := time.Now()
 	res, called, err := r.ListMetaCustomAudiences(callCtx, projectID, platform)

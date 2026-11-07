@@ -16,3 +16,8 @@ Tests: the client walk, cursor, field list, and nine malformed-answer refusals p
 (`custom_audiences_test.go`); the dispatcher's account and local refusals; the service's mapping,
 filter, sort, cap, empty array, 400s and status mapping; and the upstream-instrumentation case for
 `list_meta_custom_audiences`.
+
+Local review fixes before the PR: the read has its own 45-second budget
+(`metaCustomAudiencesCallTimeout`), since its walk may make 20 sequential Graph calls; the catalog row
+documents the 500 arms of the LF-system fallback; and every "except the Google lists" line in the
+authorization docs now names the Meta custom-audience list too.
