@@ -61,3 +61,36 @@ func TestAudiencesEmptyQIsRefusedByTheRealMux(t *testing.T) {
 		}
 	}
 }
+
+// The Meta custom-audience picker (#550) refuses an explicitly empty q the same way: the real mux
+// answers 400 naming q, and an omitted or non-blank q gets past the decoder.
+func TestMetaCustomAudiencesEmptyQIsRefusedByTheRealMux(t *testing.T) {
+	mux, err := buildMux(context.Background(), &config.Config{},
+		svc.NewEndpoints(service.NewCampaignService(nil)),
+		connsvc.NewEndpoints(service.NewConnectionService(nil, nil)),
+		briefsvc.NewEndpoints(service.NewBriefService(nil, nil, nil, nil)),
+		audiencesvc.NewEndpoints(service.NewAudienceService(nil)),
+		exploresvc.NewEndpoints(service.NewAudienceExploreService(nil)),
+		nil, nil)
+	if err != nil {
+		t.Fatalf("buildMux: %v", err)
+	}
+	do := func(rawQuery string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/projects/cncf/meta-ads/custom-audiences?"+rawQuery, nil)
+		req.Header.Set("Authorization", "Bearer test-token")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+	for _, raw := range []string{"q=", "q", "q=%20", "q=&q=kube"} {
+		rec := do(raw)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "q") {
+			t.Errorf("?%s: status = %d, want a 400 naming q; body %s", raw, rec.Code, rec.Body.String())
+		}
+	}
+	for _, raw := range []string{"", "q=kube"} {
+		if rec := do(raw); rec.Code == http.StatusBadRequest {
+			t.Errorf("?%s: status 400, want the request past the decoder; body %s", raw, rec.Body.String())
+		}
+	}
+}

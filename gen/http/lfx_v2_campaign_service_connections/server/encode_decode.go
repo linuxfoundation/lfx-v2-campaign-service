@@ -7579,6 +7579,166 @@ func EncodeListGoogleAdsAudiencesError(encoder func(context.Context, http.Respon
 	}
 }
 
+// EncodeListMetaCustomAudiencesResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// list-meta-custom-audiences endpoint.
+func EncodeListMetaCustomAudiencesResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.MetaCustomAudiences)
+		enc := encoder(ctx, w)
+		body := NewListMetaCustomAudiencesResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeListMetaCustomAudiencesRequest returns a decoder for requests sent to
+// the lfx-v2-campaign-service-connections list-meta-custom-audiences endpoint.
+func DecodeListMetaCustomAudiencesRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.ListMetaCustomAudiencesPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.ListMetaCustomAudiencesPayload, error) {
+		var payload *lfxv2campaignserviceconnections.ListMetaCustomAudiencesPayload
+		var (
+			projectID   string
+			q           *string
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		qRaw := r.URL.Query().Get("q")
+		if qRaw != "" {
+			q = &qRaw
+		}
+		if q != nil {
+			err = goa.MergeErrors(err, goa.ValidatePattern("q", *q, "\\S"))
+		}
+		if q != nil {
+			if utf8.RuneCountInString(*q) < 1 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("q", *q, utf8.RuneCountInString(*q), 1, true))
+			}
+		}
+		if q != nil {
+			if utf8.RuneCountInString(*q) > 100 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("q", *q, utf8.RuneCountInString(*q), 100, false))
+			}
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewListMetaCustomAudiencesPayload(projectID, q, bearerToken)
+		if payload.BearerToken != nil {
+			cred := *payload.BearerToken
+			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred = cred[index+1:]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeListMetaCustomAudiencesError returns an encoder for errors returned by
+// the list-meta-custom-audiences lfx-v2-campaign-service-connections endpoint.
+func EncodeListMetaCustomAudiencesError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaCustomAudiencesBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaCustomAudiencesServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaCustomAudiencesInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaCustomAudiencesNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaCustomAudiencesPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaCustomAudiencesUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeListRedditAdsCustomAudiencesResponse returns an encoder for responses
 // returned by the lfx-v2-campaign-service-connections
 // list-reddit-ads-custom-audiences endpoint.
@@ -12479,6 +12639,22 @@ func marshalLfxv2campaignserviceconnectionsGoogleAdsAudienceResourceToGoogleAdsA
 		Subtype:      v.Subtype,
 		Status:       v.Status,
 		Description:  v.Description,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceconnectionsMetaCustomAudienceToMetaCustomAudienceResponseBody
+// builds a value of type *MetaCustomAudienceResponseBody from a value of type
+// *lfxv2campaignserviceconnections.MetaCustomAudience.
+func marshalLfxv2campaignserviceconnectionsMetaCustomAudienceToMetaCustomAudienceResponseBody(v *lfxv2campaignserviceconnections.MetaCustomAudience) *MetaCustomAudienceResponseBody {
+	res := &MetaCustomAudienceResponseBody{
+		ID:                         v.ID,
+		Name:                       v.Name,
+		Subtype:                    v.Subtype,
+		Description:                v.Description,
+		ApproximateCountLowerBound: v.ApproximateCountLowerBound,
+		ApproximateCountUpperBound: v.ApproximateCountUpperBound,
 	}
 
 	return res

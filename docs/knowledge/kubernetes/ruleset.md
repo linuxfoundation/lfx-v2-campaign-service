@@ -70,12 +70,15 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    scoped to `project:{uid}` where `{uid}` is resolved from the URL-captured
    `:projectId` slug (see "Slug-to-UID resolution" below). A single rule covers
    all families because they share the identical authorization. The exceptions are
-   `google-ads/conversion-actions`, `google-ads/audiences` and `google-ads/user-lists`, ruled by
-   `marketing-ops-api` below.
+   `google-ads/conversion-actions`, `google-ads/audiences`, `google-ads/user-lists`,
+   `reddit-ads/custom-audiences` and `meta-ads/custom-audiences`, ruled by `marketing-ops-api` below.
 4. **`marketing-ops-api`** — `GET /projects/:projectId/google-ads/conversion-actions` (#458),
-   `GET /projects/:projectId/google-ads/audiences` (#496) and
-   `GET /projects/:projectId/google-ads/user-lists` only. They list every foundation's
-   conversion actions, audiences and user lists on the shared Google Ads customer, and
+   `GET /projects/:projectId/google-ads/audiences` (#496),
+   `GET /projects/:projectId/google-ads/user-lists`,
+   `GET /projects/:projectId/reddit-ads/custom-audiences` (#549) and
+   `GET /projects/:projectId/meta-ads/custom-audiences` (#550) only. They list every foundation's
+   conversion actions, audiences and user lists on the shared Google Ads customer, or custom
+   audiences on the shared Reddit or Meta ad account, and
    `campaign_manager` includes the project's `executive_director`, a foundation-scoped role
    (lfx-v2-helm `model.fga`). So it runs the same slug/UUID branches as `project-api`, on
    relation `global_marketing_ops`: the LF marketing team, granted on every project, so no ROOT
@@ -87,6 +90,8 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    the singular `google-ads/audience` performance read stays on `project-api`),
    `TestUserListsIsAMarketingOpsRead` does the same for `google-ads/user-lists` (a
    `project-api` read the service refused with 409 on the shared account until 2026-11-05), and
+   `TestMetaCustomAudiencesIsAMarketingOpsRead` does the same for `meta-ads/custom-audiences` (and
+   that `meta-ads/audience`, the insights read, stays on `project-api`), and
    `TestMarketingOpsRuleHoldsExactlyItsReads` pins the rule's whole path set.
 5. **`campaigns-placeholder:deny`** — the reserved `/campaigns`, `/campaigns/*`,
    and every other `/_campaigns/*` path (not openapi, not the signed asset route) are routed through Heimdall but are not
