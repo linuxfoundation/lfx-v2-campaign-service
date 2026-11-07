@@ -671,6 +671,18 @@ conversionPixelId?: string      — OPTIONAL per-campaign override of the connec
                                   before any upstream call.
 videoGoal?: string              — REQUIRED when objective is video_views: VIDEO_VIEW_6S | VIDEO_VIEW_15S
                                   (Reddit has no bare VIDEO_VIEWS goal). Ignored for other objectives.
+conversionEvent?: string        — OPTIONAL pixel event a CONVERSIONS campaign optimizes toward (#549):
+                                  PURCHASE | SIGN_UP | LEAD | PAGE_VISIT | VIEW_CONTENT | ADD_TO_CART |
+                                  ADD_TO_WISHLIST | SEARCH (case-insensitive). Sent as optimization_goal
+                                  on BOTH the campaign and the ad group (budget optimization requires
+                                  them to match). Omitted = PURCHASE, unchanged. Accepted only with
+                                  objective conversions (or objective omitted, whose default is
+                                  conversions) and only while REDDIT_CONVERSION_EVENT_ENABLED is "true".
+                                  An unknown value, another objective, null, an empty or non-string
+                                  value, a case variant of the key, or the field with the flag off is
+                                  a synchronous **400** ("invalid campaign config:
+                                  redditConfig.conversionEvent: ..."), and Dispatch re-checks it
+                                  before any Reddit request.
 customAudienceIds?: string[]    — OPTIONAL Reddit custom audiences to TARGET (#549): retargeting, e.g. a
                                   pixel or engagement audience. Ids from GET .../reddit-ads/custom-audiences.
                                   Sent as the ad group's targeting.custom_audience_ids on EVERY ad-group
