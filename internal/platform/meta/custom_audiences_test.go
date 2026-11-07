@@ -91,7 +91,7 @@ func TestListCustomAudiences_RefusesAPartialOrForeignList(t *testing.T) {
 		{"no data field", []string{`{"paging":{}}`}},
 		{"next without cursor", []string{`{"data":[],"paging":{"next":"x"}}`}},
 		{"repeated cursor", []string{`{"data":[],"paging":{"cursors":{"after":"C"},"next":"x"}}`, `{"data":[],"paging":{"cursors":{"after":"C"},"next":"x"}}`}},
-		{"negative count", []string{`{"data":[{"id":"111","name":"n","subtype":"CUSTOM","account_id":"777","approximate_count_lower_bound":-1}]}`}},
+		{"negative count other than -1", []string{`{"data":[{"id":"111","name":"n","subtype":"CUSTOM","account_id":"777","approximate_count_lower_bound":-2}]}`}},
 		{"oversized name", []string{`{"data":[{"id":"111","name":"` + strings.Repeat("x", maxCustomAudienceTextBytes+1) + `","subtype":"CUSTOM","account_id":"777"}]}`}},
 		{"duplicated key", []string{`{"data":[{"id":"111","name":"n","subtype":"CUSTOM","account_id":"777","account_id":"888"}]}`}},
 	} {
@@ -126,5 +126,16 @@ func TestListCustomAudiences_RefusesAMalformedAccount(t *testing.T) {
 	defer srv.Close()
 	if _, err := audienceClient(srv.URL).ListCustomAudiences(context.Background(), "act_77/x"); err == nil || len(seen()) != 0 {
 		t.Fatalf("err = %v, requests = %v; want a refusal and none", err, seen())
+	}
+}
+
+// Meta's -1 "size unavailable" bound (an inactive lookalike) reads as absent, not as a malformed row,
+// so one such audience does not fail the whole listing.
+func TestListCustomAudiences_MinusOneSizeIsAbsent(t *testing.T) {
+	srv, _ := audiencePages(t, `{"data":[{"id":"111","name":"Inactive lookalike","subtype":"LOOKALIKE","account_id":"777","approximate_count_lower_bound":-1,"approximate_count_upper_bound":-1}]}`)
+	defer srv.Close()
+	got, err := audienceClient(srv.URL).ListCustomAudiences(context.Background(), "act_777")
+	if err != nil || len(got) != 1 || got[0].CountLower != nil || got[0].CountUpper != nil {
+		t.Fatalf("ListCustomAudiences = %+v, %v; want one audience with no size", got, err)
 	}
 }

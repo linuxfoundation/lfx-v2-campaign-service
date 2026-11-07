@@ -104,6 +104,16 @@ func (c *Client) ListCustomAudiences(ctx context.Context, accountID string) ([]C
 	return nil, fmt.Errorf("list meta custom audiences: more than %d pages of %d: %w", customAudienceListMaxPages, customAudienceListPageSize, ErrCustomAudienceListTooLarge)
 }
 
+// sizeBound normalizes one approximate-count bound: Meta reports -1 when the size is unavailable
+// (an inactive lookalike, say), which is "no estimate", not a malformed audience, so it reads as
+// absent. Any other negative is left for decodeCustomAudience to refuse.
+func sizeBound(n *int64) *int64 {
+	if n != nil && *n == -1 {
+		return nil
+	}
+	return n
+}
+
 // decodeCustomAudience validates one listed audience. Errors never echo an upstream value.
 func decodeCustomAudience(raw json.RawMessage, accountID string) (CustomAudience, error) {
 	var w customAudienceWire
@@ -119,7 +129,7 @@ func decodeCustomAudience(raw json.RawMessage, accountID string) (CustomAudience
 	if w.AccountID == nil || canonicalAccountID(*w.AccountID) == "" || canonicalAccountID(*w.AccountID) != accountID {
 		return CustomAudience{}, errors.New("row is not reported under the requested ad account")
 	}
-	a := CustomAudience{ID: *w.ID, Subtype: *w.Subtype, CountLower: w.CountLower, CountUpper: w.CountUpper}
+	a := CustomAudience{ID: *w.ID, Subtype: *w.Subtype, CountLower: sizeBound(w.CountLower), CountUpper: sizeBound(w.CountUpper)}
 	if w.Name != nil {
 		a.Name = *w.Name
 	}
