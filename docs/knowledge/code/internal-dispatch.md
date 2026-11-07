@@ -1025,7 +1025,11 @@ Search. Dispatch refuses any non-empty list first, on any channel, unless
 the budget and campaign exist, so the gate stays off until lfx-v2-argocd turns it on.
 
 The #477 fields follow the same rule. `sharedNegativeKeywordLists` is passed through
-verbatim. `searchAssets` is `googleAdsSearchAssetsConfig`: `adImages`, `landscapeAdImages`
+verbatim. Its type check (#548) is the client's: `CreateCampaign` reads every named set's type
+and status before the budget and returns `(nil, err)`. The adapter's ordinary not-created wrap
+therefore releases the claim. A refusal reaches the job verbatim (a `PreflightRefusal`), and a
+failed read reaches it through `DispatchFailureMessage`'s upstream-status arm.
+`TestGoogleAds_SharedListTypeCheckJobMessages` pins both. `searchAssets` is `googleAdsSearchAssetsConfig`: `adImages`, `landscapeAdImages`
 (#538) and `businessLogoImages` are `googleAdsImageRefs`, so each entry is a URL or an
 `{"imageAssetId": …}` object. All three lists are enumerated by `googleAdsCreativeSlots` (as
 `search adImages`, `search landscapeAdImages` and `search businessLogoImages`), beside every
