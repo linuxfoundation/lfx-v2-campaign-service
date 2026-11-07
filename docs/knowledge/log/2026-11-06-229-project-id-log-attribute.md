@@ -34,7 +34,8 @@ clear, as `"project_id"`.
     out-of-package call result).
   - A same-package helper's `[]any` result is resolved through its body, so the keys
     `probeErrAttrs` builds are now checked. `make([]any, 0, n)` is empty, constant reslices
-    keep their window, and a method expression's explicit receiver is dropped.
+    keep their window, an indexed `[]any` literal is read in index order, and a method
+    expression's explicit receiver is dropped.
     Every resulting path is checked.
   - It looks through `any("k")` conversions, and reads elided `[]slog.Attr` elements,
     named-constant keys, and group names (`slog.Group`, `slog.GroupAttrs`,

@@ -297,6 +297,8 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 		{"make with length zero is empty", `byClass := make([]any, 0, 2)
 			byClass = append(byClass, slog.Int("projectID", 1))
 			_ = slog.Group("g", byClass...)`, []string{"projectID", "g"}},
+		{"an indexed literal is read in index order", `fields := []any{1: id, 0: "projectID"}
+			slog.Info("m", fields...)`, []string{"projectID"}},
 		{"a full reslice is the slice", `fields := []any{"projectID", id}
 			slog.Info("m", fields[:]...)`, []string{"projectID"}},
 		{"a constant reslice keeps its window", `fields := []any{"x", 1, "projectID", id}
@@ -556,7 +558,7 @@ func logKeys(f *ast.File, info *types.Info, decls map[*types.Func]*ast.FuncDecl)
 			return seqs{p[objOf(x)]}
 		case *ast.CompositeLit:
 			if isAnySlice(info.TypeOf(x)) {
-				return seqs{x.Elts}
+				return seqs{literalElems(x, info)}
 			}
 		case *ast.CallExpr:
 			if isAppend(x, info) && len(x.Args) > 0 {
@@ -948,8 +950,17 @@ func logKeys(f *ast.File, info *types.Info, decls map[*types.Func]*ast.FuncDecl)
 			return
 		}
 		for i := 0; i < len(seq); {
+			if seq[i] == nil {
+				overflow = true
+				return
+			}
 			a := unwrapIfaceConv(seq[i], info)
-			if b, ok := info.TypeOf(a).Underlying().(*types.Basic); ok && b.Info()&types.IsString != 0 {
+			t := info.TypeOf(a)
+			if t == nil {
+				overflow = true // not an expression the type-checker typed: cannot classify
+				return
+			}
+			if b, ok := t.Underlying().(*types.Basic); ok && b.Info()&types.IsString != 0 {
 				addKey(a)
 				i += 2
 				continue
@@ -1104,6 +1115,39 @@ func isMethodExpr(call *ast.CallExpr, info *types.Info) bool {
 	return ok && tv.IsType()
 }
 
+// literalElems returns a []any literal's elements in index order. An indexed literal
+// ([]any{1: v, 0: k}) is reordered when its indices are exactly 0..n-1; one with gaps (whose
+// missing elements are nil) or non-constant indices is untraced.
+func literalElems(cl *ast.CompositeLit, info *types.Info) []ast.Expr {
+	keyed := false
+	for _, e := range cl.Elts {
+		if _, ok := e.(*ast.KeyValueExpr); ok {
+			keyed = true
+		}
+	}
+	if !keyed {
+		return cl.Elts
+	}
+	out := make([]ast.Expr, len(cl.Elts))
+	next := 0
+	for _, e := range cl.Elts {
+		v := e
+		if kv, ok := e.(*ast.KeyValueExpr); ok {
+			n, ok := constInt(kv.Key, info)
+			if !ok {
+				return []ast.Expr{untraced}
+			}
+			next, v = n, kv.Value
+		}
+		if next < 0 || next >= len(out) || out[next] != nil {
+			return []ast.Expr{untraced} // a gap, or an index past the element count
+		}
+		out[next] = v
+		next++
+	}
+	return out
+}
+
 // untraced stands, inside a traced sequence, for slice contents the interpreter does not
 // model (a call result, a non-constant reslice, ...). A sequence holding it makes the
 // spread untraceable, so the guard fails rather than reading the contents as empty.
@@ -1231,12 +1275,13 @@ func TestLogKeys_PathOverflowIsReported(t *testing.T) {
 // instead of being checked as it was before, or read as empty.
 func TestLogKeys_UnmodelledSlicesAreReportedUntraceable(t *testing.T) {
 	for name, stmt := range map[string]string{
-		"index assignment": `fields[0] = "projectID"`,
-		"copy":             `copy(fields, []any{"projectID"})`,
-		"clear":            `clear(fields)`,
-		"multi-value call": `fields, _ = mk()`,
-		"call result":      `fields = mk1()`,
-		"variable reslice": `fields = fields[n:]`,
+		"index assignment":           `fields[0] = "projectID"`,
+		"copy":                       `copy(fields, []any{"projectID"})`,
+		"clear":                      `clear(fields)`,
+		"multi-value call":           `fields, _ = mk()`,
+		"call result":                `fields = mk1()`,
+		"variable reslice":           `fields = fields[n:]`,
+		"indexed literal with a gap": `fields = []any{0: "kind", 2: id}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			src := "package p\nimport \"log/slog\"\nvar (\nid any\nn int\nmk func() ([]any, error)\nmk1 func() []any\n)\nfunc f() {\nfields := []any{\"kind\", id}\n" +

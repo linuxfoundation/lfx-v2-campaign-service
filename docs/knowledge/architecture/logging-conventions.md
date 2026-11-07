@@ -82,8 +82,9 @@ stay together, and an alias is followed.
   the package.
 - A same-package function's `[]any` result (for example `probeErrAttrs` in
   `internal/infrastructure/postgres`) is resolved by interpreting its body up to
-  each `return`. `make([]any, 0, n)` is empty, and a constant reslice
-  (`fields[:]`, `fields[2:]`) keeps its window.
+  each `return`. `make([]any, 0, n)` is empty, a constant reslice
+  (`fields[:]`, `fields[2:]`) keeps its window, and an indexed literal
+  (`[]any{1: v, 0: k}`) is read in index order. One with gaps is untraceable.
 - A method expression such as `(*slog.Logger).Info(logger, ...)` has its
   explicit receiver dropped before keys are read.
 - A log call inside a closure sees the paths where the closure sits.
