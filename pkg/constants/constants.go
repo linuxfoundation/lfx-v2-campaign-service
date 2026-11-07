@@ -225,6 +225,17 @@ const (
 	// after a live create confirms the lookup and the criterion shapes.
 	EnvMicrosoftAudiencesEnabled = "MICROSOFT_AUDIENCES_ENABLED"
 
+	// EnvMicrosoftCreateTargetingEnabled opts a deployment IN to microsoftConfig.excludedGeoTargets,
+	// proximityTargets and languages (#563 gaps 5-6): negative location and radius criteria on the
+	// new campaign, and its ad languages. Only the exact value "true" enables them; unset or any
+	// other value fails closed, and a create naming any of the three is refused with a 400 before
+	// any job exists (and again at dispatch, before anything upstream).
+	//
+	// It names no account resource: it keeps UNVERIFIED request shapes (built from Microsoft's
+	// published Campaign Management v13 reference; no live create has sent them) off the shared
+	// account until a live create confirms them. Turn it on per environment, in lfx-v2-argocd.
+	EnvMicrosoftCreateTargetingEnabled = "MICROSOFT_CREATE_TARGETING_ENABLED"
+
 	// EnvMicrosoftAdExtensionsEnabled opts a deployment IN to microsoftConfig.sitelinks and
 	// microsoftConfig.callouts (#563), created at create time as SitelinkAdExtension and
 	// CalloutAdExtension entries and associated with the new Search campaign. Only the exact value

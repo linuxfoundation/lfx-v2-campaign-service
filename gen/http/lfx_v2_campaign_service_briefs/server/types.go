@@ -5575,7 +5575,27 @@ type CampaignCreateInputRequestBody struct {
 	// only for global_marketing_ops (see create-campaigns). A wrong JSON type
 	// (null reads as absent), a rule breach, or any of the three while the flag is
 	// off is refused with 400 "invalid campaign config: microsoftConfig.<field>:
-	// ..." before any job exists.
+	// ..." before any job exists. MICROSOFT EXCLUSIONS, RADIUS AND LANGUAGES
+	// (#563): microsoftConfig takes `excludedGeoTargets` (ISO 3166-1 alpha-2
+	// countries under the geoTargets rules, at most 30, none also in geoTargets),
+	// `proximityTargets` ([{latitude -85..85, longitude -180..180, radius a whole
+	// number 1-500 Miles or 1-800 Kilometers, unit Miles | Kilometers, name? at
+	// most 50 characters}], at most 10) and `languages` (1-10 Search
+	// Campaign.Languages values such as English, Japanese, Spanish or
+	// TraditionalChinese, matched ignoring case, or All alone). The excluded codes
+	// are resolved to LocationIds before anything is created; the exclusions
+	// (NegativeCampaignCriterion) and then the radii (BiddableCampaignCriterion
+	// with RadiusCriterion) are attached right after the positive geoTargets and
+	// before the ad group, and a failed, partial or unconfirmed attach stops the
+	// create there with the PAUSED campaign reported and retained. languages is
+	// set as the new campaign's Languages and the ad group is then created with no
+	// Language, since an ad group language overrides the campaign's; omitted, the
+	// ad group stays English. All three apply only to a campaign this run creates:
+	// a create that finds its campaign by name stops before the ad group. OFF
+	// unless MICROSOFT_CREATE_TARGETING_ENABLED is exactly "true". A wrong JSON
+	// type (null reads as absent), a rule breach, or any of them while the flag is
+	// off is refused with 400 "invalid campaign config: microsoftConfig.<field>:
+	// ..." before any job exists. Not role-gated.
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

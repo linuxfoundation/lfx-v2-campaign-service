@@ -166,29 +166,31 @@ type Service interface {
 	// same single check; those remarketing lists belong to the LF Microsoft
 	// Advertising account. A remarketing list input that breaks its rules, or is
 	// sent while MICROSOFT_AUDIENCES_ENABLED is not "true", is a synchronous 400
-	// too (see the config attribute). An X custom audience list is also refused
-	// synchronously with 400 "invalid campaign config: twitterConfig.<field>: ..."
-	// when it is not an array of strings, when an id is not 1-32 letters or
-	// digits, repeats, or is in both lists, when a list holds more than 60 ids or
-	// the X targeting lists together name more than 60 criteria, and when
-	// TWITTER_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. When both
-	// platforms' inputs are refused, the 403 names each platform's fields in its
-	// own sentence. A Reddit custom audience list is also refused synchronously
-	// with 400 "invalid campaign config: redditConfig.<field>: ..." when it is not
-	// an array of strings, when an id is not 1-64 letters, digits or underscores,
-	// repeats, or is in both lists, when a list holds more than 100 ids, and when
-	// REDDIT_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. META
-	// SHARED-ACCOUNT INPUTS: likewise a metaConfig.targeting that sets
-	// customAudiences or excludedCustomAudiences (any non-empty list) names custom
-	// audiences of the Meta ad account every foundation shares and requires
-	// global_marketing_ops on this project (403 naming them, 503 when the check
-	// cannot be made); age, gender and advantageAudience are not gated. An invalid
-	// metaConfig.targeting, or any targeting block while
-	// META_AUDIENCE_TARGETING_ENABLED is not "true" on the deployment, is a
-	// synchronous 400 "invalid campaign config: metaConfig.targeting...". An
-	// invalid per-platform `bidding` object (see the config attribute) is also
-	// refused synchronously, with 400 "invalid campaign config:
-	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
+	// too (see the config attribute). So is a microsoftConfig.excludedGeoTargets,
+	// proximityTargets or languages that breaks its rules or is sent while
+	// MICROSOFT_CREATE_TARGETING_ENABLED is not "true". An X custom audience list
+	// is also refused synchronously with 400 "invalid campaign config:
+	// twitterConfig.<field>: ..." when it is not an array of strings, when an id
+	// is not 1-32 letters or digits, repeats, or is in both lists, when a list
+	// holds more than 60 ids or the X targeting lists together name more than 60
+	// criteria, and when TWITTER_CUSTOM_AUDIENCES_ENABLED is not "true" on this
+	// deployment. When both platforms' inputs are refused, the 403 names each
+	// platform's fields in its own sentence. A Reddit custom audience list is also
+	// refused synchronously with 400 "invalid campaign config:
+	// redditConfig.<field>: ..." when it is not an array of strings, when an id is
+	// not 1-64 letters, digits or underscores, repeats, or is in both lists, when
+	// a list holds more than 100 ids, and when REDDIT_CUSTOM_AUDIENCES_ENABLED is
+	// not "true" on this deployment. META SHARED-ACCOUNT INPUTS: likewise a
+	// metaConfig.targeting that sets customAudiences or excludedCustomAudiences
+	// (any non-empty list) names custom audiences of the Meta ad account every
+	// foundation shares and requires global_marketing_ops on this project (403
+	// naming them, 503 when the check cannot be made); age, gender and
+	// advantageAudience are not gated. An invalid metaConfig.targeting, or any
+	// targeting block while META_AUDIENCE_TARGETING_ENABLED is not "true" on the
+	// deployment, is a synchronous 400 "invalid campaign config:
+	// metaConfig.targeting...". An invalid per-platform `bidding` object (see the
+	// config attribute) is also refused synchronously, with 400 "invalid campaign
+	// config: <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
 	// Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc)
 	// and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are
 	// immediately eligible for the bid lever, and eligibility follows the
@@ -1370,7 +1372,27 @@ type CampaignCreateInput struct {
 	// only for global_marketing_ops (see create-campaigns). A wrong JSON type
 	// (null reads as absent), a rule breach, or any of the three while the flag is
 	// off is refused with 400 "invalid campaign config: microsoftConfig.<field>:
-	// ..." before any job exists.
+	// ..." before any job exists. MICROSOFT EXCLUSIONS, RADIUS AND LANGUAGES
+	// (#563): microsoftConfig takes `excludedGeoTargets` (ISO 3166-1 alpha-2
+	// countries under the geoTargets rules, at most 30, none also in geoTargets),
+	// `proximityTargets` ([{latitude -85..85, longitude -180..180, radius a whole
+	// number 1-500 Miles or 1-800 Kilometers, unit Miles | Kilometers, name? at
+	// most 50 characters}], at most 10) and `languages` (1-10 Search
+	// Campaign.Languages values such as English, Japanese, Spanish or
+	// TraditionalChinese, matched ignoring case, or All alone). The excluded codes
+	// are resolved to LocationIds before anything is created; the exclusions
+	// (NegativeCampaignCriterion) and then the radii (BiddableCampaignCriterion
+	// with RadiusCriterion) are attached right after the positive geoTargets and
+	// before the ad group, and a failed, partial or unconfirmed attach stops the
+	// create there with the PAUSED campaign reported and retained. languages is
+	// set as the new campaign's Languages and the ad group is then created with no
+	// Language, since an ad group language overrides the campaign's; omitted, the
+	// ad group stays English. All three apply only to a campaign this run creates:
+	// a create that finds its campaign by name stops before the ad group. OFF
+	// unless MICROSOFT_CREATE_TARGETING_ENABLED is exactly "true". A wrong JSON
+	// type (null reads as absent), a rule breach, or any of them while the flag is
+	// off is refused with 400 "invalid campaign config: microsoftConfig.<field>:
+	// ..." before any job exists. Not role-gated.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

@@ -1582,3 +1582,40 @@ never fails the job.
 Not verified live: no Microsoft call was made. The dispatcher keeps all three fields behind
 `MICROSOFT_AUDIENCES_ENABLED` (default off). The lists belong to the shared LF account, so they
 also need `global_marketing_ops` (`service.MicrosoftMarketingOpsInputs`).
+
+## Excluded countries, radius targets and campaign languages (`create_targeting.go`, #563 gaps 5-6)
+
+`ValidateCreateTargeting` holds the pure rules once, so the dispatcher's synchronous preflight and
+`CreateCampaign` agree:
+- `excludedGeoTargets` follows the geoTargets rules (`validateGeoTargets`) and may not repeat a
+  geoTargets code. Microsoft applies exclusions after inclusions, so a repeated code would never
+  serve.
+- `proximityTargets`: at most 10. Latitude -85..85, longitude -180..180, a whole radius of 1-500
+  Miles or 1-800 Kilometers (Microsoft's `RadiusCriterion` bounds), an optional name of at most 50
+  characters. The dispatcher decodes the coordinates as pointers and refuses a missing or null
+  one, because 0 is a real place. The name is reduced (`redact.SnapshotText`) in the persisted
+  step and in the config snapshot, and sent to Microsoft as given.
+- `languages`: 1-10 of Microsoft's Search `Campaign.Languages` values, or `All` alone, matched
+  ignoring case and sent in Microsoft's spelling.
+
+In `CreateCampaign`, the excluded codes resolve through `resolveGeoTargets` with the positive ones,
+before anything is created. On a campaign this run created, the exclusions
+(`NegativeCampaignCriterion` with `LocationCriterion`) and then the radii
+(`BiddableCampaignCriterion` with `RadiusCriterion`) are attached right after the positive
+locations and before the ad group, one `AddCampaignCriterions` call each (`CriterionType:
+Targets`). The positive locations and both new kinds share `postCampaignCriterions`, so their
+outcome rules cannot drift: a truncated or rejecting error array, a short id array or an id-less
+slot never reads as success. `criterionStepError` classifies a failure the way the positive geo is
+classified (UNCONFIRMED, aborted, partially attached, rejected), and the create stops with the
+campaign as a partial. `languages` goes on the new campaign's `Languages`. The ad group is then
+created with no `Language`, which `msAdGroup.Language` now omits when empty, because an ad group
+language overrides the campaign's. Without `languages` the ad group is English, as before.
+
+All three apply only to a campaign this run creates. A create that finds its campaign by name
+stops before the ad group, with a step naming the fields and the campaign as a partial. A
+possibly live campaign's exclusions, radii and languages are an operator's to change, and an ad
+group created under it could be left without a language or could mask its languages.
+
+Not verified live: no Microsoft call was made. The dispatcher keeps all three behind
+`MICROSOFT_CREATE_TARGETING_ENABLED` (default off). They name no account resource and are not
+role-gated.

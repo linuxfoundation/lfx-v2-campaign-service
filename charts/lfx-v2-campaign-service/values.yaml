@@ -423,6 +423,16 @@ app:
     MICROSOFT_AUDIENCES_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to microsoftConfig.excludedGeoTargets,
+    # proximityTargets and languages (#563): excluded countries and radius
+    # targets on the new campaign, and its ad languages. Built from the v13
+    # Campaign Management reference and not yet sent by a live create. They
+    # name no account resource. While off, a create naming any of the three is
+    # refused with a 400 before any job exists. Any value other than "true" is
+    # treated as off.
+    MICROSOFT_CREATE_TARGETING_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.demandGenAudience (#459): one
     # existing Google Ads Audience on a Demand Gen ad group. The same flag
     # gates each googleAdsConfig.demandGenAdGroups[].audience (#460), the same

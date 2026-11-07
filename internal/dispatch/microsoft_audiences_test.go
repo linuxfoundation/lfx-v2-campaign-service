@@ -38,6 +38,8 @@ var microsoftUngatedFields = map[string]bool{
 	"imageAssetId": true, "imageAltText": true, "startDate": true, "endDate": true, "headlines": true,
 	"descriptions": true, "path1": true, "path2": true, "sitelinks": true, "callouts": true,
 	"negativeKeywords": true, "audienceBidAdjustment": true,
+	// #563 gaps 5-6: ISO countries, coordinates and languages name no account resource.
+	"excludedGeoTargets": true, "proximityTargets": true, "languages": true,
 }
 
 // TestEveryMicrosoftConfigFieldIsClassifiedForTheMarketingOpsGate fails when a microsoftConfig
@@ -140,6 +142,8 @@ func newMSAudDispatcher(t *testing.T, api *msAudAPI) *MicrosoftDispatcher {
 			_, _ = io.WriteString(w, `{"AdIds":[987],"PartialErrors":[]}`)
 		case "Keywords":
 			_, _ = io.WriteString(w, `{"KeywordIds":[1111],"PartialErrors":[]}`)
+		case "CampaignCriterions":
+			_, _ = io.WriteString(w, `{"CampaignCriterionIds":[8001],"NestedPartialErrors":[]}`)
 		case "AdGroupCriterions":
 			api.mu.Lock()
 			api.critCalls++
