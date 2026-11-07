@@ -4,6 +4,7 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -215,7 +216,7 @@ func linkedinTargetingEnabled() bool {
 
 // checkTargetingShape refuses a linkedInConfig.targeting whose JSON shape is wrong (#552): an
 // explicit null, a non-object, an include that is not an array of objects of string arrays, or an
-// exclude that is not an object of string arrays; and, with targeting set, an employerExclusions
+// exclude that is not an object of string arrays, any other key (a misspelled exclude); and, with targeting set, an employerExclusions
 // that is not an array of strings. PreflightCreate decodes the config best-effort,
 // and encoding/json skips a wrong-typed field (an "exclude": [] decodes to nil), so without this a
 // malformed exclude would pass the synchronous check and fail the job later. Anything it cannot
@@ -236,7 +237,11 @@ func checkTargetingShape(config json.RawMessage) error {
 		}
 		hasTargeting = true
 		var t linkedin.Targeting
-		if isJSONNull(raw) || json.Unmarshal(raw, &t) != nil {
+		// Unknown keys are refused: a misspelled "exclude" would otherwise be dropped and the
+		// campaign created without the caller's exclusions, a silently wider audience.
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.DisallowUnknownFields()
+		if isJSONNull(raw) || dec.Decode(&t) != nil {
 			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.targeting must be an object {\"include\": [{<facet>: [urn, ...]}], \"exclude\": {<facet>: [urn, ...]}}", domain.ErrCreateConfigInvalid))
 		}
 	}
