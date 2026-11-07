@@ -135,7 +135,18 @@ type Service interface {
 	// they do not, 503 when the check cannot be made (project lookup or
 	// authorization service unavailable). The gateway admits every
 	// campaign_manager, which includes foundation executive directors, and those
-	// resources belong to the Google Ads account every foundation shares. META
+	// resources belong to the Google Ads account every foundation shares. REDDIT
+	// SHARED-ACCOUNT INPUTS (#549): a redditConfig that sets customAudienceIds or
+	// excludedCustomAudienceIds (any non-empty list) on a create that selects
+	// reddit-ads requires global_marketing_ops on this project in the same single
+	// check, with the same 403 and 503; the custom audiences belong to the LF
+	// Reddit ad account every foundation shares. When both platforms' inputs are
+	// refused, the 403 names each platform's fields in its own sentence. A Reddit
+	// custom audience list is also refused synchronously with 400 "invalid
+	// campaign config: redditConfig.<field>: ..." when it is not an array of
+	// strings, when an id is not 1-64 letters, digits or underscores, repeats, or
+	// is in both lists, when a list holds more than 100 ids, and when
+	// REDDIT_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. META
 	// SHARED-ACCOUNT INPUTS: likewise a metaConfig.targeting that sets
 	// customAudiences or excludedCustomAudiences (any non-empty list) names custom
 	// audiences of the Meta ad account every foundation shares and requires
@@ -1114,7 +1125,17 @@ type CampaignCreateInput struct {
 	// of the account currency (checked against the currency at dispatch), and only
 	// for the traffic or leads objective; Reddit only for the traffic objective;
 	// LinkedIn whole cents; X at most the campaign's daily budget (X does not
-	// accept a line item bid above it). Keys are exact: `bidding`, `strategy` and
+	// accept a line item bid above it). REDDIT CUSTOM AUDIENCES (#549):
+	// redditConfig takes `customAudienceIds` and `excludedCustomAudienceIds`,
+	// arrays of Reddit custom audience ids (list-reddit-ads-custom-audiences
+	// offers them) to target and to exclude, sent as the ad group's
+	// targeting.custom_audience_ids and targeting.excluded_custom_audience_ids on
+	// every ad-group attempt, including the retry that drops communities and
+	// interests. Each id is 1-64 letters, digits or underscores, sent exactly as
+	// given; at most 100 per list; no id twice and none in both lists. Off unless
+	// REDDIT_CUSTOM_AUDIENCES_ENABLED is "true" (built from Reddit's public
+	// OpenAPI document, not yet exercised live), and only for global_marketing_ops
+	// (see create-campaigns). Keys are exact: `bidding`, `strategy` and
 	// `bidAmount`; a case variant (`Bidding`, `Strategy`) or an unknown key inside
 	// `bidding` is refused. `automatic` with a `bidAmount`, an unknown strategy, a
 	// wrong JSON type, an explicit null or empty value (only an ABSENT field
