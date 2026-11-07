@@ -212,6 +212,19 @@ const (
 	// (service.TwitterMarketingOpsInputs) and the read sits in the gateway's marketing-ops-api rule.
 	EnvTwitterCustomAudiencesEnabled = "TWITTER_CUSTOM_AUDIENCES_ENABLED"
 
+	// EnvMicrosoftAudiencesEnabled opts a deployment IN to microsoftConfig.audienceIds,
+	// excludedAudienceIds and audienceBidAdjustment (#563 gap 4): remarketing lists observed (bid
+	// only) and excluded on the ad group a Microsoft create makes. Only the exact value "true"
+	// enables them; unset or any other value fails closed, and a create naming any of the three is
+	// refused with a 400 before any job exists (and again at dispatch, before anything upstream).
+	//
+	// The shapes come from Microsoft's published Campaign Management v13 reference and have NOT
+	// been exercised against a live account. Independent of it, a remarketing list is a resource of
+	// the LF Microsoft Advertising account every foundation shares, so the lists also require
+	// global_marketing_ops (service.MicrosoftMarketingOpsInputs). Turn it on in lfx-v2-argocd only
+	// after a live create confirms the lookup and the criterion shapes.
+	EnvMicrosoftAudiencesEnabled = "MICROSOFT_AUDIENCES_ENABLED"
+
 	// EnvMicrosoftAdExtensionsEnabled opts a deployment IN to microsoftConfig.sitelinks and
 	// microsoftConfig.callouts (#563), created at create time as SitelinkAdExtension and
 	// CalloutAdExtension entries and associated with the new Search campaign. Only the exact value
