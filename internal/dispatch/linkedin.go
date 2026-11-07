@@ -215,7 +215,8 @@ func linkedinTargetingEnabled() bool {
 
 // checkTargetingShape refuses a linkedInConfig.targeting whose JSON shape is wrong (#552): an
 // explicit null, a non-object, an include that is not an array of objects of string arrays, or an
-// exclude that is not an object of string arrays. PreflightCreate decodes the config best-effort,
+// exclude that is not an object of string arrays; and, with targeting set, an employerExclusions
+// that is not an array of strings. PreflightCreate decodes the config best-effort,
 // and encoding/json skips a wrong-typed field (an "exclude": [] decodes to nil), so without this a
 // malformed exclude would pass the synchronous check and fail the job later. Anything it cannot
 // attribute to targeting is left to the ordinary decode.
@@ -228,13 +229,29 @@ func checkTargetingShape(config json.RawMessage) error {
 	if json.Unmarshal(envelope["linkedInConfig"], &platformCfg) != nil {
 		return nil
 	}
+	hasTargeting := false
 	for k, raw := range platformCfg {
 		if !strings.EqualFold(k, "targeting") {
 			continue
 		}
+		hasTargeting = true
 		var t linkedin.Targeting
 		if isJSONNull(raw) || json.Unmarshal(raw, &t) != nil {
 			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.targeting must be an object {\"include\": [{<facet>: [urn, ...]}], \"exclude\": {<facet>: [urn, ...]}}", domain.ErrCreateConfigInvalid))
+		}
+	}
+	// With targeting set, employerExclusions is merged into exclude.employers and checked by
+	// ValidateTargeting, so its JSON type is promised as a synchronous 400 too: a number entry
+	// or a string would otherwise decode to blanks or nil and pass.
+	if hasTargeting {
+		for k, raw := range platformCfg {
+			if !strings.EqualFold(k, "employerExclusions") || isJSONNull(raw) {
+				continue
+			}
+			var list []string
+			if json.Unmarshal(raw, &list) != nil {
+				return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.employerExclusions must be an array of employer URN strings", domain.ErrCreateConfigInvalid))
+			}
 		}
 	}
 	return nil
