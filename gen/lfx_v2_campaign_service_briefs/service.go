@@ -1202,20 +1202,31 @@ type CampaignCreateInput struct {
 	// LINKEDIN_ADS_TARGETING_ENABLED. audienceMatchingSegments and dynamicSegments
 	// name ad segments on the ad account, so they also require
 	// global_marketing_ops on the project (403; 503 when the check cannot be
-	// made). REDDIT EXCLUSIONS (#549): redditConfig takes `excludedSubreddits`
-	// (subreddit names, an optional r/ prefix stripped, each 2-21 letters, digits
-	// or underscores, at most 100, case-insensitive duplicates dropped) and
-	// `excludedGeoTargets` (ISO 3166-1 alpha-2 country codes, at most 50,
-	// uppercased and de-duplicated), sent as the ad group's
-	// targeting.excluded_communities and targeting.excluded_geolocations on every
-	// ad-group attempt (the retry that drops rejected communities and interests
-	// keeps them). A name also in `subreddits`, or a code also targeted
-	// (geoTargets, or the US default when geoTargets is empty), is refused. Both
-	// are OFF unless REDDIT_TARGETING_EXCLUSIONS_ENABLED is exactly "true" on the
-	// deployment. A blank or invalid entry, an overlap, a list over its cap, a
-	// value that is not an array of strings (null reads as absent), or either list
-	// while the flag is off, is refused with 400 "invalid campaign config:
-	// redditConfig.<field>: ..." before any job exists.
+	// made). REDDIT CONVERSION EVENT (#549): redditConfig.conversionEvent names
+	// the pixel event a conversions campaign optimizes toward, sent as the
+	// campaign's and the ad group's optimization_goal: PURCHASE, SIGN_UP, LEAD,
+	// PAGE_VISIT, VIEW_CONTENT, ADD_TO_CART, ADD_TO_WISHLIST or SEARCH,
+	// case-insensitive. Omitted means PURCHASE, as before. It is accepted only
+	// with objective conversions (also the default when objective is omitted) and
+	// only while the deployment sets REDDIT_CONVERSION_EVENT_ENABLED to "true". An
+	// unknown value, another objective, an explicit null, an empty or non-string
+	// value, a case variant of the key, or the field while the flag is off is
+	// refused synchronously with 400 "invalid campaign config:
+	// redditConfig.conversionEvent: ..." before any job exists. REDDIT EXCLUSIONS
+	// (#549): redditConfig takes `excludedSubreddits` (subreddit names, an
+	// optional r/ prefix stripped, each 2-21 letters, digits or underscores, at
+	// most 100, case-insensitive duplicates dropped) and `excludedGeoTargets` (ISO
+	// 3166-1 alpha-2 country codes, at most 50, uppercased and de-duplicated),
+	// sent as the ad group's targeting.excluded_communities and
+	// targeting.excluded_geolocations on every ad-group attempt (the retry that
+	// drops rejected communities and interests keeps them). A name also in
+	// `subreddits`, or a code also targeted (geoTargets, or the US default when
+	// geoTargets is empty), is refused. Both are OFF unless
+	// REDDIT_TARGETING_EXCLUSIONS_ENABLED is exactly "true" on the deployment. A
+	// blank or invalid entry, an overlap, a list over its cap, a value that is not
+	// an array of strings (null reads as absent), or either list while the flag is
+	// off, is refused with 400 "invalid campaign config: redditConfig.<field>:
+	// ..." before any job exists.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
