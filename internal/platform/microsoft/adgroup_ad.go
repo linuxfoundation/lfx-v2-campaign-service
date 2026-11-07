@@ -146,8 +146,10 @@ type msAdGroup struct {
 	Name        string `json:"Name"`
 	Status      string `json:"Status"`
 	AdGroupType string `json:"AdGroupType"`
-	Language    string `json:"Language"`
-	CpcBid      *msBid `json:"CpcBid,omitempty"`
+	// Language is omitted when empty: a campaign created with Languages (#563) governs its ad
+	// group's language, and an ad group Language would override it.
+	Language string `json:"Language,omitempty"`
+	CpcBid   *msBid `json:"CpcBid,omitempty"`
 	// StartDate / EndDate are the ad group's flight dates (flight.go), OMITTED when not
 	// requested so Microsoft keeps its defaults (serve from today; no end).
 	StartDate *msDate `json:"StartDate,omitempty"`
@@ -276,6 +278,9 @@ type targeting struct {
 	cpcBidSet bool
 	// flight is the validated ad-group flight window; its zero value sends no dates.
 	flight flight
+	// campaignLanguages is true when the campaign was created with Languages (#563): the ad group
+	// is then created with no Language, since an ad group language overrides the campaign's.
+	campaignLanguages bool
 }
 
 // NOTE: geo targeting has no field here. The CAMPAIGN-level location criterion ids reach every
@@ -328,7 +333,11 @@ func (c *Client) createAdGroupAndAd(
 	// (idempotent), the create is a mutation (not retried on 429). A cancellation
 	// during the lookup is a clean abort (nothing new created), but the CAMPAIGN
 	// already exists, so it is surfaced as a reconcilable partial rather than (nil,err).
-	adGroupID, existed, err := c.findOrCreateAdGroup(ctx, campaignID, adGroupName, tgt.cpcBid, tgt.cpcBidSet, tgt.flight)
+	language := adGroupLanguage
+	if tgt.campaignLanguages {
+		language = ""
+	}
+	adGroupID, existed, err := c.findOrCreateAdGroup(ctx, campaignID, adGroupName, tgt.cpcBid, tgt.cpcBidSet, tgt.flight, language)
 	if err != nil {
 		// ORDER MATTERS. createOutcomeAmbiguous catches a transportError FIRST — a ctx-cancel
 		// mid-HTTP-Do is wrapped as a transportError (whose Unwrap exposes context.Canceled),
@@ -627,7 +636,7 @@ func unconfirmedLookupErr(ctx context.Context, ferr error) error {
 	return fmt.Errorf("idempotency lookup failed (cannot confirm the entity is absent; verify before retrying): %w: %w", ferr, errNoID)
 }
 
-func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name string, cpcBid float64, cpcBidSet bool, fl flight) (id string, existed bool, err error) {
+func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name string, cpcBid float64, cpcBidSet bool, fl flight, language string) (id string, existed bool, err error) {
 	if existingID, ferr := c.findAdGroupByName(ctx, campaignID, name); ferr != nil {
 		return "", false, unconfirmedLookupErr(ctx, ferr)
 	} else if existingID != "" {
@@ -642,7 +651,7 @@ func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name strin
 		Name:        name,
 		Status:      adGroupStatusPaused,
 		AdGroupType: adGroupTypeSearchStandard,
-		Language:    adGroupLanguage,
+		Language:    language,
 	}
 	if cpcBidSet {
 		adGroup.CpcBid = &msBid{Amount: cpcBid}

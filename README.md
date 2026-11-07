@@ -312,6 +312,15 @@ openssl rand -base64 32
   `global_marketing_ops` on the project (403 otherwise). The chart sets it to
   `"false"` (`app.environment.MICROSOFT_AUDIENCES_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once a live create confirms it.
+- `MICROSOFT_CREATE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `microsoftConfig.excludedGeoTargets`, `proximityTargets`
+  and `languages` (#563): excluded countries (negative location criteria) and
+  radius targets attached to the new campaign before its ad group, and the
+  campaign's ad languages. Only the exact value `true` enables them; anything
+  else fails closed, and a create naming any of the three is refused with a
+  400 before any job exists. They name no account resource; the flag keeps a
+  shape no live create has sent off the shared account. The chart sets it to
+  `"false"` (`app.environment.MICROSOFT_CREATE_TARGETING_ENABLED.value`).
 - `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.demandGenAudience`, one
   existing Google Ads Audience on a Demand Gen ad group (#459). Only the
