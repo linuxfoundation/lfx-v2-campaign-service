@@ -143,10 +143,23 @@ func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *tes
 	both := map[string]any{
 		"googleAdsConfig": map[string]any{"channel": "search", "conversionActions": []any{"customers/1/conversionActions/2"}},
 		"redditConfig":    map[string]any{"customAudienceIds": []any{"1"}}}
+	metaAudiences := map[string]any{"metaConfig": map[string]any{"targeting": map[string]any{
+		"ageMin": 25, "customAudiences": []any{"111"}, "excludedCustomAudiences": []any{"222"}}}}
+	metaAgeOnly := map[string]any{"metaConfig": map[string]any{"targeting": map[string]any{"ageMin": 25, "genders": []any{"male"}}}}
+	googleAndMeta := map[string]any{
+		"googleAdsConfig": map[string]any{"channel": "search", "conversionActions": []any{"customers/1/conversionActions/2"}},
+		"metaConfig":      map[string]any{"targeting": map[string]any{"excludedCustomAudiences": []any{"222"}}}}
 	several := map[string]any{"googleAdsConfig": map[string]any{
 		"channel": "search", "audienceSegments": []any{"customers/1/userLists/2"},
 		"sharedNegativeKeywordLists": []any{"customers/1/sharedSets/2"}}}
 
+	// Text a 403's message must contain beyond wantNamed, by case name.
+	wantContains := map[string]string{
+		"google and meta, one check, both named": "googleAdsConfig inputs that name a resource on the shared Google Ads account " +
+			"require the global_marketing_ops role on this project: conversionActions; metaConfig inputs",
+		"google and reddit inputs, one check, both named": "googleAdsConfig inputs that name a resource on the shared Google Ads account " +
+			"require the global_marketing_ops role on this project: conversionActions; redditConfig inputs",
+	}
 	for _, tc := range []struct {
 		name      string
 		platforms []string
@@ -175,6 +188,16 @@ func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *tes
 		{"no checker is unavailable", []string{"google-ads"}, audience, nil, testActor, "503", 0, ""},
 		{"no actor is unavailable", []string{"google-ads"}, audience, &fakeMarketingOps{allow: true}, nil, "503", 0, ""},
 		{"no audience is not checked", []string{"google-ads"}, noAudience, &fakeMarketingOps{}, testActor, "", 0, ""},
+		// #550: Meta custom audiences are resources of the shared Meta ad account.
+		{"meta audiences are checked", []string{"meta-ads"}, metaAudiences, &fakeMarketingOps{}, testActor, "403", 1,
+			"targeting.customAudiences, targeting.excludedCustomAudiences"},
+		{"marketing ops may send meta audiences", []string{"meta-ads"}, metaAudiences, &fakeMarketingOps{allow: true}, testActor, "", 1, ""},
+		{"meta age and gender are not checked", []string{"meta-ads"}, metaAgeOnly, &fakeMarketingOps{}, testActor, "", 0, ""},
+		{"a failed check on meta audiences is unavailable", []string{"meta-ads"}, metaAudiences,
+			&fakeMarketingOps{allow: true, err: errors.New("nats: timeout")}, testActor, "503", 1, ""},
+		{"metaConfig is not checked unless meta-ads is selected", []string{"google-ads"}, metaAudiences, &fakeMarketingOps{}, testActor, "", 0, ""},
+		{"google and meta, one check, both named", []string{"google-ads", "meta-ads"}, googleAndMeta, &fakeMarketingOps{}, testActor, "403", 1,
+			"targeting.excludedCustomAudiences"},
 		// googleAdsConfig is read only by the google-ads dispatcher, so another platform's create
 		// carrying it is not checked.
 		{"another platform is not checked", []string{"microsoft-ads"}, audience, &fakeMarketingOps{}, testActor, "", 0, ""},
@@ -213,9 +236,8 @@ func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *tes
 				if tc.wantNamed != "" && !strings.HasSuffix(forbidden.Message, ": "+tc.wantNamed) {
 					t.Fatalf("403 message = %q, want it to name exactly %q", forbidden.Message, tc.wantNamed)
 				}
-				if tc.config["googleAdsConfig"] != nil && tc.config["redditConfig"] != nil &&
-					!strings.Contains(forbidden.Message, "Google Ads account require the global_marketing_ops role on this project: conversionActions; ") {
-					t.Fatalf("403 message = %q, want the Google fields named in their own sentence first", forbidden.Message)
+				if want := wantContains[tc.name]; want != "" && !strings.Contains(forbidden.Message, want) {
+					t.Fatalf("403 message = %q, want it to contain %q", forbidden.Message, want)
 				}
 			case "503":
 				var unavailable *briefs.ConnServiceUnavailableError
