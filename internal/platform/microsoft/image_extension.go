@@ -493,13 +493,15 @@ func (c *Client) associateCampaignExtension(ctx context.Context, account, campai
 // refuses to upload — rather than being skipped or accepted: the request asked about exactly one
 // campaign, so a response that answers about something else is not an answer to trust either way.
 func (c *Client) findCampaignImageExtension(ctx context.Context, account, campaign json.Number) (string, error) {
-	return c.findCampaignExtension(ctx, account, campaign, adExtensionTypeImage, "an image")
+	id, _, err := c.findCampaignExtension(ctx, account, campaign, adExtensionTypeImage, "an image")
+	return id, err
 }
 
-// findCampaignExtension is findCampaignImageExtension for any one AdExtensionType: the id of an
-// extension of extType already associated with the campaign, or "" when the one collection
-// answering for it holds none. label names the type in errors ("an image", "a sitelink").
-func (c *Client) findCampaignExtension(ctx context.Context, account, campaign json.Number, extType, label string) (string, error) {
+// findCampaignExtension is findCampaignImageExtension for any one AdExtensionType: the id of the
+// first extension of extType already associated with the campaign and how many are, or ("", 0)
+// when the one collection answering for it holds none. label names the type in errors ("an
+// image", "a sitelink").
+func (c *Client) findCampaignExtension(ctx context.Context, account, campaign json.Number, extType, label string) (string, int, error) {
 	body, err := c.doRequest(ctx, http.MethodPost, "AdExtensionsAssociations/Query", adExtensionAssociationsQuery{
 		AccountId:       account,
 		AdExtensionType: extType,
@@ -507,17 +509,17 @@ func (c *Client) findCampaignExtension(ctx context.Context, account, campaign js
 		EntityIds:       []json.Number{campaign},
 	}, true)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	var resp adExtensionAssociationsQueryResponse
 	if uerr := decodeTrusted(body, &resp); uerr != nil {
-		return "", fmt.Errorf("decode AdExtensionsAssociations/Query response (%v): %w", uerr, errNoID)
+		return "", 0, fmt.Errorf("decode AdExtensionsAssociations/Query response (%v): %w", uerr, errNoID)
 	}
 	if resp.PartialErrors.AnyErrors {
-		return "", fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
+		return "", 0, fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
 	}
 	if !resp.sawCollection {
-		return "", fmt.Errorf("AdExtensionsAssociations/Query response omitted AdExtensionAssociationCollection: %w", errNoID)
+		return "", 0, fmt.Errorf("AdExtensionsAssociations/Query response omitted AdExtensionAssociationCollection: %w", errNoID)
 	}
 	// "For each entity identifier specified in the request, an AdExtensionAssociationCollection is
 	// returned", and exactly one id is sent — so exactly one collection answers for this campaign.
@@ -525,13 +527,13 @@ func (c *Client) findCampaignExtension(ctx context.Context, account, campaign js
 	// neither may read as "no image extension". The only "no image extension" answers are INSIDE
 	// the one collection: a null slot, or a null or empty AdExtensionAssociations.
 	if n := len(resp.AdExtensionAssociationCollection); n != 1 {
-		return "", fmt.Errorf("AdExtensionsAssociations/Query returned %d collections for 1 requested campaign: %w", n, errNoID)
+		return "", 0, fmt.Errorf("AdExtensionsAssociations/Query returned %d collections for 1 requested campaign: %w", n, errNoID)
 	}
 	// EVERY image association is validated before any is trusted: returning at the first valid
 	// one would leave a later misattributed or unusable entry unchecked, and a mixed response
 	// would then read as AlreadyAttached. The first valid id is kept and returned only once the
 	// whole response has passed.
-	found := ""
+	found, count := "", 0
 	for _, coll := range resp.AdExtensionAssociationCollection {
 		if coll == nil {
 			continue
@@ -546,18 +548,19 @@ func (c *Client) findCampaignExtension(ctx context.Context, account, campaign js
 				continue
 			}
 			if a.AssociationType != associationTypeCampaign || numberID(a.EntityId) != campaign.String() {
-				return "", fmt.Errorf("%s extension association was returned for an entity other than campaign %s: %w", label, campaign, errNoID)
+				return "", 0, fmt.Errorf("%s extension association was returned for an entity other than campaign %s: %w", label, campaign, errNoID)
 			}
 			id := numberID(a.AdExtension.Id)
 			if id == "" {
-				return "", fmt.Errorf("%s extension is associated with the campaign but its id is unusable: %w", label, errNoID)
+				return "", 0, fmt.Errorf("%s extension is associated with the campaign but its id is unusable: %w", label, errNoID)
 			}
 			if found == "" {
 				found = id
 			}
+			count++
 		}
 	}
-	return found, nil
+	return found, count, nil
 }
 
 // adExtensionIdentity extracts the created extension id from an AddAdExtensions 200 body,

@@ -31,8 +31,8 @@ type msTextAPI struct {
 	calls    []string
 	bodies   []string
 	next     int
-	attached map[string]string // AdExtensionType -> id
-	pending  map[string]string // created id -> AdExtensionType
+	attached map[string][]string // AdExtensionType -> associated ids
+	pending  map[string]string   // created id -> AdExtensionType
 	failAt   map[string]struct {
 		status int
 		body   string
@@ -59,7 +59,7 @@ func (a *msTextAPI) total() int {
 
 func newMSTextDispatcher(t *testing.T, api *msTextAPI) *MicrosoftDispatcher {
 	t.Helper()
-	api.attached, api.pending = map[string]string{}, map[string]string{}
+	api.attached, api.pending = map[string][]string{}, map[string]string{}
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"access_token":"at-123","expires_in":3600,"token_type":"Bearer"}`)
@@ -100,8 +100,12 @@ func newMSTextDispatcher(t *testing.T, api *msTextAPI) *MicrosoftDispatcher {
 		case "AdExtensionsAssociations/Query":
 			var q struct{ AdExtensionType string }
 			_ = json.Unmarshal(b, &q)
-			if id, ok := api.attached[q.AdExtensionType]; ok {
-				_, _ = fmt.Fprintf(w, `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[{"AdExtension":{"Id":%s,"Type":%q},"AssociationType":"Campaign","EntityId":321}]}]}`, id, q.AdExtensionType)
+			if ids := api.attached[q.AdExtensionType]; len(ids) > 0 {
+				assocs := make([]string, len(ids))
+				for i, id := range ids {
+					assocs[i] = fmt.Sprintf(`{"AdExtension":{"Id":%s,"Type":%q},"AssociationType":"Campaign","EntityId":321}`, id, q.AdExtensionType)
+				}
+				_, _ = fmt.Fprintf(w, `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[%s]}]}`, strings.Join(assocs, ","))
 				return
 			}
 			_, _ = io.WriteString(w, `{"AdExtensionAssociationCollection":[null]}`)
@@ -121,7 +125,8 @@ func newMSTextDispatcher(t *testing.T, api *msTextAPI) *MicrosoftDispatcher {
 			_ = json.Unmarshal(b, &s)
 			if len(s.AdExtensionIdToEntityIdAssociations) == 1 {
 				id := s.AdExtensionIdToEntityIdAssociations[0].AdExtensionId.String()
-				api.attached[api.pending[id]] = id
+				typ := api.pending[id]
+				api.attached[typ] = append(api.attached[typ], id)
 			}
 			_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
 		default:

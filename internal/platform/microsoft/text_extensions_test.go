@@ -42,6 +42,9 @@ func TestValidateTextExtensions_AcceptsAndTrims(t *testing.T) {
 		{Text: strings.Repeat("中", 15), FinalURL: "https://x.example"},
 		{Text: strings.Repeat("中", 11), Description1: strings.Repeat("文", 15), Description2: "ok", FinalURL: "https://x.example"},
 	}
+	// The URL limit is in characters: a 2,048-character URL with a CJK path is accepted even
+	// though it is far more than 2,048 bytes.
+	edge = append(edge, Sitelink{Text: "CJK path", FinalURL: "https://x.example/" + strings.Repeat("中", 2048-len("https://x.example/"))})
 	if _, _, err := ValidateTextExtensions(edge, []string{strings.Repeat("e", 25), strings.Repeat("字", 12)}); err != nil {
 		t.Errorf("boundary values must pass: %v", err)
 	}
@@ -93,15 +96,22 @@ func TestValidateTextExtensions_Refusals(t *testing.T) {
 		"relative url":              {link(func(s *Sitelink) { s.FinalURL = "/register" }), nil, FieldSitelinks, "absolute http or https"},
 		"ftp url":                   {link(func(s *Sitelink) { s.FinalURL = "ftp://x.example" }), nil, FieldSitelinks, "absolute http or https"},
 		"url with space":            {link(func(s *Sitelink) { s.FinalURL = "https://x.example/a b" }), nil, FieldSitelinks, "whitespace"},
-		"url over 2048":             {link(func(s *Sitelink) { s.FinalURL = "https://x.example/" + strings.Repeat("p", 2048) }), nil, FieldSitelinks, "limit is 2048"},
-		"repeated text":             {[]Sitelink{{Text: "Register", FinalURL: "https://x.example"}, {Text: "REGISTER", FinalURL: "https://y.example"}}, nil, FieldSitelinks, "[1].text repeats"},
-		"one callout":               {nil, []string{"Only one"}, FieldCallouts, "at least 2"},
-		"too many callouts":         {nil, tooManyC, FieldCallouts, "at most 20"},
-		"empty callout":             {nil, []string{"a", " "}, FieldCallouts, "[1] is empty"},
-		"callout over 25":           {nil, []string{"a", strings.Repeat("b", 26)}, FieldCallouts, "limit is 25"},
-		"wide callout over 12":      {nil, []string{"a", strings.Repeat("字", 13)}, FieldCallouts, "limit is 12"},
-		"callout control char":      {nil, []string{"a", "b\x00"}, FieldCallouts, "control character"},
-		"repeated callout":          {nil, []string{"Hands-On Labs", "hands-on labs"}, FieldCallouts, "[1] repeats"},
+		"url with credentials":      {link(func(s *Sitelink) { s.FinalURL = "https://user:pw@x.example/register" }), nil, FieldSitelinks, "must not carry user credentials"},
+		"url user only":             {link(func(s *Sitelink) { s.FinalURL = "https://user@x.example/register" }), nil, FieldSitelinks, "must not carry user credentials"},
+		"non-ascii url over 2048": {link(func(s *Sitelink) {
+			s.FinalURL = "https://x.example/" + strings.Repeat("中", 2048-len("https://x.example/")+1)
+		}), nil, FieldSitelinks, "is 2049 characters"},
+		"url trailing newline": {link(func(s *Sitelink) { s.FinalURL = "https://x.example/register\n" }), nil, FieldSitelinks, "finalUrl contains a control character"},
+		"url leading tab":      {link(func(s *Sitelink) { s.FinalURL = "\thttps://x.example/register" }), nil, FieldSitelinks, "finalUrl contains a control character"},
+		"url over 2048":        {link(func(s *Sitelink) { s.FinalURL = "https://x.example/" + strings.Repeat("p", 2048) }), nil, FieldSitelinks, "limit is 2048"},
+		"repeated text":        {[]Sitelink{{Text: "Register", FinalURL: "https://x.example"}, {Text: "REGISTER", FinalURL: "https://y.example"}}, nil, FieldSitelinks, "[1].text repeats"},
+		"one callout":          {nil, []string{"Only one"}, FieldCallouts, "at least 2"},
+		"too many callouts":    {nil, tooManyC, FieldCallouts, "at most 20"},
+		"empty callout":        {nil, []string{"a", " "}, FieldCallouts, "[1] is empty"},
+		"callout over 25":      {nil, []string{"a", strings.Repeat("b", 26)}, FieldCallouts, "limit is 25"},
+		"wide callout over 12": {nil, []string{"a", strings.Repeat("字", 13)}, FieldCallouts, "limit is 12"},
+		"callout control char": {nil, []string{"a", "b\x00"}, FieldCallouts, "control character"},
+		"repeated callout":     {nil, []string{"Hands-On Labs", "hands-on labs"}, FieldCallouts, "[1] repeats"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -265,7 +275,7 @@ func TestAttachCampaignTextExtensions_SkipsTypeAlreadyAssociated(t *testing.T) {
 	if len(r.SitelinkAdExtensionIDs) != 0 || len(r.CalloutAdExtensionIDs) != 2 {
 		t.Errorf("ids = %v %v", r.SitelinkAdExtensionIDs, r.CalloutAdExtensionIDs)
 	}
-	if !strings.Contains(strings.Join(r.Steps, "\n"), "Sitelink extensions already associated with the campaign (e.g. 4441): none added") {
+	if !strings.Contains(strings.Join(r.Steps, "\n"), "Sitelink extensions already associated with the campaign (1, e.g. 4441): none added") {
 		t.Errorf("steps = %v", r.Steps)
 	}
 	n := 0
@@ -276,6 +286,59 @@ func TestAttachCampaignTextExtensions_SkipsTypeAlreadyAssociated(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("%d sitelinks created on a campaign that already has them", n)
+	}
+}
+
+// A retry that finds fewer than MinCallouts callouts on the campaign adds none (it cannot tell
+// which of its own failed), but the campaign cannot serve callouts, so the result is degraded.
+// Two or more found is a clean retry.
+func TestAttachCampaignTextExtensions_RetryWithTooFewCalloutsIsDegraded(t *testing.T) {
+	oneCallout := func(p, b string) (int, string, bool) {
+		if p == "AdExtensionsAssociations/Query" && strings.Contains(b, "CalloutAdExtension") {
+			return 200, `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[{"AdExtension":{"Id":5001,"Type":"CalloutAdExtension"},"AssociationType":"Campaign","EntityId":321}]}]}`, true
+		}
+		return 0, "", false
+	}
+	twoCallouts := func(p, b string) (int, string, bool) {
+		if p == "AdExtensionsAssociations/Query" && strings.Contains(b, "CalloutAdExtension") {
+			return 200, `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[{"AdExtension":{"Id":5001,"Type":"CalloutAdExtension"},"AssociationType":"Campaign","EntityId":321},{"AdExtension":{"Id":5002,"Type":"CalloutAdExtension"},"AssociationType":"Campaign","EntityId":321}]}]}`, true
+		}
+		return 0, "", false
+	}
+	c, calls := textExtRecorder(t, &textExtAPI{override: oneCallout})
+	r, err := c.AttachCampaignTextExtensions(context.Background(), "321", nil, goodCallouts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.CalloutsBelowMinimum || !r.Degraded() {
+		t.Errorf("one callout found must degrade: %+v", r)
+	}
+	if !strings.Contains(strings.Join(r.Steps, "\n"), "only 1 associated") {
+		t.Errorf("steps = %v", r.Steps)
+	}
+	if n := len(calls()); n != 1 {
+		t.Errorf("only the lookup may run, got %d calls", n)
+	}
+	c, _ = textExtRecorder(t, &textExtAPI{override: twoCallouts})
+	if r, err := c.AttachCampaignTextExtensions(context.Background(), "321", nil, goodCallouts()); err != nil || r.Degraded() {
+		t.Errorf("two callouts found is a clean retry, got %+v, %v", r, err)
+	}
+}
+
+// A first run that attaches only one callout leaves the campaign unable to serve callouts.
+func TestAttachCampaignTextExtensions_OneCalloutAttachedIsBelowMinimum(t *testing.T) {
+	c, _ := textExtRecorder(t, &textExtAPI{override: func(p, b string) (int, string, bool) {
+		if p == "AdExtensions" && strings.Contains(b, `"300+ Sessions"`) {
+			return 400, `{"Code":1}`, true
+		}
+		return 0, "", false
+	}})
+	r, err := c.AttachCampaignTextExtensions(context.Background(), "321", nil, goodCallouts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.CalloutsBelowMinimum || len(r.CalloutAdExtensionIDs) != 1 {
+		t.Errorf("got %+v", r)
 	}
 }
 

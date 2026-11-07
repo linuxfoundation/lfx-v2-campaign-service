@@ -153,7 +153,7 @@ func (d *MicrosoftDispatcher) attachMicrosoftTextExtensions(ctx context.Context,
 	}
 	if tr.Degraded() {
 		slog.WarnContext(ctx, "microsoft text extensions degraded", "campaign_id", result.CampaignID,
-			"failed", tr.Failed, "unconfirmed", tr.Unconfirmed)
+			"failed", tr.Failed, "unconfirmed", tr.Unconfirmed, "callouts_below_minimum", tr.CalloutsBelowMinimum)
 		return true
 	}
 	return false

@@ -756,7 +756,8 @@ sitelinks?: [{text, description1?, description2?, finalUrl}]
                                   characters when a description is set, else 35. description1 and
                                   description2 are set together or not at all, at most 35 each.
                                   finalUrl is an absolute http/https URL of at most 2,048
-                                  characters, sent as given (no UTM is added). Text holding any
+                                  characters (code points), with no user credentials, sent as
+                                  given (no UTM is added). Text holding any
                                   double-width character (CJK, emoji) is held to 11 / 15 (text with
                                   / without a description) and 15 (description). Trimmed; a control
                                   character or a repeated text (case-insensitive) is refused.
@@ -768,7 +769,9 @@ callouts?: string[]             — OPTIONAL campaign-level callout ad extension
                                   call (AddAdExtensions → SetAdExtensionsAssociations, Campaign
                                   level), and recorded in the result as sitelinkAdExtensionIds /
                                   calloutAdExtensionIds. A campaign that already has an extension of
-                                  a type (a retry that reused it) gets none of that type added. An
+                                  a type (a retry that reused it) gets none of that type added; a
+                                  campaign left with fewer than 2 callouts (none serve) is
+                                  created_degraded. An
                                   extension NOT attached (definite) or UNCONFIRMED (verify before
                                   re-attaching) leaves the campaign created_degraded with a step
                                   saying which; the job never fails for it. OFF unless

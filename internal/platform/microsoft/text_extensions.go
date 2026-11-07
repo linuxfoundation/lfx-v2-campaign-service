@@ -237,12 +237,18 @@ func optionalExtensionText(s string) (string, error) {
 // sitelinkURL accepts an absolute http/https URL with a host, at most 2,048 characters, and
 // returns it trimmed but otherwise as given. The URL itself is never quoted in an error.
 func sitelinkURL(raw string) (string, error) {
+	// Control characters are checked on the RAW value, as extensionText does, so a leading or
+	// trailing one cannot hide behind the trim below.
+	if strings.IndexFunc(raw, unicode.IsControl) >= 0 {
+		return "", fmt.Errorf("contains a control character")
+	}
 	s := strings.TrimSpace(raw)
 	if s == "" {
 		return "", fmt.Errorf("is required")
 	}
-	if len(s) > maxSitelinkURLChars {
-		return "", fmt.Errorf("is %d characters; the limit is %d", len(s), maxSitelinkURLChars)
+	// Microsoft's limit is in characters, so a non-ASCII path is counted by code point.
+	if n := utf8.RuneCountInString(s); n > maxSitelinkURLChars {
+		return "", fmt.Errorf("is %d characters; the limit is %d", n, maxSitelinkURLChars)
 	}
 	if strings.IndexFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) >= 0 {
 		return "", fmt.Errorf("contains whitespace or a control character")
@@ -250,6 +256,11 @@ func sitelinkURL(raw string) (string, error) {
 	u, err := url.Parse(s)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", fmt.Errorf("must be an absolute http or https URL")
+	}
+	// Credentials in the URL would be forwarded to Microsoft and served in the ad; the ad
+	// destination validator (validateAdURL) refuses them for the same reason.
+	if u.User != nil {
+		return "", fmt.Errorf("must not carry user credentials")
 	}
 	return s, nil
 }
@@ -281,10 +292,16 @@ type TextExtensionsResult struct {
 	// Failed counts extensions NOT attached (definite); Unconfirmed counts those that may be.
 	// A type skipped because its lookup failed counts every requested item of it as Failed.
 	Failed, Unconfirmed int
+	// CalloutsBelowMinimum is set when the campaign is left with fewer than MinCallouts callouts
+	// associated — after this run, or as a retry found it — so Microsoft serves none.
+	CalloutsBelowMinimum bool
 }
 
-// Degraded reports whether any requested extension is not, or may not be, attached.
-func (r *TextExtensionsResult) Degraded() bool { return r.Failed > 0 || r.Unconfirmed > 0 }
+// Degraded reports whether any requested extension is not, or may not be, attached, or the
+// campaign's callouts cannot serve.
+func (r *TextExtensionsResult) Degraded() bool {
+	return r.Failed > 0 || r.Unconfirmed > 0 || r.CalloutsBelowMinimum
+}
 
 // AttachCampaignTextExtensions validates the lists, then attaches each sitelink and callout to
 // the campaign, skipping a type the campaign already has. It never stops at one extension's
@@ -325,7 +342,7 @@ func (c *Client) AttachCampaignTextExtensions(ctx context.Context, campaignID st
 // attachTextExtensionsOfType runs the find-first lookup for one type and then creates and
 // associates each extension, recording outcomes on r. It returns the ids attached.
 func (c *Client) attachTextExtensionsOfType(ctx context.Context, r *TextExtensionsResult, account, campaign json.Number, extType, label string, exts []msTextAdExtension) []string {
-	existing, err := c.findCampaignExtension(ctx, account, campaign, extType, "a "+label)
+	existing, count, err := c.findCampaignExtension(ctx, account, campaign, extType, "a "+label)
 	if err != nil {
 		// Only a read was sent for this type, so nothing of it can have been attached.
 		r.Failed += len(exts)
@@ -333,7 +350,13 @@ func (c *Client) attachTextExtensionsOfType(ctx context.Context, r *TextExtensio
 		return nil
 	}
 	if existing != "" {
-		r.Steps = append(r.Steps, fmt.Sprintf("%s extensions already associated with the campaign (e.g. %s): none added", capitalize(label), existing))
+		r.Steps = append(r.Steps, fmt.Sprintf("%s extensions already associated with the campaign (%d, e.g. %s): none added", capitalize(label), count, existing))
+		// Still nothing is added — the earlier run's outcome is unknown item by item, and adding
+		// would risk doubling — but a campaign holding one callout serves none, so say so.
+		if extType == adExtensionTypeCallout && count < MinCallouts {
+			r.CalloutsBelowMinimum = true
+			r.Steps = append(r.Steps, fmt.Sprintf("Callout extensions: only %d associated with the campaign; Microsoft serves none with fewer than %d — add more in Microsoft Advertising", count, MinCallouts))
+		}
 		return nil
 	}
 	var ids []string
@@ -352,6 +375,9 @@ func (c *Client) attachTextExtensionsOfType(ctx context.Context, r *TextExtensio
 	}
 	if len(ids) > 0 {
 		r.Steps = append(r.Steps, fmt.Sprintf("%s extensions associated with campaign %s: %s", capitalize(label), campaign, strings.Join(ids, ",")))
+	}
+	if extType == adExtensionTypeCallout && len(ids) < MinCallouts {
+		r.CalloutsBelowMinimum = true
 	}
 	return ids
 }

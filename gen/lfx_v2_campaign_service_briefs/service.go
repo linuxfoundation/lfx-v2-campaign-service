@@ -1202,19 +1202,21 @@ type CampaignCreateInput struct {
 	// Campaign level), one extension per call. A sitelink's text is required, at
 	// most 25 characters when a description is set and 35 otherwise; description1
 	// and description2 are set together or not at all, at most 35 each; finalUrl
-	// is an absolute http or https URL of at most 2,048 characters, sent as given.
-	// A callout is 1-25 characters. Text holding any double-width character (CJK,
-	// emoji) is held to Microsoft's reduced limits: sitelink text 11 with a
-	// description and 15 without, a description 15, a callout 12. Values are
-	// trimmed; a control character, or a repeated sitelink text or callout
-	// (case-insensitive), is refused. A campaign that already has an extension of
-	// a type (a retry that reused it) gets none of that type added. An extension
-	// that is not, or may not be, attached marks the campaign created_degraded
-	// with a step saying which; it never fails the job. Both are OFF unless
-	// MICROSOFT_AD_EXTENSIONS_ENABLED is exactly "true" on the deployment. A rule
-	// breach, a wrong JSON type (null reads as absent), or either list while the
-	// flag is off, is refused with 400 "invalid campaign config:
-	// microsoftConfig.<field>: ..." before any job exists.
+	// is an absolute http or https URL of at most 2,048 characters with no user
+	// credentials, sent as given. A callout is 1-25 characters. Text holding any
+	// double-width character (CJK, emoji) is held to Microsoft's reduced limits:
+	// sitelink text 11 with a description and 15 without, a description 15, a
+	// callout 12. Values are trimmed; a control character, or a repeated sitelink
+	// text or callout (case-insensitive), is refused. A campaign that already has
+	// an extension of a type (a retry that reused it) gets none of that type
+	// added; if it is left with fewer than 2 callouts, which Microsoft never
+	// serves, it is marked created_degraded. An extension that is not, or may not
+	// be, attached marks the campaign created_degraded with a step saying which;
+	// it never fails the job. Both are OFF unless MICROSOFT_AD_EXTENSIONS_ENABLED
+	// is exactly "true" on the deployment. A rule breach, a wrong JSON type (null
+	// reads as absent), or either list while the flag is off, is refused with 400
+	// "invalid campaign config: microsoftConfig.<field>: ..." before any job
+	// exists.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

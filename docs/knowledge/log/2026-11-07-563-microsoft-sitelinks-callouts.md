@@ -8,7 +8,8 @@ callouts; on Microsoft the campaign had only the optional image extension.
 
 - Rules live once in `microsoft.ValidateTextExtensions`, from the v13 references: sitelinks
   1–20, text 25 with a description and 35 without, both descriptions or neither (35 each), an
-  absolute http/https finalUrl of at most 2,048 characters; callouts 2–20 at 25 each, since one
+  absolute http/https finalUrl of at most 2,048 characters (code points), with no user
+  credentials and no control character, checked before the trim; callouts 2–20 at 25 each, since one
   callout never serves. Any double-width character switches a field to the reduced limits.
   Repeats (case-insensitive) and control characters are refused.
 - Synchronous 400 (`invalid campaign config: microsoftConfig.<field>: ...`) from
@@ -22,7 +23,8 @@ callouts; on Microsoft the campaign had only the optional image extension.
   (`associateCampaignExtension`, `findCampaignExtension`) so both attach paths classify a
   response the same way.
 - A failed or UNCONFIRMED extension marks the campaign `created_degraded` with a step saying
-  which; the job never fails for it. Ids land in the result as `sitelinkAdExtensionIds` /
+  which; the job never fails for it. So does a campaign left with fewer than two callouts, after
+  the run or as a retry found it, because Microsoft serves none. Ids land in the result as `sitelinkAdExtensionIds` /
   `calloutAdExtensionIds`. The snapshot reduces each sitelink URL like Google's.
 - Default-off deployment flag `MICROSOFT_AD_EXTENSIONS_ENABLED`; the chart sets `"false"`. Not
   role-gated: the extensions are created new and name no account resource.
