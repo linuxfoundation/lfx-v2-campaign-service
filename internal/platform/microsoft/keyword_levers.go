@@ -10,11 +10,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/textfold"
 )
@@ -139,12 +141,16 @@ type NegativeKeyword struct {
 
 // NegativeKeywordOutcome is one negative keyword's positional outcome. NegativeKeywordID is
 // set only for OutcomeApplied: an already-present negative's id is not returned by the add.
+//
+// The JSON tags are the persisted shape: the create path records these outcomes on
+// CampaignResult.NegativeKeywords (#563), and the result blob is camelCase like every other
+// field there.
 type NegativeKeywordOutcome struct {
-	Text              string
-	MatchType         string
-	Outcome           string
-	NegativeKeywordID string
-	ErrorCode         string
+	Text              string `json:"text"`
+	MatchType         string `json:"matchType"`
+	Outcome           string `json:"outcome"`
+	NegativeKeywordID string `json:"negativeKeywordId,omitempty"`
+	ErrorCode         string `json:"errorCode,omitempty"`
 }
 
 // canonicalPositiveID reports whether s is the canonical base-10 spelling of a positive int64
@@ -287,8 +293,10 @@ func ValidateNegativeKeywords(in []NegativeKeyword) ([]NegativeKeyword, error) {
 		}
 		matchType, ok := canonicalMatchType(nk.MatchType)
 		if !ok || matchType == MatchTypeBroad {
-			return nil, fmt.Errorf("microsoft-ads: negative keyword %d has unsupported match type %q (want %s or %s)",
-				i, truncate(nk.MatchType, maxErrorBodyChars), MatchTypeExact, MatchTypePhrase)
+			// domain.CallerValue, not %q: this sentence reaches a persisted job error verbatim on the
+			// create path (#563), and a pasted URL or token in matchType must not ride along.
+			return nil, fmt.Errorf("microsoft-ads: negative keyword %d has unsupported match type %s (want %s or %s)",
+				i, domain.CallerValue(nk.MatchType), MatchTypeExact, MatchTypePhrase)
 		}
 		key := matchType + "\x00" + textfold.Key(text)
 		if _, dup := seen[key]; dup {
@@ -316,12 +324,31 @@ type indexedErrorItem struct {
 // code renders the item's machine-readable code, symbolic first.
 func (it indexedErrorItem) code() string {
 	if s := codeString(it.ErrorCode); s != "" && len(s) <= maxErrorCodeLen {
-		return s
+		return outputCode(s)
 	}
 	if s := codeString(it.Code); s != "" && len(s) <= maxErrorCodeLen {
-		return s
+		return outputCode(s)
 	}
 	return ""
+}
+
+// withheldErrorCode replaces an upstream code that is not code-shaped. It is non-empty, so a
+// caller that tests "was there a code" still classifies the item or entity as refused.
+const withheldErrorCode = "withheld"
+
+// errorCodeShape is what a Microsoft error code looks like: a symbolic name
+// (CampaignServiceNegativeKeywordAlreadyExists) or a number (4335).
+var errorCodeShape = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+// outputCode returns c when it is code-shaped and withheldErrorCode otherwise. The codes these
+// levers report are PERSISTED (campaign steps and results) and logged, and they come from the
+// response body, so a value carrying anything else — a URL, a token — is never passed on.
+// Classification reads the raw codes, not this rendering.
+func outputCode(c string) string {
+	if errorCodeShape.MatchString(c) {
+		return c
+	}
+	return withheldErrorCode
 }
 
 // isError reports whether the entry carries an actual code (a null placeholder does not).
@@ -873,7 +900,7 @@ func (it indexedErrorItem) isNegativeKeywordAlreadyExists() bool {
 func meaningfulCode(raws ...json.RawMessage) string {
 	for _, raw := range raws {
 		if c := codeString(raw); c != "" && c != "0" && len(c) <= maxErrorCodeLen {
-			return c
+			return outputCode(c)
 		}
 	}
 	return ""

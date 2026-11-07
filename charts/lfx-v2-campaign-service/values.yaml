@@ -319,6 +319,17 @@ app:
     MICROSOFT_AD_COPY_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to microsoftConfig.negativeKeywords (#563):
+    # campaign-level negative keywords attached right after a Microsoft
+    # Advertising campaign is created, through the AddNegativeKeywordsToEntities
+    # call the add-negative-keywords lever makes. Default off: no live create
+    # has made that call. It names no account resource; it keeps an unverified
+    # create-path call off the shared ad account. While off, a create naming a
+    # non-empty list is refused with a 400 before any job exists. Any value
+    # other than "true" is treated as off, so a typo fails closed.
+    MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to BOTH Reddit ad-group targeting writes
     # (LFXV2-2665): removing keywords (remove-keyword-targeting) and adding
     # negative keywords to excluded_keywords (add-negative-keywords) — enabling
@@ -329,6 +340,18 @@ app:
     # Reddit campaigns; the keyword-targeting READ is not gated. Any value other
     # than "true" is treated as off, so a typo fails closed.
     REDDIT_KEYWORD_TARGETING_WRITES_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to redditConfig.conversionEvent (#549): the
+    # pixel event (SIGN_UP, LEAD, PURCHASE, ...) a conversions campaign
+    # optimizes toward, sent as the campaign's and ad group's
+    # optimization_goal instead of the default PURCHASE. Default off: no live
+    # create has confirmed Reddit accepts a goal other than PURCHASE on a
+    # CONVERSIONS campaign under budget optimization. While off, a create that
+    # sets the field is refused with a 400 before any job exists; one that
+    # omits it is unaffected. Not role-gated: it names no account resource.
+    # Any value other than "true" is treated as off, so a typo fails closed.
+    REDDIT_CONVERSION_EVENT_ENABLED:
       value: "false"
 
     # Opts this deployment IN to Reddit custom audiences (#549): the create
@@ -354,6 +377,16 @@ app:
     # is refused with a 400 before any job exists. Any value other than "true"
     # is treated as off, so a typo fails closed.
     REDDIT_TARGETING_EXCLUSIONS_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to microsoftConfig.sitelinks and
+    # microsoftConfig.callouts (#563), created at create time as sitelink and
+    # callout ad extensions associated with the new Search campaign. Default
+    # off: the shape is built from the v13 Campaign Management reference and no
+    # live create has sent it. It names no account resource. While off, a
+    # create naming either list is refused with a 400 before any job exists.
+    # Any value other than "true" is treated as off, so a typo fails closed.
+    MICROSOFT_AD_EXTENSIONS_ENABLED:
       value: "false"
 
     # Opts this deployment IN to googleAdsConfig.demandGenAudience (#459): one
@@ -392,6 +425,19 @@ app:
     # global_marketing_ops). Any value other than "true" is treated as off, so a typo
     # fails closed.
     GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED:
+      value: "false"
+
+    # Opt this deployment IN to metaConfig.callToAction (the button on every Meta
+    # ad, e.g. SIGN_UP or BUY_TICKETS instead of LEARN_MORE) and
+    # metaConfig.conversionEvent (the conversions objective's custom_event_type,
+    # e.g. COMPLETE_REGISTRATION instead of PURCHASE), #550. Off by default until
+    # the payloads are verified against a live ad account; set exactly "true" in
+    # lfx-v2-argocd. While off, a create carrying the field is refused with a 400
+    # before any job exists. Neither names an account resource, so neither needs
+    # global_marketing_ops. Any value other than "true" is treated as off.
+    META_CALL_TO_ACTION_ENABLED:
+      value: "false"
+    META_CONVERSION_EVENT_ENABLED:
       value: "false"
 
     # Opts this deployment IN to metaConfig.targeting (#550): age, gender,
@@ -448,6 +494,16 @@ app:
     # naming one is refused before anything upstream exists. Any value other than
     # "true" is treated as off, so a typo fails closed.
     GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to linkedInConfig.conversions (#552): conversion
+    # rule ids associated with the campaign through a Campaign Conversions PUT
+    # once it exists. The PUT has not been exercised against a live LinkedIn
+    # account. The ids also require global_marketing_ops on the project. Set it
+    # to exactly "true" in lfx-v2-argocd once the probe in the PR passes. While
+    # off, a create naming conversions is refused before a job exists. Any value
+    # other than "true" is treated as off, so a typo fails closed.
+    LINKEDIN_ADS_CONVERSIONS_ENABLED:
       value: "false"
 
     # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR

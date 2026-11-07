@@ -111,6 +111,17 @@ type microsoftConfig struct {
 	Descriptions []string `json:"descriptions"`
 	Path1        string   `json:"path1"`
 	Path2        string   `json:"path2"`
+	// Sitelinks and Callouts are OPTIONAL campaign-level SitelinkAdExtension and
+	// CalloutAdExtension entries (#563), behind MICROSOFT_AD_EXTENSIONS_ENABLED
+	// (microsoft_text_extensions.go). Validated before anything is created; attached only to a
+	// confirmed campaign, and a failure degrades the campaign rather than failing the job.
+	Sitelinks []microsoftSitelinkConfig `json:"sitelinks"`
+	Callouts  []string                  `json:"callouts"`
+	// NegativeKeywords are OPTIONAL campaign-level negatives (#563), {text, matchType} with
+	// matchType Exact or Phrase, attached right after the campaign is confirmed through the call
+	// the add-negative-keywords lever makes. Gated by MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED;
+	// see microsoft_negative_keywords.go.
+	NegativeKeywords []microsoftKeywordConfig `json:"negativeKeywords"`
 }
 
 // MicrosoftDispatcher creates Microsoft Advertising (Bing) campaigns for the orchestrator.
@@ -217,6 +228,14 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err := checkMicrosoftAdCopy(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// Create-time negatives (#563): gated and validated BEFORE any upstream call, exactly as
+	// PreflightCreate checks them, so a refused list fails the job with nothing created.
+	negatives, err := checkMicrosoftNegativeKeywords(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	// The snapshot records what is sent: the normalized list, not the caller's spelling.
+	cfg.NegativeKeywords = microsoftNegativeKeywordConfigs(negatives)
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
 	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
@@ -226,6 +245,11 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 			plan.stamp(camp)
 		}
 	}()
+	// Sitelinks and callouts (#563): gated and validated BEFORE any upstream call (PreflightCreate
+	// has normally refused a bad or gated one already, as a 400).
+	if err := checkMicrosoftTextExtensions(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -323,6 +347,14 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// retain the claim for a reconcile that cannot re-run this step (see attachMicrosoftImage).
 	bidApplied = result.BidApplied
 	degraded := d.attachMicrosoftImage(ctx, client, result, img)
+	if d.attachMicrosoftTextExtensions(ctx, client, result, cfg) {
+		degraded = true
+	}
+	// The negatives follow the same rule: only on a CONFIRMED campaign, and a shortfall degrades
+	// it rather than failing the job (applyMicrosoftNegativeKeywords).
+	if applyMicrosoftNegativeKeywords(ctx, client, result, negatives) {
+		degraded = true
+	}
 	camp = campaignFromMicrosoft(ctx, result, cfg)
 	if degraded {
 		camp.Status = campaignStatusCreatedDegraded
@@ -331,12 +363,16 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 }
 
 // PreflightCreate refuses, before the create job exists, a microsoftConfig whose bidding cannot be
-// created as asked (see microsoftBidPlan), or whose caller ad copy (#563: headlines, descriptions,
+// created as asked (see microsoftBidPlan), whose caller ad copy (#563: headlines, descriptions,
 // path1, path2) is wrong-typed, gated off by MICROSOFT_AD_COPY_ENABLED or breaks
-// microsoft.ValidateCallerAdCopy. It never calls Microsoft, so every other outcome is
-// ErrPreflightNotApplicable; a config that does not decode is left to Dispatch (except a wrong-typed
-// `bidding` or copy field, refused here by checkBiddingShape / checkMicrosoftAdCopyShape), which
-// reports it as the job failure, as Reddit's pre-check does.
+// microsoft.ValidateCallerAdCopy, whose sitelinks or callouts are gated off or break their rules
+// (#563, checkMicrosoftTextExtensions), or whose negativeKeywords are gated off or break their
+// rules (#563, checkMicrosoftNegativeKeywords). It never calls Microsoft, so every other outcome
+// is ErrPreflightNotApplicable; a config that does not decode is left to Dispatch (except a
+// wrong-typed `bidding`, copy field, `sitelinks`, `callouts` or `negativeKeywords`, refused here
+// by checkBiddingShape, checkMicrosoftAdCopyShape, checkMicrosoftTextExtensionsShape and
+// checkMicrosoftNegativeKeywordsShape), which reports it as the job failure, as Reddit's
+// pre-check does.
 func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
 	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
 	if err := checkBiddingShape(config, "microsoftConfig"); err != nil {
@@ -346,11 +382,20 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 	if err := checkMicrosoftAdCopyShape(config); err != nil {
 		return err
 	}
+	// So is a wrong-typed sitelinks or callouts (#563).
+	if err := checkMicrosoftTextExtensionsShape(config); err != nil {
+		return err
+	}
+	// So is a wrong-typed `negativeKeywords` (#563), for the same reason.
+	if err := checkMicrosoftNegativeKeywordsShape(config); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
 	// not decode is its zero value, which no plan rule reads as a refusal. The decode error itself
-	// stays "not applicable" — only bidding and the caller ad copy are promised as synchronous 400s.
+	// stays "not applicable" — only bidding, the caller ad copy, sitelinks/callouts and
+	// negativeKeywords are promised as synchronous 400s.
 	var cfg microsoftConfig
 	_ = unmarshalPlatformConfig(config, "microsoftConfig", &cfg)
 	if _, err := microsoftBidPlan(cfg); err != nil {
@@ -358,6 +403,12 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 	}
 	// Caller ad copy (#563): the deployment gate and microsoft.ValidateCallerAdCopy, as a 400.
 	if err := checkMicrosoftAdCopy(cfg); err != nil {
+		return err
+	}
+	if err := checkMicrosoftTextExtensions(cfg); err != nil {
+		return err
+	}
+	if _, err := checkMicrosoftNegativeKeywords(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -499,6 +550,24 @@ func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
 			snapshot.Keywords[i].Text = sanitizeSnapshotText(snapshot.Keywords[i].Text)
 		}
 	}
+	// Sitelinks and callouts (#563) are copied before they are reduced, because the caller's
+	// slices share their backing arrays with the config sent to Microsoft. The destination is
+	// reduced as googleAdsConfig.sitelinks' is; the copy is free text like the keywords.
+	if cfg.Sitelinks != nil {
+		snapshot.Sitelinks = make([]microsoftSitelinkConfig, len(cfg.Sitelinks))
+		for i, s := range cfg.Sitelinks {
+			snapshot.Sitelinks[i] = microsoftSitelinkConfig{
+				Text:         sanitizeSnapshotText(s.Text),
+				Description1: sanitizeSnapshotText(s.Description1),
+				Description2: sanitizeSnapshotText(s.Description2),
+				FinalURL:     sanitizeSnapshotURL(s.FinalURL),
+			}
+		}
+	}
+	snapshot.Callouts = sanitizeSnapshotTexts(cfg.Callouts)
+	// NegativeKeywords (#563) needs no reduction: by the time a snapshot is written Dispatch has
+	// replaced the list with the VALIDATED one, whose text is letters, digits, spaces and & ' - .
+	// only, so it cannot carry a link (no ':' or '/').
 	return snapshot
 }
 

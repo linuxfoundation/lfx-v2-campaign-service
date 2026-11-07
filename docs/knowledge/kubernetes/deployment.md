@@ -78,6 +78,12 @@ enables it; off, a create naming one is refused before anything upstream exists.
 `app.environment.GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED.value` to `"true"` in that environment's
 ArgoCD overlay.
 
+`META_CALL_TO_ACTION_ENABLED` and `META_CONVERSION_EVENT_ENABLED` are the same kind of gate for
+Meta, each defaulting to `"false"` (#550): they opt a cluster in to `metaConfig.callToAction` (the
+ad's button) and `metaConfig.conversionEvent` (the conversions objective's `custom_event_type`).
+Only exactly `"true"` enables each; off, a create carrying the field is refused with a 400 before
+any job exists. Neither names an account resource, so neither is behind `global_marketing_ops`.
+
 `META_AUDIENCE_TARGETING_ENABLED` is the same kind of gate for Meta, defaulting to `"false"`
 (#550): it opts a cluster in to `metaConfig.targeting` (age, gender, custom audiences to include
 and exclude, and the Advantage+ audience flag on the ad set). Each custom audience is read and must
@@ -106,6 +112,11 @@ different: not an account resource, but inputs no live (persisted) create has ex
 2026-11-05 but whose persisted create and read-back are not yet verified. Only exactly `"true"` enables it; off, a create naming it,
 on any channel, is refused before anything upstream exists. Turn it on once the validateOnly probe
 in the field's docs passes.
+
+`LINKEDIN_ADS_CONVERSIONS_ENABLED` defaults to `"false"` (#552) and is the same kind of gate for
+LinkedIn: `linkedInConfig.conversions` sends a Campaign Conversions PUT that has not been exercised
+against a live LinkedIn account. Only exactly `"true"` enables it; off, a create naming it is
+refused with a 400 before a job exists. The ids additionally require `global_marketing_ops`.
 
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
 default `1841232183`: the LF Research survey-promo workflow a survey send series

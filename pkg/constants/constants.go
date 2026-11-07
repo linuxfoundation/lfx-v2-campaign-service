@@ -120,6 +120,17 @@ const (
 	// lfx-v2-argocd.
 	EnvMicrosoftAdCopyEnabled = "MICROSOFT_AD_COPY_ENABLED"
 
+	// EnvMicrosoftCreateNegativeKeywordsEnabled opts a deployment IN to
+	// microsoftConfig.negativeKeywords (#563): campaign-level negative keywords attached right
+	// after a Microsoft Advertising campaign is created, through the same AddNegativeKeywordsToEntities
+	// call the add-negative-keywords lever makes. Only the exact value "true" enables it; unset or
+	// any other value fails closed, and a create naming a non-empty list is refused with a 400
+	// before any job exists (and again at dispatch, before anything upstream).
+	//
+	// It names no account resource: it keeps a create-path call that no live create has made off
+	// the shared ad account until one confirms it. Turn it on per environment, in lfx-v2-argocd.
+	EnvMicrosoftCreateNegativeKeywordsEnabled = "MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED"
+
 	// EnvRedditKeywordTargetingWritesEnabled opts a deployment IN to BOTH Reddit ad-group targeting
 	// writes (LFXV2-2665): REMOVING keywords (remove-keyword-targeting) and ADDING negative keywords
 	// to excluded_keywords (add-negative-keywords) — the same whole-targeting PATCH, so one switch.
@@ -135,6 +146,17 @@ const (
 	// spending ad group. Default-off until one live write confirms it, at which point the default
 	// flips and this constant goes away.
 	EnvRedditKeywordTargetingWritesEnabled = "REDDIT_KEYWORD_TARGETING_WRITES_ENABLED"
+
+	// EnvRedditConversionEventEnabled opts a deployment IN to redditConfig.conversionEvent (#549):
+	// the pixel event a conversions campaign optimizes toward, sent as the campaign's and the ad
+	// group's optimization_goal in place of the default PURCHASE. Only the exact value "true"
+	// enables it; unset or any other value fails closed, and a create that sets the field is
+	// refused with a 400 before any job exists. The field names no account resource, so it is not
+	// role-gated. Default-off because no live create has yet confirmed that Reddit accepts a goal
+	// other than PURCHASE on a CONVERSIONS campaign under campaign budget optimization; the values
+	// come from the published optimization-goal enum. Flip after one live create, at which point
+	// the gate is removed and this constant goes away.
+	EnvRedditConversionEventEnabled = "REDDIT_CONVERSION_EVENT_ENABLED"
 
 	// EnvRedditCustomAudiencesEnabled opts a deployment IN to Reddit custom audiences (#549): the
 	// create inputs redditConfig.customAudienceIds / excludedCustomAudienceIds (sent as the ad
@@ -163,6 +185,18 @@ const (
 	// sent either field) off the shared ad account until a live create confirms it. Turn it on per
 	// environment, in lfx-v2-argocd.
 	EnvRedditTargetingExclusionsEnabled = "REDDIT_TARGETING_EXCLUSIONS_ENABLED"
+
+	// EnvMicrosoftAdExtensionsEnabled opts a deployment IN to microsoftConfig.sitelinks and
+	// microsoftConfig.callouts (#563), created at create time as SitelinkAdExtension and
+	// CalloutAdExtension entries and associated with the new Search campaign. Only the exact value
+	// "true" enables them; unset or any other value fails closed, and a create naming either is
+	// refused with a 400 before any job exists (and again at dispatch, before anything upstream).
+	//
+	// It names no account resource (the extensions are created new for the campaign): it keeps an
+	// UNVERIFIED request shape, built from the v13 Campaign Management reference with no live
+	// create having sent it, off the shared ad account until a live create confirms it. Turn it on
+	// per environment, in lfx-v2-argocd.
+	EnvMicrosoftAdExtensionsEnabled = "MICROSOFT_AD_EXTENSIONS_ENABLED"
 
 	// EnvTwitterMetricsEnabled opts a deployment IN to the two X (Twitter) Ads features built on
 	// X's asynchronous stats-jobs API: the ACCOUNT MONITOR
@@ -209,6 +243,19 @@ const (
 	// affinity and in-market categories) and excludedPlacements (public domains) name no
 	// account resource and are not gated.
 	EnvGoogleAdsDisplayAudiencesEnabled = "GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED"
+
+	// EnvMetaCallToActionEnabled opts a deployment IN to metaConfig.callToAction (#550): the
+	// button on every Meta ad (SIGN_UP, BUY_TICKETS, …) instead of the fixed LEARN_MORE. Only the
+	// exact value "true" enables it; unset or any other value fails closed, and a create carrying
+	// the field is refused with a 400 before any job exists. Off by default until the creative
+	// payload is verified against a live ad account. It names no account resource, so it needs no
+	// global_marketing_ops.
+	EnvMetaCallToActionEnabled = "META_CALL_TO_ACTION_ENABLED"
+
+	// EnvMetaConversionEventEnabled opts a deployment IN to metaConfig.conversionEvent (#550): the
+	// promoted object's custom_event_type for the conversions objective (COMPLETE_REGISTRATION,
+	// LEAD, …) instead of the fixed PURCHASE. Same rules as EnvMetaCallToActionEnabled.
+	EnvMetaConversionEventEnabled = "META_CONVERSION_EVENT_ENABLED"
 
 	// EnvMetaAudienceTargetingEnabled opts a deployment IN to metaConfig.targeting (#550): age,
 	// gender, custom audiences to include and exclude, and the Advantage+ audience flag on the ad
@@ -265,6 +312,14 @@ const (
 	// someone has probed it, because a wrong guess fails after the budget and campaign exist.
 	// Turn it on per environment, in lfx-v2-argocd, once the probe in the field's docs passes.
 	EnvGoogleAdsDemographicTargetingEnabled = "GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED"
+
+	// EnvLinkedInAdsConversionsEnabled opts a deployment IN to linkedInConfig.conversions (#552):
+	// conversion rule ids associated with the campaign through Campaign Conversions once it exists.
+	// Only the exact value "true" enables it; unset or any other value fails closed, and a create
+	// naming conversions is refused before a job exists. It keeps an UNVERIFIED request (the
+	// campaignConversions PUT) off the live ad account until the probe in the field's docs passes.
+	// The ids also require global_marketing_ops on the project (service.LinkedInMarketingOpsInputs).
+	EnvLinkedInAdsConversionsEnabled = "LINKEDIN_ADS_CONVERSIONS_ENABLED"
 
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,

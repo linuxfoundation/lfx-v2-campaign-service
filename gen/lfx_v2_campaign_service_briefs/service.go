@@ -113,7 +113,11 @@ type Service interface {
 	// supply imageUrl'): 400 with that message. A redditConfig.excludedSubreddits
 	// or excludedGeoTargets that breaks its rules, or is sent while
 	// REDDIT_TARGETING_EXCLUSIONS_ENABLED is off, is also a synchronous 400 (see
-	// the config attribute). So is a microsoftConfig.headlines, descriptions,
+	// the config attribute). So is a microsoftConfig.sitelinks or callouts list
+	// that breaks its rules, or is sent while MICROSOFT_AD_EXTENSIONS_ENABLED is
+	// off (#563). So is a microsoftConfig.negativeKeywords list that breaks its
+	// rules or is sent while MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is off
+	// (see the config attribute). So is a microsoftConfig.headlines, descriptions,
 	// path1 or path2 that breaks its rules or is sent while
 	// MICROSOFT_AD_COPY_ENABLED is off. GOOGLE ADS SHARED-ACCOUNT INPUTS: a
 	// googleAdsConfig that sets any input naming an existing audience, user list,
@@ -135,7 +139,16 @@ type Service interface {
 	// they do not, 503 when the check cannot be made (project lookup or
 	// authorization service unavailable). The gateway admits every
 	// campaign_manager, which includes foundation executive directors, and those
-	// resources belong to the Google Ads account every foundation shares. REDDIT
+	// resources belong to the Google Ads account every foundation shares. The same
+	// check, made once with the Google one, covers linkedInConfig.conversions
+	// (#552): conversion rules on the LinkedIn ad account, and the LF system
+	// account is the fallback connection of every project without its own. META
+	// CREATIVE OPTIONS: metaConfig.callToAction outside its allow-list,
+	// metaConfig.conversionEvent outside its allow-list or on an objective other
+	// than conversions, or either one while its deployment flag
+	// (META_CALL_TO_ACTION_ENABLED, META_CONVERSION_EVENT_ENABLED) is not "true",
+	// is a synchronous 400 "invalid campaign config: metaConfig.callToAction..."
+	// or "invalid campaign config: metaConfig.conversionEvent...". REDDIT
 	// SHARED-ACCOUNT INPUTS (#549): a redditConfig that sets customAudienceIds or
 	// excludedCustomAudienceIds (any non-empty list) on a create that selects
 	// reddit-ads requires global_marketing_ops on this project in the same single
@@ -1113,37 +1126,39 @@ type CampaignCreateInput struct {
 	// creates an objectiveType WEBSITE_VISIT campaign bidding MAX_CLICK with
 	// costType CPM (decision 2026-10-13: automatic LinkedIn campaigns optimise for
 	// clicks because MAX_CONVERSION, the only automated target of
-	// WEBSITE_CONVERSION, needs a conversion association this service doesn't
-	// create); LinkedIn manual keeps objectiveType WEBSITE_CONVERSION. `manual`
-	// requires `bidAmount`, the starting max cost-per-click bid in the ad
-	// account's own currency (LinkedIn: USD), greater than zero, at most 1,000,000
-	// and a whole number of micro-units; it creates the campaign in the shape
-	// update-campaign-bid accepts. Per platform, a manual bid must also be:
-	// Microsoft within 0.01–1,000 (a legacy microsoftConfig.cpcBid without
-	// `bidding` still means a manual bid at that amount; with `bidding` it must be
-	// omitted or equal bidAmount); Meta at most two decimals, a whole minor unit
-	// of the account currency (checked against the currency at dispatch), and only
-	// for the traffic or leads objective; Reddit only for the traffic objective;
-	// LinkedIn whole cents; X at most the campaign's daily budget (X does not
-	// accept a line item bid above it). REDDIT CUSTOM AUDIENCES (#549):
-	// redditConfig takes `customAudienceIds` and `excludedCustomAudienceIds`,
-	// arrays of Reddit custom audience ids (list-reddit-ads-custom-audiences
-	// offers them) to target and to exclude, sent as the ad group's
-	// targeting.custom_audience_ids and targeting.excluded_custom_audience_ids on
-	// every ad-group attempt, including the retry that drops communities and
-	// interests. Each id is 1-64 letters, digits or underscores, sent exactly as
-	// given; at most 100 per list; no id twice and none in both lists. Off unless
-	// REDDIT_CUSTOM_AUDIENCES_ENABLED is "true" (built from Reddit's public
-	// OpenAPI document, not yet exercised live), and only for global_marketing_ops
-	// (see create-campaigns). Keys are exact: `bidding`, `strategy` and
-	// `bidAmount`; a case variant (`Bidding`, `Strategy`) or an unknown key inside
-	// `bidding` is refused. `automatic` with a `bidAmount`, an unknown strategy, a
-	// wrong JSON type, an explicit null or empty value (only an ABSENT field
-	// defaults: `"strategy": null` or `""`, `"bidAmount": null` and `"bidding":
-	// null` are refused), or a bid breaking these rules is refused synchronously
-	// with 400 "invalid campaign config: <configKey>.bidding: ..." before any job
-	// exists. googleAdsConfig.bidding is refused with 400: Google Ads takes its
-	// strategy from googleAdsConfig.biddingStrategy and a manual bid from
+	// WEBSITE_CONVERSION, needs a conversion association, which this service
+	// creates only when linkedInConfig.conversions is supplied (#552); automatic
+	// still targets MAX_CLICK); LinkedIn manual keeps objectiveType
+	// WEBSITE_CONVERSION. `manual` requires `bidAmount`, the starting max
+	// cost-per-click bid in the ad account's own currency (LinkedIn: USD), greater
+	// than zero, at most 1,000,000 and a whole number of micro-units; it creates
+	// the campaign in the shape update-campaign-bid accepts. Per platform, a
+	// manual bid must also be: Microsoft within 0.01–1,000 (a legacy
+	// microsoftConfig.cpcBid without `bidding` still means a manual bid at that
+	// amount; with `bidding` it must be omitted or equal bidAmount); Meta at most
+	// two decimals, a whole minor unit of the account currency (checked against
+	// the currency at dispatch), and only for the traffic or leads objective;
+	// Reddit only for the traffic objective; LinkedIn whole cents; X at most the
+	// campaign's daily budget (X does not accept a line item bid above it). REDDIT
+	// CUSTOM AUDIENCES (#549): redditConfig takes `customAudienceIds` and
+	// `excludedCustomAudienceIds`, arrays of Reddit custom audience ids
+	// (list-reddit-ads-custom-audiences offers them) to target and to exclude,
+	// sent as the ad group's targeting.custom_audience_ids and
+	// targeting.excluded_custom_audience_ids on every ad-group attempt, including
+	// the retry that drops communities and interests. Each id is 1-64 letters,
+	// digits or underscores, sent exactly as given; at most 100 per list; no id
+	// twice and none in both lists. Off unless REDDIT_CUSTOM_AUDIENCES_ENABLED is
+	// "true" (built from Reddit's public OpenAPI document, not yet exercised
+	// live), and only for global_marketing_ops (see create-campaigns). Keys are
+	// exact: `bidding`, `strategy` and `bidAmount`; a case variant (`Bidding`,
+	// `Strategy`) or an unknown key inside `bidding` is refused. `automatic` with
+	// a `bidAmount`, an unknown strategy, a wrong JSON type, an explicit null or
+	// empty value (only an ABSENT field defaults: `"strategy": null` or `""`,
+	// `"bidAmount": null` and `"bidding": null` are refused), or a bid breaking
+	// these rules is refused synchronously with 400 "invalid campaign config:
+	// <configKey>.bidding: ..." before any job exists. googleAdsConfig.bidding is
+	// refused with 400: Google Ads takes its strategy from
+	// googleAdsConfig.biddingStrategy and a manual bid from
 	// googleAdsConfig.cpcBid. GOOGLE ADS CPC BID: googleAdsConfig.cpcBid is the ad
 	// group's manual max cost-per-click bid, sent as cpcBidMicros, in whole units
 	// of the ad account's own currency (no FX conversion, like the budget). Search
@@ -1180,7 +1195,32 @@ type CampaignCreateInput struct {
 	// character, a non-numeric instagramUserId, and any of the three with a
 	// non-string JSON type (null counts as absent) are refused here with a 400,
 	// before any job exists. An absent instagramUserId is not refused, but Meta
-	// will not publish an Instagram placement without it. REDDIT EXCLUSIONS
+	// will not publish an Instagram placement without it. LINKEDIN CONVERSIONS
+	// (#552): linkedInConfig takes an optional `conversions` list of LinkedIn
+	// conversion rule ids as numeric strings, e.g. ["104012"] (at most 20,
+	// duplicates dropped). Once the campaign exists (created or reused by name)
+	// each is associated with it by a Campaign Conversions PUT; a failed
+	// association does not stop the create, and the campaign is then
+	// created_degraded with the id in the result's conversionsFailed and a step to
+	// associate it in Campaign Manager (before activating a campaign this run
+	// created PAUSED; a campaign reused by name keeps its own status and may
+	// already be serving). Refused with a 400 before any job exists: an entry that
+	// is not a JSON string, a URN instead of an id, a non-numeric or zero-padded
+	// id, an empty list, more than 20 ids, and any conversions while the
+	// deployment has not set LINKEDIN_ADS_CONVERSIONS_ENABLED. Conversion rules
+	// belong to the ad account, so conversions also require global_marketing_ops
+	// on the project (403; 503 when the check cannot be made). REDDIT CONVERSION
+	// EVENT (#549): redditConfig.conversionEvent names the pixel event a
+	// conversions campaign optimizes toward, sent as the campaign's and the ad
+	// group's optimization_goal: PURCHASE, SIGN_UP, LEAD, PAGE_VISIT,
+	// VIEW_CONTENT, ADD_TO_CART, ADD_TO_WISHLIST or SEARCH, case-insensitive.
+	// Omitted means PURCHASE, as before. It is accepted only with objective
+	// conversions (also the default when objective is omitted) and only while the
+	// deployment sets REDDIT_CONVERSION_EVENT_ENABLED to "true". An unknown value,
+	// another objective, an explicit null, an empty or non-string value, a case
+	// variant of the key, or the field while the flag is off is refused
+	// synchronously with 400 "invalid campaign config:
+	// redditConfig.conversionEvent: ..." before any job exists. REDDIT EXCLUSIONS
 	// (#549): redditConfig takes `excludedSubreddits` (subreddit names, an
 	// optional r/ prefix stripped, each 2-21 letters, digits or underscores, at
 	// most 100, case-insensitive duplicates dropped) and `excludedGeoTargets` (ISO
@@ -1209,7 +1249,50 @@ type CampaignCreateInput struct {
 	// OFF unless MICROSOFT_AD_COPY_ENABLED is exactly "true" on the deployment. A
 	// wrong JSON type (null reads as absent), a rule breach, or any of them while
 	// the flag is off, is refused with 400 "invalid campaign config:
-	// microsoftConfig.<field>: ..." before any job exists.
+	// microsoftConfig.<field>: ..." before any job exists. MICROSOFT SITELINKS AND
+	// CALLOUTS (#563): microsoftConfig takes `sitelinks` ([{text, description1?,
+	// description2?, finalUrl}], 1-20) and `callouts` (strings, 2-20), created
+	// after the campaign is confirmed as SitelinkAdExtension and
+	// CalloutAdExtension entries (AddAdExtensions) and associated with it
+	// (SetAdExtensionsAssociations, Campaign level), one extension per call. A
+	// sitelink's text is required, at most 25 characters when a description is set
+	// and 35 otherwise; description1 and description2 are set together or not at
+	// all, at most 35 each; finalUrl is an absolute http or https URL of at most
+	// 2,048 characters with no user credentials, sent as given. A callout is 1-25
+	// characters. Text holding any double-width character (CJK, emoji) is held to
+	// Microsoft's reduced limits: sitelink text 11 with a description and 15
+	// without, a description 15, a callout 12. Values are trimmed; a control
+	// character, or a repeated sitelink text or callout (case-insensitive), is
+	// refused. A campaign that already has an extension of a type (a retry that
+	// reused it) gets none of that type added; if it is left with fewer than 2
+	// callouts, which Microsoft never serves, it is marked created_degraded. An
+	// extension that is not, or may not be, attached marks the campaign
+	// created_degraded with a step saying which; it never fails the job. Both are
+	// OFF unless MICROSOFT_AD_EXTENSIONS_ENABLED is exactly "true" on the
+	// deployment. A rule breach, a wrong JSON type (null reads as absent), or
+	// either list while the flag is off, is refused with 400 "invalid campaign
+	// config: microsoftConfig.<field>: ..." before any job exists. MICROSOFT
+	// NEGATIVE KEYWORDS (#563): microsoftConfig takes `negativeKeywords`,
+	// [{"text": string, "matchType": "Exact" | "Phrase"}], attached as
+	// CAMPAIGN-level negatives (AddNegativeKeywordsToEntities, EntityType
+	// Campaign) right after the campaign is created, under the rules of
+	// add-negative-keywords: 1-60 entries, match type Exact or Phrase in any
+	// casing (Broad is refused), text whitespace-collapsed, at most 100
+	// characters, letters, digits, spaces and & ' - . only with no two punctuation
+	// characters adjacent, and no (text, match type) pair twice. Each keyword's
+	// outcome (APPLIED, ALREADY_PRESENT, FAILED or UNCONFIRMED) is recorded in the
+	// campaign result as negativeKeywords; a FAILED or UNCONFIRMED keyword, or a
+	// failed call, leaves the campaign created_degraded with a step naming it and
+	// never fails the job. Repeating the create does not re-attach them, because a
+	// created or created_degraded campaign is returned without another dispatch:
+	// fix a shortfall with add-negative-keywords. Only a dispatch that reuses an
+	// existing campaign by name (one whose earlier attempt was never confirmed)
+	// re-sends the list, and gets ALREADY_PRESENT for the ones already there. OFF
+	// unless MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is exactly "true" on the
+	// deployment. A rule breach, a value that is not an array of {text, matchType}
+	// objects (null reads as absent), or a non-empty list while the flag is off,
+	// is refused with 400 "invalid campaign config:
+	// microsoftConfig.negativeKeywords: ..." before any job exists.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
