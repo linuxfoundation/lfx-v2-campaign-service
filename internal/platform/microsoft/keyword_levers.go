@@ -139,12 +139,16 @@ type NegativeKeyword struct {
 
 // NegativeKeywordOutcome is one negative keyword's positional outcome. NegativeKeywordID is
 // set only for OutcomeApplied: an already-present negative's id is not returned by the add.
+//
+// The JSON tags are the persisted shape: the create path records these outcomes on
+// CampaignResult.NegativeKeywords (#563), and the result blob is camelCase like every other
+// field there.
 type NegativeKeywordOutcome struct {
-	Text              string
-	MatchType         string
-	Outcome           string
-	NegativeKeywordID string
-	ErrorCode         string
+	Text              string `json:"text"`
+	MatchType         string `json:"matchType"`
+	Outcome           string `json:"outcome"`
+	NegativeKeywordID string `json:"negativeKeywordId,omitempty"`
+	ErrorCode         string `json:"errorCode,omitempty"`
 }
 
 // canonicalPositiveID reports whether s is the canonical base-10 spelling of a positive int64

@@ -108,6 +108,17 @@ const (
 	// default flips and this constant goes away.
 	EnvMicrosoftMetricsEnabled = "MICROSOFT_METRICS_ENABLED"
 
+	// EnvMicrosoftCreateNegativeKeywordsEnabled opts a deployment IN to
+	// microsoftConfig.negativeKeywords (#563): campaign-level negative keywords attached right
+	// after a Microsoft Advertising campaign is created, through the same AddNegativeKeywordsToEntities
+	// call the add-negative-keywords lever makes. Only the exact value "true" enables it; unset or
+	// any other value fails closed, and a create naming a non-empty list is refused with a 400
+	// before any job exists (and again at dispatch, before anything upstream).
+	//
+	// It names no account resource: it keeps a create-path call that no live create has made off
+	// the shared ad account until one confirms it. Turn it on per environment, in lfx-v2-argocd.
+	EnvMicrosoftCreateNegativeKeywordsEnabled = "MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED"
+
 	// EnvRedditKeywordTargetingWritesEnabled opts a deployment IN to BOTH Reddit ad-group targeting
 	// writes (LFXV2-2665): REMOVING keywords (remove-keyword-targeting) and ADDING negative keywords
 	// to excluded_keywords (add-negative-keywords) — the same whole-targeting PATCH, so one switch.

@@ -364,6 +364,20 @@ openssl rand -base64 32
   only after the contract is verified against a live Microsoft ad
   account.
 
+- `MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED` (default unset, i.e.
+  OFF) — opts a deployment IN to `microsoftConfig.negativeKeywords`
+  (#563), campaign-level negative keywords attached right after a
+  Microsoft Advertising campaign is created, through the same
+  `AddNegativeKeywordsToEntities` call the `add-negative-keywords`
+  lever makes. Only the exact value `true` enables it; anything else
+  fails closed, and a create naming a non-empty list is refused with a
+  400 before any job exists. It names no account resource; it keeps a
+  create-path call no live create has made off the shared ad account.
+  The chart sets it to `"false"`
+  (`app.environment.MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED.value`);
+  enable it per-environment in the ArgoCD overlay once a live create
+  confirms it.
+
 - `TWITTER_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to BOTH X (Twitter) Ads features built on X's
   asynchronous stats-jobs API: the account monitor

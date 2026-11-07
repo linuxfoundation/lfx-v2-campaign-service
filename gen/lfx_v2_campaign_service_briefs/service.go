@@ -113,14 +113,16 @@ type Service interface {
 	// supply imageUrl'): 400 with that message. A redditConfig.excludedSubreddits
 	// or excludedGeoTargets that breaks its rules, or is sent while
 	// REDDIT_TARGETING_EXCLUSIONS_ENABLED is off, is also a synchronous 400 (see
-	// the config attribute). GOOGLE ADS SHARED-ACCOUNT INPUTS: a googleAdsConfig
-	// that sets any input naming an existing audience, user list, custom segment,
-	// shared negative keyword list or conversion action on the Google Ads account
-	// (demandGenAudience or an audience on any demandGenAdGroups entry;
-	// audienceSegments, customAudiences, customAffinities or
-	// excludedAudienceSegments, on the campaign or on any displayAdGroups entry;
-	// audienceSegments on any adGroups entry; campaignAudienceSegments (Search
-	// campaign-level observed user lists); performanceMaxAudienceSignal;
+	// the config attribute). So is a microsoftConfig.negativeKeywords list that
+	// breaks its rules or is sent while MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED
+	// is off (see the config attribute). GOOGLE ADS SHARED-ACCOUNT INPUTS: a
+	// googleAdsConfig that sets any input naming an existing audience, user list,
+	// custom segment, shared negative keyword list or conversion action on the
+	// Google Ads account (demandGenAudience or an audience on any
+	// demandGenAdGroups entry; audienceSegments, customAudiences, customAffinities
+	// or excludedAudienceSegments, on the campaign or on any displayAdGroups
+	// entry; audienceSegments on any adGroups entry; campaignAudienceSegments
+	// (Search campaign-level observed user lists); performanceMaxAudienceSignal;
 	// sharedNegativeKeywordLists; conversionActions,
 	// demandGenDemographics.audienceSegments,
 	// demandGenDemographics.customAudiences, and the same two lists in any
@@ -1171,7 +1173,24 @@ type CampaignCreateInput struct {
 	// blank or invalid entry, an overlap, a list over its cap, a value that is not
 	// an array of strings (null reads as absent), or either list while the flag is
 	// off, is refused with 400 "invalid campaign config: redditConfig.<field>:
-	// ..." before any job exists.
+	// ..." before any job exists. MICROSOFT NEGATIVE KEYWORDS (#563):
+	// microsoftConfig takes `negativeKeywords`, [{"text": string, "matchType":
+	// "Exact" | "Phrase"}], attached as CAMPAIGN-level negatives
+	// (AddNegativeKeywordsToEntities, EntityType Campaign) right after the
+	// campaign is created, under the rules of add-negative-keywords: 1-60 entries,
+	// match type Exact or Phrase in any casing (Broad is refused), text
+	// whitespace-collapsed, at most 100 characters, letters, digits, spaces and &
+	// ' - . only with no two punctuation characters adjacent, and no (text, match
+	// type) pair twice. Each keyword's outcome (APPLIED, ALREADY_PRESENT, FAILED
+	// or UNCONFIRMED) is recorded in the campaign result as negativeKeywords; a
+	// FAILED or UNCONFIRMED keyword, or a failed call, leaves the campaign
+	// created_degraded with a step naming it and never fails the job. A retry that
+	// reuses the campaign re-sends the list and gets ALREADY_PRESENT. OFF unless
+	// MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is exactly "true" on the
+	// deployment. A rule breach, a value that is not an array of {text, matchType}
+	// objects (null reads as absent), or a non-empty list while the flag is off,
+	// is refused with 400 "invalid campaign config:
+	// microsoftConfig.negativeKeywords: ..." before any job exists.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

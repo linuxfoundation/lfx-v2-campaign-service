@@ -1024,6 +1024,13 @@ decoded with `encoding/json` and no `identityjson` check. Tests in `keyword_leve
 `_InvalidInputSendsNothing`, `_ZeroCollectionCodeIsAbsent`, `_EntityCodeWithAnIDFallsThrough` and
 `_AlreadyExistsIsMatchedStrictly`. The dispatcher's are in `internal/dispatch/microsoft_keywords_test.go`.
 
+**Also at create (#563).** `AddCampaignNegativeKeywords` is also called by the create path,
+right after a confirmed `CreateCampaign`, for `microsoftConfig.negativeKeywords` (see
+[internal/dispatch](internal-dispatch.md), "Microsoft negative keywords at create"). The
+dispatcher records its positional outcomes on `CampaignResult.NegativeKeywords`, which is why
+`NegativeKeywordOutcome` carries camelCase JSON tags (`text`, `matchType`, `outcome`,
+`negativeKeywordId`, `errorCode`). `CreateCampaign` itself never sets the field.
+
 ## Ad-group max CPC bid read + write (LFXV2-2665)
 
 `bid.go` backs `MicrosoftDispatcher.WriteBid`. The bid lives on the AD GROUP (`AdGroup.CpcBid`,
