@@ -122,6 +122,14 @@ type microsoftConfig struct {
 	// the add-negative-keywords lever makes. Gated by MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED;
 	// see microsoft_negative_keywords.go.
 	NegativeKeywords []microsoftKeywordConfig `json:"negativeKeywords"`
+	// AudienceIDs (observed, bid only) and ExcludedAudienceIDs are remarketing list ids for the ad
+	// group (#563 gap 4, microsoft_audiences.go); AudienceBidAdjustment is the whole-percent bid
+	// adjustment on the observed ones (nil means 0, observe only). Behind
+	// MICROSOFT_AUDIENCES_ENABLED, and global_marketing_ops only
+	// (service.MicrosoftMarketingOpsInputs): the lists belong to the shared LF account.
+	AudienceIDs           []string `json:"audienceIds,omitempty"`
+	ExcludedAudienceIDs   []string `json:"excludedAudienceIds,omitempty"`
+	AudienceBidAdjustment *float64 `json:"audienceBidAdjustment,omitempty"`
 }
 
 // MicrosoftDispatcher creates Microsoft Advertising (Bing) campaigns for the orchestrator.
@@ -209,6 +217,10 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err := checkMicrosoftAdCopyShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	// Likewise a wrong-typed remarketing list input (#563 gap 4).
+	if err := checkMicrosoftAudiencesShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg microsoftConfig
 	if err := unmarshalPlatformConfig(config, "microsoftConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -248,6 +260,11 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// Sitelinks and callouts (#563): gated and validated BEFORE any upstream call (PreflightCreate
 	// has normally refused a bad or gated one already, as a 400).
 	if err := checkMicrosoftTextExtensions(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// Remarketing lists (#563 gap 4): gated and validated BEFORE any upstream call. The role
+	// check ran before the job existed (service.MicrosoftMarketingOpsInputs).
+	if err := checkMicrosoftAudiences(cfg); err != nil {
 		return nil, notCreated(err)
 	}
 	bf, err := decodeBriefFields(brief)
@@ -320,6 +337,15 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// above still runs on the FRESH row on every dispatch; only construction is cached.
 	client := d.cachedMicrosoftClient(brief.ProjectID, platform, res, creds, accountID)
 
+	// The remarketing lists must each be a remarketing list on this account BEFORE anything is
+	// created (one GetAudiencesByIds read), so an unknown or wrong-typed id fails the job with
+	// nothing created rather than degrading a campaign that already exists.
+	if len(cfg.AudienceIDs) > 0 || len(cfg.ExcludedAudienceIDs) > 0 {
+		if err := client.CheckRemarketingLists(ctx, cfg.AudienceIDs, cfg.ExcludedAudienceIDs); err != nil {
+			return nil, notCreated(err)
+		}
+	}
+
 	// The Microsoft client's contract (mirrors the siblings): a non-nil result with an error is
 	// an UNCONFIRMED partial (the campaign/tree MAY exist upstream — verify before retrying),
 	// while (nil, err) means NOTHING was created. Release the claim ONLY when result==nil; a
@@ -353,6 +379,10 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// The negatives follow the same rule: only on a CONFIRMED campaign, and a shortfall degrades
 	// it rather than failing the job (applyMicrosoftNegativeKeywords).
 	if applyMicrosoftNegativeKeywords(ctx, client, result, negatives) {
+		degraded = true
+	}
+	// And the remarketing lists, on the confirmed ad group (applyMicrosoftAudiences).
+	if applyMicrosoftAudiences(ctx, client, result, cfg) {
 		degraded = true
 	}
 	camp = campaignFromMicrosoft(ctx, result, cfg)
@@ -390,12 +420,16 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 	if err := checkMicrosoftNegativeKeywordsShape(config); err != nil {
 		return err
 	}
+	// So is a wrong-typed remarketing list input (#563 gap 4).
+	if err := checkMicrosoftAudiencesShape(config); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
 	// not decode is its zero value, which no plan rule reads as a refusal. The decode error itself
-	// stays "not applicable" — only bidding, the caller ad copy, sitelinks/callouts and
-	// negativeKeywords are promised as synchronous 400s.
+	// stays "not applicable" — only bidding, the caller ad copy, sitelinks/callouts,
+	// negativeKeywords and the remarketing lists are promised as synchronous 400s.
 	var cfg microsoftConfig
 	_ = unmarshalPlatformConfig(config, "microsoftConfig", &cfg)
 	if _, err := microsoftBidPlan(cfg); err != nil {
@@ -409,6 +443,9 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 		return err
 	}
 	if _, err := checkMicrosoftNegativeKeywords(cfg); err != nil {
+		return err
+	}
+	if err := checkMicrosoftAudiences(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable

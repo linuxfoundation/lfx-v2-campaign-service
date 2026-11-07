@@ -388,6 +388,7 @@ func (c *Client) createAdGroupAndAd(
 	adGroupWithIDPartial := func() *CampaignResult {
 		r := adGroupPartial()
 		r.AdGroupID = adGroupID
+		r.AdGroupReused = adGroupExisted
 		return r
 	}
 

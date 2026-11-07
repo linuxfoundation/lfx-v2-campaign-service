@@ -5553,7 +5553,29 @@ type CampaignCreateInputRequestBody struct {
 	// deployment. A rule breach, a value that is not an array of {text, matchType}
 	// objects (null reads as absent), or a non-empty list while the flag is off,
 	// is refused with 400 "invalid campaign config:
-	// microsoftConfig.negativeKeywords: ..." before any job exists.
+	// microsoftConfig.negativeKeywords: ..." before any job exists. MICROSOFT
+	// REMARKETING LISTS (#563): microsoftConfig takes `audienceIds` (remarketing
+	// lists to observe) and `excludedAudienceIds` (lists to exclude, such as
+	// registrants), decimal Microsoft audience ids, at most 50 per list, no repeat
+	// and none in both lists, plus `audienceBidAdjustment`, a whole percent from
+	// -90 to 900 on every observed list (omitted means 0, observe only; only with
+	// audienceIds). Before anything is created one GetAudiencesByIds call must
+	// return every id as a RemarketingList, or the job fails with nothing created;
+	// Microsoft's system lists (All Visitors, All Converters, Smart lists) are not
+	// returned by it and cannot be used. After the keywords they are attached to
+	// the confirmed ad group: exclusions as NegativeAdGroupCriterion first, then
+	// observed lists as BiddableAdGroupCriterion with the BidMultiplier; no
+	// TargetSetting is sent, so the ad group stays bid only for audiences. Each
+	// outcome (APPLIED, ALREADY_PRESENT when Microsoft reports the list already on
+	// the ad group, FAILED, UNCONFIRMED) is recorded as audiences in the result;
+	// on an ad group reused from an earlier attempt no list is sent, since its
+	// status and audience setting are not read; anything but APPLIED or
+	// ALREADY_PRESENT leaves the campaign created_degraded with a step and never
+	// fails the job. OFF unless MICROSOFT_AUDIENCES_ENABLED is exactly "true", and
+	// only for global_marketing_ops (see create-campaigns). A wrong JSON type
+	// (null reads as absent), a rule breach, or any of the three while the flag is
+	// off is refused with 400 "invalid campaign config: microsoftConfig.<field>:
+	// ..." before any job exists.
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

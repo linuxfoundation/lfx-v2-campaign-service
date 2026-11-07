@@ -301,6 +301,17 @@ openssl rand -base64 32
   shared ad account. The chart sets it to `"false"`
   (`app.environment.MICROSOFT_AD_EXTENSIONS_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once a live create confirms it.
+- `MICROSOFT_AUDIENCES_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `microsoftConfig.audienceIds`, `excludedAudienceIds` and
+  `audienceBidAdjustment` (#563): remarketing lists checked with
+  `GetAudiencesByIds` before anything is created, then attached to the new ad
+  group as observed (bid-only) and excluded audience criteria. Only the exact
+  value `true` enables them; anything else fails closed, and a create naming
+  any of the three is refused with a 400 before any job exists. The lists live
+  on the account every foundation shares, so they also need
+  `global_marketing_ops` on the project (403 otherwise). The chart sets it to
+  `"false"` (`app.environment.MICROSOFT_AUDIENCES_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once a live create confirms it.
 - `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.demandGenAudience`, one
   existing Google Ads Audience on a Demand Gen ad group (#459). Only the

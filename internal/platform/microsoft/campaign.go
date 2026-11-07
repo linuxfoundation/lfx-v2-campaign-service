@@ -220,6 +220,10 @@ type CampaignResult struct {
 	// id is known is reconcilable by name (scoped to the campaign).
 	AdGroupName string `json:"adGroupName,omitempty"`
 	AdGroupID   string `json:"adGroupId,omitempty"`
+	// AdGroupReused is true when the ad group was FOUND by name (an earlier attempt made it)
+	// rather than created by this run. Its settings are then whatever they are now, which is why
+	// the create-time observed remarketing lists (#563) are not attached to it.
+	AdGroupReused bool `json:"adGroupReused,omitempty"`
 	// AdID identifies the Responsive Search Ad created under the ad group.
 	AdID string `json:"adId,omitempty"`
 	// KeywordIDs are the ids of the keywords THIS RUN attached to the ad group by the MS-4
@@ -294,8 +298,12 @@ type CampaignResult struct {
 	// CreateCampaign never sets it — and it is empty when none were requested or the call
 	// failed as a whole (the Steps entry then says why).
 	NegativeKeywords []NegativeKeywordOutcome `json:"negativeKeywords,omitempty"`
-	MicrosoftAdsURL  string                   `json:"microsoftAdsUrl"`
-	Steps            []string                 `json:"steps"`
+	// Audiences is the positional outcome of the create-time remarketing lists
+	// (microsoftConfig.excludedAudienceIds then audienceIds, #563 gap 4) on the ad group. Set by
+	// the DISPATCHER after AttachAdGroupAudiences; empty when none were requested.
+	Audiences       []AudienceOutcome `json:"audiences,omitempty"`
+	MicrosoftAdsURL string            `json:"microsoftAdsUrl"`
+	Steps           []string          `json:"steps"`
 }
 
 // msCampaign is one Campaign in the POST CampaignManagement/v13/Campaigns body. Only

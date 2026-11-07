@@ -1530,3 +1530,55 @@ positional outcomes and logs, and they come from the response body, so a URL or 
 never passed on. Classification (`isNegativeKeywordAlreadyExists`, `isError`, the entity-level
 "was there a code") still reads the raw values, and the replacement is non-empty, so an entity
 refusal stays definite and an item stays FAILED.
+
+## Remarketing lists at create (`audiences.go`, #563 gap 4)
+
+`microsoftConfig.audienceIds` (observed), `excludedAudienceIds` and `audienceBidAdjustment` put
+remarketing lists on the ad group a create makes or reuses. `ValidateAudiences` holds the pure
+rules once: each id is the canonical spelling of a positive int64, compared exactly; at most 50
+per list; no repeat; no id in both lists; an adjustment is a whole percent from -90 to 900
+(Microsoft's `BidMultiplier` range) and is accepted only with observed lists.
+
+`CheckRemarketingLists` runs BEFORE anything is created. The dispatcher calls it after the client
+is built and before `CreateCampaign`. It is ONE `POST Audiences/QueryByIds` (`GetAudiencesByIds`,
+at most 100 ids, which is why each list is capped at 50) with `Type: "RemarketingList"`, exclusions
+first. Every id must come back, index-aligned, as a `RemarketingList`. A null slot, a partial
+error or another type is a `PreflightRefusal` naming the field, the id and Microsoft's code (or
+the type, rendered only if code-shaped). An answer that cannot be believed is a plain error: too
+many entries, no `Audiences` array at all, an id other than the one asked for, or an error with
+no usable index. Microsoft
+documents that the system lists (All Visitors, All Converters, Smart lists) are not returned by
+`GetAudiencesByIds`, so they cannot pass this check.
+
+`AttachAdGroupAudiences` runs on the CONFIRMED ad group after the keywords. It makes two
+`POST AdGroupCriterions` calls with `CriterionType: "Audience"`: the exclusions as
+`NegativeAdGroupCriterion` first, then the observed lists as `BiddableAdGroupCriterion` with a
+`BidMultiplier`. No `TargetSetting` is ever sent, and Microsoft's documented default for the
+Audience group is then bid only, so an observed list never narrows who sees the ad. Each list
+gets a positional `AudienceOutcome`:
+- `APPLIED` when it has an id.
+- `ALREADY_PRESENT` when every error naming it is 4152 (`CampaignServiceDuplicateAdGroupCriterion`,
+  matched strictly as the negative-keyword 4335 is) and the error evidence is complete, which means
+  the ad group already carries it. With incomplete evidence it is `UNCONFIRMED` instead. It is a
+  defensive case: the dispatcher sends no list to a reused ad group.
+- `FAILED` when a `NestedPartialErrors` collection names its index, when the call was refused, or
+  when it was `NOT_SENT` because the context ended.
+- `UNCONFIRMED` otherwise, including an ambiguous call or an unreadable 2xx, and every list
+  without an error of its own when the evidence cannot cover all of them: an outer or nested
+  error array was truncated, or an error carried no usable index (the rule geo.go's criterion add
+  follows). Codes are read with `audienceErrorCode`: a zero, empty or null default is not an error,
+  and a present code this client cannot read still counts as one (rendered `withheld`). In the
+  lookup, such an unreadable code makes the whole answer unreadable.
+
+The calls are not retried on 429, like every add here. `CampaignResult.AdGroupReused` reports an
+ad group found by name rather than created by this run. On such an ad group the dispatcher sends
+NO list (`NOT_SENT_REUSED_AD_GROUP`): its status and audience setting are not read, it may already
+be serving, and target-and-bid would turn an observed list into a restriction. The dispatcher
+(`applyMicrosoftAudiences`) records the outcomes as `CampaignResult.Audiences`. Anything but
+APPLIED or ALREADY_PRESENT makes the campaign
+`created_degraded`, with a step, and an extra "do not enable" step when an exclusion is short. It
+never fails the job.
+
+Not verified live: no Microsoft call was made. The dispatcher keeps all three fields behind
+`MICROSOFT_AUDIENCES_ENABLED` (default off). The lists belong to the shared LF account, so they
+also need `global_marketing_ops` (`service.MicrosoftMarketingOpsInputs`).

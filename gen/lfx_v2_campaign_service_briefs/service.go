@@ -159,29 +159,36 @@ type Service interface {
 	// likewise a twitterConfig that sets customAudienceIds or
 	// excludedCustomAudienceIds (any non-empty list) on a create that selects
 	// twitter-ads requires global_marketing_ops on this project in the same single
-	// check; those audiences belong to the LF X ad account. An X custom audience
-	// list is also refused synchronously with 400 "invalid campaign config:
-	// twitterConfig.<field>: ..." when it is not an array of strings, when an id
-	// is not 1-32 letters or digits, repeats, or is in both lists, when a list
-	// holds more than 60 ids or the X targeting lists together name more than 60
-	// criteria, and when TWITTER_CUSTOM_AUDIENCES_ENABLED is not "true" on this
-	// deployment. When both platforms' inputs are refused, the 403 names each
-	// platform's fields in its own sentence. A Reddit custom audience list is also
-	// refused synchronously with 400 "invalid campaign config:
-	// redditConfig.<field>: ..." when it is not an array of strings, when an id is
-	// not 1-64 letters, digits or underscores, repeats, or is in both lists, when
-	// a list holds more than 100 ids, and when REDDIT_CUSTOM_AUDIENCES_ENABLED is
-	// not "true" on this deployment. META SHARED-ACCOUNT INPUTS: likewise a
-	// metaConfig.targeting that sets customAudiences or excludedCustomAudiences
-	// (any non-empty list) names custom audiences of the Meta ad account every
-	// foundation shares and requires global_marketing_ops on this project (403
-	// naming them, 503 when the check cannot be made); age, gender and
-	// advantageAudience are not gated. An invalid metaConfig.targeting, or any
-	// targeting block while META_AUDIENCE_TARGETING_ENABLED is not "true" on the
-	// deployment, is a synchronous 400 "invalid campaign config:
-	// metaConfig.targeting...". An invalid per-platform `bidding` object (see the
-	// config attribute) is also refused synchronously, with 400 "invalid campaign
-	// config: <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
+	// check; those audiences belong to the LF X ad account. MICROSOFT
+	// SHARED-ACCOUNT INPUTS (#563): likewise a microsoftConfig that sets
+	// audienceIds or excludedAudienceIds (any non-empty list) on a create that
+	// selects microsoft-ads requires global_marketing_ops on this project in the
+	// same single check; those remarketing lists belong to the LF Microsoft
+	// Advertising account. A remarketing list input that breaks its rules, or is
+	// sent while MICROSOFT_AUDIENCES_ENABLED is not "true", is a synchronous 400
+	// too (see the config attribute). An X custom audience list is also refused
+	// synchronously with 400 "invalid campaign config: twitterConfig.<field>: ..."
+	// when it is not an array of strings, when an id is not 1-32 letters or
+	// digits, repeats, or is in both lists, when a list holds more than 60 ids or
+	// the X targeting lists together name more than 60 criteria, and when
+	// TWITTER_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. When both
+	// platforms' inputs are refused, the 403 names each platform's fields in its
+	// own sentence. A Reddit custom audience list is also refused synchronously
+	// with 400 "invalid campaign config: redditConfig.<field>: ..." when it is not
+	// an array of strings, when an id is not 1-64 letters, digits or underscores,
+	// repeats, or is in both lists, when a list holds more than 100 ids, and when
+	// REDDIT_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. META
+	// SHARED-ACCOUNT INPUTS: likewise a metaConfig.targeting that sets
+	// customAudiences or excludedCustomAudiences (any non-empty list) names custom
+	// audiences of the Meta ad account every foundation shares and requires
+	// global_marketing_ops on this project (403 naming them, 503 when the check
+	// cannot be made); age, gender and advantageAudience are not gated. An invalid
+	// metaConfig.targeting, or any targeting block while
+	// META_AUDIENCE_TARGETING_ENABLED is not "true" on the deployment, is a
+	// synchronous 400 "invalid campaign config: metaConfig.targeting...". An
+	// invalid per-platform `bidding` object (see the config attribute) is also
+	// refused synchronously, with 400 "invalid campaign config:
+	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
 	// Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc)
 	// and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are
 	// immediately eligible for the bid lever, and eligibility follows the
@@ -1341,7 +1348,29 @@ type CampaignCreateInput struct {
 	// deployment. A rule breach, a value that is not an array of {text, matchType}
 	// objects (null reads as absent), or a non-empty list while the flag is off,
 	// is refused with 400 "invalid campaign config:
-	// microsoftConfig.negativeKeywords: ..." before any job exists.
+	// microsoftConfig.negativeKeywords: ..." before any job exists. MICROSOFT
+	// REMARKETING LISTS (#563): microsoftConfig takes `audienceIds` (remarketing
+	// lists to observe) and `excludedAudienceIds` (lists to exclude, such as
+	// registrants), decimal Microsoft audience ids, at most 50 per list, no repeat
+	// and none in both lists, plus `audienceBidAdjustment`, a whole percent from
+	// -90 to 900 on every observed list (omitted means 0, observe only; only with
+	// audienceIds). Before anything is created one GetAudiencesByIds call must
+	// return every id as a RemarketingList, or the job fails with nothing created;
+	// Microsoft's system lists (All Visitors, All Converters, Smart lists) are not
+	// returned by it and cannot be used. After the keywords they are attached to
+	// the confirmed ad group: exclusions as NegativeAdGroupCriterion first, then
+	// observed lists as BiddableAdGroupCriterion with the BidMultiplier; no
+	// TargetSetting is sent, so the ad group stays bid only for audiences. Each
+	// outcome (APPLIED, ALREADY_PRESENT when Microsoft reports the list already on
+	// the ad group, FAILED, UNCONFIRMED) is recorded as audiences in the result;
+	// on an ad group reused from an earlier attempt no list is sent, since its
+	// status and audience setting are not read; anything but APPLIED or
+	// ALREADY_PRESENT leaves the campaign created_degraded with a step and never
+	// fails the job. OFF unless MICROSOFT_AUDIENCES_ENABLED is exactly "true", and
+	// only for global_marketing_ops (see create-campaigns). A wrong JSON type
+	// (null reads as absent), a rule breach, or any of the three while the flag is
+	// off is refused with 400 "invalid campaign config: microsoftConfig.<field>:
+	// ..." before any job exists.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

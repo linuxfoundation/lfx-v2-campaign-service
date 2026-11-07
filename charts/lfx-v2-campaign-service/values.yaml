@@ -412,6 +412,17 @@ app:
     MICROSOFT_AD_EXTENSIONS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to microsoftConfig.audienceIds,
+    # excludedAudienceIds and audienceBidAdjustment (#563): remarketing lists
+    # observed (bid only) and excluded on the new ad group. Built from the v13
+    # Campaign Management reference and not yet sent by a live create. While
+    # off, a create naming any of the three is refused with a 400 before any job
+    # exists. The lists live on the account every foundation shares, so they
+    # also need global_marketing_ops (403 otherwise). Any value other than
+    # "true" is treated as off.
+    MICROSOFT_AUDIENCES_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.demandGenAudience (#459): one
     # existing Google Ads Audience on a Demand Gen ad group. The same flag
     # gates each googleAdsConfig.demandGenAdGroups[].audience (#460), the same
