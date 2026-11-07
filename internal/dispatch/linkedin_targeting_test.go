@@ -28,7 +28,7 @@ import (
 func TestLinkedIn_TargetingPreflightRefusesWrongTypedEmployerExclusions(t *testing.T) {
 	t.Setenv(constants.EnvLinkedInAdsTargetingEnabled, "true")
 	d := NewLinkedInDispatcher(fakeConnReader{}, identityEncryptor{})
-	for _, excl := range []string{`[17]`, `"urn:li:company:1"`} {
+	for _, excl := range []string{`[17]`, `"urn:li:company:1"`, `[null]`, `["urn:li:company:1",null]`} {
 		cfg := json.RawMessage(`{"linkedInConfig":{"employerExclusions":` + excl + `,"targeting":{"include":[{"skills":["urn:li:skill:1"]}]}}}`)
 		err := d.PreflightCreate(context.Background(), "cncf", model.ProviderLinkedInAds, cfg)
 		if !errors.Is(err, domain.ErrCreateConfigInvalid) || !strings.Contains(err.Error(), "employerExclusions must be an array") {

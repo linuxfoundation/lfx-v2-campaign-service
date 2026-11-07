@@ -253,8 +253,18 @@ func checkTargetingShape(config json.RawMessage) error {
 			if !strings.EqualFold(k, "employerExclusions") || isJSONNull(raw) {
 				continue
 			}
-			var list []string
-			if json.Unmarshal(raw, &list) != nil {
+			// Element by element: a []string decode turns a null element into "" without an
+			// error, and validFacets would then drop it as blank.
+			var list []json.RawMessage
+			bad := json.Unmarshal(raw, &list) != nil
+			for _, el := range list {
+				var str string
+				if bad || isJSONNull(el) || json.Unmarshal(el, &str) != nil {
+					bad = true
+					break
+				}
+			}
+			if bad {
 				return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.employerExclusions must be an array of employer URN strings", domain.ErrCreateConfigInvalid))
 			}
 		}
