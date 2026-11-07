@@ -71,6 +71,11 @@ func TestLinkedIn_TargetingPreflight(t *testing.T) {
 		{"titles with seniorities", `{"include":[{"titles":["urn:li:title:1"]},{"seniorities":["urn:li:seniority:5"]}]}`, "titles together"},
 		{"unknown facet", `{"include":[{"memberBehaviors":["urn:li:memberBehavior:2"]}]}`, "unknown facet"},
 		{"no clauses", `{"include":[]}`, "at least one clause"},
+		{"exclude as an array", `{"include":[{"skills":["urn:li:skill:1"]}],"exclude":[]}`, "must be an object"},
+		{"exclude as a string", `{"include":[{"skills":["urn:li:skill:1"]}],"exclude":"x"}`, "must be an object"},
+		{"include as an object", `{"include":{"skills":["urn:li:skill:1"]}}`, "must be an object"},
+		{"a number facet value", `{"include":[{"skills":[1]}]}`, "must be an object"},
+		{"null", `null`, "must be an object"},
 		{"included employer in employerExclusions", `{"include":[{"employers":["urn:li:organization:1111"]}]}`, "is in employerExclusions"},
 		{"locale excluded", `{"include":[{"skills":["urn:li:skill:1"]}],"exclude":{"interfaceLocales":["urn:li:locale:en_US"]}}`, "only under include"},
 	} {

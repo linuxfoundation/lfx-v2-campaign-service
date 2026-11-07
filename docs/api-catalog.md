@@ -844,7 +844,7 @@ Each key becomes `urn:li:adTargetingFacet:<key>`. Set, `targeting` REPLACES `tar
 `employerExclusions` are still merged into `exclude.employers`. Duplicates in a list are dropped.
 
 Refused with a synchronous `400 invalid campaign config: linkedInConfig.targeting: …` before any
-job exists: an unknown facet; a malformed or wrong-namespace value (ids are numeric, no leading
+job exists: a `targeting` whose JSON shape is wrong (explicit `null`, `include` not an array of objects of string arrays, `exclude` not an object of string arrays); an unknown facet; a malformed or wrong-namespace value (ids are numeric, no leading
 zero); a blank or padded value; an empty clause, empty facet, no clause or more than 10; more than
 100 values in a facet (200 for `employers`, LinkedIn's caps); `groups` or `interfaceLocales` under
 `exclude`; a value both included and excluded; an included employer that is in

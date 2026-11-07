@@ -213,6 +213,33 @@ func linkedinTargetingEnabled() bool {
 	return os.Getenv(constants.EnvLinkedInAdsTargetingEnabled) == "true"
 }
 
+// checkTargetingShape refuses a linkedInConfig.targeting whose JSON shape is wrong (#552): an
+// explicit null, a non-object, an include that is not an array of objects of string arrays, or an
+// exclude that is not an object of string arrays. PreflightCreate decodes the config best-effort,
+// and encoding/json skips a wrong-typed field (an "exclude": [] decodes to nil), so without this a
+// malformed exclude would pass the synchronous check and fail the job later. Anything it cannot
+// attribute to targeting is left to the ordinary decode.
+func checkTargetingShape(config json.RawMessage) error {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(config, &envelope) != nil {
+		return nil
+	}
+	var platformCfg map[string]json.RawMessage
+	if json.Unmarshal(envelope["linkedInConfig"], &platformCfg) != nil {
+		return nil
+	}
+	for k, raw := range platformCfg {
+		if !strings.EqualFold(k, "targeting") {
+			continue
+		}
+		var t linkedin.Targeting
+		if isJSONNull(raw) || json.Unmarshal(raw, &t) != nil {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.targeting must be an object {\"include\": [{<facet>: [urn, ...]}], \"exclude\": {<facet>: [urn, ...]}}", domain.ErrCreateConfigInvalid))
+		}
+	}
+	return nil
+}
+
 // linkedinTargeting checks linkedInConfig.targeting before any job or request: refused while
 // the deployment gate is off, and refused when linkedin.ValidateTargeting refuses it. Both are
 // ErrCreateConfigInvalid pre-flight refusals, so PreflightCreate answers them with a synchronous
@@ -282,6 +309,9 @@ func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ mode
 	}
 	// linkedInConfig.targeting (#552) is promised as a synchronous 400 too. A targeting that did
 	// not decode is left nil here, and Dispatch's own decode fails the job on the same type.
+	if err := checkTargetingShape(config); err != nil {
+		return err
+	}
 	if _, err := linkedinTargeting(cfg); err != nil {
 		return err
 	}
@@ -380,6 +410,9 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	}
 	// Caller targeting (#552), gated and validated before any upstream call. The normalised copy
 	// replaces the request's, so the client and the stored snapshot both see it.
+	if err := checkTargetingShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	if cfg.Targeting, err = linkedinTargeting(cfg); err != nil {
 		return nil, notCreated(err)
 	}
