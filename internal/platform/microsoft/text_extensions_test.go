@@ -97,6 +97,7 @@ func TestValidateTextExtensions_Refusals(t *testing.T) {
 		"ftp url":                   {link(func(s *Sitelink) { s.FinalURL = "ftp://x.example" }), nil, FieldSitelinks, "absolute http or https"},
 		"url with space":            {link(func(s *Sitelink) { s.FinalURL = "https://x.example/a b" }), nil, FieldSitelinks, "whitespace"},
 		"url with credentials":      {link(func(s *Sitelink) { s.FinalURL = "https://user:pw@x.example/register" }), nil, FieldSitelinks, "must not carry user credentials"},
+		"url port only":             {link(func(s *Sitelink) { s.FinalURL = "https://:443/register" }), nil, FieldSitelinks, "absolute http or https URL"},
 		"url user only":             {link(func(s *Sitelink) { s.FinalURL = "https://user@x.example/register" }), nil, FieldSitelinks, "must not carry user credentials"},
 		"non-ascii url over 2048": {link(func(s *Sitelink) {
 			s.FinalURL = "https://x.example/" + strings.Repeat("中", 2048-len("https://x.example/")+1)

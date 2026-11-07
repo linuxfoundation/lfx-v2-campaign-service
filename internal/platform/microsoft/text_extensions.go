@@ -254,7 +254,8 @@ func sitelinkURL(raw string) (string, error) {
 		return "", fmt.Errorf("contains whitespace or a control character")
 	}
 	u, err := url.Parse(s)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	// Hostname, not Host: "https://:443/register" has Host ":443" but no host to land on.
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
 		return "", fmt.Errorf("must be an absolute http or https URL")
 	}
 	// Credentials in the URL would be forwarded to Microsoft and served in the ad; the ad
