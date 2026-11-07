@@ -75,7 +75,8 @@ stay together, and an alias is followed.
 - A labelled `break` or `continue` targets the loop or switch it names.
 - A `fallthrough` carries a clause's paths into the next clause.
 - Paths are bounded at 1024. A spread with more fails the guard rather than
-  checking a subset.
+  checking a subset. So does a spread in a function that contains a `goto`,
+  whose jumps are not modelled. The repo has none.
 - A log call inside a closure sees the paths where the closure sits.
 
 Each resulting sequence is resolved in full before it is paired, so a pair split

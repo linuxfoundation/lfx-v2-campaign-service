@@ -114,7 +114,7 @@ func TestProjectIDLogKeyIsUniform(t *testing.T) {
 		for _, f := range files {
 			hits, over := logKeys(f, info)
 			if over {
-				t.Errorf("%s: a log call's spread slice has more than %d paths; the guard cannot check them all, so simplify how the slice is built",
+				t.Errorf("%s: a log call's spread slice cannot be fully traced (more than %d paths, or a goto in its function); simplify how the slice is built",
 					fset.Position(f.Package).Filename, 1024)
 			}
 			for _, h := range hits {
@@ -353,7 +353,7 @@ func f() {
 			var got []string
 			hits, over := logKeys(f, info)
 			if over {
-				t.Fatalf("path overflow")
+				t.Fatalf("spread could not be fully traced")
 			}
 			for _, h := range hits {
 				got = append(got, h.key)
@@ -406,8 +406,9 @@ func newInfo() *types.Info {
 }
 
 // logKeys returns the distinct constant attribute keys a type-checked file passes to
-// log/slog, in source order, and whether a spread slice had more paths than the guard
-// tracks (maxPaths), in which case the keys are incomplete and the caller must fail. A key is read where slog reads one, by argument type:
+// log/slog, in source order, and whether a spread slice could not be fully traced (more
+// paths than maxPaths, or a goto in its function), in which case the keys are incomplete
+// and the caller must fail. A key is read where slog reads one, by argument type:
 //   - in a log call's key/value arguments (from kvStart on), a string argument is a key
 //     and takes two slots, a slog.Attr takes one, and anything else takes one (slog logs
 //     it under !BADKEY);
@@ -456,7 +457,9 @@ func logKeys(f *ast.File, info *types.Info) ([]keyHit, bool) {
 	// through (a return ends a path); a loop body runs zero or one times, after a for
 	// loop's initializer.
 	const maxPaths = 1024
-	overflow := false // a distinct path was dropped at maxPaths: the result is incomplete
+	// overflow: the keys are incomplete, because a distinct path was dropped at maxPaths
+	// or a spread sits in a function with a goto, whose jumps are not modelled.
+	overflow := false
 	type path = map[types.Object][]ast.Expr
 	clonePath := func(p path) path {
 		out := make(path, len(p))
@@ -658,7 +661,8 @@ func logKeys(f *ast.File, info *types.Info) ([]keyHit, bool) {
 			case token.CONTINUE:
 				return flow{cont: map[string][]path{target: ps}}
 			}
-			// goto and fallthrough are taken to fall through: an over-approximation.
+			// fallthrough is handled by the switch; goto never reaches here, because a
+			// spread in a function containing one is reported as untraceable (kvWalk).
 		case *ast.BlockStmt:
 			return execListF(x.List, ps)
 		case *ast.LabeledStmt:
@@ -818,7 +822,12 @@ func logKeys(f *ast.File, info *types.Info) ([]keyHit, bool) {
 	kvWalk := func(call *ast.CallExpr, args []ast.Expr) {
 		ps := []path{{}}
 		if call.Ellipsis.IsValid() {
-			ps = pathsAt(enclosing(call), ps, call)
+			body := enclosing(call)
+			if hasGoto(body) {
+				overflow = true
+				return
+			}
+			ps = pathsAt(body, ps, call)
 		}
 		for _, p := range ps {
 			classify(evalArgs(args, call.Ellipsis.IsValid(), p))
@@ -855,6 +864,20 @@ func logKeys(f *ast.File, info *types.Info) ([]keyHit, bool) {
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].pos < out[j].pos })
 	return out, overflow
+}
+
+// hasGoto reports whether a function body contains a goto statement.
+func hasGoto(body []ast.Stmt) bool {
+	found := false
+	for _, s := range body {
+		ast.Inspect(s, func(n ast.Node) bool {
+			if b, ok := n.(*ast.BranchStmt); ok && b.Tok == token.GOTO {
+				found = true
+			}
+			return !found
+		})
+	}
+	return found
 }
 
 // endsInFallthrough reports whether a case clause body ends in a fallthrough statement.
@@ -951,5 +974,40 @@ func TestLogKeys_PathOverflowIsReported(t *testing.T) {
 	}
 	if _, over := logKeys(f, info); !over {
 		t.Fatal("2048 paths did not report an overflow")
+	}
+}
+
+// TestLogKeys_GotoIsReportedUntraceable pins that a goto, whose jump the interpreter does
+// not model, makes a spread in its function untraceable instead of being taken to fall
+// through (which would let an assignment the jump skips hide the key it jumped with).
+func TestLogKeys_GotoIsReportedUntraceable(t *testing.T) {
+	src := `package p
+import "log/slog"
+var (
+	c  bool
+	id any
+)
+func f() {
+	fields := []any{"a", 1}
+	if c {
+		fields = []any{"projectID", id}
+		goto L
+	}
+	fields = []any{"kind", 1}
+L:
+	slog.Info("m", fields...)
+}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "p.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info := newInfo()
+	if _, err := (&types.Config{Importer: importer.Default()}).Check("p", fset, []*ast.File{f}, info); err != nil {
+		t.Fatalf("type-check: %v", err)
+	}
+	if _, over := logKeys(f, info); !over {
+		t.Fatal("a spread in a function with a goto was not reported as untraceable")
 	}
 }

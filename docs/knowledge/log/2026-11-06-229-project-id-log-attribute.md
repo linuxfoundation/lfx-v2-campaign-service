@@ -27,7 +27,8 @@ clear, as `"project_id"`.
     `break` skips the post statement, a labelled `break`/`continue` targets its named loop,
     `fallthrough` carries paths into the next clause,
     and aliases are followed. More than 1024 paths fails the guard (pinned by
-    `TestLogKeys_PathOverflowIsReported`) rather than checking a subset.
+    `TestLogKeys_PathOverflowIsReported`) rather than checking a subset, and so does a
+    spread in a function with a `goto` (`TestLogKeys_GotoIsReportedUntraceable`).
     Every resulting path is checked.
   - It looks through `any("k")` conversions, and reads elided `[]slog.Attr` elements,
     named-constant keys, and group names (`slog.Group`, `slog.GroupAttrs`,
@@ -44,8 +45,8 @@ clear, as `"project_id"`.
     appends within one branch were treated as independent. Then a `for` initializer was
     skipped, per-variable joins mixed exclusive branches, and returned paths were merged.
     Then a `break` still ran the loop's post statement,
-    `fallthrough` was ignored, the path bound dropped branches silently, and labelled
-    branches targeted the innermost loop.
+    `fallthrough` was ignored, the path bound dropped branches silently, labelled
+    branches targeted the innermost loop, and a `goto` was taken to fall through.
 - Mutation-checked:
   - Renaming one key to `projectID` in `internal/service/connection.go`, or the spread-slice
     key in `internal/service/meta_ad_sets.go`, fails the guard.
