@@ -1471,3 +1471,11 @@ keeps its existing scheme.
 the ad group (the bid); a reused campaign — found by name or by the duplicate-name self-heal — or a
 reused ad group sets it false and adds the step "Warning: bid NOT applied to reused campaign|ad group
 <id>; its existing bidding is unchanged".
+
+**Withheld error codes (#565 review).** `indexedErrorItem.code()` and `meaningfulCode` pass every
+code through `outputCode`: a value that is not code-shaped (`[A-Za-z0-9_.-]+`, i.e. a symbolic
+name or a number) is replaced by `withheldErrorCode`. The codes reach persisted steps, the
+positional outcomes and logs, and they come from the response body, so a URL or token there is
+never passed on. Classification (`isNegativeKeywordAlreadyExists`, `isError`, the entity-level
+"was there a code") still reads the raw values, and the replacement is non-empty, so an entity
+refusal stays definite and an item stays FAILED.

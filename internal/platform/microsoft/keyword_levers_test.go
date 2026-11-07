@@ -581,3 +581,31 @@ func TestGetAdGroupKeywords_RefusesAnUntrustworthyBody(t *testing.T) {
 		})
 	}
 }
+
+// An upstream code that is not code-shaped (here a URL carrying a token) is persisted and logged
+// by the callers, so it is withheld — at entity level and per item — while the classification
+// it drives is unchanged: the entity refusal stays DEFINITE and the item stays FAILED.
+func TestAddCampaignNegativeKeywords_SecretBearingCodesAreWithheld(t *testing.T) {
+	const secret = "https://evil.example/cb?token=SECRET123"
+	c, _ := kwRecorder(t, func(string, string) (int, string) {
+		return http.StatusOK, `{"NegativeKeywordIds":[{"Ids":[null]}],"NestedPartialErrors":[{"BatchErrors":null,"Code":1100,"ErrorCode":"` + secret + `"}]}`
+	})
+	_, err := c.AddCampaignNegativeKeywords(context.Background(), "321", []NegativeKeyword{{Text: "free", MatchType: "Exact"}})
+	if err == nil || IsOutcomeUnconfirmed(err) {
+		t.Fatalf("want a DEFINITE entity error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "SECRET123") || !strings.Contains(err.Error(), withheldErrorCode) {
+		t.Errorf("entity error = %q; want the code withheld", err)
+	}
+
+	c, _ = kwRecorder(t, func(string, string) (int, string) {
+		return http.StatusOK, `{"NegativeKeywordIds":[{"Ids":[null]}],"NestedPartialErrors":[{"BatchErrors":[{"Code":1005,"ErrorCode":"` + secret + `","Index":0}]}]}`
+	})
+	out, err := c.AddCampaignNegativeKeywords(context.Background(), "321", []NegativeKeyword{{Text: "free", MatchType: "Exact"}})
+	if err != nil {
+		t.Fatalf("AddCampaignNegativeKeywords: %v", err)
+	}
+	if out[0].Outcome != OutcomeFailed || out[0].ErrorCode != withheldErrorCode {
+		t.Errorf("item = %+v; want FAILED with the code withheld", out[0])
+	}
+}

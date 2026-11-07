@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
@@ -323,12 +324,31 @@ type indexedErrorItem struct {
 // code renders the item's machine-readable code, symbolic first.
 func (it indexedErrorItem) code() string {
 	if s := codeString(it.ErrorCode); s != "" && len(s) <= maxErrorCodeLen {
-		return s
+		return outputCode(s)
 	}
 	if s := codeString(it.Code); s != "" && len(s) <= maxErrorCodeLen {
-		return s
+		return outputCode(s)
 	}
 	return ""
+}
+
+// withheldErrorCode replaces an upstream code that is not code-shaped. It is non-empty, so a
+// caller that tests "was there a code" still classifies the item or entity as refused.
+const withheldErrorCode = "withheld"
+
+// errorCodeShape is what a Microsoft error code looks like: a symbolic name
+// (CampaignServiceNegativeKeywordAlreadyExists) or a number (4335).
+var errorCodeShape = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+// outputCode returns c when it is code-shaped and withheldErrorCode otherwise. The codes these
+// levers report are PERSISTED (campaign steps and results) and logged, and they come from the
+// response body, so a value carrying anything else — a URL, a token — is never passed on.
+// Classification reads the raw codes, not this rendering.
+func outputCode(c string) string {
+	if errorCodeShape.MatchString(c) {
+		return c
+	}
+	return withheldErrorCode
 }
 
 // isError reports whether the entry carries an actual code (a null placeholder does not).
@@ -880,7 +900,7 @@ func (it indexedErrorItem) isNegativeKeywordAlreadyExists() bool {
 func meaningfulCode(raws ...json.RawMessage) string {
 	for _, raw := range raws {
 		if c := codeString(raw); c != "" && c != "0" && len(c) <= maxErrorCodeLen {
-			return c
+			return outputCode(c)
 		}
 	}
 	return ""

@@ -23,6 +23,10 @@ created. An LF event Search campaign needs them from the first impression ("jobs
 - `ValidateNegativeKeywords` now renders an unsupported match type through `domain.CallerValue`
   instead of `%q`, because its sentence reaches a persisted job error verbatim; this also applies
   to the `add-negative-keywords` lever.
+- The error codes the negative-keyword and keyword levers report come from the response body
+  and are persisted in steps and results, so a code that is not code-shaped
+  (`[A-Za-z0-9_.-]+`) is rendered `withheld`. Classification still reads the raw codes, so an
+  entity refusal stays definite and an item stays FAILED.
 - Default-off deployment flag `MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED`; the chart sets
   `"false"`. Not role-gated: a negative keyword names no account resource.
 
