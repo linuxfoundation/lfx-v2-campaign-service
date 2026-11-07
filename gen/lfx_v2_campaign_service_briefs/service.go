@@ -133,7 +133,13 @@ type Service interface {
 	// they do not, 503 when the check cannot be made (project lookup or
 	// authorization service unavailable). The gateway admits every
 	// campaign_manager, which includes foundation executive directors, and those
-	// resources belong to the Google Ads account every foundation shares. REDDIT
+	// resources belong to the Google Ads account every foundation shares. META
+	// CREATIVE OPTIONS: metaConfig.callToAction outside its allow-list,
+	// metaConfig.conversionEvent outside its allow-list or on an objective other
+	// than conversions, or either one while its deployment flag
+	// (META_CALL_TO_ACTION_ENABLED, META_CONVERSION_EVENT_ENABLED) is not "true",
+	// is a synchronous 400 "invalid campaign config: metaConfig.callToAction..."
+	// or "invalid campaign config: metaConfig.conversionEvent...". REDDIT
 	// SHARED-ACCOUNT INPUTS (#549): a redditConfig that sets customAudienceIds or
 	// excludedCustomAudienceIds (any non-empty list) on a create that selects
 	// reddit-ads requires global_marketing_ops on this project in the same single
