@@ -6,6 +6,7 @@ package meta
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -104,4 +105,60 @@ func TestCreateCampaign_CreativeOptionRefusalsSendNothing(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCreateCampaign_ConversionEventIsRecordedOnlyForACreatedAdSet: the result names the event the
+// ad set THIS run created carries (PURCHASE by default), and nothing when the ad set was reused by
+// name, whose event this run never set (PR #559 review) — so the persisted result can be trusted by
+// the conversions metrics read.
+func TestCreateCampaign_ConversionEventIsRecordedOnlyForACreatedAdSet(t *testing.T) {
+	for _, tc := range []struct {
+		name, event, want string
+		objective         string
+	}{
+		{"chosen event", "complete_registration", "COMPLETE_REGISTRATION", "conversions"},
+		{"default event", "", "PURCHASE", "conversions"},
+		{"no event off conversions", "", "", "traffic"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := metaFieldServer(t, newBodyCapture(), newBodyCapture())
+			defer srv.Close()
+			in := metaFieldInput()
+			in.Objective, in.PixelID, in.ConversionEvent = tc.objective, "1234567890", tc.event
+			res, err := biddingClient(srv.URL, 100).CreateCampaign(context.Background(), in)
+			if err != nil || res.ConversionEvent != tc.want {
+				t.Fatalf("CreateCampaign = %+v, %v; want ConversionEvent %q", res, err, tc.want)
+			}
+		})
+	}
+
+	t.Run("reused ad set", func(t *testing.T) {
+		rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body := `{"id":"120100000000012"}`
+			switch {
+			case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") && strings.HasSuffix(req.URL.Path, "/campaigns"):
+				body = `{"data":[{"id":"120200000000123","status":"PAUSED","objective":"OUTCOME_SALES"}]}`
+			case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") && strings.HasSuffix(req.URL.Path, "/adsets"):
+				body = `{"data":[{"id":"120300000000456","status":"PAUSED"}],"paging":{}}`
+			case req.Method == http.MethodGet:
+				body = `{"name":"x"}`
+			case req.Method == http.MethodPost && (strings.HasSuffix(req.URL.Path, "/campaigns") || strings.HasSuffix(req.URL.Path, "/adsets")):
+				t.Errorf("unexpected create %s", req.URL.Path)
+			case strings.HasSuffix(req.URL.Path, "/adcreatives"):
+				body = `{"id":"creative_1"}`
+			case strings.HasSuffix(req.URL.Path, "/ads"):
+				body = `{"id":"ad_1"}`
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+		})
+		c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+			WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+		in := metaFieldInput()
+		in.Objective, in.PixelID, in.ConversionEvent, in.ReconcileByName = "conversions", "1234567890", "LEAD", true
+		res, err := c.CreateCampaign(context.Background(), in)
+		if err != nil || res.AdSetID != "120300000000456" || res.ConversionEvent != "" {
+			t.Fatalf("CreateCampaign = %+v, %v; want the reused ad set and no recorded event", res, err)
+		}
+	})
 }

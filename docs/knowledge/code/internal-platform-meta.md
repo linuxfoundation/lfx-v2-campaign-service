@@ -1043,8 +1043,9 @@ promoted and it would be silently ignored. Both are checked with the other deter
 before any request; refusals wrap `domain.ErrCreateConfigInvalid` (400) and are
 `domain.PreflightRefusal`s. The dispatcher gates each behind its own default-off flag
 (`META_CALL_TO_ACTION_ENABLED`, `META_CONVERSION_EVENT_ENABLED`) in `PreflightCreate` and `Dispatch`,
-and type-checks both with the publish-identity strings (`checkMetaIdentityShape`) so a wrong type is
-a 400 rather than absent. Not live-verified: whether every listed button is accepted with every
+and type-checks both with the publish-identity strings (`checkMetaStringFieldShape`) so a wrong type is
+a 400 rather than absent. `CampaignResult.ConversionEvent` records the event on the ad set THIS run created (empty when it
+was reused by name, as `BidApplied` is), which is what a conversions read must filter on. Not live-verified: whether every listed button is accepted with every
 objective.
 
 ## Ads under an ad set (`ads.go`, decision D7 first step)

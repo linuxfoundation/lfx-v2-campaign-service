@@ -2916,6 +2916,13 @@ type CampaignResult struct {
 	// dispatcher records the strategy and starting bid only when this is true. Set only on the
 	// successful result.
 	BidApplied bool
+	// ConversionEvent is the promoted object's custom_event_type on the ad set THIS run created
+	// (#550): the conversions objective's event (PURCHASE unless metaConfig.conversionEvent chose
+	// another), "" on any other objective. Like BidApplied it is set only when this run created the
+	// ad set — a reused ad set keeps whatever event it was created with — so a reader of the
+	// persisted result (the conversions metrics read, gap 6) never filters on an event the live ad
+	// set does not optimize for. Set only on the successful result.
+	ConversionEvent string `json:",omitempty"`
 	// Ads carries one entry per SUCCESSFULLY-created ad (so len(Ads) == AdCount), in
 	// variant order, each with its ad/creative ids and the image_hash attached to its
 	// creative. A per-variant failure contributes a Steps line, not an Ads entry.
@@ -3844,6 +3851,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// failure return an identically-shaped result.
 	r := partialResult()
 	r.BidApplied = adSetCreated
+	if ev, _ := promotedObject["custom_event_type"].(string); adSetCreated {
+		r.ConversionEvent = ev
+	}
 	return r, nil
 }
 

@@ -48,6 +48,7 @@ func TestMeta_PreflightCreate_CreativeOptionsFlagsOff(t *testing.T) {
 func TestMeta_PreflightCreate_CreativeOptionsFlagsOn(t *testing.T) {
 	t.Run("call to action only", func(t *testing.T) {
 		t.Setenv(constants.EnvMetaCallToActionEnabled, "true")
+		t.Setenv(constants.EnvMetaConversionEventEnabled, "false")
 		runBiddingPreflight(t, &MetaDispatcher{}, model.ProviderMetaAds, []biddingPreflightCase{
 			{name: "allowed", config: `{"metaConfig":{"callToAction":"buy_tickets"}}`},
 			{name: "not a Meta button", config: `{"metaConfig":{"callToAction":"REGISTER_NOW"}}`, want: "metaConfig.callToAction: \"REGISTER_NOW\" is not one of"},
@@ -56,6 +57,7 @@ func TestMeta_PreflightCreate_CreativeOptionsFlagsOn(t *testing.T) {
 	})
 	t.Run("conversion event only", func(t *testing.T) {
 		t.Setenv(constants.EnvMetaConversionEventEnabled, "true")
+		t.Setenv(constants.EnvMetaCallToActionEnabled, "false")
 		runBiddingPreflight(t, &MetaDispatcher{}, model.ProviderMetaAds, []biddingPreflightCase{
 			{name: "allowed", config: `{"metaConfig":{"objective":"Conversions","conversionEvent":"complete_registration"}}`},
 			{name: "on traffic", config: `{"metaConfig":{"objective":"traffic","conversionEvent":"LEAD"}}`, want: "applies only to the conversions objective"},
@@ -74,6 +76,9 @@ func TestMeta_DispatchRefusesCreativeOptionsWhileFlagsAreOff(t *testing.T) {
 		{"conversion event", `"objective":"conversions","pixelId":"123","conversionEvent":"LEAD"`, "META_CONVERSION_EVENT_ENABLED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// Both flags off explicitly, so an exported developer environment cannot change the result.
+			t.Setenv(constants.EnvMetaCallToActionEnabled, "false")
+			t.Setenv(constants.EnvMetaConversionEventEnabled, "false")
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				t.Errorf("unexpected Meta request %s %s", r.Method, r.URL.Path)
 				w.WriteHeader(http.StatusInternalServerError)

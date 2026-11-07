@@ -1585,7 +1585,7 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 	}
 	// A wrong-typed identity field would decode to "" below and pass as absent, so it is refused
 	// on its raw JSON type first (PR #414 review).
-	if err := checkMetaIdentityShape(config); err != nil {
+	if err := checkMetaStringFieldShape(config); err != nil {
 		return err
 	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
@@ -1605,24 +1605,24 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 		return err
 	}
 	// The call-to-action and conversion event (#550). A wrong-typed one is refused on its type by
-	// checkMetaIdentityShape above, so it is never read here as absent.
+	// checkMetaStringFieldShape above, so it is never read here as absent.
 	if err := checkMetaCreativeOptions(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
 }
 
-// metaIdentityKeys are the string fields checkMetaIdentityShape type-checks: the publish identity,
+// metaStringConfigKeys are the string fields checkMetaStringFieldShape type-checks: the publish identity,
 // and since #550 the call-to-action and conversion event, which would otherwise read as absent.
-var metaIdentityKeys = []string{"instagramUserId", "dsaBeneficiary", "dsaPayor", "callToAction", "conversionEvent"}
+var metaStringConfigKeys = []string{"instagramUserId", "dsaBeneficiary", "dsaPayor", "callToAction", "conversionEvent"}
 
-// checkMetaIdentityShape refuses a metaConfig whose instagramUserId, dsaBeneficiary, dsaPayor,
+// checkMetaStringFieldShape refuses a metaConfig whose instagramUserId, dsaBeneficiary, dsaPayor,
 // callToAction or conversionEvent is present with a non-string JSON type (null is absent, as encoding/json reads it). PreflightCreate
 // decodes best-effort and ignores type errors, so without this `"instagramUserId": true` or
 // `"dsaBeneficiary": 1` on an EU target would read as absent and fail open into a 202 — then fail
 // the job on Dispatch's strict decode. Keys are matched case-insensitively, as encoding/json
 // matches them. A config that is not an object envelope is left to Dispatch.
-func checkMetaIdentityShape(config json.RawMessage) error {
+func checkMetaStringFieldShape(config json.RawMessage) error {
 	if len(config) == 0 {
 		return nil
 	}
@@ -1640,7 +1640,7 @@ func checkMetaIdentityShape(config json.RawMessage) error {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		for _, want := range metaIdentityKeys {
+		for _, want := range metaStringConfigKeys {
 			if !strings.EqualFold(k, want) {
 				continue
 			}

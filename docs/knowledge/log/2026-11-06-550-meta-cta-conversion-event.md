@@ -18,3 +18,10 @@ Tests: `creative_options_test.go` (the button on every creative, the event besid
 refusals with no request sent) and `meta_creative_options_test.go` (both flags off and on, each flag
 gating only its own field, wrong types, Dispatch's refusal and wiring). Every guard, default and
 wiring line was mutated by hand and each mutation fails a test.
+
+PR #559 review: the result now records `ConversionEvent`, the `custom_event_type` of the ad set THIS
+run created (PURCHASE by default on conversions, empty otherwise), and leaves it empty when the ad set
+was reused by name — the `BidApplied` rule — so the conversions metrics read (gap 6) filters on the
+event the live ad set really optimizes for, not on the config snapshot. `metaIdentityKeys` /
+`checkMetaIdentityShape` are renamed `metaStringConfigKeys` / `checkMetaStringFieldShape`, since they
+now type-check the two creative options too, and the flag tests set both flags explicitly.
