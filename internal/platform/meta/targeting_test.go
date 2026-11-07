@@ -215,8 +215,8 @@ func TestCreateCampaign_TargetingRefusalsSendNothing(t *testing.T) {
 		{"non-numeric audience", AudienceTargeting{CustomAudiences: []string{"abc"}}, "customAudiences entry"},
 		{"non-numeric exclusion", AudienceTargeting{ExcludedCustomAudiences: []string{"1/2"}}, "excludedCustomAudiences entry"},
 		{"audience in both lists", AudienceTargeting{CustomAudiences: []string{"111"}, ExcludedCustomAudiences: []string{" 111"}}, `custom audience "111" is in both`},
-		// A long id is quoted through domain.CallerValue, which truncates it rather than echoing it whole.
-		{"long id in both lists", AudienceTargeting{CustomAudiences: []string{strings.Repeat("9", 80)}, ExcludedCustomAudiences: []string{strings.Repeat("9", 80)}}, "…\" (truncated) is in both"},
+		// A long id is quoted through domain.CallerValue, which withholds an opaque value rather than echoing it.
+		{"long id in both lists", AudienceTargeting{CustomAudiences: []string{strings.Repeat("9", 80)}, ExcludedCustomAudiences: []string{strings.Repeat("9", 80)}}, "custom audience (value withheld) is in both"},
 		{"too many audiences", AudienceTargeting{CustomAudiences: ids(MaxCustomAudiences + 1)}, "at most 25"},
 		{"advantage with ageMin 30", AudienceTargeting{AgeMin: intp(30), AdvantageAudience: boolp(true)}, "ageMin of at most 25"},
 		{"advantage with ageMax 54", AudienceTargeting{AgeMax: intp(54), AdvantageAudience: boolp(true)}, "fixes ageMax at 65"},
