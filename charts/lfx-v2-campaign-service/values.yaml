@@ -319,6 +319,20 @@ app:
     REDDIT_KEYWORD_TARGETING_WRITES_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to Reddit custom audiences (#549): the create
+    # inputs redditConfig.customAudienceIds / excludedCustomAudienceIds and the
+    # picker read reddit-ads/custom-audiences. Built from Reddit's public v3
+    # OpenAPI document and NOT exercised against a live ad account; ops turns
+    # it on by setting it to exactly "true" in lfx-v2-argocd after a live
+    # create confirms it. While off, a create naming an audience is refused
+    # with 400 before any job exists and the read answers 400. The audiences
+    # live on the ad account every foundation shares, so create-campaigns also
+    # requires global_marketing_ops for them (403 without it) and the read is
+    # in the gateway's marketing-ops-api rule. Any value other than "true" is
+    # treated as off, so a typo fails closed.
+    REDDIT_CUSTOM_AUDIENCES_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to redditConfig.excludedSubreddits and
     # redditConfig.excludedGeoTargets (#549), sent at create time as the ad
     # group's excluded_communities and excluded_geolocations. Default off: the
