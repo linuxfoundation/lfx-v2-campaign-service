@@ -124,6 +124,17 @@ const (
 	// flips and this constant goes away.
 	EnvRedditKeywordTargetingWritesEnabled = "REDDIT_KEYWORD_TARGETING_WRITES_ENABLED"
 
+	// EnvRedditConversionEventEnabled opts a deployment IN to redditConfig.conversionEvent (#549):
+	// the pixel event a conversions campaign optimizes toward, sent as the campaign's and the ad
+	// group's optimization_goal in place of the default PURCHASE. Only the exact value "true"
+	// enables it; unset or any other value fails closed, and a create that sets the field is
+	// refused with a 400 before any job exists. The field names no account resource, so it is not
+	// role-gated. Default-off because no live create has yet confirmed that Reddit accepts a goal
+	// other than PURCHASE on a CONVERSIONS campaign under campaign budget optimization; the values
+	// come from the published optimization-goal enum. Flip after one live create, at which point
+	// the gate is removed and this constant goes away.
+	EnvRedditConversionEventEnabled = "REDDIT_CONVERSION_EVENT_ENABLED"
+
 	// EnvRedditCustomAudiencesEnabled opts a deployment IN to Reddit custom audiences (#549): the
 	// create inputs redditConfig.customAudienceIds / excludedCustomAudienceIds (sent as the ad
 	// group's targeting.custom_audience_ids / excluded_custom_audience_ids) and the picker read
