@@ -1005,3 +1005,33 @@ handled: a group whose start is after the new campaign's start is still refused 
 Pinned by `TestEnsureCampaignGroupCoversEnd` (and its `_WriteFailureIsAnError`,
 `_ReWidensAfterAConcurrentShortening` and `_ConcurrentCallersKeepTheLaterEnd` siblings) and
 `TestCreateCampaign_ReusedGroupScheduleCoversCampaign`.
+
+## Caller targeting (`targeting_criteria.go`, #552)
+
+`CampaignInput.Targeting` carries `linkedInConfig.targeting`, the caller's own `targetingCriteria`
+in LinkedIn's shape (Targeting Criteria Facet URNs, li-lms-2026-10). `ValidateTargeting` is the
+one authority on it and makes no request, so the dispatcher's `PreflightCreate` (a synchronous
+400) and `CreateCampaign` (a pre-flight refusal before the campaign group) share it. Each
+facet key has a full value pattern (numeric ids with no leading zero; `staffCountRanges` is the
+closed set of LinkedIn's nine ranges); `groups` and `interfaceLocales` are include-only, as
+LinkedIn's "Special Note" says. Duplicates in a list are dropped on a copy; the caller's value is
+not mutated.
+
+The two documented combination bans — titles with seniorities or job functions, employers with
+industries or company sizes — are refused whenever both are INCLUDED, not only when they sit in
+separate (ANDed) clauses. The docs forbid only ANDing them; refusing the ORed form too is
+deliberately stricter until a live probe shows LinkedIn accepts it.
+
+`ValidateTargeting` also takes the config's `EmployerExclusions` and checks them MERGED with
+`exclude.employers` — well formed, within the 200-employer cap, and not naming an included
+employer — because the build merges them after the campaign group exists, and a rule the merge
+could break must be refused before it. Employers compare by id (`trailingID`), so a company and
+an organization URN of one id are one employer.
+
+`buildCustomTargetingCriteria` renders the geo clause first, then one `include.and` clause per
+entry with facet keys sorted (so the body is deterministic), and `exclude.or` from the caller's
+excludes plus the runtime config's `EmployerExclusions`. With `Targeting` set, the profile is not
+read at all — `validatePrerequisites` is skipped, but the org and the employer exclusions are
+still validated, since both still reach the wire. `SegmentFacetsSet` reports an ad segment
+anywhere; the create path's role gate (`service.LinkedInMarketingOpsInputs`) is pinned to agree
+with the facet list by `TestEveryLinkedInFacetIsClassifiedForTheMarketingOpsGate`.

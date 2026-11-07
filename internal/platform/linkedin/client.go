@@ -280,6 +280,11 @@ type CampaignInput struct {
 	StageToken string
 	Tactic     string
 	SlotToken  string
+	// Targeting is the caller's own targetingCriteria (#552). When set it REPLACES the profile
+	// clause (TargetingProfile is not read) and the hard-coded jobFunctions and
+	// seniorityExclusions; the runtime config's EmployerExclusions still join exclude.employers.
+	// CreateCampaign runs ValidateTargeting on it before any request. See targeting_criteria.go.
+	Targeting *Targeting
 }
 
 // CampaignResult is the outcome of CreateCampaign. Mirrors
@@ -2050,7 +2055,7 @@ func (c *Client) readCampaignGroupEnd(ctx context.Context, path, groupID string)
 // single-flight claim is PLANNED but NOT provided here (tracked separately as
 // LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
 // must serialize concurrent calls for the same name on their own.
-func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, lifetimeBudget bool, bidding campaignBiddingPlan) (id string, reused bool, err error) {
+func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan) (id string, reused bool, err error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
 	// Scope the idempotency lookup to the resolved campaign group: the campaign
@@ -2089,7 +2094,12 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		return "", false, fmt.Errorf("campaign start (now+%s buffer) is not before the end date — the run window is too short", startTimeBuffer)
 	}
 
-	targeting, err := c.buildTargetingCriteria(targetingProfile, geoURNs)
+	var targeting map[string]any
+	if custom != nil {
+		targeting, err = c.buildCustomTargetingCriteria(custom, geoURNs)
+	} else {
+		targeting, err = c.buildTargetingCriteria(targetingProfile, geoURNs)
+	}
 	if err != nil {
 		return "", false, err
 	}
@@ -2627,7 +2637,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.WrapPreflightRefusal(err)
 	}
 
-	if err := c.validatePrerequisites(accountID, in.TargetingProfile); err != nil {
+	// Caller targeting (#552) replaces the profile, so the profile prerequisites are not read;
+	// the org and the configured employer exclusions still are, since both still reach the wire.
+	var targeting *Targeting
+	if in.Targeting != nil {
+		if targeting, err = ValidateTargeting(in.Targeting, c.cfg.EmployerExclusions); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+		if _, err := c.orgURN(accountID); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+	} else if err := c.validatePrerequisites(accountID, in.TargetingProfile); err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
 	}
 
@@ -2874,7 +2894,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, in.LifetimeBudget, bidding)
+	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, targeting, in.LifetimeBudget, bidding)
 	if err != nil {
 		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
 		// (groupID) whose creation is a real side effect. Returning nil,err here

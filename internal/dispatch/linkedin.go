@@ -4,12 +4,14 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // campaignStatusGroupCreated marks a LinkedIn dispatch where the campaign GROUP was
@@ -197,6 +200,97 @@ type linkedinConfig struct {
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic:
 	// a WEBSITE_VISIT campaign bidding MAX_CLICK. Manual is WEBSITE_CONVERSION + a manual CPC.
 	Bidding *biddingConfig `json:"bidding,omitempty"`
+	// Targeting is the caller's own targetingCriteria (#552), behind
+	// LINKEDIN_ADS_TARGETING_ENABLED. Set, it replaces TargetingProfile and the hard-coded
+	// job functions and seniority exclusions. See linkedin.Targeting.
+	Targeting *linkedin.Targeting `json:"targeting,omitempty"`
+}
+
+// linkedinTargetingEnabled reports whether this deployment opted in to linkedInConfig.targeting
+// (#552). Read per call so it flips without a rebuild. Off by default: no targeting shape has
+// been exercised against a live LinkedIn account, and a wrong guess fails after the campaign
+// group exists.
+func linkedinTargetingEnabled() bool {
+	return os.Getenv(constants.EnvLinkedInAdsTargetingEnabled) == "true"
+}
+
+// checkTargetingShape refuses a linkedInConfig.targeting whose JSON shape is wrong (#552): an
+// explicit null, a non-object, an include that is not an array of objects of string arrays, or an
+// exclude that is not an object of string arrays, any other key (a misspelled exclude); and, with targeting set, an employerExclusions
+// that is not an array of strings. PreflightCreate decodes the config best-effort,
+// and encoding/json skips a wrong-typed field (an "exclude": [] decodes to nil), so without this a
+// malformed exclude would pass the synchronous check and fail the job later. Anything it cannot
+// attribute to targeting is left to the ordinary decode.
+func checkTargetingShape(config json.RawMessage) error {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(config, &envelope) != nil {
+		return nil
+	}
+	var platformCfg map[string]json.RawMessage
+	if json.Unmarshal(envelope["linkedInConfig"], &platformCfg) != nil {
+		return nil
+	}
+	hasTargeting := false
+	for k, raw := range platformCfg {
+		if !strings.EqualFold(k, "targeting") {
+			continue
+		}
+		hasTargeting = true
+		var t linkedin.Targeting
+		// Unknown keys are refused: a misspelled "exclude" would otherwise be dropped and the
+		// campaign created without the caller's exclusions, a silently wider audience.
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.DisallowUnknownFields()
+		if isJSONNull(raw) || dec.Decode(&t) != nil {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.targeting must be an object {\"include\": [{<facet>: [urn, ...]}], \"exclude\": {<facet>: [urn, ...]}}", domain.ErrCreateConfigInvalid))
+		}
+	}
+	// With targeting set, employerExclusions is merged into exclude.employers and checked by
+	// ValidateTargeting, so its JSON type is promised as a synchronous 400 too: a number entry
+	// or a string would otherwise decode to blanks or nil and pass.
+	if hasTargeting {
+		for k, raw := range platformCfg {
+			if !strings.EqualFold(k, "employerExclusions") || isJSONNull(raw) {
+				continue
+			}
+			// Element by element: a []string decode turns a null element into "" without an
+			// error, and validFacets would then drop it as blank.
+			var list []json.RawMessage
+			bad := json.Unmarshal(raw, &list) != nil
+			for _, el := range list {
+				var str string
+				if bad || isJSONNull(el) || json.Unmarshal(el, &str) != nil {
+					bad = true
+					break
+				}
+			}
+			if bad {
+				return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.employerExclusions must be an array of employer URN strings", domain.ErrCreateConfigInvalid))
+			}
+		}
+	}
+	return nil
+}
+
+// linkedinTargeting checks linkedInConfig.targeting before any job or request: refused while
+// the deployment gate is off, and refused when linkedin.ValidateTargeting refuses it. Both are
+// ErrCreateConfigInvalid pre-flight refusals, so PreflightCreate answers them with a synchronous
+// 400 and Dispatch fails the job with the same sentence. Returns the normalised copy.
+func linkedinTargeting(cfg linkedinConfig) (*linkedin.Targeting, error) {
+	if cfg.Targeting == nil {
+		return nil, nil
+	}
+	if !linkedinTargetingEnabled() {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.targeting is disabled on this deployment (%s is not \"true\"); omit it, or ask an operator to set %s to \"true\"",
+			domain.ErrCreateConfigInvalid, constants.EnvLinkedInAdsTargetingEnabled, constants.EnvLinkedInAdsTargetingEnabled))
+	}
+	// cfg.EmployerExclusions is exactly the runtime EmployerExclusions Dispatch hands the client
+	// (no deployment default is added), so this checks the same merged list CreateCampaign does.
+	t, err := linkedin.ValidateTargeting(cfg.Targeting, cfg.EmployerExclusions)
+	if err != nil {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.targeting: %w", domain.ErrCreateConfigInvalid, err))
+	}
+	return t, nil
 }
 
 // linkedinBidPlan resolves linkedInConfig's bidding choice. The OBJECTIVE follows it (decision
@@ -243,6 +337,15 @@ func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ mode
 	var cfg linkedinConfig
 	_ = unmarshalPlatformConfig(config, "linkedInConfig", &cfg)
 	if _, err := linkedinBidPlan(cfg); err != nil {
+		return err
+	}
+	// linkedInConfig.targeting (#552) is promised as a synchronous 400 too. checkTargetingShape
+	// refuses a targeting whose JSON shape is wrong; the best-effort decode above would otherwise
+	// leave it nil or partial.
+	if err := checkTargetingShape(config); err != nil {
+		return err
+	}
+	if _, err := linkedinTargeting(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -338,6 +441,14 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if err != nil {
 		return nil, notCreated(err)
 	}
+	// Caller targeting (#552), gated and validated before any upstream call. The normalised copy
+	// replaces the request's, so the client and the stored snapshot both see it.
+	if err := checkTargetingShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	if cfg.Targeting, err = linkedinTargeting(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
 	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
@@ -420,6 +531,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		AdAccountID:      adAccountID,
 		Images:           images,
 		ManualCPCBid:     plan.amount,
+		Targeting:        cfg.Targeting,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-4): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of

@@ -5557,3 +5557,9 @@ JSON decode) or come after a read was sent (Meta's inactive-account check) are d
 **not** marked. Google Ads (`googleads*.go`, `platform/googleads`) is untouched until its owner
 opts in. Pinned by `preflight_refusal_test.go` (one refusal per platform, verbatim, nothing
 sent; a real Meta 4xx/5xx whose body carries a secret query; a real Reddit token refusal).
+
+**LinkedIn caller targeting (#552).** `linkedinConfig.Targeting` is gated by
+`linkedinTargetingEnabled` (`LINKEDIN_ADS_TARGETING_ENABLED`, off by default) and validated by
+`linkedin.ValidateTargeting` in `linkedinTargeting`, which both `PreflightCreate` (synchronous
+400) and `Dispatch` (not-created refusal, before any upstream call) run. `Dispatch` replaces the
+request's targeting with the normalised copy, so the client and the stored snapshot both see it.
