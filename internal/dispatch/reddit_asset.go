@@ -85,13 +85,19 @@ func (d *RedditDispatcher) checkRedditAssetChoice(cfg redditConfig) (string, err
 
 // PreflightCreate refuses, before the create job exists, a Reddit config that names a stored
 // asset the service cannot serve (the feature off, imageAssetId together with imageUrl or
-// postUrl, or a malformed id), or whose bidding cannot be created as asked (redditBidPlan). It
+// postUrl, or a malformed id), whose bidding cannot be created as asked (redditBidPlan), or whose
+// custom audience lists are mistyped, malformed or off on this deployment (#549). It
 // never calls Reddit, so every other outcome is ErrPreflightNotApplicable. Whether the asset belongs to the brief cannot be checked here (the
 // pre-check is not given the brief); Dispatch checks it before any upstream call. A config that does
 // not decode is left to Dispatch, except a wrong-typed `bidding` (checkBiddingShape).
 func (d *RedditDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
 	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
 	if err := checkBiddingShape(config, "redditConfig"); err != nil {
+		return err
+	}
+	// Likewise a wrong-typed custom audience list (#549), which encoding/json would otherwise
+	// leave to the job.
+	if err := checkRedditCustomAudienceShape(config); err != nil {
 		return err
 	}
 	// A wrong-typed exclusion list is a synchronous 400 too (#549).
@@ -105,6 +111,12 @@ func (d *RedditDispatcher) PreflightCreate(_ context.Context, _ string, _ model.
 	var cfg redditConfig
 	decodeErr := unmarshalPlatformConfig(config, "redditConfig", &cfg)
 	if _, err := redditBidPlan(cfg); err != nil {
+		return err
+	}
+	// The custom audiences' gate and id rules run on the best-effort decode too, like the bid
+	// plan: an unrelated mistyped field must not turn a gated or invalid list into an accepted
+	// job. checkRedditCustomAudienceShape above already refused a mistyped list, so both decoded.
+	if err := checkRedditCustomAudiences(cfg); err != nil {
 		return err
 	}
 	// The exclusions' gate and rules run on the best-effort decode too, like the bid plan: an

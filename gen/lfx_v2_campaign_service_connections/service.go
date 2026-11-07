@@ -229,6 +229,24 @@ type Service interface {
 	// pure read: the only upstream call is googleAds:search, and nothing is
 	// persisted.
 	ListGoogleAdsAudiences(context.Context, *ListGoogleAdsAudiencesPayload) (res *GoogleAdsAudienceResources, err error)
+	// List the custom audiences on the Reddit ad account a Reddit create for this
+	// project uses, live from Reddit Ads API v3 GET
+	// /ad_accounts/{ad_account_id}/custom_audiences, for picking
+	// redditConfig.customAudienceIds and excludedCustomAudienceIds (#549). Follows
+	// Reddit's pagination for at most 10 pages; `truncated` is set when more
+	// remained. Sorted by name, ignoring case. Credentials resolve as for a
+	// create: the project's own Reddit connection, or the LF system account when
+	// the deployment forces it. The Reddit ad account is shared by every
+	// foundation, so the response lists EVERY foundation's audiences; like
+	// list-google-ads-audiences it is therefore gated on global_marketing_ops of
+	// {project_id} (the LF marketing team), not campaign_manager, which also
+	// admits a foundation's executive director. Disabled (400 not supported)
+	// unless REDDIT_CUSTOM_AUDIENCES_ENABLED is "true": the read is built from
+	// Reddit's public OpenAPI document and has not been exercised against a live
+	// ad account. An answer this service cannot believe (no data list, an unusable
+	// or repeated id) is 503 with nothing partial. A pure read: nothing is
+	// persisted.
+	ListRedditAdsCustomAudiences(context.Context, *ListRedditAdsCustomAudiencesPayload) (res *RedditAdsCustomAudiences, err error)
 	// Read Meta audience insights — age and gender (one combined breakdown) and
 	// placement (publisher_platform and platform_position) — for this project's
 	// own campaigns, live from the Meta Marketing API Insights edge of the
@@ -782,7 +800,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [79]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
+var MethodNames = [80]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-reddit-ads-custom-audiences", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -2224,6 +2242,16 @@ type ListRedditAdsAccountsResult struct {
 	Accounts []*AccessibleAccount
 }
 
+// ListRedditAdsCustomAudiencesPayload is the payload type of the
+// lfx-v2-campaign-service-connections service list-reddit-ads-custom-audiences
+// method.
+type ListRedditAdsCustomAudiencesPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
 // ListTwitterAdsAccountsPayload is the payload type of the
 // lfx-v2-campaign-service-connections service list-twitter-ads-accounts method.
 type ListTwitterAdsAccountsPayload struct {
@@ -2709,6 +2737,43 @@ type RedditAdsCredentials struct {
 	ClientSecret string
 	// OAuth refresh token
 	RefreshToken string
+}
+
+type RedditAdsCustomAudience struct {
+	// The audience id, in exactly the form redditConfig.customAudienceIds and
+	// excludedCustomAudienceIds accept. Send it as-is.
+	ID string
+	// The audience's display name. Not an identifier; may be empty.
+	Name string
+	// Reddit's audience type, verbatim (CUSTOMER_LIST, LOOKALIKE,
+	// ENGAGEMENT_RETARGETING, PIXEL_RETARGETING, THIRD_PARTY or IN_MARKET); may be
+	// empty.
+	Type string
+	// Reddit's processing status, verbatim (VALID, SUCCESSFUL, PENDING, EXPIRED,
+	// NOT_ENOUGH_MATCHES_ERROR and so on); may be empty. Every audience is listed
+	// whatever its status, so a picker can show why one is not usable yet.
+	Status string
+	// Reddit's lower bound on the matched users. Absent when Reddit sent none,
+	// which is not a size of 0.
+	SizeLower *int64
+	// Reddit's upper bound on the matched users. Absent when Reddit sent none.
+	SizeUpper *int64
+}
+
+// RedditAdsCustomAudiences is the result type of the
+// lfx-v2-campaign-service-connections service list-reddit-ads-custom-audiences
+// method.
+type RedditAdsCustomAudiences struct {
+	// The Reddit ad account the audiences were read from: the account a Reddit
+	// create for this project uses
+	AccountID string
+	// The account's custom audiences, sorted by name (ignoring case), then id
+	Audiences []*RedditAdsCustomAudience
+	// How many audiences are in `audiences`
+	AudienceCount int
+	// True when Reddit still had more pages after the 10 this read follows; the
+	// list is then incomplete
+	Truncated bool
 }
 
 type RedditAdsKeyword struct {

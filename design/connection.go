@@ -1773,6 +1773,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	// Create-form lookups (design/google_ads_lookups.go): the geo target, user-list and
 	// conversion-action pickers.
 	googleAdsLookupMethods()
+	redditAdsLookupMethods()
 
 	Method("get-meta-ads-audience", func() {
 		Description("Read Meta audience insights — age and gender (one combined breakdown) and placement " +
