@@ -98,19 +98,24 @@ the dynamic value. Calls are matched by the function they resolve to, so `http.E
 not a log call. A message or value that reads "project" is not a key and
 passes. A key held in a named constant is checked.
 
+**Across function boundaries:**
+
+- A parameter of an unexported function whose every use is a direct call is
+  read from all its call sites. An example is `logFields` in
+  `internal/service/meta_ad_sets.go`, handed to `answerUnconfirmedAdSetWrite`.
+  A final `...any` parameter takes each call's trailing arguments, so a logging
+  wrapper such as `func warnf(args ...any)` is checked at its callers.
+- A parameter of an exported function, or of one also used as a value, may be
+  called from elsewhere. So may a package-level slice. Spreading either is
+  untraceable.
+
 **What it does not see:**
 
 - A key built at runtime.
-- A key that reaches slog across a function boundary. For example, a wrapper
-  `func warn(msg string, args ...any)` that spreads `args...` into slog, or a
-  `[]any` passed in as a parameter, or a slice passed to a function that
-  rewrites its elements. The guard traces a spread only within the
-  enclosing function, where a parameter has no known contents.
+- A callee that rewrites the elements of a slice passed to it.
+- A call through an interface or a func value: its target, and so its
+  parameters' call sites, is not resolved.
 
-The repo has no such logging wrapper today. The one slice that is handed to a
-helper (`logFields` in `internal/service/meta_ad_sets.go`) is checked where it
-is built, because it is also spread into slog there. Add a wrapper only with a
-matching extension to the guard.
 `TestLogKeys_ReadsKeyPositionsOnly` pins each rule. A floor on the number of
 `project_id` keys seen keeps the walk from passing vacuously.
 

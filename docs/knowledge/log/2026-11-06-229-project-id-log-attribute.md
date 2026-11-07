@@ -40,9 +40,10 @@ clear, as `"project_id"`.
   - It looks through `any("k")` conversions, and reads elided `[]slog.Attr` elements,
     named-constant keys, and group names (`slog.Group`, `slog.GroupAttrs`,
     `Logger.WithGroup`).
-  - It does not see keys that reach slog through another function's parameter (a `...any`
-    wrapper, a slice parameter). The repo has no such wrapper, and the logging-conventions
-    page states the limit.
+  - A parameter of an unexported, directly called function is read from every call site, so
+    `logFields` handed to `answerUnconfirmedAdSetWrite` and a `...any` logging wrapper are
+    checked. A parameter of an exported or value-used function, and a package-level slice,
+    are untraceable. A `var fields []any` declaration is empty.
   - It matches calls by the function they resolve to, so `http.Error` is not one.
   - `TestLogKeys_ReadsKeyPositionsOnly` pins each rule. Both tests were reworked over the PR
     #539 review rounds. Messages and values were first read as keys. Then spread slices,
@@ -54,7 +55,8 @@ clear, as `"project_id"`.
     Then a `break` still ran the loop's post statement,
     `fallthrough` was ignored, the path bound dropped branches silently, labelled
     branches targeted the innermost loop, a `goto` was taken to fall through,
-    element writes were ignored, and a reslice or a method expression's receiver hid keys.
+    element writes were ignored, a reslice or a method expression's receiver hid keys, and
+    parameters, package-level slices and zero-value declarations were mis-read.
 - Mutation-checked:
   - Renaming one key to `projectID` in `internal/service/connection.go`, or the spread-slice
     key in `internal/service/meta_ad_sets.go`, fails the guard.

@@ -111,9 +111,9 @@ func TestProjectIDLogKeyIsUniform(t *testing.T) {
 		if _, cerr := (&types.Config{Importer: imp}).Check(p.ImportPath, fset, files, info); cerr != nil {
 			t.Fatalf("type-check %s: %v", p.ImportPath, cerr)
 		}
-		decls := funcDecls(files, info)
+		idx := buildIndex(files, info)
 		for _, f := range files {
-			hits, over := logKeys(f, info, decls)
+			hits, over := logKeys(f, info, idx)
 			if over {
 				t.Errorf("%s: a log call's spread slice cannot be fully traced (more than %d paths, or a goto or an in-place []any element write in its function); simplify how the slice is built",
 					fset.Position(f.Package).Filename, 1024)
@@ -299,6 +299,12 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 			_ = slog.Group("g", byClass...)`, []string{"projectID", "g"}},
 		{"an indexed literal is read in index order", `fields := []any{1: id, 0: "projectID"}
 			slog.Info("m", fields...)`, []string{"projectID"}},
+		{"a zero-value declaration is empty", `var fields []any
+			fields = append(fields, "project_id", id)
+			slog.Info("m", fields...)`, []string{"project_id"}},
+		{"a parameter is read from its call sites", `logWith([]any{"projectID", id})
+			logWith([]any{"kind", 1})`, []string{"projectID", "kind"}},
+		{"a variadic wrapper's arguments are read from its call sites", `warnf("projectID", id)`, []string{"projectID"}},
 		{"a full reslice is the slice", `fields := []any{"projectID", id}
 			slog.Info("m", fields[:]...)`, []string{"projectID"}},
 		{"a constant reslice keeps its window", `fields := []any{"x", 1, "projectID", id}
@@ -348,6 +354,8 @@ var (
 	mk      func() ([]any, error)
 )
 const keyConst = "projectID"
+func logWith(fields []any) { slog.Info("w", fields...) }
+func warnf(args ...any)      { slog.Warn("w", args...) }
 func helperFields(c bool) []any {
 	attrs := []any{"step", 1}
 	if c {
@@ -369,7 +377,7 @@ func f() {
 				t.Fatalf("type-check: %v", err)
 			}
 			var got []string
-			hits, over := logKeys(f, info, funcDecls([]*ast.File{f}, info))
+			hits, over := logKeys(f, info, buildIndex([]*ast.File{f}, info))
 			if over {
 				t.Fatalf("spread could not be fully traced")
 			}
@@ -438,7 +446,8 @@ func newInfo() *types.Info {
 //
 // Calls are matched by the function they resolve to, so a same-named function or method
 // of another package (http.Error, a builder's With) is not a log call.
-func logKeys(f *ast.File, info *types.Info, decls map[*types.Func]*ast.FuncDecl) ([]keyHit, bool) {
+func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
+	decls := idx.decls
 	seen := map[token.Pos]bool{}
 	var out []keyHit
 	addKey := func(e ast.Expr) {
@@ -542,6 +551,9 @@ func logKeys(f *ast.File, info *types.Info, decls map[*types.Func]*ast.FuncDecl)
 	// calleeResults is defined below, once pathsAt exists: the []any sequences a
 	// same-package function can return.
 	var calleeResults func(fn *types.Func) seqs
+	// paramValues is defined below too: the []any sequences a parameter can hold, from
+	// every call site of its function, or nil when those call sites are not all known.
+	var paramValues func(v *types.Var) seqs
 
 	// evalSlice returns the sequences a []any expression can hold on path p. It is one
 	// sequence except where a call to a same-package function can return several.
@@ -555,7 +567,21 @@ func logKeys(f *ast.File, info *types.Info, decls map[*types.Func]*ast.FuncDecl)
 	evalSlice = func(e ast.Expr, p path) seqs {
 		switch x := ast.Unparen(e).(type) {
 		case *ast.Ident:
-			return seqs{p[objOf(x)]}
+			o := objOf(x)
+			if seq, ok := p[o]; ok {
+				return seqs{seq}
+			}
+			if !isAnySlice(info.TypeOf(x)) {
+				return seqs{nil}
+			}
+			if v, ok := o.(*types.Var); ok {
+				if alts := paramValues(v); alts != nil {
+					return alts
+				}
+			}
+			// Not assigned on this path and not a parameter whose callers are all known: a
+			// package-level variable, a range variable, ... Its contents are not modelled.
+			return seqs{{untraced}}
 		case *ast.CompositeLit:
 			if isAnySlice(info.TypeOf(x)) {
 				return seqs{literalElems(x, info)}
@@ -610,7 +636,12 @@ func logKeys(f *ast.File, info *types.Info, decls map[*types.Func]*ast.FuncDecl)
 			for i := range vals {
 				vals[i] = seqs{{untraced}} // a multi-value call's results are not modelled
 			}
-			if len(lhs) == len(rhs) {
+			switch {
+			case len(rhs) == 0: // var fields []any: the zero value, an empty slice
+				for i := range vals {
+					vals[i] = seqs{nil}
+				}
+			case len(lhs) == len(rhs):
 				for i := range lhs {
 					vals[i] = evalSlice(rhs[i], p)
 				}
@@ -886,9 +917,11 @@ func logKeys(f *ast.File, info *types.Info, decls map[*types.Func]*ast.FuncDecl)
 		return ps
 	}
 	// enclosing returns the statement list of the top-level function containing n.
+	// enclosing returns the statement list of the package-level function containing n,
+	// in any of the package's files.
 	enclosing := func(n ast.Node) []ast.Stmt {
-		for _, d := range f.Decls {
-			if fd, ok := d.(*ast.FuncDecl); ok && fd.Body != nil && contains(fd.Body, n) {
+		for _, fd := range decls {
+			if fd.Body != nil && contains(fd.Body, n) {
 				return fd.Body.List
 			}
 		}
@@ -937,6 +970,56 @@ func logKeys(f *ast.File, info *types.Info, decls map[*types.Func]*ast.FuncDecl)
 			out = seqs{{untraced}}
 		}
 		calleeMemo[fn] = out
+		return out
+	}
+
+	paramMemo := map[*types.Var]seqs{}
+	paramBusy := map[*types.Var]bool{}
+	paramValues = func(v *types.Var) seqs {
+		pp, ok := idx.params[v]
+		if !ok {
+			return nil
+		}
+		fn := pp.fn
+		// Only an unexported function whose every use is a direct call has all its call
+		// sites in view. An exported one, or one used as a value, may be called elsewhere.
+		if fn.Exported() || idx.valueUse[fn] {
+			return nil
+		}
+		if alts, ok := paramMemo[v]; ok {
+			return alts
+		}
+		if paramBusy[v] {
+			return seqs{{untraced}}
+		}
+		paramBusy[v] = true
+		defer delete(paramBusy, v)
+		var out seqs
+		for _, call := range idx.calls[fn] {
+			body := enclosing(call)
+			if body == nil || hasGoto(body) || writesAnyElements(body, info) {
+				out = append(out, []ast.Expr{untraced})
+				continue
+			}
+			args := call.Args
+			if isMethodExpr(call, info) && len(args) > 0 {
+				args = args[1:]
+			}
+			for _, cp := range pathsAt(body, []path{{}}, call) {
+				switch {
+				case pp.variadic && pp.index <= len(args):
+					out = append(out, evalArgs(args[pp.index:], call.Ellipsis.IsValid(), cp)...)
+				case pp.index < len(args):
+					out = append(out, evalSlice(args[pp.index], cp)...)
+				default:
+					out = append(out, []ast.Expr{untraced})
+				}
+			}
+		}
+		if out == nil {
+			out = seqs{nil} // never called: nothing reaches the log
+		}
+		paramMemo[v] = out
 		return out
 	}
 
@@ -1062,20 +1145,71 @@ func writesAnyElements(body []ast.Stmt, info *types.Info) bool {
 	return found
 }
 
-// funcDecls maps each function and method declared in files to its declaration, so the
-// guard can read a same-package helper that builds a []any it returns.
-func funcDecls(files []*ast.File, info *types.Info) map[*types.Func]*ast.FuncDecl {
-	out := map[*types.Func]*ast.FuncDecl{}
+// pkgIndex is what the guard needs to see across a package's files: each function's
+// declaration (to read a helper's []any result), every direct call of it, whether it is
+// also used as a value, and which function each []any parameter belongs to (to read a
+// parameter's contents from its call sites).
+type pkgIndex struct {
+	decls    map[*types.Func]*ast.FuncDecl
+	calls    map[*types.Func][]*ast.CallExpr
+	valueUse map[*types.Func]bool
+	params   map[*types.Var]paramPos
+}
+
+type paramPos struct {
+	fn       *types.Func
+	index    int
+	variadic bool // the final ...T parameter, which takes the call's trailing arguments
+}
+
+func buildIndex(files []*ast.File, info *types.Info) *pkgIndex {
+	idx := &pkgIndex{
+		decls:    map[*types.Func]*ast.FuncDecl{},
+		calls:    map[*types.Func][]*ast.CallExpr{},
+		valueUse: map[*types.Func]bool{},
+		params:   map[*types.Var]paramPos{},
+	}
+	callFun := map[*ast.Ident]*ast.CallExpr{}
 	for _, f := range files {
 		for _, d := range f.Decls {
-			if fd, ok := d.(*ast.FuncDecl); ok {
-				if fn, ok := info.Defs[fd.Name].(*types.Func); ok {
-					out[fn] = fd
-				}
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			fn, ok := info.Defs[fd.Name].(*types.Func)
+			if !ok {
+				continue
+			}
+			idx.decls[fn] = fd
+			sig := fn.Type().(*types.Signature)
+			for i := 0; i < sig.Params().Len(); i++ {
+				idx.params[sig.Params().At(i)] = paramPos{fn, i, sig.Variadic() && i == sig.Params().Len()-1}
 			}
 		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			if c, ok := n.(*ast.CallExpr); ok {
+				switch fun := ast.Unparen(c.Fun).(type) {
+				case *ast.Ident:
+					callFun[fun] = c
+				case *ast.SelectorExpr:
+					callFun[fun.Sel] = c
+				}
+			}
+			return true
+		})
 	}
-	return out
+	for id, o := range info.Uses {
+		fn, ok := o.(*types.Func)
+		if !ok || idx.decls[fn] == nil {
+			continue
+		}
+		if c, ok := callFun[id]; ok {
+			idx.calls[fn] = append(idx.calls[fn], c)
+		} else {
+			idx.valueUse[fn] = true
+		}
+	}
+	return idx
 }
 
 // calledFunc returns the declared function or method call invokes, or nil (a builtin,
@@ -1264,7 +1398,7 @@ func TestLogKeys_PathOverflowIsReported(t *testing.T) {
 	if _, err := (&types.Config{Importer: importer.Default()}).Check("p", fset, []*ast.File{f}, info); err != nil {
 		t.Fatalf("type-check: %v", err)
 	}
-	if _, over := logKeys(f, info, funcDecls([]*ast.File{f}, info)); !over {
+	if _, over := logKeys(f, info, buildIndex([]*ast.File{f}, info)); !over {
 		t.Fatal("2048 paths did not report an overflow")
 	}
 }
@@ -1282,9 +1416,11 @@ func TestLogKeys_UnmodelledSlicesAreReportedUntraceable(t *testing.T) {
 		"call result":                `fields = mk1()`,
 		"variable reslice":           `fields = fields[n:]`,
 		"indexed literal with a gap": `fields = []any{0: "kind", 2: id}`,
+		"package-level slice":        `fields = pkgFields`,
+		"function used as a value":   "g := logWith\ng(fields)",
 	} {
 		t.Run(name, func(t *testing.T) {
-			src := "package p\nimport \"log/slog\"\nvar (\nid any\nn int\nmk func() ([]any, error)\nmk1 func() []any\n)\nfunc f() {\nfields := []any{\"kind\", id}\n" +
+			src := "package p\nimport \"log/slog\"\nvar (\nid any\nn int\nmk func() ([]any, error)\nmk1 func() []any\n)\nvar pkgFields = []any{\"projectID\", 1}\nfunc logWith(fields []any) { slog.Info(\"m\", fields...) }\nfunc f() {\nfields := []any{\"kind\", id}\n" +
 				stmt + "\nslog.Info(\"m\", fields...)\n}\n"
 			fset := token.NewFileSet()
 			f, err := parser.ParseFile(fset, "p.go", src, 0)
@@ -1295,7 +1431,7 @@ func TestLogKeys_UnmodelledSlicesAreReportedUntraceable(t *testing.T) {
 			if _, err := (&types.Config{Importer: importer.Default()}).Check("p", fset, []*ast.File{f}, info); err != nil {
 				t.Fatalf("type-check: %v", err)
 			}
-			if _, over := logKeys(f, info, funcDecls([]*ast.File{f}, info)); !over {
+			if _, over := logKeys(f, info, buildIndex([]*ast.File{f}, info)); !over {
 				t.Fatal("an in-place element write was not reported as untraceable")
 			}
 		})
@@ -1332,7 +1468,7 @@ L:
 	if _, err := (&types.Config{Importer: importer.Default()}).Check("p", fset, []*ast.File{f}, info); err != nil {
 		t.Fatalf("type-check: %v", err)
 	}
-	if _, over := logKeys(f, info, funcDecls([]*ast.File{f}, info)); !over {
+	if _, over := logKeys(f, info, buildIndex([]*ast.File{f}, info)); !over {
 		t.Fatal("a spread in a function with a goto was not reported as untraceable")
 	}
 }
