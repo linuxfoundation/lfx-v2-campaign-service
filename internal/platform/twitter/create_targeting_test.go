@@ -33,6 +33,8 @@ type targetingFakeX struct {
 	// failList makes that read answer 500.
 	liveCriteria string
 	failList     bool
+	// reusedStatus is the reused line item's entity_status ("" = PAUSED); "fail" answers 500.
+	reusedStatus string
 
 	writes    []string // "POST <kind>[ <type>=<value>]"
 	lookups   []string // "<kind>?<query>"
@@ -76,6 +78,16 @@ func (f *targetingFakeX) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(body))
 	case r.Method == http.MethodGet && strings.HasSuffix(p, "/accounts/acc1"):
 		_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+	case r.Method == http.MethodGet && strings.HasSuffix(p, "/line_items/li9"):
+		f.lookups = append(f.lookups, "line_item_status")
+		switch f.reusedStatus {
+		case "fail":
+			w.WriteHeader(http.StatusInternalServerError)
+		case "":
+			_, _ = w.Write([]byte(`{"data":{"id":"li9","entity_status":"PAUSED","deleted":false}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":{"id":"li9","entity_status":"` + f.reusedStatus + `","deleted":false}}`))
+		}
 	case r.Method == http.MethodGet && strings.Contains(p, "line_items") && f.reuseLineItem != "":
 		_, _ = w.Write([]byte(`{"data":[{"id":"li9","name":"` + f.reuseLineItem + `"}]}`))
 	case r.Method == http.MethodGet:
@@ -430,4 +442,101 @@ func TestCreateCampaign_MalformedTargetingIsRefusedBeforeAnyRequest(t *testing.T
 func isRefusal(err error) bool {
 	var r *domain.PreflightRefusal
 	return errors.As(err, &r)
+}
+
+// A reused line item that is not PAUSED (or whose status cannot be read) is not re-targeted and
+// gets no tweet: changing a possibly-serving audience is for an operator.
+func TestCreateCampaign_ReusedLineItemMustBePausedToBeRetargeted(t *testing.T) {
+	for status, want := range map[string]string{"ACTIVE": "it is ACTIVE, not PAUSED", "WEIRD<b>": "in an unrecognised state", "fail": "status could not be read"} {
+		t.Run(status, func(t *testing.T) {
+			f := newTargetingFakeX()
+			f.reuseLineItem = "Events | KubeCon | Promoted Tweets | AUTO"
+			f.reusedStatus = status
+			c := targetingClient(t, f)
+			res, err := c.CreateCampaign(context.Background(), targetingInput([]string{"US"}, nil))
+			if err == nil || res == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("res=%+v err=%v, want %q", res, err, want)
+			}
+			if strings.Contains(err.Error(), "WEIRD") {
+				t.Errorf("upstream status text leaked: %v", err)
+			}
+			writes, lookups := f.snapshot()
+			if strings.Contains(strings.Join(writes, " "), "targeting_criteria") || strings.Contains(strings.Join(writes, " "), "promoted_tweets") {
+				t.Fatalf("writes = %v, want no criterion and no tweet", writes)
+			}
+			if strings.Contains(strings.Join(lookups, " "), "criteria?") {
+				t.Errorf("criteria were read before the status allowed it: %v", lookups)
+			}
+		})
+	}
+}
+
+// A full country page with no cursor cannot confirm "exactly one": an unreadable lookup.
+func TestResolveCountry_FullPageWithoutCursorIsUnreadable(t *testing.T) {
+	entries := make([]string, listPageSize)
+	for i := range entries {
+		entries[i] = `{"country_code":"US","location_type":"CITIES","targeting_value":"c` + fmt.Sprint(i) + `"}`
+	}
+	entries[0] = `{"country_code":"US","location_type":"COUNTRIES","targeting_value":"us1"}`
+	f := newTargetingFakeX()
+	f.countries["US"] = `{"data":[` + strings.Join(entries, ",") + `]}`
+	c := targetingClient(t, f)
+	_, err := c.resolveCountry(context.Background(), "US")
+	if err == nil || isRefusal(err) || !strings.Contains(err.Error(), "cannot be confirmed complete") {
+		t.Fatalf("err = %v, want the unreadable-lookup error", err)
+	}
+}
+
+// A 2xx whose echo does not confirm the criterion sent is UNCONFIRMED and stops the create before
+// the tweet.
+func TestCreateCampaign_UnprovenCriterionEchoStopsBeforeTheTweet(t *testing.T) {
+	for name, body := range map[string]string{
+		"no data":         `{"data":null}`,
+		"no id":           `{"data":{"line_item_id":"li1","targeting_type":"LOCATION","targeting_value":"96683cc9126741d1"}}`,
+		"other line item": `{"data":{"id":"tc1","line_item_id":"li2","targeting_type":"LOCATION","targeting_value":"96683cc9126741d1"}}`,
+		"other type":      `{"data":{"id":"tc1","line_item_id":"li1","targeting_type":"LANGUAGE","targeting_value":"96683cc9126741d1"}}`,
+		"other value":     `{"data":{"id":"tc1","line_item_id":"li1","targeting_type":"LOCATION","targeting_value":"zzz"}}`,
+		"negated":         `{"data":{"id":"tc1","line_item_id":"li1","targeting_type":"LOCATION","targeting_value":"96683cc9126741d1","operator_type":"NE"}}`,
+		"deleted":         `{"data":{"id":"tc1","line_item_id":"li1","targeting_type":"LOCATION","targeting_value":"96683cc9126741d1","deleted":true}}`,
+		"duplicate key":   `{"data":{"id":"tc1","id":"tc2","line_item_id":"li1","targeting_type":"LOCATION","targeting_value":"96683cc9126741d1"}}`,
+		"not an object":   `{"data":[1]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var mu sync.Mutex
+			var writes []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/12/targeting_criteria/locations":
+					_, _ = w.Write([]byte(countryBody("US", "96683cc9126741d1")))
+				case r.Method == http.MethodGet:
+					_, _ = w.Write([]byte(`{"data":[]}`))
+				case strings.HasSuffix(r.URL.Path, "/targeting_criteria"):
+					writes = append(writes, "criterion")
+					_, _ = w.Write([]byte(body))
+				case strings.HasSuffix(r.URL.Path, "/campaigns"):
+					_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+				case strings.HasSuffix(r.URL.Path, "/line_items"):
+					_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+				default:
+					writes = append(writes, r.URL.Path)
+					_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
+				}
+			}))
+			defer srv.Close()
+			c := NewClient(Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+				AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"}, WithBaseURL(srv.URL), WithWriteDelay(0))
+			c.timeFn = staticTime
+			res, err := c.CreateCampaign(context.Background(), targetingInput([]string{"US"}, nil))
+			if err == nil || res == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+				t.Fatalf("res=%+v err=%v, want an UNCONFIRMED partial result", res, err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(writes) != 1 || writes[0] != "criterion" {
+				t.Fatalf("writes after the line item = %v, want only the criterion (no tweet)", writes)
+			}
+		})
+	}
 }

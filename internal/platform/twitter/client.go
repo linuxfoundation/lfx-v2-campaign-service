@@ -3310,7 +3310,9 @@ type CampaignInput struct {
 	// NormalizeCreateTargeting and resolved against X's targeting_criteria lookups before anything
 	// is created, then sent as LOCATION / LANGUAGE criteria after the line item and before the
 	// promoted tweet. Empty means no criterion of that type: the line item serves worldwide / in
-	// every language, exactly as before. A REUSED line item is not re-targeted (a warning step).
+	// every language, exactly as before. A REUSED line item that is still PAUSED gets only the
+	// requested criteria it does not already hold, before the tweet; one that is not PAUSED, or
+	// whose status or criteria cannot be read, stops the create before the tweet.
 	GeoTargets []string
 	Languages  []string
 }
@@ -3891,6 +3893,25 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if len(criteria) > 0 {
 		pending := criteria
 		if lineItemReused {
+			// Only a PAUSED line item is re-targeted. Reuse does not reset entity_status, so a
+			// reused line item may already be serving its earlier promoted tweet; adding criteria
+			// to it changes a live audience, and a failure part-way would leave that audience
+			// half-changed. Not PAUSED, or a status that cannot be read, is for an operator.
+			status, serr := c.lineItemEntityStatus(ctx, lineItemID)
+			if serr != nil {
+				return partialResult(), fmt.Errorf("x targeting not confirmed (%s, %s; its status could not be read, so its targeting was not changed and nothing was authored or promoted): verify the line item in X Ads Manager: %w",
+					campaignStatus(), lineItemStatus(), serr)
+			}
+			if status != "PAUSED" {
+				// X's status is upstream text: only a value from X's documented set is named.
+				shown := "in an unrecognised state"
+				switch status {
+				case "ACTIVE", "DRAFT", "DELETED":
+					shown = status
+				}
+				return partialResult(), fmt.Errorf("x targeting not applied (%s, %s; it is %s, not PAUSED, so its targeting was not changed and nothing was authored or promoted): reconcile the line item's targeting in X Ads Manager",
+					campaignStatus(), lineItemStatus(), shown)
+			}
 			live, lerr := c.ListLineItemTargetingCriteria(ctx, lineItemID)
 			if lerr != nil {
 				return partialResult(), fmt.Errorf("x targeting not confirmed (%s, %s; its existing targeting criteria could not be read, so nothing was authored or promoted): verify the line item's targeting in X Ads Manager before retrying: %w",

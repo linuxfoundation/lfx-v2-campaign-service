@@ -183,8 +183,14 @@ func (c *Client) resolveCountry(ctx context.Context, code string) (string, error
 	if err != nil {
 		return "", fmt.Errorf("x location lookup for %s failed: %w", code, err)
 	}
-	if cursorVerdict(resp) == cursorMore {
+	switch v := cursorVerdict(resp); {
+	case v == cursorMore:
 		return "", domain.PreflightRefusalf("invalid twitterConfig.%s: X answered more than one page of country locations for %s, so which one to target cannot be told", FieldGeoTargets, code)
+	case v == cursorUnknowable && len(opts) >= listPageSize:
+		// A FULL page owes a cursor (the findByName / language-walk rule): without one the
+		// answer cannot be confirmed complete, so "exactly one" cannot be concluded from it. An
+		// unreadable lookup, not a value X refused.
+		return "", fmt.Errorf("x location lookup for %s: a full page came back with no usable cursor, so the answer cannot be confirmed complete", code)
 	}
 	var values []string
 	seen := map[string]struct{}{}
@@ -354,4 +360,33 @@ func missingCriteria(want []createCriterion, live []TargetingCriterion) []create
 		}
 	}
 	return out
+}
+
+// lineItemEntityStatus reads a line item's entity_status (GET accounts/:account_id/line_items/:id).
+// Used before a reused line item's targeting is changed: only a PAUSED one may be re-targeted, since
+// changing the audience of a line item that may be serving is not this create's to do.
+func (c *Client) lineItemEntityStatus(ctx context.Context, lineItemID string) (string, error) {
+	path, lineItemID, err := c.lineItemPath(lineItemID)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.request(ctx, http.MethodGet, path)
+	if err != nil {
+		return "", fmt.Errorf("read line item %s status: %w", lineItemID, err)
+	}
+	if resp == nil || len(resp.Data) == 0 || string(resp.Data) == "null" || resp.raw != nil && identityjson.Check(resp.raw) != nil {
+		return "", fmt.Errorf("read line item %s status: the response carried no trustworthy line item", lineItemID)
+	}
+	var wire struct {
+		ID           string `json:"id"`
+		EntityStatus string `json:"entity_status"`
+		Deleted      bool   `json:"deleted"`
+	}
+	if json.Unmarshal(resp.Data, &wire) != nil || strings.TrimSpace(wire.ID) != lineItemID {
+		return "", fmt.Errorf("read line item %s status: the response is not this line item", lineItemID)
+	}
+	if wire.Deleted {
+		return "DELETED", nil
+	}
+	return strings.ToUpper(strings.TrimSpace(wire.EntityStatus)), nil
 }

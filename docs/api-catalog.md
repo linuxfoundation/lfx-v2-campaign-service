@@ -2967,11 +2967,17 @@ languages?: string[]             — Language targeting (#564). X language value
                                   promoted) and the job reports the PAUSED campaign and line item
                                   with how many criteria were applied — enable nothing until the
                                   targeting is completed in X Ads Manager (an ambiguous failure is
-                                  worded UNCONFIRMED). A retry that REUSES the line item by name
-                                  reads its live criteria and posts only the missing ones before
-                                  the tweet, so it finishes a targeting that stopped part-way; if
-                                  that read fails the create stops before the tweet (the row is
-                                  `created_degraded`, as every reuse is). Not role-gated: a
+                                  worded UNCONFIRMED). Such a partial create is RETAINED: a repeat
+                                  of this API request does not re-dispatch it but answers
+                                  "reconciliation required", so an operator completes the
+                                  targeting in X Ads Manager (or reconciles the row) — there is no
+                                  automatic API retry. Inside the client, a create that finds its
+                                  line item by name (reuse) changes its targeting only if X reports
+                                  it PAUSED, and then posts only the criteria it does not already
+                                  hold, before the tweet; a line item that is not PAUSED, or whose
+                                  status or criteria cannot be read, stops the create before the
+                                  tweet with its targeting unchanged (a reused row is
+                                  `created_degraded`). Not role-gated: a
                                   country or language names no account resource.
 ```
 
