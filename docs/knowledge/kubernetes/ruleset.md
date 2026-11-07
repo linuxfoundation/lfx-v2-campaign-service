@@ -71,19 +71,20 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    `:projectId` slug (see "Slug-to-UID resolution" below). A single rule covers
    all families because they share the identical authorization. The exceptions are
    `google-ads/conversion-actions`, `google-ads/audiences`, `google-ads/user-lists`,
-   `reddit-ads/custom-audiences`, `linkedin-ads/audiences` and `linkedin-ads/conversions`, ruled
-   by `marketing-ops-api` below.
+   `reddit-ads/custom-audiences`, `linkedin-ads/audiences`, `linkedin-ads/conversions` and
+   `meta-ads/custom-audiences`, ruled by `marketing-ops-api` below.
 4. **`marketing-ops-api`** — `GET /projects/:projectId/google-ads/conversion-actions` (#458),
    `GET /projects/:projectId/google-ads/audiences` (#496),
    `GET /projects/:projectId/google-ads/user-lists`,
    `GET /projects/:projectId/reddit-ads/custom-audiences` (#549),
-   `GET /projects/:projectId/linkedin-ads/audiences` and
-   `GET /projects/:projectId/linkedin-ads/conversions` (#552) only. The Google three list every
+   `GET /projects/:projectId/linkedin-ads/audiences`,
+   `GET /projects/:projectId/linkedin-ads/conversions` (#552) and
+   `GET /projects/:projectId/meta-ads/custom-audiences` (#550) only. The Google three list every
    foundation's conversion actions, audiences and user lists on the shared Google Ads customer,
-   and the Reddit one every foundation's custom audiences on the shared Reddit ad account;
-   the LinkedIn two read the account a LinkedIn create uses, which is the LF system account for
-   every project without its own connection, so they can list other foundations' segments and
-   conversion rules. In both cases
+   and the Reddit and Meta ones every foundation's custom audiences on the shared Reddit or Meta
+   ad account; the LinkedIn two read the account a LinkedIn create uses, which is the LF system
+   account for every project without its own connection, so they can list other foundations'
+   segments and conversion rules. In both cases
    `campaign_manager` includes the project's `executive_director`, a foundation-scoped role
    (lfx-v2-helm `model.fga`). So it runs the same slug/UUID branches as `project-api`, on
    relation `global_marketing_ops`: the LF marketing team, granted on every project, so no ROOT
@@ -98,7 +99,9 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    `TestLinkedInPickersAreMarketingOpsReads` does the same for the LinkedIn ad-segment and
    conversion-rule pickers `linkedin-ads/audiences` and `linkedin-ads/conversions` (#552: they
    read the account a LinkedIn create uses, the LF system account for every project without its
-   own connection), and `TestMarketingOpsRuleHoldsExactlyItsReads` pins the rule's whole path set.
+   own connection), `TestMetaCustomAudiencesIsAMarketingOpsRead` does the same for
+   `meta-ads/custom-audiences` (and that `meta-ads/audience`, the insights read, stays on
+   `project-api`), and `TestMarketingOpsRuleHoldsExactlyItsReads` pins the rule's whole path set.
 5. **`campaigns-placeholder:deny`** — the reserved `/campaigns`, `/campaigns/*`,
    and every other `/_campaigns/*` path (not openapi, not the signed asset route) are routed through Heimdall but are not
    real endpoints yet, so they **fail closed** with `deny_all`.

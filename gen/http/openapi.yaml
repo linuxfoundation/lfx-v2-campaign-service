@@ -11438,6 +11438,87 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/meta-ads/custom-audiences:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-meta-custom-audiences lfx-v2-campaign-service-connections
+            description: 'List the custom audiences (lookalikes included) of the Meta ad account a Meta create for this project uses, live from the ad account''s customaudiences edge, for picking metaConfig.targeting.customAudiences and excludedCustomAudiences (#550). Credentials resolve as for a create, so every id is one the create accepts. q keeps audiences whose name contains it, ignoring case. Sorted by name, capped at 500 after the q filter, with `truncated` set when more matched. More than 2000 audiences on the account fails the read with 503 rather than truncating it, and that 503 does not clear on retry. The Meta ad account is shared by every foundation, so the response lists EVERY foundation''s audiences, not only this project''s; like list-google-ads-audiences it is therefore gated on global_marketing_ops of {project_id} (the LF marketing team), not campaign_manager, which also admits a foundation''s executive director. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#list-meta-custom-audiences
+            parameters:
+                - name: q
+                  in: query
+                  description: Optional case-insensitive name substring to keep
+                  required: false
+                  type: string
+                  maxLength: 100
+                  minLength: 1
+                  pattern: \S
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/MetaCustomAudiences'
+                        required:
+                            - account_id
+                            - audiences
+                            - audience_count
+                            - truncated
+                "400":
+                    description: 'BadRequest: Bad request'
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: 'NotFound: Resource not found'
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/microsoft-ads/audience:
         get:
             tags:
@@ -21745,6 +21826,128 @@ definitions:
         required:
             - access_token
             - app_secret
+    MetaCustomAudience:
+        title: MetaCustomAudience
+        type: object
+        properties:
+            approximate_count_lower_bound:
+                type: integer
+                description: Meta's estimated audience size, lower bound. Absent when Meta reported none.
+                example: 12000
+                format: int64
+            approximate_count_upper_bound:
+                type: integer
+                description: Meta's estimated audience size, upper bound. Absent when Meta reported none.
+                example: 14100
+                format: int64
+            description:
+                type: string
+                description: The audience's description. Absent when Meta sent none.
+                example: HubSpot upload
+            id:
+                type: string
+                description: The audience id, exactly what metaConfig.targeting.customAudiences and excludedCustomAudiences take
+                example: "23851234567890123"
+            name:
+                type: string
+                description: The audience's display name. Not an identifier.
+                example: KubeCon NA 2025 registrants
+            subtype:
+                type: string
+                description: Meta's own kind, verbatim (CUSTOM, WEBSITE, LOOKALIKE, ENGAGEMENT, …)
+                example: CUSTOM
+        example:
+            approximate_count_lower_bound: 12000
+            approximate_count_upper_bound: 14100
+            description: HubSpot upload
+            id: "23851234567890123"
+            name: KubeCon NA 2025 registrants
+            subtype: CUSTOM
+        required:
+            - id
+            - name
+            - subtype
+    MetaCustomAudiences:
+        title: MetaCustomAudiences
+        type: object
+        properties:
+            account_id:
+                type: string
+                description: 'The Meta ad account the audiences were read from: the account a Meta create for this project uses'
+                example: act_193556282970417
+            audience_count:
+                type: integer
+                description: How many audiences are in `audiences`
+                example: 1
+                format: int64
+            audiences:
+                type: array
+                items:
+                    $ref: '#/definitions/MetaCustomAudience'
+                description: Matching audiences sorted by name (ignoring case), capped at 500 (see `truncated`)
+                example:
+                    - approximate_count_lower_bound: 12000
+                      approximate_count_upper_bound: 14100
+                      description: HubSpot upload
+                      id: "23851234567890123"
+                      name: KubeCon NA 2025 registrants
+                      subtype: CUSTOM
+                    - approximate_count_lower_bound: 12000
+                      approximate_count_upper_bound: 14100
+                      description: HubSpot upload
+                      id: "23851234567890123"
+                      name: KubeCon NA 2025 registrants
+                      subtype: CUSTOM
+                    - approximate_count_lower_bound: 12000
+                      approximate_count_upper_bound: 14100
+                      description: HubSpot upload
+                      id: "23851234567890123"
+                      name: KubeCon NA 2025 registrants
+                      subtype: CUSTOM
+                    - approximate_count_lower_bound: 12000
+                      approximate_count_upper_bound: 14100
+                      description: HubSpot upload
+                      id: "23851234567890123"
+                      name: KubeCon NA 2025 registrants
+                      subtype: CUSTOM
+            truncated:
+                type: boolean
+                description: True when more audiences matched than were returned; narrow the search with q
+                example: false
+        example:
+            account_id: act_193556282970417
+            audience_count: 1
+            audiences:
+                - approximate_count_lower_bound: 12000
+                  approximate_count_upper_bound: 14100
+                  description: HubSpot upload
+                  id: "23851234567890123"
+                  name: KubeCon NA 2025 registrants
+                  subtype: CUSTOM
+                - approximate_count_lower_bound: 12000
+                  approximate_count_upper_bound: 14100
+                  description: HubSpot upload
+                  id: "23851234567890123"
+                  name: KubeCon NA 2025 registrants
+                  subtype: CUSTOM
+                - approximate_count_lower_bound: 12000
+                  approximate_count_upper_bound: 14100
+                  description: HubSpot upload
+                  id: "23851234567890123"
+                  name: KubeCon NA 2025 registrants
+                  subtype: CUSTOM
+                - approximate_count_lower_bound: 12000
+                  approximate_count_upper_bound: 14100
+                  description: HubSpot upload
+                  id: "23851234567890123"
+                  name: KubeCon NA 2025 registrants
+                  subtype: CUSTOM
+            truncated: false
+        required:
+            - account_id
+            - audiences
+            - audience_count
+            - truncated
     MicrosoftAdsAccountMonitor:
         title: MicrosoftAdsAccountMonitor
         type: object

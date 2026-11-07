@@ -423,6 +423,13 @@ func (d upstreamCapableDispatcher) ListAudiences(context.Context, string, model.
 	return &model.AudienceResources{Audiences: []model.AudienceResource{}}, true, nil
 }
 
+func (d upstreamCapableDispatcher) ListMetaCustomAudiences(context.Context, string, model.Provider) (*model.MetaCustomAudiences, bool, error) {
+	if d.err != nil {
+		return nil, true, d.err
+	}
+	return &model.MetaCustomAudiences{Audiences: []model.MetaCustomAudience{}}, true, nil
+}
+
 func (d upstreamCapableDispatcher) ListRedditCustomAudiences(context.Context, string, model.Provider) (*model.RedditCustomAudiences, bool, error) {
 	if d.err != nil {
 		return nil, true, d.err
@@ -686,6 +693,14 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opListAudiences,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ReadAudiences(ctx, "p1", platform, "audience")
+				return err
+			},
+		},
+		{
+			name: "list meta custom audiences",
+			op:   opListMetaCustomAudiences,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadMetaCustomAudiences(ctx, "p1", platform)
 				return err
 			},
 		},

@@ -33,7 +33,7 @@ mismatch). PATCH takes a dedicated `AudienceUpdateInput` (all fields optional, n
 immutable `platform`) rather than the create-time `AudienceInput` (where `platform`
 is required) — so a status-only or suppression-only patch is valid without resending
 the immutable platform. Every method is gated on `campaign_manager` at the gateway (except the Google
-conversion-action, audience and user lists, gated on `global_marketing_ops`) via `JWTAuth`, which can reject any request with an `Unauthorized` (401, carrying a
+conversion-action, audience and user lists, the Reddit and Meta custom-audience lists and the LinkedIn ad-segment and conversion-rule pickers, gated on `global_marketing_ops`) via `JWTAuth`, which can reject any request with an `Unauthorized` (401, carrying a
 `WWW-Authenticate: Bearer` challenge) — so every brief, audience **and connection** method
 declares `Unauthorized`, and still declares `BadRequest` for payload/path validation,
 regardless of whether it accepts a body. The 401 arrived with LFXV2-3057; before it a

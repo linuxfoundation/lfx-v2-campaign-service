@@ -155,6 +155,8 @@ func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints,
 	connServer := connsvcsvr.New(connEndpoints, mux, goahttp.RequestDecoder, nonEchoingResponseEncoder, eh, nil)
 	// `?q=` must be refused like any other blank q, not decoded as an omitted one (#496).
 	connServer.ListGoogleAdsAudiences = refuseEmptyQueryParam("q", connServer.ListGoogleAdsAudiences)
+	// The same for the Meta custom-audience picker (#550).
+	connServer.ListMetaCustomAudiences = refuseEmptyQueryParam("q", connServer.ListMetaCustomAudiences)
 	connsvcsvr.Mount(mux, connServer)
 
 	if briefEndpoints == nil {

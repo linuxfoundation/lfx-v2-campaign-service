@@ -60,15 +60,25 @@ type AudienceReader interface {
 	ListAudiences(ctx context.Context, projectID string, platform model.Provider, kind string) (res *model.AudienceResources, called bool, err error)
 }
 
+// MetaCustomAudienceReader is an OPTIONAL dispatcher capability: list every custom audience of the
+// Meta ad account a campaign create for the project would use (#550).
+//
+// A successful call MUST return a non-nil result with a non-nil Audiences slice. called reports
+// whether Meta was actually contacted, as ConversionActionReader's does.
+type MetaCustomAudienceReader interface {
+	ListMetaCustomAudiences(ctx context.Context, projectID string, platform model.Provider) (res *model.MetaCustomAudiences, called bool, err error)
+}
+
 // ErrTargetingLookupUnsupported re-exports the domain sentinel, as the siblings in
 // orchestrator.go do.
 var ErrTargetingLookupUnsupported = domain.ErrTargetingLookupUnsupported
 
 const (
-	opSuggestGeoTargets     = "suggest_geo_targets"
-	opListUserLists         = "list_user_lists"
-	opListConversionActions = "list_conversion_actions"
-	opListAudiences         = "list_audiences"
+	opSuggestGeoTargets       = "suggest_geo_targets"
+	opListUserLists           = "list_user_lists"
+	opListConversionActions   = "list_conversion_actions"
+	opListAudiences           = "list_audiences"
+	opListMetaCustomAudiences = "list_meta_custom_audiences"
 )
 
 // ReadGeoTargetSuggestions runs a geo target search through the platform's dispatcher. A pure
@@ -202,6 +212,46 @@ func (o *Orchestrator) ReadAudiences(ctx context.Context, projectID string, plat
 	}
 	if res == nil || res.Audiences == nil {
 		return nil, fmt.Errorf("%s audience reader returned a nil result with no error", platform)
+	}
+	return res, nil
+}
+
+// metaCustomAudiencesCallTimeout bounds the custom-audience read. It is longer than
+// accountsCallTimeout because the walk may make up to 20 sequential Graph calls (the client's page
+// bound) and each row asks for Meta's approximate audience size, which Meta computes per audience;
+// 20 seconds would leave about a second per page on the largest accounts this read admits. It
+// fits the request path the same way toggleCallTimeout (also 45 s) does: the server's WriteTimeout
+// is constants.DefaultWriteTimeout (120 s), and the HTTPRoute sets no request timeout of its own.
+const metaCustomAudiencesCallTimeout = 45 * time.Second
+
+// ReadMetaCustomAudiences lists every custom audience of the Meta ad account a create for the
+// project uses (#550), through the platform's dispatcher. A pure read; nothing is persisted.
+//
+// Like ReadAudiences, it is NOT refused on a shared-tenancy platform: the LF Meta ad account is
+// shared by every foundation, so the answer holds EVERY foundation's audiences, which is why the
+// gateway admits only global_marketing_ops of the project to this route.
+func (o *Orchestrator) ReadMetaCustomAudiences(ctx context.Context, projectID string, platform model.Provider) (*model.MetaCustomAudiences, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrTargetingLookupUnsupported, platform)
+	}
+	r, ok := d.(MetaCustomAudienceReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrTargetingLookupUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, metaCustomAudiencesCallTimeout)
+	defer cancel()
+	start := time.Now()
+	res, called, err := r.ListMetaCustomAudiences(callCtx, projectID, platform)
+	// Recorded only when Meta was reached: a local refusal sent nothing.
+	if called {
+		o.recordUpstream(ctx, platform, opListMetaCustomAudiences, start, err)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if res == nil || res.Audiences == nil {
+		return nil, fmt.Errorf("%s custom audience reader returned a nil result with no error", platform)
 	}
 	return res, nil
 }

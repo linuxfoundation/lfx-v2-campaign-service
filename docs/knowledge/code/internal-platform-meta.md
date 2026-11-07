@@ -1030,6 +1030,23 @@ cannot be represented (`bidCapMinor > MaxInt64/5`) before forming the product; u
 bound no encoded bid reaches it, so it is a backstop against a later change to that bound
 (PR #332 review).
 
+## Custom audience listing (`custom_audiences.go`, #550)
+
+`Client.ListCustomAudiences` backs `GET /projects/{project_id}/meta-ads/custom-audiences`
+(`list-meta-custom-audiences`), the picker for `metaConfig.targeting.customAudiences` and
+`excludedCustomAudiences`: `GET /act_<id>/customaudiences?fields=id,name,subtype,description,
+approximate_count_lower_bound,approximate_count_upper_bound,account_id&limit=100`, all or nothing. It
+follows the opaque `after` cursor (never the token-bearing `paging.next` URL) for at most 20 pages
+and fails with `ErrCustomAudienceListTooLarge` past that rather than truncating. Each page passes
+`identityjson` on its raw bytes (`getChecked`), and each row must carry a numeric id, an audience
+`subtype` token and the requested account (`canonicalAccountID`), and appear once. A missing `data`
+field, a next page without a cursor or a repeated cursor fails the read. `MetaDispatcher` resolves
+with the create's credential resolution (`creds.resolve`), so every id is on the account a create
+reads its audiences from. The service filters by `q`, sorts by name and caps at 500 with
+`truncated`. The route is on the gateway's `marketing-ops-api` rule (`global_marketing_ops`),
+because the LF Meta ad account is shared by every foundation. Not verified live: the edge's field
+names and default population.
+
 ## Call-to-action and conversion event (`creative_options.go`, #550)
 
 `CampaignInput.CallToAction` sets every variant creative's `link_data.call_to_action.type`

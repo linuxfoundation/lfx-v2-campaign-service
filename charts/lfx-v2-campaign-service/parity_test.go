@@ -109,6 +109,11 @@ const googleAudiencesPath = "/projects/:projectId/google-ads/audiences"
 // TestUserListsIsAMarketingOpsRead pins that.
 const userListsPath = "/projects/:projectId/google-ads/user-lists"
 
+// metaCustomAudiencesPath is the Meta custom-audience read (#550). It lists every foundation's
+// audiences on the shared Meta ad account, so it is ruled by marketing-ops-api only, and
+// TestMetaCustomAudiencesIsAMarketingOpsRead pins that.
+const metaCustomAudiencesPath = "/projects/:projectId/meta-ads/custom-audiences"
+
 // redditCustomAudiencesPath is the Reddit custom-audience list (#549). It lists every
 // foundation's audiences on the shared LF Reddit ad account, so it is ruled by marketing-ops-api
 // only, and TestRedditCustomAudiencesIsAMarketingOpsRead pins that.
@@ -123,7 +128,7 @@ const (
 )
 
 // marketingOpsPaths is every path the marketing-ops-api rule must hold, in order, and nothing else.
-var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, linkedInAudiencesPath, linkedInConversionsPath}
+var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, linkedInAudiencesPath, linkedInConversionsPath, metaCustomAudiencesPath}
 
 // ruleBlock isolates one rendered Heimdall rule (from its `- id: "<id>"` line up to
 // the next `- id:` or EOF) so path/authorizer extraction is scoped to a SINGLE rule.
@@ -192,6 +197,25 @@ func rulePatterns(t *testing.T, ruleset, ruleID string) []string {
 // the LF marketing team alone, granted on every project, so no rule needs the ROOT project.
 func TestConversionActionsIsAMarketingOpsRead(t *testing.T) {
 	assertMarketingOpsRead(t, conversionActionsPath, "/projects/p1/google-ads/conversion-actions")
+}
+
+// TestMetaCustomAudiencesIsAMarketingOpsRead pins the same for the Meta custom-audience list
+// (#550): it lists every foundation's custom audiences on the shared Meta ad account, so a
+// campaign_manager (executive_director included) must not reach it, while meta-ads/audience (the
+// audience insights of the project's own campaigns) stays a project-api read.
+func TestMetaCustomAudiencesIsAMarketingOpsRead(t *testing.T) {
+	assertMarketingOpsRead(t, metaCustomAudiencesPath, "/projects/p1/meta-ads/custom-audiences")
+	ruleset := helmTemplate(t, "templates/ruleset.yaml")
+	const insights = "/projects/p1/meta-ads/audience"
+	matched := false
+	for _, p := range rulePatterns(t, ruleset, projectAPIRuleID) {
+		if ruleMatcher(t, p).MatchString(insights) {
+			matched = true
+		}
+	}
+	if !matched {
+		t.Errorf("%s rule no longer matches %s, the campaign_manager Meta audience insights read", projectAPIRuleID, insights)
+	}
 }
 
 // TestGoogleAudiencesIsAMarketingOpsRead pins the same for the Google audience list (#496): it
@@ -662,6 +686,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/google-ads/conversion-actions", true},
 		{"/projects/p1/google-ads/audiences", true},
 		{"/projects/p1/google-ads/audiences/x", false},
+		{"/projects/p1/meta-ads/custom-audiences", true},
+		{"/projects/p1/meta-ads/custom-audiences/x", false},
 		{"/projects/p1/google-ads/conversion-actions/x", false},
 		{"/projects/p1/microsoft-ads/conversion-actions", false},
 		{"/projects/p1/connection-google-ads/conversion-actions", false},

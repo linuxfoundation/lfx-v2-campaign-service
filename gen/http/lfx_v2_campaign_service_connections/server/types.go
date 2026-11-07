@@ -889,6 +889,22 @@ type ListGoogleAdsAudiencesResponseBody struct {
 	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
 }
 
+// ListMetaCustomAudiencesResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body.
+type ListMetaCustomAudiencesResponseBody struct {
+	// The Meta ad account the audiences were read from: the account a Meta create
+	// for this project uses
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Matching audiences sorted by name (ignoring case), capped at 500 (see
+	// `truncated`)
+	Audiences []*MetaCustomAudienceResponseBody `form:"audiences" json:"audiences" xml:"audiences"`
+	// How many audiences are in `audiences`
+	AudienceCount int `form:"audience_count" json:"audience_count" xml:"audience_count"`
+	// True when more audiences matched than were returned; narrow the search with q
+	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
+}
+
 // ListRedditAdsCustomAudiencesResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-reddit-ads-custom-audiences" endpoint HTTP response body.
@@ -4514,6 +4530,66 @@ type ListGoogleAdsAudiencesUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListMetaCustomAudiencesBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListMetaCustomAudiencesBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaCustomAudiencesServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListMetaCustomAudiencesServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaCustomAudiencesInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListMetaCustomAudiencesInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaCustomAudiencesNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "NotFound" error.
+type ListMetaCustomAudiencesNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaCustomAudiencesPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListMetaCustomAudiencesPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaCustomAudiencesUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListMetaCustomAudiencesUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListRedditAdsCustomAudiencesBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-reddit-ads-custom-audiences" endpoint HTTP response body for the
@@ -6765,6 +6841,24 @@ type GoogleAdsAudienceResourceResponseBody struct {
 	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
 }
 
+// MetaCustomAudienceResponseBody is used to define fields on response body
+// types.
+type MetaCustomAudienceResponseBody struct {
+	// The audience id, exactly what metaConfig.targeting.customAudiences and
+	// excludedCustomAudiences take
+	ID string `form:"id" json:"id" xml:"id"`
+	// The audience's display name. Not an identifier.
+	Name string `form:"name" json:"name" xml:"name"`
+	// Meta's own kind, verbatim (CUSTOM, WEBSITE, LOOKALIKE, ENGAGEMENT, …)
+	Subtype string `form:"subtype" json:"subtype" xml:"subtype"`
+	// The audience's description. Absent when Meta sent none.
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Meta's estimated audience size, lower bound. Absent when Meta reported none.
+	ApproximateCountLowerBound *int64 `form:"approximate_count_lower_bound,omitempty" json:"approximate_count_lower_bound,omitempty" xml:"approximate_count_lower_bound,omitempty"`
+	// Meta's estimated audience size, upper bound. Absent when Meta reported none.
+	ApproximateCountUpperBound *int64 `form:"approximate_count_upper_bound,omitempty" json:"approximate_count_upper_bound,omitempty" xml:"approximate_count_upper_bound,omitempty"`
+}
+
 // RedditAdsCustomAudienceResponseBody is used to define fields on response
 // body types.
 type RedditAdsCustomAudienceResponseBody struct {
@@ -8432,6 +8526,30 @@ func NewListGoogleAdsAudiencesResponseBody(res *lfxv2campaignserviceconnections.
 		}
 	} else {
 		body.Audiences = []*GoogleAdsAudienceResourceResponseBody{}
+	}
+	return body
+}
+
+// NewListMetaCustomAudiencesResponseBody builds the HTTP response body from
+// the result of the "list-meta-custom-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaCustomAudiencesResponseBody(res *lfxv2campaignserviceconnections.MetaCustomAudiences) *ListMetaCustomAudiencesResponseBody {
+	body := &ListMetaCustomAudiencesResponseBody{
+		AccountID:     res.AccountID,
+		AudienceCount: res.AudienceCount,
+		Truncated:     res.Truncated,
+	}
+	if res.Audiences != nil {
+		body.Audiences = make([]*MetaCustomAudienceResponseBody, len(res.Audiences))
+		for i, val := range res.Audiences {
+			if val == nil {
+				body.Audiences[i] = nil
+				continue
+			}
+			body.Audiences[i] = marshalLfxv2campaignserviceconnectionsMetaCustomAudienceToMetaCustomAudienceResponseBody(val)
+		}
+	} else {
+		body.Audiences = []*MetaCustomAudienceResponseBody{}
 	}
 	return body
 }
@@ -12697,6 +12815,72 @@ func NewListGoogleAdsAudiencesUnauthorizedResponseBody(res *lfxv2campaignservice
 	return body
 }
 
+// NewListMetaCustomAudiencesBadRequestResponseBody builds the HTTP response
+// body from the result of the "list-meta-custom-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaCustomAudiencesBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListMetaCustomAudiencesBadRequestResponseBody {
+	body := &ListMetaCustomAudiencesBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaCustomAudiencesServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "list-meta-custom-audiences" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListMetaCustomAudiencesServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListMetaCustomAudiencesServiceUnavailableResponseBody {
+	body := &ListMetaCustomAudiencesServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaCustomAudiencesInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "list-meta-custom-audiences" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListMetaCustomAudiencesInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListMetaCustomAudiencesInternalServerErrorResponseBody {
+	body := &ListMetaCustomAudiencesInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaCustomAudiencesNotFoundResponseBody builds the HTTP response body
+// from the result of the "list-meta-custom-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaCustomAudiencesNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListMetaCustomAudiencesNotFoundResponseBody {
+	body := &ListMetaCustomAudiencesNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaCustomAudiencesPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "list-meta-custom-audiences" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListMetaCustomAudiencesPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListMetaCustomAudiencesPayloadTooLargeResponseBody {
+	body := &ListMetaCustomAudiencesPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaCustomAudiencesUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "list-meta-custom-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaCustomAudiencesUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListMetaCustomAudiencesUnauthorizedResponseBody {
+	body := &ListMetaCustomAudiencesUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListRedditAdsCustomAudiencesBadRequestResponseBody builds the HTTP
 // response body from the result of the "list-reddit-ads-custom-audiences"
 // endpoint of the "lfx-v2-campaign-service-connections" service.
@@ -15412,6 +15596,18 @@ func NewListGoogleAdsAudiencesPayload(projectID string, type_ string, q *string,
 	v := &lfxv2campaignserviceconnections.ListGoogleAdsAudiencesPayload{}
 	v.ProjectID = projectID
 	v.Type = type_
+	v.Q = q
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListMetaCustomAudiencesPayload builds a
+// lfx-v2-campaign-service-connections service list-meta-custom-audiences
+// endpoint payload.
+func NewListMetaCustomAudiencesPayload(projectID string, q *string, bearerToken *string) *lfxv2campaignserviceconnections.ListMetaCustomAudiencesPayload {
+	v := &lfxv2campaignserviceconnections.ListMetaCustomAudiencesPayload{}
+	v.ProjectID = projectID
 	v.Q = q
 	v.BearerToken = bearerToken
 

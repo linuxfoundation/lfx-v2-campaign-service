@@ -889,6 +889,22 @@ type ListGoogleAdsAudiencesResponseBody struct {
 	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
 }
 
+// ListMetaCustomAudiencesResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body.
+type ListMetaCustomAudiencesResponseBody struct {
+	// The Meta ad account the audiences were read from: the account a Meta create
+	// for this project uses
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// Matching audiences sorted by name (ignoring case), capped at 500 (see
+	// `truncated`)
+	Audiences []*MetaCustomAudienceResponseBody `form:"audiences,omitempty" json:"audiences,omitempty" xml:"audiences,omitempty"`
+	// How many audiences are in `audiences`
+	AudienceCount *int `form:"audience_count,omitempty" json:"audience_count,omitempty" xml:"audience_count,omitempty"`
+	// True when more audiences matched than were returned; narrow the search with q
+	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
+}
+
 // ListRedditAdsCustomAudiencesResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-reddit-ads-custom-audiences" endpoint HTTP response body.
@@ -4514,6 +4530,66 @@ type ListGoogleAdsAudiencesUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListMetaCustomAudiencesBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListMetaCustomAudiencesBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaCustomAudiencesServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListMetaCustomAudiencesServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaCustomAudiencesInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListMetaCustomAudiencesInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaCustomAudiencesNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "NotFound" error.
+type ListMetaCustomAudiencesNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaCustomAudiencesPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListMetaCustomAudiencesPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaCustomAudiencesUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListMetaCustomAudiencesUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ListRedditAdsCustomAudiencesBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-reddit-ads-custom-audiences" endpoint HTTP response body for the
@@ -6763,6 +6839,24 @@ type GoogleAdsAudienceResourceResponseBody struct {
 	// The entry's description. Absent when Google sent none, and always for
 	// user_interest.
 	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+}
+
+// MetaCustomAudienceResponseBody is used to define fields on response body
+// types.
+type MetaCustomAudienceResponseBody struct {
+	// The audience id, exactly what metaConfig.targeting.customAudiences and
+	// excludedCustomAudiences take
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// The audience's display name. Not an identifier.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Meta's own kind, verbatim (CUSTOM, WEBSITE, LOOKALIKE, ENGAGEMENT, …)
+	Subtype *string `form:"subtype,omitempty" json:"subtype,omitempty" xml:"subtype,omitempty"`
+	// The audience's description. Absent when Meta sent none.
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Meta's estimated audience size, lower bound. Absent when Meta reported none.
+	ApproximateCountLowerBound *int64 `form:"approximate_count_lower_bound,omitempty" json:"approximate_count_lower_bound,omitempty" xml:"approximate_count_lower_bound,omitempty"`
+	// Meta's estimated audience size, upper bound. Absent when Meta reported none.
+	ApproximateCountUpperBound *int64 `form:"approximate_count_upper_bound,omitempty" json:"approximate_count_upper_bound,omitempty" xml:"approximate_count_upper_bound,omitempty"`
 }
 
 // RedditAdsCustomAudienceResponseBody is used to define fields on response
@@ -12383,6 +12477,100 @@ func NewListGoogleAdsAudiencesUnauthorized(body *ListGoogleAdsAudiencesUnauthori
 	return v
 }
 
+// NewListMetaCustomAudiencesMetaCustomAudiencesOK builds a
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint result from a HTTP "OK" response.
+func NewListMetaCustomAudiencesMetaCustomAudiencesOK(body *ListMetaCustomAudiencesResponseBody) *lfxv2campaignserviceconnections.MetaCustomAudiences {
+	v := &lfxv2campaignserviceconnections.MetaCustomAudiences{
+		AccountID:     *body.AccountID,
+		AudienceCount: *body.AudienceCount,
+		Truncated:     *body.Truncated,
+	}
+	v.Audiences = make([]*lfxv2campaignserviceconnections.MetaCustomAudience, len(body.Audiences))
+	for i, val := range body.Audiences {
+		if val == nil {
+			v.Audiences[i] = nil
+			continue
+		}
+		v.Audiences[i] = unmarshalMetaCustomAudienceResponseBodyToLfxv2campaignserviceconnectionsMetaCustomAudience(val)
+	}
+
+	return v
+}
+
+// NewListMetaCustomAudiencesBadRequest builds a
+// lfx-v2-campaign-service-connections service list-meta-custom-audiences
+// endpoint BadRequest error.
+func NewListMetaCustomAudiencesBadRequest(body *ListMetaCustomAudiencesBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaCustomAudiencesServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service list-meta-custom-audiences
+// endpoint ServiceUnavailable error.
+func NewListMetaCustomAudiencesServiceUnavailable(body *ListMetaCustomAudiencesServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaCustomAudiencesInternalServerError builds a
+// lfx-v2-campaign-service-connections service list-meta-custom-audiences
+// endpoint InternalServerError error.
+func NewListMetaCustomAudiencesInternalServerError(body *ListMetaCustomAudiencesInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaCustomAudiencesNotFound builds a
+// lfx-v2-campaign-service-connections service list-meta-custom-audiences
+// endpoint NotFound error.
+func NewListMetaCustomAudiencesNotFound(body *ListMetaCustomAudiencesNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaCustomAudiencesPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service list-meta-custom-audiences
+// endpoint PayloadTooLarge error.
+func NewListMetaCustomAudiencesPayloadTooLarge(body *ListMetaCustomAudiencesPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaCustomAudiencesUnauthorized builds a
+// lfx-v2-campaign-service-connections service list-meta-custom-audiences
+// endpoint Unauthorized error.
+func NewListMetaCustomAudiencesUnauthorized(body *ListMetaCustomAudiencesUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewListRedditAdsCustomAudiencesRedditAdsCustomAudiencesOK builds a
 // "lfx-v2-campaign-service-connections" service
 // "list-reddit-ads-custom-audiences" endpoint result from a HTTP "OK" response.
@@ -16327,6 +16515,31 @@ func ValidateListGoogleAdsAudiencesResponseBody(body *ListGoogleAdsAudiencesResp
 	for _, e := range body.Audiences {
 		if e != nil {
 			if err2 := validateGoogleAdsAudienceResourceResponseBody(e, "body.audiences[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListMetaCustomAudiencesResponseBody runs the validations defined on
+// ListMetaCustomAudiencesResponseBody
+func ValidateListMetaCustomAudiencesResponseBody(body *ListMetaCustomAudiencesResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Audiences == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("audiences", "body"))
+	}
+	if body.AudienceCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("audience_count", "body"))
+	}
+	if body.Truncated == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("truncated", "body"))
+	}
+	for _, e := range body.Audiences {
+		if e != nil {
+			if err2 := validateMetaCustomAudienceResponseBody(e, "body.audiences[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -21036,6 +21249,78 @@ func ValidateListGoogleAdsAudiencesUnauthorizedResponseBody(body *ListGoogleAdsA
 	return
 }
 
+// ValidateListMetaCustomAudiencesBadRequestResponseBody runs the validations
+// defined on ListMetaCustomAudiencesBadRequestResponseBody
+func ValidateListMetaCustomAudiencesBadRequestResponseBody(body *ListMetaCustomAudiencesBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaCustomAudiencesServiceUnavailableResponseBody runs the
+// validations defined on ListMetaCustomAudiencesServiceUnavailableResponseBody
+func ValidateListMetaCustomAudiencesServiceUnavailableResponseBody(body *ListMetaCustomAudiencesServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaCustomAudiencesInternalServerErrorResponseBody runs the
+// validations defined on ListMetaCustomAudiencesInternalServerErrorResponseBody
+func ValidateListMetaCustomAudiencesInternalServerErrorResponseBody(body *ListMetaCustomAudiencesInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaCustomAudiencesNotFoundResponseBody runs the validations
+// defined on ListMetaCustomAudiencesNotFoundResponseBody
+func ValidateListMetaCustomAudiencesNotFoundResponseBody(body *ListMetaCustomAudiencesNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaCustomAudiencesPayloadTooLargeResponseBody runs the
+// validations defined on ListMetaCustomAudiencesPayloadTooLargeResponseBody
+func ValidateListMetaCustomAudiencesPayloadTooLargeResponseBody(body *ListMetaCustomAudiencesPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaCustomAudiencesUnauthorizedResponseBody runs the validations
+// defined on ListMetaCustomAudiencesUnauthorizedResponseBody
+func ValidateListMetaCustomAudiencesUnauthorizedResponseBody(body *ListMetaCustomAudiencesUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateListRedditAdsCustomAudiencesBadRequestResponseBody runs the
 // validations defined on ListRedditAdsCustomAudiencesBadRequestResponseBody
 func ValidateListRedditAdsCustomAudiencesBadRequestResponseBody(body *ListRedditAdsCustomAudiencesBadRequestResponseBody) (err error) {
@@ -23903,6 +24188,36 @@ func validateGoogleAdsAudienceResourceResponseBody(body *GoogleAdsAudienceResour
 		if !(*body.Type == "custom_audience" || *body.Type == "combined_audience" || *body.Type == "audience" || *body.Type == "user_interest" || *body.Type == "custom_interest") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".type", *body.Type, []any{"custom_audience", "combined_audience", "audience", "user_interest", "custom_interest"}))
 		}
+	}
+	return
+}
+
+// ValidateMetaCustomAudienceResponseBody runs the validations defined on
+// meta-custom-audience
+func ValidateMetaCustomAudienceResponseBody(body *MetaCustomAudienceResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.Subtype == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("subtype", "body"))
+	}
+	return
+}
+
+// validateMetaCustomAudienceResponseBody checks meta-custom-audience and
+// reports errors using the path supplied by its caller
+func validateMetaCustomAudienceResponseBody(body *MetaCustomAudienceResponseBody, path string) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	if body.Subtype == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("subtype", path))
 	}
 	return
 }

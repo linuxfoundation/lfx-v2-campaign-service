@@ -254,6 +254,11 @@ func ListGoogleAdsAudiencesLfxV2CampaignServiceConnectionsPath(projectID string)
 	return fmt.Sprintf("/projects/%v/google-ads/audiences", projectID)
 }
 
+// ListMetaCustomAudiencesLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-meta-custom-audiences HTTP endpoint.
+func ListMetaCustomAudiencesLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/meta-ads/custom-audiences", projectID)
+}
+
 // ListRedditAdsCustomAudiencesLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-reddit-ads-custom-audiences HTTP endpoint.
 func ListRedditAdsCustomAudiencesLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/reddit-ads/custom-audiences", projectID)
