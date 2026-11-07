@@ -89,6 +89,11 @@ func (c *Client) ListCustomAudiences(ctx context.Context, accountID string) ([]C
 			if _, dup := ids[a.ID]; dup {
 				return nil, &transportError{Method: http.MethodGet, Path: path, Err: fmt.Errorf("page %d row %d: the same audience is listed twice", page, i)}
 			}
+			// The bound is on ROWS, not only pages: a page larger than the requested limit must not
+			// carry the listing past what the read publishes.
+			if len(out) == customAudienceListPageSize*customAudienceListMaxPages {
+				return nil, fmt.Errorf("list meta custom audiences: more than %d audiences: %w", customAudienceListPageSize*customAudienceListMaxPages, ErrCustomAudienceListTooLarge)
+			}
 			ids[a.ID] = struct{}{}
 			out = append(out, a)
 		}

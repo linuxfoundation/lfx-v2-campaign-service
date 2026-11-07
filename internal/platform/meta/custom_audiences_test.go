@@ -139,3 +139,24 @@ func TestListCustomAudiences_MinusOneSizeIsAbsent(t *testing.T) {
 		t.Fatalf("ListCustomAudiences = %+v, %v; want one audience with no size", got, err)
 	}
 }
+
+// A single page larger than the requested limit cannot carry the listing past the 2000-row bound.
+func TestListCustomAudiences_RowBoundHoldsOnAnOversizedPage(t *testing.T) {
+	limit := customAudienceListPageSize * customAudienceListMaxPages
+	rows := make([]string, 0, limit+1)
+	for i := 0; i <= limit; i++ {
+		rows = append(rows, `{"id":"`+strconv.Itoa(100000+i)+`","name":"n","subtype":"CUSTOM","account_id":"777"}`)
+	}
+	srv, _ := audiencePages(t, `{"data":[`+strings.Join(rows, ",")+`]}`)
+	defer srv.Close()
+	got, err := audienceClient(srv.URL).ListCustomAudiences(context.Background(), "act_777")
+	if !errors.Is(err, ErrCustomAudienceListTooLarge) || got != nil {
+		t.Fatalf("got %d rows, err %v; want ErrCustomAudienceListTooLarge", len(got), err)
+	}
+	// Exactly the bound is still a complete answer.
+	srv2, _ := audiencePages(t, `{"data":[`+strings.Join(rows[:limit], ",")+`]}`)
+	defer srv2.Close()
+	if got, err := audienceClient(srv2.URL).ListCustomAudiences(context.Background(), "act_777"); err != nil || len(got) != limit {
+		t.Fatalf("got %d rows, err %v; want all %d", len(got), err, limit)
+	}
+}
