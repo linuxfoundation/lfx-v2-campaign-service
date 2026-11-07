@@ -5440,7 +5440,28 @@ type CampaignCreateInputRequestBody struct {
 	// deployment. A blank or invalid entry, an overlap, a list over its cap, a
 	// value that is not an array of strings (null reads as absent), or either list
 	// while the flag is off, is refused with 400 "invalid campaign config:
-	// redditConfig.<field>: ..." before any job exists.
+	// redditConfig.<field>: ..." before any job exists. MICROSOFT NEGATIVE
+	// KEYWORDS (#563): microsoftConfig takes `negativeKeywords`, [{"text": string,
+	// "matchType": "Exact" | "Phrase"}], attached as CAMPAIGN-level negatives
+	// (AddNegativeKeywordsToEntities, EntityType Campaign) right after the
+	// campaign is created, under the rules of add-negative-keywords: 1-60 entries,
+	// match type Exact or Phrase in any casing (Broad is refused), text
+	// whitespace-collapsed, at most 100 characters, letters, digits, spaces and &
+	// ' - . only with no two punctuation characters adjacent, and no (text, match
+	// type) pair twice. Each keyword's outcome (APPLIED, ALREADY_PRESENT, FAILED
+	// or UNCONFIRMED) is recorded in the campaign result as negativeKeywords; a
+	// FAILED or UNCONFIRMED keyword, or a failed call, leaves the campaign
+	// created_degraded with a step naming it and never fails the job. Repeating
+	// the create does not re-attach them, because a created or created_degraded
+	// campaign is returned without another dispatch: fix a shortfall with
+	// add-negative-keywords. Only a dispatch that reuses an existing campaign by
+	// name (one whose earlier attempt was never confirmed) re-sends the list, and
+	// gets ALREADY_PRESENT for the ones already there. OFF unless
+	// MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is exactly "true" on the
+	// deployment. A rule breach, a value that is not an array of {text, matchType}
+	// objects (null reads as absent), or a non-empty list while the flag is off,
+	// is refused with 400 "invalid campaign config:
+	// microsoftConfig.negativeKeywords: ..." before any job exists.
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

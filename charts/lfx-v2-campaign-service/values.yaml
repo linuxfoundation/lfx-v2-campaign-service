@@ -307,6 +307,17 @@ app:
     MICROSOFT_METRICS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to microsoftConfig.negativeKeywords (#563):
+    # campaign-level negative keywords attached right after a Microsoft
+    # Advertising campaign is created, through the AddNegativeKeywordsToEntities
+    # call the add-negative-keywords lever makes. Default off: no live create
+    # has made that call. It names no account resource; it keeps an unverified
+    # create-path call off the shared ad account. While off, a create naming a
+    # non-empty list is refused with a 400 before any job exists. Any value
+    # other than "true" is treated as off, so a typo fails closed.
+    MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to BOTH Reddit ad-group targeting writes
     # (LFXV2-2665): removing keywords (remove-keyword-targeting) and adding
     # negative keywords to excluded_keywords (add-negative-keywords) — enabling
