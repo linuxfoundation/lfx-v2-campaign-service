@@ -1135,7 +1135,9 @@ entry whose `action_type` is the one asked for. `ConversionActionType` maps a re
 The following are a measured zero: a row with no matching entry, a row with no `actions` (Meta
 omits empty lists), and no delivery (`data: []`). These fail the read as a malformed row
 (`transportError`) and never publish a number: two entries for the type, a null or non-list
-`actions`, and a value that is not a JSON string holding a non-negative finite number. The error
+`actions`, a null entry or one whose `action_type` is missing, null, not a string or blank (an
+entry this client cannot identify could be the conversion itself), and a value that is not a JSON
+string holding a non-negative finite number. The error
 text never echoes a value.
 
 `MetaDispatcher.ReadMetrics` uses it only for a campaign whose stored create result records a

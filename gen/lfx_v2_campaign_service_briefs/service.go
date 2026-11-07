@@ -1492,11 +1492,11 @@ type CampaignMetrics struct {
 	// conversions_status to learn why it is absent, never this field's absence.
 	// FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a
 	// double and credit partial conversions under data-driven, position-based and
-	// offline attribution, so a campaign can genuinely hold 0.4 of a conversion —
-	// do not round it to a whole number, and in particular do not treat a value
-	// below 1 as zero. A present 0 is a measured zero against real delivery. A
-	// consumer must not render an absent value as zero or fold it into a
-	// conversion total.
+	// offline attribution, and Meta's Insights action value (#550) is a decimal
+	// string kept as is, so a campaign can genuinely hold 0.4 of a conversion — do
+	// not round it to a whole number, and in particular do not treat a value below
+	// 1 as zero. A present 0 is a measured zero against real delivery. A consumer
+	// must not render an absent value as zero or fold it into a conversion total.
 	Conversions *float64
 	// What this read established about conversions. `reported`: a complete
 	// measurement, carried in `conversions` (the ONLY status that carries it).

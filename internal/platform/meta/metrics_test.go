@@ -445,6 +445,12 @@ func TestGetCampaignMetricsWithConversions(t *testing.T) {
 		{"number value", `{"data":[{"actions":[{"action_type":"offsite_conversion.fb_pixel_lead","value":3}]}]}`, 0, "not a JSON string"},
 		{"negative", `{"data":[{"actions":[{"action_type":"offsite_conversion.fb_pixel_lead","value":"-1"}]}]}`, 0, "non-negative"},
 		{"garbage", `{"data":[{"actions":[{"action_type":"offsite_conversion.fb_pixel_lead","value":"x"}]}]}`, 0, "non-negative"},
+		{"null entry", `{"data":[{"clicks":"9","actions":[null]}]}`, 0, "entry 1 is null"},
+		{"missing action_type", `{"data":[{"clicks":"9","actions":[{"value":"7"}]}]}`, 0, "entry 1 has no readable action_type"},
+		{"null action_type", `{"data":[{"actions":[{"action_type":"link_click","value":"1"},{"action_type":null,"value":"7"}]}]}`, 0, "entry 2 has no readable action_type"},
+		{"blank action_type", `{"data":[{"actions":[{"action_type":" ","value":"7"}]}]}`, 0, "no readable action_type"},
+		{"numeric action_type", `{"data":[{"actions":[{"action_type":5,"value":"7"}]}]}`, 0, "no readable action_type"},
+		{"entry not an object", `{"data":[{"actions":["x"]}]}`, 0, "entry 1 is not an object"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex

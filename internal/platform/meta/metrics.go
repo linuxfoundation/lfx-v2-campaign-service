@@ -122,10 +122,10 @@ func ConversionActionType(event string) (string, bool) {
 	return t, ok
 }
 
-// actionStat is one AdsActionStats entry. Value is raw: Meta sends numbers as JSON strings, and
-// a null or other type must not read as 0.
+// actionStat is one AdsActionStats entry. Both fields are raw: Meta sends numbers as JSON
+// strings, and a null, missing or other-typed value or action_type must not read as "" or 0.
 type actionStat struct {
-	ActionType string          `json:"action_type"`
+	ActionType json.RawMessage `json:"action_type"`
 	Value      json.RawMessage `json:"value"`
 }
 
@@ -140,14 +140,29 @@ func countAction(raw json.RawMessage, actionType string) (float64, error) {
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return 0, errors.New("actions is an explicit null")
 	}
-	var stats []actionStat
-	if err := json.Unmarshal(raw, &stats); err != nil {
+	// Entries are decoded one by one as raw objects, so a null entry, or one whose action_type is
+	// missing, null, not a string or blank, is refused rather than skipped: skipping it would
+	// read an entry this client cannot identify as "not the conversion", a measured zero that
+	// could be the conversion count itself.
+	var entries []json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
 		return 0, fmt.Errorf("actions is not a list (%d bytes)", len(raw))
 	}
 	found := false
 	var total float64
-	for _, s := range stats {
-		if s.ActionType != actionType {
+	for i, e := range entries {
+		if bytes.Equal(bytes.TrimSpace(e), []byte("null")) {
+			return 0, fmt.Errorf("actions entry %d is null", i+1)
+		}
+		var s actionStat
+		if err := json.Unmarshal(e, &s); err != nil {
+			return 0, fmt.Errorf("actions entry %d is not an object (%d bytes)", i+1, len(e))
+		}
+		var at string
+		if len(s.ActionType) == 0 || json.Unmarshal(s.ActionType, &at) != nil || strings.TrimSpace(at) == "" {
+			return 0, fmt.Errorf("actions entry %d has no readable action_type", i+1)
+		}
+		if at != actionType {
 			continue
 		}
 		if found {
