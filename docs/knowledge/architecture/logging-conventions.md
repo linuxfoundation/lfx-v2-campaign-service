@@ -75,9 +75,17 @@ stay together, and an alias is followed.
 - A labelled `break` or `continue` targets the loop or switch it names.
 - A `fallthrough` carries a clause's paths into the next clause.
 - Paths are bounded at 1024. A spread with more fails the guard rather than
-  checking a subset. So does a spread in a function that contains a `goto`, or
-  that writes `[]any` elements in place (`fields[i] = v`, `copy`, `clear`). The
-  interpreter does not model either, and the repo has neither.
+  checking a subset. So does any slice the interpreter does not model, rather
+  than being read as empty: a spread in a function that contains a `goto` or
+  writes `[]any` elements in place (`fields[i] = v`, `copy`, `clear`), a
+  non-constant reslice, a multi-value assignment, or a call result from outside
+  the package.
+- A same-package function's `[]any` result (for example `probeErrAttrs` in
+  `internal/infrastructure/postgres`) is resolved by interpreting its body up to
+  each `return`. `make([]any, 0, n)` is empty, and a constant reslice
+  (`fields[:]`, `fields[2:]`) keeps its window.
+- A method expression such as `(*slog.Logger).Info(logger, ...)` has its
+  explicit receiver dropped before keys are read.
 - A log call inside a closure sees the paths where the closure sits.
 
 Each resulting sequence is resolved in full before it is paired, so a pair split

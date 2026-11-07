@@ -29,7 +29,12 @@ clear, as `"project_id"`.
     and aliases are followed. More than 1024 paths fails the guard (pinned by
     `TestLogKeys_PathOverflowIsReported`) rather than checking a subset, and so does a
     spread in a function with a `goto` or an in-place `[]any` element write
-    (`TestLogKeys_GotoIsReportedUntraceable`, `TestLogKeys_ElementWritesAreReportedUntraceable`).
+    (`TestLogKeys_GotoIsReportedUntraceable`, `TestLogKeys_UnmodelledSlicesAreReportedUntraceable`),
+    as does any other slice change it does not model (a non-constant reslice, a multi-value or
+    out-of-package call result).
+  - A same-package helper's `[]any` result is resolved through its body, so the keys
+    `probeErrAttrs` builds are now checked. `make([]any, 0, n)` is empty, constant reslices
+    keep their window, and a method expression's explicit receiver is dropped.
     Every resulting path is checked.
   - It looks through `any("k")` conversions, and reads elided `[]slog.Attr` elements,
     named-constant keys, and group names (`slog.Group`, `slog.GroupAttrs`,
@@ -47,8 +52,8 @@ clear, as `"project_id"`.
     skipped, per-variable joins mixed exclusive branches, and returned paths were merged.
     Then a `break` still ran the loop's post statement,
     `fallthrough` was ignored, the path bound dropped branches silently, labelled
-    branches targeted the innermost loop, a `goto` was taken to fall through, and
-    element writes were ignored.
+    branches targeted the innermost loop, a `goto` was taken to fall through,
+    element writes were ignored, and a reslice or a method expression's receiver hid keys.
 - Mutation-checked:
   - Renaming one key to `projectID` in `internal/service/connection.go`, or the spread-slice
     key in `internal/service/meta_ad_sets.go`, fails the guard.
