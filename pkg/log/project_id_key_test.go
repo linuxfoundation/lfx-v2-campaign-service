@@ -218,8 +218,8 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 			slog.Info("m", fields...)`, []string{"a", "projectID", "b"}},
 		{"a log call inside a closure sees the state where the closure is", `fields := []any{"a", 1}
 			func() {
-				fields = append(fields, "projectID", id)
-				slog.Info("m", fields...)
+				local := []any{"projectID", id}
+				slog.Info("m", append(fields, local...)...)
 			}()`, []string{"a", "projectID"}},
 		{"group names are keys", `_ = logger.WithGroup("project")
 			_ = slog.GroupAttrs("projectID", slog.Int("n", 1))`, []string{"project", "projectID", "n"}},
@@ -1268,6 +1268,20 @@ func sharesAnyBacking(body []ast.Stmt, info *types.Info) bool {
 				if isAnySlice(info.TypeOf(x.X)) && (x.High != nil || x.Slice3) {
 					found = true
 				}
+			case *ast.FuncLit:
+				// A closure that assigns a []any captured from outside it changes the
+				// outer slice whenever it runs, which the interpreter does not replay.
+				ast.Inspect(x.Body, func(m ast.Node) bool {
+					if as, ok := m.(*ast.AssignStmt); ok {
+						for _, l := range as.Lhs {
+							if o := identObj(l); o != nil && isAnySlice(o.Type()) &&
+								(o.Pos() < x.Pos() || o.Pos() >= x.End()) {
+								found = true
+							}
+						}
+					}
+					return !found
+				})
 			case *ast.ForStmt:
 				found = found || loopAppendsPairs(x.Body, info)
 			case *ast.RangeStmt:
@@ -1483,12 +1497,14 @@ func loopAppendsPairs(body *ast.BlockStmt, info *types.Info) bool {
 // later) and that reads a []any captured from outside it. Such a closure reads its
 // captured slices when it runs, not where it is written.
 func inDeferredClosure(fd *ast.FuncDecl, call *ast.CallExpr, info *types.Info) bool {
-	var lit *ast.FuncLit
+	// lits: every function literal on the way to call that is not run where it is
+	// written, however deeply nested.
+	var lits []*ast.FuncLit
 	var visit func(n ast.Node, immediate bool)
 	visit = func(n ast.Node, immediate bool) {
 		ast.Inspect(n, func(m ast.Node) bool {
-			if lit != nil {
-				return false
+			if m == nil || m.Pos() > call.Pos() || call.End() > m.End() {
+				return false // not on the way to call
 			}
 			switch x := m.(type) {
 			case *ast.DeferStmt:
@@ -1506,29 +1522,30 @@ func inDeferredClosure(fd *ast.FuncDecl, call *ast.CallExpr, info *types.Info) b
 					return false
 				}
 			case *ast.FuncLit:
-				if x.Pos() <= call.Pos() && call.End() <= x.End() {
-					lit = x // stored, passed or deferred: runs later
-				}
+				lits = append(lits, x) // stored, passed or deferred: runs later
+				visit(x.Body, true)    // and look for later-running closures inside it
 				return false
 			}
 			return true
 		})
 	}
 	visit(fd.Body, true)
-	if lit == nil {
-		return false
-	}
-	captured := false
-	ast.Inspect(lit.Body, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok {
-			if o, ok := info.Uses[id].(*types.Var); ok && isAnySlice(o.Type()) &&
-				(o.Pos() < lit.Pos() || o.Pos() >= lit.End()) {
-				captured = true
+	for _, lit := range lits {
+		captured := false
+		ast.Inspect(lit.Body, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok {
+				if o, ok := info.Uses[id].(*types.Var); ok && isAnySlice(o.Type()) &&
+					(o.Pos() < lit.Pos() || o.Pos() >= lit.End()) {
+					captured = true
+				}
 			}
+			return !captured
+		})
+		if captured {
+			return true
 		}
-		return !captured
-	})
-	return captured
+	}
+	return false
 }
 
 // endsInFallthrough reports whether a case clause body ends in a fallthrough statement.
@@ -1653,6 +1670,8 @@ func TestLogKeys_UnmodelledSlicesAreReportedUntraceable(t *testing.T) {
 		"go closure":                      "go func() { slog.Info(\"g\", fields...) }()",
 		"stored closure":                  "g := func() { slog.Info(\"s\", fields...) }\ng()",
 		"interface value in key position": "var k any = \"event\"\nslog.Info(\"i\", k, \"project_id\", \"projectID\", 7)",
+		"nested later-running closure":    "g := func() {\nlocal := []any{\"a\", 1}\ndefer func() { slog.Info(\"d\", local...) }()\nlocal = []any{\"projectID\", id}\n}\ng()",
+		"closure writes a captured slice": "func() { fields = []any{\"projectID\", id} }()",
 		"range variable":                  "for _, g := range groups {\nfields = g\n}",
 		"function used as a value":        "g := logWith\ng(fields)",
 	} {

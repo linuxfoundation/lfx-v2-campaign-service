@@ -94,7 +94,9 @@ stay together.
 - A log call in a closure that is deferred, started with `go`, or stored and
   called later is untraceable when it reads a `[]any` captured from outside the
   closure, because it runs with the slice's later contents. An immediately
-  invoked `func() { ... }()` is traced.
+  invoked `func() { ... }()` is traced. Every enclosing later-running closure
+  is checked, however deeply nested, and a closure that assigns a captured
+  `[]any` makes the function untraceable.
 - An argument of an empty interface type (`any`) in a key position may hold a
   string at run time, so its pairing is unknown and it is untraceable.
   `Record.Add` pairs its arguments like `With`.
