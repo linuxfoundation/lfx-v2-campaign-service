@@ -95,6 +95,7 @@ func TestLinkedIn_TargetingPreflight(t *testing.T) {
 		{"include as an object", `{"include":{"skills":["urn:li:skill:1"]}}`, "must be an object"},
 		{"a number facet value", `{"include":[{"skills":[1]}]}`, "must be an object"},
 		{"null", `null`, "must be an object"},
+		{"misspelled exclude", `{"include":[{"skills":["urn:li:skill:1"]}],"excldue":{"seniorities":["urn:li:seniority:1"]}}`, "must be an object"},
 		{"included employer in employerExclusions", `{"include":[{"employers":["urn:li:organization:1111"]}]}`, "is in employerExclusions"},
 		{"locale excluded", `{"include":[{"skills":["urn:li:skill:1"]}],"exclude":{"interfaceLocales":["urn:li:locale:en_US"]}}`, "only under include"},
 	} {
